@@ -1,0 +1,179 @@
+{{- if .Values.kafka.enabled }}
+# ============================================
+# Kafka 事件总线
+# ============================================
+# 单节点 KRaft 模式，用于开发/演示环境
+# ============================================
+
+# ------------------------------------------
+# StatefulSet - Kafka Broker + Controller
+# ------------------------------------------
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+spec:
+  serviceName: kafka
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+    spec:
+      {{- with .Values.global.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: kafka
+          image: {{ .Values.kafka.image | quote }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- with .Values.global.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            - name: KAFKA_NODE_ID
+              value: "1"
+            - name: KAFKA_PROCESS_ROLES
+              value: broker,controller
+            - name: KAFKA_LISTENERS
+              value: INTERNAL://:9092,CONTROLLER://:9093
+            - name: KAFKA_ADVERTISED_LISTENERS
+              value: INTERNAL://kafka:9092
+            - name: KAFKA_INTER_BROKER_LISTENER_NAME
+              value: INTERNAL
+            - name: KAFKA_CONTROLLER_LISTENER_NAMES
+              value: CONTROLLER
+            - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+              value: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT
+            - name: KAFKA_CONTROLLER_QUORUM_VOTERS
+              value: 1@kafka:9093
+            - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+              value: "1"
+            - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
+              value: "1"
+            - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
+              value: "1"
+            - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
+              value: "false"
+            - name: KAFKA_LOG_RETENTION_HOURS
+              value: {{ .Values.kafka.logRetentionHours | quote }}
+            - name: CLUSTER_ID
+              value: {{ .Values.kafka.clusterId | quote }}
+          ports:
+            - name: client
+              containerPort: 9092
+            - name: controller
+              containerPort: 9093
+          resources:
+            {{- toYaml .Values.kafka.resources | nindent 12 }}
+          livenessProbe:
+            tcpSocket:
+              port: 9092
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          readinessProbe:
+            tcpSocket:
+              port: 9092
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/kafka/data
+      {{- if not .Values.kafka.persistence.enabled }}
+      volumes:
+        - name: data
+          emptyDir: {}
+      {{- end }}
+  {{- if .Values.kafka.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "server-monitor.labels" . | nindent 10 }}
+      spec:
+        accessModes:
+          {{- toYaml .Values.kafka.persistence.accessModes | nindent 10 }}
+        resources:
+          requests:
+            storage: {{ .Values.kafka.persistence.size | quote }}
+        {{ if .Values.kafka.persistence.storageClassName }}
+        storageClassName: {{ .Values.kafka.persistence.storageClassName | quote }}
+        {{ end }}
+  {{- end }}
+
+---
+# ------------------------------------------
+# Service - 服务发现
+# ------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: kafka
+  ports:
+    - name: client
+      port: {{ .Values.kafka.service.clientPort }}
+      targetPort: 9092
+    - name: controller
+      port: {{ .Values.kafka.service.controllerPort }}
+      targetPort: 9093
+  type: {{ .Values.kafka.service.type }}
+
+---
+# ------------------------------------------
+# Job - Topic 初始化
+# ------------------------------------------
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-init
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  template:
+    metadata:
+      labels:
+        app: kafka-init
+    spec:
+      restartPolicy: OnFailure
+      {{- with .Values.global.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: kafka-init
+          image: {{ .Values.kafka.image | quote }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- with .Values.global.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for Kafka to be ready..."
+              until kafka-topics --bootstrap-server kafka:9092 --list >/dev/null 2>&1; do
+                sleep 2
+              done
+              echo "Creating topics..."
+              kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic {{ .Values.kafka.topics.alertEvents.name }} --partitions {{ .Values.kafka.topics.alertEvents.partitions }} --replication-factor {{ .Values.kafka.topics.alertEvents.replicationFactor }}
+              kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic {{ .Values.kafka.topics.operationEvents.name }} --partitions {{ .Values.kafka.topics.operationEvents.partitions }} --replication-factor {{ .Values.kafka.topics.operationEvents.replicationFactor }}
+              echo "Topics created."
+          resources:
+            {{- toYaml .Values.kafka.init.resources | nindent 12 }}
+{{- end }}

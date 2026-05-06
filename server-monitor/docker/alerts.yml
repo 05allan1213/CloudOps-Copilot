@@ -1,0 +1,67 @@
+groups:
+  - name: host-alerts
+    rules:
+      - alert: HighCPU
+        expr: server_monitor_cpu_usage_percent > 80
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is {{ $value }}% (threshold: 80%)."
+
+      - alert: CriticalCPU
+        expr: server_monitor_cpu_usage_percent > 95
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is {{ $value }}% (threshold: 95%)."
+
+      - alert: HighMemory
+        expr: server_monitor_memory_usage_percent > 85
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage is {{ $value }}% (threshold: 85%)."
+
+      - alert: HighDisk
+        expr: server_monitor_disk_usage_percent > 90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High disk usage on {{ $labels.instance }}"
+          description: "Disk usage on {{ $labels.mountpoint }} is {{ $value }}% (threshold: 90%)."
+
+      - alert: HostDown
+        expr: up{job="server-probe"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Host {{ $labels.instance }} is down"
+          description: "Prometheus cannot reach the probe on {{ $labels.instance }}."
+
+  - name: service-alerts
+    rules:
+      - alert: HighErrorRate
+        expr: (sum by (instance) (rate(http_requests_total{job="server-web",status=~"5.."}[5m])) / sum by (instance) (rate(http_requests_total{job="server-web"}[5m])) > 0.05) and on (instance) (sum by (instance) (rate(http_requests_total{job="server-web"}[5m])) > 0)
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate on {{ $labels.instance }}"
+          description: "HTTP 5xx error rate is above 5%."
+
+      - alert: HighLatency
+        expr: histogram_quantile(0.95, sum by (instance, le) (rate(http_request_duration_seconds_bucket{job="server-web"}[5m]))) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High latency on {{ $labels.instance }}"
+          description: "HTTP P95 latency is above 1s."

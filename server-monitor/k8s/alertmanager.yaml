@@ -1,0 +1,132 @@
+# ============================================
+# AlertManager 配置与部署
+# ============================================
+# 当前阶段已接入 server-web webhook
+# ============================================
+
+# ------------------------------------------
+# 1. AlertManager 配置（ConfigMap）
+# ------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: server-monitor
+data:
+  alertmanager.yml: |
+    global:
+      resolve_timeout: 5m
+
+    route:
+      group_by: ['alertname', 'instance']
+      group_wait: 10s
+      group_interval: 30s
+      repeat_interval: 4h
+      receiver: 'webhook'
+
+    receivers:
+      - name: 'webhook'
+        webhook_configs:
+          - url: 'http://server-web:8080/api/v1/webhook/alertmanager'
+            send_resolved: true
+
+    inhibit_rules:
+      - source_matchers:
+          - severity="critical"
+        target_matchers:
+          - severity="warning"
+        equal: ['alertname', 'instance']
+
+---
+# ------------------------------------------
+# 2. AlertManager 数据卷（PersistentVolumeClaim）
+# ------------------------------------------
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: alertmanager-data
+  namespace: server-monitor
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+# ------------------------------------------
+# 3. AlertManager 部署（Deployment）
+# ------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+  namespace: server-monitor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alertmanager
+  template:
+    metadata:
+      labels:
+        app: alertmanager
+    spec:
+      containers:
+        - name: alertmanager
+          image: prom/alertmanager:v0.27.0
+          args:
+            - --config.file=/etc/alertmanager/alertmanager.yml
+            - --storage.path=/alertmanager
+          ports:
+            - containerPort: 9093
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: 9093
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: 9093
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alertmanager/alertmanager.yml
+              subPath: alertmanager.yml
+            - name: data
+              mountPath: /alertmanager
+      volumes:
+        - name: config
+          configMap:
+            name: alertmanager-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: alertmanager-data
+
+---
+# ------------------------------------------
+# 4. AlertManager 服务（Service）
+# ------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager
+  namespace: server-monitor
+spec:
+  selector:
+    app: alertmanager
+  ports:
+    - port: 9093
+      targetPort: 9093
+      nodePort: 30093
+  type: NodePort

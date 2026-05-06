@@ -1,0 +1,108 @@
+{
+  "index_patterns": [
+    "sm-logs-*"
+  ],
+  "priority": 100,
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "index.lifecycle.name": "sm-logs-policy"
+    },
+    "mappings": {
+      "properties": {
+        "@timestamp": {
+          "type": "date",
+          "format": "strict_date_optional_time||epoch_millis"
+        },
+        "ts": {
+          "type": "date",
+          "format": "strict_date_optional_time||epoch_millis"
+        },
+        "level": {
+          "type": "keyword"
+        },
+        "msg": {
+          "type": "text",
+          "fields": {
+            "keyword": {
+              "type": "keyword",
+              "ignore_above": 256
+            }
+          }
+        },
+        "service": {
+          "type": "keyword"
+        },
+        "instance": {
+          "type": "keyword"
+        },
+        "trace_id": {
+          "type": "keyword"
+        },
+        "span_id": {
+          "type": "keyword"
+        },
+        "request_id": {
+          "type": "keyword"
+        },
+        "method": {
+          "type": "keyword"
+        },
+        "path": {
+          "type": "keyword"
+        },
+        "status": {
+          "type": "integer"
+        },
+        "latency_ms": {
+          "type": "float"
+        },
+        "client_ip": {
+          "type": "keyword"
+        },
+        "error": {
+          "type": "text",
+          "fields": {
+            "keyword": {
+              "type": "keyword",
+              "ignore_above": 256
+            }
+          }
+        },
+        "collector": {
+          "type": "keyword"
+        },
+        "caller": {
+          "type": "keyword"
+        },
+        "stacktrace": {
+          "type": "text"
+        },
+        "stream": {
+          "type": "keyword"
+        },
+        "kubernetes": {
+          "properties": {
+            "pod_name": {
+              "type": "keyword"
+            },
+            "namespace_name": {
+              "type": "keyword"
+            },
+            "container_name": {
+              "type": "keyword"
+            },
+            "host": {
+              "type": "keyword"
+            },
+            "labels": {
+              "type": "object",
+              "enabled": true
+            }
+          }
+        }
+      }
+    }
+  }
+}

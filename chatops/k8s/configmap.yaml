@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: chatops-config
+data:
+  REDIS_ADDR: "chatops-redis:6379"
+  PROMETHEUS_URL: "http://prometheus:9090"
+  LLM_API_URL: "https://api.deepseek.com/v1/chat/completions"

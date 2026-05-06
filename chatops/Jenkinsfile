@@ -1,0 +1,68 @@
+pipeline {
+    agent any
+
+    environment {
+        DOCKER_IMAGE = 'xiujacksun/chatops-server'
+        DOCKER_TAG   = "${BUILD_NUMBER}"
+    }
+
+    stages {
+        stage('拉取代码') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('编译测试') {
+            steps {
+                dir('server') {
+                    sh '''
+                        export GOPROXY=https://goproxy.cn,direct
+                        go mod tidy
+                        CGO_ENABLED=0 go build -o chatops-server .
+                    '''
+                }
+            }
+        }
+
+        stage('构建镜像') {
+            steps {
+                dir('server') {
+                    sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} ."
+                    sh "docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:latest"
+                }
+            }
+        }
+
+        stage('推送镜像') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-credentials',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
+                    sh '''
+                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                        docker push ${DOCKER_IMAGE}:${DOCKER_TAG}
+                        docker push ${DOCKER_IMAGE}:latest
+                    '''
+                }
+            }
+        }
+
+        stage('清理') {
+            steps {
+                sh "docker rmi ${DOCKER_IMAGE}:${DOCKER_TAG} || true"
+            }
+        }
+    }
+
+    post {
+        success {
+            echo '构建成功，镜像已推送至 Docker Hub'
+        }
+        failure {
+            echo '构建失败，请检查日志'
+        }
+    }
+}

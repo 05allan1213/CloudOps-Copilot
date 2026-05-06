@@ -1,0 +1,26 @@
+# ============================================
+# HorizontalPodAutoscaler (HPA) - 自动扩缩容
+# ============================================
+# 根据 CPU 使用率自动调整 Pod 副本数
+# 前置条件：集群需安装 Metrics Server
+# ============================================
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: server-web-hpa
+  namespace: server-monitor
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: server-web
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 80

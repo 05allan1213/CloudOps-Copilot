@@ -1,0 +1,92 @@
+# ============================================
+# VictoriaMetrics 长期指标存储
+# ============================================
+# 第三阶段：Prometheus remote_write 长期存储
+# ============================================
+
+# ------------------------------------------
+# 1. PersistentVolumeClaim - VM 数据
+# ------------------------------------------
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: victoriametrics-data
+  namespace: server-monitor
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+
+---
+# ------------------------------------------
+# 2. Deployment - VictoriaMetrics 部署
+# ------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: victoriametrics
+  namespace: server-monitor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: victoriametrics
+  template:
+    metadata:
+      labels:
+        app: victoriametrics
+    spec:
+      containers:
+        - name: victoriametrics
+          image: victoriametrics/victoria-metrics:v1.102.1
+          args:
+            - --storageDataPath=/victoria-metrics-data
+            - --retentionPeriod=90d
+            - --httpListenAddr=:8428
+          ports:
+            - containerPort: 8428
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8428
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8428
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          volumeMounts:
+            - name: data
+              mountPath: /victoria-metrics-data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: victoriametrics-data
+
+---
+# ------------------------------------------
+# 3. Service - VictoriaMetrics 服务
+# ------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: victoriametrics
+  namespace: server-monitor
+spec:
+  selector:
+    app: victoriametrics
+  ports:
+    - port: 8428
+      targetPort: 8428
+  type: ClusterIP

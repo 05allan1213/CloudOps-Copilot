@@ -1,0 +1,363 @@
+global:
+  imagePullPolicy: IfNotPresent
+  timezone: Asia/Shanghai
+  podSecurityContext: {}
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+
+config:
+  logLevel: info
+  prometheusUrl: http://prometheus:9090
+  redisAddr: redis:6379
+  corsAllowedOrigins: ""
+  ginMode: release
+  readyTimeoutSeconds: "3"
+  requestTimeoutSeconds: "5"
+  hostsCacheTTLSeconds: "30"
+  traceOtlpEndpoint: jaeger:4317
+  traceSampleRate: "1.0"
+  kafkaBrokers: kafka:9092
+  mysqlHost: mysql
+  mysqlPort: "3306"
+  mysqlUser: server_monitor
+  mysqlDatabase: server_monitor
+
+secret:
+  create: true
+  name: monitor-secret
+  # 以下默认值仅用于本地/学习环境，生产环境必须通过 values 覆盖或使用外部 Secret。
+  redisPassword: server-monitor-change-me
+  mysqlPassword: server-monitor-change-me
+  mysqlRootPassword: server-monitor-change-me
+  jwtSecret: server-monitor-dev-jwt-secret-change-me
+  adminPassword: server-monitor-change-me
+  grafanaAdminUser: admin
+  grafanaAdminPassword: server-monitor-change-me
+
+rateLimit:
+  enabled: true
+  requests: "120"
+  windowSeconds: "60"
+
+serverWeb:
+  enabled: true
+  replicas: 1
+  image:
+    repository: goproject-server-web
+    tag: 0.1.0
+  service:
+    type: NodePort
+    port: 8080
+    nodePort: 30080
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+alertService:
+  enabled: true
+  replicas: 1
+  image:
+    repository: goproject-alert-service
+    tag: 0.1.0
+  service:
+    type: ClusterIP
+    port: 8081
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+serverProbe:
+  enabled: true
+  image:
+    repository: goproject-server-probe
+    tag: 0.1.0
+  listenAddr: ":9090"
+  metricsPath: /metrics
+  scrapeInterval: "5"
+  hostProc: /proc
+  hostSys: /sys
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+    - key: node-role.kubernetes.io/master
+      operator: Exists
+      effect: NoSchedule
+  service:
+    type: ClusterIP
+    port: 9090
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+redis:
+  enabled: true
+  image: redis:7-alpine
+  maxmemory: 96mb
+  maxmemoryPolicy: allkeys-lru
+  persistence:
+    enabled: true
+    accessModes:
+      - ReadWriteOnce
+    size: 1Gi
+    storageClassName: ""
+  service:
+    type: ClusterIP
+    port: 6379
+
+mysql:
+  enabled: true
+  image: mysql:8.0
+  database: server_monitor
+  user: server_monitor
+  persistence:
+    enabled: true
+    accessModes:
+      - ReadWriteOnce
+    size: 10Gi
+    storageClassName: ""
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+auth:
+  enabled: true
+  jwtExpireHours: "24"
+
+alertRuleSync:
+  # K8s/Helm 默认不允许 server-web 直写 Prometheus ConfigMap 挂载的规则目录。
+  enabled: false
+  rulesFilePath: ""
+  prometheusReloadUrl: http://prometheus:9090/-/reload
+  promtoolPath: /usr/local/bin/promtool
+  timeoutSeconds: "10"
+
+prometheus:
+  enabled: true
+  image: prom/prometheus:v2.51.0
+  retention: 6h
+  persistence:
+    enabled: true
+    accessModes:
+      - ReadWriteOnce
+    size: 10Gi
+    storageClassName: ""
+  service:
+    type: NodePort
+    port: 9090
+    nodePort: 30090
+
+victoriametrics:
+  enabled: true
+  image: victoriametrics/victoria-metrics:v1.102.1
+  retention: 90d
+  persistence:
+    enabled: true
+    accessModes:
+      - ReadWriteOnce
+    size: 10Gi
+    storageClassName: ""
+  service:
+    type: ClusterIP
+    port: 8428
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+alertmanager:
+  enabled: true
+  image: prom/alertmanager:v0.27.0
+  persistence:
+    enabled: true
+    accessModes:
+      - ReadWriteOnce
+    size: 1Gi
+    storageClassName: ""
+  service:
+    type: NodePort
+    port: 9093
+    nodePort: 30093
+
+grafana:
+  enabled: true
+  image: grafana/grafana:10.4.0
+  persistence:
+    enabled: true
+    accessModes:
+      - ReadWriteOnce
+    size: 2Gi
+    storageClassName: ""
+  service:
+    type: NodePort
+    port: 3000
+    nodePort: 30030
+
+jaeger:
+  enabled: true
+  image: cr.jaegertracing.io/jaegertracing/jaeger:2.17.0
+  service:
+    type: NodePort
+    uiPort: 16686
+    otlpGrpcPort: 4317
+    otlpHttpPort: 4318
+    uiNodePort: 30686
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+kafka:
+  enabled: true
+  image: confluentinc/cp-kafka:7.6.1
+  clusterId: MkU3OEVBNTcwNTJENDM2Qk
+  logRetentionHours: "72"
+  topics:
+    alertEvents:
+      name: alert-events
+      partitions: 3
+      replicationFactor: 1
+    operationEvents:
+      name: operation-events
+      partitions: 3
+      replicationFactor: 1
+  persistence:
+    enabled: true
+    accessModes:
+      - ReadWriteOnce
+    size: 10Gi
+    storageClassName: ""
+  service:
+    type: ClusterIP
+    clientPort: 9092
+    controllerPort: 9093
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  init:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+
+elasticsearch:
+  enabled: true
+  image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
+  clusterName: sm-logs
+  javaOpts: "-Xms512m -Xmx512m"
+  podSecurityContext:
+    fsGroup: 1000
+  init:
+    enabled: true
+    image: curlimages/curl:8.8.0
+    ilmPolicyName: sm-logs-policy
+    indexTemplateName: sm-logs-template
+    retentionDays: 30
+    resources:
+      requests:
+        cpu: 10m
+        memory: 16Mi
+      limits:
+        cpu: 100m
+        memory: 64Mi
+  persistence:
+    enabled: true
+    accessModes:
+      - ReadWriteOnce
+    size: 10Gi
+    storageClassName: ""
+  service:
+    type: ClusterIP
+    port: 9200
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "1"
+      memory: 2Gi
+
+kibana:
+  enabled: true
+  image: docker.elastic.co/kibana/kibana:8.13.0
+  service:
+    type: NodePort
+    port: 5601
+    nodePort: 30561
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+fluentBit:
+  enabled: true
+  image: fluent/fluent-bit:3.1.4
+  logLevel: info
+  flushSeconds: "5"
+  hostLogPath: /var/log
+  hostDockerContainersPath: /var/lib/docker/containers
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+    - key: node-role.kubernetes.io/master
+      operator: Exists
+      effect: NoSchedule
+  resources:
+    requests:
+      cpu: 50m
+      memory: 32Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+hpa:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 5
+  cpuAverageUtilization: 80
+
+ingress:
+  enabled: true
+  className: nginx
+  host: monitor.local
+  path: /
+  pathType: Prefix
+  tls:
+    enabled: true
+    secretName: monitor-tls

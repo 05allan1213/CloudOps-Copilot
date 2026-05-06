@@ -1,0 +1,131 @@
+{{- if .Values.serverProbe.enabled }}
+# ============================================
+# server-probe 部署配置
+# ============================================
+# 监控探针：采集宿主机指标，暴露 Prometheus 指标
+# ============================================
+
+# ------------------------------------------
+# DaemonSet - 每个 Node 部署一个监控探针
+# ------------------------------------------
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: server-probe
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app: server-probe
+  template:
+    metadata:
+      labels:
+        app: server-probe
+    spec:
+      {{- with .Values.global.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.serverProbe.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: server-probe
+          image: "{{ .Values.serverProbe.image.repository }}:{{ .Values.serverProbe.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- with .Values.global.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - containerPort: 9090
+              name: metrics
+          volumeMounts:
+            - name: proc
+              mountPath: /host/proc
+              readOnly: true
+            - name: sys
+              mountPath: /host/sys
+              readOnly: true
+          resources:
+            {{- toYaml .Values.serverProbe.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9090
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 9090
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          env:
+            - name: TZ
+              value: Asia/Shanghai
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: LOG_LEVEL
+            - name: LISTEN_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: PROBE_LISTEN_ADDR
+            - name: METRICS_PATH
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: PROBE_METRICS_PATH
+            - name: SCRAPE_INTERVAL
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: PROBE_SCRAPE_INTERVAL
+            - name: TRACE_OTLP_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: TRACE_OTLP_ENDPOINT
+            - name: TRACE_SAMPLE_RATE
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: TRACE_SAMPLE_RATE
+            - name: HOST_PROC
+              value: /host/proc
+            - name: HOST_SYS
+              value: /host/sys
+      volumes:
+        - name: proc
+          hostPath:
+            path: {{ .Values.serverProbe.hostProc | quote }}
+            type: Directory
+        - name: sys
+          hostPath:
+            path: {{ .Values.serverProbe.hostSys | quote }}
+            type: Directory
+
+---
+# ------------------------------------------
+# Service - 服务发现
+# ------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: server-probe
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: server-probe
+  ports:
+    - port: {{ .Values.serverProbe.service.port }}
+      targetPort: 9090
+      name: metrics
+  type: {{ .Values.serverProbe.service.type }}
+{{- end }}

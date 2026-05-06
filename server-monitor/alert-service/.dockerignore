@@ -1,0 +1,7 @@
+.git
+.gitignore
+*_test.go
+*.md
+*.out
+coverage.*
+profile.cov

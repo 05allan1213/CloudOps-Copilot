@@ -1,0 +1,6 @@
+apiVersion: v2
+name: server-monitor
+description: Server monitor stack with server-web, server-probe, Redis, Prometheus, Alertmanager, and Grafana.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

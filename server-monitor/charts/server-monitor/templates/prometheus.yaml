@@ -1,0 +1,354 @@
+{{- if .Values.prometheus.enabled }}
+# ============================================
+# Prometheus 配置与部署
+# ============================================
+# 包含三部分：
+# 1. ConfigMap - Prometheus 抓取配置
+# 2. Deployment - Prometheus 部署
+# 3. Service - Prometheus 服务暴露
+# ============================================
+
+# ------------------------------------------
+# 1. Prometheus 配置（ConfigMap）
+# ------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    rule_files:
+      - /etc/prometheus/rules/*.yml
+
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets: ['alertmanager:9093']
+
+    scrape_configs:
+      - job_name: 'server-probe'
+        metrics_path: /metrics
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              own_namespace: true
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex: server-probe
+          - source_labels: [__meta_kubernetes_pod_phase]
+            action: keep
+            regex: Running
+          - source_labels: [__meta_kubernetes_pod_ip]
+            target_label: __address__
+            replacement: ${1}:9090
+          - source_labels: [__meta_kubernetes_pod_node_name]
+            target_label: instance
+          - source_labels: [__meta_kubernetes_pod_node_name]
+            target_label: node
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+
+      - job_name: 'server-web'
+        metrics_path: /metrics
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              own_namespace: true
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex: server-web
+          - source_labels: [__meta_kubernetes_pod_phase]
+            action: keep
+            regex: Running
+          - source_labels: [__meta_kubernetes_pod_ip]
+            target_label: __address__
+            replacement: ${1}:8080
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: instance
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+
+      {{- if .Values.alertService.enabled }}
+      - job_name: 'alert-service'
+        metrics_path: /metrics
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              own_namespace: true
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            action: keep
+            regex: alert-service
+          - source_labels: [__meta_kubernetes_pod_phase]
+            action: keep
+            regex: Running
+          - source_labels: [__meta_kubernetes_pod_ip]
+            target_label: __address__
+            replacement: ${1}:8081
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: instance
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+      {{- end }}
+
+    {{- if .Values.victoriametrics.enabled }}
+    remote_write:
+      - url: http://victoriametrics:8428/api/v1/write
+        queue_config:
+          max_samples_per_send: 10000
+          capacity: 20000
+          max_shards: 5
+    {{- end }}
+
+---
+# ------------------------------------------
+# 2. Prometheus 规则配置（ConfigMap）
+# ------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-rules
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+data:
+  alerts.yml: |
+    groups:
+      - name: host-alerts
+        rules:
+          - alert: HighCPU
+            expr: server_monitor_cpu_usage_percent > 80
+            for: 2m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High CPU usage on {{ "{{" }} $labels.instance {{ "}}" }}"
+              description: "CPU usage is {{ "{{" }} $value {{ "}}" }}% (threshold: 80%)."
+
+          - alert: CriticalCPU
+            expr: server_monitor_cpu_usage_percent > 95
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Critical CPU usage on {{ "{{" }} $labels.instance {{ "}}" }}"
+              description: "CPU usage is {{ "{{" }} $value {{ "}}" }}% (threshold: 95%)."
+
+          - alert: HighMemory
+            expr: server_monitor_memory_usage_percent > 85
+            for: 2m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High memory usage on {{ "{{" }} $labels.instance {{ "}}" }}"
+              description: "Memory usage is {{ "{{" }} $value {{ "}}" }}% (threshold: 85%)."
+
+          - alert: HighDisk
+            expr: server_monitor_disk_usage_percent > 90
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High disk usage on {{ "{{" }} $labels.instance {{ "}}" }}"
+              description: "Disk usage on {{ "{{" }} $labels.mountpoint {{ "}}" }} is {{ "{{" }} $value {{ "}}" }}% (threshold: 90%)."
+
+          - alert: HostDown
+            expr: up{job="server-probe"} == 0
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Host {{ "{{" }} $labels.instance {{ "}}" }} is down"
+              description: "Prometheus cannot reach the probe on {{ "{{" }} $labels.instance {{ "}}" }}."
+
+      - name: service-alerts
+        rules:
+          - alert: HighErrorRate
+            expr: (sum by (instance) (rate(http_requests_total{job="server-web",status=~"5.."}[5m])) / sum by (instance) (rate(http_requests_total{job="server-web"}[5m])) > 0.05) and on (instance) (sum by (instance) (rate(http_requests_total{job="server-web"}[5m])) > 0)
+            for: 2m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High error rate on {{ "{{" }} $labels.instance {{ "}}" }}"
+              description: "HTTP 5xx error rate is above 5%."
+
+          - alert: HighLatency
+            expr: histogram_quantile(0.95, sum by (instance, le) (rate(http_request_duration_seconds_bucket{job="server-web"}[5m]))) > 1
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High latency on {{ "{{" }} $labels.instance {{ "}}" }}"
+              description: "HTTP P95 latency is above 1s."
+
+---
+# ------------------------------------------
+# 3. Prometheus RBAC
+# ------------------------------------------
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: prometheus
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources:
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: prometheus
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: prometheus
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+
+---
+# ------------------------------------------
+# 4. Prometheus 数据卷（PersistentVolumeClaim）
+# ------------------------------------------
+{{ if .Values.prometheus.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-data
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.prometheus.persistence.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.prometheus.persistence.size | quote }}
+  {{ if .Values.prometheus.persistence.storageClassName }}
+  storageClassName: {{ .Values.prometheus.persistence.storageClassName | quote }}
+  {{ end }}
+
+---
+{{ end }}
+# ------------------------------------------
+# 5. Prometheus 部署（Deployment）
+# ------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      serviceAccountName: prometheus
+      {{- with .Values.global.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: prometheus
+          image: {{ .Values.prometheus.image | quote }}
+          {{- with .Values.global.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          args:
+            - "--config.file=/etc/prometheus/prometheus.yml"
+            - "--storage.tsdb.path=/prometheus"
+            - "--storage.tsdb.retention.time={{ .Values.prometheus.retention }}"
+            - "--web.enable-lifecycle"
+          ports:
+            - containerPort: 9090
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: 9090
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: 9090
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus/prometheus.yml
+              subPath: prometheus.yml
+            - name: rules
+              mountPath: /etc/prometheus/rules
+            - name: data
+              mountPath: /prometheus
+      volumes:
+        - name: config
+          configMap:
+            name: prometheus-config
+        - name: rules
+          configMap:
+            name: prometheus-rules
+        - name: data
+          {{ if .Values.prometheus.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: prometheus-data
+          {{ else }}
+          emptyDir: {}
+          {{ end }}
+
+---
+# ------------------------------------------
+# 6. Prometheus 服务（Service）
+# ------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: prometheus
+  ports:
+    - port: {{ .Values.prometheus.service.port }}
+      targetPort: 9090
+      {{- if eq .Values.prometheus.service.type "NodePort" }}
+      nodePort: {{ .Values.prometheus.service.nodePort }}
+      {{- end }}
+  type: {{ .Values.prometheus.service.type }}
+{{- end }}

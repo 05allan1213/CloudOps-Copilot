@@ -1,0 +1,110 @@
+{{- if .Values.victoriametrics.enabled }}
+# ============================================
+# VictoriaMetrics 长期指标存储
+# ============================================
+# 接收 Prometheus remote_write，提供长期指标查询
+# ============================================
+
+# ------------------------------------------
+# PersistentVolumeClaim - VictoriaMetrics 数据
+# ------------------------------------------
+{{ if .Values.victoriametrics.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: victoriametrics-data
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.victoriametrics.persistence.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.victoriametrics.persistence.size | quote }}
+  {{ if .Values.victoriametrics.persistence.storageClassName }}
+  storageClassName: {{ .Values.victoriametrics.persistence.storageClassName | quote }}
+  {{ end }}
+
+---
+{{ end }}
+# ------------------------------------------
+# Deployment - 部署控制器
+# ------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: victoriametrics
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: victoriametrics
+  template:
+    metadata:
+      labels:
+        app: victoriametrics
+    spec:
+      {{- with .Values.global.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: victoriametrics
+          image: {{ .Values.victoriametrics.image | quote }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- with .Values.global.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          args:
+            - --storageDataPath=/victoria-metrics-data
+            - --retentionPeriod={{ .Values.victoriametrics.retention }}
+            - --httpListenAddr=:8428
+          ports:
+            - containerPort: 8428
+          resources:
+            {{- toYaml .Values.victoriametrics.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8428
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8428
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /victoria-metrics-data
+      volumes:
+        - name: data
+          {{ if .Values.victoriametrics.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: victoriametrics-data
+          {{ else }}
+          emptyDir: {}
+          {{ end }}
+
+---
+# ------------------------------------------
+# Service - 服务发现
+# ------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: victoriametrics
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: victoriametrics
+  ports:
+    - port: {{ .Values.victoriametrics.service.port }}
+      targetPort: 8428
+  type: {{ .Values.victoriametrics.service.type }}
+{{- end }}

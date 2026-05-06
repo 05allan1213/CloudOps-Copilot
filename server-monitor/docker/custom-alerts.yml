@@ -1,0 +1,19 @@
+groups:
+  - name: custom_alerts
+    rules:
+      - alert: "IntegrationTestCPU"
+        expr: "server_monitor_cpu_usage_percent > 95"
+        for: "1m"
+        labels:
+          severity: "warning"
+        annotations:
+          summary: "Integration test CPU alert"
+          description: "CPU > 95% for testing"
+      - alert: "ForbiddenRule"
+        expr: "up"
+        for: "1m"
+        labels:
+          severity: "warning"
+        annotations:
+          summary: ""
+          description: ""

@@ -1,0 +1,222 @@
+{{- if and .Values.elasticsearch.enabled .Values.elasticsearch.init.enabled }}
+# ============================================
+# Elasticsearch 日志索引初始化
+# ============================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: elasticsearch-init
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+data:
+  ilm-policy.json: |
+    {
+      "policy": {
+        "phases": {
+          "hot": {
+            "min_age": "0ms",
+            "actions": {
+              "set_priority": {
+                "priority": 100
+              }
+            }
+          },
+          "delete": {
+            "min_age": "{{ .Values.elasticsearch.init.retentionDays }}d",
+            "actions": {
+              "delete": {}
+            }
+          }
+        }
+      }
+    }
+  index-template.json: |
+    {
+      "index_patterns": [
+        "sm-logs-*"
+      ],
+      "priority": 100,
+      "template": {
+        "settings": {
+          "number_of_shards": 1,
+          "number_of_replicas": 0,
+          "index.lifecycle.name": "{{ .Values.elasticsearch.init.ilmPolicyName }}"
+        },
+        "mappings": {
+          "properties": {
+            "@timestamp": {
+              "type": "date",
+              "format": "strict_date_optional_time||epoch_millis"
+            },
+            "ts": {
+              "type": "date",
+              "format": "strict_date_optional_time||epoch_millis"
+            },
+            "level": {
+              "type": "keyword"
+            },
+            "msg": {
+              "type": "text",
+              "fields": {
+                "keyword": {
+                  "type": "keyword",
+                  "ignore_above": 256
+                }
+              }
+            },
+            "service": {
+              "type": "keyword"
+            },
+            "instance": {
+              "type": "keyword"
+            },
+            "trace_id": {
+              "type": "keyword"
+            },
+            "span_id": {
+              "type": "keyword"
+            },
+            "request_id": {
+              "type": "keyword"
+            },
+            "method": {
+              "type": "keyword"
+            },
+            "path": {
+              "type": "keyword"
+            },
+            "status": {
+              "type": "integer"
+            },
+            "latency_ms": {
+              "type": "float"
+            },
+            "client_ip": {
+              "type": "keyword"
+            },
+            "error": {
+              "type": "text",
+              "fields": {
+                "keyword": {
+                  "type": "keyword",
+                  "ignore_above": 256
+                }
+              }
+            },
+            "collector": {
+              "type": "keyword"
+            },
+            "caller": {
+              "type": "keyword"
+            },
+            "stacktrace": {
+              "type": "text"
+            },
+            "stream": {
+              "type": "keyword"
+            },
+            "kubernetes": {
+              "properties": {
+                "pod_name": {
+                  "type": "keyword"
+                },
+                "namespace_name": {
+                  "type": "keyword"
+                },
+                "container_name": {
+                  "type": "keyword"
+                },
+                "host": {
+                  "type": "keyword"
+                },
+                "labels": {
+                  "type": "object",
+                  "enabled": true
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  init.sh: |
+    #!/bin/sh
+    set -eu
+
+    ES_URL="${ELASTICSEARCH_URL:-http://elasticsearch:9200}"
+    ILM_POLICY_NAME="${ILM_POLICY_NAME:-sm-logs-policy}"
+    INDEX_TEMPLATE_NAME="${INDEX_TEMPLATE_NAME:-sm-logs-template}"
+
+    echo "waiting for Elasticsearch at ${ES_URL}"
+    attempt=1
+    while [ "$attempt" -le 60 ]; do
+      if curl -fsS "${ES_URL}/_cluster/health?local=true" >/dev/null; then
+        break
+      fi
+      attempt=$((attempt + 1))
+      sleep 2
+    done
+
+    if [ "$attempt" -gt 60 ]; then
+      echo "Elasticsearch is not ready after 120 seconds" >&2
+      exit 1
+    fi
+
+    echo "installing ILM policy ${ILM_POLICY_NAME}"
+    curl -fsS \
+      -X PUT "${ES_URL}/_ilm/policy/${ILM_POLICY_NAME}" \
+      -H "Content-Type: application/json" \
+      --data-binary "@/init/ilm-policy.json"
+
+    echo "installing index template ${INDEX_TEMPLATE_NAME}"
+    curl -fsS \
+      -X PUT "${ES_URL}/_index_template/${INDEX_TEMPLATE_NAME}" \
+      -H "Content-Type: application/json" \
+      --data-binary "@/init/index-template.json"
+
+    echo "Elasticsearch log lifecycle initialization completed"
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: elasticsearch-init
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        app: elasticsearch-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: elasticsearch-init
+          image: {{ .Values.elasticsearch.init.image | quote }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          command:
+            - /bin/sh
+            - /init/init.sh
+          env:
+            - name: ELASTICSEARCH_URL
+              value: http://elasticsearch:9200
+            - name: ILM_POLICY_NAME
+              value: {{ .Values.elasticsearch.init.ilmPolicyName | quote }}
+            - name: INDEX_TEMPLATE_NAME
+              value: {{ .Values.elasticsearch.init.indexTemplateName | quote }}
+          resources:
+            {{- toYaml .Values.elasticsearch.init.resources | nindent 12 }}
+          volumeMounts:
+            - name: init
+              mountPath: /init
+              readOnly: true
+      volumes:
+        - name: init
+          configMap:
+            name: elasticsearch-init
+            defaultMode: 0755
+{{- end }}

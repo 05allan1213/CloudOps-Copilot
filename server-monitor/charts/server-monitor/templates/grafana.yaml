@@ -1,0 +1,447 @@
+{{- if .Values.grafana.enabled }}
+# ============================================
+# Grafana 部署配置
+# ============================================
+# 可视化仪表盘：展示 Prometheus 指标
+# ============================================
+
+# ------------------------------------------
+# 1. DataSource Provisioning
+# ------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        uid: prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus:9090
+        isDefault: true
+        jsonData:
+          timeInterval: "15s"
+      - name: VictoriaMetrics
+        uid: victoriametrics
+        type: prometheus
+        access: proxy
+        url: http://victoriametrics:8428
+        jsonData:
+          timeInterval: "15s"
+        editable: true
+      - name: Elasticsearch
+        uid: elasticsearch
+        type: elasticsearch
+        access: proxy
+        url: http://elasticsearch:9200
+        database: sm-logs-*
+        jsonData:
+          timeField: "@timestamp"
+          esVersion: "8.13.0"
+          logMessageField: msg
+          logLevelField: level
+          dataLinks:
+            - datasourceUid: jaeger
+              field: trace_id
+              url: "$${__value.raw}"
+        editable: true
+      - name: Jaeger
+        uid: jaeger
+        type: jaeger
+        access: proxy
+        url: http://jaeger:16686
+        jsonData:
+          tracesToMetrics:
+            datasourceUid: prometheus
+        editable: true
+
+---
+# ------------------------------------------
+# 2. Dashboard Provider Provisioning
+# ------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-providers
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: server-monitor
+        orgId: 1
+        folder: Server Monitor
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards
+
+---
+# ------------------------------------------
+# 3. Dashboard JSON
+# ------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+data:
+  host-overview.json: |
+    {
+      "annotations": {"list": []},
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 0,
+      "id": null,
+      "links": [],
+      "panels": [
+        {
+          "datasource": "Prometheus",
+          "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+          "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+          "id": 1,
+          "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+          "targets": [{"expr": "count(up{job=\"server-probe\"})", "refId": "A"}],
+          "title": "Total Hosts",
+          "type": "stat"
+        },
+        {
+          "datasource": "Prometheus",
+          "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+          "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+          "id": 2,
+          "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+          "targets": [{"expr": "sum(up{job=\"server-probe\"})", "refId": "A"}],
+          "title": "Healthy Hosts",
+          "type": "stat"
+        },
+        {
+          "datasource": "Prometheus",
+          "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []},
+          "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+          "id": 3,
+          "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+          "targets": [{"expr": "avg(server_monitor_cpu_usage_percent)", "refId": "A"}],
+          "title": "Average CPU",
+          "type": "stat"
+        },
+        {
+          "datasource": "Prometheus",
+          "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []},
+          "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+          "id": 4,
+          "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+          "targets": [{"expr": "avg(server_monitor_memory_usage_percent)", "refId": "A"}],
+          "title": "Average Memory",
+          "type": "stat"
+        },
+        {
+          "datasource": "Prometheus",
+          "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+          "id": 5,
+          "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+          "targets": [{"expr": "server_monitor_cpu_usage_percent", "legendFormat": "{{ "{{" }}instance{{ "}}" }}", "refId": "A"}],
+          "title": "CPU Usage",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "Prometheus",
+          "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+          "id": 6,
+          "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+          "targets": [{"expr": "server_monitor_memory_usage_percent", "legendFormat": "{{ "{{" }}instance{{ "}}" }}", "refId": "A"}],
+          "title": "Memory Usage",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "Prometheus",
+          "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+          "id": 7,
+          "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+          "targets": [{"expr": "max by (instance) (server_monitor_disk_usage_percent)", "legendFormat": "{{ "{{" }}instance{{ "}}" }}", "refId": "A"}],
+          "title": "Max Disk Usage",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "Prometheus",
+          "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+          "id": 8,
+          "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}},
+          "targets": [{"expr": "server_monitor_load1", "legendFormat": "{{ "{{" }}instance{{ "}}" }}", "refId": "A"}],
+          "title": "Load 1m",
+          "type": "timeseries"
+        }
+      ],
+      "refresh": "5s",
+      "schemaVersion": 39,
+      "tags": ["server-monitor", "hosts"],
+      "templating": {"list": []},
+      "time": {"from": "now-15m", "to": "now"},
+      "timepicker": {},
+      "timezone": "",
+      "title": "Host Overview",
+      "uid": "server-monitor-host-overview",
+      "version": 1,
+      "weekStart": ""
+    }
+  host-detail.json: |
+    {
+      "annotations": {"list": []},
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 0,
+      "id": null,
+      "links": [],
+      "panels": [
+        {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []}, "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}, "id": 1, "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}}, "targets": [{"expr": "server_monitor_cpu_usage_percent{instance=\"$instance\"}", "legendFormat": "cpu", "refId": "A"}], "title": "CPU Usage", "type": "timeseries"},
+        {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []}, "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}, "id": 2, "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}}, "targets": [{"expr": "server_monitor_memory_usage_percent{instance=\"$instance\"}", "legendFormat": "memory", "refId": "A"}], "title": "Memory Usage", "type": "timeseries"},
+        {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []}, "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}, "id": 3, "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}}, "targets": [{"expr": "server_monitor_disk_usage_percent{instance=\"$instance\"}", "legendFormat": "{{ "{{" }}mountpoint{{ "}}" }}", "refId": "A"}], "title": "Disk Usage", "type": "timeseries"},
+        {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "Bps"}, "overrides": []}, "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}, "id": 4, "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}}, "targets": [{"expr": "rate(server_monitor_network_recv_bytes_total{instance=\"$instance\"}[5m])", "legendFormat": "recv {{ "{{" }}interface{{ "}}" }}", "refId": "A"}, {"expr": "rate(server_monitor_network_sent_bytes_total{instance=\"$instance\"}[5m])", "legendFormat": "sent {{ "{{" }}interface{{ "}}" }}", "refId": "B"}], "title": "Network Throughput", "type": "timeseries"},
+        {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}, "gridPos": {"h": 8, "w": 8, "x": 0, "y": 16}, "id": 5, "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}}, "targets": [{"expr": "server_monitor_load1{instance=\"$instance\"}", "legendFormat": "load1", "refId": "A"}, {"expr": "server_monitor_load5{instance=\"$instance\"}", "legendFormat": "load5", "refId": "B"}, {"expr": "server_monitor_load15{instance=\"$instance\"}", "legendFormat": "load15", "refId": "C"}], "title": "Load Average", "type": "timeseries"},
+        {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}, "gridPos": {"h": 8, "w": 8, "x": 8, "y": 16}, "id": 6, "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}}, "targets": [{"expr": "server_monitor_process_count{instance=\"$instance\"}", "legendFormat": "processes", "refId": "A"}], "title": "Process Count", "type": "timeseries"},
+        {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []}, "gridPos": {"h": 8, "w": 8, "x": 16, "y": 16}, "id": 7, "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"}, "targets": [{"expr": "server_monitor_uptime_seconds{instance=\"$instance\"}", "refId": "A"}], "title": "Uptime", "type": "stat"}
+      ],
+      "refresh": "5s",
+      "schemaVersion": 39,
+      "tags": ["server-monitor", "hosts"],
+      "templating": {"list": [{"current": {}, "datasource": "Prometheus", "definition": "label_values(up{job=\"server-probe\"}, instance)", "hide": 0, "includeAll": false, "label": "Instance", "multi": false, "name": "instance", "options": [], "query": {"query": "label_values(up{job=\"server-probe\"}, instance)", "refId": "PrometheusVariableQueryEditor-VariableQuery"}, "refresh": 1, "regex": "", "skipUrlSync": false, "sort": 1, "type": "query"}]},
+      "time": {"from": "now-1h", "to": "now"},
+      "timepicker": {},
+      "timezone": "",
+      "title": "Host Detail",
+      "uid": "server-monitor-host-detail",
+      "version": 1,
+      "weekStart": ""
+    }
+  service-monitor.json: |
+    {
+      "annotations": {"list": []},
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 0,
+      "id": null,
+      "links": [],
+      "panels": [
+        {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []}, "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}, "id": 1, "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}}, "targets": [{"expr": "sum by (instance) (rate(http_requests_total{job=\"server-web\"}[5m]))", "legendFormat": "{{ "{{" }}instance{{ "}}" }}", "refId": "A"}], "title": "Request Rate", "type": "timeseries"},
+        {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []}, "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}, "id": 2, "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}}, "targets": [{"expr": "histogram_quantile(0.95, sum by (instance, le) (rate(http_request_duration_seconds_bucket{job=\"server-web\"}[5m])))", "legendFormat": "p95 {{ "{{" }}instance{{ "}}" }}", "refId": "A"}], "title": "P95 Latency", "type": "timeseries"},
+        {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "percentunit"}, "overrides": []}, "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}, "id": 3, "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}}, "targets": [{"expr": "sum by (instance) (rate(http_requests_total{job=\"server-web\",status=~\"5..\"}[5m])) / sum by (instance) (rate(http_requests_total{job=\"server-web\"}[5m]))", "legendFormat": "{{ "{{" }}instance{{ "}}" }}", "refId": "A"}], "title": "5xx Error Ratio", "type": "timeseries"},
+        {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}, "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}, "id": 4, "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}}, "targets": [{"expr": "websocket_connections_active{job=\"server-web\"}", "legendFormat": "{{ "{{" }}instance{{ "}}" }}", "refId": "A"}], "title": "Active WebSocket Connections", "type": "timeseries"},
+        {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []}, "gridPos": {"h": 8, "w": 24, "x": 0, "y": 16}, "id": 5, "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}}, "targets": [{"expr": "sum by (path, status) (rate(http_requests_total{job=\"server-web\"}[5m]))", "legendFormat": "{{ "{{" }}status{{ "}}" }} {{ "{{" }}path{{ "}}" }}", "refId": "A"}], "title": "Request Rate by Path and Status", "type": "timeseries"},
+        {"datasource": "Elasticsearch", "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}, "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24}, "id": 6, "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}}, "targets": [{"bucketAggs": [{"field": "@timestamp", "id": "2", "settings": {"interval": "auto"}, "type": "date_histogram"}], "metrics": [{"id": "1", "type": "count"}], "query": "service:server-web OR service:server-probe", "refId": "A", "timeField": "@timestamp"}], "title": "Log Volume", "type": "timeseries"},
+        {"datasource": "Elasticsearch", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24}, "id": 7, "options": {"dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": false, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true}, "targets": [{"query": "level:error OR level:warn", "refId": "A", "timeField": "@timestamp"}], "title": "Warning and Error Logs", "type": "logs"}
+      ],
+      "refresh": "5s",
+      "schemaVersion": 39,
+      "tags": ["server-monitor", "server-web"],
+      "templating": {"list": []},
+      "time": {"from": "now-30m", "to": "now"},
+      "timepicker": {},
+      "timezone": "",
+      "title": "Service Monitor",
+      "uid": "server-monitor-service",
+      "version": 1,
+      "weekStart": ""
+    }
+  alert-overview.json: |
+    {
+      "annotations": {"list": []},
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 0,
+      "id": null,
+      "links": [],
+      "panels": [
+        {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}, "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0}, "id": 1, "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"}, "targets": [{"expr": "count(ALERTS{alertstate=\"firing\"})", "refId": "A"}], "title": "Active Alerts", "type": "stat"},
+        {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}, "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0}, "id": 2, "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"}, "targets": [{"expr": "count(ALERTS{alertstate=\"firing\",severity=\"critical\"})", "refId": "A"}], "title": "Critical Alerts", "type": "stat"},
+        {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}, "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0}, "id": 3, "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"}, "targets": [{"expr": "count(ALERTS{alertstate=\"firing\",severity=\"warning\"})", "refId": "A"}], "title": "Warning Alerts", "type": "stat"},
+        {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}, "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0}, "id": 4, "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"}, "targets": [{"expr": "count(ALERTS{alertstate=\"firing\",severity=\"info\"})", "refId": "A"}], "title": "Info Alerts", "type": "stat"},
+        {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}, "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4}, "id": 5, "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}}, "targets": [{"expr": "count by (alertname, severity) (ALERTS{alertstate=\"firing\"})", "legendFormat": "{{ "{{" }}severity{{ "}}" }} {{ "{{" }}alertname{{ "}}" }}", "refId": "A"}], "title": "Active Alerts by Rule", "type": "timeseries"},
+        {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}, "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4}, "id": 6, "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}}, "targets": [{"expr": "count by (instance) (ALERTS{alertstate=\"firing\"})", "legendFormat": "{{ "{{" }}instance{{ "}}" }}", "refId": "A"}], "title": "Active Alerts by Instance", "type": "timeseries"},
+        {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}, "gridPos": {"h": 8, "w": 24, "x": 0, "y": 12}, "id": 7, "options": {"showHeader": true}, "targets": [{"expr": "ALERTS{alertstate=\"firing\"}", "format": "table", "instant": true, "refId": "A"}], "title": "Current Firing Alerts", "type": "table"}
+      ],
+      "refresh": "5s",
+      "schemaVersion": 39,
+      "tags": ["server-monitor", "alerts"],
+      "templating": {"list": []},
+      "time": {"from": "now-1h", "to": "now"},
+      "timepicker": {},
+      "timezone": "",
+      "title": "Alert Overview",
+      "uid": "server-monitor-alerts",
+      "version": 1,
+      "weekStart": ""
+    }
+  trace-kafka-overview.json: |
+    {
+      "annotations": {"list": []},
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 0,
+      "id": null,
+      "links": [],
+      "panels": [
+        {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "eps"}, "overrides": []}, "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}, "id": 1, "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}}, "targets": [{"expr": "sum by (result) (rate(server_web_kafka_alert_events_total[5m]))", "refId": "A"}], "title": "server-web Kafka Alert Events", "type": "timeseries"},
+        {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "eps"}, "overrides": []}, "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}, "id": 2, "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}}, "targets": [{"expr": "sum by (result) (rate(alert_service_kafka_messages_total[5m]))", "refId": "A"}], "title": "alert-service Kafka Messages", "type": "timeseries"},
+        {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "eps"}, "overrides": []}, "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}, "id": 3, "options": {"legend": {"displayMode": "table", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}}, "targets": [{"expr": "sum by (status, result) (rate(alert_service_alert_events_total[5m]))", "refId": "A"}], "title": "alert-service Alert Event Results", "type": "timeseries"},
+        {"datasource": "Prometheus", "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}, "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}, "id": 4, "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"}, "targets": [{"expr": "max(alert_service_kafka_ready)", "refId": "A"}], "title": "alert-service Kafka Ready", "type": "stat"},
+        {"datasource": "Elasticsearch", "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []}, "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}, "id": 5, "options": {"legend": {"displayMode": "list", "placement": "bottom", "showLegend": true}, "tooltip": {"mode": "multi", "sort": "none"}}, "targets": [{"bucketAggs": [{"field": "@timestamp", "id": "2", "settings": {"interval": "auto"}, "type": "date_histogram"}], "metrics": [{"id": "1", "type": "count"}], "query": "_exists_:trace_id AND (service:server-web OR service:alert-service OR service:server-probe)", "refId": "A", "timeField": "@timestamp"}], "title": "Trace-linked Log Volume", "type": "timeseries"},
+        {"datasource": "Elasticsearch", "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}, "id": 6, "options": {"dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": false, "showCommonLabels": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true}, "targets": [{"query": "service:alert-service OR msg:*kafka* OR msg:*alert*", "refId": "A", "timeField": "@timestamp"}], "title": "Kafka and alert-service Logs", "type": "logs"}
+      ],
+      "refresh": "5s",
+      "schemaVersion": 39,
+      "tags": ["server-monitor", "trace", "kafka"],
+      "templating": {"list": []},
+      "time": {"from": "now-30m", "to": "now"},
+      "timepicker": {},
+      "timezone": "",
+      "title": "Trace and Kafka Overview",
+      "uid": "server-monitor-trace-kafka",
+      "version": 1,
+      "weekStart": ""
+    }
+
+---
+# ------------------------------------------
+# 4. Grafana 数据卷（PersistentVolumeClaim）
+# ------------------------------------------
+{{ if .Values.grafana.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-data
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.grafana.persistence.accessModes | nindent 4 }}
+  resources:
+    requests:
+      storage: {{ .Values.grafana.persistence.size | quote }}
+  {{ if .Values.grafana.persistence.storageClassName }}
+  storageClassName: {{ .Values.grafana.persistence.storageClassName | quote }}
+  {{ end }}
+
+---
+{{ end }}
+# ------------------------------------------
+# 5. Deployment - 部署控制器
+# ------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      {{- with .Values.global.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: grafana
+          image: {{ .Values.grafana.image | quote }}
+          {{- with .Values.global.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - containerPort: 3000
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secret.name | quote }}
+                  key: GRAFANA_ADMIN_USER
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secret.name | quote }}
+                  key: GRAFANA_ADMIN_PASSWORD
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/grafana
+            - name: datasources
+              mountPath: /etc/grafana/provisioning/datasources
+            - name: dashboard-providers
+              mountPath: /etc/grafana/provisioning/dashboards
+            - name: dashboards
+              mountPath: /var/lib/grafana/dashboards
+      volumes:
+        - name: data
+          {{ if .Values.grafana.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: grafana-data
+          {{ else }}
+          emptyDir: {}
+          {{ end }}
+        - name: datasources
+          configMap:
+            name: grafana-datasources
+        - name: dashboard-providers
+          configMap:
+            name: grafana-dashboard-providers
+        - name: dashboards
+          configMap:
+            name: grafana-dashboards
+
+---
+# ------------------------------------------
+# 6. Service - 服务发现
+# ------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: grafana
+  ports:
+    - port: {{ .Values.grafana.service.port }}
+      targetPort: 3000
+      {{- if eq .Values.grafana.service.type "NodePort" }}
+      nodePort: {{ .Values.grafana.service.nodePort }}
+      {{- end }}
+  type: {{ .Values.grafana.service.type }}
+{{- end }}

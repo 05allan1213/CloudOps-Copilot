@@ -1,0 +1,130 @@
+# ============================================
+# Jaeger 链路追踪
+# ============================================
+# 第三阶段：Trace 存储、查询、展示
+# ============================================
+
+# ------------------------------------------
+# 1. ConfigMap - Jaeger v2 配置
+# ------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jaeger-config
+  namespace: server-monitor
+data:
+  jaeger.yaml: |
+    service:
+      extensions: [jaeger_storage, jaeger_query]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [jaeger_storage_exporter]
+    extensions:
+      jaeger_storage:
+        backends:
+          memory_store:
+            memory:
+              max_traces: 100000
+      jaeger_query:
+        storage:
+          traces: memory_store
+        http:
+          endpoint: 0.0.0.0:16686
+        grpc:
+          endpoint: 0.0.0.0:16685
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    processors:
+      batch:
+    exporters:
+      jaeger_storage_exporter:
+        trace_storage: memory_store
+
+---
+# ------------------------------------------
+# 2. Deployment - Jaeger 部署
+# ------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jaeger
+  namespace: server-monitor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jaeger
+  template:
+    metadata:
+      labels:
+        app: jaeger
+    spec:
+      containers:
+        - name: jaeger
+          image: cr.jaegertracing.io/jaegertracing/jaeger:2.17.0
+          args:
+            - --config=file:/etc/jaeger/jaeger.yaml
+          ports:
+            - containerPort: 16686
+            - containerPort: 4317
+            - containerPort: 4318
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 16686
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 16686
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          volumeMounts:
+            - name: jaeger-config
+              mountPath: /etc/jaeger/jaeger.yaml
+              subPath: jaeger.yaml
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: jaeger-config
+          configMap:
+            name: jaeger-config
+
+---
+# ------------------------------------------
+# 3. Service - Jaeger 服务
+# ------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger
+  namespace: server-monitor
+spec:
+  selector:
+    app: jaeger
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+    - name: ui
+      port: 16686
+      targetPort: 16686
+      nodePort: 30686
+  type: NodePort

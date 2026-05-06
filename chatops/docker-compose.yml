@@ -1,0 +1,37 @@
+services:
+  # Nginx 反向代理
+  nginx:
+    image: nginx:1.25-alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf
+      - ./web:/usr/share/nginx/html
+    depends_on:
+      - server
+    restart: unless-stopped
+
+  # Go 后端服务
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    environment:
+      - REDIS_ADDR=redis:6379
+      - LLM_API_KEY=${LLM_API_KEY}
+      - LLM_API_URL=${LLM_API_URL:-https://api.deepseek.com/v1/chat/completions}
+      - PROMETHEUS_URL=${PROMETHEUS_URL:-http://prometheus:9090}
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # Redis 缓存
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --maxmemory 128mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
+volumes:
+  redis-data:

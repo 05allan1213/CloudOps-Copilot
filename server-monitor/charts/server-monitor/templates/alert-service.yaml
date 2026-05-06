@@ -1,0 +1,112 @@
+{{- if .Values.alertService.enabled }}
+# ============================================
+# alert-service 部署配置
+# ============================================
+# 告警事件消费服务：Kafka Consumer、告警去重/聚合、Redis 状态管理
+# ============================================
+
+# ------------------------------------------
+# Deployment - 部署控制器
+# ------------------------------------------
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alert-service
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.alertService.replicas }}
+  selector:
+    matchLabels:
+      app: alert-service
+  template:
+    metadata:
+      labels:
+        app: alert-service
+    spec:
+      {{- with .Values.global.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: alert-service
+          image: "{{ .Values.alertService.image.repository }}:{{ .Values.alertService.image.tag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          {{- with .Values.global.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - containerPort: 8081
+              name: http
+          resources:
+            {{- toYaml .Values.alertService.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          env:
+            - name: TZ
+              value: {{ .Values.global.timezone | quote }}
+            - name: LISTEN_ADDR
+              value: ":8081"
+            - name: LOG_LEVEL
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: LOG_LEVEL
+            - name: KAFKA_BROKERS
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: KAFKA_BROKERS
+            - name: KAFKA_GROUP_ID
+              value: "alert-service"
+            - name: REDIS_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: REDIS_ADDR
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secret.name | quote }}
+                  key: REDIS_PASSWORD
+            - name: TRACE_OTLP_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: TRACE_OTLP_ENDPOINT
+            - name: TRACE_SAMPLE_RATE
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: TRACE_SAMPLE_RATE
+
+---
+# ------------------------------------------
+# Service - 服务发现
+# ------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: alert-service
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: alert-service
+  ports:
+    - port: {{ .Values.alertService.service.port }}
+      targetPort: 8081
+      name: http
+  type: {{ .Values.alertService.service.type }}
+{{- end }}
