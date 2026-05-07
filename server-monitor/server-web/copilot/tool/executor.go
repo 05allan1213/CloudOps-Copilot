@@ -96,6 +96,11 @@ type alertHistoryQueryOptions struct {
 	PageSize  int
 }
 
+type hostListQueryOptions struct {
+	ListOptions apphost.ListOptions
+	GroupID     uint64
+}
+
 func NewExecutor(options Options) *Executor {
 	timeout := options.Timeout
 	if timeout <= 0 {
@@ -145,16 +150,74 @@ func (e *Executor) runHostList(ctx context.Context, entities map[string]string) 
 	toolCtx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()
 
-	hosts, err := e.hostService.Hosts(toolCtx, apphost.ListOptions{
-		Status: parseHostStatus(entities),
-		Query:  apphost.NormalizeQuery(entities["instance"]),
-		Sort:   "instance",
-	})
+	options := parseHostListQueryOptions(entities)
+	if options.GroupID != 0 {
+		if e.db == nil {
+			call := buildCall(ToolHostList, nil, fmt.Errorf("%w: db is required for group_id filter", ErrToolUnavailable))
+			return []copilot.ToolCall{call}, "", nil
+		}
+		groupInstances, err := e.hostGroupInstances(toolCtx, options.GroupID)
+		if err != nil {
+			call := buildCall(ToolHostList, nil, err)
+			return []copilot.ToolCall{call}, "", nil
+		}
+		options.ListOptions.GroupFiltered = true
+		options.ListOptions.GroupInstances = groupInstances
+	}
+
+	hosts, err := e.hostService.Hosts(toolCtx, options.ListOptions)
 	call := buildCall(ToolHostList, hosts, err)
 	if err != nil {
 		return []copilot.ToolCall{call}, "", nil
 	}
 	return []copilot.ToolCall{call}, fmt.Sprintf("Found %d hosts.", len(hosts)), nil
+}
+
+func (e *Executor) hostGroupInstances(ctx context.Context, groupID uint64) (map[string]struct{}, error) {
+	var instances []string
+	if err := e.db.WithContext(ctx).
+		Model(&model.HostGroupMember{}).
+		Where("group_id = ?", groupID).
+		Pluck("instance", &instances).Error; err != nil {
+		return nil, fmt.Errorf("load host group members: %w", err)
+	}
+
+	groupInstances := make(map[string]struct{}, len(instances))
+	for _, instance := range instances {
+		instance = strings.TrimSpace(instance)
+		if instance != "" {
+			groupInstances[instance] = struct{}{}
+		}
+	}
+	return groupInstances, nil
+}
+
+func parseHostListQueryOptions(entities map[string]string) hostListQueryOptions {
+	search := strings.TrimSpace(entities["search"])
+	if search == "" {
+		search = entities["instance"]
+	}
+	return hostListQueryOptions{
+		ListOptions: apphost.ListOptions{
+			Status: apphost.ParseStatus(entities["status"]),
+			Query:  apphost.NormalizeQuery(search),
+			Sort:   apphost.ParseSort(entities["sort"]),
+			Risk:   apphost.ParseRisk(entities["risk"]),
+		},
+		GroupID: parseOptionalUint(entities["group_id"]),
+	}
+}
+
+func parseOptionalUint(value string) uint64 {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	parsed, err := strconv.ParseUint(value, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return parsed
 }
 
 func (e *Executor) runHostMetrics(ctx context.Context, entities map[string]string) ([]copilot.ToolCall, string, error) {

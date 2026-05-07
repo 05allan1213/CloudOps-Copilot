@@ -185,7 +185,7 @@ func isAllowedIntent(intent string) bool {
 
 func isAllowedEntity(key string) bool {
 	switch key {
-	case "instance", "severity", "status", "window", "query", "count", "alert_name", "page", "page_size":
+	case "instance", "severity", "status", "window", "query", "count", "alert_name", "page", "page_size", "search", "sort", "risk", "group_id":
 		return true
 	default:
 		return false
@@ -197,7 +197,7 @@ func systemPrompt() string {
 		"You classify CloudOps Copilot user messages.",
 		"Return JSON only, without markdown.",
 		"Allowed intents: alert_query, alert_event_query, alert_history_query, host_query, metric_query, general_chat, unknown.",
-		"Allowed entities: instance, severity, status, window, query, count, alert_name, page, page_size.",
+		"Allowed entities: instance, severity, status, window, query, count, alert_name, page, page_size, search, sort, risk, group_id.",
 		"Use query only for explicit PromQL or query_range requests.",
 		"Never return commands or write actions.",
 		`Example: {"intent":"host_query","confidence":0.7,"entities":{"status":"down"}}`,

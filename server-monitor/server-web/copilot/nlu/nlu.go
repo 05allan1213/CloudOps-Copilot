@@ -48,6 +48,16 @@ var (
 		regexp.MustCompile(`(?i)\b(cpu|memory|disk|load|network)\s+alerts?\s+history\b`),
 		regexp.MustCompile(`(?i)(cpu|内存|memory|磁盘|disk|负载|load|网络|network)\s*告警\s*历史`),
 	}
+	searchPatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\bsearch\s*[:=]\s*([a-z0-9_.:-]+)\b`),
+		regexp.MustCompile(`(?i)\bq\s*[:=]\s*([a-z0-9_.:-]+)\b`),
+		regexp.MustCompile(`(?i)(?:搜索|查找)\s*([a-z0-9_.:-]+)`),
+	}
+	groupIDPatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\bgroup[_ -]?id\s*[:=]?\s*(\d{1,20})\b`),
+		regexp.MustCompile(`(?i)\bgroup\s*[:=]\s*(\d{1,20})\b`),
+		regexp.MustCompile(`(?i)主机组\s*(\d{1,20})`),
+	}
 )
 
 func NewClassifier() *Classifier {
@@ -66,6 +76,7 @@ func (c *Classifier) Classify(message string) Result {
 	hasEvent := containsAny(normalized, "事件", "event", "events", "最新", "latest")
 	hasHost := containsAny(normalized, "主机", "host", "hosts", "instance", "机器", "节点", "node", "nodes", "离线", "offline")
 	hasMetric := containsAny(normalized, "cpu", "内存", "memory", "磁盘", "disk", "负载", "load", "网络", "network", "metric", "metrics", "趋势", "trend", "promql", "query_range")
+	hasHostListOption := containsAny(normalized, "search", "q=", "group", "group_id", "sort", "risk", "high cpu", "high memory", "高cpu", "高内存", "cpu_desc", "memory_desc")
 	hasGeneral := containsAny(normalized, "能做什么", "help", "帮助", "what can you do", "解释", "explain")
 
 	switch {
@@ -75,6 +86,8 @@ func (c *Classifier) Classify(message string) Result {
 		return Result{Intent: IntentAlertEventQuery, Confidence: 0.88, Entities: entities}
 	case hasAlert:
 		return Result{Intent: IntentAlertQuery, Confidence: 0.9, Entities: entities}
+	case hasHost && hasHostListOption:
+		return Result{Intent: IntentHostQuery, Confidence: 0.87, Entities: entities}
 	case hasMetric:
 		return Result{Intent: IntentMetricQuery, Confidence: 0.84, Entities: entities}
 	case hasHost:
@@ -106,13 +119,25 @@ func extractEntities(original, normalized string) map[string]string {
 	if alertName := extractAlertName(original); alertName != "" {
 		entities["alert_name"] = alertName
 	}
+	if search := extractFirstPattern(original, searchPatterns); search != "" && !isCommonKeyword(search) {
+		entities["search"] = search
+	}
+	if groupID := extractFirstPattern(original, groupIDPatterns); groupID != "" {
+		entities["group_id"] = groupID
+	}
+	if sort := extractSort(normalized); sort != "" {
+		entities["sort"] = sort
+	}
+	if risk := extractRisk(normalized); risk != "" {
+		entities["risk"] = risk
+	}
 	if query := extractPromQL(original); query != "" {
 		entities["query"] = query
 	}
 	if window := extractWindow(original, normalized, entities["query"] != ""); window != "" {
 		entities["window"] = window
 	}
-	if instance := extractInstance(original, entities["alert_name"], entities["page"], entities["page_size"], entities["count"]); instance != "" {
+	if instance := extractInstance(original, entities["alert_name"], entities["page"], entities["page_size"], entities["count"], entities["group_id"], entities["search"]); instance != "" {
 		entities["instance"] = instance
 	}
 	return entities
@@ -158,6 +183,30 @@ func extractFirstPattern(original string, patterns []*regexp.Regexp) string {
 
 func extractAlertName(original string) string {
 	return strings.TrimSpace(extractFirstPattern(original, alertNamePatterns))
+}
+
+func extractSort(normalized string) string {
+	switch {
+	case containsAny(normalized, "cpu_desc", "highest cpu", "cpu desc", "按cpu排序", "按 cpu 排序"):
+		return "cpu_desc"
+	case containsAny(normalized, "memory_desc", "highest memory", "memory desc", "按memory排序", "按 memory 排序", "按内存排序", "按 内存 排序"):
+		return "memory_desc"
+	case containsAny(normalized, "instance sort", "sort by instance", "按实例排序", "按 instance 排序"):
+		return "instance"
+	default:
+		return ""
+	}
+}
+
+func extractRisk(normalized string) string {
+	switch {
+	case containsAny(normalized, "high_cpu", "high cpu", "cpu risk", "cpu高", "高cpu", "cpu 风险"):
+		return "high_cpu"
+	case containsAny(normalized, "high_memory", "high memory", "memory risk", "内存高", "高内存", "memory 风险"):
+		return "high_memory"
+	default:
+		return ""
+	}
 }
 
 func extractWindow(original, normalized string, hasPromQL bool) string {
@@ -255,7 +304,7 @@ func containsAny(value string, keywords ...string) bool {
 
 func isCommonKeyword(value string) bool {
 	switch strings.ToLower(value) {
-	case "cpu", "memory", "disk", "load", "network", "metric", "metrics", "alert", "alerts", "host", "hosts", "node", "nodes", "event", "events", "info", "warning", "critical", "firing", "resolved", "promql", "alert_name", "alertname", "page", "page_size", "count":
+	case "cpu", "memory", "disk", "load", "network", "metric", "metrics", "alert", "alerts", "host", "hosts", "node", "nodes", "event", "events", "info", "warning", "critical", "firing", "resolved", "promql", "alert_name", "alertname", "page", "page_size", "count", "search", "sort", "risk", "group", "group_id", "high_cpu", "high_memory", "cpu_desc", "memory_desc":
 		return true
 	default:
 		return false
