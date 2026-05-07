@@ -119,7 +119,7 @@ func extractEntities(original, normalized string) map[string]string {
 	if alertName := extractAlertName(original); alertName != "" {
 		entities["alert_name"] = alertName
 	}
-	if search := extractFirstPattern(original, searchPatterns); search != "" && !isCommonKeyword(search) {
+	if search := extractFirstPattern(original, searchPatterns); search != "" {
 		entities["search"] = search
 	}
 	if groupID := extractFirstPattern(original, groupIDPatterns); groupID != "" {
