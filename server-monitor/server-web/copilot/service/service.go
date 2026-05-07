@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"server-web/copilot/nlu"
 	"server-web/copilot/session"
 )
 
@@ -30,6 +31,7 @@ type Config struct {
 	SessionTTL         time.Duration
 	MaxSessionMessages int
 	Store              session.Store
+	Classifier         *nlu.Classifier
 }
 
 type User struct {
@@ -43,6 +45,7 @@ type Service struct {
 	sessionTTL         time.Duration
 	maxSessionMessages int
 	store              session.Store
+	classifier         *nlu.Classifier
 }
 
 type ChatRequest struct {
@@ -86,6 +89,7 @@ func NewService(cfg Config) *Service {
 		sessionTTL:         sessionTTL,
 		maxSessionMessages: maxSessionMessages,
 		store:              cfg.Store,
+		classifier:         defaultClassifier(cfg.Classifier),
 	}
 }
 
@@ -124,7 +128,8 @@ func (s *Service) Chat(ctx context.Context, user User, req ChatRequest) (ChatRes
 		meta.CreatedAt = existing.CreatedAt
 	}
 	meta.ID = sessionID
-	reply := "Copilot chat API is ready. Session storage is enabled. Intent parsing and read-only tools will be enabled in the next Phase 1 modules."
+	parsed := s.classifier.Classify(message)
+	reply := buildReply(parsed)
 
 	if err := s.store.AppendMessages(ctx, meta, []session.Message{
 		{
@@ -142,15 +147,12 @@ func (s *Service) Chat(ctx context.Context, user User, req ChatRequest) (ChatRes
 	}
 
 	return ChatResponse{
-		SessionID:  sessionID,
-		Reply:      reply,
-		Intent:     IntentUnknown,
-		Confidence: 0,
-		ToolCalls:  []ToolCall{},
-		Suggestions: []string{
-			"Try asking for active alerts after the read-only tools module is enabled.",
-			"Try asking for host status after the read-only tools module is enabled.",
-		},
+		SessionID:   sessionID,
+		Reply:       reply,
+		Intent:      parsed.Intent,
+		Confidence:  parsed.Confidence,
+		ToolCalls:   []ToolCall{},
+		Suggestions: buildSuggestions(parsed),
 	}, nil
 }
 
@@ -215,4 +217,49 @@ func buildTitle(message string) string {
 		return message
 	}
 	return string(runes[:maxTitleRunes])
+}
+
+func defaultClassifier(classifier *nlu.Classifier) *nlu.Classifier {
+	if classifier != nil {
+		return classifier
+	}
+	return nlu.NewClassifier()
+}
+
+func buildReply(result nlu.Result) string {
+	switch result.Intent {
+	case nlu.IntentAlertQuery:
+		return "I recognized this as an active alert query. Read-only alert tools will return live data in the next module."
+	case nlu.IntentAlertEventQuery:
+		return "I recognized this as an alert event query. Read-only alert event tools will return live data in the next module."
+	case nlu.IntentAlertHistoryQuery:
+		return "I recognized this as an alert history query. Read-only history tools will return live data in the next module."
+	case nlu.IntentHostQuery:
+		return "I recognized this as a host query. Read-only host tools will return live data in the next module."
+	case nlu.IntentMetricQuery:
+		return "I recognized this as a metric query. Read-only metric tools will return live data in the next module."
+	case nlu.IntentGeneralChat:
+		return "I can help query hosts, metrics, active alerts, alert events, and alert history through read-only tools as Phase 1 comes online."
+	default:
+		return "I could not confidently identify the operation yet. Please clarify whether you want to query hosts, metrics, active alerts, alert events, or alert history."
+	}
+}
+
+func buildSuggestions(result nlu.Result) []string {
+	switch result.Intent {
+	case nlu.IntentAlertQuery:
+		return []string{"Show current active alerts", "List critical firing alerts"}
+	case nlu.IntentAlertEventQuery:
+		return []string{"Show latest alert events", "Show recent resolved alerts"}
+	case nlu.IntentAlertHistoryQuery:
+		return []string{"Show CPU alert history for the last week", "Show warning alert history"}
+	case nlu.IntentHostQuery:
+		return []string{"List current hosts", "Show offline hosts"}
+	case nlu.IntentMetricQuery:
+		return []string{"Show node-1 CPU for 1h", "Show memory trend for 24h"}
+	case nlu.IntentGeneralChat:
+		return []string{"What alerts are firing?", "Which hosts are offline?", "Show CPU trend for node-1"}
+	default:
+		return []string{"What alerts are firing?", "Which hosts are offline?", "Show CPU trend for node-1"}
+	}
 }
