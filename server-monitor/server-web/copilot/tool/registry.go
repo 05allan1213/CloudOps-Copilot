@@ -243,7 +243,7 @@ func authorizeTool(ctx context.Context, schema ToolSchema) error {
 	user, ok := copilot.UserFromContext(ctx)
 	role := strings.ToLower(strings.TrimSpace(user.Role))
 	if !ok || role == "" {
-		role = "viewer"
+		return NewToolError(ErrorCodePermissionDenied, "", "user context is required to execute tools", ErrPermissionDenied)
 	}
 	if !schema.ReadOnly {
 		return NewToolError(ErrorCodePermissionDenied, "", "write tools are disabled in phase 2", ErrPermissionDenied)
