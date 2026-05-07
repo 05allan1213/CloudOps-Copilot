@@ -3,7 +3,6 @@ package tool
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -39,11 +38,6 @@ const (
 	defaultAlertHistoryPage     = 1
 	defaultAlertHistoryPageSize = 20
 	maxAlertHistoryPageSize     = 100
-)
-
-var (
-	ErrInvalidArgs     = errors.New("invalid tool arguments")
-	ErrToolUnavailable = errors.New("copilot tool unavailable")
 )
 
 type HostService interface {
