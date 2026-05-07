@@ -31,6 +31,10 @@ type Registry interface {
 	HealthCheck(ctx context.Context) map[string]bool
 }
 
+type healthCheckedTool interface {
+	HealthCheck(ctx context.Context) bool
+}
+
 type MemoryRegistry struct {
 	mu      sync.RWMutex
 	tools   map[string]Tool
@@ -177,19 +181,26 @@ func (r *MemoryRegistry) Execute(ctx context.Context, name string, args json.Raw
 	return result, nil
 }
 
-func (r *MemoryRegistry) HealthCheck(context.Context) map[string]bool {
+func (r *MemoryRegistry) HealthCheck(ctx context.Context) map[string]bool {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
-
 	names := make([]string, 0, len(r.tools))
+	tools := make(map[string]Tool, len(r.tools))
 	for name := range r.tools {
 		names = append(names, name)
+		tools[name] = r.tools[name]
 	}
+	r.mu.RUnlock()
+
 	sort.Strings(names)
 
 	health := make(map[string]bool, len(names))
 	for _, name := range names {
-		health[name] = true
+		checker, ok := tools[name].(healthCheckedTool)
+		if !ok {
+			health[name] = true
+			continue
+		}
+		health[name] = checker.HealthCheck(ctx)
 	}
 	return health
 }

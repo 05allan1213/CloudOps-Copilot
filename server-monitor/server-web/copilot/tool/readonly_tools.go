@@ -66,6 +66,22 @@ func (t executorTool) Run(ctx context.Context, args json.RawMessage) (ToolResult
 	return toolResultFromCall(calls[0], reply), nil
 }
 
+func (t executorTool) HealthCheck(ctx context.Context) bool {
+	if ctx.Err() != nil || t.executor == nil {
+		return false
+	}
+	switch t.name {
+	case ToolHostList, ToolHostMetrics:
+		return t.executor.hostService != nil
+	case ToolAlertListActive, ToolAlertEvents:
+		return t.executor.alertService != nil && t.executor.alertService.Enabled()
+	case ToolAlertHistory:
+		return t.executor.db != nil
+	default:
+		return true
+	}
+}
+
 type promQueryRangeTool struct {
 	executor *Executor
 	schema   ToolSchema
@@ -135,6 +151,10 @@ func (t promQueryRangeTool) Run(ctx context.Context, args json.RawMessage) (Tool
 		return ToolResult{}, err
 	}
 	return toolResultFromCall(call, "Prometheus range query completed."), nil
+}
+
+func (t promQueryRangeTool) HealthCheck(ctx context.Context) bool {
+	return ctx.Err() == nil && t.executor != nil && t.executor.promClient != nil
 }
 
 func registerReadOnlyTools(registry Registry, executor *Executor) error {
