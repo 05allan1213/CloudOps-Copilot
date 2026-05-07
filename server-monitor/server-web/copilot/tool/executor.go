@@ -30,6 +30,7 @@ const (
 	ToolAlertListActive = "alert.list_active"
 	ToolAlertEvents     = "alert.events"
 	ToolAlertHistory    = "alert.history"
+	ToolAlertRuleList   = "alert.rule_list"
 	ToolPromQueryRange  = "prom.query_range"
 
 	defaultToolTimeout = 30 * time.Second
@@ -111,6 +112,17 @@ type alertHistoryQueryOptions struct {
 	Window    time.Duration
 	Page      int
 	PageSize  int
+}
+
+type alertRuleListResult struct {
+	Items []model.AlertRule `json:"items"`
+	Total int64             `json:"total"`
+}
+
+type alertRuleListQueryOptions struct {
+	Enabled  *bool
+	Severity string
+	Search   string
 }
 
 type hostListQueryOptions struct {
@@ -211,6 +223,12 @@ func (e *Executor) planToolCall(result nlu.Result) (string, json.RawMessage, boo
 			"page":       ParamTypeInteger,
 			"page_size":  ParamTypeInteger,
 		})), true
+	case nlu.IntentAlertRuleListQuery:
+		return ToolAlertRuleList, encodeToolArgs(mixedArgs(result.Entities, map[string]ParamType{
+			"enabled":  ParamTypeBoolean,
+			"severity": ParamTypeString,
+			"search":   ParamTypeString,
+		})), true
 	case nlu.IntentMetricQuery:
 		if result.Entities["query"] != "" {
 			return ToolPromQueryRange, e.promQueryRangeArgs(result.Entities), true
@@ -305,6 +323,11 @@ func mixedArgs(entities map[string]string, params map[string]ParamType) map[stri
 		switch paramType {
 		case ParamTypeInteger:
 			parsed, err := strconv.ParseInt(value, 10, 64)
+			if err == nil {
+				args[key] = parsed
+			}
+		case ParamTypeBoolean:
+			parsed, err := strconv.ParseBool(value)
 			if err == nil {
 				args[key] = parsed
 			}
@@ -538,6 +561,41 @@ func (e *Executor) runAlertHistory(ctx context.Context, entities map[string]stri
 	return []copilot.ToolCall{call}, fmt.Sprintf("Found %d alert history records.", total), nil
 }
 
+func (e *Executor) runAlertRuleList(ctx context.Context, entities map[string]string) ([]copilot.ToolCall, string, error) {
+	if e.db == nil {
+		return nil, "", ErrToolUnavailable
+	}
+	toolCtx, cancel := context.WithTimeout(ctx, e.timeout)
+	defer cancel()
+
+	options := parseAlertRuleListQueryOptions(entities)
+	stmt := e.db.WithContext(toolCtx).Model(&model.AlertRule{})
+	if options.Enabled != nil {
+		stmt = stmt.Where("enabled = ?", *options.Enabled)
+	}
+	if options.Severity != "" {
+		stmt = stmt.Where("severity = ?", options.Severity)
+	}
+	if options.Search != "" {
+		stmt = stmt.Where("name LIKE ? OR summary LIKE ?", "%"+options.Search+"%", "%"+options.Search+"%")
+	}
+
+	var total int64
+	if err := stmt.Count(&total).Error; err != nil {
+		call := buildCall(ToolAlertRuleList, nil, err)
+		return []copilot.ToolCall{call}, "", nil
+	}
+
+	var rules []model.AlertRule
+	err := stmt.Order("id ASC").Find(&rules).Error
+	result := alertRuleListResult{Items: rules, Total: total}
+	call := buildCall(ToolAlertRuleList, result, err)
+	if err != nil {
+		return []copilot.ToolCall{call}, "", nil
+	}
+	return []copilot.ToolCall{call}, fmt.Sprintf("Found %d alert rules.", total), nil
+}
+
 func parseAlertHistoryQueryOptions(entities map[string]string) alertHistoryQueryOptions {
 	return alertHistoryQueryOptions{
 		Status:    appalert.ParseEventFilter(entities["status"]),
@@ -548,6 +606,26 @@ func parseAlertHistoryQueryOptions(entities map[string]string) alertHistoryQuery
 		Page:      parsePositiveInt(entities["page"], defaultAlertHistoryPage, 0),
 		PageSize:  parsePositiveInt(entities["page_size"], defaultAlertHistoryPageSize, maxAlertHistoryPageSize),
 	}
+}
+
+func parseAlertRuleListQueryOptions(entities map[string]string) alertRuleListQueryOptions {
+	return alertRuleListQueryOptions{
+		Enabled:  parseOptionalBool(entities["enabled"]),
+		Severity: appalert.ParseEventSeverityFilter(entities["severity"]),
+		Search:   strings.TrimSpace(entities["search"]),
+	}
+}
+
+func parseOptionalBool(value string) *bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return nil
+	}
+	return &parsed
 }
 
 func parsePositiveInt(value string, defaultValue, maxValue int) int {

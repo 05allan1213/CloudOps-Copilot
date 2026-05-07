@@ -6,13 +6,14 @@ import (
 )
 
 const (
-	IntentAlertQuery        = "alert_query"
-	IntentAlertEventQuery   = "alert_event_query"
-	IntentAlertHistoryQuery = "alert_history_query"
-	IntentHostQuery         = "host_query"
-	IntentMetricQuery       = "metric_query"
-	IntentGeneralChat       = "general_chat"
-	IntentUnknown           = "unknown"
+	IntentAlertQuery         = "alert_query"
+	IntentAlertEventQuery    = "alert_event_query"
+	IntentAlertHistoryQuery  = "alert_history_query"
+	IntentAlertRuleListQuery = "alert_rule_list_query"
+	IntentHostQuery          = "host_query"
+	IntentMetricQuery        = "metric_query"
+	IntentGeneralChat        = "general_chat"
+	IntentUnknown            = "unknown"
 )
 
 type Result struct {
@@ -72,6 +73,7 @@ func (c *Classifier) Classify(message string) Result {
 
 	entities := extractEntities(message, normalized)
 	hasAlert := containsAny(normalized, "告警", "alert", "firing", "resolved", "severity")
+	hasAlertRule := containsAny(normalized, "告警规则", "alert rule", "alert rules", "rule list", "rules")
 	hasHistory := containsAny(normalized, "历史", "history", "过去", "最近一周", "last week")
 	hasEvent := containsAny(normalized, "事件", "event", "events", "最新", "latest")
 	hasHost := containsAny(normalized, "主机", "host", "hosts", "instance", "机器", "节点", "node", "nodes", "离线", "offline")
@@ -80,6 +82,8 @@ func (c *Classifier) Classify(message string) Result {
 	hasGeneral := containsAny(normalized, "能做什么", "help", "帮助", "what can you do", "解释", "explain")
 
 	switch {
+	case hasAlertRule:
+		return Result{Intent: IntentAlertRuleListQuery, Confidence: 0.89, Entities: entities}
 	case hasAlert && hasHistory:
 		return Result{Intent: IntentAlertHistoryQuery, Confidence: 0.9, Entities: entities}
 	case hasAlert && hasEvent:
@@ -125,6 +129,9 @@ func extractEntities(original, normalized string) map[string]string {
 	if groupID := extractFirstPattern(original, groupIDPatterns); groupID != "" {
 		entities["group_id"] = groupID
 	}
+	if enabled := extractEnabled(normalized); enabled != "" {
+		entities["enabled"] = enabled
+	}
 	if sort := extractSort(normalized); sort != "" {
 		entities["sort"] = sort
 	}
@@ -150,6 +157,17 @@ func extractSeverity(normalized string) string {
 		}
 	}
 	return ""
+}
+
+func extractEnabled(normalized string) string {
+	switch {
+	case containsAny(normalized, "disabled", "禁用", "未启用", "停用"):
+		return "false"
+	case containsAny(normalized, "enabled", "启用", "已启用"):
+		return "true"
+	default:
+		return ""
+	}
 }
 
 func extractStatus(normalized string) string {
@@ -304,7 +322,7 @@ func containsAny(value string, keywords ...string) bool {
 
 func isCommonKeyword(value string) bool {
 	switch strings.ToLower(value) {
-	case "cpu", "memory", "disk", "load", "network", "metric", "metrics", "alert", "alerts", "host", "hosts", "node", "nodes", "event", "events", "info", "warning", "critical", "firing", "resolved", "promql", "alert_name", "alertname", "page", "page_size", "count", "search", "sort", "risk", "group", "group_id", "high_cpu", "high_memory", "cpu_desc", "memory_desc":
+	case "cpu", "memory", "disk", "load", "network", "metric", "metrics", "alert", "alerts", "rule", "rules", "host", "hosts", "node", "nodes", "event", "events", "info", "warning", "critical", "firing", "resolved", "enabled", "disabled", "promql", "alert_name", "alertname", "page", "page_size", "count", "search", "sort", "risk", "group", "group_id", "high_cpu", "high_memory", "cpu_desc", "memory_desc":
 		return true
 	default:
 		return false

@@ -77,6 +77,8 @@ func (t executorTool) HealthCheck(ctx context.Context) bool {
 		return t.executor.alertService != nil && t.executor.alertService.Enabled()
 	case ToolAlertHistory:
 		return t.executor.db != nil
+	case ToolAlertRuleList:
+		return t.executor.db != nil
 	default:
 		return true
 	}
@@ -164,6 +166,7 @@ func registerReadOnlyTools(registry Registry, executor *Executor) error {
 		newAlertListActiveTool(executor),
 		newAlertEventsTool(executor),
 		newAlertHistoryTool(executor),
+		newAlertRuleListTool(executor),
 		newPromQueryRangeTool(executor),
 	} {
 		if err := registry.Register(tool); err != nil {
@@ -255,6 +258,22 @@ func newAlertHistoryTool(executor *Executor) Tool {
 		},
 		RiskLevelLow,
 		executor.runAlertHistory,
+	)
+}
+
+func newAlertRuleListTool(executor *Executor) Tool {
+	maxTextLength := 128.0
+	return newExecutorTool(
+		executor,
+		ToolAlertRuleList,
+		"List configured alert rules.",
+		[]ParamSchema{
+			{Name: "enabled", Type: ParamTypeBoolean},
+			{Name: "severity", Type: ParamTypeString, Enum: []string{"critical", "warning", "info"}},
+			{Name: "search", Type: ParamTypeString, Max: &maxTextLength},
+		},
+		RiskLevelLow,
+		executor.runAlertRuleList,
 	)
 }
 
