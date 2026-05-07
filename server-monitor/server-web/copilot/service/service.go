@@ -32,6 +32,7 @@ type Config struct {
 	MaxSessionMessages int
 	Store              session.Store
 	Classifier         *nlu.Classifier
+	LLM                LLMClassifier
 	Tools              ToolExecutor
 }
 
@@ -47,11 +48,16 @@ type Service struct {
 	maxSessionMessages int
 	store              session.Store
 	classifier         *nlu.Classifier
+	llm                LLMClassifier
 	tools              ToolExecutor
 }
 
 type ToolExecutor interface {
 	Execute(ctx context.Context, result nlu.Result) ([]ToolCall, string, error)
+}
+
+type LLMClassifier interface {
+	Classify(ctx context.Context, message string) (nlu.Result, error)
 }
 
 type ChatRequest struct {
@@ -97,6 +103,7 @@ func NewService(cfg Config) *Service {
 		maxSessionMessages: maxSessionMessages,
 		store:              cfg.Store,
 		classifier:         defaultClassifier(cfg.Classifier),
+		llm:                cfg.LLM,
 		tools:              cfg.Tools,
 	}
 }
@@ -137,6 +144,7 @@ func (s *Service) Chat(ctx context.Context, user User, req ChatRequest) (ChatRes
 	}
 	meta.ID = sessionID
 	parsed := s.classifier.Classify(message)
+	parsed = s.classifyWithFallback(ctx, message, parsed)
 	toolCalls, toolReply, err := s.executeTools(ctx, parsed)
 	if err != nil {
 		return ChatResponse{}, err
@@ -243,6 +251,23 @@ func (s *Service) executeTools(ctx context.Context, result nlu.Result) ([]ToolCa
 		return []ToolCall{}, "", nil
 	}
 	return s.tools.Execute(ctx, result)
+}
+
+func (s *Service) classifyWithFallback(ctx context.Context, message string, parsed nlu.Result) nlu.Result {
+	if s.llm == nil || parsed.Confidence >= 0.6 {
+		return parsed
+	}
+	llmResult, err := s.llm.Classify(ctx, message)
+	if err != nil {
+		return parsed
+	}
+	if llmResult.Intent == "" {
+		return parsed
+	}
+	if llmResult.Entities == nil {
+		llmResult.Entities = map[string]string{}
+	}
+	return llmResult
 }
 
 func buildReply(result nlu.Result, toolReply string) string {

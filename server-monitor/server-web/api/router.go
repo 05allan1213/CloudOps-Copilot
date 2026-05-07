@@ -18,6 +18,7 @@ import (
 	appcache "server-web/cache"
 	"server-web/config"
 	copilothandler "server-web/copilot/handler"
+	copilotllm "server-web/copilot/llm"
 	copilotservice "server-web/copilot/service"
 	copilotsession "server-web/copilot/session"
 	copilottool "server-web/copilot/tool"
@@ -123,6 +124,12 @@ func NewRouter(cfg config.Config, promClient *promclient.Client, cacheClient *re
 			SessionTTL:         cfg.CopilotSessionTTL,
 			MaxSessionMessages: cfg.CopilotMaxSessionMessages,
 			Store:              copilotsession.NewRedisStore(cacheClient),
+			LLM: copilotllm.NewClient(copilotllm.Options{
+				APIKey:  cfg.LLMAPIKey,
+				APIURL:  cfg.LLMAPIURL,
+				Model:   cfg.LLMModel,
+				Timeout: cfg.LLMTimeout,
+			}),
 			Tools: copilottool.NewExecutor(copilottool.Options{
 				HostService:  copilotHostService,
 				AlertService: copilotAlertService,
