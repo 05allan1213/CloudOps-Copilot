@@ -40,6 +40,10 @@ func NormalizeArgs(schema ToolSchema, args json.RawMessage) (json.RawMessage, er
 		if err := validateParamValue(param, value); err != nil {
 			return nil, err
 		}
+		if param.Type == ParamTypeInteger {
+			number, _ := integerValue(value)
+			values[param.Name] = number
+		}
 	}
 
 	normalized, err := json.Marshal(values)
