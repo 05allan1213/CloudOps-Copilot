@@ -32,14 +32,27 @@ type Registry interface {
 }
 
 type MemoryRegistry struct {
-	mu    sync.RWMutex
-	tools map[string]Tool
+	mu      sync.RWMutex
+	tools   map[string]Tool
+	logArgs bool
 }
 
-func NewRegistry() *MemoryRegistry {
-	return &MemoryRegistry{
+type RegistryOption func(*MemoryRegistry)
+
+func WithLogArgs(enabled bool) RegistryOption {
+	return func(registry *MemoryRegistry) {
+		registry.logArgs = enabled
+	}
+}
+
+func NewRegistry(options ...RegistryOption) *MemoryRegistry {
+	registry := &MemoryRegistry{
 		tools: map[string]Tool{},
 	}
+	for _, option := range options {
+		option(registry)
+	}
+	return registry
 }
 
 func (r *MemoryRegistry) Register(tool Tool) error {
@@ -255,7 +268,7 @@ func (r *MemoryRegistry) logToolCall(ctx context.Context, schema ToolSchema, arg
 	if result.Error != nil {
 		errorType = string(result.Error.Code)
 	}
-	zap.L().Info("copilot tool call",
+	fields := []zap.Field{
 		zap.String("tool_name", schema.Name),
 		zap.String("risk_level", string(schema.RiskLevel)),
 		zap.Bool("read_only", schema.ReadOnly),
@@ -264,12 +277,24 @@ func (r *MemoryRegistry) logToolCall(ctx context.Context, schema ToolSchema, arg
 		zap.Bool("success", result.Success),
 		zap.String("error_type", errorType),
 		zap.String("trace_id", traceIDFromContext(ctx)),
-	)
+	}
+	if r.logArgs {
+		fields = append(fields, zap.Any("args", sanitizedLogArgs(args)))
+	}
+	zap.L().Info("copilot tool call", fields...)
 }
 
 func hashArgs(args json.RawMessage) string {
 	sum := sha256.Sum256(args)
 	return fmt.Sprintf("%x", sum[:])
+}
+
+func sanitizedLogArgs(args json.RawMessage) interface{} {
+	var decoded interface{}
+	if err := json.Unmarshal(args, &decoded); err != nil {
+		return nil
+	}
+	return redactSensitive(decoded)
 }
 
 func traceIDFromContext(ctx context.Context) string {

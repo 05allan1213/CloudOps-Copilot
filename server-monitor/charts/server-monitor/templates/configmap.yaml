@@ -33,6 +33,7 @@ data:
   COPILOT_MAX_SESSION_MESSAGES: {{ .Values.config.copilotMaxSessionMessages | quote }}
   COPILOT_TOOL_REGISTRY_ENABLED: {{ .Values.config.copilotToolRegistryEnabled | quote }}
   COPILOT_TOOL_DEFAULT_TIMEOUT_SECONDS: {{ .Values.config.copilotToolDefaultTimeoutSeconds | quote }}
+  COPILOT_TOOL_LOG_ARGS: {{ .Values.config.copilotToolLogArgs | quote }}
   GIN_MODE: {{ .Values.config.ginMode | quote }}
   READY_TIMEOUT_SECONDS: {{ .Values.config.readyTimeoutSeconds | quote }}
   REQUEST_TIMEOUT_SECONDS: {{ .Values.config.requestTimeoutSeconds | quote }}

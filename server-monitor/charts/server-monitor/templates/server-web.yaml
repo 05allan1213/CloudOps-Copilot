@@ -192,6 +192,11 @@ spec:
                 configMapKeyRef:
                   name: monitor-config
                   key: COPILOT_TOOL_DEFAULT_TIMEOUT_SECONDS
+            - name: COPILOT_TOOL_LOG_ARGS
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: COPILOT_TOOL_LOG_ARGS
             - name: READY_TIMEOUT_SECONDS
               valueFrom:
                 configMapKeyRef:

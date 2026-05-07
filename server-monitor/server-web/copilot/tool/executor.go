@@ -78,6 +78,7 @@ type Options struct {
 	PromClient   PrometheusClient
 	DB           *gorm.DB
 	Timeout      time.Duration
+	LogArgs      bool
 	Now          func() time.Time
 }
 
@@ -114,7 +115,7 @@ type hostListQueryOptions struct {
 }
 
 func NewExecutor(options Options) (*Executor, error) {
-	return newExecutor(options, NewRegistry())
+	return newExecutor(options, NewRegistry(WithLogArgs(options.LogArgs)))
 }
 
 func newExecutor(options Options, registry Registry) (*Executor, error) {

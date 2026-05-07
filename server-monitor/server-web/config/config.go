@@ -119,6 +119,10 @@ type Config struct {
 	// 默认值：30s
 	CopilotToolDefaultTimeout time.Duration
 
+	// CopilotToolLogArgs 是否在工具调用日志中记录脱敏后的明文参数
+	// 默认值：false
+	CopilotToolLogArgs bool
+
 	// LLMAPIKey LLM API Key，用于后续 LLM 兜底
 	// 默认值：空（禁用 LLM 调用）
 	// 敏感：是
@@ -306,6 +310,7 @@ func Load() Config {
 		CopilotEnabled:             configutil.Bool("COPILOT_ENABLED", true),
 		CopilotToolRegistryEnabled: configutil.Bool("COPILOT_TOOL_REGISTRY_ENABLED", true),
 		CopilotToolDefaultTimeout:  configutil.DurationSeconds("COPILOT_TOOL_DEFAULT_TIMEOUT_SECONDS", 30),
+		CopilotToolLogArgs:         configutil.Bool("COPILOT_TOOL_LOG_ARGS", false),
 		LLMAPIKey:                  configutil.String("LLM_API_KEY", ""),
 		LLMAPIURL:                  configutil.String("LLM_API_URL", "https://api.deepseek.com/v1/chat/completions"),
 		LLMModel:                   configutil.String("LLM_MODEL", "deepseek-chat"),

@@ -33,6 +33,7 @@ data:
   COPILOT_ENABLED: "true"
   COPILOT_TOOL_REGISTRY_ENABLED: "true"
   COPILOT_TOOL_DEFAULT_TIMEOUT_SECONDS: "30"
+  COPILOT_TOOL_LOG_ARGS: "false"
   LLM_API_URL: https://api.deepseek.com/v1/chat/completions
   LLM_MODEL: deepseek-chat
   LLM_TIMEOUT_SECONDS: "60"

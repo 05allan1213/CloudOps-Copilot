@@ -130,6 +130,7 @@ func NewRouter(cfg config.Config, promClient *promclient.Client, cacheClient *re
 				PromClient:   promClient,
 				DB:           db,
 				Timeout:      cfg.CopilotToolDefaultTimeout,
+				LogArgs:      cfg.CopilotToolLogArgs,
 			})
 			if err != nil {
 				return nil, err
