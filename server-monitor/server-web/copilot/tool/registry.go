@@ -116,15 +116,12 @@ func (r *MemoryRegistry) Execute(ctx context.Context, name string, args json.Raw
 	if err != nil {
 		return ToolResult{Success: false, Error: errorResult(err)}, err
 	}
-	if err := r.Validate(name, args); err != nil {
-		return ToolResult{Success: false, Error: errorResult(err)}, err
-	}
 
-	normalizedArgs, err := NormalizeArgs(tool.Schema(), args)
+	schema := tool.Schema()
+	normalizedArgs, err := NormalizeArgs(schema, args)
 	if err != nil {
 		return ToolResult{Success: false, Error: errorResult(err)}, err
 	}
-	schema := tool.Schema()
 	if err := authorizeTool(ctx, schema); err != nil {
 		result := ToolResult{Success: false, Error: errorResult(err)}
 		r.logToolCall(ctx, schema, normalizedArgs, result, 0)
