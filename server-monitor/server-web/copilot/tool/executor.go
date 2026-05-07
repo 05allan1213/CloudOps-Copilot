@@ -3,6 +3,7 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -66,6 +67,7 @@ type Executor struct {
 	alertService AlertService
 	promClient   PrometheusClient
 	db           *gorm.DB
+	registry     Registry
 	timeout      time.Duration
 	now          func() time.Time
 }
@@ -110,7 +112,7 @@ func NewExecutor(options Options) *Executor {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &Executor{
+	executor := &Executor{
 		hostService:  options.HostService,
 		alertService: options.AlertService,
 		promClient:   options.PromClient,
@@ -118,29 +120,172 @@ func NewExecutor(options Options) *Executor {
 		timeout:      timeout,
 		now:          now,
 	}
+	registry := NewRegistry()
+	if err := registerReadOnlyTools(registry, executor); err != nil {
+		executor.registry = NewRegistry()
+		return executor
+	}
+	executor.registry = registry
+	return executor
 }
 
 func (e *Executor) Execute(ctx context.Context, result nlu.Result) ([]copilot.ToolCall, string, error) {
-	switch result.Intent {
-	case nlu.IntentAlertQuery:
-		return e.runAlertListActive(ctx, result.Entities)
-	case nlu.IntentAlertEventQuery:
-		return e.runAlertEvents(ctx, result.Entities)
-	case nlu.IntentAlertHistoryQuery:
-		return e.runAlertHistory(ctx, result.Entities)
-	case nlu.IntentMetricQuery:
-		if result.Entities["query"] != "" {
-			return e.runPromQueryRange(ctx, result.Entities)
-		}
-		if result.Entities["instance"] != "" {
-			return e.runHostMetrics(ctx, result.Entities)
-		}
-		return e.runHostList(ctx, result.Entities)
-	case nlu.IntentHostQuery:
-		return e.runHostList(ctx, result.Entities)
-	default:
+	name, args, ok := e.planToolCall(result)
+	if !ok {
 		return []copilot.ToolCall{}, "", nil
 	}
+	return e.executeTool(ctx, name, args)
+}
+
+func (e *Executor) planToolCall(result nlu.Result) (string, json.RawMessage, bool) {
+	switch result.Intent {
+	case nlu.IntentAlertQuery:
+		return ToolAlertListActive, encodeToolArgs(stringArgs(result.Entities, "severity")), true
+	case nlu.IntentAlertEventQuery:
+		return ToolAlertEvents, encodeToolArgs(mixedArgs(result.Entities, map[string]ParamType{
+			"count":    ParamTypeInteger,
+			"status":   ParamTypeString,
+			"severity": ParamTypeString,
+		})), true
+	case nlu.IntentAlertHistoryQuery:
+		return ToolAlertHistory, encodeToolArgs(mixedArgs(result.Entities, map[string]ParamType{
+			"status":     ParamTypeString,
+			"severity":   ParamTypeString,
+			"alert_name": ParamTypeString,
+			"instance":   ParamTypeString,
+			"window":     ParamTypeString,
+			"page":       ParamTypeInteger,
+			"page_size":  ParamTypeInteger,
+		})), true
+	case nlu.IntentMetricQuery:
+		if result.Entities["query"] != "" {
+			return ToolPromQueryRange, e.promQueryRangeArgs(result.Entities), true
+		}
+		if result.Entities["instance"] != "" {
+			return ToolHostMetrics, encodeToolArgs(stringArgs(result.Entities, "instance", "window")), true
+		}
+		return ToolHostList, encodeToolArgs(mixedArgs(result.Entities, map[string]ParamType{
+			"status":   ParamTypeString,
+			"search":   ParamTypeString,
+			"instance": ParamTypeString,
+			"sort":     ParamTypeString,
+			"risk":     ParamTypeString,
+			"group_id": ParamTypeInteger,
+		})), true
+	case nlu.IntentHostQuery:
+		return ToolHostList, encodeToolArgs(mixedArgs(result.Entities, map[string]ParamType{
+			"status":   ParamTypeString,
+			"search":   ParamTypeString,
+			"instance": ParamTypeString,
+			"sort":     ParamTypeString,
+			"risk":     ParamTypeString,
+			"group_id": ParamTypeInteger,
+		})), true
+	default:
+		return "", nil, false
+	}
+}
+
+func (e *Executor) executeTool(ctx context.Context, name string, args json.RawMessage) ([]copilot.ToolCall, string, error) {
+	if e.registry == nil {
+		return nil, "", ErrToolUnavailable
+	}
+	result, err := e.registry.Execute(ctx, name, args)
+	call := buildCallFromToolResult(name, result)
+	if err != nil {
+		if errors.Is(err, ErrToolUnavailable) {
+			return nil, "", err
+		}
+		return []copilot.ToolCall{call}, "", nil
+	}
+	if call.Status == StatusError {
+		return []copilot.ToolCall{call}, "", nil
+	}
+	return []copilot.ToolCall{call}, replyFromResult(result), nil
+}
+
+func (e *Executor) promQueryRangeArgs(entities map[string]string) json.RawMessage {
+	end := e.now()
+	start := end.Add(-parseHistoryWindow(entities["window"]))
+	step := time.Minute
+	if end.Sub(start) > 24*time.Hour {
+		step = 15 * time.Minute
+	}
+	return encodeToolArgs(map[string]interface{}{
+		"query":      strings.TrimSpace(entities["query"]),
+		"start":      start.Format(time.RFC3339),
+		"end":        end.Format(time.RFC3339),
+		"step":       durationArg(step),
+		"max_points": 1000,
+	})
+}
+
+func durationArg(duration time.Duration) string {
+	switch {
+	case duration%time.Hour == 0:
+		return fmt.Sprintf("%dh", int(duration/time.Hour))
+	case duration%time.Minute == 0:
+		return fmt.Sprintf("%dm", int(duration/time.Minute))
+	default:
+		return fmt.Sprintf("%ds", int(duration/time.Second))
+	}
+}
+
+func stringArgs(entities map[string]string, keys ...string) map[string]interface{} {
+	args := make(map[string]interface{}, len(keys))
+	for _, key := range keys {
+		if value := strings.TrimSpace(entities[key]); value != "" {
+			args[key] = value
+		}
+	}
+	return args
+}
+
+func mixedArgs(entities map[string]string, params map[string]ParamType) map[string]interface{} {
+	args := make(map[string]interface{}, len(params))
+	for key, paramType := range params {
+		value := strings.TrimSpace(entities[key])
+		if value == "" {
+			continue
+		}
+		switch paramType {
+		case ParamTypeInteger:
+			parsed, err := strconv.ParseInt(value, 10, 64)
+			if err == nil {
+				args[key] = parsed
+			}
+		default:
+			args[key] = value
+		}
+	}
+	return args
+}
+
+func encodeToolArgs(args map[string]interface{}) json.RawMessage {
+	data, err := json.Marshal(args)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return data
+}
+
+func buildCallFromToolResult(name string, result ToolResult) copilot.ToolCall {
+	if result.Error != nil || !result.Success {
+		errorMessage := "tool execution failed"
+		if result.Error != nil {
+			errorMessage = result.Error.Error()
+		}
+		return copilot.ToolCall{Name: name, Status: StatusError, Error: errorMessage}
+	}
+	return buildCall(name, result.Data, nil)
+}
+
+func replyFromResult(result ToolResult) string {
+	if result.Metadata == nil {
+		return ""
+	}
+	reply, _ := result.Metadata[metadataReply].(string)
+	return reply
 }
 
 func (e *Executor) runHostList(ctx context.Context, entities map[string]string) ([]copilot.ToolCall, string, error) {

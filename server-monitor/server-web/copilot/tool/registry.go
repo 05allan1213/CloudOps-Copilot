@@ -110,7 +110,7 @@ func (r *MemoryRegistry) Execute(ctx context.Context, name string, args json.Raw
 		}
 		return result, err
 	}
-	result.Success = true
+	result.Success = result.Error == nil
 	return result, nil
 }
 
