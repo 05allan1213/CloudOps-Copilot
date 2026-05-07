@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"sort"
@@ -150,7 +151,16 @@ func (c *Client) QueryRange(ctx context.Context, metric, instance string, params
 		return nil, err
 	}
 
-	return c.queryRange(ctx, query, start, end, step)
+	return c.queryRange(ctx, query, start, end, step, 0)
+}
+
+func (c *Client) QueryRangeRaw(ctx context.Context, query string, start, end time.Time, step time.Duration) ([]RangeSeries, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, fmt.Errorf("prometheus query is required")
+	}
+
+	return c.queryRange(ctx, query, start, end, step, 1024*1024)
 }
 
 func (c *Client) queryInstantVector(ctx context.Context, query string) ([]metricValue, error) {
@@ -197,7 +207,7 @@ func (c *Client) queryInstantVector(ctx context.Context, query string) ([]metric
 	return results, nil
 }
 
-func (c *Client) queryRange(ctx context.Context, query string, start, end time.Time, step time.Duration) ([]RangeSeries, error) {
+func (c *Client) queryRange(ctx context.Context, query string, start, end time.Time, step time.Duration, maxResponseBytes int64) ([]RangeSeries, error) {
 	if start.IsZero() || end.IsZero() {
 		return nil, fmt.Errorf("range query start and end are required")
 	}
@@ -230,9 +240,9 @@ func (c *Client) queryRange(ctx context.Context, query string, start, end time.T
 		return nil, fmt.Errorf("range query prometheus returned status %d", response.StatusCode)
 	}
 
-	var payload apiResponse
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
-		return nil, fmt.Errorf("decode prometheus range response: %w", err)
+	payload, err := decodeRangeResponse(response.Body, maxResponseBytes)
+	if err != nil {
+		return nil, err
 	}
 
 	if payload.Status != "success" {
@@ -252,6 +262,28 @@ func (c *Client) queryRange(ctx context.Context, query string, start, end time.T
 	}
 
 	return results, nil
+}
+
+func decodeRangeResponse(body io.Reader, maxResponseBytes int64) (apiResponse, error) {
+	var payload apiResponse
+	if maxResponseBytes <= 0 {
+		if err := json.NewDecoder(body).Decode(&payload); err != nil {
+			return apiResponse{}, fmt.Errorf("decode prometheus range response: %w", err)
+		}
+		return payload, nil
+	}
+
+	data, err := io.ReadAll(io.LimitReader(body, maxResponseBytes+1))
+	if err != nil {
+		return apiResponse{}, fmt.Errorf("read prometheus range response: %w", err)
+	}
+	if int64(len(data)) > maxResponseBytes {
+		return apiResponse{}, fmt.Errorf("prometheus range response too large")
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return apiResponse{}, fmt.Errorf("decode prometheus range response: %w", err)
+	}
+	return payload, nil
 }
 
 func parseVectorResult(item vectorResult) (metricValue, error) {

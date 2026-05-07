@@ -9,6 +9,7 @@ import (
 	"server-web/api/middleware"
 	copilot "server-web/copilot/service"
 	"server-web/copilot/session"
+	"server-web/copilot/tool"
 )
 
 type Handler struct {
@@ -114,6 +115,8 @@ func writeServiceError(c *gin.Context, err error) {
 	case errors.Is(err, copilot.ErrSessionForbidden):
 		c.JSON(http.StatusForbidden, response{Status: "error", Error: err.Error()})
 	case errors.Is(err, session.ErrUnavailable):
+		c.JSON(http.StatusServiceUnavailable, response{Status: "error", Error: err.Error()})
+	case errors.Is(err, tool.ErrToolUnavailable):
 		c.JSON(http.StatusServiceUnavailable, response{Status: "error", Error: err.Error()})
 	default:
 		c.JSON(http.StatusInternalServerError, response{Status: "error", Error: "copilot service unavailable"})

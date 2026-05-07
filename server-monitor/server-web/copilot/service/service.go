@@ -32,6 +32,7 @@ type Config struct {
 	MaxSessionMessages int
 	Store              session.Store
 	Classifier         *nlu.Classifier
+	Tools              ToolExecutor
 }
 
 type User struct {
@@ -46,6 +47,11 @@ type Service struct {
 	maxSessionMessages int
 	store              session.Store
 	classifier         *nlu.Classifier
+	tools              ToolExecutor
+}
+
+type ToolExecutor interface {
+	Execute(ctx context.Context, result nlu.Result) ([]ToolCall, string, error)
 }
 
 type ChatRequest struct {
@@ -63,9 +69,10 @@ type ChatResponse struct {
 }
 
 type ToolCall struct {
-	Name   string `json:"name"`
-	Status string `json:"status"`
-	Error  string `json:"error,omitempty"`
+	Name   string      `json:"name"`
+	Status string      `json:"status"`
+	Error  string      `json:"error,omitempty"`
+	Result interface{} `json:"result,omitempty"`
 }
 
 type SessionSummary = session.Summary
@@ -90,6 +97,7 @@ func NewService(cfg Config) *Service {
 		maxSessionMessages: maxSessionMessages,
 		store:              cfg.Store,
 		classifier:         defaultClassifier(cfg.Classifier),
+		tools:              cfg.Tools,
 	}
 }
 
@@ -129,7 +137,11 @@ func (s *Service) Chat(ctx context.Context, user User, req ChatRequest) (ChatRes
 	}
 	meta.ID = sessionID
 	parsed := s.classifier.Classify(message)
-	reply := buildReply(parsed)
+	toolCalls, toolReply, err := s.executeTools(ctx, parsed)
+	if err != nil {
+		return ChatResponse{}, err
+	}
+	reply := buildReply(parsed, toolReply)
 
 	if err := s.store.AppendMessages(ctx, meta, []session.Message{
 		{
@@ -151,7 +163,7 @@ func (s *Service) Chat(ctx context.Context, user User, req ChatRequest) (ChatRes
 		Reply:       reply,
 		Intent:      parsed.Intent,
 		Confidence:  parsed.Confidence,
-		ToolCalls:   []ToolCall{},
+		ToolCalls:   toolCalls,
 		Suggestions: buildSuggestions(parsed),
 	}, nil
 }
@@ -226,7 +238,17 @@ func defaultClassifier(classifier *nlu.Classifier) *nlu.Classifier {
 	return nlu.NewClassifier()
 }
 
-func buildReply(result nlu.Result) string {
+func (s *Service) executeTools(ctx context.Context, result nlu.Result) ([]ToolCall, string, error) {
+	if s.tools == nil || result.Intent == nlu.IntentUnknown || result.Intent == nlu.IntentGeneralChat {
+		return []ToolCall{}, "", nil
+	}
+	return s.tools.Execute(ctx, result)
+}
+
+func buildReply(result nlu.Result, toolReply string) string {
+	if toolReply != "" {
+		return toolReply
+	}
 	switch result.Intent {
 	case nlu.IntentAlertQuery:
 		return "I recognized this as an active alert query. Read-only alert tools will return live data in the next module."

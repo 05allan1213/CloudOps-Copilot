@@ -12,13 +12,17 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"gorm.io/gorm"
 
+	appalert "server-web/alert"
 	"server-web/api/handlers"
 	"server-web/api/middleware"
+	appcache "server-web/cache"
 	"server-web/config"
 	copilothandler "server-web/copilot/handler"
 	copilotservice "server-web/copilot/service"
 	copilotsession "server-web/copilot/session"
+	copilottool "server-web/copilot/tool"
 	"server-web/database"
+	apphost "server-web/host"
 	eventbus "server-web/kafka"
 	promclient "server-web/prometheus"
 	rediscache "server-web/redis"
@@ -100,8 +104,28 @@ func NewRouter(cfg config.Config, promClient *promclient.Client, cacheClient *re
 	protected.GET("/api/v1/alerts/events", handler.AlertEvents)
 	protected.GET("/api/v1/alert-histories", handler.ListAlertHistories)
 
+	copilotCacheService := appcache.NewService(cacheClient, appcache.Options{
+		HostsTTL:     cfg.HostsCacheTTL,
+		DashboardTTL: cfg.DashboardOverviewTTL,
+	})
+	copilotHostService := apphost.NewService(promClient, copilotCacheService, apphost.Options{
+		RequestTimeout: cfg.RequestTimeout,
+		CacheTimeout:   cfg.CacheWriteTimeout,
+	})
+	copilotAlertService := appalert.NewService(cacheClient, appalert.Options{
+		DedupeTTL: cfg.AlertEventDedupeTTL,
+		DB:        dbFromMySQL(mysqlClient),
+		Producer:  alertProducer,
+	})
 	copilotHandler := copilothandler.NewHandler(copilotservice.NewService(copilotservice.Config{
 		Store: copilotsession.NewRedisStore(cacheClient),
+		Tools: copilottool.NewExecutor(copilottool.Options{
+			HostService:  copilotHostService,
+			AlertService: copilotAlertService,
+			PromClient:   promClient,
+			DB:           dbFromMySQL(mysqlClient),
+			Timeout:      cfg.RequestTimeout,
+		}),
 	}))
 	protected.POST("/api/v1/copilot/chat", copilotHandler.Chat)
 	protected.GET("/api/v1/copilot/sessions", copilotHandler.ListSessions)
