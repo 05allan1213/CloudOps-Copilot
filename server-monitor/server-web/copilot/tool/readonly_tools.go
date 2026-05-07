@@ -268,7 +268,7 @@ func toolResultFromCall(call copilot.ToolCall, reply string) ToolResult {
 	if call.Status == StatusError {
 		return ToolResult{
 			Success:  false,
-			Error:    NewToolError(ErrorCodeToolExecution, "", call.Error, ErrToolExecution),
+			Error:    publicToolError(ErrToolExecution),
 			Metadata: replyMetadata(reply),
 		}
 	}

@@ -194,11 +194,28 @@ func normalizeToolName(name string) string {
 }
 
 func errorResult(err error) *ToolError {
+	return publicToolError(err)
+}
+
+func publicToolError(err error) *ToolError {
 	var toolErr *ToolError
 	if errors.As(err, &toolErr) {
 		return toolErr
 	}
-	return NewToolError(ErrorCodeToolExecution, "", err.Error(), err)
+	switch {
+	case errors.Is(err, ErrToolNotFound):
+		return NewToolError(ErrorCodeToolNotFound, "", "tool not found", err)
+	case errors.Is(err, ErrInvalidArgs):
+		return NewToolError(ErrorCodeInvalidArgs, "", "invalid tool arguments", err)
+	case errors.Is(err, ErrPermissionDenied):
+		return NewToolError(ErrorCodePermissionDenied, "", "tool permission denied", err)
+	case errors.Is(err, ErrToolTimeout), errors.Is(err, context.DeadlineExceeded):
+		return NewToolError(ErrorCodeToolTimeout, "", "tool execution timed out", err)
+	case errors.Is(err, ErrToolUnavailable):
+		return NewToolError(ErrorCodeToolUnavailable, "", "tool unavailable", err)
+	default:
+		return NewToolError(ErrorCodeToolExecution, "", "tool execution failed", err)
+	}
 }
 
 func authorizeTool(ctx context.Context, schema ToolSchema) error {

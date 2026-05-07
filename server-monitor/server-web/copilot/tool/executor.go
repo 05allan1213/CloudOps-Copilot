@@ -285,7 +285,7 @@ func buildCallFromToolResult(name string, result ToolResult) copilot.ToolCall {
 	if result.Error != nil || !result.Success {
 		errorMessage := "tool execution failed"
 		if result.Error != nil {
-			errorMessage = result.Error.Error()
+			errorMessage = publicToolError(result.Error).Error()
 		}
 		return copilot.ToolCall{Name: name, Status: StatusError, Error: errorMessage}
 	}
@@ -557,7 +557,7 @@ func (e *Executor) runPromQueryRange(ctx context.Context, entities map[string]st
 
 func buildCall(name string, result interface{}, err error) copilot.ToolCall {
 	if err != nil {
-		return copilot.ToolCall{Name: name, Status: StatusError, Error: err.Error()}
+		return copilot.ToolCall{Name: name, Status: StatusError, Error: publicToolError(err).Error()}
 	}
 	return copilot.ToolCall{Name: name, Status: StatusSuccess, Result: sanitizeResult(result)}
 }
