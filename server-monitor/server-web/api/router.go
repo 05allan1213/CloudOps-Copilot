@@ -122,6 +122,16 @@ func NewRouter(cfg config.Config, promClient *promclient.Client, cacheClient *re
 			RequestTimeout: cfg.RequestTimeout,
 			CacheTimeout:   cfg.CacheWriteTimeout,
 		})
+		var tools copilotservice.ToolExecutor
+		if cfg.CopilotToolRegistryEnabled {
+			tools = copilottool.NewExecutor(copilottool.Options{
+				HostService:  copilotHostService,
+				AlertService: alertService,
+				PromClient:   promClient,
+				DB:           db,
+				Timeout:      cfg.RequestTimeout,
+			})
+		}
 		copilotHandler := copilothandler.NewHandler(copilotservice.NewService(copilotservice.Config{
 			MaxMessageLength:   cfg.CopilotMaxMessageLength,
 			SessionTTL:         cfg.CopilotSessionTTL,
@@ -133,13 +143,7 @@ func NewRouter(cfg config.Config, promClient *promclient.Client, cacheClient *re
 				Model:   cfg.LLMModel,
 				Timeout: cfg.LLMTimeout,
 			}),
-			Tools: copilottool.NewExecutor(copilottool.Options{
-				HostService:  copilotHostService,
-				AlertService: alertService,
-				PromClient:   promClient,
-				DB:           db,
-				Timeout:      cfg.RequestTimeout,
-			}),
+			Tools: tools,
 		}))
 		protected.POST("/api/v1/copilot/chat", copilotHandler.Chat)
 		protected.GET("/api/v1/copilot/sessions", copilotHandler.ListSessions)
