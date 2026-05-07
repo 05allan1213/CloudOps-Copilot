@@ -95,6 +95,7 @@ type Config struct {
 	DedupeTTL      time.Duration
 	CacheTimeout   time.Duration
 	RuleSync       AlertRuleSyncConfig
+	AlertService   *appalert.Service
 	AlertProducer  alertProducer
 	MySQLClient    mysqlClient
 	DB             *gorm.DB
@@ -109,16 +110,20 @@ func NewHandler(promClient *promclient.Client, cacheClient cacheClient, cfg Conf
 		HostsTTL:     cfg.HostsTTL,
 		DashboardTTL: cfg.DashboardTTL,
 	})
+	alertService := cfg.AlertService
+	if alertService == nil {
+		alertService = appalert.NewService(cacheClient, appalert.Options{
+			DedupeTTL: cfg.DedupeTTL,
+			DB:        cfg.DB,
+			Producer:  cfg.AlertProducer,
+		})
+	}
 	return &Handler{
 		promClient:   promClient,
 		db:           cfg.DB,
 		cacheClient:  cacheClient,
 		cacheService: cacheService,
-		alertService: appalert.NewService(cacheClient, appalert.Options{
-			DedupeTTL: cfg.DedupeTTL,
-			DB:        cfg.DB,
-			Producer:  cfg.AlertProducer,
-		}),
+		alertService: alertService,
 		hostService: apphost.NewService(promClient, cacheService, apphost.Options{
 			RequestTimeout: cfg.RequestTimeout,
 			CacheTimeout:   cfg.CacheTimeout,

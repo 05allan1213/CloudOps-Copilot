@@ -58,6 +58,13 @@ func NewRouter(cfg config.Config, promClient *promclient.Client, cacheClient *re
 		return nil, err
 	}
 
+	db := dbFromMySQL(mysqlClient)
+	alertService := appalert.NewService(cacheClient, appalert.Options{
+		DedupeTTL: cfg.AlertEventDedupeTTL,
+		DB:        db,
+		Producer:  alertProducer,
+	})
+
 	handler, err := handlers.NewHandler(promClient, cacheClient, handlers.Config{
 		ReadyTimeout:   cfg.ReadyTimeout,
 		RequestTimeout: cfg.RequestTimeout,
@@ -72,9 +79,10 @@ func NewRouter(cfg config.Config, promClient *promclient.Client, cacheClient *re
 			cfg.PrometheusReloadURL,
 			cfg.AlertRuleSyncTimeout,
 		),
+		AlertService:  alertService,
 		AlertProducer: alertProducer,
 		MySQLClient:   mysqlClient,
-		DB:            dbFromMySQL(mysqlClient),
+		DB:            db,
 		AuthService:   authService,
 	}, websocketHub)
 	if err != nil {
@@ -114,11 +122,6 @@ func NewRouter(cfg config.Config, promClient *promclient.Client, cacheClient *re
 			RequestTimeout: cfg.RequestTimeout,
 			CacheTimeout:   cfg.CacheWriteTimeout,
 		})
-		copilotAlertService := appalert.NewService(cacheClient, appalert.Options{
-			DedupeTTL: cfg.AlertEventDedupeTTL,
-			DB:        dbFromMySQL(mysqlClient),
-			Producer:  alertProducer,
-		})
 		copilotHandler := copilothandler.NewHandler(copilotservice.NewService(copilotservice.Config{
 			MaxMessageLength:   cfg.CopilotMaxMessageLength,
 			SessionTTL:         cfg.CopilotSessionTTL,
@@ -132,9 +135,9 @@ func NewRouter(cfg config.Config, promClient *promclient.Client, cacheClient *re
 			}),
 			Tools: copilottool.NewExecutor(copilottool.Options{
 				HostService:  copilotHostService,
-				AlertService: copilotAlertService,
+				AlertService: alertService,
 				PromClient:   promClient,
-				DB:           dbFromMySQL(mysqlClient),
+				DB:           db,
 				Timeout:      cfg.RequestTimeout,
 			}),
 		}))

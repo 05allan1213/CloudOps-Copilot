@@ -118,10 +118,10 @@ async function submitMessage() {
     await refreshSessions();
     await scrollToBottom();
   } catch (err) {
-    error.value = normalizeError(err);
+    const errorMessage = normalizeError(err);
     messages.value.push({
       role: "assistant",
-      content: error.value,
+      content: errorMessage,
       created_at: new Date().toISOString(),
       intent: "error",
       confidence: 0,
