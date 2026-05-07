@@ -31,6 +31,8 @@ config:
   copilotSessionTTLSeconds: "7200"
   copilotMaxMessageLength: "2000"
   copilotMaxSessionMessages: "50"
+  copilotToolRegistryEnabled: "true"
+  copilotToolDefaultTimeoutSeconds: "30"
 
 secret:
   create: true
