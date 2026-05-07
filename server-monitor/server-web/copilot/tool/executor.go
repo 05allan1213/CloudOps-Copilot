@@ -35,6 +35,10 @@ const (
 
 	defaultAlertEventsCount = int64(20)
 	maxAlertEventsCount     = int64(100)
+
+	defaultAlertHistoryPage     = 1
+	defaultAlertHistoryPageSize = 20
+	maxAlertHistoryPageSize     = 100
 )
 
 var (
@@ -80,6 +84,16 @@ type historyResult struct {
 	Total    int64                `json:"total"`
 	Page     int                  `json:"page"`
 	PageSize int                  `json:"page_size"`
+}
+
+type alertHistoryQueryOptions struct {
+	Status    string
+	Severity  string
+	AlertName string
+	Instance  string
+	Window    time.Duration
+	Page      int
+	PageSize  int
 }
 
 func NewExecutor(options Options) *Executor {
@@ -223,16 +237,22 @@ func (e *Executor) runAlertHistory(ctx context.Context, entities map[string]stri
 	toolCtx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()
 
-	pageSize := 20
+	options := parseAlertHistoryQueryOptions(entities)
 	stmt := e.db.WithContext(toolCtx).Model(&model.AlertHistory{})
-	if severity := appalert.ParseEventSeverityFilter(entities["severity"]); severity != "" {
-		stmt = stmt.Where("severity = ?", severity)
+	if options.Status != "" {
+		stmt = stmt.Where("status = ?", options.Status)
 	}
-	if instance := strings.TrimSpace(entities["instance"]); instance != "" {
-		stmt = stmt.Where("instance = ?", instance)
+	if options.Severity != "" {
+		stmt = stmt.Where("severity = ?", options.Severity)
 	}
-	if window := parseHistoryWindow(entities["window"]); window > 0 {
-		stmt = stmt.Where("fired_at >= ?", e.now().Add(-window))
+	if options.AlertName != "" {
+		stmt = stmt.Where("alert_name LIKE ?", "%"+options.AlertName+"%")
+	}
+	if options.Instance != "" {
+		stmt = stmt.Where("instance = ?", options.Instance)
+	}
+	if options.Window > 0 {
+		stmt = stmt.Where("fired_at >= ?", e.now().Add(-options.Window))
 	}
 
 	var total int64
@@ -242,13 +262,45 @@ func (e *Executor) runAlertHistory(ctx context.Context, entities map[string]stri
 	}
 
 	var histories []model.AlertHistory
-	err := stmt.Order("fired_at DESC").Order("id DESC").Limit(pageSize).Find(&histories).Error
-	result := historyResult{Items: histories, Total: total, Page: 1, PageSize: pageSize}
+	err := stmt.
+		Order("fired_at DESC").
+		Order("id DESC").
+		Limit(options.PageSize).
+		Offset((options.Page - 1) * options.PageSize).
+		Find(&histories).Error
+	result := historyResult{Items: histories, Total: total, Page: options.Page, PageSize: options.PageSize}
 	call := buildCall(ToolAlertHistory, result, err)
 	if err != nil {
 		return []copilot.ToolCall{call}, "", nil
 	}
 	return []copilot.ToolCall{call}, fmt.Sprintf("Found %d alert history records.", total), nil
+}
+
+func parseAlertHistoryQueryOptions(entities map[string]string) alertHistoryQueryOptions {
+	return alertHistoryQueryOptions{
+		Status:    appalert.ParseEventFilter(entities["status"]),
+		Severity:  appalert.ParseEventSeverityFilter(entities["severity"]),
+		AlertName: strings.TrimSpace(entities["alert_name"]),
+		Instance:  strings.TrimSpace(entities["instance"]),
+		Window:    parseHistoryWindow(entities["window"]),
+		Page:      parsePositiveInt(entities["page"], defaultAlertHistoryPage, 0),
+		PageSize:  parsePositiveInt(entities["page_size"], defaultAlertHistoryPageSize, maxAlertHistoryPageSize),
+	}
+}
+
+func parsePositiveInt(value string, defaultValue, maxValue int) int {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return defaultValue
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return defaultValue
+	}
+	if maxValue > 0 && parsed > maxValue {
+		return maxValue
+	}
+	return parsed
 }
 
 func (e *Executor) RunPromQueryRange(ctx context.Context, query string, start, end time.Time, step time.Duration, maxPoints int) (copilot.ToolCall, error) {

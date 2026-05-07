@@ -32,6 +32,22 @@ var (
 		regexp.MustCompile(`(?i)\b(\d{1,3})\s+(?:events?|alerts?|records?)\b`),
 		regexp.MustCompile(`(?i)(?:最近|最新)\s*(\d{1,3})\s*(?:条|个)?`),
 	}
+	pagePatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\bpage\s+(\d{1,4})\b`),
+		regexp.MustCompile(`(?i)\bpage\s*[:=]\s*(\d{1,4})\b`),
+		regexp.MustCompile(`(?i)第\s*(\d{1,4})\s*页`),
+	}
+	pageSizePatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\bpage[_ -]?size\s*[:=]?\s*(\d{1,3})\b`),
+		regexp.MustCompile(`(?i)\b(\d{1,3})\s*(?:per page|each page)\b`),
+		regexp.MustCompile(`(?i)每页\s*(\d{1,3})\s*条`),
+	}
+	alertNamePatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\balert[_ -]?name\s*[:=]\s*([a-z0-9_.:-]+)\b`),
+		regexp.MustCompile(`(?i)\b([a-z][a-z0-9_.:-]*(?:cpu|memory|disk|load|network)[a-z0-9_.:-]*)\s+alerts?\s+history\b`),
+		regexp.MustCompile(`(?i)\b(cpu|memory|disk|load|network)\s+alerts?\s+history\b`),
+		regexp.MustCompile(`(?i)(cpu|内存|memory|磁盘|disk|负载|load|网络|network)\s*告警\s*历史`),
+	}
 )
 
 func NewClassifier() *Classifier {
@@ -81,13 +97,22 @@ func extractEntities(original, normalized string) map[string]string {
 	if count := extractCount(original); count != "" {
 		entities["count"] = count
 	}
+	if page := extractFirstPattern(original, pagePatterns); page != "" {
+		entities["page"] = page
+	}
+	if pageSize := extractFirstPattern(original, pageSizePatterns); pageSize != "" {
+		entities["page_size"] = pageSize
+	}
+	if alertName := extractAlertName(original); alertName != "" {
+		entities["alert_name"] = alertName
+	}
 	if query := extractPromQL(original); query != "" {
 		entities["query"] = query
 	}
 	if window := extractWindow(original, normalized, entities["query"] != ""); window != "" {
 		entities["window"] = window
 	}
-	if instance := extractInstance(original); instance != "" && !isCommonKeyword(instance) {
+	if instance := extractInstance(original, entities["alert_name"], entities["page"], entities["page_size"], entities["count"]); instance != "" {
 		entities["instance"] = instance
 	}
 	return entities
@@ -118,13 +143,21 @@ func extractStatus(normalized string) string {
 }
 
 func extractCount(original string) string {
-	for _, pattern := range countPatterns {
+	return extractFirstPattern(original, countPatterns)
+}
+
+func extractFirstPattern(original string, patterns []*regexp.Regexp) string {
+	for _, pattern := range patterns {
 		matches := pattern.FindStringSubmatch(original)
 		if len(matches) == 2 {
 			return matches[1]
 		}
 	}
 	return ""
+}
+
+func extractAlertName(original string) string {
+	return strings.TrimSpace(extractFirstPattern(original, alertNamePatterns))
 }
 
 func extractWindow(original, normalized string, hasPromQL bool) string {
@@ -146,15 +179,24 @@ func extractWindow(original, normalized string, hasPromQL bool) string {
 	}
 }
 
-func extractInstance(original string) string {
+func extractInstance(original string, ignoredValues ...string) string {
 	matches := instancePattern.FindAllString(original, -1)
 	for _, match := range matches {
 		trimmed := strings.Trim(match, ".,?!;:")
-		if trimmed != "" {
+		if trimmed != "" && !isCommonKeyword(trimmed) && !isIgnoredValue(trimmed, ignoredValues) {
 			return trimmed
 		}
 	}
 	return ""
+}
+
+func isIgnoredValue(value string, ignoredValues []string) bool {
+	for _, ignored := range ignoredValues {
+		if strings.EqualFold(value, ignored) {
+			return true
+		}
+	}
+	return false
 }
 
 func extractPromQL(original string) string {
@@ -213,7 +255,7 @@ func containsAny(value string, keywords ...string) bool {
 
 func isCommonKeyword(value string) bool {
 	switch strings.ToLower(value) {
-	case "cpu", "memory", "disk", "load", "network", "metric", "metrics", "alert", "alerts", "host", "hosts", "node", "nodes", "event", "events", "info", "warning", "critical", "firing", "resolved", "promql":
+	case "cpu", "memory", "disk", "load", "network", "metric", "metrics", "alert", "alerts", "host", "hosts", "node", "nodes", "event", "events", "info", "warning", "critical", "firing", "resolved", "promql", "alert_name", "alertname", "page", "page_size", "count":
 		return true
 	default:
 		return false
