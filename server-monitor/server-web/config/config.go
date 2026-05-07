@@ -115,6 +115,10 @@ type Config struct {
 	// 默认值：true
 	CopilotToolRegistryEnabled bool
 
+	// CopilotToolDefaultTimeout Copilot 工具默认执行超时时间
+	// 默认值：30s
+	CopilotToolDefaultTimeout time.Duration
+
 	// LLMAPIKey LLM API Key，用于后续 LLM 兜底
 	// 默认值：空（禁用 LLM 调用）
 	// 敏感：是
@@ -301,6 +305,7 @@ func Load() Config {
 		},
 		CopilotEnabled:             configutil.Bool("COPILOT_ENABLED", true),
 		CopilotToolRegistryEnabled: configutil.Bool("COPILOT_TOOL_REGISTRY_ENABLED", true),
+		CopilotToolDefaultTimeout:  configutil.DurationSeconds("COPILOT_TOOL_DEFAULT_TIMEOUT_SECONDS", 30),
 		LLMAPIKey:                  configutil.String("LLM_API_KEY", ""),
 		LLMAPIURL:                  configutil.String("LLM_API_URL", "https://api.deepseek.com/v1/chat/completions"),
 		LLMModel:                   configutil.String("LLM_MODEL", "deepseek-chat"),
@@ -400,6 +405,9 @@ func (c Config) Validate() error {
 	}
 	if c.CopilotMaxSessionMessages <= 0 {
 		return fmt.Errorf("COPILOT_MAX_SESSION_MESSAGES must be positive, got %d", c.CopilotMaxSessionMessages)
+	}
+	if c.CopilotToolDefaultTimeout <= 0 {
+		return fmt.Errorf("COPILOT_TOOL_DEFAULT_TIMEOUT_SECONDS must be positive, got %v", c.CopilotToolDefaultTimeout)
 	}
 	if c.RateLimit.Enabled {
 		if c.RateLimit.Requests <= 0 {

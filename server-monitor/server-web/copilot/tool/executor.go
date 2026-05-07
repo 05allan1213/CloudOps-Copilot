@@ -32,7 +32,7 @@ const (
 	ToolAlertHistory    = "alert.history"
 	ToolPromQueryRange  = "prom.query_range"
 
-	defaultToolTimeout = 5 * time.Second
+	defaultToolTimeout = 30 * time.Second
 
 	defaultAlertEventsCount = int64(20)
 	maxAlertEventsCount     = int64(100)
@@ -81,6 +81,16 @@ type Options struct {
 	Now          func() time.Time
 }
 
+type DisabledExecutor struct{}
+
+func NewDisabledExecutor() DisabledExecutor {
+	return DisabledExecutor{}
+}
+
+func (DisabledExecutor) Execute(context.Context, nlu.Result) ([]copilot.ToolCall, string, error) {
+	return nil, "", ErrToolUnavailable
+}
+
 type historyResult struct {
 	Items    []model.AlertHistory `json:"items"`
 	Total    int64                `json:"total"`
@@ -103,7 +113,11 @@ type hostListQueryOptions struct {
 	GroupID     uint64
 }
 
-func NewExecutor(options Options) *Executor {
+func NewExecutor(options Options) (*Executor, error) {
+	return newExecutor(options, NewRegistry())
+}
+
+func newExecutor(options Options, registry Registry) (*Executor, error) {
 	timeout := options.Timeout
 	if timeout <= 0 {
 		timeout = defaultToolTimeout
@@ -120,13 +134,11 @@ func NewExecutor(options Options) *Executor {
 		timeout:      timeout,
 		now:          now,
 	}
-	registry := NewRegistry()
 	if err := registerReadOnlyTools(registry, executor); err != nil {
-		executor.registry = NewRegistry()
-		return executor
+		return nil, fmt.Errorf("register copilot read-only tools: %w", err)
 	}
 	executor.registry = registry
-	return executor
+	return executor, nil
 }
 
 func (e *Executor) Execute(ctx context.Context, result nlu.Result) ([]copilot.ToolCall, string, error) {

@@ -124,13 +124,18 @@ func NewRouter(cfg config.Config, promClient *promclient.Client, cacheClient *re
 		})
 		var tools copilotservice.ToolExecutor
 		if cfg.CopilotToolRegistryEnabled {
-			tools = copilottool.NewExecutor(copilottool.Options{
+			tools, err = copilottool.NewExecutor(copilottool.Options{
 				HostService:  copilotHostService,
 				AlertService: alertService,
 				PromClient:   promClient,
 				DB:           db,
-				Timeout:      cfg.RequestTimeout,
+				Timeout:      cfg.CopilotToolDefaultTimeout,
 			})
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			tools = copilottool.NewDisabledExecutor()
 		}
 		copilotHandler := copilothandler.NewHandler(copilotservice.NewService(copilotservice.Config{
 			MaxMessageLength:   cfg.CopilotMaxMessageLength,
