@@ -141,6 +141,47 @@ spec:
                 configMapKeyRef:
                   name: monitor-config
                   key: RATE_LIMIT_WINDOW_SECONDS
+            - name: COPILOT_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: COPILOT_ENABLED
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secret.name | quote }}
+                  key: LLM_API_KEY
+                  optional: true
+            - name: LLM_API_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: LLM_API_URL
+            - name: LLM_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: LLM_MODEL
+            - name: LLM_TIMEOUT_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: LLM_TIMEOUT_SECONDS
+            - name: COPILOT_SESSION_TTL_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: COPILOT_SESSION_TTL_SECONDS
+            - name: COPILOT_MAX_MESSAGE_LENGTH
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: COPILOT_MAX_MESSAGE_LENGTH
+            - name: COPILOT_MAX_SESSION_MESSAGES
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: COPILOT_MAX_SESSION_MESSAGES
             - name: READY_TIMEOUT_SECONDS
               valueFrom:
                 configMapKeyRef:

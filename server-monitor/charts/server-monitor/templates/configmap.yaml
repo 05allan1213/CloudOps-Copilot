@@ -24,6 +24,13 @@ data:
   RATE_LIMIT_ENABLED: {{ .Values.rateLimit.enabled | quote }}
   RATE_LIMIT_REQUESTS: {{ .Values.rateLimit.requests | quote }}
   RATE_LIMIT_WINDOW_SECONDS: {{ .Values.rateLimit.windowSeconds | quote }}
+  COPILOT_ENABLED: {{ .Values.config.copilotEnabled | quote }}
+  LLM_API_URL: {{ .Values.config.llmApiUrl | quote }}
+  LLM_MODEL: {{ .Values.config.llmModel | quote }}
+  LLM_TIMEOUT_SECONDS: {{ .Values.config.llmTimeoutSeconds | quote }}
+  COPILOT_SESSION_TTL_SECONDS: {{ .Values.config.copilotSessionTTLSeconds | quote }}
+  COPILOT_MAX_MESSAGE_LENGTH: {{ .Values.config.copilotMaxMessageLength | quote }}
+  COPILOT_MAX_SESSION_MESSAGES: {{ .Values.config.copilotMaxSessionMessages | quote }}
   GIN_MODE: {{ .Values.config.ginMode | quote }}
   READY_TIMEOUT_SECONDS: {{ .Values.config.readyTimeoutSeconds | quote }}
   REQUEST_TIMEOUT_SECONDS: {{ .Values.config.requestTimeoutSeconds | quote }}

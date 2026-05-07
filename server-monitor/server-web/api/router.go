@@ -104,33 +104,38 @@ func NewRouter(cfg config.Config, promClient *promclient.Client, cacheClient *re
 	protected.GET("/api/v1/alerts/events", handler.AlertEvents)
 	protected.GET("/api/v1/alert-histories", handler.ListAlertHistories)
 
-	copilotCacheService := appcache.NewService(cacheClient, appcache.Options{
-		HostsTTL:     cfg.HostsCacheTTL,
-		DashboardTTL: cfg.DashboardOverviewTTL,
-	})
-	copilotHostService := apphost.NewService(promClient, copilotCacheService, apphost.Options{
-		RequestTimeout: cfg.RequestTimeout,
-		CacheTimeout:   cfg.CacheWriteTimeout,
-	})
-	copilotAlertService := appalert.NewService(cacheClient, appalert.Options{
-		DedupeTTL: cfg.AlertEventDedupeTTL,
-		DB:        dbFromMySQL(mysqlClient),
-		Producer:  alertProducer,
-	})
-	copilotHandler := copilothandler.NewHandler(copilotservice.NewService(copilotservice.Config{
-		Store: copilotsession.NewRedisStore(cacheClient),
-		Tools: copilottool.NewExecutor(copilottool.Options{
-			HostService:  copilotHostService,
-			AlertService: copilotAlertService,
-			PromClient:   promClient,
-			DB:           dbFromMySQL(mysqlClient),
-			Timeout:      cfg.RequestTimeout,
-		}),
-	}))
-	protected.POST("/api/v1/copilot/chat", copilotHandler.Chat)
-	protected.GET("/api/v1/copilot/sessions", copilotHandler.ListSessions)
-	protected.GET("/api/v1/copilot/sessions/:id/messages", copilotHandler.ListMessages)
-	protected.DELETE("/api/v1/copilot/sessions/:id", copilotHandler.DeleteSession)
+	if cfg.CopilotEnabled {
+		copilotCacheService := appcache.NewService(cacheClient, appcache.Options{
+			HostsTTL:     cfg.HostsCacheTTL,
+			DashboardTTL: cfg.DashboardOverviewTTL,
+		})
+		copilotHostService := apphost.NewService(promClient, copilotCacheService, apphost.Options{
+			RequestTimeout: cfg.RequestTimeout,
+			CacheTimeout:   cfg.CacheWriteTimeout,
+		})
+		copilotAlertService := appalert.NewService(cacheClient, appalert.Options{
+			DedupeTTL: cfg.AlertEventDedupeTTL,
+			DB:        dbFromMySQL(mysqlClient),
+			Producer:  alertProducer,
+		})
+		copilotHandler := copilothandler.NewHandler(copilotservice.NewService(copilotservice.Config{
+			MaxMessageLength:   cfg.CopilotMaxMessageLength,
+			SessionTTL:         cfg.CopilotSessionTTL,
+			MaxSessionMessages: cfg.CopilotMaxSessionMessages,
+			Store:              copilotsession.NewRedisStore(cacheClient),
+			Tools: copilottool.NewExecutor(copilottool.Options{
+				HostService:  copilotHostService,
+				AlertService: copilotAlertService,
+				PromClient:   promClient,
+				DB:           dbFromMySQL(mysqlClient),
+				Timeout:      cfg.RequestTimeout,
+			}),
+		}))
+		protected.POST("/api/v1/copilot/chat", copilotHandler.Chat)
+		protected.GET("/api/v1/copilot/sessions", copilotHandler.ListSessions)
+		protected.GET("/api/v1/copilot/sessions/:id/messages", copilotHandler.ListMessages)
+		protected.DELETE("/api/v1/copilot/sessions/:id", copilotHandler.DeleteSession)
+	}
 
 	wsGroup := router.Group("")
 	if cfg.AuthEnabled {

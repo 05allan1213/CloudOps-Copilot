@@ -107,6 +107,39 @@ type Config struct {
 	// RateLimit 限流配置
 	RateLimit RateLimitConfig
 
+	// CopilotEnabled 是否启用 Copilot API
+	// 默认值：true
+	CopilotEnabled bool
+
+	// LLMAPIKey LLM API Key，用于后续 LLM 兜底
+	// 默认值：空（禁用 LLM 调用）
+	// 敏感：是
+	LLMAPIKey string
+
+	// LLMAPIURL OpenAI 兼容 Chat Completions 地址
+	// 默认值：https://api.deepseek.com/v1/chat/completions
+	LLMAPIURL string
+
+	// LLMModel LLM 模型名称
+	// 默认值：deepseek-chat
+	LLMModel string
+
+	// LLMTimeout LLM 请求超时时间
+	// 默认值：60s
+	LLMTimeout time.Duration
+
+	// CopilotSessionTTL Copilot Redis 会话 TTL
+	// 默认值：7200s（2 小时）
+	CopilotSessionTTL time.Duration
+
+	// CopilotMaxMessageLength Copilot 单条消息最大字符数
+	// 默认值：2000
+	CopilotMaxMessageLength int
+
+	// CopilotMaxSessionMessages Copilot 单会话保留消息数
+	// 默认值：50
+	CopilotMaxSessionMessages int
+
 	// RedisAddr Redis 连接地址，格式为 host:port
 	// 默认值：空（禁用 Redis）
 	RedisAddr string
@@ -262,31 +295,39 @@ func Load() Config {
 			Window:           configutil.DurationSeconds("RATE_LIMIT_WINDOW_SECONDS", 60),
 			OperationTimeout: configutil.DurationMilliseconds("RATE_LIMIT_OPERATION_TIMEOUT_MILLISECONDS", 500),
 		},
-		RedisAddr:            configutil.String("REDIS_ADDR", ""),
-		RedisPassword:        configutil.String("REDIS_PASSWORD", ""),
-		RedisDB:              configutil.NonNegativeInt("REDIS_DB", 0),
-		RedisStartupTimeout:  configutil.DurationSeconds("REDIS_STARTUP_TIMEOUT_SECONDS", 5),
-		RedisDialTimeout:     configutil.DurationSeconds("REDIS_DIAL_TIMEOUT_SECONDS", 5),
-		RedisReadTimeout:     configutil.DurationSeconds("REDIS_READ_TIMEOUT_SECONDS", 3),
-		RedisWriteTimeout:    configutil.DurationSeconds("REDIS_WRITE_TIMEOUT_SECONDS", 3),
-		RedisConnMaxLifetime: configutil.DurationSeconds("REDIS_CONN_MAX_LIFETIME_SECONDS", 1800),
-		RedisConnMaxIdleTime: configutil.DurationSeconds("REDIS_CONN_MAX_IDLE_TIME_SECONDS", 300),
-		MySQLHost:            configutil.String("MYSQL_HOST", ""),
-		MySQLPort:            configutil.String("MYSQL_PORT", "3306"),
-		MySQLUser:            configutil.String("MYSQL_USER", ""),
-		MySQLPassword:        configutil.String("MYSQL_PASSWORD", ""),
-		MySQLDatabase:        configutil.String("MYSQL_DATABASE", ""),
-		MySQLStartupTimeout:  configutil.DurationSeconds("MYSQL_STARTUP_TIMEOUT_SECONDS", 5),
-		MySQLPingTimeout:     configutil.DurationSeconds("MYSQL_PING_TIMEOUT_SECONDS", 3),
-		JWTSecret:            configutil.String("JWT_SECRET", ""),
-		JWTExpireHours:       configutil.PositiveInt("JWT_EXPIRE_HOURS", 24),
-		AuthEnabled:          configutil.Bool("AUTH_ENABLED", true),
-		AdminPassword:        configutil.String("ADMIN_PASSWORD", ""),
-		StaticDir:            configutil.String("STATIC_DIR", ""),
-		TraceOTLPEndpoint:    configutil.NonEmptyString("TRACE_OTLP_ENDPOINT", ""),
-		TraceSampleRate:      configutil.FloatRange("TRACE_SAMPLE_RATE", 1.0, 0, 1),
-		KafkaBrokers:         configutil.List("KAFKA_BROKERS"),
-		WSMaxConnections:     configutil.PositiveInt("WS_MAX_CONNECTIONS", 1000),
+		CopilotEnabled:            configutil.Bool("COPILOT_ENABLED", true),
+		LLMAPIKey:                 configutil.String("LLM_API_KEY", ""),
+		LLMAPIURL:                 configutil.String("LLM_API_URL", "https://api.deepseek.com/v1/chat/completions"),
+		LLMModel:                  configutil.String("LLM_MODEL", "deepseek-chat"),
+		LLMTimeout:                configutil.DurationSeconds("LLM_TIMEOUT_SECONDS", 60),
+		CopilotSessionTTL:         configutil.DurationSeconds("COPILOT_SESSION_TTL_SECONDS", 7200),
+		CopilotMaxMessageLength:   configutil.PositiveInt("COPILOT_MAX_MESSAGE_LENGTH", 2000),
+		CopilotMaxSessionMessages: configutil.PositiveInt("COPILOT_MAX_SESSION_MESSAGES", 50),
+		RedisAddr:                 configutil.String("REDIS_ADDR", ""),
+		RedisPassword:             configutil.String("REDIS_PASSWORD", ""),
+		RedisDB:                   configutil.NonNegativeInt("REDIS_DB", 0),
+		RedisStartupTimeout:       configutil.DurationSeconds("REDIS_STARTUP_TIMEOUT_SECONDS", 5),
+		RedisDialTimeout:          configutil.DurationSeconds("REDIS_DIAL_TIMEOUT_SECONDS", 5),
+		RedisReadTimeout:          configutil.DurationSeconds("REDIS_READ_TIMEOUT_SECONDS", 3),
+		RedisWriteTimeout:         configutil.DurationSeconds("REDIS_WRITE_TIMEOUT_SECONDS", 3),
+		RedisConnMaxLifetime:      configutil.DurationSeconds("REDIS_CONN_MAX_LIFETIME_SECONDS", 1800),
+		RedisConnMaxIdleTime:      configutil.DurationSeconds("REDIS_CONN_MAX_IDLE_TIME_SECONDS", 300),
+		MySQLHost:                 configutil.String("MYSQL_HOST", ""),
+		MySQLPort:                 configutil.String("MYSQL_PORT", "3306"),
+		MySQLUser:                 configutil.String("MYSQL_USER", ""),
+		MySQLPassword:             configutil.String("MYSQL_PASSWORD", ""),
+		MySQLDatabase:             configutil.String("MYSQL_DATABASE", ""),
+		MySQLStartupTimeout:       configutil.DurationSeconds("MYSQL_STARTUP_TIMEOUT_SECONDS", 5),
+		MySQLPingTimeout:          configutil.DurationSeconds("MYSQL_PING_TIMEOUT_SECONDS", 3),
+		JWTSecret:                 configutil.String("JWT_SECRET", ""),
+		JWTExpireHours:            configutil.PositiveInt("JWT_EXPIRE_HOURS", 24),
+		AuthEnabled:               configutil.Bool("AUTH_ENABLED", true),
+		AdminPassword:             configutil.String("ADMIN_PASSWORD", ""),
+		StaticDir:                 configutil.String("STATIC_DIR", ""),
+		TraceOTLPEndpoint:         configutil.NonEmptyString("TRACE_OTLP_ENDPOINT", ""),
+		TraceSampleRate:           configutil.FloatRange("TRACE_SAMPLE_RATE", 1.0, 0, 1),
+		KafkaBrokers:              configutil.List("KAFKA_BROKERS"),
+		WSMaxConnections:          configutil.PositiveInt("WS_MAX_CONNECTIONS", 1000),
 	}
 }
 
@@ -308,6 +349,11 @@ func (c Config) Validate() error {
 	}
 	if c.PrometheusReloadURL != "" {
 		if err := validateHTTPURL("PROMETHEUS_RELOAD_URL", c.PrometheusReloadURL); err != nil {
+			return err
+		}
+	}
+	if c.LLMAPIURL != "" {
+		if err := validateHTTPURL("LLM_API_URL", c.LLMAPIURL); err != nil {
 			return err
 		}
 	}
@@ -337,6 +383,18 @@ func (c Config) Validate() error {
 	}
 	if c.JWTExpireHours <= 0 {
 		return fmt.Errorf("JWT_EXPIRE_HOURS must be positive, got %d", c.JWTExpireHours)
+	}
+	if c.LLMTimeout <= 0 {
+		return fmt.Errorf("LLM_TIMEOUT_SECONDS must be positive, got %v", c.LLMTimeout)
+	}
+	if c.CopilotSessionTTL <= 0 {
+		return fmt.Errorf("COPILOT_SESSION_TTL_SECONDS must be positive, got %v", c.CopilotSessionTTL)
+	}
+	if c.CopilotMaxMessageLength <= 0 {
+		return fmt.Errorf("COPILOT_MAX_MESSAGE_LENGTH must be positive, got %d", c.CopilotMaxMessageLength)
+	}
+	if c.CopilotMaxSessionMessages <= 0 {
+		return fmt.Errorf("COPILOT_MAX_SESSION_MESSAGES must be positive, got %d", c.CopilotMaxSessionMessages)
 	}
 	if c.RateLimit.Enabled {
 		if c.RateLimit.Requests <= 0 {

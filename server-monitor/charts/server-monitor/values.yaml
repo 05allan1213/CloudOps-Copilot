@@ -24,6 +24,13 @@ config:
   mysqlPort: "3306"
   mysqlUser: server_monitor
   mysqlDatabase: server_monitor
+  copilotEnabled: "true"
+  llmApiUrl: https://api.deepseek.com/v1/chat/completions
+  llmModel: deepseek-chat
+  llmTimeoutSeconds: "60"
+  copilotSessionTTLSeconds: "7200"
+  copilotMaxMessageLength: "2000"
+  copilotMaxSessionMessages: "50"
 
 secret:
   create: true
@@ -34,6 +41,7 @@ secret:
   mysqlRootPassword: server-monitor-change-me
   jwtSecret: server-monitor-dev-jwt-secret-change-me
   adminPassword: server-monitor-change-me
+  llmApiKey: ""
   grafanaAdminUser: admin
   grafanaAdminPassword: server-monitor-change-me
 
