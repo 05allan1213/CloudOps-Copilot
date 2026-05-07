@@ -43,6 +43,11 @@ export const router = createRouter({
       component: () => import("../pages/AlertHistoriesPage.vue"),
     },
     {
+      path: "/copilot",
+      name: "copilot",
+      component: () => import("../pages/CopilotPage.vue"),
+    },
+    {
       path: "/settings",
       name: "settings",
       component: () => import("../pages/SettingsPage.vue"),

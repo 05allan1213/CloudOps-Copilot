@@ -251,6 +251,9 @@ onBeforeUnmount(() => {
       <RouterLink to="/alert-histories" class="route-tab" exact-active-class="active">
         历史
       </RouterLink>
+      <RouterLink to="/copilot" class="route-tab" exact-active-class="active">
+        Copilot
+      </RouterLink>
       <RouterLink
         v-if="auth.isAdmin"
         to="/settings"

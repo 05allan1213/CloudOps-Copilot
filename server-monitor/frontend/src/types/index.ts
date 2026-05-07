@@ -138,6 +138,39 @@ export interface HostMetricsResponse {
   metrics: Record<string, RangeSeries[]>;
 }
 
+export interface CopilotToolCall {
+  name: string;
+  status: "success" | "error" | string;
+  error?: string;
+  result?: unknown;
+}
+
+export interface CopilotChatRequest {
+  message: string;
+  session_id?: string;
+}
+
+export interface CopilotChatResponse {
+  session_id: string;
+  reply: string;
+  intent: string;
+  confidence: number;
+  tool_calls: CopilotToolCall[];
+  suggestions: string[];
+}
+
+export interface CopilotSession {
+  id: string;
+  title: string;
+  updated_at: string;
+}
+
+export interface CopilotMessage {
+  role: "user" | "assistant" | string;
+  content: string;
+  created_at: string;
+}
+
 export interface DashboardOverview {
   total_hosts: number;
   healthy_hosts: number;
