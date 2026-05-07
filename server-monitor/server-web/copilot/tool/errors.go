@@ -7,6 +7,10 @@ import (
 
 type ErrorCode string
 
+func (c ErrorCode) String() string {
+	return string(c)
+}
+
 const (
 	ErrorCodeToolNotFound     ErrorCode = "tool_not_found"
 	ErrorCodeInvalidArgs      ErrorCode = "invalid_args"

@@ -2,6 +2,7 @@ package tool
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,7 +10,17 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+	"go.uber.org/zap"
+
+	copilot "server-web/copilot/service"
 )
+
+const defaultRegistryTimeout = 30 * time.Second
 
 type Registry interface {
 	Register(tool Tool) error
@@ -96,21 +107,60 @@ func (r *MemoryRegistry) Execute(ctx context.Context, name string, args json.Raw
 	if err != nil {
 		return ToolResult{Success: false, Error: errorResult(err)}, err
 	}
+	schema := tool.Schema()
+	if err := authorizeTool(ctx, schema); err != nil {
+		result := ToolResult{Success: false, Error: errorResult(err)}
+		r.logToolCall(ctx, schema, normalizedArgs, result, 0)
+		return result, err
+	}
 
 	start := time.Now()
+	ctx, cancel := context.WithTimeout(ctx, toolTimeout(schema))
+	defer cancel()
+	ctx, span := otel.Tracer("server-web/copilot/tool").Start(ctx, "copilot.tool."+normalizeToolName(name))
+	span.SetAttributes(
+		attribute.String("tool.name", schema.Name),
+		attribute.String("tool.risk_level", string(schema.RiskLevel)),
+		attribute.Bool("tool.read_only", schema.ReadOnly),
+	)
+
 	result, err := tool.Run(ctx, normalizedArgs)
 	duration := time.Since(start)
 	if result.Duration == 0 {
 		result.Duration = duration
 	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) && err == nil && result.Error == nil {
+		err = ErrToolTimeout
+		result.Error = NewToolError(ErrorCodeToolTimeout, "", "tool execution timed out", ErrToolTimeout)
+	}
 	if err != nil {
 		result.Success = false
 		if result.Error == nil {
-			result.Error = errorResult(err)
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
+				err = ErrToolTimeout
+				result.Error = NewToolError(ErrorCodeToolTimeout, "", "tool execution timed out", ErrToolTimeout)
+			} else {
+				result.Error = errorResult(err)
+			}
 		}
+		result = sanitizeToolResult(result)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, result.Error.Code.String())
+		span.SetAttributes(attribute.Bool("tool.success", false), attribute.Int64("tool.duration_ms", duration.Milliseconds()))
+		r.logToolCall(ctx, schema, normalizedArgs, result, duration)
+		span.End()
 		return result, err
 	}
 	result.Success = result.Error == nil
+	result = sanitizeToolResult(result)
+	if result.Success {
+		span.SetStatus(codes.Ok, "")
+	} else if result.Error != nil {
+		span.SetStatus(codes.Error, result.Error.Code.String())
+	}
+	span.SetAttributes(attribute.Bool("tool.success", result.Success), attribute.Int64("tool.duration_ms", duration.Milliseconds()))
+	r.logToolCall(ctx, schema, normalizedArgs, result, duration)
+	span.End()
 	return result, nil
 }
 
@@ -149,4 +199,66 @@ func errorResult(err error) *ToolError {
 		return toolErr
 	}
 	return NewToolError(ErrorCodeToolExecution, "", err.Error(), err)
+}
+
+func authorizeTool(ctx context.Context, schema ToolSchema) error {
+	user, ok := copilot.UserFromContext(ctx)
+	role := strings.ToLower(strings.TrimSpace(user.Role))
+	if !ok || role == "" {
+		role = "viewer"
+	}
+	if !schema.ReadOnly {
+		return NewToolError(ErrorCodePermissionDenied, "", "write tools are disabled in phase 2", ErrPermissionDenied)
+	}
+	if role == "viewer" || role == "admin" {
+		return nil
+	}
+	return NewToolError(ErrorCodePermissionDenied, "", "role is not allowed to execute tools", ErrPermissionDenied)
+}
+
+func toolTimeout(schema ToolSchema) time.Duration {
+	if schema.Timeout > 0 {
+		return schema.Timeout
+	}
+	return defaultRegistryTimeout
+}
+
+func sanitizeToolResult(result ToolResult) ToolResult {
+	result.Data = sanitizeResult(result.Data)
+	if result.Metadata != nil {
+		if sanitized, ok := redactSensitive(result.Metadata).(map[string]interface{}); ok {
+			result.Metadata = sanitized
+		}
+	}
+	return result
+}
+
+func (r *MemoryRegistry) logToolCall(ctx context.Context, schema ToolSchema, args json.RawMessage, result ToolResult, duration time.Duration) {
+	errorType := ""
+	if result.Error != nil {
+		errorType = string(result.Error.Code)
+	}
+	zap.L().Info("copilot tool call",
+		zap.String("tool_name", schema.Name),
+		zap.String("risk_level", string(schema.RiskLevel)),
+		zap.Bool("read_only", schema.ReadOnly),
+		zap.String("args_hash", hashArgs(args)),
+		zap.Int64("duration_ms", duration.Milliseconds()),
+		zap.Bool("success", result.Success),
+		zap.String("error_type", errorType),
+		zap.String("trace_id", traceIDFromContext(ctx)),
+	)
+}
+
+func hashArgs(args json.RawMessage) string {
+	sum := sha256.Sum256(args)
+	return fmt.Sprintf("%x", sum[:])
+}
+
+func traceIDFromContext(ctx context.Context) string {
+	spanContext := trace.SpanContextFromContext(ctx)
+	if !spanContext.HasTraceID() {
+		return ""
+	}
+	return spanContext.TraceID().String()
 }

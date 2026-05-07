@@ -42,6 +42,17 @@ type User struct {
 	Role     string
 }
 
+type userContextKey struct{}
+
+func WithUser(ctx context.Context, user User) context.Context {
+	return context.WithValue(ctx, userContextKey{}, user)
+}
+
+func UserFromContext(ctx context.Context) (User, bool) {
+	user, ok := ctx.Value(userContextKey{}).(User)
+	return user, ok
+}
+
 type Service struct {
 	maxMessageLength   int
 	sessionTTL         time.Duration
@@ -145,6 +156,7 @@ func (s *Service) Chat(ctx context.Context, user User, req ChatRequest) (ChatRes
 	meta.ID = sessionID
 	parsed := s.classifier.Classify(message)
 	parsed = s.classifyWithFallback(ctx, message, parsed)
+	ctx = WithUser(ctx, user)
 	toolCalls, toolReply, err := s.executeTools(ctx, parsed)
 	if err != nil {
 		return ChatResponse{}, err
