@@ -288,7 +288,7 @@ func toolResultFromCall(call copilot.ToolCall, reply string) ToolResult {
 	if call.Status == StatusError {
 		return ToolResult{
 			Success:  false,
-			Error:    publicToolError(ErrToolExecution),
+			Error:    toolErrorFromCallError(call.Error),
 			Metadata: replyMetadata(reply),
 		}
 	}
@@ -304,6 +304,80 @@ func replyMetadata(reply string) map[string]interface{} {
 		return nil
 	}
 	return map[string]interface{}{metadataReply: reply}
+}
+
+func toolErrorFromCallError(message string) *ToolError {
+	message = strings.TrimSpace(message)
+	codeText, reason, ok := strings.Cut(message, ":")
+	if !ok {
+		return publicToolError(ErrToolExecution)
+	}
+
+	code := ErrorCode(strings.TrimSpace(codeText))
+	cause := causeForErrorCode(code)
+	if cause == nil {
+		return publicToolError(ErrToolExecution)
+	}
+
+	field, reason := splitToolErrorReason(reason)
+	if reason == "" {
+		return publicToolError(cause)
+	}
+	return NewToolError(code, field, reason, cause)
+}
+
+func causeForErrorCode(code ErrorCode) error {
+	switch code {
+	case ErrorCodeToolNotFound:
+		return ErrToolNotFound
+	case ErrorCodeInvalidArgs:
+		return ErrInvalidArgs
+	case ErrorCodePermissionDenied:
+		return ErrPermissionDenied
+	case ErrorCodeToolTimeout:
+		return ErrToolTimeout
+	case ErrorCodeToolExecution:
+		return ErrToolExecution
+	case ErrorCodeToolUnavailable:
+		return ErrToolUnavailable
+	default:
+		return nil
+	}
+}
+
+func splitToolErrorReason(reason string) (string, string) {
+	reason = strings.TrimSpace(reason)
+	field, detail, ok := strings.Cut(reason, ":")
+	if !ok {
+		return "", reason
+	}
+	field = strings.TrimSpace(field)
+	if !isToolErrorField(field) {
+		return "", reason
+	}
+	return field, strings.TrimSpace(detail)
+}
+
+func isToolErrorField(field string) bool {
+	if field == "" || len(field) > 64 {
+		return false
+	}
+	for _, r := range field {
+		if r >= 'a' && r <= 'z' {
+			continue
+		}
+		if r >= 'A' && r <= 'Z' {
+			continue
+		}
+		if r >= '0' && r <= '9' {
+			continue
+		}
+		if r == '_' || r == '-' || r == '.' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func formatToolNumber(value float64) string {
