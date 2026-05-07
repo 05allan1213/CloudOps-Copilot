@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,6 +32,9 @@ const (
 	ToolPromQueryRange  = "prom.query_range"
 
 	defaultToolTimeout = 5 * time.Second
+
+	defaultAlertEventsCount = int64(20)
+	maxAlertEventsCount     = int64(100)
 )
 
 var (
@@ -184,12 +188,32 @@ func (e *Executor) runAlertEvents(ctx context.Context, entities map[string]strin
 	toolCtx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()
 
-	events, err := e.alertService.AlertEvents(toolCtx, 20, "", appalert.ParseEventSeverityFilter(entities["severity"]))
+	events, err := e.alertService.AlertEvents(
+		toolCtx,
+		parseAlertEventsCount(entities["count"]),
+		appalert.ParseEventFilter(entities["status"]),
+		appalert.ParseEventSeverityFilter(entities["severity"]),
+	)
 	call := buildCall(ToolAlertEvents, events, err)
 	if err != nil {
 		return []copilot.ToolCall{call}, "", nil
 	}
 	return []copilot.ToolCall{call}, fmt.Sprintf("Found %d recent alert events.", len(events)), nil
+}
+
+func parseAlertEventsCount(value string) int64 {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return defaultAlertEventsCount
+	}
+	count, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || count <= 0 {
+		return defaultAlertEventsCount
+	}
+	if count > maxAlertEventsCount {
+		return maxAlertEventsCount
+	}
+	return count
 }
 
 func (e *Executor) runAlertHistory(ctx context.Context, entities map[string]string) ([]copilot.ToolCall, string, error) {

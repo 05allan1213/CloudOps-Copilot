@@ -27,6 +27,11 @@ var (
 	instancePattern = regexp.MustCompile(`(?i)\b([a-z0-9][a-z0-9._-]*(:\d{2,5})?|(?:\d{1,3}\.){3}\d{1,3}(:\d{2,5})?)\b`)
 	windowPattern   = regexp.MustCompile(`(?i)\b(15m|1h|6h|24h)\b`)
 	queryWindowOnly = regexp.MustCompile(`(?i)^(15m|1h|6h|24h|7d)$`)
+	countPatterns   = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\b(?:latest|last|recent)\s+(\d{1,3})\b`),
+		regexp.MustCompile(`(?i)\b(\d{1,3})\s+(?:events?|alerts?|records?)\b`),
+		regexp.MustCompile(`(?i)(?:最近|最新)\s*(\d{1,3})\s*(?:条|个)?`),
+	}
 )
 
 func NewClassifier() *Classifier {
@@ -73,6 +78,9 @@ func extractEntities(original, normalized string) map[string]string {
 	if severity := extractSeverity(normalized); severity != "" {
 		entities["severity"] = severity
 	}
+	if count := extractCount(original); count != "" {
+		entities["count"] = count
+	}
 	if query := extractPromQL(original); query != "" {
 		entities["query"] = query
 	}
@@ -96,6 +104,10 @@ func extractSeverity(normalized string) string {
 
 func extractStatus(normalized string) string {
 	switch {
+	case containsAny(normalized, "firing"):
+		return "firing"
+	case containsAny(normalized, "resolved", "已恢复", "恢复"):
+		return "resolved"
 	case containsAny(normalized, "离线", "offline", "down"):
 		return "down"
 	case containsAny(normalized, "在线", "healthy", "up"):
@@ -103,6 +115,16 @@ func extractStatus(normalized string) string {
 	default:
 		return ""
 	}
+}
+
+func extractCount(original string) string {
+	for _, pattern := range countPatterns {
+		matches := pattern.FindStringSubmatch(original)
+		if len(matches) == 2 {
+			return matches[1]
+		}
+	}
+	return ""
 }
 
 func extractWindow(original, normalized string, hasPromQL bool) string {
