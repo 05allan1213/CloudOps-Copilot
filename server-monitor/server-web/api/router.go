@@ -17,6 +17,7 @@ import (
 	"server-web/config"
 	copilothandler "server-web/copilot/handler"
 	copilotservice "server-web/copilot/service"
+	copilotsession "server-web/copilot/session"
 	"server-web/database"
 	eventbus "server-web/kafka"
 	promclient "server-web/prometheus"
@@ -99,7 +100,9 @@ func NewRouter(cfg config.Config, promClient *promclient.Client, cacheClient *re
 	protected.GET("/api/v1/alerts/events", handler.AlertEvents)
 	protected.GET("/api/v1/alert-histories", handler.ListAlertHistories)
 
-	copilotHandler := copilothandler.NewHandler(copilotservice.NewService(copilotservice.Config{}))
+	copilotHandler := copilothandler.NewHandler(copilotservice.NewService(copilotservice.Config{
+		Store: copilotsession.NewRedisStore(cacheClient),
+	}))
 	protected.POST("/api/v1/copilot/chat", copilotHandler.Chat)
 	protected.GET("/api/v1/copilot/sessions", copilotHandler.ListSessions)
 	protected.GET("/api/v1/copilot/sessions/:id/messages", copilotHandler.ListMessages)

@@ -133,6 +133,97 @@ func (c *Client) HGetAll(ctx context.Context, key string) (map[string]string, er
 	return c.client.HGetAll(ctx, key).Result()
 }
 
+func (c *Client) RPush(ctx context.Context, key string, values ...[]byte) error {
+	if !c.Enabled() {
+		return errors.New("redis is not enabled")
+	}
+	if len(values) == 0 {
+		return nil
+	}
+
+	args := make([]interface{}, 0, len(values))
+	for _, value := range values {
+		args = append(args, string(value))
+	}
+	return c.client.RPush(ctx, key, args...).Err()
+}
+
+func (c *Client) LRange(ctx context.Context, key string, start, stop int64) ([]string, error) {
+	if !c.Enabled() {
+		return nil, errors.New("redis is not enabled")
+	}
+
+	return c.client.LRange(ctx, key, start, stop).Result()
+}
+
+func (c *Client) LTrim(ctx context.Context, key string, start, stop int64) error {
+	if !c.Enabled() {
+		return errors.New("redis is not enabled")
+	}
+
+	return c.client.LTrim(ctx, key, start, stop).Err()
+}
+
+func (c *Client) Expire(ctx context.Context, key string, ttl time.Duration) error {
+	if !c.Enabled() {
+		return errors.New("redis is not enabled")
+	}
+	if ttl <= 0 {
+		return errors.New("ttl must be positive")
+	}
+
+	return c.client.Expire(ctx, key, ttl).Err()
+}
+
+func (c *Client) Del(ctx context.Context, keys ...string) error {
+	if !c.Enabled() {
+		return errors.New("redis is not enabled")
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+
+	return c.client.Del(ctx, keys...).Err()
+}
+
+func (c *Client) SAdd(ctx context.Context, key string, members ...string) error {
+	if !c.Enabled() {
+		return errors.New("redis is not enabled")
+	}
+	if len(members) == 0 {
+		return nil
+	}
+
+	args := make([]interface{}, 0, len(members))
+	for _, member := range members {
+		args = append(args, member)
+	}
+	return c.client.SAdd(ctx, key, args...).Err()
+}
+
+func (c *Client) SMembers(ctx context.Context, key string) ([]string, error) {
+	if !c.Enabled() {
+		return nil, errors.New("redis is not enabled")
+	}
+
+	return c.client.SMembers(ctx, key).Result()
+}
+
+func (c *Client) SRem(ctx context.Context, key string, members ...string) error {
+	if !c.Enabled() {
+		return errors.New("redis is not enabled")
+	}
+	if len(members) == 0 {
+		return nil
+	}
+
+	args := make([]interface{}, 0, len(members))
+	for _, member := range members {
+		args = append(args, member)
+	}
+	return c.client.SRem(ctx, key, args...).Err()
+}
+
 func (c *Client) AllowSlidingWindow(ctx context.Context, key string, limit int64, window time.Duration, now time.Time) (bool, int64, error) {
 	if !c.Enabled() {
 		return false, 0, errors.New("redis is not enabled")
