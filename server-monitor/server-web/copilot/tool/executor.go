@@ -331,7 +331,7 @@ func validatePromQueryRange(query string, start, end time.Time, step time.Durati
 
 func containsDangerousQuery(query string) bool {
 	normalized := strings.ToLower(query)
-	for _, pattern := range []string{"password", "token", "secret", "authorization", "go_memstats", "process_"} {
+	for _, pattern := range []string{"password", "token", "secret", "authorization", "go_memstats", "process_cmdline"} {
 		if strings.Contains(normalized, pattern) {
 			return true
 		}
