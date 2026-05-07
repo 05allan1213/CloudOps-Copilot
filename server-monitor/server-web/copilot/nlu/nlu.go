@@ -322,7 +322,8 @@ func containsAny(value string, keywords ...string) bool {
 
 func isCommonKeyword(value string) bool {
 	switch strings.ToLower(value) {
-	case "cpu", "memory", "disk", "load", "network", "metric", "metrics", "alert", "alerts", "rule", "rules", "host", "hosts", "node", "nodes", "event", "events", "info", "warning", "critical", "firing", "resolved", "enabled", "disabled", "promql", "alert_name", "alertname", "page", "page_size", "count", "search", "sort", "risk", "group", "group_id", "high_cpu", "high_memory", "cpu_desc", "memory_desc":
+	case "list", "show", "get", "current", "latest", "recent", "last",
+		"cpu", "memory", "disk", "load", "network", "metric", "metrics", "alert", "alerts", "rule", "rules", "host", "hosts", "node", "nodes", "event", "events", "history", "records", "query", "trend", "info", "warning", "critical", "firing", "resolved", "enabled", "disabled", "promql", "alert_name", "alertname", "page", "page_size", "count", "search", "sort", "risk", "group", "group_id", "high_cpu", "high_memory", "cpu_desc", "memory_desc":
 		return true
 	default:
 		return false

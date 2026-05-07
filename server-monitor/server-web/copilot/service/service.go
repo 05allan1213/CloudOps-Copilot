@@ -186,7 +186,7 @@ func (s *Service) Chat(ctx context.Context, user User, req ChatRequest) (ChatRes
 	if err != nil {
 		return ChatResponse{}, err
 	}
-	reply := buildReply(parsed, toolReply)
+	reply := buildReply(parsed, toolReply, toolCalls)
 
 	if err := s.store.AppendMessages(ctx, meta, []session.Message{
 		{
@@ -319,9 +319,14 @@ func (s *Service) classifyWithFallback(ctx context.Context, message string, pars
 	return llmResult
 }
 
-func buildReply(result nlu.Result, toolReply string) string {
+func buildReply(result nlu.Result, toolReply string, toolCalls []ToolCall) string {
 	if toolReply != "" {
 		return toolReply
+	}
+	for _, call := range toolCalls {
+		if call.Status == "error" && call.Error != "" {
+			return fmt.Sprintf("Tool %s failed: %s", call.Name, call.Error)
+		}
 	}
 	switch result.Intent {
 	case nlu.IntentAlertQuery:
