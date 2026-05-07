@@ -17,12 +17,13 @@ const (
 )
 
 var (
-	ErrToolNotFound     = errors.New("tool not found")
-	ErrInvalidArgs      = errors.New("invalid tool arguments")
-	ErrPermissionDenied = errors.New("tool permission denied")
-	ErrToolTimeout      = errors.New("tool timeout")
-	ErrToolExecution    = errors.New("tool execution failed")
-	ErrToolUnavailable  = errors.New("copilot tool unavailable")
+	ErrToolNotFound          = errors.New("tool not found")
+	ErrToolAlreadyRegistered = errors.New("tool already registered")
+	ErrInvalidArgs           = errors.New("invalid tool arguments")
+	ErrPermissionDenied      = errors.New("tool permission denied")
+	ErrToolTimeout           = errors.New("tool timeout")
+	ErrToolExecution         = errors.New("tool execution failed")
+	ErrToolUnavailable       = errors.New("copilot tool unavailable")
 )
 
 type ToolError struct {
