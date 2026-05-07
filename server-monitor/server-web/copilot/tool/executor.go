@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -38,6 +39,11 @@ const (
 	defaultAlertHistoryPage     = 1
 	defaultAlertHistoryPageSize = 20
 	maxAlertHistoryPageSize     = 100
+)
+
+var (
+	promOffsetPattern   = regexp.MustCompile(`(?i)\boffset\s+([0-9]+)\s*([smhdwy])\b`)
+	promSubqueryPattern = regexp.MustCompile(`\[[^\]]+:[^\]]*\]`)
 )
 
 type HostService interface {
@@ -464,12 +470,58 @@ func validatePromQueryRange(query string, start, end time.Time, step time.Durati
 
 func containsDangerousQuery(query string) bool {
 	normalized := strings.ToLower(query)
+	if strings.Contains(normalized, "__internal_") {
+		return true
+	}
+	if promSubqueryPattern.MatchString(query) {
+		return true
+	}
+	if hasOffsetOverLimit(normalized, 7*24*time.Hour) {
+		return true
+	}
 	for _, pattern := range []string{"password", "token", "secret", "authorization", "go_memstats", "process_cmdline"} {
 		if strings.Contains(normalized, pattern) {
 			return true
 		}
 	}
 	return false
+}
+
+func hasOffsetOverLimit(query string, limit time.Duration) bool {
+	matches := promOffsetPattern.FindAllStringSubmatch(query, -1)
+	for _, match := range matches {
+		if len(match) != 3 {
+			continue
+		}
+		value, err := strconv.ParseInt(match[1], 10, 64)
+		if err != nil {
+			return true
+		}
+		duration, ok := promOffsetDuration(value, match[2])
+		if !ok || duration > limit {
+			return true
+		}
+	}
+	return false
+}
+
+func promOffsetDuration(value int64, unit string) (time.Duration, bool) {
+	switch strings.ToLower(unit) {
+	case "s":
+		return time.Duration(value) * time.Second, true
+	case "m":
+		return time.Duration(value) * time.Minute, true
+	case "h":
+		return time.Duration(value) * time.Hour, true
+	case "d":
+		return time.Duration(value) * 24 * time.Hour, true
+	case "w":
+		return time.Duration(value) * 7 * 24 * time.Hour, true
+	case "y":
+		return time.Duration(value) * 365 * 24 * time.Hour, true
+	default:
+		return 0, false
+	}
 }
 
 func sanitizeResult(result interface{}) interface{} {

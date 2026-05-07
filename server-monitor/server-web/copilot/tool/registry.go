@@ -75,11 +75,12 @@ func (r *MemoryRegistry) List() []ToolSchema {
 	return schemas
 }
 
-func (r *MemoryRegistry) Validate(name string, _ json.RawMessage) error {
-	if _, ok := r.get(name); !ok {
+func (r *MemoryRegistry) Validate(name string, args json.RawMessage) error {
+	tool, ok := r.get(name)
+	if !ok {
 		return NewToolNotFoundError(name)
 	}
-	return nil
+	return ValidateArgs(tool.Schema(), args)
 }
 
 func (r *MemoryRegistry) Execute(ctx context.Context, name string, args json.RawMessage) (ToolResult, error) {
@@ -91,8 +92,13 @@ func (r *MemoryRegistry) Execute(ctx context.Context, name string, args json.Raw
 		return ToolResult{Success: false, Error: errorResult(err)}, err
 	}
 
+	normalizedArgs, err := NormalizeArgs(tool.Schema(), args)
+	if err != nil {
+		return ToolResult{Success: false, Error: errorResult(err)}, err
+	}
+
 	start := time.Now()
-	result, err := tool.Run(ctx, args)
+	result, err := tool.Run(ctx, normalizedArgs)
 	duration := time.Since(start)
 	if result.Duration == 0 {
 		result.Duration = duration
