@@ -92,6 +92,10 @@ func (DisabledExecutor) Execute(context.Context, nlu.Result) ([]copilot.ToolCall
 	return nil, "", ErrToolUnavailable
 }
 
+func (DisabledExecutor) ToolSchemas() []copilot.ToolSchema {
+	return []copilot.ToolSchema{}
+}
+
 type historyResult struct {
 	Items    []model.AlertHistory `json:"items"`
 	Total    int64                `json:"total"`
@@ -148,6 +152,43 @@ func (e *Executor) Execute(ctx context.Context, result nlu.Result) ([]copilot.To
 		return []copilot.ToolCall{}, "", nil
 	}
 	return e.executeTool(ctx, name, args)
+}
+
+func (e *Executor) ToolSchemas() []copilot.ToolSchema {
+	if e.registry == nil {
+		return []copilot.ToolSchema{}
+	}
+	schemas := e.registry.List()
+	result := make([]copilot.ToolSchema, 0, len(schemas))
+	for _, schema := range schemas {
+		result = append(result, toServiceToolSchema(schema))
+	}
+	return result
+}
+
+func toServiceToolSchema(schema ToolSchema) copilot.ToolSchema {
+	params := make([]copilot.ToolParamSchema, 0, len(schema.Parameters))
+	for _, param := range schema.Parameters {
+		params = append(params, copilot.ToolParamSchema{
+			Name:        param.Name,
+			Type:        string(param.Type),
+			Required:    param.Required,
+			Description: param.Description,
+			Enum:        append([]string(nil), param.Enum...),
+			Default:     param.Default,
+			Min:         param.Min,
+			Max:         param.Max,
+			Pattern:     param.Pattern,
+		})
+	}
+	return copilot.ToolSchema{
+		Name:        schema.Name,
+		Description: schema.Description,
+		Parameters:  params,
+		RiskLevel:   string(schema.RiskLevel),
+		ReadOnly:    schema.ReadOnly,
+		Timeout:     schema.Timeout,
+	}
 }
 
 func (e *Executor) planToolCall(result nlu.Result) (string, json.RawMessage, bool) {

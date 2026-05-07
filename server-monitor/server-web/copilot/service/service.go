@@ -67,6 +67,10 @@ type ToolExecutor interface {
 	Execute(ctx context.Context, result nlu.Result) ([]ToolCall, string, error)
 }
 
+type ToolSchemaLister interface {
+	ToolSchemas() []ToolSchema
+}
+
 type LLMClassifier interface {
 	Classify(ctx context.Context, message string) (nlu.Result, error)
 }
@@ -90,6 +94,27 @@ type ToolCall struct {
 	Status string      `json:"status"`
 	Error  string      `json:"error,omitempty"`
 	Result interface{} `json:"result,omitempty"`
+}
+
+type ToolSchema struct {
+	Name        string            `json:"name"`
+	Description string            `json:"description"`
+	Parameters  []ToolParamSchema `json:"parameters"`
+	RiskLevel   string            `json:"risk_level"`
+	ReadOnly    bool              `json:"read_only"`
+	Timeout     time.Duration     `json:"timeout"`
+}
+
+type ToolParamSchema struct {
+	Name        string      `json:"name"`
+	Type        string      `json:"type"`
+	Required    bool        `json:"required"`
+	Description string      `json:"description,omitempty"`
+	Enum        []string    `json:"enum,omitempty"`
+	Default     interface{} `json:"default,omitempty"`
+	Min         *float64    `json:"min,omitempty"`
+	Max         *float64    `json:"max,omitempty"`
+	Pattern     string      `json:"pattern,omitempty"`
 }
 
 type SessionSummary = session.Summary
@@ -215,6 +240,18 @@ func (s *Service) DeleteSession(ctx context.Context, user User, sessionID string
 		return err
 	}
 	return s.store.DeleteSession(ctx, user.ID, sessionID)
+}
+
+func (s *Service) ToolSchemas() []ToolSchema {
+	lister, ok := s.tools.(ToolSchemaLister)
+	if !ok || lister == nil {
+		return []ToolSchema{}
+	}
+	schemas := lister.ToolSchemas()
+	if schemas == nil {
+		return []ToolSchema{}
+	}
+	return schemas
 }
 
 func (s *Service) requireOwnedSession(ctx context.Context, user User, sessionID string) (session.Meta, error) {

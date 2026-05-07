@@ -151,6 +151,7 @@ func NewRouter(cfg config.Config, promClient *promclient.Client, cacheClient *re
 			}),
 			Tools: tools,
 		}))
+		protected.GET("/api/v1/copilot/tools", copilotHandler.ListTools)
 		protected.POST("/api/v1/copilot/chat", copilotHandler.Chat)
 		protected.GET("/api/v1/copilot/sessions", copilotHandler.ListSessions)
 		protected.GET("/api/v1/copilot/sessions/:id/messages", copilotHandler.ListMessages)

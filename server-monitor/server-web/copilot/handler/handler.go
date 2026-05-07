@@ -88,6 +88,13 @@ func (h *Handler) DeleteSession(c *gin.Context) {
 	})
 }
 
+func (h *Handler) ListTools(c *gin.Context) {
+	c.JSON(http.StatusOK, response{
+		Status: "success",
+		Data:   h.service.ToolSchemas(),
+	})
+}
+
 func currentUser(c *gin.Context) copilot.User {
 	userID, _ := c.Get(middleware.ContextUserID)
 	username, _ := c.Get(middleware.ContextUsername)
