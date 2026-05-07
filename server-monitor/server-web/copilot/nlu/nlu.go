@@ -26,6 +26,7 @@ type Classifier struct{}
 var (
 	instancePattern = regexp.MustCompile(`(?i)\b([a-z0-9][a-z0-9._-]*(:\d{2,5})?|(?:\d{1,3}\.){3}\d{1,3}(:\d{2,5})?)\b`)
 	windowPattern   = regexp.MustCompile(`(?i)\b(15m|1h|6h|24h)\b`)
+	queryWindowOnly = regexp.MustCompile(`(?i)^(15m|1h|6h|24h|7d)$`)
 )
 
 func NewClassifier() *Classifier {
@@ -72,11 +73,11 @@ func extractEntities(original, normalized string) map[string]string {
 	if severity := extractSeverity(normalized); severity != "" {
 		entities["severity"] = severity
 	}
-	if window := extractWindow(original, normalized); window != "" {
-		entities["window"] = window
-	}
 	if query := extractPromQL(original); query != "" {
 		entities["query"] = query
+	}
+	if window := extractWindow(original, normalized, entities["query"] != ""); window != "" {
+		entities["window"] = window
 	}
 	if instance := extractInstance(original); instance != "" && !isCommonKeyword(instance) {
 		entities["instance"] = instance
@@ -104,7 +105,12 @@ func extractStatus(normalized string) string {
 	}
 }
 
-func extractWindow(original, normalized string) string {
+func extractWindow(original, normalized string, hasPromQL bool) string {
+	if hasPromQL {
+		if window := extractPromQLWindow(original); window != "" {
+			return window
+		}
+	}
 	if match := windowPattern.FindString(original); match != "" {
 		return strings.ToLower(match)
 	}
@@ -136,7 +142,40 @@ func extractPromQL(original string) string {
 			continue
 		}
 		query := strings.TrimSpace(original[index+len(marker):])
-		return strings.Trim(query, "` ")
+		return trimTrailingQueryWindow(strings.Trim(query, "` "))
+	}
+	return ""
+}
+
+func extractPromQLWindow(original string) string {
+	query := rawPromQLText(original)
+	fields := strings.Fields(strings.Trim(query, "` "))
+	if len(fields) == 0 {
+		return ""
+	}
+	if queryWindowOnly.MatchString(fields[len(fields)-1]) {
+		return strings.ToLower(fields[len(fields)-1])
+	}
+	return ""
+}
+
+func trimTrailingQueryWindow(query string) string {
+	fields := strings.Fields(query)
+	if len(fields) <= 1 {
+		return query
+	}
+	if !queryWindowOnly.MatchString(fields[len(fields)-1]) {
+		return query
+	}
+	return strings.TrimSpace(strings.TrimSuffix(query, fields[len(fields)-1]))
+}
+
+func rawPromQLText(original string) string {
+	for _, marker := range []string{"promql:", "PromQL:", "query=", "QUERY="} {
+		index := strings.Index(original, marker)
+		if index >= 0 {
+			return strings.TrimSpace(original[index+len(marker):])
+		}
 	}
 	return ""
 }

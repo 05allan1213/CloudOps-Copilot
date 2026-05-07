@@ -96,7 +96,9 @@ services:
   # server-probe 监控探针
   # ------------------------------------------
   server-probe:
-    build: ./server-probe
+    build:
+      context: .
+      dockerfile: server-probe/Dockerfile
     restart: unless-stopped
     ports:
       - "127.0.0.1:9090:9090"
@@ -243,7 +245,9 @@ services:
   # alert-service 告警事件消费与状态管理
   # ------------------------------------------
   alert-service:
-    build: ./alert-service
+    build:
+      context: .
+      dockerfile: alert-service/Dockerfile
     restart: unless-stopped
     ports:
       - "127.0.0.1:8081:8081"
