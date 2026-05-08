@@ -60,6 +60,7 @@ func (s *Service) Trigger(ctx context.Context, user User, req Request) (ReportRe
 	if s == nil || s.repo == nil || s.resolver == nil {
 		return ReportResponse{}, ErrUnavailable
 	}
+	ctx = WithUser(ctx, user)
 
 	report := model.DiagnosisReport{
 		Status:                 StatusPending,

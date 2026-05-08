@@ -267,13 +267,26 @@ func dbFromMySQL(mysqlClient *database.MySQL) *gorm.DB {
 	return mysqlClient.DB()
 }
 
+type copilotToolExecutor interface {
+	ExecuteTool(ctx context.Context, name string, args json.RawMessage) (copilottool.ToolResult, error)
+}
+
 type diagnosisToolRunner struct {
-	executor *copilottool.Executor
+	executor copilotToolExecutor
 }
 
 func (r diagnosisToolRunner) ExecuteTool(ctx context.Context, name string, args json.RawMessage) (copilotdiagnosis.ToolResult, error) {
 	if r.executor == nil {
 		return copilotdiagnosis.ToolResult{Success: false, Error: "tool registry unavailable"}, nil
+	}
+	if _, ok := copilotservice.UserFromContext(ctx); !ok {
+		if user, ok := copilotdiagnosis.UserFromContext(ctx); ok {
+			ctx = copilotservice.WithUser(ctx, copilotservice.User{
+				ID:       user.ID,
+				Username: user.Username,
+				Role:     user.Role,
+			})
+		}
 	}
 	result, err := r.executor.ExecuteTool(ctx, name, args)
 	errorMessage := ""

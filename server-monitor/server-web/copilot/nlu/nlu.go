@@ -50,6 +50,15 @@ var (
 		regexp.MustCompile(`(?i)\b([a-z][a-z0-9_.:-]*(?:cpu|memory|disk|load|network)[a-z0-9_.:-]*)\s+alerts?\s+history\b`),
 		regexp.MustCompile(`(?i)\b(cpu|memory|disk|load|network)\s+alerts?\s+history\b`),
 		regexp.MustCompile(`(?i)(cpu|内存|memory|磁盘|disk|负载|load|网络|network)\s*告警\s*历史`),
+		regexp.MustCompile(`(?i)(?:^|[\s的])([a-z][a-z0-9_.:-]{1,127})\s*告警`),
+	}
+	fingerprintPatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\bfingerprint\s*(?:[:=]|为|is)?\s*([a-z0-9][a-z0-9_.:-]{2,127})\b`),
+	}
+	alertHistoryIDPatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\balert[_ -]?history[_ -]?id\s*(?:[:=]|为|is)?\s*(\d{1,20})\b`),
+		regexp.MustCompile(`(?i)\bhistory[_ -]?id\s*(?:[:=]|为|is)?\s*(\d{1,20})\b`),
+		regexp.MustCompile(`(?i)历史记录\s*(?:id)?\s*(?:[:=]|为)?\s*(\d{1,20})`),
 	}
 	searchPatterns = []*regexp.Regexp{
 		regexp.MustCompile(`(?i)\bsearch\s*[:=]\s*([a-z0-9_.:-]+)\b`),
@@ -128,6 +137,12 @@ func extractEntities(original, normalized string) map[string]string {
 	if alertName := extractAlertName(original); alertName != "" {
 		entities["alert_name"] = alertName
 	}
+	if fingerprint := extractFirstPattern(original, fingerprintPatterns); fingerprint != "" {
+		entities["fingerprint"] = fingerprint
+	}
+	if alertHistoryID := extractFirstPattern(original, alertHistoryIDPatterns); alertHistoryID != "" {
+		entities["alert_history_id"] = alertHistoryID
+	}
 	if search := extractFirstPattern(original, searchPatterns); search != "" {
 		entities["search"] = search
 	}
@@ -149,7 +164,7 @@ func extractEntities(original, normalized string) map[string]string {
 	if window := extractWindow(original, normalized, entities["query"] != ""); window != "" {
 		entities["window"] = window
 	}
-	if instance := extractInstance(original, entities["alert_name"], entities["page"], entities["page_size"], entities["count"], entities["group_id"], entities["search"]); instance != "" {
+	if instance := extractInstance(original, entities["alert_name"], entities["fingerprint"], entities["alert_history_id"], entities["page"], entities["page_size"], entities["count"], entities["group_id"], entities["search"]); instance != "" {
 		entities["instance"] = instance
 	}
 	return entities
@@ -329,6 +344,10 @@ func isCommonKeyword(value string) bool {
 	switch strings.ToLower(value) {
 	case "list", "show", "get", "current", "latest", "recent", "last",
 		"cpu", "memory", "disk", "load", "network", "metric", "metrics", "alert", "alerts", "rule", "rules", "host", "hosts", "node", "nodes", "event", "events", "history", "records", "query", "trend", "info", "warning", "critical", "firing", "resolved", "enabled", "disabled", "promql", "alert_name", "alertname", "page", "page_size", "count", "search", "sort", "risk", "group", "group_id", "high_cpu", "high_memory", "cpu_desc", "memory_desc":
+		return true
+	case "fingerprint":
+		return true
+	case "alert_history_id", "history_id":
 		return true
 	default:
 		return false
