@@ -15,6 +15,7 @@ import (
 )
 
 const defaultMaxResponseBytes int64 = 64 * 1024
+const maxErrorResponseBytes int64 = 4 * 1024
 
 var (
 	ErrDisabled        = errors.New("llm classifier disabled")
@@ -125,7 +126,7 @@ func (c *Client) Generate(ctx context.Context, systemPrompt, userPrompt string) 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return "", fmt.Errorf("llm returned status %d", resp.StatusCode)
+		return "", fmt.Errorf("llm returned status %d%s", resp.StatusCode, responseBodyDetail(resp.Body))
 	}
 
 	var decoded chatResponse
@@ -137,6 +138,21 @@ func (c *Client) Generate(ctx context.Context, systemPrompt, userPrompt string) 
 		return "", ErrInvalidResponse
 	}
 	return decoded.Choices[0].Message.Content, nil
+}
+
+func responseBodyDetail(body io.Reader) string {
+	if body == nil {
+		return ""
+	}
+	raw, err := io.ReadAll(io.LimitReader(body, maxErrorResponseBytes))
+	if err != nil {
+		return ""
+	}
+	detail := strings.TrimSpace(string(raw))
+	if detail == "" {
+		return ""
+	}
+	return ": " + strings.Join(strings.Fields(detail), " ")
 }
 
 func (c *Client) Model() string {
