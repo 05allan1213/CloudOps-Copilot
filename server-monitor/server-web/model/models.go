@@ -8,5 +8,6 @@ func AllModels() []interface{} {
 		&AlertRule{},
 		&NotificationChannel{},
 		&AlertHistory{},
+		&DiagnosisReport{},
 	}
 }

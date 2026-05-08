@@ -86,8 +86,16 @@ func NewClient(options Options) *Client {
 }
 
 func (c *Client) Classify(ctx context.Context, message string) (nlu.Result, error) {
+	content, err := c.Generate(ctx, systemPrompt(), strings.TrimSpace(message))
+	if err != nil {
+		return nlu.Result{}, err
+	}
+	return parseIntentPayload(content)
+}
+
+func (c *Client) Generate(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
 	if c == nil || c.apiKey == "" || c.apiURL == "" || c.model == "" {
-		return nlu.Result{}, ErrDisabled
+		return "", ErrDisabled
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
@@ -95,40 +103,47 @@ func (c *Client) Classify(ctx context.Context, message string) (nlu.Result, erro
 	body, err := json.Marshal(chatRequest{
 		Model: c.model,
 		Messages: []chatMessage{
-			{Role: "system", Content: systemPrompt()},
-			{Role: "user", Content: strings.TrimSpace(message)},
+			{Role: "system", Content: strings.TrimSpace(systemPrompt)},
+			{Role: "user", Content: strings.TrimSpace(userPrompt)},
 		},
 		Temperature: 0,
 	})
 	if err != nil {
-		return nlu.Result{}, fmt.Errorf("marshal llm request: %w", err)
+		return "", fmt.Errorf("marshal llm request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.apiURL, bytes.NewReader(body))
 	if err != nil {
-		return nlu.Result{}, fmt.Errorf("create llm request: %w", err)
+		return "", fmt.Errorf("create llm request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nlu.Result{}, fmt.Errorf("call llm classifier: %w", err)
+		return "", fmt.Errorf("call llm: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nlu.Result{}, fmt.Errorf("llm classifier returned status %d", resp.StatusCode)
+		return "", fmt.Errorf("llm returned status %d", resp.StatusCode)
 	}
 
 	var decoded chatResponse
 	limited := io.LimitReader(resp.Body, c.maxResponseBytes)
 	if err := json.NewDecoder(limited).Decode(&decoded); err != nil {
-		return nlu.Result{}, fmt.Errorf("decode llm response: %w", err)
+		return "", fmt.Errorf("decode llm response: %w", err)
 	}
 	if len(decoded.Choices) == 0 {
-		return nlu.Result{}, ErrInvalidResponse
+		return "", ErrInvalidResponse
 	}
-	return parseIntentPayload(decoded.Choices[0].Message.Content)
+	return decoded.Choices[0].Message.Content, nil
+}
+
+func (c *Client) Model() string {
+	if c == nil {
+		return ""
+	}
+	return c.model
 }
 
 func parseIntentPayload(content string) (nlu.Result, error) {
@@ -175,6 +190,7 @@ func isAllowedIntent(intent string) bool {
 		nlu.IntentAlertHistoryQuery,
 		nlu.IntentHostQuery,
 		nlu.IntentMetricQuery,
+		nlu.IntentDiagnosisRequest,
 		nlu.IntentGeneralChat,
 		nlu.IntentUnknown:
 		return true
@@ -185,7 +201,7 @@ func isAllowedIntent(intent string) bool {
 
 func isAllowedEntity(key string) bool {
 	switch key {
-	case "instance", "severity", "status", "window", "query", "count", "alert_name", "page", "page_size", "search", "sort", "risk", "group_id":
+	case "instance", "severity", "status", "window", "query", "count", "alert_name", "fingerprint", "alert_history_id", "page", "page_size", "search", "sort", "risk", "group_id":
 		return true
 	default:
 		return false
@@ -196,8 +212,8 @@ func systemPrompt() string {
 	return strings.Join([]string{
 		"You classify CloudOps Copilot user messages.",
 		"Return JSON only, without markdown.",
-		"Allowed intents: alert_query, alert_event_query, alert_history_query, host_query, metric_query, general_chat, unknown.",
-		"Allowed entities: instance, severity, status, window, query, count, alert_name, page, page_size, search, sort, risk, group_id.",
+		"Allowed intents: alert_query, alert_event_query, alert_history_query, diagnosis_request, host_query, metric_query, general_chat, unknown.",
+		"Allowed entities: instance, severity, status, window, query, count, alert_name, fingerprint, alert_history_id, page, page_size, search, sort, risk, group_id.",
 		"Use query only for explicit PromQL or query_range requests.",
 		"Never return commands or write actions.",
 		`Example: {"intent":"host_query","confidence":0.7,"entities":{"status":"down"}}`,

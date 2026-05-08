@@ -166,6 +166,13 @@ func (e *Executor) Execute(ctx context.Context, result nlu.Result) ([]copilot.To
 	return e.executeTool(ctx, name, args)
 }
 
+func (e *Executor) ExecuteTool(ctx context.Context, name string, args json.RawMessage) (ToolResult, error) {
+	if e == nil || e.registry == nil {
+		return ToolResult{Success: false, Error: errorResult(ErrToolUnavailable)}, ErrToolUnavailable
+	}
+	return e.registry.Execute(ctx, name, args)
+}
+
 func (e *Executor) ToolSchemas() []copilot.ToolSchema {
 	if e.registry == nil {
 		return []copilot.ToolSchema{}
