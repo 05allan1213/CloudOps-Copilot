@@ -6,9 +6,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
+	"server-web/copilot/diagnosis"
 	"server-web/copilot/nlu"
 	"server-web/copilot/session"
 )
@@ -34,6 +36,7 @@ type Config struct {
 	Classifier         *nlu.Classifier
 	LLM                LLMClassifier
 	Tools              ToolExecutor
+	Diagnosis          DiagnosisService
 }
 
 type User struct {
@@ -61,6 +64,7 @@ type Service struct {
 	classifier         *nlu.Classifier
 	llm                LLMClassifier
 	tools              ToolExecutor
+	diagnosis          DiagnosisService
 }
 
 type ToolExecutor interface {
@@ -73,6 +77,10 @@ type ToolSchemaLister interface {
 
 type LLMClassifier interface {
 	Classify(ctx context.Context, message string) (nlu.Result, error)
+}
+
+type DiagnosisService interface {
+	Trigger(ctx context.Context, user diagnosis.User, req diagnosis.Request) (diagnosis.ReportResponse, error)
 }
 
 type ChatRequest struct {
@@ -141,6 +149,7 @@ func NewService(cfg Config) *Service {
 		classifier:         defaultClassifier(cfg.Classifier),
 		llm:                cfg.LLM,
 		tools:              cfg.Tools,
+		diagnosis:          cfg.Diagnosis,
 	}
 }
 
@@ -182,7 +191,7 @@ func (s *Service) Chat(ctx context.Context, user User, req ChatRequest) (ChatRes
 	parsed := s.classifier.Classify(message)
 	parsed = s.classifyWithFallback(ctx, message, parsed)
 	ctx = WithUser(ctx, user)
-	toolCalls, toolReply, err := s.executeTools(ctx, parsed)
+	toolCalls, toolReply, err := s.executeIntent(ctx, user, parsed)
 	if err != nil {
 		return ChatResponse{}, err
 	}
@@ -302,6 +311,40 @@ func (s *Service) executeTools(ctx context.Context, result nlu.Result) ([]ToolCa
 	return s.tools.Execute(ctx, result)
 }
 
+func (s *Service) executeIntent(ctx context.Context, user User, result nlu.Result) ([]ToolCall, string, error) {
+	if result.Intent == nlu.IntentDiagnosisRequest {
+		return s.executeDiagnosis(ctx, user, result)
+	}
+	return s.executeTools(ctx, result)
+}
+
+func (s *Service) executeDiagnosis(ctx context.Context, user User, result nlu.Result) ([]ToolCall, string, error) {
+	if s.diagnosis == nil {
+		return []ToolCall{{Name: "diagnosis.trigger", Status: "error", Error: "diagnosis service unavailable"}}, "", nil
+	}
+	req := diagnosis.Request{
+		Fingerprint: result.Entities["fingerprint"],
+		AlertName:   result.Entities["alert_name"],
+		Instance:    result.Entities["instance"],
+		TriggerType: diagnosis.TriggerChat,
+	}
+	if rawID := strings.TrimSpace(result.Entities["alert_history_id"]); rawID != "" {
+		if id, err := strconv.ParseUint(rawID, 10, 64); err == nil {
+			req.AlertHistoryID = id
+		}
+	}
+	report, err := s.diagnosis.Trigger(ctx, diagnosis.User{
+		ID:       user.ID,
+		Username: user.Username,
+		Role:     user.Role,
+	}, req)
+	if err != nil {
+		return []ToolCall{{Name: "diagnosis.trigger", Status: "error", Error: err.Error()}}, "", nil
+	}
+	reply := fmt.Sprintf("诊断报告已生成：#%d，状态 %s，置信度 %.0f%%。摘要：%s", report.ID, report.Status, report.Confidence*100, report.Summary)
+	return []ToolCall{{Name: "diagnosis.trigger", Status: "success", Result: report}}, reply, nil
+}
+
 func (s *Service) classifyWithFallback(ctx context.Context, message string, parsed nlu.Result) nlu.Result {
 	if s.llm == nil || parsed.Confidence >= 0.6 {
 		return parsed
@@ -339,6 +382,8 @@ func buildReply(result nlu.Result, toolReply string, toolCalls []ToolCall) strin
 		return "I recognized this as a host query. Read-only host tools will return live data in the next module."
 	case nlu.IntentMetricQuery:
 		return "I recognized this as a metric query. Read-only metric tools will return live data in the next module."
+	case nlu.IntentDiagnosisRequest:
+		return "请提供 fingerprint、alert_history_id，或 alert_name + instance 以生成单条告警诊断。"
 	case nlu.IntentGeneralChat:
 		return "I can help query hosts, metrics, active alerts, alert events, and alert history through read-only tools as Phase 1 comes online."
 	default:
@@ -358,6 +403,8 @@ func buildSuggestions(result nlu.Result) []string {
 		return []string{"List current hosts", "Show offline hosts"}
 	case nlu.IntentMetricQuery:
 		return []string{"Show node-1 CPU for 1h", "Show memory trend for 24h"}
+	case nlu.IntentDiagnosisRequest:
+		return []string{"帮我分析 node-1:9100 的 HighCPU 告警", "诊断 fingerprint 为 abc123 的告警"}
 	case nlu.IntentGeneralChat:
 		return []string{"What alerts are firing?", "Which hosts are offline?", "Show CPU trend for node-1"}
 	default:

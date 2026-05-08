@@ -10,6 +10,7 @@ const (
 	IntentAlertEventQuery    = "alert_event_query"
 	IntentAlertHistoryQuery  = "alert_history_query"
 	IntentAlertRuleListQuery = "alert_rule_list_query"
+	IntentDiagnosisRequest   = "diagnosis_request"
 	IntentHostQuery          = "host_query"
 	IntentMetricQuery        = "metric_query"
 	IntentGeneralChat        = "general_chat"
@@ -45,6 +46,7 @@ var (
 	}
 	alertNamePatterns = []*regexp.Regexp{
 		regexp.MustCompile(`(?i)\balert[_ -]?name\s*[:=]\s*([a-z0-9_.:-]+)\b`),
+		regexp.MustCompile(`(?i)\b([a-z][a-z0-9_.:-]*(?:cpu|memory|disk|down)[a-z0-9_.:-]*)\s*(?:alert\b|告警)`),
 		regexp.MustCompile(`(?i)\b([a-z][a-z0-9_.:-]*(?:cpu|memory|disk|load|network)[a-z0-9_.:-]*)\s+alerts?\s+history\b`),
 		regexp.MustCompile(`(?i)\b(cpu|memory|disk|load|network)\s+alerts?\s+history\b`),
 		regexp.MustCompile(`(?i)(cpu|内存|memory|磁盘|disk|负载|load|网络|network)\s*告警\s*历史`),
@@ -73,6 +75,7 @@ func (c *Classifier) Classify(message string) Result {
 
 	entities := extractEntities(message, normalized)
 	hasAlert := containsAny(normalized, "告警", "alert", "firing", "resolved", "severity")
+	hasDiagnosis := containsAny(normalized, "诊断", "分析", "diagnose", "diagnosis", "analyze")
 	hasAlertRule := containsAny(normalized, "告警规则", "alert rule", "alert rules", "rule list", "rules")
 	hasHistory := containsAny(normalized, "历史", "history", "过去", "最近一周", "last week")
 	hasEvent := containsAny(normalized, "事件", "event", "events", "最新", "latest")
@@ -82,6 +85,8 @@ func (c *Classifier) Classify(message string) Result {
 	hasGeneral := containsAny(normalized, "能做什么", "help", "帮助", "what can you do", "解释", "explain")
 
 	switch {
+	case hasDiagnosis && hasAlert:
+		return Result{Intent: IntentDiagnosisRequest, Confidence: 0.9, Entities: entities}
 	case hasAlertRule:
 		return Result{Intent: IntentAlertRuleListQuery, Confidence: 0.89, Entities: entities}
 	case hasAlert && hasHistory:

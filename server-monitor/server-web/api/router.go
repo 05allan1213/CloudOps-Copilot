@@ -1,10 +1,13 @@
 package api
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
@@ -17,6 +20,7 @@ import (
 	"server-web/api/middleware"
 	appcache "server-web/cache"
 	"server-web/config"
+	copilotdiagnosis "server-web/copilot/diagnosis"
 	copilothandler "server-web/copilot/handler"
 	copilotllm "server-web/copilot/llm"
 	copilotservice "server-web/copilot/service"
@@ -123,8 +127,9 @@ func NewRouter(cfg config.Config, promClient *promclient.Client, cacheClient *re
 			CacheTimeout:   cfg.CacheWriteTimeout,
 		})
 		var tools copilotservice.ToolExecutor
+		var toolExecutor *copilottool.Executor
 		if cfg.CopilotToolRegistryEnabled {
-			tools, err = copilottool.NewExecutor(copilottool.Options{
+			toolExecutor, err = copilottool.NewExecutor(copilottool.Options{
 				HostService:  copilotHostService,
 				AlertService: alertService,
 				PromClient:   promClient,
@@ -135,27 +140,51 @@ func NewRouter(cfg config.Config, promClient *promclient.Client, cacheClient *re
 			if err != nil {
 				return nil, err
 			}
+			tools = toolExecutor
 		} else {
 			tools = copilottool.NewDisabledExecutor()
 		}
+		llmClient := copilotllm.NewClient(copilotllm.Options{
+			APIKey:  cfg.LLMAPIKey,
+			APIURL:  cfg.LLMAPIURL,
+			Model:   cfg.LLMModel,
+			Timeout: cfg.LLMTimeout,
+		})
+		var runner copilotdiagnosis.ToolRunner
+		if toolExecutor != nil {
+			runner = diagnosisToolRunner{executor: toolExecutor}
+		}
+		diagnosisService := copilotdiagnosis.NewService(copilotdiagnosis.Config{
+			Repository: copilotdiagnosis.NewRepository(db),
+			Resolver: copilotdiagnosis.NewResolver(copilotdiagnosis.ResolverOptions{
+				DB:           db,
+				AlertService: alertService,
+				Timeout:      cfg.CopilotToolDefaultTimeout,
+			}),
+			Collector: copilotdiagnosis.NewEvidenceCollector(copilotdiagnosis.EvidenceOptions{
+				Runner:  runner,
+				Timeout: 45 * time.Second,
+			}),
+			Summarizer: copilotdiagnosis.NewLLMSummarizer(llmClient),
+		})
 		copilotHandler := copilothandler.NewHandler(copilotservice.NewService(copilotservice.Config{
 			MaxMessageLength:   cfg.CopilotMaxMessageLength,
 			SessionTTL:         cfg.CopilotSessionTTL,
 			MaxSessionMessages: cfg.CopilotMaxSessionMessages,
 			Store:              copilotsession.NewRedisStore(cacheClient),
-			LLM: copilotllm.NewClient(copilotllm.Options{
-				APIKey:  cfg.LLMAPIKey,
-				APIURL:  cfg.LLMAPIURL,
-				Model:   cfg.LLMModel,
-				Timeout: cfg.LLMTimeout,
-			}),
-			Tools: tools,
+			LLM:                llmClient,
+			Tools:              tools,
+			Diagnosis:          diagnosisService,
 		}))
+		diagnosisHandler := copilotdiagnosis.NewHandler(diagnosisService)
 		protected.GET("/api/v1/copilot/tools", copilotHandler.ListTools)
 		protected.POST("/api/v1/copilot/chat", copilotHandler.Chat)
 		protected.GET("/api/v1/copilot/sessions", copilotHandler.ListSessions)
 		protected.GET("/api/v1/copilot/sessions/:id/messages", copilotHandler.ListMessages)
 		protected.DELETE("/api/v1/copilot/sessions/:id", copilotHandler.DeleteSession)
+		protected.POST("/api/v1/diagnosis", diagnosisHandler.Trigger)
+		protected.GET("/api/v1/diagnosis", diagnosisHandler.List)
+		protected.GET("/api/v1/diagnosis/:id", diagnosisHandler.Get)
 	}
 
 	wsGroup := router.Group("")
@@ -236,6 +265,26 @@ func dbFromMySQL(mysqlClient *database.MySQL) *gorm.DB {
 		return nil
 	}
 	return mysqlClient.DB()
+}
+
+type diagnosisToolRunner struct {
+	executor *copilottool.Executor
+}
+
+func (r diagnosisToolRunner) ExecuteTool(ctx context.Context, name string, args json.RawMessage) (copilotdiagnosis.ToolResult, error) {
+	if r.executor == nil {
+		return copilotdiagnosis.ToolResult{Success: false, Error: "tool registry unavailable"}, nil
+	}
+	result, err := r.executor.ExecuteTool(ctx, name, args)
+	errorMessage := ""
+	if result.Error != nil {
+		errorMessage = result.Error.Error()
+	}
+	return copilotdiagnosis.ToolResult{
+		Success: result.Success,
+		Data:    result.Data,
+		Error:   errorMessage,
+	}, err
 }
 
 func limitRequestBody(maxBytes int64) gin.HandlerFunc {
