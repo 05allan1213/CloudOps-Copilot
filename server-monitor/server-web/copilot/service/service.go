@@ -339,10 +339,37 @@ func (s *Service) executeDiagnosis(ctx context.Context, user User, result nlu.Re
 		Role:     user.Role,
 	}, req)
 	if err != nil {
+		var conflict diagnosis.ConflictError
+		if errors.As(err, &conflict) {
+			return []ToolCall{{Name: "diagnosis.trigger", Status: "error", Error: err.Error(), Result: conflict.Candidates}}, buildDiagnosisCandidatesReply(conflict.Candidates), nil
+		}
 		return []ToolCall{{Name: "diagnosis.trigger", Status: "error", Error: err.Error()}}, "", nil
 	}
 	reply := fmt.Sprintf("诊断报告已生成：#%d，状态 %s，置信度 %.0f%%。摘要：%s", report.ID, report.Status, report.Confidence*100, report.Summary)
 	return []ToolCall{{Name: "diagnosis.trigger", Status: "success", Result: report}}, reply, nil
+}
+
+func buildDiagnosisCandidatesReply(candidates []diagnosis.DiagnosisCandidate) string {
+	if len(candidates) == 0 {
+		return "匹配到多条告警，请提供 fingerprint 或 alert_history_id 后再诊断。"
+	}
+	var builder strings.Builder
+	builder.WriteString("匹配到多条告警，请选择一条后再诊断：")
+	for i, candidate := range candidates {
+		if i >= 5 {
+			builder.WriteString("\n- 还有更多候选，请使用更精确的 fingerprint 或 alert_history_id")
+			break
+		}
+		builder.WriteString(fmt.Sprintf(
+			"\n- alert_history_id=%d fingerprint=%s alert=%s instance=%s status=%s",
+			candidate.AlertHistoryID,
+			candidate.Fingerprint,
+			candidate.AlertName,
+			candidate.Instance,
+			candidate.Status,
+		))
+	}
+	return builder.String()
 }
 
 func (s *Service) classifyWithFallback(ctx context.Context, message string, parsed nlu.Result) nlu.Result {

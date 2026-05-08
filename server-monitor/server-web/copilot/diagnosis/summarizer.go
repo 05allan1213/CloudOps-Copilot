@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+const maxDiagnosisPromptBytes = 16 * 1024
+
 type LLMGenerator interface {
 	Generate(ctx context.Context, systemPrompt, userPrompt string) (string, error)
 	Model() string
@@ -81,11 +83,33 @@ func ParseDiagnosisSummary(raw string) (DiagnosisSummary, error) {
 	if strings.TrimSpace(summary.Summary) == "" {
 		return DiagnosisSummary{}, fmt.Errorf("parse diagnosis summary: summary is required")
 	}
+	if summary.SeverityAssessment != "" && !isAllowedSeverity(summary.SeverityAssessment) {
+		return DiagnosisSummary{}, fmt.Errorf("parse diagnosis summary: invalid severity_assessment")
+	}
 	if summary.RootCauseHypotheses == nil {
 		summary.RootCauseHypotheses = []RootCauseHypothesis{}
 	}
 	if summary.RecommendedActions == nil {
 		summary.RecommendedActions = []RecommendedAction{}
+	}
+	for i, action := range summary.RecommendedActions {
+		if strings.TrimSpace(action.Type) == "" {
+			return DiagnosisSummary{}, fmt.Errorf("parse diagnosis summary: recommended_actions[%d].type is required", i)
+		}
+		if strings.TrimSpace(action.Description) == "" {
+			return DiagnosisSummary{}, fmt.Errorf("parse diagnosis summary: recommended_actions[%d].description is required", i)
+		}
+		if !isAllowedRisk(action.Risk) {
+			return DiagnosisSummary{}, fmt.Errorf("parse diagnosis summary: recommended_actions[%d].risk is invalid", i)
+		}
+	}
+	for i, hypothesis := range summary.RootCauseHypotheses {
+		if strings.TrimSpace(hypothesis.Cause) == "" {
+			return DiagnosisSummary{}, fmt.Errorf("parse diagnosis summary: root_cause_hypotheses[%d].cause is required", i)
+		}
+		if hypothesis.Confidence != "" && !isAllowedConfidence(hypothesis.Confidence) {
+			return DiagnosisSummary{}, fmt.Errorf("parse diagnosis summary: root_cause_hypotheses[%d].confidence is invalid", i)
+		}
 	}
 	if summary.NextSteps == nil {
 		summary.NextSteps = []string{}
@@ -107,7 +131,7 @@ func extractJSONBody(raw string) string {
 func buildPrompt(alert AlertContext, evidence EvidenceBundle, rules RuleAnalysis) (string, string, error) {
 	payload := map[string]interface{}{
 		"alert_context": alert,
-		"evidence":      evidence,
+		"evidence":      compactEvidenceForPrompt(evidence),
 		"rule_analysis": rules,
 		"runbook_note":  "Phase 3 has not connected Runbook retrieval; runbooks are intentionally empty.",
 		"output_schema": map[string]interface{}{
@@ -122,7 +146,17 @@ func buildPrompt(alert AlertContext, evidence EvidenceBundle, rules RuleAnalysis
 	if err != nil {
 		return "", "", err
 	}
+	if len(data) > maxDiagnosisPromptBytes {
+		payload["evidence"] = minimalEvidenceForPrompt(evidence)
+		data, err = json.Marshal(payload)
+		if err != nil {
+			return "", "", err
+		}
+	}
 	prompt := string(data)
+	if len(prompt) > maxDiagnosisPromptBytes {
+		prompt = truncateBytes(prompt, maxDiagnosisPromptBytes)
+	}
 	sum := sha256.Sum256([]byte(diagnosisSystemPrompt() + prompt))
 	return prompt, fmt.Sprintf("%x", sum[:]), nil
 }
@@ -148,4 +182,73 @@ func passedRuleRefs(results []RuleResult) []string {
 		return []string{"rule_analysis"}
 	}
 	return compactStrings(refs)
+}
+
+func compactEvidenceForPrompt(evidence EvidenceBundle) EvidenceBundle {
+	evidence.ActiveAlerts = limitSlice(evidence.ActiveAlerts, 20)
+	evidence.Metrics = limitSlice(evidence.Metrics, 40)
+	evidence.History = limitSlice(evidence.History, 20)
+	evidence.CollectionErrors = limitSlice(evidence.CollectionErrors, 20)
+	return evidence
+}
+
+func minimalEvidenceForPrompt(evidence EvidenceBundle) map[string]interface{} {
+	return map[string]interface{}{
+		"alert_context":     evidence.AlertContext,
+		"metrics":           limitSlice(evidence.Metrics, 12),
+		"history_count":     len(evidence.History),
+		"collection_errors": limitSlice(evidence.CollectionErrors, 12),
+		"collected_at":      evidence.CollectedAt,
+	}
+}
+
+func limitSlice[T any](values []T, max int) []T {
+	if len(values) <= max {
+		return values
+	}
+	return values[:max]
+}
+
+func truncateBytes(value string, maxBytes int) string {
+	if len(value) <= maxBytes {
+		return value
+	}
+	end := 0
+	for idx := range value {
+		if idx > maxBytes {
+			break
+		}
+		end = idx
+	}
+	if end == 0 {
+		return ""
+	}
+	return value[:end]
+}
+
+func isAllowedSeverity(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "critical", "warning", "info":
+		return true
+	default:
+		return false
+	}
+}
+
+func isAllowedRisk(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "low", "medium", "high":
+		return true
+	default:
+		return false
+	}
+}
+
+func isAllowedConfidence(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case ConfidenceLow, ConfidenceMedium, ConfidenceHigh:
+		return true
+	default:
+		return false
+	}
 }

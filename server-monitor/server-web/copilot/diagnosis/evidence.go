@@ -6,16 +6,19 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"server-web/model"
 	"strings"
 	"sync"
 	"time"
+
+	"server-web/model"
+	promclient "server-web/prometheus"
 )
 
 const (
 	ToolAlertListActive = "alert.list_active"
 	ToolAlertHistory    = "alert.history"
 	ToolHostMetrics     = "host.metrics"
+	ToolPromQueryRange  = "prom.query_range"
 )
 
 type ToolRunner interface {
@@ -78,7 +81,7 @@ func (c *EvidenceCollector) Collect(ctx context.Context, alert AlertContext) Evi
 		bundle.CollectionErrors = append(bundle.CollectionErrors, CollectionError{Source: source, Error: err.Error()})
 	}
 
-	wg.Add(3)
+	wg.Add(4)
 	go func() {
 		defer wg.Done()
 		active, err := c.collectActiveAlerts(ctx, alert)
@@ -112,11 +115,61 @@ func (c *EvidenceCollector) Collect(ctx context.Context, alert AlertContext) Evi
 		bundle.Metrics = append(bundle.Metrics, metrics...)
 		mu.Unlock()
 	}()
+	go func() {
+		defer wg.Done()
+		metrics, err := c.collectPromQueryRange(ctx, alert)
+		if err != nil {
+			recordError(ToolPromQueryRange, err)
+			return
+		}
+		mu.Lock()
+		bundle.Metrics = append(bundle.Metrics, metrics...)
+		mu.Unlock()
+	}()
 	wg.Wait()
 	if err := ctx.Err(); err != nil {
 		recordError("evidence_collector", err)
 	}
 	return bundle
+}
+
+func (c *EvidenceCollector) collectPromQueryRange(ctx context.Context, alert AlertContext) ([]MetricEvidence, error) {
+	queries := supplementaryPromQueries(alert)
+	if len(queries) == 0 {
+		return nil, nil
+	}
+	collectedAt := c.now().UTC()
+	start := collectedAt.Add(-15 * time.Minute)
+	metrics := make([]MetricEvidence, 0, len(queries))
+	var errs []error
+	for name, query := range queries {
+		args, _ := json.Marshal(map[string]interface{}{
+			"query":      query,
+			"start":      start.Format(time.RFC3339),
+			"end":        collectedAt.Format(time.RFC3339),
+			"step":       "1m",
+			"max_points": 1000,
+		})
+		result, err := c.runner.ExecuteTool(ctx, ToolPromQueryRange, args)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if !result.Success {
+			errs = append(errs, errors.New(toolErrorString(result)))
+			continue
+		}
+		evidence, err := metricEvidenceFromToolData(name, ToolPromQueryRange, "15m", result.Data, collectedAt)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		metrics = append(metrics, evidence...)
+	}
+	if len(errs) > 0 {
+		return metrics, errors.Join(errs...)
+	}
+	return metrics, nil
 }
 
 func (c *EvidenceCollector) collectActiveAlerts(ctx context.Context, alert AlertContext) ([]AlertContext, error) {
@@ -244,22 +297,70 @@ func (c *EvidenceCollector) collectMetrics(ctx context.Context, alert AlertConte
 	}
 	metrics := make([]MetricEvidence, 0, len(payload.Metrics))
 	for name, series := range payload.Metrics {
-		values := collectMetricValues(series)
-		if len(values) == 0 {
-			continue
-		}
-		metrics = append(metrics, MetricEvidence{
+		metrics = append(metrics, metricEvidenceFromValues(name, ToolHostMetrics, payload.Range, collectMetricValues(series), c.now().UTC())...)
+	}
+	return metrics, nil
+}
+
+func metricEvidenceFromToolData(name, source, window string, data interface{}, collectedAt time.Time) ([]MetricEvidence, error) {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+	var series []struct {
+		Values []struct {
+			Value float64 `json:"value"`
+		} `json:"values"`
+	}
+	if err := json.Unmarshal(raw, &series); err != nil {
+		return nil, err
+	}
+	return metricEvidenceFromValues(name, source, window, collectMetricValues(series), collectedAt), nil
+}
+
+func metricEvidenceFromValues(name, source, window string, values []float64, collectedAt time.Time) []MetricEvidence {
+	if len(values) == 0 {
+		return nil
+	}
+	return []MetricEvidence{
+		{
 			Name:        name,
-			Source:      ToolHostMetrics,
-			Window:      payload.Range,
+			Source:      source,
+			Window:      window,
 			Avg:         avg(values),
 			Max:         max(values),
 			Last:        values[len(values)-1],
 			Trend:       trend(values),
-			CollectedAt: c.now().UTC(),
-		})
+			CollectedAt: collectedAt,
+		},
 	}
-	return metrics, nil
+}
+
+func supplementaryPromQueries(alert AlertContext) map[string]string {
+	alertName := strings.ToLower(alert.AlertName)
+	queries := map[string]string{}
+	addBuiltQuery := func(name, metric string) {
+		query, err := promclient.BuildQuery(metric, alert.Instance, nil)
+		if err == nil {
+			queries[name] = query
+		}
+	}
+	switch {
+	case strings.Contains(alertName, "cpu"):
+		addBuiltQuery("cpu_usage_prom", promclient.MetricCPUUsage)
+		addBuiltQuery("load1_prom", promclient.MetricLoad1)
+		addBuiltQuery("process_count_prom", promclient.MetricProcessCount)
+	case strings.Contains(alertName, "memory") || strings.Contains(alertName, "内存"):
+		addBuiltQuery("memory_usage_prom", promclient.MetricMemoryUsage)
+		addBuiltQuery("memory_available_prom", promclient.MetricMemoryAvailable)
+	case strings.Contains(alertName, "disk") || strings.Contains(alertName, "磁盘"):
+		addBuiltQuery("disk_usage_prom", promclient.MetricDiskUsage)
+	case strings.Contains(alertName, "down") || strings.Contains(alertName, "hostdown"):
+		if strings.TrimSpace(alert.Instance) != "" {
+			queries["up_prom"] = fmt.Sprintf(`up{job="server-probe",instance=%q}`, alert.Instance)
+		}
+	}
+	return queries
 }
 
 func collectMetricValues(series []struct {
