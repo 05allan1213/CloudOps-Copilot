@@ -209,6 +209,11 @@ func contextFromHistory(history model.AlertHistory, collectedAt time.Time) Alert
 	if strings.TrimSpace(history.LabelsJSON) != "" {
 		_ = json.Unmarshal([]byte(history.LabelsJSON), &labels)
 	}
+	annotations := map[string]string{}
+	if history.AnnotationsJSON != nil && strings.TrimSpace(*history.AnnotationsJSON) != "" {
+		_ = json.Unmarshal([]byte(*history.AnnotationsJSON), &annotations)
+		annotations = cloneLabels(annotations)
+	}
 	if labels["alertname"] == "" {
 		labels["alertname"] = history.AlertName
 	}
@@ -217,6 +222,9 @@ func contextFromHistory(history model.AlertHistory, collectedAt time.Time) Alert
 	}
 	if labels["severity"] == "" {
 		labels["severity"] = history.Severity
+	}
+	if annotations["summary"] == "" && history.Summary != "" {
+		annotations["summary"] = history.Summary
 	}
 	var endsAt *time.Time
 	if history.ResolvedAt != nil {
@@ -235,6 +243,7 @@ func contextFromHistory(history model.AlertHistory, collectedAt time.Time) Alert
 		Status:         history.Status,
 		Summary:        history.Summary,
 		Labels:         labels,
+		Annotations:    annotations,
 		StartsAt:       history.FiredAt.UTC(),
 		EndsAt:         endsAt,
 		Source:         "mysql:alert_histories",

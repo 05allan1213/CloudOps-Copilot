@@ -19,6 +19,9 @@ const (
 	ToolAlertHistory    = "alert.history"
 	ToolHostMetrics     = "host.metrics"
 	ToolPromQueryRange  = "prom.query_range"
+
+	defaultEvidenceTimeout     = 45 * time.Second
+	defaultEvidenceToolTimeout = 30 * time.Second
 )
 
 type ToolRunner interface {
@@ -32,27 +35,33 @@ type ToolResult struct {
 }
 
 type EvidenceCollector struct {
-	runner  ToolRunner
-	timeout time.Duration
-	now     func() time.Time
+	runner      ToolRunner
+	timeout     time.Duration
+	toolTimeout time.Duration
+	now         func() time.Time
 }
 
 type EvidenceOptions struct {
-	Runner  ToolRunner
-	Timeout time.Duration
-	Now     func() time.Time
+	Runner      ToolRunner
+	Timeout     time.Duration
+	ToolTimeout time.Duration
+	Now         func() time.Time
 }
 
 func NewEvidenceCollector(options EvidenceOptions) *EvidenceCollector {
 	timeout := options.Timeout
 	if timeout <= 0 {
-		timeout = 45 * time.Second
+		timeout = defaultEvidenceTimeout
+	}
+	toolTimeout := options.ToolTimeout
+	if toolTimeout <= 0 {
+		toolTimeout = defaultEvidenceToolTimeout
 	}
 	now := options.Now
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &EvidenceCollector{runner: options.Runner, timeout: timeout, now: now}
+	return &EvidenceCollector{runner: options.Runner, timeout: timeout, toolTimeout: toolTimeout, now: now}
 }
 
 func (c *EvidenceCollector) Collect(ctx context.Context, alert AlertContext) EvidenceBundle {
@@ -84,7 +93,9 @@ func (c *EvidenceCollector) Collect(ctx context.Context, alert AlertContext) Evi
 	wg.Add(4)
 	go func() {
 		defer wg.Done()
-		active, err := c.collectActiveAlerts(ctx, alert)
+		toolCtx, toolCancel := c.withToolTimeout(ctx)
+		defer toolCancel()
+		active, err := c.collectActiveAlerts(toolCtx, alert)
 		if err != nil {
 			recordError(ToolAlertListActive, err)
 			return
@@ -95,7 +106,9 @@ func (c *EvidenceCollector) Collect(ctx context.Context, alert AlertContext) Evi
 	}()
 	go func() {
 		defer wg.Done()
-		history, err := c.collectHistory(ctx, alert)
+		toolCtx, toolCancel := c.withToolTimeout(ctx)
+		defer toolCancel()
+		history, err := c.collectHistory(toolCtx, alert)
 		if err != nil {
 			recordError(ToolAlertHistory, err)
 			return
@@ -106,7 +119,9 @@ func (c *EvidenceCollector) Collect(ctx context.Context, alert AlertContext) Evi
 	}()
 	go func() {
 		defer wg.Done()
-		metrics, err := c.collectMetrics(ctx, alert)
+		toolCtx, toolCancel := c.withToolTimeout(ctx)
+		defer toolCancel()
+		metrics, err := c.collectMetrics(toolCtx, alert)
 		if err != nil {
 			recordError(ToolHostMetrics, err)
 			return
@@ -117,7 +132,9 @@ func (c *EvidenceCollector) Collect(ctx context.Context, alert AlertContext) Evi
 	}()
 	go func() {
 		defer wg.Done()
-		metrics, err := c.collectPromQueryRange(ctx, alert)
+		toolCtx, toolCancel := c.withToolTimeout(ctx)
+		defer toolCancel()
+		metrics, err := c.collectPromQueryRange(toolCtx, alert)
 		if err != nil {
 			recordError(ToolPromQueryRange, err)
 			return
@@ -131,6 +148,14 @@ func (c *EvidenceCollector) Collect(ctx context.Context, alert AlertContext) Evi
 		recordError("evidence_collector", err)
 	}
 	return bundle
+}
+
+func (c *EvidenceCollector) withToolTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	timeout := defaultEvidenceToolTimeout
+	if c != nil && c.toolTimeout > 0 {
+		timeout = c.toolTimeout
+	}
+	return context.WithTimeout(ctx, timeout)
 }
 
 func (c *EvidenceCollector) collectPromQueryRange(ctx context.Context, alert AlertContext) ([]MetricEvidence, error) {

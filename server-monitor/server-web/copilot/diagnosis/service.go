@@ -81,15 +81,13 @@ func (s *Service) Trigger(ctx context.Context, user User, req Request) (ReportRe
 
 	alert, err := s.resolver.Resolve(ctx, req)
 	if err != nil {
-		_ = s.repo.Update(ctx, report.ID, map[string]interface{}{
-			"status":  StatusFailed,
+		_ = s.repo.UpdateStatus(ctx, report.ID, StatusFailed, map[string]interface{}{
 			"summary": publicError(err),
 		})
 		return ReportResponse{}, err
 	}
 
-	if err := s.repo.Update(ctx, report.ID, map[string]interface{}{
-		"status":           StatusRunning,
+	if err := s.repo.UpdateStatus(ctx, report.ID, StatusRunning, map[string]interface{}{
 		"alert_history_id": alert.AlertHistoryID,
 		"fingerprint":      alert.Fingerprint,
 		"alert_name":       alert.AlertName,
@@ -115,13 +113,12 @@ func (s *Service) Trigger(ctx context.Context, user User, req Request) (ReportRe
 
 	reportFields, err := completedFields(alert, evidence, rules, summary, meta)
 	if err != nil {
-		_ = s.repo.Update(ctx, report.ID, map[string]interface{}{
-			"status":  StatusFailed,
+		_ = s.repo.UpdateStatus(ctx, report.ID, StatusFailed, map[string]interface{}{
 			"summary": "serialize diagnosis report failed",
 		})
 		return ReportResponse{}, err
 	}
-	if err := s.repo.Update(ctx, report.ID, reportFields); err != nil {
+	if err := s.repo.UpdateStatus(ctx, report.ID, StatusCompleted, reportFields); err != nil {
 		return ReportResponse{}, err
 	}
 	updated, err := s.repo.GetByID(ctx, report.ID, user)
@@ -182,7 +179,6 @@ func completedFields(alert AlertContext, evidence EvidenceBundle, rules RuleAnal
 		rootCause = rules.Summary
 	}
 	return map[string]interface{}{
-		"status":                   StatusCompleted,
 		"alert_history_id":         alert.AlertHistoryID,
 		"fingerprint":              alert.Fingerprint,
 		"alert_name":               alert.AlertName,

@@ -28,16 +28,21 @@ func (r *Repository) Create(ctx context.Context, report *model.DiagnosisReport) 
 	return r.db.WithContext(ctx).Create(report).Error
 }
 
-func (r *Repository) Update(ctx context.Context, id uint64, updates map[string]interface{}) error {
+func (r *Repository) UpdateStatus(ctx context.Context, id uint64, status string, fields map[string]interface{}) error {
 	if r == nil || r.db == nil {
 		return ErrUnavailable
 	}
 	if id == 0 {
 		return fmt.Errorf("%w: id is required", ErrInvalidRequest)
 	}
-	if len(updates) == 0 {
-		return nil
+	if !validReportStatus(status) {
+		return fmt.Errorf("%w: invalid status", ErrInvalidRequest)
 	}
+	updates := make(map[string]interface{}, len(fields)+1)
+	for key, value := range fields {
+		updates[key] = value
+	}
+	updates["status"] = status
 	return r.db.WithContext(ctx).Model(&model.DiagnosisReport{}).Where("id = ?", id).Updates(updates).Error
 }
 
@@ -115,6 +120,15 @@ func (r *Repository) FindLatestByFingerprint(ctx context.Context, fingerprint st
 
 func canAccessReport(user User, report model.DiagnosisReport) bool {
 	return user.Role == "admin" || report.CreatedBy == user.ID
+}
+
+func validReportStatus(status string) bool {
+	switch status {
+	case StatusPending, StatusRunning, StatusCompleted, StatusFailed:
+		return true
+	default:
+		return false
+	}
 }
 
 func toReportResponse(report model.DiagnosisReport) ReportResponse {

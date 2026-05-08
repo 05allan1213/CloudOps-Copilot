@@ -244,11 +244,12 @@ func (s *Service) archiveHistory(ctx context.Context, alert webhook.AlertRecord)
 		}
 
 		updates := map[string]interface{}{
-			"alert_name":  history.AlertName,
-			"instance":    history.Instance,
-			"severity":    history.Severity,
-			"summary":     history.Summary,
-			"labels_json": history.LabelsJSON,
+			"alert_name":       history.AlertName,
+			"instance":         history.Instance,
+			"severity":         history.Severity,
+			"summary":          history.Summary,
+			"labels_json":      history.LabelsJSON,
+			"annotations_json": history.AnnotationsJSON,
 		}
 		if history.Status == "resolved" {
 			updates["status"] = "resolved"
@@ -295,16 +296,21 @@ func BuildHistory(alert webhook.AlertRecord) (model.AlertHistory, error) {
 	if err != nil {
 		return model.AlertHistory{}, err
 	}
+	annotationsJSON, err := marshalStringMap(alert.Annotations)
+	if err != nil {
+		return model.AlertHistory{}, err
+	}
 
 	history := model.AlertHistory{
-		Fingerprint: alert.Fingerprint,
-		AlertName:   strings.TrimSpace(alert.Labels["alertname"]),
-		Instance:    strings.TrimSpace(alert.Labels["instance"]),
-		Severity:    strings.TrimSpace(alert.Labels["severity"]),
-		Status:      alert.Status,
-		Summary:     strings.TrimSpace(alert.Annotations["summary"]),
-		LabelsJSON:  labelsJSON,
-		FiredAt:     alert.StartsAt.UTC(),
+		Fingerprint:     alert.Fingerprint,
+		AlertName:       strings.TrimSpace(alert.Labels["alertname"]),
+		Instance:        strings.TrimSpace(alert.Labels["instance"]),
+		Severity:        strings.TrimSpace(alert.Labels["severity"]),
+		Status:          alert.Status,
+		Summary:         strings.TrimSpace(alert.Annotations["summary"]),
+		LabelsJSON:      labelsJSON,
+		AnnotationsJSON: &annotationsJSON,
+		FiredAt:         alert.StartsAt.UTC(),
 	}
 	if history.Severity == "" {
 		history.Severity = "warning"
