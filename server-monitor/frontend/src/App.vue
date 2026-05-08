@@ -254,6 +254,9 @@ onBeforeUnmount(() => {
       <RouterLink to="/copilot" class="route-tab" exact-active-class="active">
         Copilot
       </RouterLink>
+      <RouterLink to="/diagnosis" class="route-tab" exact-active-class="active">
+        诊断
+      </RouterLink>
       <RouterLink
         v-if="auth.isAdmin"
         to="/settings"

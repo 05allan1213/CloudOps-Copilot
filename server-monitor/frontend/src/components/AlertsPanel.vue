@@ -13,6 +13,7 @@ defineProps<{
 const emit = defineEmits<{
   severityChange: [value: SeverityFilter];
   refresh: [];
+  diagnose: [alert: AlertRecord];
 }>();
 
 function severityClass(severity: string | undefined): string {
@@ -192,6 +193,9 @@ function formatTime(iso: string): string {
           >
             {{ alert.annotations.description }}
           </p>
+          <button class="diagnose-btn" type="button" @click="emit('diagnose', alert)">
+            生成诊断
+          </button>
         </div>
       </div>
     </div>
@@ -419,6 +423,16 @@ function formatTime(iso: string): string {
   font-size: 0.75rem;
   color: var(--text-muted);
   margin: 0.35rem 0 0;
+}
+
+.diagnose-btn {
+  margin-top: 0.7rem;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: var(--radius-sm);
+  padding: 0.42rem 0.62rem;
+  font-size: 0.74rem;
+  font-weight: 700;
 }
 
 @media (max-width: 768px) {

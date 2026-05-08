@@ -191,6 +191,15 @@ function toolResultPreview(value: unknown): string {
   return text.length > 420 ? `${text.slice(0, 420)}...` : text;
 }
 
+function diagnosisReportId(message: LocalMessage): number | null {
+  const result = message.tool_calls?.find((tool) => tool.name === "diagnosis.trigger" && tool.status === "success")?.result;
+  if (result && typeof result === "object" && "id" in result) {
+    const id = Number((result as { id: unknown }).id);
+    return Number.isFinite(id) ? id : null;
+  }
+  return null;
+}
+
 function normalizeError(err: unknown): string {
   if (err instanceof Error) {
     return err.message;
@@ -291,6 +300,14 @@ function normalizeError(err: unknown): string {
                 <pre v-else>{{ toolResultPreview(tool.result) }}</pre>
               </details>
             </div>
+
+            <RouterLink
+              v-if="diagnosisReportId(message)"
+              class="diagnosis-link"
+              :to="`/diagnosis/${diagnosisReportId(message)}`"
+            >
+              查看诊断报告 #{{ diagnosisReportId(message) }}
+            </RouterLink>
 
             <div v-if="message.suggestions?.length" class="suggestion-row">
               <button
@@ -576,6 +593,17 @@ function normalizeError(err: unknown): string {
   flex-wrap: wrap;
   gap: 0.45rem;
   margin-top: 0.7rem;
+}
+
+.diagnosis-link {
+  display: inline-flex;
+  margin-top: 0.7rem;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-radius: var(--radius-sm);
+  padding: 0.42rem 0.62rem;
+  font-size: 0.74rem;
+  font-weight: 700;
 }
 
 .suggestion-row button {

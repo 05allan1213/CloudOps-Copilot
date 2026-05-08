@@ -48,6 +48,17 @@ export const router = createRouter({
       component: () => import("../pages/CopilotPage.vue"),
     },
     {
+      path: "/diagnosis",
+      name: "diagnosis",
+      component: () => import("../pages/DiagnosisListPage.vue"),
+    },
+    {
+      path: "/diagnosis/:id",
+      name: "diagnosis-detail",
+      component: () => import("../pages/DiagnosisDetailPage.vue"),
+      props: true,
+    },
+    {
       path: "/settings",
       name: "settings",
       component: () => import("../pages/SettingsPage.vue"),

@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
+import { useRouter } from "vue-router";
 
 import { fetchAlertHistories, type AlertHistoryQuery } from "../api/alertHistories";
+import { createDiagnosis } from "../api/diagnosis";
 import { fetchHostGroups } from "../api/hostGroups";
 import type { AlertHistory, AlertHistoryListResponse, HostGroup } from "../types";
 
+const router = useRouter();
 const histories = ref<AlertHistoryListResponse>({
   items: [],
   total: 0,
@@ -14,6 +17,7 @@ const histories = ref<AlertHistoryListResponse>({
 const groups = ref<HostGroup[]>([]);
 const loading = ref(false);
 const error = ref("");
+const diagnosisLoading = reactive<Record<number, boolean>>({});
 const filters = reactive<AlertHistoryQuery>({
   status: "",
   severity: "",
@@ -87,6 +91,22 @@ function resetFilters() {
 function changePage(nextPage: number) {
   filters.page = Math.min(Math.max(nextPage, 1), pageCount.value);
   loadHistories();
+}
+
+async function diagnose(item: AlertHistory) {
+  diagnosisLoading[item.id] = true;
+  error.value = "";
+  try {
+    const report = await createDiagnosis({
+      alert_history_id: item.id,
+      trigger_type: "manual",
+    });
+    await router.push(`/diagnosis/${report.id}`);
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "生成诊断失败";
+  } finally {
+    diagnosisLoading[item.id] = false;
+  }
 }
 
 onMounted(() => {
@@ -163,6 +183,7 @@ onMounted(() => {
             <th>状态</th>
             <th>触发时间</th>
             <th>摘要</th>
+            <th>操作</th>
           </tr>
         </thead>
         <tbody>
@@ -173,6 +194,16 @@ onMounted(() => {
             <td>{{ item.status }}</td>
             <td>{{ formatTime(item.fired_at) }}</td>
             <td class="summary-cell">{{ item.summary || "-" }}</td>
+            <td>
+              <button
+                class="ghost-btn"
+                type="button"
+                :disabled="diagnosisLoading[item.id]"
+                @click="diagnose(item)"
+              >
+                {{ diagnosisLoading[item.id] ? "生成中" : "诊断" }}
+              </button>
+            </td>
           </tr>
         </tbody>
       </table>

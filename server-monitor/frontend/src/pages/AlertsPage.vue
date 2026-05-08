@@ -1,13 +1,29 @@
 <script setup lang="ts">
 import { ref } from "vue";
+import { useRouter } from "vue-router";
 
 import AlertEventsPanel from "../components/AlertEventsPanel.vue";
 import AlertHistoriesPage from "./AlertHistoriesPage.vue";
 import AlertsPanel from "../components/AlertsPanel.vue";
+import { createDiagnosis } from "../api/diagnosis";
 import { useMonitorStore } from "../stores/monitor";
+import type { AlertRecord } from "../types";
 
 const monitor = useMonitorStore();
+const router = useRouter();
 const activeTab = ref<"current" | "history">("current");
+
+async function diagnoseActiveAlert(alert: AlertRecord) {
+  try {
+    const report = await createDiagnosis({
+      fingerprint: alert.fingerprint,
+      trigger_type: "manual",
+    });
+    await router.push(`/diagnosis/${report.id}`);
+  } catch (err) {
+    monitor.alertsError = err instanceof Error ? err.message : "生成诊断失败";
+  }
+}
 </script>
 
 <template>
@@ -24,6 +40,7 @@ const activeTab = ref<"current" | "history">("current");
       :error="monitor.alertsError"
       @severity-change="monitor.setSeverityFilter"
       @refresh="monitor.refreshAll"
+      @diagnose="diagnoseActiveAlert"
     />
 
     <AlertEventsPanel

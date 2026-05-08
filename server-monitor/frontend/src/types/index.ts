@@ -145,6 +145,90 @@ export interface CopilotToolCall {
   result?: unknown;
 }
 
+export interface DiagnosisRequest {
+  fingerprint?: string;
+  alert_history_id?: number;
+  alert_name?: string;
+  instance?: string;
+  trigger_type?: "manual" | "chat" | string;
+}
+
+export interface DiagnosisMetricEvidence {
+  name: string;
+  source: string;
+  window: string;
+  avg: number;
+  max: number;
+  last: number;
+  trend: string;
+  collected_at?: string;
+}
+
+export interface DiagnosisRuleResult {
+  rule: string;
+  passed: boolean;
+  detail: string;
+  evidence_refs: string[];
+}
+
+export interface DiagnosisRuleAnalysis {
+  summary: string;
+  confidence: number;
+  confidence_level: string;
+  results: DiagnosisRuleResult[];
+  next_steps: string[];
+}
+
+export interface DiagnosisRecommendedAction {
+  type: string;
+  description: string;
+  risk: string;
+  requires_approval: boolean;
+}
+
+export interface DiagnosisEvidence {
+  alert_context?: Record<string, unknown>;
+  active_alerts?: Record<string, unknown>[];
+  metrics?: DiagnosisMetricEvidence[];
+  history?: Record<string, unknown>[];
+  runbooks?: unknown[];
+  collection_errors?: Array<{ source: string; error: string }>;
+  collected_at?: string;
+}
+
+export interface DiagnosisReport {
+  id: number;
+  alert_history_id: number;
+  fingerprint: string;
+  alert_name: string;
+  target_kind: string;
+  target_name: string;
+  namespace: string;
+  severity: "critical" | "warning" | "info" | string;
+  status: "pending" | "running" | "completed" | "failed" | string;
+  summary: string;
+  root_cause: string;
+  evidence?: DiagnosisEvidence;
+  runbooks?: unknown[];
+  recommended_actions?: DiagnosisRecommendedAction[];
+  rule_analysis?: DiagnosisRuleAnalysis;
+  confidence: number;
+  confidence_level: string;
+  llm_prompt_hash: string;
+  llm_model: string;
+  trigger_type: string;
+  created_by: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DiagnosisListResponse {
+  items: DiagnosisReport[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
 export interface CopilotChatRequest {
   message: string;
   session_id?: string;
