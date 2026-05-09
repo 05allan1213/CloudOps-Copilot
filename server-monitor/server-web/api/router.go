@@ -145,10 +145,11 @@ func NewRouter(cfg config.Config, promClient *promclient.Client, cacheClient *re
 			tools = copilottool.NewDisabledExecutor()
 		}
 		llmClient := copilotllm.NewClient(copilotllm.Options{
-			APIKey:  cfg.LLMAPIKey,
-			APIURL:  cfg.LLMAPIURL,
-			Model:   cfg.LLMModel,
-			Timeout: cfg.LLMTimeout,
+			APIKey:    cfg.LLMAPIKey,
+			APIURL:    cfg.LLMAPIURL,
+			Model:     cfg.LLMModel,
+			Timeout:   cfg.LLMTimeout,
+			MaxTokens: cfg.LLMMaxTokens,
 		})
 		var runner copilotdiagnosis.ToolRunner
 		if toolExecutor != nil {
@@ -165,7 +166,9 @@ func NewRouter(cfg config.Config, promClient *promclient.Client, cacheClient *re
 				Runner:  runner,
 				Timeout: 45 * time.Second,
 			}),
-			Summarizer: copilotdiagnosis.NewLLMSummarizer(llmClient),
+			Summarizer: copilotdiagnosis.NewLLMSummarizerWithOptions(llmClient, copilotdiagnosis.LLMSummarizerOptions{
+				Timeout: cfg.DiagnosisLLMTimeout,
+			}),
 		})
 		copilotHandler := copilothandler.NewHandler(copilotservice.NewService(copilotservice.Config{
 			MaxMessageLength:   cfg.CopilotMaxMessageLength,

@@ -29,6 +29,7 @@ type Client struct {
 	timeout          time.Duration
 	httpClient       *http.Client
 	maxResponseBytes int64
+	maxTokens        int
 }
 
 type Options struct {
@@ -38,12 +39,14 @@ type Options struct {
 	Timeout          time.Duration
 	HTTPClient       *http.Client
 	MaxResponseBytes int64
+	MaxTokens        int
 }
 
 type chatRequest struct {
 	Model       string        `json:"model"`
 	Messages    []chatMessage `json:"messages"`
 	Temperature float64       `json:"temperature"`
+	MaxTokens   int           `json:"max_tokens,omitempty"`
 }
 
 type chatMessage struct {
@@ -83,6 +86,7 @@ func NewClient(options Options) *Client {
 		timeout:          timeout,
 		httpClient:       httpClient,
 		maxResponseBytes: maxResponseBytes,
+		maxTokens:        options.MaxTokens,
 	}
 }
 
@@ -108,6 +112,7 @@ func (c *Client) Generate(ctx context.Context, systemPrompt, userPrompt string) 
 			{Role: "user", Content: strings.TrimSpace(userPrompt)},
 		},
 		Temperature: 0,
+		MaxTokens:   c.maxTokens,
 	})
 	if err != nil {
 		return "", fmt.Errorf("marshal llm request: %w", err)

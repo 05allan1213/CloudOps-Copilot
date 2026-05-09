@@ -200,6 +200,7 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
       KAFKA_LOG_RETENTION_HOURS: 72
+      KAFKA_HEAP_OPTS: "-Xms256M -Xmx512M"
       CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
     volumes:
       - kafka-data:/var/lib/kafka/data
@@ -213,7 +214,7 @@ services:
       resources:
         limits:
           cpus: "0.50"
-          memory: 512M
+          memory: 1G
 
   # ------------------------------------------
   # Kafka Topic 初始化
@@ -221,6 +222,8 @@ services:
   kafka-init:
     image: confluentinc/cp-kafka:7.6.1
     restart: "no"
+    environment:
+      KAFKA_HEAP_OPTS: "-Xms64M -Xmx128M"
     depends_on:
       kafka:
         condition: service_started
@@ -239,7 +242,7 @@ services:
       resources:
         limits:
           cpus: "0.10"
-          memory: 128M
+          memory: 256M
 
   # ------------------------------------------
   # alert-service 告警事件消费与状态管理
@@ -473,6 +476,8 @@ services:
       LLM_API_URL: ${LLM_API_URL:-https://api.deepseek.com/v1/chat/completions}
       LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-60}
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-800}
+      DIAGNOSIS_LLM_TIMEOUT_SECONDS: ${DIAGNOSIS_LLM_TIMEOUT_SECONDS:-15}
       COPILOT_SESSION_TTL_SECONDS: ${COPILOT_SESSION_TTL_SECONDS:-7200}
       COPILOT_MAX_MESSAGE_LENGTH: ${COPILOT_MAX_MESSAGE_LENGTH:-2000}
       COPILOT_MAX_SESSION_MESSAGES: ${COPILOT_MAX_SESSION_MESSAGES:-50}

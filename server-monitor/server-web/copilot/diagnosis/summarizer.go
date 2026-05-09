@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 const maxDiagnosisPromptBytes = 16 * 1024
@@ -20,11 +21,20 @@ type Summarizer interface {
 }
 
 type LLMSummarizer struct {
-	llm LLMGenerator
+	llm     LLMGenerator
+	timeout time.Duration
+}
+
+type LLMSummarizerOptions struct {
+	Timeout time.Duration
 }
 
 func NewLLMSummarizer(llm LLMGenerator) *LLMSummarizer {
-	return &LLMSummarizer{llm: llm}
+	return NewLLMSummarizerWithOptions(llm, LLMSummarizerOptions{})
+}
+
+func NewLLMSummarizerWithOptions(llm LLMGenerator, options LLMSummarizerOptions) *LLMSummarizer {
+	return &LLMSummarizer{llm: llm, timeout: options.Timeout}
 }
 
 func (s *LLMSummarizer) Summarize(ctx context.Context, alert AlertContext, evidence EvidenceBundle, rules RuleAnalysis) (DiagnosisSummary, LLMMetadata, error) {
@@ -36,7 +46,13 @@ func (s *LLMSummarizer) Summarize(ctx context.Context, alert AlertContext, evide
 		return RuleOnlySummary(alert, rules), LLMMetadata{Model: "rule-only", PromptHash: hash}, nil
 	}
 
-	raw, err := s.llm.Generate(ctx, diagnosisSystemPrompt(), prompt)
+	llmCtx := ctx
+	var cancel context.CancelFunc
+	if s.timeout > 0 {
+		llmCtx, cancel = context.WithTimeout(ctx, s.timeout)
+		defer cancel()
+	}
+	raw, err := s.llm.Generate(llmCtx, diagnosisSystemPrompt(), prompt)
 	if err != nil {
 		return RuleOnlySummary(alert, rules), LLMMetadata{Model: "rule-only", PromptHash: hash}, err
 	}

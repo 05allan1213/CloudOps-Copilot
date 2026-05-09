@@ -140,6 +140,14 @@ type Config struct {
 	// 默认值：60s
 	LLMTimeout time.Duration
 
+	// LLMMaxTokens LLM 单次响应最大 token 数
+	// 默认值：800
+	LLMMaxTokens int
+
+	// DiagnosisLLMTimeout 诊断总结 LLM 请求超时时间
+	// 默认值：15s
+	DiagnosisLLMTimeout time.Duration
+
 	// CopilotSessionTTL Copilot Redis 会话 TTL
 	// 默认值：7200s（2 小时）
 	CopilotSessionTTL time.Duration
@@ -315,6 +323,8 @@ func Load() Config {
 		LLMAPIURL:                  configutil.String("LLM_API_URL", "https://api.deepseek.com/v1/chat/completions"),
 		LLMModel:                   configutil.String("LLM_MODEL", "deepseek-chat"),
 		LLMTimeout:                 configutil.DurationSeconds("LLM_TIMEOUT_SECONDS", 60),
+		LLMMaxTokens:               configutil.PositiveInt("LLM_MAX_TOKENS", 800),
+		DiagnosisLLMTimeout:        configutil.DurationSeconds("DIAGNOSIS_LLM_TIMEOUT_SECONDS", 15),
 		CopilotSessionTTL:          configutil.DurationSeconds("COPILOT_SESSION_TTL_SECONDS", 7200),
 		CopilotMaxMessageLength:    configutil.PositiveInt("COPILOT_MAX_MESSAGE_LENGTH", 2000),
 		CopilotMaxSessionMessages:  configutil.PositiveInt("COPILOT_MAX_SESSION_MESSAGES", 50),
@@ -401,6 +411,12 @@ func (c Config) Validate() error {
 	}
 	if c.LLMTimeout <= 0 {
 		return fmt.Errorf("LLM_TIMEOUT_SECONDS must be positive, got %v", c.LLMTimeout)
+	}
+	if c.LLMMaxTokens <= 0 {
+		return fmt.Errorf("LLM_MAX_TOKENS must be positive, got %d", c.LLMMaxTokens)
+	}
+	if c.DiagnosisLLMTimeout <= 0 {
+		return fmt.Errorf("DIAGNOSIS_LLM_TIMEOUT_SECONDS must be positive, got %v", c.DiagnosisLLMTimeout)
 	}
 	if c.CopilotSessionTTL <= 0 {
 		return fmt.Errorf("COPILOT_SESSION_TTL_SECONDS must be positive, got %v", c.CopilotSessionTTL)
