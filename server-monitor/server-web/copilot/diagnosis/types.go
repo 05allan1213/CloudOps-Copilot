@@ -3,6 +3,9 @@ package diagnosis
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -149,6 +152,49 @@ type RootCauseHypothesis struct {
 	Cause      string   `json:"cause"`
 	Confidence string   `json:"confidence"`
 	Evidence   []string `json:"evidence"`
+}
+
+func (h *RootCauseHypothesis) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Cause      string          `json:"cause"`
+		Confidence json.RawMessage `json:"confidence"`
+		Evidence   json.RawMessage `json:"evidence"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	h.Cause = raw.Cause
+	h.Evidence = nil
+	if len(raw.Evidence) > 0 && string(raw.Evidence) != "null" {
+		var evidence []string
+		if err := json.Unmarshal(raw.Evidence, &evidence); err == nil {
+			h.Evidence = evidence
+		} else {
+			var single string
+			if err := json.Unmarshal(raw.Evidence, &single); err != nil {
+				return fmt.Errorf("evidence must be string or string array")
+			}
+			if strings.TrimSpace(single) != "" {
+				h.Evidence = []string{single}
+			}
+		}
+	}
+	h.Confidence = ""
+	if len(raw.Confidence) == 0 || string(raw.Confidence) == "null" {
+		return nil
+	}
+	var confidence string
+	if err := json.Unmarshal(raw.Confidence, &confidence); err == nil {
+		h.Confidence = confidence
+		return nil
+	}
+	value := strings.TrimSpace(string(raw.Confidence))
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return fmt.Errorf("confidence must be string or number")
+	}
+	h.Confidence = strconv.FormatFloat(parsed, 'f', -1, 64)
+	return nil
 }
 
 type RecommendedAction struct {

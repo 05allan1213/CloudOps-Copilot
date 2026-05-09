@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -261,7 +262,11 @@ func isAllowedRisk(value string) bool {
 }
 
 func isAllowedConfidence(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if numeric, err := strconv.ParseFloat(normalized, 64); err == nil {
+		return numeric >= 0 && numeric <= 1
+	}
+	switch normalized {
 	case ConfidenceLow, ConfidenceMedium, ConfidenceHigh:
 		return true
 	default:
