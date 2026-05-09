@@ -292,6 +292,18 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.secret.name | quote }}
                   key: ADMIN_PASSWORD
+          {{- if .Values.runbooks.enabled }}
+          volumeMounts:
+            - name: runbooks
+              mountPath: {{ .Values.runbooks.mountPath | quote }}
+              readOnly: true
+          {{- end }}
+      {{- if .Values.runbooks.enabled }}
+      volumes:
+        - name: runbooks
+          configMap:
+            name: {{ .Values.runbooks.configMapName | quote }}
+      {{- end }}
 
 ---
 # ------------------------------------------

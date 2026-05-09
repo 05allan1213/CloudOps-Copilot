@@ -292,6 +292,14 @@ spec:
                 configMapKeyRef:
                   name: monitor-config
                   key: KAFKA_BROKERS
+          volumeMounts:
+            - name: runbooks
+              mountPath: /app/runbooks
+              readOnly: true
+      volumes:
+        - name: runbooks
+          configMap:
+            name: monitor-runbooks
 
 ---
 # ------------------------------------------

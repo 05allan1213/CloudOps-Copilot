@@ -442,7 +442,7 @@ func supplementaryPromQueries(alert AlertContext) map[string]string {
 }
 
 func runbookKeywords(alert AlertContext) []string {
-	values := []string{alert.AlertName, alert.Severity, alert.Instance}
+	values := []string{alert.AlertName, alert.Severity}
 	for _, key := range []string{"alertname", "job", "namespace"} {
 		if value := alert.Labels[key]; value != "" {
 			values = append(values, value)

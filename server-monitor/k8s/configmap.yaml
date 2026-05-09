@@ -55,3 +55,174 @@ data:
   PROBE_LISTEN_ADDR: ":9090"
   PROBE_METRICS_PATH: "/metrics"
   PROBE_SCRAPE_INTERVAL: "5"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: monitor-runbooks
+  namespace: server-monitor
+data:
+  high-cpu.md: |-
+    # HighCPU
+
+    ## 适用告警
+    - HighCPU
+
+    ## 关键词
+    - cpu
+    - load
+    - server_monitor_cpu_usage_percent
+    - server_monitor_load1
+
+    ## 典型现象
+    CPU 使用率在 15m 窗口内持续高于阈值，可能伴随 load1 升高、请求延迟变大或批处理任务堆积。
+
+    ## 关键指标
+    - server_monitor_cpu_usage_percent
+    - server_monitor_load1
+    - server_monitor_process_count
+
+    ## 排查步骤
+    1. 查看 CPU 15m 和 1h 趋势，确认是否持续高位而不是瞬时尖峰。
+    2. 对比 load1 与进程数量，判断是否存在可运行队列同步升高。
+    3. 查看同实例 24h 告警历史，识别周期性任务、发布窗口或重复抖动。
+    4. 结合主机最近变更、流量增长和批处理任务，确认是否为预期负载。
+
+    ## 建议动作
+    - 低风险：继续观察、通知负责人、收集进程和负载信息。
+    - 中风险：扩容关联工作负载或迁移流量，必须人工确认。
+    - 高风险：删除资源、修改 Secret、批量重启，禁止由 AI 自动执行。
+
+    ## 风险说明
+    任何写操作必须进入审批和审计流程；Phase 4 只提供知识建议，不执行动作。
+  critical-cpu.md: |-
+    # CriticalCPU
+
+    ## 适用告警
+    - CriticalCPU
+
+    ## 关键词
+    - cpu
+    - critical
+    - load
+    - server_monitor_cpu_usage_percent
+
+    ## 典型现象
+    CPU 使用率长时间接近饱和，可能影响核心服务响应，并伴随 load1 明显升高或进程数异常增长。
+
+    ## 关键指标
+    - server_monitor_cpu_usage_percent
+    - server_monitor_load1
+    - server_monitor_process_count
+
+    ## 排查步骤
+    1. 优先确认告警仍处于 firing，排除已恢复告警导致的重复处理。
+    2. 查看 CPU、load1、进程数量在 15m 窗口内是否同时异常。
+    3. 检查同实例最近是否有 HighCPU 或 CriticalCPU 连续触发。
+    4. 联系业务负责人确认近期发布、压测、定时任务或异常流量。
+
+    ## 建议动作
+    - 低风险：立即通知负责人并保留指标、告警历史和进程快照。
+    - 中风险：执行限流、摘流、扩容或迁移前必须由人工确认。
+    - 高风险：强制重启、删除容器、修改配置和批量变更必须走审批流程。
+
+    ## 风险说明
+    CriticalCPU 表示影响风险更高，但 Runbook 仍只是参考知识；自动执行任何写操作都不在 Phase 4 范围内。
+  high-memory.md: |-
+    # HighMemory
+
+    ## 适用告警
+    - HighMemory
+
+    ## 关键词
+    - memory
+    - mem
+    - server_monitor_memory_usage_percent
+    - server_monitor_memory_available_bytes
+
+    ## 典型现象
+    内存使用率持续升高，可用内存下降，可能伴随缓存膨胀、进程泄漏或批处理任务占用。
+
+    ## 关键指标
+    - server_monitor_memory_usage_percent
+    - server_monitor_memory_available_bytes
+
+    ## 排查步骤
+    1. 查看 memory usage 15m 和 1h 趋势，判断是否单调增长。
+    2. 对比 available bytes，确认是否接近业务安全水位。
+    3. 查看告警历史，判断是否为周期性任务或持续泄漏。
+    4. 结合近期发布和进程列表，定位高内存进程或缓存策略变化。
+
+    ## 建议动作
+    - 低风险：收集内存趋势、进程占用和告警历史。
+    - 中风险：调整流量、扩容实例或优化缓存策略，需要人工确认。
+    - 高风险：强制 kill 进程、重启服务、修改配置必须走审批和回滚预案。
+
+    ## 风险说明
+    Runbook 不能替代现场确认；内存类操作容易造成状态丢失或请求失败，必须保留人工审批。
+  high-disk.md: |-
+    # HighDisk
+
+    ## 适用告警
+    - HighDisk
+
+    ## 关键词
+    - disk
+    - filesystem
+    - mountpoint
+    - server_monitor_disk_usage_percent
+
+    ## 典型现象
+    磁盘使用率持续高于阈值，可能由日志增长、临时文件堆积、数据目录扩张或挂载点容量不足引起。
+
+    ## 关键指标
+    - server_monitor_disk_usage_percent
+
+    ## 排查步骤
+    1. 查看目标挂载点的 disk usage 当前值和最近趋势。
+    2. 确认告警挂载点是否为业务数据目录、日志目录或临时目录。
+    3. 查看 24h 告警历史，判断是否快速增长或周期性清理失败。
+    4. 检查日志轮转、备份任务、数据写入量和异常大文件。
+
+    ## 建议动作
+    - 低风险：收集挂载点、目录占用和增长趋势。
+    - 中风险：清理已确认可删除的临时文件或扩容磁盘，必须人工确认。
+    - 高风险：删除业务数据、格式化挂载点、修改持久化配置必须走审批流程。
+
+    ## 风险说明
+    磁盘清理存在数据丢失风险；Phase 4 只给出排查建议，不自动删除任何文件。
+  host-down.md: |-
+    # HostDown
+
+    ## 适用告警
+    - HostDown
+
+    ## 关键词
+    - down
+    - offline
+    - server-probe
+    - prometheus
+    - up
+
+    ## 典型现象
+    Prometheus `up{job="server-probe"}` 为 0，目标主机或 server-probe 探针不可达，可能导致主机指标和告警数据中断。
+
+    ## 关键指标
+    - up
+    - server_monitor_cpu_usage_percent
+    - server_monitor_memory_usage_percent
+
+    ## 排查步骤
+    1. 查看告警状态是否仍为 firing，并确认 startsAt 与最近 scrape 时间。
+    2. 检查 Prometheus targets 中 server-probe 目标是否 down。
+    3. 验证目标主机网络连通性、防火墙、端口监听和 server-probe 进程状态。
+    4. 对比同主机告警历史，排除短暂网络抖动或 Prometheus scrape 配置错误。
+
+    ## 建议动作
+    - 低风险：记录 targets 状态、错误信息和最近 scrape 时间。
+    - 中风险：重启探针或切换流量前必须由人工确认。
+    - 高风险：修改网络策略、重启宿主机或批量变更探针配置必须走审批流程。
+
+    ## 风险说明
+    HostDown 可能是真实故障，也可能是监控链路误报；诊断必须区分业务不可用和观测不可用。

@@ -1,0 +1,13 @@
+{{- if and .Values.serverWeb.enabled .Values.runbooks.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.runbooks.configMapName | quote }}
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+data:
+{{- range $name, $content := .Values.runbooks.files }}
+  {{ $name | quote }}: |-
+{{ $content | nindent 4 }}
+{{- end }}
+{{- end }}

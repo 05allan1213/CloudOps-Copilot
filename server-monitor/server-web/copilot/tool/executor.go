@@ -224,14 +224,6 @@ func toServiceToolSchema(schema ToolSchema) copilot.ToolSchema {
 func (e *Executor) planToolCall(result nlu.Result) (string, json.RawMessage, bool) {
 	switch result.Intent {
 	case nlu.IntentAlertQuery:
-		if result.Entities["alert_name"] != "" {
-			return ToolRunbookSearch, encodeToolArgs(mixedArgs(result.Entities, map[string]ParamType{
-				"alert_name": ParamTypeString,
-				"keywords":   ParamTypeArray,
-				"metrics":    ParamTypeArray,
-				"limit":      ParamTypeInteger,
-			})), true
-		}
 		return ToolAlertListActive, encodeToolArgs(stringArgs(result.Entities, "severity")), true
 	case nlu.IntentAlertEventQuery:
 		return ToolAlertEvents, encodeToolArgs(mixedArgs(result.Entities, map[string]ParamType{
