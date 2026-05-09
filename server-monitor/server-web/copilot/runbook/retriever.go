@@ -45,6 +45,9 @@ func (r *Retriever) Search(ctx context.Context, req SearchRequest) ([]SearchResu
 	if r == nil {
 		return nil, ErrUnavailable
 	}
+	if len(r.docs) == 0 {
+		return nil, ErrUnavailable
+	}
 
 	alertName := strings.TrimSpace(req.AlertName)
 	keywords := normalizeTerms(req.Keywords)

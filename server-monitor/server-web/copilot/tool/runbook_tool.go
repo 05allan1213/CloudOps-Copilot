@@ -3,6 +3,7 @@ package tool
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 
 	"server-web/copilot/runbook"
@@ -61,6 +62,9 @@ func (t runbookSearchTool) Run(ctx context.Context, args json.RawMessage) (ToolR
 	req.Metrics = cleanStringList(req.Metrics, 128)
 	results, err := t.executor.runbookSearcher.Search(ctx, req)
 	if err != nil {
+		if errors.Is(err, runbook.ErrUnavailable) {
+			return ToolResult{}, ErrToolUnavailable
+		}
 		return ToolResult{}, err
 	}
 	return ToolResult{Success: true, Data: results}, nil
