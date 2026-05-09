@@ -472,6 +472,10 @@ services:
       COPILOT_TOOL_REGISTRY_ENABLED: ${COPILOT_TOOL_REGISTRY_ENABLED:-true}
       COPILOT_TOOL_DEFAULT_TIMEOUT_SECONDS: ${COPILOT_TOOL_DEFAULT_TIMEOUT_SECONDS:-30}
       COPILOT_TOOL_LOG_ARGS: ${COPILOT_TOOL_LOG_ARGS:-false}
+      RUNBOOK_DIR: ${RUNBOOK_DIR:-/app/runbooks}
+      RUNBOOK_MAX_FILES: ${RUNBOOK_MAX_FILES:-100}
+      RUNBOOK_MAX_FILE_BYTES: ${RUNBOOK_MAX_FILE_BYTES:-65536}
+      RUNBOOK_SEARCH_TOP_N: ${RUNBOOK_SEARCH_TOP_N:-2}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_API_URL: ${LLM_API_URL:-https://api.deepseek.com/v1/chat/completions}
       LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
@@ -488,6 +492,7 @@ services:
       KAFKA_BROKERS: kafka:9092
     volumes:
       - ./docker/custom-alerts.yml:/etc/server-monitor/rules/custom-alerts.yml
+      - ./runbooks:/app/runbooks:ro
     depends_on:
       jaeger:
         condition: service_started

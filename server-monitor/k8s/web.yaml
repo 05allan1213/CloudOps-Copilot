@@ -242,6 +242,26 @@ spec:
                 configMapKeyRef:
                   name: monitor-config
                   key: COPILOT_TOOL_LOG_ARGS
+            - name: RUNBOOK_DIR
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: RUNBOOK_DIR
+            - name: RUNBOOK_MAX_FILES
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: RUNBOOK_MAX_FILES
+            - name: RUNBOOK_MAX_FILE_BYTES
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: RUNBOOK_MAX_FILE_BYTES
+            - name: RUNBOOK_SEARCH_TOP_N
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: RUNBOOK_SEARCH_TOP_N
             - name: READY_TIMEOUT_SECONDS
               valueFrom:
                 configMapKeyRef:

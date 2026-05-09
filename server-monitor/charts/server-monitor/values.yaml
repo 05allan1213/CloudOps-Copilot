@@ -34,6 +34,10 @@ config:
   copilotToolRegistryEnabled: "true"
   copilotToolDefaultTimeoutSeconds: "30"
   copilotToolLogArgs: "false"
+  runbookDir: /app/runbooks
+  runbookMaxFiles: "100"
+  runbookMaxFileBytes: "65536"
+  runbookSearchTopN: "2"
 
 secret:
   create: true

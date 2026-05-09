@@ -123,6 +123,22 @@ type Config struct {
 	// 默认值：false
 	CopilotToolLogArgs bool
 
+	// RunbookDir Runbook Markdown 目录，为空时禁用 Runbook 检索
+	// 默认值：../runbooks
+	RunbookDir string
+
+	// RunbookMaxFiles 最大 Runbook 文件数量
+	// 默认值：100
+	RunbookMaxFiles int
+
+	// RunbookMaxFileBytes 单个 Runbook Markdown 最大字节数
+	// 默认值：65536
+	RunbookMaxFileBytes int64
+
+	// RunbookSearchTopN 诊断默认注入 Runbook 片段数量
+	// 默认值：2
+	RunbookSearchTopN int
+
 	// LLMAPIKey LLM API Key，用于后续 LLM 兜底
 	// 默认值：空（禁用 LLM 调用）
 	// 敏感：是
@@ -319,6 +335,10 @@ func Load() Config {
 		CopilotToolRegistryEnabled: configutil.Bool("COPILOT_TOOL_REGISTRY_ENABLED", true),
 		CopilotToolDefaultTimeout:  configutil.DurationSeconds("COPILOT_TOOL_DEFAULT_TIMEOUT_SECONDS", 30),
 		CopilotToolLogArgs:         configutil.Bool("COPILOT_TOOL_LOG_ARGS", false),
+		RunbookDir:                 configutil.String("RUNBOOK_DIR", "../runbooks"),
+		RunbookMaxFiles:            configutil.PositiveInt("RUNBOOK_MAX_FILES", 100),
+		RunbookMaxFileBytes:        int64(configutil.PositiveInt("RUNBOOK_MAX_FILE_BYTES", 65536)),
+		RunbookSearchTopN:          configutil.PositiveInt("RUNBOOK_SEARCH_TOP_N", 2),
 		LLMAPIKey:                  configutil.String("LLM_API_KEY", ""),
 		LLMAPIURL:                  configutil.String("LLM_API_URL", "https://api.deepseek.com/v1/chat/completions"),
 		LLMModel:                   configutil.String("LLM_MODEL", "deepseek-chat"),
@@ -429,6 +449,15 @@ func (c Config) Validate() error {
 	}
 	if c.CopilotToolDefaultTimeout <= 0 {
 		return fmt.Errorf("COPILOT_TOOL_DEFAULT_TIMEOUT_SECONDS must be positive, got %v", c.CopilotToolDefaultTimeout)
+	}
+	if c.RunbookMaxFiles <= 0 {
+		return fmt.Errorf("RUNBOOK_MAX_FILES must be positive, got %d", c.RunbookMaxFiles)
+	}
+	if c.RunbookMaxFileBytes <= 0 {
+		return fmt.Errorf("RUNBOOK_MAX_FILE_BYTES must be positive, got %d", c.RunbookMaxFileBytes)
+	}
+	if c.RunbookSearchTopN <= 0 || c.RunbookSearchTopN > 5 {
+		return fmt.Errorf("RUNBOOK_SEARCH_TOP_N must be in range 1-5, got %d", c.RunbookSearchTopN)
 	}
 	if c.RateLimit.Enabled {
 		if c.RateLimit.Requests <= 0 {

@@ -34,6 +34,10 @@ data:
   COPILOT_TOOL_REGISTRY_ENABLED: {{ .Values.config.copilotToolRegistryEnabled | quote }}
   COPILOT_TOOL_DEFAULT_TIMEOUT_SECONDS: {{ .Values.config.copilotToolDefaultTimeoutSeconds | quote }}
   COPILOT_TOOL_LOG_ARGS: {{ .Values.config.copilotToolLogArgs | quote }}
+  RUNBOOK_DIR: {{ .Values.config.runbookDir | quote }}
+  RUNBOOK_MAX_FILES: {{ .Values.config.runbookMaxFiles | quote }}
+  RUNBOOK_MAX_FILE_BYTES: {{ .Values.config.runbookMaxFileBytes | quote }}
+  RUNBOOK_SEARCH_TOP_N: {{ .Values.config.runbookSearchTopN | quote }}
   GIN_MODE: {{ .Values.config.ginMode | quote }}
   READY_TIMEOUT_SECONDS: {{ .Values.config.readyTimeoutSeconds | quote }}
   REQUEST_TIMEOUT_SECONDS: {{ .Values.config.requestTimeoutSeconds | quote }}

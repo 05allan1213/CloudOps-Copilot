@@ -34,6 +34,10 @@ data:
   COPILOT_TOOL_REGISTRY_ENABLED: "true"
   COPILOT_TOOL_DEFAULT_TIMEOUT_SECONDS: "30"
   COPILOT_TOOL_LOG_ARGS: "false"
+  RUNBOOK_DIR: /app/runbooks
+  RUNBOOK_MAX_FILES: "100"
+  RUNBOOK_MAX_FILE_BYTES: "65536"
+  RUNBOOK_SEARCH_TOP_N: "2"
   LLM_API_URL: https://api.deepseek.com/v1/chat/completions
   LLM_MODEL: deepseek-chat
   LLM_TIMEOUT_SECONDS: "60"

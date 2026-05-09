@@ -23,6 +23,7 @@ import (
 	copilotdiagnosis "server-web/copilot/diagnosis"
 	copilothandler "server-web/copilot/handler"
 	copilotllm "server-web/copilot/llm"
+	copilotrunbook "server-web/copilot/runbook"
 	copilotservice "server-web/copilot/service"
 	copilotsession "server-web/copilot/session"
 	copilottool "server-web/copilot/tool"
@@ -128,14 +129,26 @@ func NewRouter(cfg config.Config, promClient *promclient.Client, cacheClient *re
 		})
 		var tools copilotservice.ToolExecutor
 		var toolExecutor *copilottool.Executor
+		runbookDocs, err := copilotrunbook.LoadDir(context.Background(), cfg.RunbookDir, copilotrunbook.LoadOptions{
+			MaxFiles:     cfg.RunbookMaxFiles,
+			MaxFileBytes: cfg.RunbookMaxFileBytes,
+		})
+		if err != nil {
+			return nil, err
+		}
+		runbookRetriever := copilotrunbook.NewRetriever(runbookDocs, copilotrunbook.RetrieverOptions{
+			DefaultLimit: cfg.RunbookSearchTopN,
+			MaxLimit:     5,
+		})
 		if cfg.CopilotToolRegistryEnabled {
 			toolExecutor, err = copilottool.NewExecutor(copilottool.Options{
-				HostService:  copilotHostService,
-				AlertService: alertService,
-				PromClient:   promClient,
-				DB:           db,
-				Timeout:      cfg.CopilotToolDefaultTimeout,
-				LogArgs:      cfg.CopilotToolLogArgs,
+				HostService:     copilotHostService,
+				AlertService:    alertService,
+				PromClient:      promClient,
+				RunbookSearcher: runbookRetriever,
+				DB:              db,
+				Timeout:         cfg.CopilotToolDefaultTimeout,
+				LogArgs:         cfg.CopilotToolLogArgs,
 			})
 			if err != nil {
 				return nil, err
@@ -163,8 +176,9 @@ func NewRouter(cfg config.Config, promClient *promclient.Client, cacheClient *re
 				Timeout:      cfg.CopilotToolDefaultTimeout,
 			}),
 			Collector: copilotdiagnosis.NewEvidenceCollector(copilotdiagnosis.EvidenceOptions{
-				Runner:  runner,
-				Timeout: 45 * time.Second,
+				Runner:       runner,
+				Timeout:      45 * time.Second,
+				RunbookLimit: cfg.RunbookSearchTopN,
 			}),
 			Summarizer: copilotdiagnosis.NewLLMSummarizerWithOptions(llmClient, copilotdiagnosis.LLMSummarizerOptions{
 				Timeout: cfg.DiagnosisLLMTimeout,
