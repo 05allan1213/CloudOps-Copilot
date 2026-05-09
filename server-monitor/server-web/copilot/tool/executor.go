@@ -14,6 +14,7 @@ import (
 
 	appalert "server-web/alert"
 	"server-web/copilot/nlu"
+	"server-web/copilot/runbook"
 	copilot "server-web/copilot/service"
 	apphost "server-web/host"
 	"server-web/model"
@@ -32,6 +33,7 @@ const (
 	ToolAlertHistory    = "alert.history"
 	ToolAlertRuleList   = "alert.rule_list"
 	ToolPromQueryRange  = "prom.query_range"
+	ToolRunbookSearch   = "runbook.search"
 
 	defaultToolTimeout = 30 * time.Second
 
@@ -63,24 +65,32 @@ type PrometheusClient interface {
 	QueryRangeRaw(ctx context.Context, query string, start, end time.Time, step time.Duration) ([]promclient.RangeSeries, error)
 }
 
+type RunbookSearcher interface {
+	Search(ctx context.Context, req runbook.SearchRequest) ([]runbook.SearchResult, error)
+	HealthCheck(ctx context.Context) bool
+	Count() int
+}
+
 type Executor struct {
-	hostService  HostService
-	alertService AlertService
-	promClient   PrometheusClient
-	db           *gorm.DB
-	registry     Registry
-	timeout      time.Duration
-	now          func() time.Time
+	hostService     HostService
+	alertService    AlertService
+	promClient      PrometheusClient
+	runbookSearcher RunbookSearcher
+	db              *gorm.DB
+	registry        Registry
+	timeout         time.Duration
+	now             func() time.Time
 }
 
 type Options struct {
-	HostService  HostService
-	AlertService AlertService
-	PromClient   PrometheusClient
-	DB           *gorm.DB
-	Timeout      time.Duration
-	LogArgs      bool
-	Now          func() time.Time
+	HostService     HostService
+	AlertService    AlertService
+	PromClient      PrometheusClient
+	RunbookSearcher RunbookSearcher
+	DB              *gorm.DB
+	Timeout         time.Duration
+	LogArgs         bool
+	Now             func() time.Time
 }
 
 type DisabledExecutor struct{}
@@ -144,12 +154,13 @@ func newExecutor(options Options, registry Registry) (*Executor, error) {
 		now = func() time.Time { return time.Now().UTC() }
 	}
 	executor := &Executor{
-		hostService:  options.HostService,
-		alertService: options.AlertService,
-		promClient:   options.PromClient,
-		db:           options.DB,
-		timeout:      timeout,
-		now:          now,
+		hostService:     options.HostService,
+		alertService:    options.AlertService,
+		promClient:      options.PromClient,
+		runbookSearcher: options.RunbookSearcher,
+		db:              options.DB,
+		timeout:         timeout,
+		now:             now,
 	}
 	if err := registerReadOnlyTools(registry, executor); err != nil {
 		return nil, fmt.Errorf("register copilot read-only tools: %w", err)
@@ -213,6 +224,14 @@ func toServiceToolSchema(schema ToolSchema) copilot.ToolSchema {
 func (e *Executor) planToolCall(result nlu.Result) (string, json.RawMessage, bool) {
 	switch result.Intent {
 	case nlu.IntentAlertQuery:
+		if result.Entities["alert_name"] != "" {
+			return ToolRunbookSearch, encodeToolArgs(mixedArgs(result.Entities, map[string]ParamType{
+				"alert_name": ParamTypeString,
+				"keywords":   ParamTypeArray,
+				"metrics":    ParamTypeArray,
+				"limit":      ParamTypeInteger,
+			})), true
+		}
 		return ToolAlertListActive, encodeToolArgs(stringArgs(result.Entities, "severity")), true
 	case nlu.IntentAlertEventQuery:
 		return ToolAlertEvents, encodeToolArgs(mixedArgs(result.Entities, map[string]ParamType{
@@ -237,6 +256,12 @@ func (e *Executor) planToolCall(result nlu.Result) (string, json.RawMessage, boo
 			"search":   ParamTypeString,
 		})), true
 	case nlu.IntentMetricQuery:
+		if result.Entities["alert_name"] != "" {
+			return ToolRunbookSearch, encodeToolArgs(mixedArgs(result.Entities, map[string]ParamType{
+				"alert_name": ParamTypeString,
+				"limit":      ParamTypeInteger,
+			})), true
+		}
 		if result.Entities["query"] != "" {
 			return ToolPromQueryRange, e.promQueryRangeArgs(result.Entities), true
 		}

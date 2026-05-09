@@ -79,6 +79,8 @@ func (t executorTool) HealthCheck(ctx context.Context) bool {
 		return t.executor.db != nil
 	case ToolAlertRuleList:
 		return t.executor.db != nil
+	case ToolRunbookSearch:
+		return t.executor.runbookSearcher != nil && t.executor.runbookSearcher.HealthCheck(ctx) && t.executor.runbookSearcher.Count() > 0
 	default:
 		return true
 	}
@@ -168,6 +170,7 @@ func registerReadOnlyTools(registry Registry, executor *Executor) error {
 		newAlertHistoryTool(executor),
 		newAlertRuleListTool(executor),
 		newPromQueryRangeTool(executor),
+		newRunbookSearchTool(executor),
 	} {
 		if err := registry.Register(tool); err != nil {
 			return err

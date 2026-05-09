@@ -45,6 +45,7 @@ var (
 		regexp.MustCompile(`(?i)每页\s*(\d{1,3})\s*条`),
 	}
 	alertNamePatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\b(HighCPU|CriticalCPU|HighMemory|HighDisk|HostDown)\b`),
 		regexp.MustCompile(`(?i)\balert[_ -]?name\s*[:=]\s*([a-z0-9_.:-]+)\b`),
 		regexp.MustCompile(`(?i)\b([a-z][a-z0-9_.:-]*(?:cpu|memory|disk|down)[a-z0-9_.:-]*)\s*(?:alert\b|告警)`),
 		regexp.MustCompile(`(?i)\b([a-z][a-z0-9_.:-]*(?:cpu|memory|disk|load|network)[a-z0-9_.:-]*)\s+alerts?\s+history\b`),
