@@ -186,12 +186,24 @@ export interface DiagnosisRecommendedAction {
   requires_approval: boolean;
 }
 
+export interface RunbookEvidence {
+  title: string;
+  file: string;
+  score: number;
+  matched_alerts?: string[];
+  matched_keywords?: string[];
+  matched_metrics?: string[];
+  snippet: string;
+  source?: string;
+  collected_at?: string;
+}
+
 export interface DiagnosisEvidence {
   alert_context?: Record<string, unknown>;
   active_alerts?: Record<string, unknown>[];
   metrics?: DiagnosisMetricEvidence[];
   history?: Record<string, unknown>[];
-  runbooks?: unknown[];
+  runbooks?: RunbookEvidence[];
   collection_errors?: Array<{ source: string; error: string }>;
   collected_at?: string;
 }
@@ -209,7 +221,7 @@ export interface DiagnosisReport {
   summary: string;
   root_cause: string;
   evidence?: DiagnosisEvidence;
-  runbooks?: unknown[];
+  runbooks?: RunbookEvidence[];
   recommended_actions?: DiagnosisRecommendedAction[];
   rule_analysis?: DiagnosisRuleAnalysis;
   confidence: number;

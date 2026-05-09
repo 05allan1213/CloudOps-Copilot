@@ -14,6 +14,11 @@ const metrics = computed(() => report.value?.evidence?.metrics ?? []);
 const ruleResults = computed(() => report.value?.rule_analysis?.results ?? []);
 const actions = computed(() => report.value?.recommended_actions ?? []);
 const collectionErrors = computed(() => report.value?.evidence?.collection_errors ?? []);
+const runbooks = computed(() => {
+  const direct = report.value?.runbooks ?? [];
+  if (direct.length > 0) return direct;
+  return report.value?.evidence?.runbooks ?? [];
+});
 
 function formatPercent(value?: number) {
   return `${Math.round((value ?? 0) * 100)}%`;
@@ -26,6 +31,18 @@ function formatTime(value?: string) {
 
 function formatJSON(value: unknown) {
   return JSON.stringify(value ?? {}, null, 2);
+}
+
+function formatScore(value?: number) {
+  return (value ?? 0).toFixed(1);
+}
+
+function runbookMatches(runbook: { matched_alerts?: string[]; matched_keywords?: string[]; matched_metrics?: string[] }) {
+  return [
+    ...(runbook.matched_alerts ?? []),
+    ...(runbook.matched_keywords ?? []),
+    ...(runbook.matched_metrics ?? []),
+  ];
 }
 
 async function loadReport() {
@@ -118,6 +135,26 @@ onMounted(loadReport);
             <span>{{ rule.passed ? "命中" : "未命中" }}</span>
             <p>{{ rule.detail }}</p>
           </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h3>Runbook 命中</h3>
+        <div v-if="runbooks.length === 0" class="empty-line">未命中匹配 Runbook，当前诊断仅基于告警、指标和规则分析。</div>
+        <div v-else class="runbook-list">
+          <article v-for="runbook in runbooks" :key="`${runbook.file}-${runbook.title}`" class="runbook-item">
+            <div class="runbook-head">
+              <strong>{{ runbook.title }}</strong>
+              <span>{{ runbook.file }} · score {{ formatScore(runbook.score) }}</span>
+            </div>
+            <div v-if="runbookMatches(runbook).length" class="tag-row">
+              <span v-for="match in runbookMatches(runbook)" :key="match" class="tag">{{ match }}</span>
+            </div>
+            <details class="runbook-snippet">
+              <summary>查看片段</summary>
+              <pre>{{ runbook.snippet }}</pre>
+            </details>
+          </article>
         </div>
       </section>
 
@@ -262,6 +299,55 @@ th {
   font-size: 0.75rem;
 }
 
+.runbook-list {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.runbook-item {
+  border-top: 1px solid var(--border-color);
+  display: grid;
+  gap: 0.55rem;
+  padding-top: 0.75rem;
+}
+
+.runbook-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.runbook-head span {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  white-space: nowrap;
+}
+
+.tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.tag {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  padding: 0.18rem 0.45rem;
+}
+
+.runbook-snippet summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.runbook-snippet pre {
+  max-height: 220px;
+}
+
 .warning-panel {
   border-color: rgba(245, 158, 11, 0.35);
 }
@@ -303,6 +389,14 @@ pre {
 
   .confidence {
     justify-items: start;
+  }
+
+  .runbook-head {
+    display: grid;
+  }
+
+  .runbook-head span {
+    white-space: normal;
   }
 }
 </style>
