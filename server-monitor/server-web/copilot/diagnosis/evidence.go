@@ -19,6 +19,7 @@ const (
 	ToolAlertHistory    = "alert.history"
 	ToolHostMetrics     = "host.metrics"
 	ToolPromQueryRange  = "prom.query_range"
+	ToolRunbookSearch   = "runbook.search"
 
 	defaultEvidenceTimeout     = 45 * time.Second
 	defaultEvidenceToolTimeout = 30 * time.Second
@@ -35,17 +36,19 @@ type ToolResult struct {
 }
 
 type EvidenceCollector struct {
-	runner      ToolRunner
-	timeout     time.Duration
-	toolTimeout time.Duration
-	now         func() time.Time
+	runner       ToolRunner
+	timeout      time.Duration
+	toolTimeout  time.Duration
+	runbookLimit int
+	now          func() time.Time
 }
 
 type EvidenceOptions struct {
-	Runner      ToolRunner
-	Timeout     time.Duration
-	ToolTimeout time.Duration
-	Now         func() time.Time
+	Runner       ToolRunner
+	Timeout      time.Duration
+	ToolTimeout  time.Duration
+	RunbookLimit int
+	Now          func() time.Time
 }
 
 func NewEvidenceCollector(options EvidenceOptions) *EvidenceCollector {
@@ -57,18 +60,25 @@ func NewEvidenceCollector(options EvidenceOptions) *EvidenceCollector {
 	if toolTimeout <= 0 {
 		toolTimeout = defaultEvidenceToolTimeout
 	}
+	runbookLimit := options.RunbookLimit
+	if runbookLimit <= 0 {
+		runbookLimit = 2
+	}
+	if runbookLimit > 5 {
+		runbookLimit = 5
+	}
 	now := options.Now
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &EvidenceCollector{runner: options.Runner, timeout: timeout, toolTimeout: toolTimeout, now: now}
+	return &EvidenceCollector{runner: options.Runner, timeout: timeout, toolTimeout: toolTimeout, runbookLimit: runbookLimit, now: now}
 }
 
 func (c *EvidenceCollector) Collect(ctx context.Context, alert AlertContext) EvidenceBundle {
 	collectedAt := c.now().UTC()
 	bundle := EvidenceBundle{
 		AlertContext: alert,
-		Runbooks:     []json.RawMessage{},
+		Runbooks:     []RunbookEvidence{},
 		CollectedAt:  collectedAt,
 	}
 	if c == nil || c.runner == nil {
@@ -90,7 +100,7 @@ func (c *EvidenceCollector) Collect(ctx context.Context, alert AlertContext) Evi
 		bundle.CollectionErrors = append(bundle.CollectionErrors, CollectionError{Source: source, Error: err.Error()})
 	}
 
-	wg.Add(4)
+	wg.Add(5)
 	go func() {
 		defer wg.Done()
 		toolCtx, toolCancel := c.withToolTimeout(ctx)
@@ -143,11 +153,54 @@ func (c *EvidenceCollector) Collect(ctx context.Context, alert AlertContext) Evi
 		bundle.Metrics = append(bundle.Metrics, metrics...)
 		mu.Unlock()
 	}()
+	go func() {
+		defer wg.Done()
+		toolCtx, toolCancel := c.withToolTimeout(ctx)
+		defer toolCancel()
+		runbooks, err := c.collectRunbooks(toolCtx, alert)
+		if err != nil {
+			recordError(ToolRunbookSearch, err)
+			return
+		}
+		mu.Lock()
+		bundle.Runbooks = runbooks
+		mu.Unlock()
+	}()
 	wg.Wait()
 	if err := ctx.Err(); err != nil {
 		recordError("evidence_collector", err)
 	}
 	return bundle
+}
+
+func (c *EvidenceCollector) collectRunbooks(ctx context.Context, alert AlertContext) ([]RunbookEvidence, error) {
+	args, _ := json.Marshal(map[string]interface{}{
+		"alert_name": alert.AlertName,
+		"keywords":   runbookKeywords(alert),
+		"metrics":    runbookMetrics(alert),
+		"limit":      c.runbookLimit,
+	})
+	result, err := c.runner.ExecuteTool(ctx, ToolRunbookSearch, args)
+	if err != nil {
+		return nil, err
+	}
+	if !result.Success {
+		return nil, errors.New(toolErrorString(result))
+	}
+	data, err := json.Marshal(result.Data)
+	if err != nil {
+		return nil, err
+	}
+	var payload []RunbookEvidence
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return nil, err
+	}
+	collectedAt := c.now().UTC()
+	for i := range payload {
+		payload[i].Source = ToolRunbookSearch
+		payload[i].CollectedAt = collectedAt
+	}
+	return payload, nil
 }
 
 func (c *EvidenceCollector) withToolTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
@@ -386,6 +439,32 @@ func supplementaryPromQueries(alert AlertContext) map[string]string {
 		}
 	}
 	return queries
+}
+
+func runbookKeywords(alert AlertContext) []string {
+	values := []string{alert.AlertName, alert.Severity, alert.Instance}
+	for _, key := range []string{"alertname", "job", "namespace"} {
+		if value := alert.Labels[key]; value != "" {
+			values = append(values, value)
+		}
+	}
+	return compactStrings(values)
+}
+
+func runbookMetrics(alert AlertContext) []string {
+	alertName := strings.ToLower(alert.AlertName)
+	switch {
+	case strings.Contains(alertName, "cpu"):
+		return []string{promclient.MetricCPUUsage, promclient.MetricLoad1, promclient.MetricProcessCount}
+	case strings.Contains(alertName, "memory") || strings.Contains(alertName, "内存"):
+		return []string{promclient.MetricMemoryUsage, promclient.MetricMemoryAvailable}
+	case strings.Contains(alertName, "disk") || strings.Contains(alertName, "磁盘"):
+		return []string{promclient.MetricDiskUsage}
+	case strings.Contains(alertName, "down") || strings.Contains(alertName, "hostdown"):
+		return []string{"up"}
+	default:
+		return nil
+	}
 }
 
 func collectMetricValues(series []struct {

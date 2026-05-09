@@ -137,7 +137,7 @@ func confidenceScore(alert AlertContext, evidence EvidenceBundle, incomplete boo
 	if len(evidence.History) > 0 {
 		score += 0.2
 	}
-	score += 0.08
+	score += runbookEvidenceScore(evidence)
 	if incomplete {
 		score -= 0.2
 	}
@@ -148,6 +148,20 @@ func confidenceScore(alert AlertContext, evidence EvidenceBundle, incomplete boo
 		return 1
 	}
 	return score
+}
+
+func runbookEvidenceScore(evidence EvidenceBundle) float64 {
+	for _, item := range evidence.Runbooks {
+		if strings.TrimSpace(item.Snippet) != "" {
+			return 0.1
+		}
+	}
+	for _, item := range evidence.CollectionErrors {
+		if item.Source == ToolRunbookSearch {
+			return 0.03
+		}
+	}
+	return 0.04
 }
 
 func buildRuleSummary(alert AlertContext, results []RuleResult) string {

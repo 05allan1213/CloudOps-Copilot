@@ -150,7 +150,7 @@ func buildPrompt(alert AlertContext, evidence EvidenceBundle, rules RuleAnalysis
 		"alert_context": alert,
 		"evidence":      compactEvidenceForPrompt(evidence),
 		"rule_analysis": rules,
-		"runbook_note":  "Phase 3 has not connected Runbook retrieval; runbooks are intentionally empty.",
+		"runbook_note":  runbookNote(evidence.Runbooks),
 		"output_schema": map[string]interface{}{
 			"summary":               "string",
 			"severity_assessment":   "critical|warning|info",
@@ -183,6 +183,8 @@ func diagnosisSystemPrompt() string {
 		"You are CloudOps Copilot diagnosis summarizer.",
 		"Return JSON only, without markdown unless the transport wraps it.",
 		"Use only provided alert evidence and rule analysis.",
+		"Treat runbooks as reference knowledge, not observed facts.",
+		"Clearly separate metric evidence from runbook suggestions.",
 		"Do not invent secrets, tokens, Kubernetes write operations, or unobserved facts.",
 		"Recommended actions are text suggestions only and must not execute changes.",
 	}, "\n")
@@ -205,6 +207,7 @@ func compactEvidenceForPrompt(evidence EvidenceBundle) EvidenceBundle {
 	evidence.ActiveAlerts = limitSlice(evidence.ActiveAlerts, 20)
 	evidence.Metrics = limitSlice(evidence.Metrics, 40)
 	evidence.History = limitSlice(evidence.History, 20)
+	evidence.Runbooks = compactRunbooksForPrompt(evidence.Runbooks, 2, 800)
 	evidence.CollectionErrors = limitSlice(evidence.CollectionErrors, 20)
 	return evidence
 }
@@ -213,10 +216,28 @@ func minimalEvidenceForPrompt(evidence EvidenceBundle) map[string]interface{} {
 	return map[string]interface{}{
 		"alert_context":     evidence.AlertContext,
 		"metrics":           limitSlice(evidence.Metrics, 12),
+		"runbooks":          compactRunbooksForPrompt(evidence.Runbooks, 2, 500),
 		"history_count":     len(evidence.History),
 		"collection_errors": limitSlice(evidence.CollectionErrors, 12),
 		"collected_at":      evidence.CollectedAt,
 	}
+}
+
+func runbookNote(runbooks []RunbookEvidence) string {
+	if len(runbooks) == 0 {
+		return "No matching runbook found."
+	}
+	return "Runbooks are reference knowledge. Do not treat suggested actions as approved execution."
+}
+
+func compactRunbooksForPrompt(runbooks []RunbookEvidence, maxItems int, maxSnippetBytes int) []RunbookEvidence {
+	runbooks = limitSlice(runbooks, maxItems)
+	result := make([]RunbookEvidence, len(runbooks))
+	for i, item := range runbooks {
+		result[i] = item
+		result[i].Snippet = truncateBytes(item.Snippet, maxSnippetBytes)
+	}
+	return result
 }
 
 func limitSlice[T any](values []T, max int) []T {

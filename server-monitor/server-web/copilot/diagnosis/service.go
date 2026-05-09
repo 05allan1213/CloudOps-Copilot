@@ -2,7 +2,6 @@ package diagnosis
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -100,7 +99,7 @@ func (s *Service) Trigger(ctx context.Context, user User, req Request) (ReportRe
 		return ReportResponse{}, err
 	}
 
-	evidence := EvidenceBundle{AlertContext: alert, Runbooks: []json.RawMessage{}, CollectedAt: s.now().UTC()}
+	evidence := EvidenceBundle{AlertContext: alert, Runbooks: []RunbookEvidence{}, CollectedAt: s.now().UTC()}
 	if s.collector != nil {
 		evidence = s.collector.Collect(ctx, alert)
 	}
@@ -168,7 +167,7 @@ func completedFields(alert AlertContext, evidence EvidenceBundle, rules RuleAnal
 	if err != nil {
 		return nil, fmt.Errorf("marshal recommended actions: %w", err)
 	}
-	runbooksJSON, err := marshalJSON([]interface{}{})
+	runbooksJSON, err := marshalJSON(evidence.Runbooks)
 	if err != nil {
 		return nil, fmt.Errorf("marshal runbooks: %w", err)
 	}

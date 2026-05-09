@@ -92,7 +92,7 @@ type EvidenceBundle struct {
 	ActiveAlerts     []AlertContext    `json:"active_alerts"`
 	Metrics          []MetricEvidence  `json:"metrics"`
 	History          []HistoryEvidence `json:"history"`
-	Runbooks         []json.RawMessage `json:"runbooks"`
+	Runbooks         []RunbookEvidence `json:"runbooks"`
 	CollectionErrors []CollectionError `json:"collection_errors"`
 	CollectedAt      time.Time         `json:"collected_at"`
 }
@@ -118,6 +118,18 @@ type HistoryEvidence struct {
 	Summary        string     `json:"summary,omitempty"`
 	FiredAt        time.Time  `json:"fired_at"`
 	ResolvedAt     *time.Time `json:"resolved_at,omitempty"`
+}
+
+type RunbookEvidence struct {
+	Title           string    `json:"title"`
+	File            string    `json:"file"`
+	Score           float64   `json:"score"`
+	MatchedAlerts   []string  `json:"matched_alerts,omitempty"`
+	MatchedKeywords []string  `json:"matched_keywords,omitempty"`
+	MatchedMetrics  []string  `json:"matched_metrics,omitempty"`
+	Snippet         string    `json:"snippet"`
+	Source          string    `json:"source"`
+	CollectedAt     time.Time `json:"collected_at"`
 }
 
 type CollectionError struct {
