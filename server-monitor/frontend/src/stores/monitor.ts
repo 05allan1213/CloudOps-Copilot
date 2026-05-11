@@ -3,7 +3,7 @@ import { defineStore } from "pinia";
 
 import { fetchActiveAlerts, fetchAlertEvents } from "../api/alerts";
 import { fetchHosts } from "../api/hosts";
-import type { AlertEvent, AlertRecord, Host } from "../types";
+import type { AlertEvent, AlertRecord, DiagnosisUpdate, Host } from "../types";
 
 type SeverityFilter = "all" | "critical" | "warning" | "info";
 type HostStatusFilter = "all" | "up" | "down";
@@ -14,6 +14,7 @@ type EventStatusFilter = "all" | "firing" | "resolved";
 export const useMonitorStore = defineStore("monitor", () => {
   const alerts = ref<AlertRecord[]>([]);
   const alertEvents = ref<AlertEvent[]>([]);
+  const diagnosisByFingerprint = ref<Record<string, DiagnosisUpdate>>({});
   const hosts = ref<Host[]>([]);
   const loading = ref(true);
   const refreshing = ref(false);
@@ -275,6 +276,12 @@ export const useMonitorStore = defineStore("monitor", () => {
       endsAt: event.endsAt,
       generatorURL: event.generatorURL,
     };
+    const diagnosis = diagnosisByFingerprint.value[event.fingerprint];
+    if (diagnosis) {
+      alert.diagnosisStatus = diagnosis.status;
+      alert.diagnosisReportId = diagnosis.report_id;
+      alert.diagnosisError = diagnosis.error;
+    }
 
     const idx = alerts.value.findIndex(
       (a) => a.fingerprint === alert.fingerprint,
@@ -314,6 +321,24 @@ export const useMonitorStore = defineStore("monitor", () => {
       }),
     );
     lastUpdateTime.value = Date.now();
+  }
+
+  function applyIncomingDiagnosisUpdate(update: DiagnosisUpdate) {
+    diagnosisByFingerprint.value[update.fingerprint] = update;
+    const idx = alerts.value.findIndex((a) => a.fingerprint === update.fingerprint);
+    if (idx !== -1) {
+      alerts.value[idx] = {
+        ...alerts.value[idx],
+        diagnosisStatus: update.status,
+        diagnosisReportId: update.report_id,
+        diagnosisError: update.error,
+      };
+    }
+    if (update.status === "completed" && update.report_id) {
+      showToast(`自动诊断完成: ${update.alert_name || update.fingerprint}`, "info");
+    } else if (update.status === "failed") {
+      showToast(`自动诊断失败: ${update.alert_name || update.fingerprint}`, "warning");
+    }
   }
 
   function updateAgoText() {
@@ -428,6 +453,7 @@ export const useMonitorStore = defineStore("monitor", () => {
   return {
     alerts,
     alertEvents,
+    diagnosisByFingerprint,
     hosts,
     loading,
     refreshing,
@@ -474,6 +500,7 @@ export const useMonitorStore = defineStore("monitor", () => {
     refreshAll,
     applyIncomingAlert,
     applyIncomingHosts,
+    applyIncomingDiagnosisUpdate,
     updateAgoText,
     clearToastTimers,
   };

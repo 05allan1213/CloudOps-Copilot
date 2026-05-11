@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { RouterLink } from "vue-router";
+
 import type { AlertRecord } from "../types";
 
 type SeverityFilter = "all" | "critical" | "warning" | "info";
@@ -43,6 +45,23 @@ function formatTime(iso: string): string {
     return new Date(iso).toLocaleString("zh-CN");
   } catch {
     return iso;
+  }
+}
+
+function diagnosisLabel(status?: string): string {
+  switch (status) {
+    case "pending":
+      return "诊断等待中";
+    case "running":
+      return "自动诊断中";
+    case "completed":
+      return "自动诊断完成";
+    case "failed":
+      return "自动诊断失败";
+    case "skipped":
+      return "已跳过诊断";
+    default:
+      return "";
   }
 }
 </script>
@@ -193,8 +212,23 @@ function formatTime(iso: string): string {
           >
             {{ alert.annotations.description }}
           </p>
+          <div v-if="alert.diagnosisStatus" class="diagnosis-state">
+            <span :class="['diagnosis-badge', `diagnosis-${alert.diagnosisStatus}`]">
+              {{ diagnosisLabel(alert.diagnosisStatus) }}
+            </span>
+            <RouterLink
+              v-if="alert.diagnosisReportId"
+              class="diagnosis-link"
+              :to="`/diagnosis/${alert.diagnosisReportId}`"
+            >
+              查看诊断
+            </RouterLink>
+            <span v-if="alert.diagnosisError" class="diagnosis-error">
+              {{ alert.diagnosisError }}
+            </span>
+          </div>
           <button class="diagnose-btn" type="button" @click="emit('diagnose', alert)">
-            生成诊断
+            {{ alert.diagnosisStatus === "failed" ? "手动重试" : "生成诊断" }}
           </button>
         </div>
       </div>
@@ -433,6 +467,53 @@ function formatTime(iso: string): string {
   padding: 0.42rem 0.62rem;
   font-size: 0.74rem;
   font-weight: 700;
+}
+
+.diagnosis-state {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.7rem;
+}
+
+.diagnosis-badge {
+  border-radius: var(--radius-sm);
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.22rem 0.5rem;
+}
+
+.diagnosis-pending,
+.diagnosis-running {
+  background: var(--info-soft);
+  color: var(--info);
+}
+
+.diagnosis-completed {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.diagnosis-failed {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.diagnosis-skipped {
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+}
+
+.diagnosis-link {
+  color: var(--accent);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.diagnosis-error {
+  color: var(--danger);
+  font-size: 0.72rem;
 }
 
 @media (max-width: 768px) {

@@ -3,6 +3,7 @@ import type { DiagnosisListResponse, DiagnosisReport, DiagnosisRequest } from ".
 
 export interface DiagnosisQuery {
   status?: string;
+  trigger_type?: string;
   page?: number;
   page_size?: number;
 }

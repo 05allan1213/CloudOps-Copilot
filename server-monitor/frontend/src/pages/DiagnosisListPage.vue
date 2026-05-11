@@ -15,6 +15,7 @@ const loading = ref(false);
 const error = ref("");
 const filters = reactive<DiagnosisQuery>({
   status: "",
+  trigger_type: "",
   page: 1,
   page_size: 20,
 });
@@ -33,6 +34,19 @@ function statusLabel(value: string) {
       return "已完成";
     case "failed":
       return "失败";
+    default:
+      return value || "-";
+  }
+}
+
+function triggerLabel(value: string) {
+  switch (value) {
+    case "manual":
+      return "手动";
+    case "chat":
+      return "对话";
+    case "auto":
+      return "自动";
     default:
       return value || "-";
   }
@@ -92,6 +106,15 @@ onMounted(loadReports);
           <option value="failed">failed</option>
         </select>
       </label>
+      <label>
+        <span>来源</span>
+        <select v-model="filters.trigger_type">
+          <option value="">全部</option>
+          <option value="manual">手动</option>
+          <option value="chat">对话</option>
+          <option value="auto">自动</option>
+        </select>
+      </label>
       <div class="filter-actions">
         <button class="primary-btn" type="submit">查询</button>
       </div>
@@ -113,6 +136,7 @@ onMounted(loadReports);
             <th>告警</th>
             <th>目标</th>
             <th>状态</th>
+            <th>来源</th>
             <th>置信度</th>
             <th>摘要</th>
             <th>创建时间</th>
@@ -126,6 +150,7 @@ onMounted(loadReports);
             <td>{{ item.alert_name || "-" }}</td>
             <td class="mono-cell">{{ item.target_name || "-" }}</td>
             <td>{{ statusLabel(item.status) }}</td>
+            <td>{{ triggerLabel(item.trigger_type) }}</td>
             <td>{{ formatPercent(item.confidence) }}</td>
             <td class="summary-cell">{{ item.summary || "-" }}</td>
             <td>{{ formatTime(item.created_at) }}</td>

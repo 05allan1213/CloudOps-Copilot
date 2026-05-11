@@ -1,6 +1,6 @@
 import { onBeforeUnmount, ref } from "vue";
 
-import type { AlertEvent, AlertRecord, Host } from "../types";
+import type { AlertEvent, DiagnosisUpdate, Host } from "../types";
 import { getStoredToken } from "../api/authStorage";
 
 type ConnectionState = "connecting" | "connected" | "disconnected";
@@ -54,9 +54,27 @@ function isValidHostsMessage(data: unknown): data is { type: "hosts"; data: Host
   return msg.data.every(isValidHost);
 }
 
+function isValidDiagnosisUpdate(data: unknown): data is DiagnosisUpdate {
+  if (!data || typeof data !== "object") return false;
+  const record = data as Record<string, unknown>;
+  return (
+    typeof record.fingerprint === "string" &&
+    typeof record.status === "string" &&
+    typeof record.trigger_type === "string" &&
+    typeof record.updated_at === "string"
+  );
+}
+
+function isValidDiagnosisMessage(data: unknown): data is { type: "diagnosis_update"; data: DiagnosisUpdate } {
+  if (!data || typeof data !== "object") return false;
+  const msg = data as Record<string, unknown>;
+  return msg.type === "diagnosis_update" && isValidDiagnosisUpdate(msg.data);
+}
+
 export function useAlertsWebSocket(
   onAlert: (alert: AlertEvent) => void,
   onHosts?: (hosts: Host[]) => void,
+  onDiagnosis?: (update: DiagnosisUpdate) => void,
 ) {
   const connectionState = ref<ConnectionState>("disconnected");
   let socket: WebSocket | null = null;
@@ -108,6 +126,8 @@ export function useAlertsWebSocket(
           onAlert(payload);
         } else if (isValidHostsMessage(payload) && onHosts) {
           onHosts(payload.data);
+        } else if (isValidDiagnosisMessage(payload) && onDiagnosis) {
+          onDiagnosis(payload.data);
         } else {
           console.warn("Unknown websocket message", payload);
         }

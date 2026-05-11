@@ -20,6 +20,7 @@ const liveDataStarted = ref(false);
 const { connectionState, connect, disconnect } = useAlertsWebSocket(
   monitor.applyIncomingAlert,
   monitor.applyIncomingHosts,
+  monitor.applyIncomingDiagnosisUpdate,
 );
 
 const connectionLabel = computed(() => {

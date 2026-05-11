@@ -6,6 +6,9 @@ export interface AlertRecord {
   startsAt: string;
   endsAt: string;
   generatorURL?: string;
+  diagnosisStatus?: DiagnosisUpdate["status"];
+  diagnosisReportId?: number;
+  diagnosisError?: string;
 }
 
 export interface AlertEvent {
@@ -150,7 +153,19 @@ export interface DiagnosisRequest {
   alert_history_id?: number;
   alert_name?: string;
   instance?: string;
-  trigger_type?: "manual" | "chat" | string;
+  trigger_type?: "manual" | "chat" | "auto" | string;
+}
+
+export interface DiagnosisUpdate {
+  fingerprint: string;
+  alert_name: string;
+  instance: string;
+  status: "pending" | "running" | "completed" | "failed" | "skipped" | string;
+  trigger_type: "auto" | string;
+  report_id?: number;
+  summary?: string;
+  error?: string;
+  updated_at: string;
 }
 
 export interface DiagnosisMetricEvidence {
