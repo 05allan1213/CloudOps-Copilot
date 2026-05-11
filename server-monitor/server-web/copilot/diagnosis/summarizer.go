@@ -116,9 +116,11 @@ func ParseDiagnosisSummary(raw string) (DiagnosisSummary, error) {
 		if strings.TrimSpace(action.Description) == "" {
 			return DiagnosisSummary{}, fmt.Errorf("parse diagnosis summary: recommended_actions[%d].description is required", i)
 		}
-		if !isAllowedRisk(action.Risk) {
+		risk, ok := normalizeRisk(action.Risk)
+		if !ok {
 			return DiagnosisSummary{}, fmt.Errorf("parse diagnosis summary: recommended_actions[%d].risk is invalid", i)
 		}
+		summary.RecommendedActions[i].Risk = risk
 	}
 	for i, hypothesis := range summary.RootCauseHypotheses {
 		if strings.TrimSpace(hypothesis.Cause) == "" {
@@ -274,11 +276,20 @@ func isAllowedSeverity(value string) bool {
 }
 
 func isAllowedRisk(value string) bool {
+	_, ok := normalizeRisk(value)
+	return ok
+}
+
+func normalizeRisk(value string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "low", "medium", "high":
-		return true
+	case "low", "低":
+		return "low", true
+	case "medium", "moderate", "中", "中等":
+		return "medium", true
+	case "high", "高":
+		return "high", true
 	default:
-		return false
+		return "", false
 	}
 }
 
