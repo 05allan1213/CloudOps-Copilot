@@ -1,5 +1,29 @@
 basePath: /api/v1
 definitions:
+  action.ApproveRequest:
+    properties:
+      comment:
+        type: string
+    type: object
+  action.CreateFromDiagnosisRequest:
+    properties:
+      selected_action_types:
+        items:
+          type: string
+        type: array
+      source:
+        type: string
+    type: object
+  action.ExecuteRequest:
+    properties:
+      confirm:
+        type: boolean
+    type: object
+  action.RejectRequest:
+    properties:
+      reason:
+        type: string
+    type: object
   handlers.loginRequest:
     properties:
       password:
@@ -68,6 +92,274 @@ info:
   title: Server Monitor API
   version: "1.0"
 paths:
+  /actions:
+    get:
+      description: 按状态、风险等级、动作类型查询 PendingAction
+      parameters:
+      - description: 状态
+        in: query
+        name: status
+        type: string
+      - description: 风险等级
+        in: query
+        name: risk_level
+        type: string
+      - description: 动作类型
+        in: query
+        name: action_type
+        type: string
+      - description: 页码
+        in: query
+        name: page
+        type: integer
+      - description: 每页数量
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: 获取动作列表
+      tags:
+      - actions
+  /actions/{id}:
+    get:
+      description: 查询单个 PendingAction 的参数、状态、审批和执行结果
+      parameters:
+      - description: 动作 ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: 获取动作详情
+      tags:
+      - actions
+  /actions/{id}/approve:
+    post:
+      consumes:
+      - application/json
+      description: 将 pending 动作审批为 approved，只有 admin 可调用
+      parameters:
+      - description: 动作 ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: 审批备注
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/action.ApproveRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: 审批通过动作
+      tags:
+      - actions
+  /actions/{id}/execute:
+    post:
+      consumes:
+      - application/json
+      description: 执行 approved 动作；Phase 6 默认 disabled executor，会记录失败审计
+      parameters:
+      - description: 动作 ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: 执行确认
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/action.ExecuteRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: 执行动作
+      tags:
+      - actions
+  /actions/{id}/reject:
+    post:
+      consumes:
+      - application/json
+      description: 将 pending 动作拒绝为 rejected，拒绝原因必填
+      parameters:
+      - description: 动作 ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: 拒绝原因
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/action.RejectRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: 拒绝动作
+      tags:
+      - actions
+  /actions/pending:
+    get:
+      description: 查询 pending 状态的动作审批项
+      parameters:
+      - description: 页码
+        in: query
+        name: page
+        type: integer
+      - description: 每页数量
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: 获取待审批动作列表
+      tags:
+      - actions
   /alerts/active:
     get:
       description: 从 Redis 获取当前活跃的告警列表
@@ -135,6 +427,90 @@ paths:
       summary: 获取告警事件列表
       tags:
       - alerts
+  /audit-logs:
+    get:
+      description: 查询动作审批、拒绝、执行、失败和权限拒绝审计日志
+      parameters:
+      - description: 审计动作
+        in: query
+        name: action
+        type: string
+      - description: 结果
+        in: query
+        name: result
+        type: string
+      - description: 操作者
+        in: query
+        name: actor
+        type: string
+      - description: 页码
+        in: query
+        name: page
+        type: integer
+      - description: 每页数量
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: 获取审计日志列表
+      tags:
+      - audit
+  /audit-logs/{id}:
+    get:
+      description: 查询单条审计日志详情
+      parameters:
+      - description: 审计日志 ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: 获取审计日志详情
+      tags:
+      - audit
   /auth/login:
     post:
       consumes:
@@ -192,6 +568,55 @@ paths:
       summary: 获取当前用户信息
       tags:
       - auth
+  /diagnosis/{id}/actions:
+    post:
+      consumes:
+      - application/json
+      description: 根据诊断报告 recommended_actions 创建 PendingAction，只有 admin 可调用，不会执行真实动作
+      parameters:
+      - description: 诊断报告 ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: 创建请求
+        in: body
+        name: body
+        schema:
+          $ref: '#/definitions/action.CreateFromDiagnosisRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: 从诊断报告生成待审批动作
+      tags:
+      - actions
   /hosts:
     get:
       description: 查询 Prometheus 获取所有监控主机列表

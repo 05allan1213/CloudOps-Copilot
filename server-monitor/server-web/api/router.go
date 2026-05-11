@@ -228,6 +228,7 @@ func NewRouterWithRuntime(cfg config.Config, promClient *promclient.Client, cach
 				Executor:               copilotaction.DisabledK8sExecutor{},
 				Notifier:               copilotaction.NewWebSocketNotifier(websocketHub),
 				OperationEvents:        operationEventProducer{producer: alertProducer},
+				Observer:               metrics,
 				OperationEventsEnabled: cfg.ActionOperationEventsEnabled,
 				StatusPushEnabled:      cfg.ActionStatusPushEnabled,
 				ActionExecutionEnabled: actionExecutionEnabled,

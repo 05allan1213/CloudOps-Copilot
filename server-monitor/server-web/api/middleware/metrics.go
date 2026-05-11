@@ -17,6 +17,8 @@ type Metrics struct {
 	websocketConnections prometheus.Gauge
 	kafkaAlertEvents     *prometheus.CounterVec
 	kafkaMessages        *prometheus.CounterVec
+	actionEvents         *prometheus.CounterVec
+	actionDuration       *prometheus.HistogramVec
 }
 
 func NewMetrics() *Metrics {
@@ -43,9 +45,26 @@ func NewMetrics() *Metrics {
 			Name: "server_web_kafka_diagnosis_messages_total",
 			Help: "Total number of Kafka alert-events consumed by the diagnosis worker.",
 		}, []string{"result"}),
+		actionEvents: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "server_web_action_events_total",
+			Help: "Total number of action approval events handled by server-web.",
+		}, []string{"operation", "result"}),
+		actionDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "server_web_action_execution_duration_seconds",
+			Help:    "Action execution duration in seconds.",
+			Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
+		}, []string{"action_type", "status"}),
 	}
 
-	metrics.registry.MustRegister(metrics.requestsTotal, metrics.requestDuration, metrics.websocketConnections, metrics.kafkaAlertEvents, metrics.kafkaMessages)
+	metrics.registry.MustRegister(
+		metrics.requestsTotal,
+		metrics.requestDuration,
+		metrics.websocketConnections,
+		metrics.kafkaAlertEvents,
+		metrics.kafkaMessages,
+		metrics.actionEvents,
+		metrics.actionDuration,
+	)
 	return metrics
 }
 
@@ -86,4 +105,18 @@ func (m *Metrics) ObserveKafkaMessage(result string) {
 		return
 	}
 	m.kafkaMessages.WithLabelValues(result).Inc()
+}
+
+func (m *Metrics) ObserveActionEvent(operation, result string) {
+	if m == nil {
+		return
+	}
+	m.actionEvents.WithLabelValues(operation, result).Inc()
+}
+
+func (m *Metrics) ObserveActionExecutionDuration(actionType, status string, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.actionDuration.WithLabelValues(actionType, status).Observe(seconds)
 }

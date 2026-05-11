@@ -19,6 +19,7 @@ type ServiceConfig struct {
 	Executor                K8sExecutor
 	Notifier                StatusNotifier
 	OperationEvents         OperationEventPublisher
+	Observer                Observer
 	OperationEventsEnabled  bool
 	StatusPushEnabled       bool
 	ActionExecutionEnabled  bool
@@ -31,6 +32,7 @@ type Service struct {
 	executor               K8sExecutor
 	notifier               StatusNotifier
 	events                 OperationEventPublisher
+	observer               Observer
 	operationEventsEnabled bool
 	statusPushEnabled      bool
 	executionTimeout       time.Duration
@@ -55,6 +57,7 @@ func NewService(cfg ServiceConfig) *Service {
 		executor:               executor,
 		notifier:               cfg.Notifier,
 		events:                 cfg.OperationEvents,
+		observer:               cfg.Observer,
 		operationEventsEnabled: cfg.OperationEventsEnabled,
 		statusPushEnabled:      cfg.StatusPushEnabled,
 		executionTimeout:       executionTimeout,
@@ -69,6 +72,7 @@ func (s *Service) CreateFromDiagnosis(ctx context.Context, reportID uint64, req 
 		if auditErr := s.audit(ctx, actor, "action.create_pending", "diagnosis_report", strconv.FormatUint(reportID, 10), mustMarshal(req), model.AuditResultDenied, "insufficient permissions"); auditErr != nil {
 			return CreateFromDiagnosisResult{}, auditErr
 		}
+		s.observeAction("create_pending", model.AuditResultDenied)
 		return CreateFromDiagnosisResult{}, ErrForbidden
 	}
 	report, err := s.repo.GetDiagnosisReport(ctx, reportID)
@@ -118,6 +122,7 @@ func (s *Service) CreateFromDiagnosis(ctx context.Context, reportID uint64, req 
 		if err := s.audit(ctx, actorOrCopilot(actor), "action.create_pending", "pending_action", strconv.FormatUint(created.ID, 10), json.RawMessage(created.ParamsJSON), model.AuditResultSuccess, ""); err != nil {
 			return result, err
 		}
+		s.observeAction("create_pending", model.AuditResultSuccess)
 		s.notifyPending(ctx, created)
 		result.Created = append(result.Created, toActionResponse(created))
 	}
@@ -165,11 +170,13 @@ func (s *Service) Approve(ctx context.Context, id uint64, req ApproveRequest, ac
 		if auditErr := s.audit(ctx, actor, "action.approve", "pending_action", strconv.FormatUint(id, 10), mustMarshal(req), model.AuditResultDenied, err.Error()); auditErr != nil {
 			return ActionResponse{}, auditErr
 		}
+		s.observeAction("approve", model.AuditResultDenied)
 		return ActionResponse{}, err
 	}
 	if err := s.audit(ctx, actor, "action.approve", "pending_action", strconv.FormatUint(id, 10), mustMarshal(req), model.AuditResultSuccess, ""); err != nil {
 		return ActionResponse{}, err
 	}
+	s.observeAction("approve", model.AuditResultSuccess)
 	s.notifyStatus(ctx, saved, model.AuditResultSuccess)
 	return toActionResponse(saved), nil
 }
@@ -193,11 +200,13 @@ func (s *Service) Reject(ctx context.Context, id uint64, req RejectRequest, acto
 		if auditErr := s.audit(ctx, actor, "action.reject", "pending_action", strconv.FormatUint(id, 10), mustMarshal(req), model.AuditResultDenied, err.Error()); auditErr != nil {
 			return ActionResponse{}, auditErr
 		}
+		s.observeAction("reject", model.AuditResultDenied)
 		return ActionResponse{}, err
 	}
 	if err := s.audit(ctx, actor, "action.reject", "pending_action", strconv.FormatUint(id, 10), mustMarshal(req), model.AuditResultSuccess, ""); err != nil {
 		return ActionResponse{}, err
 	}
+	s.observeAction("reject", model.AuditResultSuccess)
 	s.notifyStatus(ctx, saved, model.AuditResultSuccess)
 	return toActionResponse(saved), nil
 }
@@ -217,6 +226,7 @@ func (s *Service) Execute(ctx context.Context, id uint64, actor Actor) (ActionRe
 		if auditErr := s.audit(ctx, actor, "action.execute", "pending_action", strconv.FormatUint(id, 10), json.RawMessage(`{}`), model.AuditResultDenied, err.Error()); auditErr != nil {
 			return ActionResponse{}, auditErr
 		}
+		s.observeAction("execute", model.AuditResultDenied)
 		return ActionResponse{}, err
 	}
 
@@ -224,7 +234,9 @@ func (s *Service) Execute(ctx context.Context, id uint64, actor Actor) (ActionRe
 
 	execCtx, cancel := context.WithTimeout(ctx, s.executionTimeout)
 	defer cancel()
+	start := time.Now()
 	result, execErr := s.executeK8s(execCtx, saved)
+	executionSeconds := time.Since(start).Seconds()
 	now := time.Now()
 	event := EventExecuteSuccess
 	if execErr != nil {
@@ -250,6 +262,8 @@ func (s *Service) Execute(ctx context.Context, id uint64, actor Actor) (ActionRe
 		auditResult = model.AuditResultFailure
 		errorMessage = sanitizeError(execErr)
 	}
+	s.observeAction("execute", auditResult)
+	s.observeExecution(saved.ActionType, final.Status, executionSeconds)
 	if err := s.audit(ctx, actor, "action.execute", "pending_action", strconv.FormatUint(id, 10), json.RawMessage(final.ParamsJSON), auditResult, errorMessage); err != nil {
 		return toActionResponse(final), err
 	}
@@ -348,6 +362,18 @@ func (s *Service) notifyPending(ctx context.Context, action model.PendingAction)
 func (s *Service) notifyStatus(ctx context.Context, action model.PendingAction, result string) {
 	if s.statusPushEnabled && s.notifier != nil {
 		s.notifier.NotifyActionStatus(ctx, action, result)
+	}
+}
+
+func (s *Service) observeAction(operation, result string) {
+	if s.observer != nil {
+		s.observer.ObserveActionEvent(operation, result)
+	}
+}
+
+func (s *Service) observeExecution(actionType, status string, seconds float64) {
+	if s.observer != nil {
+		s.observer.ObserveActionExecutionDuration(actionType, status, seconds)
 	}
 }
 
