@@ -16,6 +16,7 @@ type Metrics struct {
 	requestDuration      *prometheus.HistogramVec
 	websocketConnections prometheus.Gauge
 	kafkaAlertEvents     *prometheus.CounterVec
+	kafkaMessages        *prometheus.CounterVec
 }
 
 func NewMetrics() *Metrics {
@@ -38,9 +39,13 @@ func NewMetrics() *Metrics {
 			Name: "server_web_kafka_alert_events_total",
 			Help: "Total number of alert events handled by the server-web Kafka producer.",
 		}, []string{"result"}),
+		kafkaMessages: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "server_web_kafka_diagnosis_messages_total",
+			Help: "Total number of Kafka alert-events consumed by the diagnosis worker.",
+		}, []string{"result"}),
 	}
 
-	metrics.registry.MustRegister(metrics.requestsTotal, metrics.requestDuration, metrics.websocketConnections, metrics.kafkaAlertEvents)
+	metrics.registry.MustRegister(metrics.requestsTotal, metrics.requestDuration, metrics.websocketConnections, metrics.kafkaAlertEvents, metrics.kafkaMessages)
 	return metrics
 }
 
@@ -74,4 +79,11 @@ func (m *Metrics) ObserveKafkaAlertEvent(result string) {
 		return
 	}
 	m.kafkaAlertEvents.WithLabelValues(result).Inc()
+}
+
+func (m *Metrics) ObserveKafkaMessage(result string) {
+	if m == nil {
+		return
+	}
+	m.kafkaMessages.WithLabelValues(result).Inc()
 }

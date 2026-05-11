@@ -164,6 +164,34 @@ type Config struct {
 	// 默认值：15s
 	DiagnosisLLMTimeout time.Duration
 
+	// DiagnosisEnabled 是否启用告警自动诊断 Worker
+	// 默认值：false
+	DiagnosisEnabled bool
+
+	// DiagnosisWorkerCount 自动诊断 Worker 并发数量
+	// 默认值：1
+	DiagnosisWorkerCount int
+
+	// DiagnosisKafkaGroupID 自动诊断 Kafka Consumer Group ID
+	// 默认值：diagnosis-worker
+	DiagnosisKafkaGroupID string
+
+	// DiagnosisTaskTTL 自动诊断 Redis 去重任务 TTL
+	// 默认值：1800s（30 分钟）
+	DiagnosisTaskTTL time.Duration
+
+	// DiagnosisTaskTimeout 单次自动诊断总超时
+	// 默认值：120s
+	DiagnosisTaskTimeout time.Duration
+
+	// DiagnosisRetryableErrors 临时错误是否不提交 Kafka offset
+	// 默认值：true
+	DiagnosisRetryableErrors bool
+
+	// DiagnosisStatusPushEnabled 是否推送 diagnosis_update WebSocket 消息
+	// 默认值：true
+	DiagnosisStatusPushEnabled bool
+
 	// CopilotSessionTTL Copilot Redis 会话 TTL
 	// 默认值：7200s（2 小时）
 	CopilotSessionTTL time.Duration
@@ -345,6 +373,13 @@ func Load() Config {
 		LLMTimeout:                 configutil.DurationSeconds("LLM_TIMEOUT_SECONDS", 60),
 		LLMMaxTokens:               configutil.PositiveInt("LLM_MAX_TOKENS", 800),
 		DiagnosisLLMTimeout:        configutil.DurationSeconds("DIAGNOSIS_LLM_TIMEOUT_SECONDS", 15),
+		DiagnosisEnabled:           configutil.Bool("DIAGNOSIS_ENABLED", false),
+		DiagnosisWorkerCount:       configutil.PositiveInt("DIAGNOSIS_WORKER_COUNT", 1),
+		DiagnosisKafkaGroupID:      configutil.String("DIAGNOSIS_KAFKA_GROUP_ID", "diagnosis-worker"),
+		DiagnosisTaskTTL:           configutil.DurationSeconds("DIAGNOSIS_TASK_TTL_SECONDS", 1800),
+		DiagnosisTaskTimeout:       configutil.DurationSeconds("DIAGNOSIS_TASK_TIMEOUT_SECONDS", 120),
+		DiagnosisRetryableErrors:   configutil.Bool("DIAGNOSIS_RETRYABLE_ERRORS", true),
+		DiagnosisStatusPushEnabled: configutil.Bool("DIAGNOSIS_STATUS_PUSH_ENABLED", true),
 		CopilotSessionTTL:          configutil.DurationSeconds("COPILOT_SESSION_TTL_SECONDS", 7200),
 		CopilotMaxMessageLength:    configutil.PositiveInt("COPILOT_MAX_MESSAGE_LENGTH", 2000),
 		CopilotMaxSessionMessages:  configutil.PositiveInt("COPILOT_MAX_SESSION_MESSAGES", 50),
@@ -437,6 +472,35 @@ func (c Config) Validate() error {
 	}
 	if c.DiagnosisLLMTimeout <= 0 {
 		return fmt.Errorf("DIAGNOSIS_LLM_TIMEOUT_SECONDS must be positive, got %v", c.DiagnosisLLMTimeout)
+	}
+	if c.DiagnosisWorkerCount <= 0 || c.DiagnosisWorkerCount > 8 {
+		return fmt.Errorf("DIAGNOSIS_WORKER_COUNT must be in range 1-8, got %d", c.DiagnosisWorkerCount)
+	}
+	if c.DiagnosisTaskTTL <= 0 {
+		return fmt.Errorf("DIAGNOSIS_TASK_TTL_SECONDS must be positive, got %v", c.DiagnosisTaskTTL)
+	}
+	if c.DiagnosisTaskTimeout <= 0 {
+		return fmt.Errorf("DIAGNOSIS_TASK_TIMEOUT_SECONDS must be positive, got %v", c.DiagnosisTaskTimeout)
+	}
+	if c.DiagnosisTaskTTL <= c.DiagnosisTaskTimeout {
+		return fmt.Errorf("DIAGNOSIS_TASK_TTL_SECONDS must be greater than DIAGNOSIS_TASK_TIMEOUT_SECONDS")
+	}
+	if c.DiagnosisTaskTimeout <= c.DiagnosisLLMTimeout {
+		return fmt.Errorf("DIAGNOSIS_TASK_TIMEOUT_SECONDS must be greater than DIAGNOSIS_LLM_TIMEOUT_SECONDS")
+	}
+	if c.DiagnosisEnabled {
+		if !c.CopilotEnabled {
+			return fmt.Errorf("COPILOT_ENABLED must be true when DIAGNOSIS_ENABLED is true")
+		}
+		if len(c.KafkaBrokers) == 0 {
+			return fmt.Errorf("KAFKA_BROKERS is required when DIAGNOSIS_ENABLED is true")
+		}
+		if strings.TrimSpace(c.DiagnosisKafkaGroupID) == "" {
+			return fmt.Errorf("DIAGNOSIS_KAFKA_GROUP_ID is required when DIAGNOSIS_ENABLED is true")
+		}
+		if strings.TrimSpace(c.RedisAddr) == "" {
+			return fmt.Errorf("REDIS_ADDR is required when DIAGNOSIS_ENABLED is true")
+		}
 	}
 	if c.CopilotSessionTTL <= 0 {
 		return fmt.Errorf("COPILOT_SESSION_TTL_SECONDS must be positive, got %v", c.CopilotSessionTTL)
