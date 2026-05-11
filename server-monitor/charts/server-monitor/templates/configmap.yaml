@@ -28,6 +28,15 @@ data:
   LLM_API_URL: {{ .Values.config.llmApiUrl | quote }}
   LLM_MODEL: {{ .Values.config.llmModel | quote }}
   LLM_TIMEOUT_SECONDS: {{ .Values.config.llmTimeoutSeconds | quote }}
+  LLM_MAX_TOKENS: {{ .Values.config.llmMaxTokens | quote }}
+  DIAGNOSIS_LLM_TIMEOUT_SECONDS: {{ .Values.config.diagnosisLLMTimeoutSeconds | quote }}
+  DIAGNOSIS_ENABLED: {{ .Values.config.diagnosisEnabled | quote }}
+  DIAGNOSIS_WORKER_COUNT: {{ .Values.config.diagnosisWorkerCount | quote }}
+  DIAGNOSIS_KAFKA_GROUP_ID: {{ .Values.config.diagnosisKafkaGroupID | quote }}
+  DIAGNOSIS_TASK_TTL_SECONDS: {{ .Values.config.diagnosisTaskTTLSeconds | quote }}
+  DIAGNOSIS_TASK_TIMEOUT_SECONDS: {{ .Values.config.diagnosisTaskTimeoutSeconds | quote }}
+  DIAGNOSIS_RETRYABLE_ERRORS: {{ .Values.config.diagnosisRetryableErrors | quote }}
+  DIAGNOSIS_STATUS_PUSH_ENABLED: {{ .Values.config.diagnosisStatusPushEnabled | quote }}
   COPILOT_SESSION_TTL_SECONDS: {{ .Values.config.copilotSessionTTLSeconds | quote }}
   COPILOT_MAX_MESSAGE_LENGTH: {{ .Values.config.copilotMaxMessageLength | quote }}
   COPILOT_MAX_SESSION_MESSAGES: {{ .Values.config.copilotMaxSessionMessages | quote }}

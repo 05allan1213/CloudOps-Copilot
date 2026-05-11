@@ -28,6 +28,15 @@ config:
   llmApiUrl: https://api.deepseek.com/v1/chat/completions
   llmModel: deepseek-chat
   llmTimeoutSeconds: "60"
+  llmMaxTokens: "800"
+  diagnosisLLMTimeoutSeconds: "15"
+  diagnosisEnabled: "false"
+  diagnosisWorkerCount: "1"
+  diagnosisKafkaGroupID: diagnosis-worker
+  diagnosisTaskTTLSeconds: "1800"
+  diagnosisTaskTimeoutSeconds: "120"
+  diagnosisRetryableErrors: "true"
+  diagnosisStatusPushEnabled: "true"
   copilotSessionTTLSeconds: "7200"
   copilotMaxMessageLength: "2000"
   copilotMaxSessionMessages: "50"

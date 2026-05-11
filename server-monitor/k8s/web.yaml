@@ -212,6 +212,51 @@ spec:
                 configMapKeyRef:
                   name: monitor-config
                   key: LLM_TIMEOUT_SECONDS
+            - name: LLM_MAX_TOKENS
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: LLM_MAX_TOKENS
+            - name: DIAGNOSIS_LLM_TIMEOUT_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: DIAGNOSIS_LLM_TIMEOUT_SECONDS
+            - name: DIAGNOSIS_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: DIAGNOSIS_ENABLED
+            - name: DIAGNOSIS_WORKER_COUNT
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: DIAGNOSIS_WORKER_COUNT
+            - name: DIAGNOSIS_KAFKA_GROUP_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: DIAGNOSIS_KAFKA_GROUP_ID
+            - name: DIAGNOSIS_TASK_TTL_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: DIAGNOSIS_TASK_TTL_SECONDS
+            - name: DIAGNOSIS_TASK_TIMEOUT_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: DIAGNOSIS_TASK_TIMEOUT_SECONDS
+            - name: DIAGNOSIS_RETRYABLE_ERRORS
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: DIAGNOSIS_RETRYABLE_ERRORS
+            - name: DIAGNOSIS_STATUS_PUSH_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: DIAGNOSIS_STATUS_PUSH_ENABLED
             - name: COPILOT_SESSION_TTL_SECONDS
               valueFrom:
                 configMapKeyRef:
