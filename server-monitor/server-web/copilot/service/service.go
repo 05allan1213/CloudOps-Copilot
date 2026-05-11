@@ -343,7 +343,7 @@ func (s *Service) executeDiagnosis(ctx context.Context, user User, result nlu.Re
 		if errors.As(err, &conflict) {
 			return []ToolCall{{Name: "diagnosis.trigger", Status: "error", Error: err.Error(), Result: conflict.Candidates}}, buildDiagnosisCandidatesReply(conflict.Candidates), nil
 		}
-		return []ToolCall{{Name: "diagnosis.trigger", Status: "error", Error: err.Error()}}, "", nil
+		return []ToolCall{{Name: "diagnosis.trigger", Status: "error", Error: err.Error()}}, buildDiagnosisErrorReply(err), nil
 	}
 	reply := fmt.Sprintf("诊断报告已生成：#%d，状态 %s，置信度 %.0f%%。摘要：%s", report.ID, report.Status, report.Confidence*100, report.Summary)
 	return []ToolCall{{Name: "diagnosis.trigger", Status: "success", Result: report}}, reply, nil
@@ -370,6 +370,17 @@ func buildDiagnosisCandidatesReply(candidates []diagnosis.DiagnosisCandidate) st
 		))
 	}
 	return builder.String()
+}
+
+func buildDiagnosisErrorReply(err error) string {
+	switch {
+	case errors.Is(err, diagnosis.ErrInvalidRequest):
+		return "请提供真实的 fingerprint、alert_history_id，或 alert_name + instance 后再诊断。可以先查询最近告警历史，复制其中的 alert_history_id 或 fingerprint。"
+	case errors.Is(err, diagnosis.ErrNotFound):
+		return "没有找到匹配的告警目标。请先查询最近告警历史或当前 firing 告警，再使用真实的 alert_history_id 或 fingerprint 发起诊断。"
+	default:
+		return ""
+	}
 }
 
 func (s *Service) classifyWithFallback(ctx context.Context, message string, parsed nlu.Result) nlu.Result {
@@ -431,7 +442,7 @@ func buildSuggestions(result nlu.Result) []string {
 	case nlu.IntentMetricQuery:
 		return []string{"Show node-1 CPU for 1h", "Show memory trend for 24h"}
 	case nlu.IntentDiagnosisRequest:
-		return []string{"帮我分析 node-1:9100 的 HighCPU 告警", "诊断 fingerprint 为 abc123 的告警"}
+		return []string{"显示最近 5 条告警历史", "显示当前 firing 告警"}
 	case nlu.IntentGeneralChat:
 		return []string{"What alerts are firing?", "Which hosts are offline?", "Show CPU trend for node-1"}
 	default:
