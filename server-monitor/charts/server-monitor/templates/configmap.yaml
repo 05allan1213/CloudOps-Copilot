@@ -37,6 +37,12 @@ data:
   DIAGNOSIS_TASK_TIMEOUT_SECONDS: {{ .Values.config.diagnosisTaskTimeoutSeconds | quote }}
   DIAGNOSIS_RETRYABLE_ERRORS: {{ .Values.config.diagnosisRetryableErrors | quote }}
   DIAGNOSIS_STATUS_PUSH_ENABLED: {{ .Values.config.diagnosisStatusPushEnabled | quote }}
+  ACTION_APPROVAL_ENABLED: {{ .Values.config.actionApprovalEnabled | quote }}
+  ACTION_EXECUTION_ENABLED: {{ .Values.config.actionExecutionEnabled | quote }}
+  ACTION_MAX_REPLICAS: {{ .Values.config.actionMaxReplicas | quote }}
+  ACTION_PENDING_TTL_HOURS: {{ .Values.config.actionPendingTTLHours | quote }}
+  ACTION_OPERATION_EVENTS_ENABLED: {{ .Values.config.actionOperationEventsEnabled | quote }}
+  ACTION_STATUS_PUSH_ENABLED: {{ .Values.config.actionStatusPushEnabled | quote }}
   COPILOT_SESSION_TTL_SECONDS: {{ .Values.config.copilotSessionTTLSeconds | quote }}
   COPILOT_MAX_MESSAGE_LENGTH: {{ .Values.config.copilotMaxMessageLength | quote }}
   COPILOT_MAX_SESSION_MESSAGES: {{ .Values.config.copilotMaxSessionMessages | quote }}

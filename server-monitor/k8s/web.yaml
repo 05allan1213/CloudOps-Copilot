@@ -257,6 +257,36 @@ spec:
                 configMapKeyRef:
                   name: monitor-config
                   key: DIAGNOSIS_STATUS_PUSH_ENABLED
+            - name: ACTION_APPROVAL_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: ACTION_APPROVAL_ENABLED
+            - name: ACTION_EXECUTION_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: ACTION_EXECUTION_ENABLED
+            - name: ACTION_MAX_REPLICAS
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: ACTION_MAX_REPLICAS
+            - name: ACTION_PENDING_TTL_HOURS
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: ACTION_PENDING_TTL_HOURS
+            - name: ACTION_OPERATION_EVENTS_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: ACTION_OPERATION_EVENTS_ENABLED
+            - name: ACTION_STATUS_PUSH_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: ACTION_STATUS_PUSH_ENABLED
             - name: COPILOT_SESSION_TTL_SECONDS
               valueFrom:
                 configMapKeyRef:
