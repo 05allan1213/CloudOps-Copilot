@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/IBM/sarama"
 	"go.opentelemetry.io/otel"
@@ -23,6 +24,11 @@ type ConsumerObserver interface {
 	ObserveKafkaMessage(result string)
 }
 
+type consumerGroup interface {
+	Consume(ctx context.Context, topics []string, handler sarama.ConsumerGroupHandler) error
+	Close() error
+}
+
 const (
 	MessageProcessed    = "processed"
 	MessageSkipped      = "skipped"
@@ -35,11 +41,26 @@ type permanentError struct {
 	err error
 }
 
+type skippedError struct {
+	err error
+}
+
 func (e permanentError) Error() string {
 	return e.err.Error()
 }
 
 func (e permanentError) Unwrap() error {
+	return e.err
+}
+
+func (e skippedError) Error() string {
+	if e.err == nil {
+		return "skipped"
+	}
+	return e.err.Error()
+}
+
+func (e skippedError) Unwrap() error {
 	return e.err
 }
 
@@ -53,15 +74,25 @@ func Permanent(err error) error {
 	return permanentError{err: err}
 }
 
+func Skipped(err error) error {
+	return skippedError{err: err}
+}
+
 func IsPermanent(err error) bool {
 	var target permanentError
 	return errors.As(err, &target)
 }
 
+func IsSkipped(err error) bool {
+	var target skippedError
+	return errors.As(err, &target)
+}
+
 type Consumer struct {
-	group   sarama.ConsumerGroup
-	topics  []string
-	handler *consumerGroupHandler
+	group        consumerGroup
+	topics       []string
+	handler      *consumerGroupHandler
+	retryBackoff func(attempt int) time.Duration
 }
 
 func NewConsumer(brokers []string, groupID string, processor AlertProcessor) (*Consumer, error) {
@@ -85,9 +116,10 @@ func NewConsumer(brokers []string, groupID string, processor AlertProcessor) (*C
 	}
 
 	return &Consumer{
-		group:   group,
-		topics:  []string{TopicAlertEvents},
-		handler: &consumerGroupHandler{processor: processor},
+		group:        group,
+		topics:       []string{TopicAlertEvents},
+		handler:      &consumerGroupHandler{processor: processor},
+		retryBackoff: defaultConsumeRetryBackoff,
 	}, nil
 }
 
@@ -98,11 +130,34 @@ func (c *Consumer) Consume(ctx context.Context, onReady, onNotReady func()) erro
 
 	c.handler.onReady = onReady
 	c.handler.onNotReady = onNotReady
+	attempt := 0
 	for ctx.Err() == nil {
 		if err := c.group.Consume(ctx, c.topics, c.handler); err != nil {
 			c.handler.notifyNotReady()
-			return fmt.Errorf("consume kafka topics: %w", err)
+			if ctx.Err() != nil {
+				break
+			}
+			logger.FromContext(ctx).Warn("consume kafka topics failed; retrying",
+				zap.Int("attempt", attempt+1),
+				zap.Error(err),
+			)
+			delay := defaultConsumeRetryBackoff(attempt)
+			if c.retryBackoff != nil {
+				delay = c.retryBackoff(attempt)
+			}
+			attempt++
+			if delay > 0 {
+				timer := time.NewTimer(delay)
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					break
+				case <-timer.C:
+				}
+			}
+			continue
 		}
+		attempt = 0
 	}
 	c.handler.notifyNotReady()
 	return nil
@@ -124,12 +179,20 @@ func (c *Consumer) SetObserver(observer ConsumerObserver) {
 	c.handler.observer = observer
 }
 
+func (c *Consumer) SetRetryableErrors(enabled bool) {
+	if c == nil || c.handler == nil {
+		return
+	}
+	c.handler.commitRetryableErrors = !enabled
+}
+
 type consumerGroupHandler struct {
-	processor  AlertProcessor
-	observer   ConsumerObserver
-	observerMu sync.RWMutex
-	onReady    func()
-	onNotReady func()
+	processor             AlertProcessor
+	observer              ConsumerObserver
+	observerMu            sync.RWMutex
+	commitRetryableErrors bool
+	onReady               func()
+	onNotReady            func()
 }
 
 func (h *consumerGroupHandler) Setup(sarama.ConsumerGroupSession) error {
@@ -196,6 +259,11 @@ func (h *consumerGroupHandler) processMessage(ctx context.Context, marker messag
 			attribute.String("alert.fingerprint", event.Fingerprint),
 			attribute.String("alert.status", event.Status),
 		)
+		if IsSkipped(err) {
+			h.observe(MessageSkipped)
+			marker.MarkMessage(msg, "")
+			return
+		}
 		if IsPermanent(err) {
 			logger.FromContext(ctx).Warn("process diagnosis alert event failed permanently, committing offset",
 				zap.String("topic", msg.Topic),
@@ -206,6 +274,19 @@ func (h *consumerGroupHandler) processMessage(ctx context.Context, marker messag
 				zap.Error(err),
 			)
 			h.observe(MessagePermanentErr)
+			marker.MarkMessage(msg, "")
+			return
+		}
+		if h.commitRetryableErrors {
+			logger.FromContext(ctx).Warn("process diagnosis alert event failed; retries disabled, committing offset",
+				zap.String("topic", msg.Topic),
+				zap.Int32("partition", msg.Partition),
+				zap.Int64("offset", msg.Offset),
+				zap.String("fingerprint", event.Fingerprint),
+				zap.String("status", event.Status),
+				zap.Error(err),
+			)
+			h.observe(MessageProcessError)
 			marker.MarkMessage(msg, "")
 			return
 		}
@@ -230,6 +311,17 @@ func (h *consumerGroupHandler) notifyNotReady() {
 	if h.onNotReady != nil {
 		h.onNotReady()
 	}
+}
+
+func defaultConsumeRetryBackoff(attempt int) time.Duration {
+	if attempt < 0 {
+		attempt = 0
+	}
+	delay := time.Second << attempt
+	if delay > 30*time.Second {
+		return 30 * time.Second
+	}
+	return delay
 }
 
 func (h *consumerGroupHandler) observe(result string) {

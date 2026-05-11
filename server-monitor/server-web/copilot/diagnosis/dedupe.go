@@ -28,6 +28,7 @@ type TaskState struct {
 }
 
 type taskRedis interface {
+	Get(ctx context.Context, key string) ([]byte, bool)
 	SetNX(ctx context.Context, key string, value []byte, ttl time.Duration) (bool, error)
 	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
 }
@@ -83,12 +84,19 @@ func (s *RedisTaskStore) setState(ctx context.Context, fingerprint string, repor
 		return ErrUnavailable
 	}
 	now := s.now().UTC()
+	startedAt := now
+	if value, ok := s.redis.Get(ctx, TaskKey(fingerprint)); ok {
+		var existing TaskState
+		if err := json.Unmarshal(value, &existing); err == nil && !existing.StartedAt.IsZero() {
+			startedAt = existing.StartedAt.UTC()
+		}
+	}
 	value, err := marshalTaskState(TaskState{
 		Fingerprint: strings.TrimSpace(fingerprint),
 		Status:      status,
 		ReportID:    reportID,
 		TriggerType: TriggerAuto,
-		StartedAt:   now,
+		StartedAt:   startedAt,
 		UpdatedAt:   now,
 		Error:       strings.TrimSpace(errText),
 	})

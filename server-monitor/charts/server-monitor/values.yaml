@@ -24,6 +24,8 @@ config:
   mysqlPort: "3306"
   mysqlUser: server_monitor
   mysqlDatabase: server_monitor
+  mysqlStartupTimeoutSeconds: "10"
+  mysqlPingTimeoutSeconds: "3"
   copilotEnabled: "true"
   llmApiUrl: https://api.deepseek.com/v1/chat/completions
   llmModel: deepseek-chat

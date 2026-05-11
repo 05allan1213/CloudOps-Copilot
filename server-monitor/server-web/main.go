@@ -268,6 +268,7 @@ func initDiagnosisConsumer(cfg config.Config, redisClient *rediscache.Client, ru
 	if err != nil {
 		return nil, fmt.Errorf("diagnosis kafka consumer init failed: %w", err)
 	}
+	consumer.SetRetryableErrors(cfg.DiagnosisRetryableErrors)
 	consumer.SetObserver(runtime.KafkaObserver)
 	zap.L().Info("diagnosis worker initialized",
 		zap.Strings("brokers", cfg.KafkaBrokers),

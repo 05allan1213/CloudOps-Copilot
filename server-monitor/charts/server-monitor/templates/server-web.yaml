@@ -312,6 +312,16 @@ spec:
                 configMapKeyRef:
                   name: monitor-config
                   key: MYSQL_DATABASE
+            - name: MYSQL_STARTUP_TIMEOUT_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: MYSQL_STARTUP_TIMEOUT_SECONDS
+            - name: MYSQL_PING_TIMEOUT_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: MYSQL_PING_TIMEOUT_SECONDS
             - name: MYSQL_PASSWORD
               valueFrom:
                 secretKeyRef:

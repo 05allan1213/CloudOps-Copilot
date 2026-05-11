@@ -61,5 +61,7 @@ data:
   MYSQL_PORT: {{ .Values.config.mysqlPort | quote }}
   MYSQL_USER: {{ .Values.config.mysqlUser | quote }}
   MYSQL_DATABASE: {{ .Values.config.mysqlDatabase | quote }}
+  MYSQL_STARTUP_TIMEOUT_SECONDS: {{ .Values.config.mysqlStartupTimeoutSeconds | quote }}
+  MYSQL_PING_TIMEOUT_SECONDS: {{ .Values.config.mysqlPingTimeoutSeconds | quote }}
   JWT_EXPIRE_HOURS: {{ .Values.auth.jwtExpireHours | quote }}
   AUTH_ENABLED: {{ .Values.auth.enabled | quote }}

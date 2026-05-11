@@ -74,12 +74,12 @@ func (w *Worker) Process(ctx context.Context, event eventbus.AlertEvent) error {
 	alert := normalizeAlertEvent(event)
 	if alert.status != "firing" {
 		w.notify(ctx, alert, StatusSkipped, 0, "", "")
-		return nil
+		return eventbus.Skipped(nil)
 	}
 	if alert.dedupeKey == "" {
 		err := fmt.Errorf("%w: alert fingerprint or alertname with instance is required", ErrInvalidRequest)
 		w.notify(ctx, alert, StatusSkipped, 0, "", err.Error())
-		return eventbus.Permanent(err)
+		return eventbus.Skipped(err)
 	}
 
 	started, err := w.taskStore.TryStart(ctx, alert.dedupeKey, w.ttl)
@@ -88,10 +88,13 @@ func (w *Worker) Process(ctx context.Context, event eventbus.AlertEvent) error {
 	}
 	if !started {
 		w.notify(ctx, alert, StatusSkipped, 0, "", "")
-		return nil
+		return eventbus.Skipped(nil)
 	}
 
 	w.notify(ctx, alert, StatusPending, 0, "", "")
+	if err := w.taskStore.MarkRunning(ctx, alert.dedupeKey, 0, w.ttl); err != nil {
+		return err
+	}
 	w.notify(ctx, alert, StatusRunning, 0, "", "")
 	taskCtx, cancel := context.WithTimeout(ctx, w.timeout)
 	defer cancel()
@@ -103,11 +106,6 @@ func (w *Worker) Process(ctx context.Context, event eventbus.AlertEvent) error {
 		TriggerType: TriggerAuto,
 	}
 	report, err := w.service.Trigger(taskCtx, systemDiagnosisUser(), req)
-	if report.ID != 0 {
-		if markErr := w.taskStore.MarkRunning(ctx, alert.dedupeKey, report.ID, w.ttl); markErr != nil {
-			return markErr
-		}
-	}
 	if err != nil {
 		errText := publicError(err)
 		if markErr := w.taskStore.MarkFailed(ctx, alert.dedupeKey, errText, w.ttl); markErr != nil {
