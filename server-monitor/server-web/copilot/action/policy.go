@@ -112,8 +112,18 @@ func (p *Policy) ValidateApprove(action model.PendingAction, actor Actor) error 
 	if actor.Role != "admin" {
 		return ErrForbidden
 	}
-	if action.Status != model.ActionStatusPending {
-		return fmt.Errorf("%w: action is not pending", ErrInvalidAction)
+	if _, ok := CanTransition(action.Status, EventApprove); !ok {
+		return fmt.Errorf("%w: cannot approve action from status %s", ErrInvalidAction, action.Status)
+	}
+	return nil
+}
+
+func (p *Policy) ValidateReject(action model.PendingAction, actor Actor) error {
+	if actor.Role != "admin" {
+		return ErrForbidden
+	}
+	if _, ok := CanTransition(action.Status, EventReject); !ok {
+		return fmt.Errorf("%w: cannot reject action from status %s", ErrInvalidAction, action.Status)
 	}
 	return nil
 }
@@ -122,8 +132,8 @@ func (p *Policy) ValidateExecute(action model.PendingAction, actor Actor) error 
 	if actor.Role != "admin" && actor.Role != "system" {
 		return ErrForbidden
 	}
-	if action.Status != model.ActionStatusApproved {
-		return fmt.Errorf("%w: action is not approved", ErrInvalidAction)
+	if _, ok := CanTransition(action.Status, EventExecute); !ok {
+		return fmt.Errorf("%w: cannot execute action from status %s", ErrInvalidAction, action.Status)
 	}
 	_, err := p.ValidateCreate(CreateActionInput{
 		DiagnosisReportID: action.DiagnosisReportID,

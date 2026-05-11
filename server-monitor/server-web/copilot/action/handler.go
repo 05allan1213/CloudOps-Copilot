@@ -188,7 +188,7 @@ func actorFromGin(c *gin.Context) Actor {
 		}
 	}
 	if actor.Role == "" {
-		actor.Role = "admin"
+		actor.Role = "viewer"
 	}
 	return actor
 }

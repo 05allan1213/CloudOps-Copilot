@@ -3,7 +3,6 @@ package action
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -152,23 +151,20 @@ func (s *Service) Approve(ctx context.Context, id uint64, req ApproveRequest, ac
 	if err := s.requireReady(); err != nil {
 		return ActionResponse{}, err
 	}
-	action, err := s.repo.GetAction(ctx, id)
+	saved, err := s.repo.TransitionAction(ctx, id, EventApprove, func(action *model.PendingAction) error {
+		if err := s.policy.ValidateApprove(*action, actor); err != nil {
+			return err
+		}
+		now := time.Now()
+		action.ApprovedBy = actor.ID
+		action.ApprovedAt = &now
+		action.ErrorMessage = ""
+		return nil
+	})
 	if err != nil {
-		return ActionResponse{}, err
-	}
-	if err := s.policy.ValidateApprove(action, actor); err != nil {
 		if auditErr := s.audit(ctx, actor, "action.approve", "pending_action", strconv.FormatUint(id, 10), mustMarshal(req), model.AuditResultDenied, err.Error()); auditErr != nil {
 			return ActionResponse{}, auditErr
 		}
-		return ActionResponse{}, err
-	}
-	now := time.Now()
-	action.Status = model.ActionStatusApproved
-	action.ApprovedBy = actor.ID
-	action.ApprovedAt = &now
-	action.ErrorMessage = ""
-	saved, err := s.repo.SaveAction(ctx, action)
-	if err != nil {
 		return ActionResponse{}, err
 	}
 	if err := s.audit(ctx, actor, "action.approve", "pending_action", strconv.FormatUint(id, 10), mustMarshal(req), model.AuditResultSuccess, ""); err != nil {
@@ -186,24 +182,17 @@ func (s *Service) Reject(ctx context.Context, id uint64, req RejectRequest, acto
 	if req.Reason == "" || len(req.Reason) > 500 {
 		return ActionResponse{}, fmt.Errorf("%w: reason must be 1-500 characters", ErrInvalidAction)
 	}
-	action, err := s.repo.GetAction(ctx, id)
-	if err != nil {
-		return ActionResponse{}, err
-	}
-	if actor.Role != "admin" || action.Status != model.ActionStatusPending {
-		message := "action is not pending"
-		if actor.Role != "admin" {
-			message = "insufficient permissions"
+	saved, err := s.repo.TransitionAction(ctx, id, EventReject, func(action *model.PendingAction) error {
+		if err := s.policy.ValidateReject(*action, actor); err != nil {
+			return err
 		}
-		if auditErr := s.audit(ctx, actor, "action.reject", "pending_action", strconv.FormatUint(id, 10), mustMarshal(req), model.AuditResultDenied, message); auditErr != nil {
+		action.ErrorMessage = req.Reason
+		return nil
+	})
+	if err != nil {
+		if auditErr := s.audit(ctx, actor, "action.reject", "pending_action", strconv.FormatUint(id, 10), mustMarshal(req), model.AuditResultDenied, err.Error()); auditErr != nil {
 			return ActionResponse{}, auditErr
 		}
-		return ActionResponse{}, fmt.Errorf("%w: %s", ErrInvalidAction, message)
-	}
-	action.Status = model.ActionStatusRejected
-	action.ErrorMessage = req.Reason
-	saved, err := s.repo.SaveAction(ctx, action)
-	if err != nil {
 		return ActionResponse{}, err
 	}
 	if err := s.audit(ctx, actor, "action.reject", "pending_action", strconv.FormatUint(id, 10), mustMarshal(req), model.AuditResultSuccess, ""); err != nil {
@@ -217,40 +206,41 @@ func (s *Service) Execute(ctx context.Context, id uint64, actor Actor) (ActionRe
 	if err := s.requireReady(); err != nil {
 		return ActionResponse{}, err
 	}
-	action, err := s.repo.GetAction(ctx, id)
+	saved, err := s.repo.TransitionAction(ctx, id, EventExecute, func(action *model.PendingAction) error {
+		if err := s.policy.ValidateExecute(*action, actor); err != nil {
+			return err
+		}
+		action.ExecutedBy = actor.ID
+		return nil
+	})
 	if err != nil {
-		return ActionResponse{}, err
-	}
-	if err := s.policy.ValidateExecute(action, actor); err != nil {
 		if auditErr := s.audit(ctx, actor, "action.execute", "pending_action", strconv.FormatUint(id, 10), json.RawMessage(`{}`), model.AuditResultDenied, err.Error()); auditErr != nil {
 			return ActionResponse{}, auditErr
 		}
 		return ActionResponse{}, err
 	}
 
-	action.Status = model.ActionStatusExecuting
-	action.ExecutedBy = actor.ID
-	saved, err := s.repo.SaveAction(ctx, action)
-	if err != nil {
-		return ActionResponse{}, err
-	}
 	s.notifyStatus(ctx, saved, "executing")
 
 	execCtx, cancel := context.WithTimeout(ctx, s.executionTimeout)
 	defer cancel()
 	result, execErr := s.executeK8s(execCtx, saved)
 	now := time.Now()
-	saved.ExecutedAt = &now
+	event := EventExecuteSuccess
 	if execErr != nil {
-		saved.Status = model.ActionStatusFailed
-		saved.ErrorMessage = sanitizeError(execErr)
-		saved.ResultJSON = "{}"
-	} else {
-		saved.Status = model.ActionStatusExecuted
-		saved.ErrorMessage = ""
-		saved.ResultJSON = string(mustMarshal(result))
+		event = EventExecuteFailure
 	}
-	final, saveErr := s.repo.SaveAction(ctx, saved)
+	final, saveErr := s.repo.TransitionAction(ctx, saved.ID, event, func(action *model.PendingAction) error {
+		action.ExecutedAt = &now
+		if execErr != nil {
+			action.ErrorMessage = sanitizeError(execErr)
+			action.ResultJSON = "{}"
+			return nil
+		}
+		action.ErrorMessage = ""
+		action.ResultJSON = string(mustMarshal(result))
+		return nil
+	})
 	if saveErr != nil {
 		return toActionResponse(saved), saveErr
 	}
@@ -500,8 +490,4 @@ func actorRole(actor Actor) string {
 		return "system"
 	}
 	return actor.Role
-}
-
-func isNotFound(err error) bool {
-	return errors.Is(err, ErrNotFound)
 }

@@ -13,6 +13,7 @@ import (
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
+	"go.uber.org/zap"
 	"gorm.io/gorm"
 
 	appalert "server-web/alert"
@@ -216,6 +217,11 @@ func NewRouterWithRuntime(cfg config.Config, promClient *promclient.Client, cach
 		protected.GET("/api/v1/diagnosis", diagnosisHandler.List)
 		protected.GET("/api/v1/diagnosis/:id", diagnosisHandler.Get)
 		if cfg.ActionApprovalEnabled {
+			actionExecutionEnabled := cfg.ActionExecutionEnabled
+			if actionExecutionEnabled {
+				zap.L().Warn("ACTION_EXECUTION_ENABLED=true but no action executor is configured; forcing action execution disabled")
+				actionExecutionEnabled = false
+			}
 			actionService := copilotaction.NewService(copilotaction.ServiceConfig{
 				Repository:             copilotaction.NewRepository(db),
 				Policy:                 copilotaction.NewPolicy(copilotaction.PolicyConfig{MaxReplicas: cfg.ActionMaxReplicas}),
@@ -224,7 +230,7 @@ func NewRouterWithRuntime(cfg config.Config, promClient *promclient.Client, cach
 				OperationEvents:        operationEventProducer{producer: alertProducer},
 				OperationEventsEnabled: cfg.ActionOperationEventsEnabled,
 				StatusPushEnabled:      cfg.ActionStatusPushEnabled,
-				ActionExecutionEnabled: cfg.ActionExecutionEnabled,
+				ActionExecutionEnabled: actionExecutionEnabled,
 			})
 			actionHandler := copilotaction.NewHandler(actionService)
 			actionAdmin := router.Group("/api/v1")

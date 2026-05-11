@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
-	"unicode/utf8"
 
 	"go.opentelemetry.io/otel/trace"
 )
@@ -121,11 +120,15 @@ func truncateUTF8(value string, limit int) string {
 	if len(value) <= limit {
 		return value
 	}
-	for len(value) > limit && !utf8.ValidString(value) {
-		value = value[:len(value)-1]
+	cut := 0
+	for index := range value {
+		if index > limit {
+			break
+		}
+		cut = index
 	}
-	if len(value) <= limit {
-		return value
+	if cut == 0 {
+		return ""
 	}
-	return value[:limit]
+	return value[:cut]
 }

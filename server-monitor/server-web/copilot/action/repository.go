@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"server-web/model"
 )
@@ -21,7 +22,7 @@ type repository interface {
 	FindPendingByDedupeKey(ctx context.Context, key string) (model.PendingAction, bool, error)
 	CreatePending(ctx context.Context, input NormalizedAction) (model.PendingAction, error)
 	GetAction(ctx context.Context, id uint64) (model.PendingAction, error)
-	SaveAction(ctx context.Context, action model.PendingAction) (model.PendingAction, error)
+	TransitionAction(ctx context.Context, id uint64, event string, mutate func(*model.PendingAction) error) (model.PendingAction, error)
 	ListActions(ctx context.Context, filter ListFilter) ([]model.PendingAction, int64, ListFilter, error)
 	RecordAudit(ctx context.Context, entry AuditEntry) error
 	ListAuditLogs(ctx context.Context, filter ListFilter) ([]model.AuditLog, int64, ListFilter, error)
@@ -53,7 +54,15 @@ func (r *Repository) FindPendingByDedupeKey(ctx context.Context, key string) (mo
 		return model.PendingAction{}, false, ErrUnavailable
 	}
 	var action model.PendingAction
-	err := r.db.WithContext(ctx).Where("dedupe_key = ?", key).First(&action).Error
+	terminalStatuses := []string{
+		model.ActionStatusRejected,
+		model.ActionStatusFailed,
+		model.ActionStatusCancelled,
+		model.ActionStatusExecuted,
+	}
+	err := r.db.WithContext(ctx).
+		Where("dedupe_key = ? AND status NOT IN ?", key, terminalStatuses).
+		First(&action).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return model.PendingAction{}, false, nil
 	}
@@ -96,11 +105,31 @@ func (r *Repository) GetAction(ctx context.Context, id uint64) (model.PendingAct
 	return action, err
 }
 
-func (r *Repository) SaveAction(ctx context.Context, action model.PendingAction) (model.PendingAction, error) {
+func (r *Repository) TransitionAction(ctx context.Context, id uint64, event string, mutate func(*model.PendingAction) error) (model.PendingAction, error) {
 	if r == nil || r.db == nil {
 		return model.PendingAction{}, ErrUnavailable
 	}
-	err := r.db.WithContext(ctx).Save(&action).Error
+	var action model.PendingAction
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&action, id).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		nextStatus, ok := CanTransition(action.Status, event)
+		if !ok {
+			return fmt.Errorf("%w: cannot %s action from status %s", ErrInvalidAction, event, action.Status)
+		}
+		if mutate != nil {
+			if err := mutate(&action); err != nil {
+				return err
+			}
+		}
+		action.Status = nextStatus
+		return tx.Save(&action).Error
+	})
 	return action, err
 }
 
