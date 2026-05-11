@@ -59,6 +59,25 @@ export const router = createRouter({
       props: true,
     },
     {
+      path: "/actions",
+      name: "actions",
+      component: () => import("../pages/ActionsPage.vue"),
+      meta: { admin: true },
+    },
+    {
+      path: "/actions/:id",
+      name: "action-detail",
+      component: () => import("../pages/ActionDetailPage.vue"),
+      props: true,
+      meta: { admin: true },
+    },
+    {
+      path: "/audit-logs",
+      name: "audit-logs",
+      component: () => import("../pages/AuditLogsPage.vue"),
+      meta: { admin: true },
+    },
+    {
       path: "/settings",
       name: "settings",
       component: () => import("../pages/SettingsPage.vue"),

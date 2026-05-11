@@ -260,6 +260,22 @@ onBeforeUnmount(() => {
       </RouterLink>
       <RouterLink
         v-if="auth.isAdmin"
+        to="/actions"
+        class="route-tab"
+        exact-active-class="active"
+      >
+        动作
+      </RouterLink>
+      <RouterLink
+        v-if="auth.isAdmin"
+        to="/audit-logs"
+        class="route-tab"
+        exact-active-class="active"
+      >
+        审计
+      </RouterLink>
+      <RouterLink
+        v-if="auth.isAdmin"
         to="/settings"
         class="route-tab"
         exact-active-class="active"

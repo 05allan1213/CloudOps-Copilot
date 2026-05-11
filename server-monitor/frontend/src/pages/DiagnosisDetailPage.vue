@@ -2,13 +2,18 @@
 import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 
+import { createActionsFromDiagnosis } from "../api/actions";
 import { fetchDiagnosis } from "../api/diagnosis";
+import { useAuthStore } from "../stores/auth";
 import type { DiagnosisReport } from "../types";
 
 const route = useRoute();
+const auth = useAuthStore();
 const report = ref<DiagnosisReport | null>(null);
 const loading = ref(false);
+const creatingActions = ref(false);
 const error = ref("");
+const actionMessage = ref("");
 
 const metrics = computed(() => report.value?.evidence?.metrics ?? []);
 const ruleResults = computed(() => report.value?.rule_analysis?.results ?? []);
@@ -62,6 +67,24 @@ async function loadReport() {
   }
 }
 
+async function createApprovalActions() {
+  if (!report.value) return;
+  creatingActions.value = true;
+  actionMessage.value = "";
+  error.value = "";
+  try {
+    const selectedTypes = actions.value
+      .filter((action) => action.requires_approval)
+      .map((action) => action.type);
+    const result = await createActionsFromDiagnosis(report.value.id, selectedTypes);
+    actionMessage.value = `已创建 ${result.created.length} 条，跳过 ${result.skipped.length} 条`;
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : "创建待审批动作失败";
+  } finally {
+    creatingActions.value = false;
+  }
+}
+
 onMounted(loadReport);
 </script>
 
@@ -91,6 +114,12 @@ onMounted(loadReport);
       <section class="grid-panels">
         <div class="panel">
           <h3>建议动作</h3>
+          <div v-if="auth.isAdmin && actions.some((action) => action.requires_approval)" class="action-toolbar">
+            <button type="button" :disabled="creatingActions" @click="createApprovalActions">
+              创建审批动作
+            </button>
+            <span v-if="actionMessage">{{ actionMessage }}</span>
+          </div>
           <div v-if="actions.length === 0" class="empty-line">暂无建议</div>
           <ul v-else class="action-list">
             <li v-for="action in actions" :key="`${action.type}-${action.description}`">
@@ -258,6 +287,34 @@ h3 {
   gap: 0.25rem;
   border-top: 1px solid var(--border-color);
   padding-top: 0.6rem;
+}
+
+.action-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.action-toolbar button {
+  background: var(--accent);
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: white;
+  cursor: pointer;
+  min-height: 2rem;
+  padding: 0 0.75rem;
+}
+
+.action-toolbar button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.action-toolbar span {
+  color: var(--text-muted);
+  font-size: 0.8rem;
 }
 
 table {

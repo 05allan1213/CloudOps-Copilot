@@ -201,6 +201,84 @@ export interface DiagnosisRecommendedAction {
   requires_approval: boolean;
 }
 
+export type ActionStatus =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "executing"
+  | "executed"
+  | "failed"
+  | "cancelled"
+  | string;
+
+export type RiskLevel = "low" | "medium" | "high" | string;
+
+export interface PendingAction {
+  id: number;
+  diagnosis_report_id: number;
+  action_type: string;
+  target_kind: string;
+  target_name: string;
+  namespace: string;
+  params?: Record<string, unknown>;
+  risk_level: RiskLevel;
+  status: ActionStatus;
+  requested_by: string;
+  approved_by?: number;
+  executed_by?: number;
+  result?: Record<string, unknown>;
+  error_message?: string;
+  created_at: string;
+  approved_at?: string;
+  executed_at?: string;
+  updated_at: string;
+}
+
+export interface ActionUpdate {
+  action_id: number;
+  diagnosis_report_id?: number;
+  action_type?: string;
+  target?: string;
+  risk_level?: string;
+  requested_by?: string;
+  status?: ActionStatus;
+  result?: string;
+  updated_at?: string;
+}
+
+export interface PendingActionListResponse {
+  items: PendingAction[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface CreatePendingActionResult {
+  created: PendingAction[];
+  skipped: Array<{ action_type: string; reason: string }>;
+}
+
+export interface AuditLog {
+  id: number;
+  actor: string;
+  actor_role: string;
+  action: string;
+  resource_type: string;
+  resource_id: string;
+  request?: Record<string, unknown>;
+  result: "success" | "failure" | "denied" | "timeout" | string;
+  error_message?: string;
+  trace_id?: string;
+  created_at: string;
+}
+
+export interface AuditLogListResponse {
+  items: AuditLog[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
 export interface RunbookEvidence {
   title: string;
   file: string;
