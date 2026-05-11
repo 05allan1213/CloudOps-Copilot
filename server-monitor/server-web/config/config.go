@@ -192,6 +192,30 @@ type Config struct {
 	// 默认值：true
 	DiagnosisStatusPushEnabled bool
 
+	// ActionApprovalEnabled 是否启用动作审批 API
+	// 默认值：true
+	ActionApprovalEnabled bool
+
+	// ActionExecutionEnabled 是否允许真实执行白名单动作
+	// 默认值：false
+	ActionExecutionEnabled bool
+
+	// ActionMaxReplicas scale_deployment 允许的最大副本数
+	// 默认值：10
+	ActionMaxReplicas int
+
+	// ActionPendingTTL 待审批动作建议过期时间
+	// 默认值：24h
+	ActionPendingTTL time.Duration
+
+	// ActionOperationEventsEnabled 是否发布 operation-events
+	// 默认值：true
+	ActionOperationEventsEnabled bool
+
+	// ActionStatusPushEnabled 是否推送 action 状态 WebSocket 消息
+	// 默认值：true
+	ActionStatusPushEnabled bool
+
 	// CopilotSessionTTL Copilot Redis 会话 TTL
 	// 默认值：7200s（2 小时）
 	CopilotSessionTTL time.Duration
@@ -359,55 +383,61 @@ func Load() Config {
 			Window:           configutil.DurationSeconds("RATE_LIMIT_WINDOW_SECONDS", 60),
 			OperationTimeout: configutil.DurationMilliseconds("RATE_LIMIT_OPERATION_TIMEOUT_MILLISECONDS", 500),
 		},
-		CopilotEnabled:             configutil.Bool("COPILOT_ENABLED", true),
-		CopilotToolRegistryEnabled: configutil.Bool("COPILOT_TOOL_REGISTRY_ENABLED", true),
-		CopilotToolDefaultTimeout:  configutil.DurationSeconds("COPILOT_TOOL_DEFAULT_TIMEOUT_SECONDS", 30),
-		CopilotToolLogArgs:         configutil.Bool("COPILOT_TOOL_LOG_ARGS", false),
-		RunbookDir:                 configutil.String("RUNBOOK_DIR", "../runbooks"),
-		RunbookMaxFiles:            configutil.PositiveInt("RUNBOOK_MAX_FILES", 100),
-		RunbookMaxFileBytes:        int64(configutil.PositiveInt("RUNBOOK_MAX_FILE_BYTES", 65536)),
-		RunbookSearchTopN:          configutil.PositiveInt("RUNBOOK_SEARCH_TOP_N", 2),
-		LLMAPIKey:                  configutil.String("LLM_API_KEY", ""),
-		LLMAPIURL:                  configutil.String("LLM_API_URL", "https://api.deepseek.com/v1/chat/completions"),
-		LLMModel:                   configutil.String("LLM_MODEL", "deepseek-chat"),
-		LLMTimeout:                 configutil.DurationSeconds("LLM_TIMEOUT_SECONDS", 60),
-		LLMMaxTokens:               configutil.PositiveInt("LLM_MAX_TOKENS", 800),
-		DiagnosisLLMTimeout:        configutil.DurationSeconds("DIAGNOSIS_LLM_TIMEOUT_SECONDS", 15),
-		DiagnosisEnabled:           configutil.Bool("DIAGNOSIS_ENABLED", false),
-		DiagnosisWorkerCount:       configutil.PositiveInt("DIAGNOSIS_WORKER_COUNT", 1),
-		DiagnosisKafkaGroupID:      configutil.String("DIAGNOSIS_KAFKA_GROUP_ID", "diagnosis-worker"),
-		DiagnosisTaskTTL:           configutil.DurationSeconds("DIAGNOSIS_TASK_TTL_SECONDS", 1800),
-		DiagnosisTaskTimeout:       configutil.DurationSeconds("DIAGNOSIS_TASK_TIMEOUT_SECONDS", 120),
-		DiagnosisRetryableErrors:   configutil.Bool("DIAGNOSIS_RETRYABLE_ERRORS", true),
-		DiagnosisStatusPushEnabled: configutil.Bool("DIAGNOSIS_STATUS_PUSH_ENABLED", true),
-		CopilotSessionTTL:          configutil.DurationSeconds("COPILOT_SESSION_TTL_SECONDS", 7200),
-		CopilotMaxMessageLength:    configutil.PositiveInt("COPILOT_MAX_MESSAGE_LENGTH", 2000),
-		CopilotMaxSessionMessages:  configutil.PositiveInt("COPILOT_MAX_SESSION_MESSAGES", 50),
-		RedisAddr:                  configutil.String("REDIS_ADDR", ""),
-		RedisPassword:              configutil.String("REDIS_PASSWORD", ""),
-		RedisDB:                    configutil.NonNegativeInt("REDIS_DB", 0),
-		RedisStartupTimeout:        configutil.DurationSeconds("REDIS_STARTUP_TIMEOUT_SECONDS", 5),
-		RedisDialTimeout:           configutil.DurationSeconds("REDIS_DIAL_TIMEOUT_SECONDS", 5),
-		RedisReadTimeout:           configutil.DurationSeconds("REDIS_READ_TIMEOUT_SECONDS", 3),
-		RedisWriteTimeout:          configutil.DurationSeconds("REDIS_WRITE_TIMEOUT_SECONDS", 3),
-		RedisConnMaxLifetime:       configutil.DurationSeconds("REDIS_CONN_MAX_LIFETIME_SECONDS", 1800),
-		RedisConnMaxIdleTime:       configutil.DurationSeconds("REDIS_CONN_MAX_IDLE_TIME_SECONDS", 300),
-		MySQLHost:                  configutil.String("MYSQL_HOST", ""),
-		MySQLPort:                  configutil.String("MYSQL_PORT", "3306"),
-		MySQLUser:                  configutil.String("MYSQL_USER", ""),
-		MySQLPassword:              configutil.String("MYSQL_PASSWORD", ""),
-		MySQLDatabase:              configutil.String("MYSQL_DATABASE", ""),
-		MySQLStartupTimeout:        configutil.DurationSeconds("MYSQL_STARTUP_TIMEOUT_SECONDS", 5),
-		MySQLPingTimeout:           configutil.DurationSeconds("MYSQL_PING_TIMEOUT_SECONDS", 3),
-		JWTSecret:                  configutil.String("JWT_SECRET", ""),
-		JWTExpireHours:             configutil.PositiveInt("JWT_EXPIRE_HOURS", 24),
-		AuthEnabled:                configutil.Bool("AUTH_ENABLED", true),
-		AdminPassword:              configutil.String("ADMIN_PASSWORD", ""),
-		StaticDir:                  configutil.String("STATIC_DIR", ""),
-		TraceOTLPEndpoint:          configutil.NonEmptyString("TRACE_OTLP_ENDPOINT", ""),
-		TraceSampleRate:            configutil.FloatRange("TRACE_SAMPLE_RATE", 1.0, 0, 1),
-		KafkaBrokers:               configutil.List("KAFKA_BROKERS"),
-		WSMaxConnections:           configutil.PositiveInt("WS_MAX_CONNECTIONS", 1000),
+		CopilotEnabled:               configutil.Bool("COPILOT_ENABLED", true),
+		CopilotToolRegistryEnabled:   configutil.Bool("COPILOT_TOOL_REGISTRY_ENABLED", true),
+		CopilotToolDefaultTimeout:    configutil.DurationSeconds("COPILOT_TOOL_DEFAULT_TIMEOUT_SECONDS", 30),
+		CopilotToolLogArgs:           configutil.Bool("COPILOT_TOOL_LOG_ARGS", false),
+		RunbookDir:                   configutil.String("RUNBOOK_DIR", "../runbooks"),
+		RunbookMaxFiles:              configutil.PositiveInt("RUNBOOK_MAX_FILES", 100),
+		RunbookMaxFileBytes:          int64(configutil.PositiveInt("RUNBOOK_MAX_FILE_BYTES", 65536)),
+		RunbookSearchTopN:            configutil.PositiveInt("RUNBOOK_SEARCH_TOP_N", 2),
+		LLMAPIKey:                    configutil.String("LLM_API_KEY", ""),
+		LLMAPIURL:                    configutil.String("LLM_API_URL", "https://api.deepseek.com/v1/chat/completions"),
+		LLMModel:                     configutil.String("LLM_MODEL", "deepseek-chat"),
+		LLMTimeout:                   configutil.DurationSeconds("LLM_TIMEOUT_SECONDS", 60),
+		LLMMaxTokens:                 configutil.PositiveInt("LLM_MAX_TOKENS", 800),
+		DiagnosisLLMTimeout:          configutil.DurationSeconds("DIAGNOSIS_LLM_TIMEOUT_SECONDS", 15),
+		DiagnosisEnabled:             configutil.Bool("DIAGNOSIS_ENABLED", false),
+		DiagnosisWorkerCount:         configutil.PositiveInt("DIAGNOSIS_WORKER_COUNT", 1),
+		DiagnosisKafkaGroupID:        configutil.String("DIAGNOSIS_KAFKA_GROUP_ID", "diagnosis-worker"),
+		DiagnosisTaskTTL:             configutil.DurationSeconds("DIAGNOSIS_TASK_TTL_SECONDS", 1800),
+		DiagnosisTaskTimeout:         configutil.DurationSeconds("DIAGNOSIS_TASK_TIMEOUT_SECONDS", 120),
+		DiagnosisRetryableErrors:     configutil.Bool("DIAGNOSIS_RETRYABLE_ERRORS", true),
+		DiagnosisStatusPushEnabled:   configutil.Bool("DIAGNOSIS_STATUS_PUSH_ENABLED", true),
+		ActionApprovalEnabled:        configutil.Bool("ACTION_APPROVAL_ENABLED", true),
+		ActionExecutionEnabled:       configutil.Bool("ACTION_EXECUTION_ENABLED", false),
+		ActionMaxReplicas:            configutil.PositiveInt("ACTION_MAX_REPLICAS", 10),
+		ActionPendingTTL:             time.Duration(configutil.PositiveInt("ACTION_PENDING_TTL_HOURS", 24)) * time.Hour,
+		ActionOperationEventsEnabled: configutil.Bool("ACTION_OPERATION_EVENTS_ENABLED", true),
+		ActionStatusPushEnabled:      configutil.Bool("ACTION_STATUS_PUSH_ENABLED", true),
+		CopilotSessionTTL:            configutil.DurationSeconds("COPILOT_SESSION_TTL_SECONDS", 7200),
+		CopilotMaxMessageLength:      configutil.PositiveInt("COPILOT_MAX_MESSAGE_LENGTH", 2000),
+		CopilotMaxSessionMessages:    configutil.PositiveInt("COPILOT_MAX_SESSION_MESSAGES", 50),
+		RedisAddr:                    configutil.String("REDIS_ADDR", ""),
+		RedisPassword:                configutil.String("REDIS_PASSWORD", ""),
+		RedisDB:                      configutil.NonNegativeInt("REDIS_DB", 0),
+		RedisStartupTimeout:          configutil.DurationSeconds("REDIS_STARTUP_TIMEOUT_SECONDS", 5),
+		RedisDialTimeout:             configutil.DurationSeconds("REDIS_DIAL_TIMEOUT_SECONDS", 5),
+		RedisReadTimeout:             configutil.DurationSeconds("REDIS_READ_TIMEOUT_SECONDS", 3),
+		RedisWriteTimeout:            configutil.DurationSeconds("REDIS_WRITE_TIMEOUT_SECONDS", 3),
+		RedisConnMaxLifetime:         configutil.DurationSeconds("REDIS_CONN_MAX_LIFETIME_SECONDS", 1800),
+		RedisConnMaxIdleTime:         configutil.DurationSeconds("REDIS_CONN_MAX_IDLE_TIME_SECONDS", 300),
+		MySQLHost:                    configutil.String("MYSQL_HOST", ""),
+		MySQLPort:                    configutil.String("MYSQL_PORT", "3306"),
+		MySQLUser:                    configutil.String("MYSQL_USER", ""),
+		MySQLPassword:                configutil.String("MYSQL_PASSWORD", ""),
+		MySQLDatabase:                configutil.String("MYSQL_DATABASE", ""),
+		MySQLStartupTimeout:          configutil.DurationSeconds("MYSQL_STARTUP_TIMEOUT_SECONDS", 5),
+		MySQLPingTimeout:             configutil.DurationSeconds("MYSQL_PING_TIMEOUT_SECONDS", 3),
+		JWTSecret:                    configutil.String("JWT_SECRET", ""),
+		JWTExpireHours:               configutil.PositiveInt("JWT_EXPIRE_HOURS", 24),
+		AuthEnabled:                  configutil.Bool("AUTH_ENABLED", true),
+		AdminPassword:                configutil.String("ADMIN_PASSWORD", ""),
+		StaticDir:                    configutil.String("STATIC_DIR", ""),
+		TraceOTLPEndpoint:            configutil.NonEmptyString("TRACE_OTLP_ENDPOINT", ""),
+		TraceSampleRate:              configutil.FloatRange("TRACE_SAMPLE_RATE", 1.0, 0, 1),
+		KafkaBrokers:                 configutil.List("KAFKA_BROKERS"),
+		WSMaxConnections:             configutil.PositiveInt("WS_MAX_CONNECTIONS", 1000),
 	}
 }
 
@@ -501,6 +531,12 @@ func (c Config) Validate() error {
 		if strings.TrimSpace(c.RedisAddr) == "" {
 			return fmt.Errorf("REDIS_ADDR is required when DIAGNOSIS_ENABLED is true")
 		}
+	}
+	if c.ActionMaxReplicas < 1 || c.ActionMaxReplicas > 100 {
+		return fmt.Errorf("ACTION_MAX_REPLICAS must be in range 1-100, got %d", c.ActionMaxReplicas)
+	}
+	if c.ActionPendingTTL < time.Hour || c.ActionPendingTTL > 168*time.Hour {
+		return fmt.Errorf("ACTION_PENDING_TTL_HOURS must be in range 1-168, got %v", c.ActionPendingTTL)
 	}
 	if c.CopilotSessionTTL <= 0 {
 		return fmt.Errorf("COPILOT_SESSION_TTL_SECONDS must be positive, got %v", c.CopilotSessionTTL)

@@ -95,15 +95,29 @@ func (p *Producer) SendAlertEvent(event AlertEvent) error {
 		event.Type = "alert"
 	}
 
-	value, err := json.Marshal(event)
+	return p.sendJSON(TopicAlertEvents, event.Fingerprint, event, "alert event")
+}
+
+func (p *Producer) SendOperationEvent(key string, event interface{}) error {
+	if p == nil || p.producer == nil {
+		return errors.New("kafka producer is not initialized")
+	}
+	if key == "" {
+		key = "operation"
+	}
+	return p.sendJSON(TopicOperationEvents, key, event, "operation event")
+}
+
+func (p *Producer) sendJSON(topic, key string, value interface{}, label string) error {
+	data, err := json.Marshal(value)
 	if err != nil {
-		return fmt.Errorf("marshal alert event: %w", err)
+		return fmt.Errorf("marshal %s: %w", label, err)
 	}
 
 	msg := &sarama.ProducerMessage{
-		Topic: TopicAlertEvents,
-		Key:   sarama.StringEncoder(event.Fingerprint),
-		Value: sarama.ByteEncoder(value),
+		Topic: topic,
+		Key:   sarama.StringEncoder(key),
+		Value: sarama.ByteEncoder(data),
 	}
 
 	select {
@@ -112,7 +126,7 @@ func (p *Producer) SendAlertEvent(event AlertEvent) error {
 		return nil
 	default:
 		p.observe(AlertEventDropped)
-		return errors.New("kafka producer channel full, dropping alert event")
+		return fmt.Errorf("kafka producer channel full, dropping %s", label)
 	}
 }
 

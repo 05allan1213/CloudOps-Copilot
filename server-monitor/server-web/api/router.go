@@ -20,6 +20,7 @@ import (
 	"server-web/api/middleware"
 	appcache "server-web/cache"
 	"server-web/config"
+	copilotaction "server-web/copilot/action"
 	copilotdiagnosis "server-web/copilot/diagnosis"
 	copilothandler "server-web/copilot/handler"
 	copilotllm "server-web/copilot/llm"
@@ -214,6 +215,32 @@ func NewRouterWithRuntime(cfg config.Config, promClient *promclient.Client, cach
 		protected.POST("/api/v1/diagnosis", diagnosisHandler.Trigger)
 		protected.GET("/api/v1/diagnosis", diagnosisHandler.List)
 		protected.GET("/api/v1/diagnosis/:id", diagnosisHandler.Get)
+		if cfg.ActionApprovalEnabled {
+			actionService := copilotaction.NewService(copilotaction.ServiceConfig{
+				Repository:             copilotaction.NewRepository(db),
+				Policy:                 copilotaction.NewPolicy(copilotaction.PolicyConfig{MaxReplicas: cfg.ActionMaxReplicas}),
+				Executor:               copilotaction.DisabledK8sExecutor{},
+				Notifier:               copilotaction.NewWebSocketNotifier(websocketHub),
+				OperationEvents:        operationEventProducer{producer: alertProducer},
+				OperationEventsEnabled: cfg.ActionOperationEventsEnabled,
+				StatusPushEnabled:      cfg.ActionStatusPushEnabled,
+				ActionExecutionEnabled: cfg.ActionExecutionEnabled,
+			})
+			actionHandler := copilotaction.NewHandler(actionService)
+			actionAdmin := router.Group("/api/v1")
+			if cfg.AuthEnabled {
+				actionAdmin.Use(middleware.Auth(authService), middleware.VerifyTokenVersion(authService), middleware.RequireRole("admin"))
+			}
+			actionAdmin.POST("/diagnosis/:id/actions", actionHandler.CreateFromDiagnosis)
+			actionAdmin.GET("/actions/pending", actionHandler.ListPending)
+			actionAdmin.GET("/actions", actionHandler.ListActions)
+			actionAdmin.GET("/actions/:id", actionHandler.GetAction)
+			actionAdmin.POST("/actions/:id/approve", actionHandler.Approve)
+			actionAdmin.POST("/actions/:id/reject", actionHandler.Reject)
+			actionAdmin.POST("/actions/:id/execute", actionHandler.Execute)
+			actionAdmin.GET("/audit-logs", actionHandler.ListAuditLogs)
+			actionAdmin.GET("/audit-logs/:id", actionHandler.GetAuditLog)
+		}
 	}
 
 	wsGroup := router.Group("")
@@ -302,6 +329,17 @@ type copilotToolExecutor interface {
 
 type diagnosisToolRunner struct {
 	executor copilotToolExecutor
+}
+
+type operationEventProducer struct {
+	producer *eventbus.Producer
+}
+
+func (p operationEventProducer) SendOperationEvent(event copilotaction.OperationEvent) error {
+	if p.producer == nil {
+		return nil
+	}
+	return p.producer.SendOperationEvent(event.ActionType, event)
 }
 
 func (r diagnosisToolRunner) ExecuteTool(ctx context.Context, name string, args json.RawMessage) (copilotdiagnosis.ToolResult, error) {
