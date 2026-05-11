@@ -19,7 +19,7 @@ func NormalizeRequest(req Request) (Request, error) {
 	if req.TriggerType == "" {
 		req.TriggerType = TriggerManual
 	}
-	if req.TriggerType != TriggerManual && req.TriggerType != TriggerChat {
+	if !isAllowedTriggerType(req.TriggerType) {
 		return Request{}, fmt.Errorf("%w: invalid trigger_type", ErrInvalidRequest)
 	}
 	if req.Fingerprint == "" && req.AlertHistoryID == 0 && (req.AlertName == "" || req.Instance == "") {
@@ -32,6 +32,10 @@ func NormalizeListFilter(filter ListFilter) (ListFilter, error) {
 	if filter.Status != "" && !isAllowedStatus(filter.Status) {
 		return ListFilter{}, fmt.Errorf("%w: invalid status", ErrInvalidRequest)
 	}
+	filter.TriggerType = strings.TrimSpace(filter.TriggerType)
+	if filter.TriggerType != "" && !isAllowedTriggerType(filter.TriggerType) {
+		return ListFilter{}, fmt.Errorf("%w: invalid trigger_type", ErrInvalidRequest)
+	}
 	if filter.Page <= 0 {
 		filter.Page = defaultPage
 	}
@@ -42,6 +46,15 @@ func NormalizeListFilter(filter ListFilter) (ListFilter, error) {
 		filter.PageSize = maxPageSize
 	}
 	return filter, nil
+}
+
+func isAllowedTriggerType(triggerType string) bool {
+	switch triggerType {
+	case TriggerManual, TriggerChat, TriggerAuto:
+		return true
+	default:
+		return false
+	}
 }
 
 func isAllowedStatus(status string) bool {

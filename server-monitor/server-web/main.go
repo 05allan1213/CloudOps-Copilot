@@ -26,6 +26,7 @@ import (
 	"server-web/api"
 	authpkg "server-web/auth"
 	"server-web/config"
+	copilotdiagnosis "server-web/copilot/diagnosis"
 	"server-web/database"
 	eventbus "server-web/kafka"
 	promclient "server-web/prometheus"
@@ -50,12 +51,15 @@ type app struct {
 	redisClient       *rediscache.Client
 	mysqlClient       *database.MySQL
 	kafkaProducer     *eventbus.Producer
+	diagnosisConsumer *eventbus.Consumer
+	copilotRuntime    *api.CopilotRuntime
 	alertHub          *pubsub.Hub
 	websocketHub      *ws.Hub
 	server            *http.Server
 	ctx               context.Context
 	cancel            context.CancelFunc
 	subscriberDone    <-chan struct{}
+	diagnosisDone     <-chan struct{}
 	alertHubConsumers <-chan struct{}
 }
 
@@ -122,21 +126,27 @@ func initApp(ctx context.Context) (*app, error) {
 	alertHub := pubsub.NewHub(64)
 	websocketHub := ws.NewHub(cfg.WSMaxConnections, cfg.CORSOrigins)
 
-	router, err := api.NewRouter(cfg, prometheusClient, redisClient, mysqlClient, authService, websocketHub, kafkaProducer)
+	router, copilotRuntime, err := api.NewRouterWithRuntime(cfg, prometheusClient, redisClient, mysqlClient, authService, websocketHub, kafkaProducer)
 	if err != nil {
 		return nil, fmt.Errorf("create router: %w", err)
+	}
+	diagnosisConsumer, err := initDiagnosisConsumer(cfg, redisClient, copilotRuntime, websocketHub)
+	if err != nil {
+		return nil, err
 	}
 
 	appCtx, cancel := context.WithCancel(context.Background())
 	return &app{
-		cfg:              cfg,
-		shutdownTracer:   shutdownTracer,
-		prometheusClient: prometheusClient,
-		redisClient:      redisClient,
-		mysqlClient:      mysqlClient,
-		kafkaProducer:    kafkaProducer,
-		alertHub:         alertHub,
-		websocketHub:     websocketHub,
+		cfg:               cfg,
+		shutdownTracer:    shutdownTracer,
+		prometheusClient:  prometheusClient,
+		redisClient:       redisClient,
+		mysqlClient:       mysqlClient,
+		kafkaProducer:     kafkaProducer,
+		diagnosisConsumer: diagnosisConsumer,
+		copilotRuntime:    copilotRuntime,
+		alertHub:          alertHub,
+		websocketHub:      websocketHub,
 		server: &http.Server{
 			Addr:              cfg.ListenAddr,
 			Handler:           router,
@@ -230,6 +240,43 @@ func initKafkaProducer(cfg config.Config) *eventbus.Producer {
 	return kafkaProducer
 }
 
+func initDiagnosisConsumer(cfg config.Config, redisClient *rediscache.Client, runtime *api.CopilotRuntime, hub *ws.Hub) (*eventbus.Consumer, error) {
+	if !cfg.DiagnosisEnabled {
+		zap.L().Info("diagnosis worker disabled")
+		return nil, nil
+	}
+	if runtime == nil || runtime.DiagnosisService == nil {
+		return nil, fmt.Errorf("diagnosis worker requires copilot diagnosis service")
+	}
+	if redisClient == nil || !redisClient.Enabled() {
+		return nil, fmt.Errorf("diagnosis worker requires redis")
+	}
+
+	var notifier copilotdiagnosis.Notifier
+	if cfg.DiagnosisStatusPushEnabled {
+		notifier = copilotdiagnosis.NewWebSocketNotifier(hub)
+	}
+	worker := copilotdiagnosis.NewWorker(copilotdiagnosis.WorkerConfig{
+		Service:   runtime.DiagnosisService,
+		TaskStore: copilotdiagnosis.NewRedisTaskStore(redisClient, nil),
+		Notifier:  notifier,
+		Timeout:   cfg.DiagnosisTaskTimeout,
+		TTL:       cfg.DiagnosisTaskTTL,
+		Logger:    zap.L(),
+	})
+	consumer, err := eventbus.NewConsumer(cfg.KafkaBrokers, cfg.DiagnosisKafkaGroupID, worker)
+	if err != nil {
+		return nil, fmt.Errorf("diagnosis kafka consumer init failed: %w", err)
+	}
+	consumer.SetObserver(runtime.KafkaObserver)
+	zap.L().Info("diagnosis worker initialized",
+		zap.Strings("brokers", cfg.KafkaBrokers),
+		zap.String("group_id", cfg.DiagnosisKafkaGroupID),
+		zap.Int("worker_count", cfg.DiagnosisWorkerCount),
+	)
+	return consumer, nil
+}
+
 func runApp(app *app) int {
 	startBackgroundTasks(app)
 	serverErr := make(chan error, 1)
@@ -293,6 +340,30 @@ func startBackgroundTasks(app *app) {
 	}()
 
 	go broadcastHosts(app.ctx, app.prometheusClient, app.websocketHub, app.cfg.RequestTimeout, app.cfg.HostsBroadcastInterval)
+
+	if app.diagnosisConsumer != nil {
+		done := make(chan struct{})
+		app.diagnosisDone = done
+		go func() {
+			defer close(done)
+			defer func() {
+				if r := recover(); r != nil {
+					zap.L().Error("diagnosis consumer recovered from panic", zap.Any("panic", r))
+				}
+			}()
+			err := app.diagnosisConsumer.Consume(app.ctx,
+				func() {
+					zap.L().Info("diagnosis kafka consumer ready")
+				},
+				func() {
+					zap.L().Info("diagnosis kafka consumer not ready")
+				},
+			)
+			if err != nil && app.ctx.Err() == nil {
+				zap.L().Error("diagnosis kafka consumer stopped", zap.Error(err))
+			}
+		}()
+	}
 }
 
 func shutdownApp(app *app) {
@@ -304,8 +375,16 @@ func shutdownApp(app *app) {
 	})
 
 	app.cancel()
+	if app.diagnosisConsumer != nil {
+		if err := app.diagnosisConsumer.Close(); err != nil {
+			zap.L().Warn("diagnosis kafka consumer close failed", zap.Error(err))
+		}
+	}
 	if app.subscriberDone != nil {
 		<-app.subscriberDone
+	}
+	if app.diagnosisDone != nil {
+		<-app.diagnosisDone
 	}
 
 	shutdown.Graceful(app.cfg.ShutdownTimeout, []shutdown.Phase{

@@ -17,6 +17,7 @@ const (
 
 	TriggerManual = "manual"
 	TriggerChat   = "chat"
+	TriggerAuto   = "auto"
 
 	ConfidenceHigh   = "high"
 	ConfidenceMedium = "medium"
@@ -222,9 +223,10 @@ type LLMMetadata struct {
 }
 
 type ListFilter struct {
-	Status   string
-	Page     int
-	PageSize int
+	Status      string
+	TriggerType string
+	Page        int
+	PageSize    int
 }
 
 type ListResult struct {

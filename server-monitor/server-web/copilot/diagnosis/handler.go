@@ -67,7 +67,10 @@ func (h *Handler) Get(c *gin.Context) {
 }
 
 func parseListFilter(c *gin.Context) (ListFilter, bool) {
-	filter := ListFilter{Status: strings.TrimSpace(c.Query("status"))}
+	filter := ListFilter{
+		Status:      strings.TrimSpace(c.Query("status")),
+		TriggerType: strings.TrimSpace(c.Query("trigger_type")),
+	}
 	var err error
 	filter.Page, err = parseIntQuery(c.Query("page"), defaultPage)
 	if err != nil {

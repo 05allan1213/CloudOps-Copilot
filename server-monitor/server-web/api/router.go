@@ -41,7 +41,17 @@ type authService interface {
 	handlers.AuthService
 }
 
+type CopilotRuntime struct {
+	DiagnosisService *copilotdiagnosis.Service
+	KafkaObserver    eventbus.ConsumerObserver
+}
+
 func NewRouter(cfg config.Config, promClient *promclient.Client, cacheClient *rediscache.Client, mysqlClient *database.MySQL, authService authService, websocketHub *ws.Hub, alertProducer *eventbus.Producer) (*gin.Engine, error) {
+	router, _, err := NewRouterWithRuntime(cfg, promClient, cacheClient, mysqlClient, authService, websocketHub, alertProducer)
+	return router, err
+}
+
+func NewRouterWithRuntime(cfg config.Config, promClient *promclient.Client, cacheClient *rediscache.Client, mysqlClient *database.MySQL, authService authService, websocketHub *ws.Hub, alertProducer *eventbus.Producer) (*gin.Engine, *CopilotRuntime, error) {
 	router := gin.New()
 	metrics := middleware.NewMetrics()
 	if websocketHub != nil {
@@ -60,7 +70,7 @@ func NewRouter(cfg config.Config, promClient *promclient.Client, cacheClient *re
 	)
 
 	if err := router.SetTrustedProxies(cfg.TrustedProxies); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	db := dbFromMySQL(mysqlClient)
@@ -91,7 +101,7 @@ func NewRouter(cfg config.Config, promClient *promclient.Client, cacheClient *re
 		AuthService:   authService,
 	}, websocketHub)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	router.GET("/metrics", gin.WrapH(metrics.HTTPHandler()))
@@ -118,6 +128,7 @@ func NewRouter(cfg config.Config, promClient *promclient.Client, cacheClient *re
 	protected.GET("/api/v1/alerts/events", handler.AlertEvents)
 	protected.GET("/api/v1/alert-histories", handler.ListAlertHistories)
 
+	var copilotRuntime *CopilotRuntime
 	if cfg.CopilotEnabled {
 		copilotCacheService := appcache.NewService(cacheClient, appcache.Options{
 			HostsTTL:     cfg.HostsCacheTTL,
@@ -134,7 +145,7 @@ func NewRouter(cfg config.Config, promClient *promclient.Client, cacheClient *re
 			MaxFileBytes: cfg.RunbookMaxFileBytes,
 		})
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		runbookRetriever := copilotrunbook.NewRetriever(runbookDocs, copilotrunbook.RetrieverOptions{
 			DefaultLimit: cfg.RunbookSearchTopN,
@@ -151,7 +162,7 @@ func NewRouter(cfg config.Config, promClient *promclient.Client, cacheClient *re
 				LogArgs:         cfg.CopilotToolLogArgs,
 			})
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			tools = toolExecutor
 		} else {
@@ -184,6 +195,7 @@ func NewRouter(cfg config.Config, promClient *promclient.Client, cacheClient *re
 				Timeout: cfg.DiagnosisLLMTimeout,
 			}),
 		})
+		copilotRuntime = &CopilotRuntime{DiagnosisService: diagnosisService, KafkaObserver: metrics}
 		copilotHandler := copilothandler.NewHandler(copilotservice.NewService(copilotservice.Config{
 			MaxMessageLength:   cfg.CopilotMaxMessageLength,
 			SessionTTL:         cfg.CopilotSessionTTL,
@@ -268,13 +280,13 @@ func NewRouter(cfg config.Config, promClient *promclient.Client, cacheClient *re
 		if _, err := os.Stat(staticDir); err == nil {
 			staticHandler, err := serveStatic(staticDir)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			router.Use(staticHandler)
 		}
 	}
 
-	return router, nil
+	return router, copilotRuntime, nil
 }
 
 func dbFromMySQL(mysqlClient *database.MySQL) *gorm.DB {

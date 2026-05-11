@@ -80,6 +80,9 @@ func (r *Repository) List(ctx context.Context, filter ListFilter, user User) ([]
 	if filter.Status != "" {
 		stmt = stmt.Where("status = ?", filter.Status)
 	}
+	if filter.TriggerType != "" {
+		stmt = stmt.Where("trigger_type = ?", filter.TriggerType)
+	}
 	if user.Role != "admin" {
 		stmt = stmt.Where("created_by = ?", user.ID)
 	}
