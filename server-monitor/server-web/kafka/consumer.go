@@ -106,11 +106,7 @@ func NewConsumer(brokers []string, groupID string, processor AlertProcessor) (*C
 		return nil, errors.New("alert processor is required")
 	}
 
-	config := sarama.NewConfig()
-	config.Consumer.Group.Rebalance.GroupStrategies = []sarama.BalanceStrategy{sarama.NewBalanceStrategyRange()}
-	config.Consumer.Offsets.Initial = sarama.OffsetOldest
-
-	group, err := sarama.NewConsumerGroup(brokers, groupID, config)
+	group, err := sarama.NewConsumerGroup(brokers, groupID, newConsumerConfig())
 	if err != nil {
 		return nil, fmt.Errorf("create kafka consumer group: %w", err)
 	}
@@ -121,6 +117,13 @@ func NewConsumer(brokers []string, groupID string, processor AlertProcessor) (*C
 		handler:      &consumerGroupHandler{processor: processor},
 		retryBackoff: defaultConsumeRetryBackoff,
 	}, nil
+}
+
+func newConsumerConfig() *sarama.Config {
+	config := sarama.NewConfig()
+	config.Consumer.Group.Rebalance.GroupStrategies = []sarama.BalanceStrategy{sarama.NewBalanceStrategyRange()}
+	config.Consumer.Offsets.Initial = sarama.OffsetNewest
+	return config
 }
 
 func (c *Consumer) Consume(ctx context.Context, onReady, onNotReady func()) error {
