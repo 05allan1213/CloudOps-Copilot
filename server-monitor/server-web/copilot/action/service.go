@@ -24,6 +24,7 @@ type ServiceConfig struct {
 	StatusPushEnabled       bool
 	ActionExecutionEnabled  bool
 	ExecutionTimeoutSeconds int
+	PendingTTL              time.Duration
 }
 
 type Service struct {
@@ -36,6 +37,7 @@ type Service struct {
 	operationEventsEnabled bool
 	statusPushEnabled      bool
 	executionTimeout       time.Duration
+	pendingTTL             time.Duration
 }
 
 func NewService(cfg ServiceConfig) *Service {
@@ -61,6 +63,7 @@ func NewService(cfg ServiceConfig) *Service {
 		operationEventsEnabled: cfg.OperationEventsEnabled,
 		statusPushEnabled:      cfg.StatusPushEnabled,
 		executionTimeout:       executionTimeout,
+		pendingTTL:             cfg.PendingTTL,
 	}
 }
 
@@ -293,6 +296,33 @@ func (s *Service) GetAuditLog(ctx context.Context, id uint64) (AuditLogResponse,
 	}
 	log, err := s.repo.GetAuditLog(ctx, id)
 	return toAuditLogResponse(log), err
+}
+
+func (s *Service) ExpirePendingActions(ctx context.Context) (int, error) {
+	if err := s.requireReady(); err != nil {
+		return 0, err
+	}
+	if s.pendingTTL <= 0 {
+		return 0, nil
+	}
+	cutoff := time.Now().Add(-s.pendingTTL)
+	actions, err := s.repo.ListPendingBefore(ctx, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	expired := 0
+	for _, action := range actions {
+		_, transitionErr := s.repo.TransitionAction(ctx, action.ID, EventReject, func(a *model.PendingAction) error {
+			a.ErrorMessage = fmt.Sprintf("action expired after %s pending TTL", s.pendingTTL)
+			return nil
+		})
+		if transitionErr != nil {
+			continue
+		}
+		expired++
+		s.observeAction("expire", model.AuditResultDenied)
+	}
+	return expired, nil
 }
 
 func (s *Service) requireReady() error {

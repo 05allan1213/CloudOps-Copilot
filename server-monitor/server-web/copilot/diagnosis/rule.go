@@ -35,6 +35,8 @@ func (defaultRuleAnalyzer) Analyze(ctx context.Context, alert AlertContext, evid
 	memory := findMetric(evidence.Metrics, "memory")
 	disk := findMetric(evidence.Metrics, "disk")
 	up := findMetric(evidence.Metrics, "up")
+	errorRate := findMetric(evidence.Metrics, "error")
+	latency := findMetric(evidence.Metrics, "latency")
 
 	alertName := strings.ToLower(alert.AlertName)
 	if strings.Contains(alertName, "cpu") {
@@ -59,6 +61,28 @@ func (defaultRuleAnalyzer) Analyze(ctx context.Context, alert AlertContext, evid
 		add("disk_usage_high", passed, metricDetail("disk", disk, "disk last >= 80"), "metrics.disk_usage")
 		if passed {
 			nextSteps = append(nextSteps, "检查挂载点容量和大文件增长")
+		}
+	}
+	if strings.Contains(alertName, "error") || strings.Contains(alertName, "错误率") || strings.Contains(alertName, "5xx") {
+		passed := errorRate != nil && errorRate.Avg >= 5
+		add("high_error_rate", passed, metricDetail("error_rate", errorRate, "error_rate avg >= 5%"), "metrics.error_rate")
+		if !passed && (strings.Contains(alertName, "error") || strings.Contains(alertName, "错误率")) {
+			add("high_error_rate_no_metric", true, "告警触发但缺少 error_rate 指标证据，建议检查 HTTP 5xx 监控", "alert_context.alert_name")
+			nextSteps = append(nextSteps, "检查服务日志和异常堆栈", "确认依赖服务状态")
+		}
+		if passed {
+			nextSteps = append(nextSteps, "检查服务日志和异常堆栈", "确认依赖服务状态")
+		}
+	}
+	if strings.Contains(alertName, "latency") || strings.Contains(alertName, "延迟") || strings.Contains(alertName, "p99") || strings.Contains(alertName, "p95") {
+		passed := latency != nil && latency.Avg >= 500
+		add("high_latency", passed, metricDetail("latency", latency, "latency avg >= 500ms"), "metrics.latency")
+		if !passed && (strings.Contains(alertName, "latency") || strings.Contains(alertName, "延迟")) {
+			add("high_latency_no_metric", true, "告警触发但缺少 latency 指标证据，建议检查 HTTP 延迟监控", "alert_context.alert_name")
+			nextSteps = append(nextSteps, "检查慢查询和下游依赖延迟", "确认资源是否瓶颈")
+		}
+		if passed {
+			nextSteps = append(nextSteps, "检查慢查询和下游依赖延迟", "确认资源是否瓶颈")
 		}
 	}
 	if strings.Contains(alertName, "down") || strings.Contains(alertName, "hostdown") {

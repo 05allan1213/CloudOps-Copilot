@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -19,23 +20,27 @@ type TriggerService interface {
 }
 
 type WorkerConfig struct {
-	Service   TriggerService
-	TaskStore TaskStore
-	Notifier  Notifier
-	Timeout   time.Duration
-	TTL       time.Duration
-	Now       func() time.Time
-	Logger    *zap.Logger
+	Service     TriggerService
+	TaskStore   TaskStore
+	Notifier    Notifier
+	Timeout     time.Duration
+	TTL         time.Duration
+	Concurrency int
+	Now         func() time.Time
+	Logger      *zap.Logger
 }
 
 type Worker struct {
-	service   TriggerService
-	taskStore TaskStore
-	notifier  Notifier
-	timeout   time.Duration
-	ttl       time.Duration
-	now       func() time.Time
-	logger    *zap.Logger
+	service     TriggerService
+	taskStore   TaskStore
+	notifier    Notifier
+	timeout     time.Duration
+	ttl         time.Duration
+	concurrency int
+	now         func() time.Time
+	logger      *zap.Logger
+	sem         chan struct{}
+	wg          sync.WaitGroup
 }
 
 func NewWorker(cfg WorkerConfig) *Worker {
@@ -55,14 +60,20 @@ func NewWorker(cfg WorkerConfig) *Worker {
 	if logger == nil {
 		logger = zap.L()
 	}
+	concurrency := cfg.Concurrency
+	if concurrency <= 0 {
+		concurrency = 1
+	}
 	return &Worker{
-		service:   cfg.Service,
-		taskStore: cfg.TaskStore,
-		notifier:  cfg.Notifier,
-		timeout:   timeout,
-		ttl:       ttl,
-		now:       now,
-		logger:    logger,
+		service:     cfg.Service,
+		taskStore:   cfg.TaskStore,
+		notifier:    cfg.Notifier,
+		timeout:     timeout,
+		ttl:         ttl,
+		concurrency: concurrency,
+		now:         now,
+		logger:      logger,
+		sem:         make(chan struct{}, concurrency),
 	}
 }
 
@@ -96,6 +107,22 @@ func (w *Worker) Process(ctx context.Context, event eventbus.AlertEvent) error {
 		return err
 	}
 	w.notify(ctx, alert, StatusRunning, 0, "", "")
+
+	select {
+	case w.sem <- struct{}{}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	w.wg.Add(1)
+	go func() {
+		defer func() { <-w.sem }()
+		defer w.wg.Done()
+		w.processAlert(ctx, alert)
+	}()
+	return nil
+}
+
+func (w *Worker) processAlert(ctx context.Context, alert workerAlert) {
 	taskCtx, cancel := context.WithTimeout(ctx, w.timeout)
 	defer cancel()
 
@@ -109,17 +136,16 @@ func (w *Worker) Process(ctx context.Context, event eventbus.AlertEvent) error {
 	if err != nil {
 		errText := publicError(err)
 		if markErr := w.taskStore.MarkFailed(ctx, alert.dedupeKey, errText, w.ttl); markErr != nil {
-			return markErr
+			w.logger.Error("mark diagnosis task failed", zap.Error(markErr))
+			return
 		}
 		w.notify(ctx, alert, StatusFailed, report.ID, "", errText)
-		if isPermanentWorkerError(err) {
-			return eventbus.Permanent(err)
-		}
-		return err
+		return
 	}
 
 	if err := w.taskStore.MarkCompleted(ctx, alert.dedupeKey, report.ID, w.ttl); err != nil {
-		return err
+		w.logger.Error("mark diagnosis task completed", zap.Error(err))
+		return
 	}
 	w.notify(ctx, alert, StatusCompleted, report.ID, report.Summary, "")
 	w.logger.Info("diagnosis worker processed alert event",
@@ -129,7 +155,10 @@ func (w *Worker) Process(ctx context.Context, event eventbus.AlertEvent) error {
 		zap.String("instance", alert.instance),
 		zap.Uint64("report_id", report.ID),
 	)
-	return nil
+}
+
+func (w *Worker) Wait() {
+	w.wg.Wait()
 }
 
 func (w *Worker) notify(ctx context.Context, alert workerAlert, status string, reportID uint64, summary string, errText string) {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -25,6 +26,7 @@ type repository interface {
 	GetAction(ctx context.Context, id uint64) (model.PendingAction, error)
 	TransitionAction(ctx context.Context, id uint64, event string, mutate func(*model.PendingAction) error) (model.PendingAction, error)
 	ListActions(ctx context.Context, filter ListFilter) ([]model.PendingAction, int64, ListFilter, error)
+	ListPendingBefore(ctx context.Context, cutoff time.Time) ([]model.PendingAction, error)
 	RecordAudit(ctx context.Context, entry AuditEntry) error
 	ListAuditLogs(ctx context.Context, filter ListFilter) ([]model.AuditLog, int64, ListFilter, error)
 	GetAuditLog(ctx context.Context, id uint64) (model.AuditLog, error)
@@ -156,6 +158,17 @@ func (r *Repository) ListActions(ctx context.Context, filter ListFilter) ([]mode
 	var actions []model.PendingAction
 	err := stmt.Order("created_at DESC").Order("id DESC").Limit(filter.PageSize).Offset((filter.Page - 1) * filter.PageSize).Find(&actions).Error
 	return actions, total, filter, err
+}
+
+func (r *Repository) ListPendingBefore(ctx context.Context, cutoff time.Time) ([]model.PendingAction, error) {
+	if r == nil || r.db == nil {
+		return nil, ErrUnavailable
+	}
+	var actions []model.PendingAction
+	err := r.db.WithContext(ctx).
+		Where("status = ? AND created_at < ?", model.ActionStatusPending, cutoff).
+		Find(&actions).Error
+	return actions, err
 }
 
 func (r *Repository) RecordAudit(ctx context.Context, entry AuditEntry) error {
