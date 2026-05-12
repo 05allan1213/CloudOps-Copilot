@@ -45,6 +45,7 @@ data:
   ACTION_STATUS_PUSH_ENABLED: {{ .Values.config.actionStatusPushEnabled | quote }}
   K8S_ENABLED: {{ .Values.k8sIntegration.enabled | quote }}
   K8S_WRITE_ENABLED: {{ .Values.k8sIntegration.writeEnabled | quote }}
+  K8S_NODES_ENABLED: {{ .Values.k8sIntegration.nodesEnabled | quote }}
   K8S_IN_CLUSTER: {{ .Values.k8sIntegration.inCluster | quote }}
   K8S_KUBECONFIG: {{ .Values.k8sIntegration.kubeconfig | quote }}
   K8S_ALLOWED_NAMESPACES: {{ join "," .Values.k8sIntegration.allowedNamespaces | quote }}

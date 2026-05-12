@@ -84,6 +84,7 @@ type Executor struct {
 	promClient      PrometheusClient
 	runbookSearcher RunbookSearcher
 	k8sReader       k8sreader.Reader
+	k8sNodesEnabled bool
 	db              *gorm.DB
 	registry        Registry
 	timeout         time.Duration
@@ -96,6 +97,7 @@ type Options struct {
 	PromClient      PrometheusClient
 	RunbookSearcher RunbookSearcher
 	K8sReader       k8sreader.Reader
+	K8sNodesEnabled bool
 	DB              *gorm.DB
 	Observer        Observer
 	Timeout         time.Duration
@@ -169,6 +171,7 @@ func newExecutor(options Options, registry Registry) (*Executor, error) {
 		promClient:      options.PromClient,
 		runbookSearcher: options.RunbookSearcher,
 		k8sReader:       options.K8sReader,
+		k8sNodesEnabled: options.K8sNodesEnabled,
 		db:              options.DB,
 		timeout:         timeout,
 		now:             now,

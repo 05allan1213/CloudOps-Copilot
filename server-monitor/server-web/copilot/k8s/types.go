@@ -63,6 +63,7 @@ type PodSummary struct {
 type DeploymentSummary struct {
 	Namespace         string                `json:"namespace"`
 	Name              string                `json:"name"`
+	Selector          map[string]string     `json:"selector,omitempty"`
 	Replicas          int32                 `json:"replicas"`
 	ReadyReplicas     int32                 `json:"ready_replicas"`
 	UpdatedReplicas   int32                 `json:"updated_replicas"`
@@ -80,12 +81,13 @@ type DeploymentCondition struct {
 }
 
 type ServiceSummary struct {
-	Namespace   string        `json:"namespace"`
-	Name        string        `json:"name"`
-	Type        string        `json:"type"`
-	ClusterIP   string        `json:"cluster_ip,omitempty"`
-	Ports       []ServicePort `json:"ports,omitempty"`
-	CollectedAt time.Time     `json:"collected_at"`
+	Namespace   string            `json:"namespace"`
+	Name        string            `json:"name"`
+	Selector    map[string]string `json:"selector,omitempty"`
+	Type        string            `json:"type"`
+	ClusterIP   string            `json:"cluster_ip,omitempty"`
+	Ports       []ServicePort     `json:"ports,omitempty"`
+	CollectedAt time.Time         `json:"collected_at"`
 }
 
 type ServicePort struct {

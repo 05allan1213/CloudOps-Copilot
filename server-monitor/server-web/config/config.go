@@ -225,6 +225,10 @@ type Config struct {
 	// 默认值：false
 	K8SWriteEnabled bool
 
+	// K8SNodesEnabled 是否启用集群级 Node 查询工具
+	// 默认值：false
+	K8SNodesEnabled bool
+
 	// K8SInCluster 是否优先使用集群内 ServiceAccount 配置
 	// 默认值：true
 	K8SInCluster bool
@@ -454,6 +458,7 @@ func Load() Config {
 		ActionStatusPushEnabled:      configutil.Bool("ACTION_STATUS_PUSH_ENABLED", true),
 		K8SEnabled:                   configutil.Bool("K8S_ENABLED", false),
 		K8SWriteEnabled:              configutil.Bool("K8S_WRITE_ENABLED", false),
+		K8SNodesEnabled:              configutil.Bool("K8S_NODES_ENABLED", false),
 		K8SInCluster:                 configutil.Bool("K8S_IN_CLUSTER", true),
 		K8SKubeconfig:                configutil.String("K8S_KUBECONFIG", ""),
 		K8SAllowedNamespaces:         defaultList(configutil.List("K8S_ALLOWED_NAMESPACES"), []string{"default"}),
@@ -600,6 +605,9 @@ func (c Config) Validate() error {
 		if !c.ActionExecutionEnabled {
 			return fmt.Errorf("ACTION_EXECUTION_ENABLED must be true when K8S_WRITE_ENABLED is true")
 		}
+	}
+	if c.K8SNodesEnabled && !c.K8SEnabled {
+		return fmt.Errorf("K8S_ENABLED must be true when K8S_NODES_ENABLED is true")
 	}
 	if err := validateK8SNamespace("K8S_DEFAULT_NAMESPACE", c.K8SDefaultNamespace); err != nil {
 		return err

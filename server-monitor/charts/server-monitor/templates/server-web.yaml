@@ -270,6 +270,11 @@ spec:
                 configMapKeyRef:
                   name: monitor-config
                   key: K8S_WRITE_ENABLED
+            - name: K8S_NODES_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: K8S_NODES_ENABLED
             - name: K8S_IN_CLUSTER
               valueFrom:
                 configMapKeyRef:

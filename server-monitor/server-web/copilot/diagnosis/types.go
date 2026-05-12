@@ -112,6 +112,7 @@ type K8sEvidence struct {
 	TargetName  string                        `json:"target_name,omitempty"`
 	Pods        []k8sreader.PodSummary        `json:"pods,omitempty"`
 	Deployments []k8sreader.DeploymentSummary `json:"deployments,omitempty"`
+	Services    []k8sreader.ServiceSummary    `json:"services,omitempty"`
 	Nodes       []k8sreader.NodeSummary       `json:"nodes,omitempty"`
 	Events      []k8sreader.EventSummary      `json:"events,omitempty"`
 	Logs        []k8sreader.LogSnippet        `json:"logs,omitempty"`

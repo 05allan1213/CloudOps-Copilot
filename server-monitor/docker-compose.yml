@@ -497,6 +497,7 @@ services:
       ACTION_STATUS_PUSH_ENABLED: ${ACTION_STATUS_PUSH_ENABLED:-true}
       K8S_ENABLED: ${K8S_ENABLED:-false}
       K8S_WRITE_ENABLED: ${K8S_WRITE_ENABLED:-false}
+      K8S_NODES_ENABLED: ${K8S_NODES_ENABLED:-false}
       K8S_IN_CLUSTER: ${K8S_IN_CLUSTER:-false}
       K8S_KUBECONFIG: ${K8S_KUBECONFIG:-}
       K8S_ALLOWED_NAMESPACES: ${K8S_ALLOWED_NAMESPACES:-default}
@@ -516,6 +517,8 @@ services:
     volumes:
       - ./docker/custom-alerts.yml:/etc/server-monitor/rules/custom-alerts.yml
       - ./runbooks:/app/runbooks:ro
+      # Enable local K8s access by setting K8S_KUBECONFIG=/app/kubeconfig and mounting your kubeconfig here.
+      # - ${HOME}/.kube/config:/app/kubeconfig:ro
     depends_on:
       jaeger:
         condition: service_started

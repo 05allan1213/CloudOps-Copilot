@@ -171,6 +171,7 @@ func NewRouterWithRuntime(cfg config.Config, promClient *promclient.Client, cach
 				PromClient:      promClient,
 				RunbookSearcher: runbookRetriever,
 				K8sReader:       k8sService,
+				K8sNodesEnabled: cfg.K8SNodesEnabled,
 				DB:              db,
 				Observer:        metrics,
 				Timeout:         cfg.CopilotToolDefaultTimeout,
@@ -239,6 +240,7 @@ func NewRouterWithRuntime(cfg config.Config, promClient *promclient.Client, cach
 				actionExecutor = copilotaction.NewClientK8sExecutor(k8sClient, copilotaction.ClientK8sExecutorConfig{
 					AllowedNamespaces: cfg.K8SAllowedNamespaces,
 					MaxReplicas:       cfg.ActionMaxReplicas,
+					RequestTimeout:    cfg.K8SRequestTimeout,
 				})
 			} else if cfg.ActionExecutionEnabled && !cfg.K8SWriteEnabled {
 				zap.L().Warn("ACTION_EXECUTION_ENABLED=true but K8S_WRITE_ENABLED=false; forcing k8s action execution disabled")

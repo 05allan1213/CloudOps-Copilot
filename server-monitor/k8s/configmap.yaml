@@ -58,6 +58,7 @@ data:
   ACTION_STATUS_PUSH_ENABLED: "true"
   K8S_ENABLED: "false"
   K8S_WRITE_ENABLED: "false"
+  K8S_NODES_ENABLED: "false"
   K8S_IN_CLUSTER: "true"
   K8S_KUBECONFIG: ""
   K8S_ALLOWED_NAMESPACES: "default"

@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"k8s.io/apimachinery/pkg/labels"
+
 	k8sreader "server-web/copilot/k8s"
 	"server-web/model"
 	promclient "server-web/prometheus"
@@ -23,6 +25,7 @@ const (
 	ToolRunbookSearch     = "runbook.search"
 	ToolK8sGetPods        = "k8s.get_pods"
 	ToolK8sGetDeployments = "k8s.get_deployments"
+	ToolK8sGetServices    = "k8s.get_services"
 	ToolK8sGetNodes       = "k8s.get_nodes"
 	ToolK8sGetEvents      = "k8s.get_events"
 	ToolK8sGetLogs        = "k8s.get_logs"
@@ -219,12 +222,20 @@ func (c *EvidenceCollector) collectK8sEvidence(ctx context.Context, alert AlertC
 		} else {
 			evidence.Deployments = deployments
 		}
-		podArgs, _ := json.Marshal(map[string]interface{}{"namespace": evidence.Namespace, "label_selector": deploymentSelector(alert.TargetName), "limit": 20})
+		selector := deploymentSelector(alert.TargetName, deployments)
+		podArgs, _ := json.Marshal(map[string]interface{}{"namespace": evidence.Namespace, "label_selector": selector, "limit": 20})
 		pods, err := executeK8sTool[[]k8sreader.PodSummary](ctx, c.runner, ToolK8sGetPods, podArgs)
 		if err != nil {
 			record(ToolK8sGetPods, err)
 		} else {
 			evidence.Pods = pods
+		}
+		serviceArgs, _ := json.Marshal(map[string]interface{}{"namespace": evidence.Namespace, "limit": 50})
+		services, err := executeK8sTool[[]k8sreader.ServiceSummary](ctx, c.runner, ToolK8sGetServices, serviceArgs)
+		if err != nil {
+			record(ToolK8sGetServices, err)
+		} else {
+			evidence.Services = relatedServices(services, alert.TargetName, deployments)
 		}
 		eventArgs, _ := json.Marshal(map[string]interface{}{"namespace": evidence.Namespace, "involved_kind": "Deployment", "involved_name": alert.TargetName, "limit": 10})
 		events, err := executeK8sTool[[]k8sreader.EventSummary](ctx, c.runner, ToolK8sGetEvents, eventArgs)
@@ -299,11 +310,42 @@ func isK8sTarget(alert AlertContext) bool {
 	}
 }
 
-func deploymentSelector(name string) string {
-	if strings.TrimSpace(name) == "" {
+func deploymentSelector(name string, deployments []k8sreader.DeploymentSummary) string {
+	if len(deployments) > 0 && len(deployments[0].Selector) > 0 {
+		return labels.Set(deployments[0].Selector).AsSelector().String()
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
 		return ""
 	}
-	return "app=" + strings.TrimSpace(name)
+	return labels.Set{"app": name}.AsSelector().String()
+}
+
+func relatedServices(services []k8sreader.ServiceSummary, deploymentName string, deployments []k8sreader.DeploymentSummary) []k8sreader.ServiceSummary {
+	deploymentName = strings.TrimSpace(deploymentName)
+	deploymentLabels := map[string]string(nil)
+	if len(deployments) > 0 {
+		deploymentLabels = deployments[0].Selector
+	}
+	result := make([]k8sreader.ServiceSummary, 0, len(services))
+	for _, service := range services {
+		if service.Name == deploymentName || selectorSubset(service.Selector, deploymentLabels) {
+			result = append(result, service)
+		}
+	}
+	return result
+}
+
+func selectorSubset(subset, values map[string]string) bool {
+	if len(subset) == 0 || len(values) == 0 {
+		return false
+	}
+	for key, value := range subset {
+		if values[key] != value {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *EvidenceCollector) collectRunbooks(ctx context.Context, alert AlertContext) ([]RunbookEvidence, error) {

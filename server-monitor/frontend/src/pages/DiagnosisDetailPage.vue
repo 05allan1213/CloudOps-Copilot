@@ -43,6 +43,10 @@ function formatScore(value?: number) {
   return (value ?? 0).toFixed(1);
 }
 
+function formatServicePorts(ports?: Array<{ port: number; target_port?: string }>) {
+  return (ports ?? []).map((port) => `${port.port}${port.target_port ? `:${port.target_port}` : ""}`).join(", ") || "-";
+}
+
 function runbookMatches(runbook: { matched_alerts?: string[]; matched_keywords?: string[]; matched_metrics?: string[] }) {
   return [
     ...(runbook.matched_alerts ?? []),
@@ -213,6 +217,46 @@ onMounted(loadReport);
                   <td>{{ pod.phase }}</td>
                   <td>{{ pod.ready_containers }}/{{ pod.total_containers }}</td>
                   <td>{{ pod.restart_count }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div v-if="k8sEvidence.services?.length" class="mini-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Service</th>
+                  <th>type</th>
+                  <th>cluster IP</th>
+                  <th>ports</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="service in k8sEvidence.services" :key="service.name">
+                  <td>{{ service.namespace }}/{{ service.name }}</td>
+                  <td>{{ service.type }}</td>
+                  <td>{{ service.cluster_ip || "-" }}</td>
+                  <td>{{ formatServicePorts(service.ports) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div v-if="k8sEvidence.nodes?.length" class="mini-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Node</th>
+                  <th>ready</th>
+                  <th>kubelet</th>
+                  <th>capacity</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="node in k8sEvidence.nodes" :key="node.name">
+                  <td>{{ node.name }}</td>
+                  <td>{{ node.ready ? "true" : "false" }}</td>
+                  <td>{{ node.kubelet_version || "-" }}</td>
+                  <td>{{ node.capacity?.cpu || "-" }} / {{ node.capacity?.memory || "-" }}</td>
                 </tr>
               </tbody>
             </table>

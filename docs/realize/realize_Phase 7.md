@@ -173,6 +173,7 @@ Phase 7 拆为 9 个模块推进，每个模块都有独立验证点。
 |---|---:|---|---|---|
 | `K8S_ENABLED` | `false` | bool | 是否启用 K8s 只读工具和诊断证据 | 否 |
 | `K8S_WRITE_ENABLED` | `false` | bool | 是否启用审批后的真实 K8s 写操作 | 否 |
+| `K8S_NODES_ENABLED` | `false` | bool | 是否启用集群级 `k8s.get_nodes` 工具；需要额外 ClusterRole 权限 | 否 |
 | `K8S_IN_CLUSTER` | `true` | bool | 是否优先使用集群内 ServiceAccount | 否 |
 | `K8S_KUBECONFIG` | 空 | string | 本地/Compose 使用的 kubeconfig 路径；为空时使用 in-cluster 或默认 kubeconfig | 是，路径本身不敏感但文件内容敏感 |
 | `K8S_ALLOWED_NAMESPACES` | 空 | csv | 允许访问的 namespace；为空表示只允许 `default`，不表示全量开放 | 否 |
@@ -187,13 +188,14 @@ Phase 7 拆为 9 个模块推进，每个模块都有独立验证点。
 
 1. `K8S_WRITE_ENABLED=true` 时，`ACTION_APPROVAL_ENABLED=true` 且 `ACTION_EXECUTION_ENABLED=true`，否则启动失败。
 2. `K8S_WRITE_ENABLED=true` 时，`K8S_ENABLED=true`，否则启动失败。
-3. `K8S_ALLOWED_NAMESPACES` 不能为空时，每个 namespace 必须符合 K8s namespace 命名规范。
-4. `K8S_DEFAULT_NAMESPACE` 必须在允许 namespace 列表中；如果列表为空，则默认只允许 `default`。
-5. `K8S_REQUEST_TIMEOUT_SECONDS` 必须在 `[1, 60]`。
-6. `K8S_LOG_TAIL_LINES` 必须在 `[1, 1000]`。
-7. `K8S_LOG_MAX_BYTES` 必须在 `[1024, 262144]`。
-8. `K8S_EVENT_LIMIT` 必须在 `[1, 200]`。
-9. 生产 Helm 默认 `K8S_WRITE_ENABLED=false`，除非 values 明确开启并创建 RBAC。
+3. `K8S_NODES_ENABLED=true` 时，`K8S_ENABLED=true`；生产环境还必须显式授予 node 只读 ClusterRole。
+4. `K8S_ALLOWED_NAMESPACES` 不能为空时，每个 namespace 必须符合 K8s namespace 命名规范。
+5. `K8S_DEFAULT_NAMESPACE` 必须在允许 namespace 列表中；如果列表为空，则默认只允许 `default`。
+6. `K8S_REQUEST_TIMEOUT_SECONDS` 必须在 `[1, 60]`。
+7. `K8S_LOG_TAIL_LINES` 必须在 `[1, 1000]`。
+8. `K8S_LOG_MAX_BYTES` 必须在 `[1024, 262144]`。
+9. `K8S_EVENT_LIMIT` 必须在 `[1, 200]`。
+10. 生产 Helm 默认 `K8S_WRITE_ENABLED=false` 且 `K8S_NODES_ENABLED=false`，除非 values 明确开启并创建对应 RBAC。
 
 ### 5.3 依赖新增说明
 
@@ -566,6 +568,7 @@ go test ./copilot/action
 k8sIntegration:
   enabled: false
   writeEnabled: false
+  nodesEnabled: false
   inCluster: true
   allowedNamespaces:
     - default
@@ -576,9 +579,11 @@ k8sIntegration:
   eventLimit: 50
   rbac:
     create: true
+    bindWriteRole: false
+    bindNodeRole: false
 ```
 
-6. Helm 模板根据 values 创建 ServiceAccount、Role/ClusterRole、RoleBinding/ClusterRoleBinding。
+6. Helm 模板根据 values 创建 ServiceAccount、Role/ClusterRole、RoleBinding/ClusterRoleBinding；`bindNodeRole=true` 时才创建 node 只读 ClusterRoleBinding。
 7. Compose 默认不挂载 kubeconfig；本地调试需要显式挂载只读 kubeconfig 并设置 `K8S_ENABLED=true`。
 
 **技术要求：**
@@ -852,7 +857,7 @@ kubectl apply --dry-run=client -f k8s/
 Phase 7 完成必须同时满足以下条件：
 
 1. 默认配置下，K8s 接入关闭，现有监控、Copilot、诊断、Runbook、自动诊断、审批审计能力不回退。
-2. 开启 `K8S_ENABLED=true` 后，`k8s.get_pods`、`k8s.get_deployments`、`k8s.get_services`、`k8s.get_events`、`k8s.get_logs` 至少在 fake client 或测试集群中可用。
+2. 开启 `K8S_ENABLED=true` 后，`k8s.get_pods`、`k8s.get_deployments`、`k8s.get_services`、`k8s.get_events`、`k8s.get_logs` 至少在 fake client 或测试集群中可用；`k8s.get_nodes` 仅在 `K8S_NODES_ENABLED=true` 且 ClusterRole 权限就绪时注册。
 3. K8s 只读工具全部经过 Tool Registry schema 校验、权限校验、超时控制和脱敏。
 4. Diagnosis 能在 K8s 目标存在时采集 K8s evidence；K8s 失败时诊断仍能降级完成。
 5. `k8s.restart_deployment` 和 `k8s.scale_deployment` 只有 approved PendingAction 才能执行。

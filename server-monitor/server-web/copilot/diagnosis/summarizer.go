@@ -230,6 +230,7 @@ func minimalEvidenceForPrompt(evidence EvidenceBundle) map[string]interface{} {
 func compactK8sEvidenceForPrompt(evidence K8sEvidence) K8sEvidence {
 	evidence.Pods = limitSlice(evidence.Pods, 10)
 	evidence.Deployments = limitSlice(evidence.Deployments, 5)
+	evidence.Services = limitSlice(evidence.Services, 5)
 	evidence.Nodes = limitSlice(evidence.Nodes, 5)
 	evidence.Events = limitSlice(evidence.Events, 10)
 	evidence.Logs = limitSlice(evidence.Logs, 2)

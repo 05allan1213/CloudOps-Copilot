@@ -15,6 +15,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -151,6 +152,13 @@ func (s *Service) ListServices(ctx context.Context, options QueryOptions) ([]Ser
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.requestTimeout)
 	defer cancel()
+	if options.Name != "" {
+		item, err := s.client.CoreV1().Services(options.Namespace).Get(ctx, options.Name, metav1.GetOptions{})
+		if err != nil {
+			return nil, classifyError(err)
+		}
+		return []ServiceSummary{serviceSummary(*item, s.now())}, nil
+	}
 	list, err := s.client.CoreV1().Services(options.Namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: options.LabelSelector,
 		FieldSelector: options.FieldSelector,
@@ -207,7 +215,10 @@ func (s *Service) ListEvents(ctx context.Context, query EventQuery) ([]EventSumm
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.requestTimeout)
 	defer cancel()
-	list, err := s.client.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{Limit: int64(limit)})
+	list, err := s.client.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{
+		FieldSelector: eventFieldSelector(query),
+		Limit:         int64(limit),
+	})
 	if err != nil {
 		return nil, classifyError(err)
 	}
@@ -387,6 +398,10 @@ func deploymentSummary(deployment appsv1.Deployment, collectedAt time.Time) Depl
 	if deployment.Spec.Replicas != nil {
 		replicas = *deployment.Spec.Replicas
 	}
+	var selector map[string]string
+	if deployment.Spec.Selector != nil {
+		selector = copyStringMap(deployment.Spec.Selector.MatchLabels)
+	}
 	conditions := make([]DeploymentCondition, 0, len(deployment.Status.Conditions))
 	for _, condition := range deployment.Status.Conditions {
 		conditions = append(conditions, DeploymentCondition{
@@ -399,6 +414,7 @@ func deploymentSummary(deployment appsv1.Deployment, collectedAt time.Time) Depl
 	return DeploymentSummary{
 		Namespace:         deployment.Namespace,
 		Name:              deployment.Name,
+		Selector:          selector,
 		Replicas:          replicas,
 		ReadyReplicas:     deployment.Status.ReadyReplicas,
 		UpdatedReplicas:   deployment.Status.UpdatedReplicas,
@@ -419,7 +435,7 @@ func serviceSummary(service corev1.Service, collectedAt time.Time) ServiceSummar
 			TargetPort: port.TargetPort.String(),
 		})
 	}
-	return ServiceSummary{Namespace: service.Namespace, Name: service.Name, Type: string(service.Spec.Type), ClusterIP: service.Spec.ClusterIP, Ports: ports, CollectedAt: collectedAt}
+	return ServiceSummary{Namespace: service.Namespace, Name: service.Name, Selector: copyStringMap(service.Spec.Selector), Type: string(service.Spec.Type), ClusterIP: service.Spec.ClusterIP, Ports: ports, CollectedAt: collectedAt}
 }
 
 func nodeSummary(node corev1.Node, collectedAt time.Time) NodeSummary {
@@ -474,6 +490,17 @@ func eventSummary(event corev1.Event, collectedAt time.Time) EventSummary {
 	}
 }
 
+func copyStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	copied := make(map[string]string, len(values))
+	for key, value := range values {
+		copied[key] = value
+	}
+	return copied
+}
+
 func splitLogLines(text string) []string {
 	scanner := bufio.NewScanner(strings.NewReader(text))
 	lines := make([]string, 0)
@@ -483,12 +510,28 @@ func splitLogLines(text string) []string {
 	return lines
 }
 
+func eventFieldSelector(query EventQuery) string {
+	selectors := make([]fields.Selector, 0, 2)
+	if query.InvolvedKind != "" {
+		selectors = append(selectors, fields.OneTermEqualSelector("involvedObject.kind", query.InvolvedKind))
+	}
+	if query.InvolvedName != "" {
+		selectors = append(selectors, fields.OneTermEqualSelector("involvedObject.name", query.InvolvedName))
+	}
+	if len(selectors) == 0 {
+		return ""
+	}
+	return fields.AndSelectors(selectors...).String()
+}
+
 func classifyError(err error) error {
 	switch {
 	case apierrors.IsNotFound(err):
-		return fmt.Errorf("k8s resource not found: %w", err)
+		return errors.New("k8s resource not found")
 	case apierrors.IsForbidden(err), apierrors.IsUnauthorized(err):
-		return fmt.Errorf("k8s permission denied: %w", err)
+		return errors.New("k8s permission denied")
+	case apierrors.IsConflict(err):
+		return errors.New("k8s resource conflict")
 	default:
 		return err
 	}

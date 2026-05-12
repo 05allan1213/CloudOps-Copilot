@@ -20,7 +20,7 @@ func newK8sReadOnlyTools(executor *Executor) []Tool {
 	namespaceParam := ParamSchema{Name: "namespace", Type: ParamTypeString, Pattern: `^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`}
 	labelSelectorParam := ParamSchema{Name: "label_selector", Type: ParamTypeString, Pattern: `^[A-Za-z0-9_.\-/=!,() ]*$`}
 	limitParam := ParamSchema{Name: "limit", Type: ParamTypeInteger, Default: k8sreader.DefaultLimit, Min: &limitMin, Max: &limitMax}
-	return []Tool{
+	tools := []Tool{
 		newK8sTool(executor, ToolK8sGetPods, "List Kubernetes pods.", []ParamSchema{
 			namespaceParam,
 			labelSelectorParam,
@@ -38,9 +38,6 @@ func newK8sReadOnlyTools(executor *Executor) []Tool {
 			labelSelectorParam,
 			limitParam,
 		}, executor.runK8sGetServices),
-		newK8sTool(executor, ToolK8sGetNodes, "List Kubernetes nodes.", []ParamSchema{
-			limitParam,
-		}, executor.runK8sGetNodes),
 		newK8sTool(executor, ToolK8sGetEvents, "List Kubernetes events.", []ParamSchema{
 			namespaceParam,
 			{Name: "involved_kind", Type: ParamTypeString, Max: &maxNameLength},
@@ -54,6 +51,12 @@ func newK8sReadOnlyTools(executor *Executor) []Tool {
 			{Name: "tail_lines", Type: ParamTypeInteger, Default: 100, Min: &tailMin, Max: &tailMax},
 		}, executor.runK8sGetLogs),
 	}
+	if executor.k8sNodesEnabled {
+		tools = append(tools, newK8sTool(executor, ToolK8sGetNodes, "List Kubernetes nodes.", []ParamSchema{
+			limitParam,
+		}, executor.runK8sGetNodes))
+	}
+	return tools
 }
 
 func newK8sTool(executor *Executor, name, description string, parameters []ParamSchema, run func(context.Context, json.RawMessage) (ToolResult, error)) Tool {

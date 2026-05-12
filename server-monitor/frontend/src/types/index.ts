@@ -197,11 +197,31 @@ export interface K8sPodSummary {
 export interface K8sDeploymentSummary {
   namespace: string;
   name: string;
+  selector?: Record<string, string>;
   replicas: number;
   ready_replicas: number;
   updated_replicas: number;
   available_replicas: number;
   strategy?: string;
+  collected_at?: string;
+}
+
+export interface K8sServiceSummary {
+  namespace: string;
+  name: string;
+  selector?: Record<string, string>;
+  type: string;
+  cluster_ip?: string;
+  ports?: Array<{ name?: string; protocol: string; port: number; target_port?: string }>;
+  collected_at?: string;
+}
+
+export interface K8sNodeSummary {
+  name: string;
+  ready: boolean;
+  roles?: string[];
+  kubelet_version?: string;
+  capacity?: { cpu?: string; memory?: string };
   collected_at?: string;
 }
 
@@ -234,6 +254,8 @@ export interface K8sEvidence {
   target_name?: string;
   pods?: K8sPodSummary[];
   deployments?: K8sDeploymentSummary[];
+  services?: K8sServiceSummary[];
+  nodes?: K8sNodeSummary[];
   events?: K8sEventSummary[];
   logs?: K8sLogSnippet[];
   errors?: Array<{ source: string; error: string }>;

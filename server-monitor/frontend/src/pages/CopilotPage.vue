@@ -215,7 +215,7 @@ function k8sColumns(toolName: string): string[] {
     case "k8s.get_services":
       return ["namespace", "name", "type", "cluster_ip", "ports"];
     case "k8s.get_nodes":
-      return ["name", "ready", "kubelet_version", "os_image"];
+      return ["name", "ready", "kubelet_version", "capacity"];
     case "k8s.get_events":
       return ["namespace", "type", "reason", "involved_kind", "involved_name", "message"];
     default:
