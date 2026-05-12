@@ -838,14 +838,14 @@ server-monitor/
 | 服务 | 端口 | 说明 |
 |------|------|------|
 | server-web | 8080 | API + WebSocket + 前端 |
-| server-probe | 9090 | Prometheus 指标 |
+| server-probe | 8082 | Prometheus 指标 |
 | alert-service | 8081 | 告警消费服务 |
-| Prometheus | 9091 | 指标存储 |
+| Prometheus | 9090 | 指标存储 |
 | AlertManager | 9093 | 告警管理 |
 | Grafana | 3000 | 可视化大盘 |
 | Redis | 6379 | 缓存 + Pub/Sub |
 | MySQL | 3306 | 业务数据 |
-| Kafka | 19092 | 事件总线 |
+| Kafka | 9092 | 事件总线 |
 | Elasticsearch | 9200 | 日志存储 |
 | Kibana | 5601 | 日志查询 |
 | Jaeger | 16686 | 链路追踪 UI |
