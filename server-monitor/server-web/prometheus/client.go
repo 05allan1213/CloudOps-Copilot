@@ -163,6 +163,8 @@ func (c *Client) QueryRangeRaw(ctx context.Context, query string, start, end tim
 	return c.queryRange(ctx, query, start, end, step, 1024*1024)
 }
 
+const maxInstantResponseBytes int64 = 1024 * 1024
+
 func (c *Client) queryInstantVector(ctx context.Context, query string) ([]metricValue, error) {
 	endpoint := c.baseURL + "/api/v1/query"
 	values := url.Values{}
@@ -183,8 +185,16 @@ func (c *Client) queryInstantVector(ctx context.Context, query string) ([]metric
 		return nil, fmt.Errorf("query prometheus returned status %d", response.StatusCode)
 	}
 
+	data, err := io.ReadAll(io.LimitReader(response.Body, maxInstantResponseBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("read prometheus response: %w", err)
+	}
+	if int64(len(data)) > maxInstantResponseBytes {
+		return nil, fmt.Errorf("prometheus response too large")
+	}
+
 	var payload apiResponse
-	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil {
+	if err := json.Unmarshal(data, &payload); err != nil {
 		return nil, fmt.Errorf("decode prometheus response: %w", err)
 	}
 
