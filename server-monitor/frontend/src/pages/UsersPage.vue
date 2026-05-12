@@ -41,6 +41,9 @@ async function handleRegister() {
 }
 
 async function handleDelete(id: number) {
+  const user = users.value.find((u) => u.id === id);
+  const name = user?.username ?? `#${id}`;
+  if (!window.confirm(`确认删除用户 ${name}？此操作不可撤销。`)) return;
   try {
     await deleteUser(id);
     await loadUsers();

@@ -1,7 +1,7 @@
 import axios, { AxiosError, type AxiosRequestConfig } from "axios";
 
 import type { ApiResponse } from "../types";
-import { clearStoredAuth, getStoredToken } from "./authStorage";
+import { clearStoredAuth, getStoredExpiresAt, getStoredToken } from "./authStorage";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 
@@ -13,6 +13,17 @@ const httpClient = axios.create({
 httpClient.interceptors.request.use((config) => {
   const token = getStoredToken();
   if (token) {
+    const expiresAt = getStoredExpiresAt();
+    if (expiresAt) {
+      const expires = new Date(expiresAt).getTime();
+      if (Date.now() >= expires) {
+        clearStoredAuth();
+        if (window.location.pathname !== "/login") {
+          window.location.href = "/login";
+        }
+        return config;
+      }
+    }
     config.headers.Authorization = `Bearer ${token}`;
   }
   return config;

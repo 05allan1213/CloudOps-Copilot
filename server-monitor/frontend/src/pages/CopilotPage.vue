@@ -79,6 +79,7 @@ function startNewSession() {
 }
 
 async function removeSession(sessionId: string) {
+  if (!window.confirm("确认删除该会话？此操作不可撤销。")) return;
   error.value = "";
   try {
     await deleteCopilotSession(sessionId);

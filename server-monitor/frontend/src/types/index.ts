@@ -322,6 +322,7 @@ export interface ActionUpdate {
   diagnosis_report_id?: number;
   action_type?: string;
   target?: string;
+  target_name?: string;
   risk_level?: string;
   requested_by?: string;
   status?: ActionStatus;

@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 
 import { listAuditLogs } from "../api/auditLogs";
+import { formatTime } from "../utils/format";
 import type { AuditLog } from "../types";
 
 const logs = ref<AuditLog[]>([]);
 const loading = ref(false);
 const error = ref("");
+const total = ref(0);
+const page = ref(1);
+const pageSize = 50;
 const filters = reactive({
   action: "",
   result: "",
@@ -22,17 +26,20 @@ const actionOptions = [
   { value: "k8s.scale_deployment", label: "K8s 扩缩 Deployment" },
 ];
 
-function formatTime(value?: string) {
-  if (!value) return "-";
-  return new Date(value).toLocaleString("zh-CN", { hour12: false });
-}
-
 function requestActionType(log: AuditLog): string {
   const request = log.request;
   if (!request || typeof request.action_type !== "string") {
     return "-";
   }
   return request.action_type;
+}
+
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)));
+
+function goToPage(p: number) {
+  if (p < 1 || p > totalPages.value) return;
+  page.value = p;
+  loadLogs();
 }
 
 async function loadLogs() {
@@ -43,9 +50,11 @@ async function loadLogs() {
       action: filters.action || undefined,
       result: filters.result || undefined,
       actor: filters.actor || undefined,
-      page_size: 50,
+      page: page.value,
+      page_size: pageSize,
     });
     logs.value = response.items;
+    total.value = response.total ?? 0;
   } catch (err) {
     error.value = err instanceof Error ? err.message : "加载审计日志失败";
   } finally {
@@ -116,6 +125,11 @@ onMounted(loadLogs);
           </tr>
         </tbody>
       </table>
+      <div v-if="totalPages > 1" class="pagination">
+        <button type="button" :disabled="page <= 1" @click="goToPage(page - 1)">上一页</button>
+        <span class="page-info">{{ page }} / {{ totalPages }}</span>
+        <button type="button" :disabled="page >= totalPages" @click="goToPage(page + 1)">下一页</button>
+      </div>
     </div>
   </section>
 </template>
@@ -215,5 +229,31 @@ th {
 .empty-line {
   color: var(--text-muted);
   text-align: center;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border-color);
+  margin-top: 0.5rem;
+}
+
+.page-info {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  min-width: 5rem;
+  text-align: center;
+}
+
+.pagination button {
+  background: var(--bg-hover);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  padding: 0.3rem 0.7rem;
+  min-height: auto;
 }
 </style>

@@ -21,6 +21,7 @@ const { connectionState, connect, disconnect } = useAlertsWebSocket(
   monitor.applyIncomingAlert,
   monitor.applyIncomingHosts,
   monitor.applyIncomingDiagnosisUpdate,
+  monitor.applyIncomingActionUpdate,
 );
 
 const connectionLabel = computed(() => {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import { RouterLink } from "vue-router";
 
 import {
@@ -8,25 +8,32 @@ import {
   listActions,
   rejectAction,
 } from "../api/actions";
+import { formatTime } from "../utils/format";
 import type { PendingAction } from "../types";
 
 const actions = ref<PendingAction[]>([]);
 const loading = ref(false);
 const actingID = ref<number | null>(null);
 const error = ref("");
+const total = ref(0);
+const page = ref(1);
+const pageSize = 50;
 const filters = reactive({
   status: "",
   risk_level: "",
   action_type: "",
 });
 
-function formatTime(value?: string) {
-  if (!value) return "-";
-  return new Date(value).toLocaleString("zh-CN", { hour12: false });
-}
-
 function targetOf(action: PendingAction) {
   return `${action.namespace || "-"}/${action.target_name || "-"}`;
+}
+
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)));
+
+function goToPage(p: number) {
+  if (p < 1 || p > totalPages.value) return;
+  page.value = p;
+  loadActions();
 }
 
 async function loadActions() {
@@ -37,9 +44,11 @@ async function loadActions() {
       status: filters.status || undefined,
       risk_level: filters.risk_level || undefined,
       action_type: filters.action_type || undefined,
-      page_size: 50,
+      page: page.value,
+      page_size: pageSize,
     });
     actions.value = response.items;
+    total.value = response.total ?? 0;
   } catch (err) {
     error.value = err instanceof Error ? err.message : "加载待审批动作失败";
   } finally {
@@ -178,6 +187,11 @@ onMounted(loadActions);
           </tr>
         </tbody>
       </table>
+      <div v-if="totalPages > 1" class="pagination">
+        <button type="button" :disabled="page <= 1" @click="goToPage(page - 1)">上一页</button>
+        <span class="page-info">{{ page }} / {{ totalPages }}</span>
+        <button type="button" :disabled="page >= totalPages" @click="goToPage(page + 1)">下一页</button>
+      </div>
     </div>
   </section>
 </template>
@@ -308,5 +322,31 @@ button:disabled {
 .empty-line {
   color: var(--text-muted);
   text-align: center;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border-color);
+  margin-top: 0.5rem;
+}
+
+.page-info {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  min-width: 5rem;
+  text-align: center;
+}
+
+.pagination button {
+  background: var(--bg-hover);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  padding: 0.3rem 0.7rem;
+  min-height: auto;
 }
 </style>

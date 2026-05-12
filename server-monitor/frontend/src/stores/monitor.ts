@@ -3,7 +3,8 @@ import { defineStore } from "pinia";
 
 import { fetchActiveAlerts, fetchAlertEvents } from "../api/alerts";
 import { fetchHosts } from "../api/hosts";
-import type { AlertEvent, AlertRecord, DiagnosisUpdate, Host } from "../types";
+import type { ActionUpdate, AlertEvent, AlertRecord, DiagnosisUpdate, Host } from "../types";
+import { severityClass } from "../utils/format";
 
 type SeverityFilter = "all" | "critical" | "warning" | "info";
 type HostStatusFilter = "all" | "up" | "down";
@@ -122,17 +123,6 @@ export const useMonitorStore = defineStore("monitor", () => {
       ? `当前视图匹配 ${hosts.value.length} 台主机`
       : `当前展示 ${hosts.value.length} 台主机`;
   });
-
-  function severityClass(severity: string | undefined): string {
-    switch (severity ?? "info") {
-      case "critical":
-        return "severity-critical";
-      case "warning":
-        return "severity-warning";
-      default:
-        return "severity-info";
-    }
-  }
 
   function severityLabel(severity: string | undefined): string {
     switch (severity ?? "info") {
@@ -341,6 +331,14 @@ export const useMonitorStore = defineStore("monitor", () => {
     }
   }
 
+  function applyIncomingActionUpdate(update: ActionUpdate) {
+    if (update.action_type && update.target_name) {
+      showToast(`动作 ${update.action_type} ${update.target_name}: ${update.status}`, "info");
+    } else {
+      showToast(`动作 #${update.action_id} 状态更新: ${update.status}`, "info");
+    }
+  }
+
   function updateAgoText() {
     const diff = Math.floor((Date.now() - lastUpdateTime.value) / 1000);
     if (diff < 5) {
@@ -501,6 +499,7 @@ export const useMonitorStore = defineStore("monitor", () => {
     applyIncomingAlert,
     applyIncomingHosts,
     applyIncomingDiagnosisUpdate,
+    applyIncomingActionUpdate,
     updateAgoText,
     clearToastTimers,
   };
