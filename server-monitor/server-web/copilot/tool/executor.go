@@ -274,6 +274,12 @@ func (e *Executor) planToolCall(result nlu.Result) (string, json.RawMessage, boo
 		if result.Entities["instance"] != "" {
 			return ToolHostMetrics, encodeToolArgs(stringArgs(result.Entities, "instance", "window")), true
 		}
+		if hasMetricKeywords(result.Entities) {
+			return ToolRunbookSearch, encodeToolArgs(map[string]interface{}{
+				"keywords": metricKeywordsFromEntities(result.Entities),
+				"limit":    2,
+			}), true
+		}
 		return ToolHostList, encodeToolArgs(mixedArgs(result.Entities, map[string]ParamType{
 			"status":   ParamTypeString,
 			"search":   ParamTypeString,
@@ -294,6 +300,30 @@ func (e *Executor) planToolCall(result nlu.Result) (string, json.RawMessage, boo
 	default:
 		return "", nil, false
 	}
+}
+
+func hasMetricKeywords(entities map[string]string) bool {
+	_, ok := entities["metric_keywords"]
+	return ok
+}
+
+func metricKeywordsFromEntities(entities map[string]string) []string {
+	raw, ok := entities["metric_keywords"]
+	if !ok || raw == "" {
+		return []string{"cpu", "memory"}
+	}
+	keywords := strings.Split(raw, ",")
+	var result []string
+	for _, kw := range keywords {
+		trimmed := strings.TrimSpace(kw)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	if len(result) == 0 {
+		return []string{"cpu", "memory"}
+	}
+	return result
 }
 
 func (e *Executor) executeTool(ctx context.Context, name string, args json.RawMessage) ([]copilot.ToolCall, string, error) {

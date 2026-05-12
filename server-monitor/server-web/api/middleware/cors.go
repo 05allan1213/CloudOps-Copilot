@@ -17,30 +17,37 @@ const (
 
 func CORS(allowedOrigins []string) gin.HandlerFunc {
 	allowed := buildOriginSet(allowedOrigins)
-	if len(allowed) == 0 {
-		return func(c *gin.Context) {
-			c.Next()
-		}
-	}
+	allowAll := len(allowed) == 0
 
 	return func(c *gin.Context) {
 		origin := c.GetHeader("Origin")
 		if origin == "" {
+			if c.Request.Method == http.MethodOptions {
+				c.Header(corsAllowOrigin, "*")
+				c.Header(corsAllowMethods, "GET, POST, PUT, DELETE, OPTIONS")
+				c.Header(corsAllowHeaders, "Content-Type, Authorization, X-Request-ID")
+				c.Header(corsMaxAge, "600")
+				c.AbortWithStatus(http.StatusNoContent)
+				return
+			}
 			c.Next()
 			return
 		}
 
-		allowOrigin, ok := matchOrigin(origin, allowed)
-		if !ok {
-			c.Next()
-			return
+		if allowAll {
+			c.Header(corsAllowOrigin, "*")
+		} else {
+			allowOrigin, ok := matchOrigin(origin, allowed)
+			if !ok {
+				c.Next()
+				return
+			}
+			c.Header(corsAllowOrigin, allowOrigin)
+			if allowOrigin != "*" {
+				c.Header(corsVary, "Origin")
+			}
 		}
-
-		c.Header(corsAllowOrigin, allowOrigin)
-		if allowOrigin != "*" {
-			c.Header(corsVary, "Origin")
-		}
-		c.Header(corsAllowMethods, "GET, POST, OPTIONS")
+		c.Header(corsAllowMethods, "GET, POST, PUT, DELETE, OPTIONS")
 		c.Header(corsAllowHeaders, "Content-Type, Authorization, X-Request-ID")
 		c.Header(corsMaxAge, "600")
 

@@ -149,9 +149,9 @@ func NewRouterWithRuntime(cfg config.Config, promClient *promclient.Client, cach
 		if err != nil {
 			return nil, nil, err
 		}
-		var k8sService *copilotk8s.Service
+		var k8sReader copilotk8s.Reader
 		if cfg.K8SEnabled {
-			k8sService = copilotk8s.NewServiceWithClient(k8sClient, k8sCfg)
+			k8sReader = copilotk8s.NewServiceWithClient(k8sClient, k8sCfg)
 		}
 		runbookDocs, err := copilotrunbook.LoadDir(context.Background(), cfg.RunbookDir, copilotrunbook.LoadOptions{
 			MaxFiles:     cfg.RunbookMaxFiles,
@@ -170,7 +170,7 @@ func NewRouterWithRuntime(cfg config.Config, promClient *promclient.Client, cach
 				AlertService:    alertService,
 				PromClient:      promClient,
 				RunbookSearcher: runbookRetriever,
-				K8sReader:       k8sService,
+				K8sReader:       k8sReader,
 				K8sNodesEnabled: cfg.K8SNodesEnabled,
 				DB:              db,
 				Observer:        metrics,

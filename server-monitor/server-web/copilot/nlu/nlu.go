@@ -168,7 +168,36 @@ func extractEntities(original, normalized string) map[string]string {
 	if instance := extractInstance(original, entities["alert_name"], entities["fingerprint"], entities["alert_history_id"], entities["page"], entities["page_size"], entities["count"], entities["group_id"], entities["search"]); instance != "" {
 		entities["instance"] = instance
 	}
+	if metricKw := extractMetricKeywords(normalized); len(metricKw) > 0 {
+		entities["metric_keywords"] = strings.Join(metricKw, ",")
+	}
 	return entities
+}
+
+var metricKeywordDefs = map[string]string{
+	"cpu":     "cpu",
+	"内存":      "memory",
+	"memory":  "memory",
+	"磁盘":      "disk",
+	"disk":    "disk",
+	"负载":      "load",
+	"load":    "load",
+	"网络":      "network",
+	"network": "network",
+}
+
+func extractMetricKeywords(normalized string) []string {
+	var keywords []string
+	seen := make(map[string]struct{})
+	for kw, canonical := range metricKeywordDefs {
+		if strings.Contains(normalized, kw) {
+			if _, dup := seen[canonical]; !dup {
+				seen[canonical] = struct{}{}
+				keywords = append(keywords, canonical)
+			}
+		}
+	}
+	return keywords
 }
 
 func extractSeverity(normalized string) string {
