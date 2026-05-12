@@ -19,6 +19,8 @@ type Metrics struct {
 	kafkaMessages        *prometheus.CounterVec
 	actionEvents         *prometheus.CounterVec
 	actionDuration       *prometheus.HistogramVec
+	copilotToolEvents    *prometheus.CounterVec
+	copilotToolDuration  *prometheus.HistogramVec
 }
 
 func NewMetrics() *Metrics {
@@ -54,6 +56,15 @@ func NewMetrics() *Metrics {
 			Help:    "Action execution duration in seconds.",
 			Buckets: []float64{0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
 		}, []string{"action_type", "status"}),
+		copilotToolEvents: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "server_web_copilot_tool_calls_total",
+			Help: "Total number of Copilot tool executions handled by server-web.",
+		}, []string{"tool", "result"}),
+		copilotToolDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "server_web_copilot_tool_duration_seconds",
+			Help:    "Copilot tool execution duration in seconds.",
+			Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
+		}, []string{"tool", "result"}),
 	}
 
 	metrics.registry.MustRegister(
@@ -64,6 +75,8 @@ func NewMetrics() *Metrics {
 		metrics.kafkaMessages,
 		metrics.actionEvents,
 		metrics.actionDuration,
+		metrics.copilotToolEvents,
+		metrics.copilotToolDuration,
 	)
 	return metrics
 }
@@ -119,4 +132,12 @@ func (m *Metrics) ObserveActionExecutionDuration(actionType, status string, seco
 		return
 	}
 	m.actionDuration.WithLabelValues(actionType, status).Observe(seconds)
+}
+
+func (m *Metrics) ObserveToolExecution(name, result string, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.copilotToolEvents.WithLabelValues(name, result).Inc()
+	m.copilotToolDuration.WithLabelValues(name, result).Observe(seconds)
 }

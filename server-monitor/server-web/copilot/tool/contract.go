@@ -32,6 +32,10 @@ type Tool interface {
 	Run(ctx context.Context, args json.RawMessage) (ToolResult, error)
 }
 
+type Observer interface {
+	ObserveToolExecution(name, result string, seconds float64)
+}
+
 type ToolSchema struct {
 	Name        string        `json:"name"`
 	Description string        `json:"description"`

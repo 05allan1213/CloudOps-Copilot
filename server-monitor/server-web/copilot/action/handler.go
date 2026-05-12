@@ -14,6 +14,73 @@ type Handler struct {
 	service *Service
 }
 
+type actionResponseEnvelope struct {
+	Status string    `json:"status"`
+	Data   actionDoc `json:"data,omitempty"`
+	Error  string    `json:"error,omitempty"`
+}
+
+type actionListResponseEnvelope struct {
+	Status string           `json:"status"`
+	Data   actionListResult `json:"data,omitempty"`
+	Error  string           `json:"error,omitempty"`
+}
+
+type actionListResult struct {
+	Items    []actionDoc `json:"items"`
+	Total    int64       `json:"total"`
+	Page     int         `json:"page"`
+	PageSize int         `json:"page_size"`
+}
+
+type actionDoc struct {
+	ID                uint64       `json:"id"`
+	DiagnosisReportID uint64       `json:"diagnosis_report_id"`
+	ActionType        string       `json:"action_type"`
+	TargetKind        string       `json:"target_kind"`
+	TargetName        string       `json:"target_name"`
+	Namespace         string       `json:"namespace"`
+	Params            interface{}  `json:"params,omitempty"`
+	RiskLevel         string       `json:"risk_level"`
+	Status            string       `json:"status"`
+	RequestedBy       string       `json:"requested_by"`
+	ApprovedBy        uint64       `json:"approved_by,omitempty"`
+	ExecutedBy        uint64       `json:"executed_by,omitempty"`
+	Result            ActionResult `json:"result,omitempty"`
+	ErrorMessage      string       `json:"error_message,omitempty"`
+	CreatedAt         string       `json:"created_at"`
+	ApprovedAt        string       `json:"approved_at,omitempty"`
+	ExecutedAt        string       `json:"executed_at,omitempty"`
+	UpdatedAt         string       `json:"updated_at"`
+}
+
+type auditListResponseEnvelope struct {
+	Status string          `json:"status"`
+	Data   auditListResult `json:"data,omitempty"`
+	Error  string          `json:"error,omitempty"`
+}
+
+type auditListResult struct {
+	Items    []auditLogDoc `json:"items"`
+	Total    int64         `json:"total"`
+	Page     int           `json:"page"`
+	PageSize int           `json:"page_size"`
+}
+
+type auditLogDoc struct {
+	ID           uint64      `json:"id"`
+	Actor        string      `json:"actor"`
+	ActorRole    string      `json:"actor_role"`
+	Action       string      `json:"action"`
+	ResourceType string      `json:"resource_type"`
+	ResourceID   string      `json:"resource_id"`
+	Request      interface{} `json:"request,omitempty"`
+	Result       string      `json:"result"`
+	ErrorMessage string      `json:"error_message,omitempty"`
+	TraceID      string      `json:"trace_id,omitempty"`
+	CreatedAt    string      `json:"created_at"`
+}
+
 func NewHandler(service *Service) *Handler {
 	return &Handler{service: service}
 }
@@ -189,14 +256,14 @@ func (h *Handler) Reject(c *gin.Context) {
 
 // Execute godoc
 // @Summary      执行动作
-// @Description  执行 approved 动作；Phase 6 默认 disabled executor，会记录失败审计
+// @Description  执行 approved 动作；K8s restart/scale 只有在 ACTION_EXECUTION_ENABLED 和 K8S_WRITE_ENABLED 同时开启时使用真实执行器，结果包含 target、old/new replicas、ready replicas 和 restart annotation 摘要。
 // @Tags         actions
 // @Accept       json
 // @Produce      json
 // @Security     BearerAuth
 // @Param        id    path  int  true  "动作 ID"
 // @Param        body  body  ExecuteRequest  true  "执行确认"
-// @Success      200  {object}  map[string]interface{}
+// @Success      200  {object}  actionResponseEnvelope
 // @Failure      400  {object}  map[string]interface{}
 // @Failure      403  {object}  map[string]interface{}
 // @Failure      404  {object}  map[string]interface{}
@@ -227,16 +294,17 @@ func (h *Handler) Execute(c *gin.Context) {
 
 // ListAuditLogs godoc
 // @Summary      获取审计日志列表
-// @Description  查询动作审批、拒绝、执行、失败和权限拒绝审计日志
+// @Description  查询动作审批、拒绝、执行、失败和权限拒绝审计日志；action/action_type 支持 action.execute 等审计动作，也支持 k8s.restart_deployment、k8s.scale_deployment 过滤 K8s 动作类型。
 // @Tags         audit
 // @Produce      json
 // @Security     BearerAuth
-// @Param        action     query  string  false  "审计动作"
+// @Param        action     query  string  false  "审计动作或 K8s 动作类型"
+// @Param        action_type query string  false  "审计动作或 K8s 动作类型"
 // @Param        result     query  string  false  "结果"
 // @Param        actor      query  string  false  "操作者"
 // @Param        page       query  int     false  "页码"
 // @Param        page_size  query  int     false  "每页数量"
-// @Success      200  {object}  map[string]interface{}
+// @Success      200  {object}  auditListResponseEnvelope
 // @Failure      403  {object}  map[string]interface{}
 // @Failure      500  {object}  map[string]interface{}
 // @Router       /audit-logs [get]

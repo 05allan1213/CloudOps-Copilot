@@ -210,6 +210,7 @@ func compactEvidenceForPrompt(evidence EvidenceBundle) EvidenceBundle {
 	evidence.Metrics = limitSlice(evidence.Metrics, 40)
 	evidence.History = limitSlice(evidence.History, 20)
 	evidence.Runbooks = compactRunbooksForPrompt(evidence.Runbooks, 2, 800)
+	evidence.K8s = compactK8sEvidenceForPrompt(evidence.K8s)
 	evidence.CollectionErrors = limitSlice(evidence.CollectionErrors, 20)
 	return evidence
 }
@@ -218,11 +219,25 @@ func minimalEvidenceForPrompt(evidence EvidenceBundle) map[string]interface{} {
 	return map[string]interface{}{
 		"alert_context":     evidence.AlertContext,
 		"metrics":           limitSlice(evidence.Metrics, 12),
+		"k8s":               compactK8sEvidenceForPrompt(evidence.K8s),
 		"runbooks":          compactRunbooksForPrompt(evidence.Runbooks, 2, 500),
 		"history_count":     len(evidence.History),
 		"collection_errors": limitSlice(evidence.CollectionErrors, 12),
 		"collected_at":      evidence.CollectedAt,
 	}
+}
+
+func compactK8sEvidenceForPrompt(evidence K8sEvidence) K8sEvidence {
+	evidence.Pods = limitSlice(evidence.Pods, 10)
+	evidence.Deployments = limitSlice(evidence.Deployments, 5)
+	evidence.Nodes = limitSlice(evidence.Nodes, 5)
+	evidence.Events = limitSlice(evidence.Events, 10)
+	evidence.Logs = limitSlice(evidence.Logs, 2)
+	for i := range evidence.Logs {
+		evidence.Logs[i].Lines = limitSlice(evidence.Logs[i].Lines, 20)
+	}
+	evidence.Errors = limitSlice(evidence.Errors, 10)
+	return evidence
 }
 
 func runbookNote(runbooks []RunbookEvidence) string {

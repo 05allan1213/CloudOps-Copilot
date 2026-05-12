@@ -10,16 +10,22 @@ import (
 	"sync"
 	"time"
 
+	k8sreader "server-web/copilot/k8s"
 	"server-web/model"
 	promclient "server-web/prometheus"
 )
 
 const (
-	ToolAlertListActive = "alert.list_active"
-	ToolAlertHistory    = "alert.history"
-	ToolHostMetrics     = "host.metrics"
-	ToolPromQueryRange  = "prom.query_range"
-	ToolRunbookSearch   = "runbook.search"
+	ToolAlertListActive   = "alert.list_active"
+	ToolAlertHistory      = "alert.history"
+	ToolHostMetrics       = "host.metrics"
+	ToolPromQueryRange    = "prom.query_range"
+	ToolRunbookSearch     = "runbook.search"
+	ToolK8sGetPods        = "k8s.get_pods"
+	ToolK8sGetDeployments = "k8s.get_deployments"
+	ToolK8sGetNodes       = "k8s.get_nodes"
+	ToolK8sGetEvents      = "k8s.get_events"
+	ToolK8sGetLogs        = "k8s.get_logs"
 
 	defaultEvidenceTimeout     = 45 * time.Second
 	defaultEvidenceToolTimeout = 30 * time.Second
@@ -166,11 +172,138 @@ func (c *EvidenceCollector) Collect(ctx context.Context, alert AlertContext) Evi
 		bundle.Runbooks = runbooks
 		mu.Unlock()
 	}()
+	if isK8sTarget(alert) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			toolCtx, toolCancel := c.withToolTimeout(ctx)
+			defer toolCancel()
+			evidence, errors := c.collectK8sEvidence(toolCtx, alert)
+			mu.Lock()
+			bundle.K8s = evidence
+			bundle.CollectionErrors = append(bundle.CollectionErrors, errors...)
+			mu.Unlock()
+		}()
+	}
 	wg.Wait()
 	if err := ctx.Err(); err != nil {
 		recordError("evidence_collector", err)
 	}
 	return bundle
+}
+
+func (c *EvidenceCollector) collectK8sEvidence(ctx context.Context, alert AlertContext) (K8sEvidence, []CollectionError) {
+	evidence := K8sEvidence{
+		Enabled:     true,
+		Namespace:   firstNonEmpty(alert.Namespace, "default"),
+		TargetKind:  alert.TargetKind,
+		TargetName:  alert.TargetName,
+		CollectedAt: c.now().UTC(),
+	}
+	var errs []CollectionError
+	record := func(source string, err error) {
+		if err == nil {
+			return
+		}
+		item := CollectionError{Source: source, Error: err.Error()}
+		errs = append(errs, item)
+		evidence.Errors = append(evidence.Errors, item)
+	}
+
+	switch alert.TargetKind {
+	case TargetKindK8sDeployment:
+		args, _ := json.Marshal(map[string]interface{}{"namespace": evidence.Namespace, "name": alert.TargetName, "limit": 1})
+		deployments, err := executeK8sTool[[]k8sreader.DeploymentSummary](ctx, c.runner, ToolK8sGetDeployments, args)
+		if err != nil {
+			record(ToolK8sGetDeployments, err)
+		} else {
+			evidence.Deployments = deployments
+		}
+		podArgs, _ := json.Marshal(map[string]interface{}{"namespace": evidence.Namespace, "label_selector": deploymentSelector(alert.TargetName), "limit": 20})
+		pods, err := executeK8sTool[[]k8sreader.PodSummary](ctx, c.runner, ToolK8sGetPods, podArgs)
+		if err != nil {
+			record(ToolK8sGetPods, err)
+		} else {
+			evidence.Pods = pods
+		}
+		eventArgs, _ := json.Marshal(map[string]interface{}{"namespace": evidence.Namespace, "involved_kind": "Deployment", "involved_name": alert.TargetName, "limit": 10})
+		events, err := executeK8sTool[[]k8sreader.EventSummary](ctx, c.runner, ToolK8sGetEvents, eventArgs)
+		if err != nil {
+			record(ToolK8sGetEvents, err)
+		} else {
+			evidence.Events = events
+		}
+	case TargetKindK8sPod:
+		podArgs, _ := json.Marshal(map[string]interface{}{"namespace": evidence.Namespace, "field_selector": "metadata.name=" + alert.TargetName, "limit": 1})
+		pods, err := executeK8sTool[[]k8sreader.PodSummary](ctx, c.runner, ToolK8sGetPods, podArgs)
+		if err != nil {
+			record(ToolK8sGetPods, err)
+		} else {
+			evidence.Pods = pods
+		}
+		eventArgs, _ := json.Marshal(map[string]interface{}{"namespace": evidence.Namespace, "involved_kind": "Pod", "involved_name": alert.TargetName, "limit": 10})
+		events, err := executeK8sTool[[]k8sreader.EventSummary](ctx, c.runner, ToolK8sGetEvents, eventArgs)
+		if err != nil {
+			record(ToolK8sGetEvents, err)
+		} else {
+			evidence.Events = events
+		}
+		logArgs, _ := json.Marshal(map[string]interface{}{"namespace": evidence.Namespace, "pod_name": alert.TargetName, "tail_lines": 20})
+		logs, err := executeK8sTool[k8sreader.LogSnippet](ctx, c.runner, ToolK8sGetLogs, logArgs)
+		if err != nil {
+			record(ToolK8sGetLogs, err)
+		} else {
+			evidence.Logs = []k8sreader.LogSnippet{logs}
+		}
+	case TargetKindK8sNode:
+		nodes, err := executeK8sTool[[]k8sreader.NodeSummary](ctx, c.runner, ToolK8sGetNodes, json.RawMessage(`{"limit":50}`))
+		if err != nil {
+			record(ToolK8sGetNodes, err)
+		} else {
+			for _, node := range nodes {
+				if node.Name == alert.TargetName || alert.TargetName == "" {
+					evidence.Nodes = append(evidence.Nodes, node)
+				}
+			}
+		}
+	}
+	return evidence, errs
+}
+
+func executeK8sTool[T any](ctx context.Context, runner ToolRunner, name string, args json.RawMessage) (T, error) {
+	var zero T
+	result, err := runner.ExecuteTool(ctx, name, args)
+	if err != nil {
+		return zero, err
+	}
+	if !result.Success {
+		return zero, errors.New(toolErrorString(result))
+	}
+	data, err := json.Marshal(result.Data)
+	if err != nil {
+		return zero, err
+	}
+	var payload T
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return zero, err
+	}
+	return payload, nil
+}
+
+func isK8sTarget(alert AlertContext) bool {
+	switch alert.TargetKind {
+	case TargetKindK8sDeployment, TargetKindK8sPod, TargetKindK8sNode:
+		return strings.TrimSpace(alert.TargetName) != ""
+	default:
+		return false
+	}
+}
+
+func deploymentSelector(name string) string {
+	if strings.TrimSpace(name) == "" {
+		return ""
+	}
+	return "app=" + strings.TrimSpace(name)
 }
 
 func (c *EvidenceCollector) collectRunbooks(ctx context.Context, alert AlertContext) ([]RunbookEvidence, error) {

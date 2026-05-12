@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	k8sreader "server-web/copilot/k8s"
 )
 
 const (
@@ -22,6 +24,10 @@ const (
 	ConfidenceHigh   = "high"
 	ConfidenceMedium = "medium"
 	ConfidenceLow    = "low"
+
+	TargetKindK8sDeployment = "k8s_deployment"
+	TargetKindK8sPod        = "k8s_pod"
+	TargetKindK8sNode       = "k8s_node"
 )
 
 var (
@@ -94,8 +100,23 @@ type EvidenceBundle struct {
 	Metrics          []MetricEvidence  `json:"metrics"`
 	History          []HistoryEvidence `json:"history"`
 	Runbooks         []RunbookEvidence `json:"runbooks"`
+	K8s              K8sEvidence       `json:"k8s,omitempty"`
 	CollectionErrors []CollectionError `json:"collection_errors"`
 	CollectedAt      time.Time         `json:"collected_at"`
+}
+
+type K8sEvidence struct {
+	Enabled     bool                          `json:"enabled"`
+	Namespace   string                        `json:"namespace,omitempty"`
+	TargetKind  string                        `json:"target_kind,omitempty"`
+	TargetName  string                        `json:"target_name,omitempty"`
+	Pods        []k8sreader.PodSummary        `json:"pods,omitempty"`
+	Deployments []k8sreader.DeploymentSummary `json:"deployments,omitempty"`
+	Nodes       []k8sreader.NodeSummary       `json:"nodes,omitempty"`
+	Events      []k8sreader.EventSummary      `json:"events,omitempty"`
+	Logs        []k8sreader.LogSnippet        `json:"logs,omitempty"`
+	Errors      []CollectionError             `json:"errors,omitempty"`
+	CollectedAt time.Time                     `json:"collected_at,omitempty"`
 }
 
 type MetricEvidence struct {

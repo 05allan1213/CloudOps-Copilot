@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	appalert "server-web/alert"
+	k8sreader "server-web/copilot/k8s"
 	"server-web/copilot/nlu"
 	"server-web/copilot/runbook"
 	copilot "server-web/copilot/service"
@@ -26,14 +27,20 @@ const (
 	StatusSuccess = "success"
 	StatusError   = "error"
 
-	ToolHostList        = "host.list"
-	ToolHostMetrics     = "host.metrics"
-	ToolAlertListActive = "alert.list_active"
-	ToolAlertEvents     = "alert.events"
-	ToolAlertHistory    = "alert.history"
-	ToolAlertRuleList   = "alert.rule_list"
-	ToolPromQueryRange  = "prom.query_range"
-	ToolRunbookSearch   = "runbook.search"
+	ToolHostList          = "host.list"
+	ToolHostMetrics       = "host.metrics"
+	ToolAlertListActive   = "alert.list_active"
+	ToolAlertEvents       = "alert.events"
+	ToolAlertHistory      = "alert.history"
+	ToolAlertRuleList     = "alert.rule_list"
+	ToolPromQueryRange    = "prom.query_range"
+	ToolRunbookSearch     = "runbook.search"
+	ToolK8sGetPods        = "k8s.get_pods"
+	ToolK8sGetDeployments = "k8s.get_deployments"
+	ToolK8sGetServices    = "k8s.get_services"
+	ToolK8sGetNodes       = "k8s.get_nodes"
+	ToolK8sGetEvents      = "k8s.get_events"
+	ToolK8sGetLogs        = "k8s.get_logs"
 
 	defaultToolTimeout = 30 * time.Second
 
@@ -76,6 +83,7 @@ type Executor struct {
 	alertService    AlertService
 	promClient      PrometheusClient
 	runbookSearcher RunbookSearcher
+	k8sReader       k8sreader.Reader
 	db              *gorm.DB
 	registry        Registry
 	timeout         time.Duration
@@ -87,7 +95,9 @@ type Options struct {
 	AlertService    AlertService
 	PromClient      PrometheusClient
 	RunbookSearcher RunbookSearcher
+	K8sReader       k8sreader.Reader
 	DB              *gorm.DB
+	Observer        Observer
 	Timeout         time.Duration
 	LogArgs         bool
 	Now             func() time.Time
@@ -141,7 +151,7 @@ type hostListQueryOptions struct {
 }
 
 func NewExecutor(options Options) (*Executor, error) {
-	return newExecutor(options, NewRegistry(WithLogArgs(options.LogArgs)))
+	return newExecutor(options, NewRegistry(WithLogArgs(options.LogArgs), WithObserver(options.Observer)))
 }
 
 func newExecutor(options Options, registry Registry) (*Executor, error) {
@@ -158,6 +168,7 @@ func newExecutor(options Options, registry Registry) (*Executor, error) {
 		alertService:    options.AlertService,
 		promClient:      options.PromClient,
 		runbookSearcher: options.RunbookSearcher,
+		k8sReader:       options.K8sReader,
 		db:              options.DB,
 		timeout:         timeout,
 		now:             now,

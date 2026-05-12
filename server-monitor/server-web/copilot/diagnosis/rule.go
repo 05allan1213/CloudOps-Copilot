@@ -68,6 +68,22 @@ func (defaultRuleAnalyzer) Analyze(ctx context.Context, alert AlertContext, evid
 			nextSteps = append(nextSteps, "检查主机网络连通性和 exporter 状态")
 		}
 	}
+	if evidence.K8s.Enabled {
+		if deployment := firstDeployment(evidence.K8s); deployment != nil {
+			passed := deployment.ReadyReplicas < deployment.Replicas
+			add("k8s_deployment_not_ready", passed, fmt.Sprintf("Deployment ready=%d desired=%d updated=%d", deployment.ReadyReplicas, deployment.Replicas, deployment.UpdatedReplicas), "k8s.deployments")
+			if passed {
+				nextSteps = append(nextSteps, "检查 Deployment rollout、Pod 状态和 Warning Events")
+			}
+		}
+		if restarts := podRestartCount(evidence.K8s); restarts > 0 {
+			add("k8s_pod_restarts", true, fmt.Sprintf("关联 Pod 累计重启 %d 次", restarts), "k8s.pods")
+			nextSteps = append(nextSteps, "查看最近 Pod 日志和 BackOff 事件")
+		}
+		if reason := warningEventReason(evidence.K8s); reason != "" {
+			add("k8s_warning_event", true, fmt.Sprintf("发现 Warning Event: %s", reason), "k8s.events")
+		}
+	}
 
 	recurring := repeatedHistory(evidence.History, alert)
 	add("history_recurring", recurring >= 2, fmt.Sprintf("24 小时内同类历史记录 %d 条", recurring), "history")
@@ -110,6 +126,37 @@ func repeatedHistory(history []HistoryEvidence, alert AlertContext) int {
 		}
 	}
 	return count
+}
+
+func firstDeployment(evidence K8sEvidence) *k8sDeploymentView {
+	if len(evidence.Deployments) == 0 {
+		return nil
+	}
+	deployment := evidence.Deployments[0]
+	return &k8sDeploymentView{Replicas: deployment.Replicas, ReadyReplicas: deployment.ReadyReplicas, UpdatedReplicas: deployment.UpdatedReplicas}
+}
+
+type k8sDeploymentView struct {
+	Replicas        int32
+	ReadyReplicas   int32
+	UpdatedReplicas int32
+}
+
+func podRestartCount(evidence K8sEvidence) int32 {
+	var total int32
+	for _, pod := range evidence.Pods {
+		total += pod.RestartCount
+	}
+	return total
+}
+
+func warningEventReason(evidence K8sEvidence) string {
+	for _, event := range evidence.Events {
+		if strings.EqualFold(event.Type, "Warning") {
+			return firstNonEmpty(event.Reason, event.Message, event.Name)
+		}
+	}
+	return ""
 }
 
 func incompleteDetail(evidence EvidenceBundle) string {

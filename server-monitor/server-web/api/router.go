@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -24,6 +25,7 @@ import (
 	copilotaction "server-web/copilot/action"
 	copilotdiagnosis "server-web/copilot/diagnosis"
 	copilothandler "server-web/copilot/handler"
+	copilotk8s "server-web/copilot/k8s"
 	copilotllm "server-web/copilot/llm"
 	copilotrunbook "server-web/copilot/runbook"
 	copilotservice "server-web/copilot/service"
@@ -142,6 +144,15 @@ func NewRouterWithRuntime(cfg config.Config, promClient *promclient.Client, cach
 		})
 		var tools copilotservice.ToolExecutor
 		var toolExecutor *copilottool.Executor
+		k8sCfg := k8sConfigFromApp(cfg)
+		k8sClient, err := copilotk8s.NewClient(k8sCfg)
+		if err != nil {
+			return nil, nil, err
+		}
+		var k8sService *copilotk8s.Service
+		if cfg.K8SEnabled {
+			k8sService = copilotk8s.NewServiceWithClient(k8sClient, k8sCfg)
+		}
 		runbookDocs, err := copilotrunbook.LoadDir(context.Background(), cfg.RunbookDir, copilotrunbook.LoadOptions{
 			MaxFiles:     cfg.RunbookMaxFiles,
 			MaxFileBytes: cfg.RunbookMaxFileBytes,
@@ -159,7 +170,9 @@ func NewRouterWithRuntime(cfg config.Config, promClient *promclient.Client, cach
 				AlertService:    alertService,
 				PromClient:      promClient,
 				RunbookSearcher: runbookRetriever,
+				K8sReader:       k8sService,
 				DB:              db,
+				Observer:        metrics,
 				Timeout:         cfg.CopilotToolDefaultTimeout,
 				LogArgs:         cfg.CopilotToolLogArgs,
 			})
@@ -217,15 +230,23 @@ func NewRouterWithRuntime(cfg config.Config, promClient *promclient.Client, cach
 		protected.GET("/api/v1/diagnosis", diagnosisHandler.List)
 		protected.GET("/api/v1/diagnosis/:id", diagnosisHandler.Get)
 		if cfg.ActionApprovalEnabled {
-			actionExecutionEnabled := cfg.ActionExecutionEnabled
+			actionExecutionEnabled := cfg.ActionExecutionEnabled && cfg.K8SWriteEnabled
+			actionExecutor := copilotaction.K8sExecutor(copilotaction.DisabledK8sExecutor{})
 			if actionExecutionEnabled {
-				zap.L().Warn("ACTION_EXECUTION_ENABLED=true but no action executor is configured; forcing action execution disabled")
-				actionExecutionEnabled = false
+				if k8sClient == nil {
+					return nil, nil, errK8sClientRequired()
+				}
+				actionExecutor = copilotaction.NewClientK8sExecutor(k8sClient, copilotaction.ClientK8sExecutorConfig{
+					AllowedNamespaces: cfg.K8SAllowedNamespaces,
+					MaxReplicas:       cfg.ActionMaxReplicas,
+				})
+			} else if cfg.ActionExecutionEnabled && !cfg.K8SWriteEnabled {
+				zap.L().Warn("ACTION_EXECUTION_ENABLED=true but K8S_WRITE_ENABLED=false; forcing k8s action execution disabled")
 			}
 			actionService := copilotaction.NewService(copilotaction.ServiceConfig{
 				Repository:             copilotaction.NewRepository(db),
 				Policy:                 copilotaction.NewPolicy(copilotaction.PolicyConfig{MaxReplicas: cfg.ActionMaxReplicas}),
-				Executor:               copilotaction.DisabledK8sExecutor{},
+				Executor:               actionExecutor,
 				Notifier:               copilotaction.NewWebSocketNotifier(websocketHub),
 				OperationEvents:        operationEventProducer{producer: alertProducer},
 				Observer:               metrics,
@@ -381,6 +402,25 @@ func limitRequestBody(maxBytes int64) gin.HandlerFunc {
 		}
 		c.Next()
 	}
+}
+
+func k8sConfigFromApp(cfg config.Config) copilotk8s.Config {
+	return copilotk8s.Config{
+		Enabled:           cfg.K8SEnabled,
+		WriteEnabled:      cfg.K8SWriteEnabled,
+		InCluster:         cfg.K8SInCluster,
+		Kubeconfig:        cfg.K8SKubeconfig,
+		AllowedNamespaces: cfg.K8SAllowedNamespaces,
+		DefaultNamespace:  cfg.K8SDefaultNamespace,
+		RequestTimeout:    cfg.K8SRequestTimeout,
+		LogTailLines:      cfg.K8SLogTailLines,
+		LogMaxBytes:       cfg.K8SLogMaxBytes,
+		EventLimit:        cfg.K8SEventLimit,
+	}
+}
+
+func errK8sClientRequired() error {
+	return errors.New("k8s client is required when k8s write execution is enabled")
 }
 
 func serveStatic(staticDir string) (gin.HandlerFunc, error) {

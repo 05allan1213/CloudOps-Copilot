@@ -278,7 +278,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "执行 approved 动作；Phase 6 默认 disabled executor，会记录失败审计",
+                "description": "执行 approved 动作；K8s restart/scale 只有在 ACTION_EXECUTION_ENABLED 和 K8S_WRITE_ENABLED 同时开启时使用真实执行器，结果包含 target、old/new replicas、ready replicas 和 restart annotation 摘要。",
                 "consumes": [
                     "application/json"
                 ],
@@ -311,8 +311,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/action.actionResponseEnvelope"
                         }
                     },
                     "400": {
@@ -534,7 +533,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "查询动作审批、拒绝、执行、失败和权限拒绝审计日志",
+                "description": "查询动作审批、拒绝、执行、失败和权限拒绝审计日志；action/action_type 支持 action.execute 等审计动作，也支持 k8s.restart_deployment、k8s.scale_deployment 过滤 K8s 动作类型。",
                 "produces": [
                     "application/json"
                 ],
@@ -545,8 +544,14 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "审计动作",
+                        "description": "审计动作或 K8s 动作类型",
                         "name": "action",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "审计动作或 K8s 动作类型",
+                        "name": "action_type",
                         "in": "query"
                     },
                     {
@@ -578,8 +583,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": true
+                            "$ref": "#/definitions/action.auditListResponseEnvelope"
                         }
                     },
                     "403": {
@@ -739,6 +743,43 @@ const docTemplate = `{
                         "description": "Service Unavailable",
                         "schema": {
                             "$ref": "#/definitions/handlers.response"
+                        }
+                    }
+                }
+            }
+        },
+        "/copilot/tools": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "返回当前启用的只读工具；K8s 开启后包含 k8s.get_pods、k8s.get_deployments、k8s.get_services、k8s.get_nodes、k8s.get_events、k8s.get_logs。",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "copilot"
+                ],
+                "summary": "获取 Copilot 工具 Schema",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handler.toolSchemasResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handler.response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handler.response"
                         }
                     }
                 }
@@ -911,6 +952,38 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "action.ActionResult": {
+            "type": "object",
+            "properties": {
+                "action_type": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "new_annotation": {
+                    "type": "string"
+                },
+                "new_replicas": {
+                    "type": "integer"
+                },
+                "old_annotation": {
+                    "type": "string"
+                },
+                "old_replicas": {
+                    "type": "integer"
+                },
+                "ready_replicas": {
+                    "type": "integer"
+                },
+                "replicas": {
+                    "type": "integer"
+                },
+                "target": {
+                    "type": "string"
+                }
+            }
+        },
         "action.ApproveRequest": {
             "type": "object",
             "properties": {
@@ -945,6 +1018,235 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "reason": {
+                    "type": "string"
+                }
+            }
+        },
+        "action.actionDoc": {
+            "type": "object",
+            "properties": {
+                "action_type": {
+                    "type": "string"
+                },
+                "approved_at": {
+                    "type": "string"
+                },
+                "approved_by": {
+                    "type": "integer"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "diagnosis_report_id": {
+                    "type": "integer"
+                },
+                "error_message": {
+                    "type": "string"
+                },
+                "executed_at": {
+                    "type": "string"
+                },
+                "executed_by": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "namespace": {
+                    "type": "string"
+                },
+                "params": {},
+                "requested_by": {
+                    "type": "string"
+                },
+                "result": {
+                    "$ref": "#/definitions/action.ActionResult"
+                },
+                "risk_level": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "target_kind": {
+                    "type": "string"
+                },
+                "target_name": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "action.actionResponseEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/action.actionDoc"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "action.auditListResponseEnvelope": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/action.auditListResult"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "action.auditListResult": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/action.auditLogDoc"
+                    }
+                },
+                "page": {
+                    "type": "integer"
+                },
+                "page_size": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "action.auditLogDoc": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "actor": {
+                    "type": "string"
+                },
+                "actor_role": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "error_message": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "request": {},
+                "resource_id": {
+                    "type": "string"
+                },
+                "resource_type": {
+                    "type": "string"
+                },
+                "result": {
+                    "type": "string"
+                },
+                "trace_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "handler.response": {
+            "type": "object",
+            "properties": {
+                "data": {},
+                "error": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "handler.toolParamDoc": {
+            "type": "object",
+            "properties": {
+                "default": {},
+                "description": {
+                    "type": "string"
+                },
+                "enum": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "max": {
+                    "type": "number"
+                },
+                "min": {
+                    "type": "number"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "pattern": {
+                    "type": "string"
+                },
+                "required": {
+                    "type": "boolean"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "handler.toolSchemaDoc": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "parameters": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.toolParamDoc"
+                    }
+                },
+                "read_only": {
+                    "type": "boolean"
+                },
+                "risk_level": {
+                    "type": "string"
+                },
+                "timeout": {
+                    "type": "string"
+                }
+            }
+        },
+        "handler.toolSchemasResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/handler.toolSchemaDoc"
+                    }
+                },
+                "error": {
+                    "type": "string"
+                },
+                "status": {
                     "type": "string"
                 }
             }

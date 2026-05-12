@@ -22,6 +22,33 @@ type response struct {
 	Error  string      `json:"error,omitempty"`
 }
 
+type toolSchemasResponse struct {
+	Status string          `json:"status"`
+	Data   []toolSchemaDoc `json:"data,omitempty"`
+	Error  string          `json:"error,omitempty"`
+}
+
+type toolSchemaDoc struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Parameters  []toolParamDoc `json:"parameters"`
+	RiskLevel   string         `json:"risk_level"`
+	ReadOnly    bool           `json:"read_only"`
+	Timeout     string         `json:"timeout"`
+}
+
+type toolParamDoc struct {
+	Name        string      `json:"name"`
+	Type        string      `json:"type"`
+	Required    bool        `json:"required"`
+	Description string      `json:"description,omitempty"`
+	Enum        []string    `json:"enum,omitempty"`
+	Default     interface{} `json:"default,omitempty"`
+	Min         *float64    `json:"min,omitempty"`
+	Max         *float64    `json:"max,omitempty"`
+	Pattern     string      `json:"pattern,omitempty"`
+}
+
 func NewHandler(service *copilot.Service) *Handler {
 	return &Handler{service: service}
 }
@@ -88,6 +115,16 @@ func (h *Handler) DeleteSession(c *gin.Context) {
 	})
 }
 
+// ListTools godoc
+// @Summary      获取 Copilot 工具 Schema
+// @Description  返回当前启用的只读工具；K8s 开启后包含 k8s.get_pods、k8s.get_deployments、k8s.get_services、k8s.get_nodes、k8s.get_events、k8s.get_logs。
+// @Tags         copilot
+// @Produce      json
+// @Security     BearerAuth
+// @Success      200  {object}  toolSchemasResponse
+// @Failure      403  {object}  response
+// @Failure      500  {object}  response
+// @Router       /copilot/tools [get]
 func (h *Handler) ListTools(c *gin.Context) {
 	c.JSON(http.StatusOK, response{
 		Status: "success",

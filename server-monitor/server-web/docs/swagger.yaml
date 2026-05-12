@@ -1,5 +1,26 @@
 basePath: /api/v1
 definitions:
+  action.ActionResult:
+    properties:
+      action_type:
+        type: string
+      message:
+        type: string
+      new_annotation:
+        type: string
+      new_replicas:
+        type: integer
+      old_annotation:
+        type: string
+      old_replicas:
+        type: integer
+      ready_replicas:
+        type: integer
+      replicas:
+        type: integer
+      target:
+        type: string
+    type: object
   action.ApproveRequest:
     properties:
       comment:
@@ -22,6 +43,157 @@ definitions:
   action.RejectRequest:
     properties:
       reason:
+        type: string
+    type: object
+  action.actionDoc:
+    properties:
+      action_type:
+        type: string
+      approved_at:
+        type: string
+      approved_by:
+        type: integer
+      created_at:
+        type: string
+      diagnosis_report_id:
+        type: integer
+      error_message:
+        type: string
+      executed_at:
+        type: string
+      executed_by:
+        type: integer
+      id:
+        type: integer
+      namespace:
+        type: string
+      params: {}
+      requested_by:
+        type: string
+      result:
+        $ref: '#/definitions/action.ActionResult'
+      risk_level:
+        type: string
+      status:
+        type: string
+      target_kind:
+        type: string
+      target_name:
+        type: string
+      updated_at:
+        type: string
+    type: object
+  action.actionResponseEnvelope:
+    properties:
+      data:
+        $ref: '#/definitions/action.actionDoc'
+      error:
+        type: string
+      status:
+        type: string
+    type: object
+  action.auditListResponseEnvelope:
+    properties:
+      data:
+        $ref: '#/definitions/action.auditListResult'
+      error:
+        type: string
+      status:
+        type: string
+    type: object
+  action.auditListResult:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/action.auditLogDoc'
+        type: array
+      page:
+        type: integer
+      page_size:
+        type: integer
+      total:
+        type: integer
+    type: object
+  action.auditLogDoc:
+    properties:
+      action:
+        type: string
+      actor:
+        type: string
+      actor_role:
+        type: string
+      created_at:
+        type: string
+      error_message:
+        type: string
+      id:
+        type: integer
+      request: {}
+      resource_id:
+        type: string
+      resource_type:
+        type: string
+      result:
+        type: string
+      trace_id:
+        type: string
+    type: object
+  handler.response:
+    properties:
+      data: {}
+      error:
+        type: string
+      status:
+        type: string
+    type: object
+  handler.toolParamDoc:
+    properties:
+      default: {}
+      description:
+        type: string
+      enum:
+        items:
+          type: string
+        type: array
+      max:
+        type: number
+      min:
+        type: number
+      name:
+        type: string
+      pattern:
+        type: string
+      required:
+        type: boolean
+      type:
+        type: string
+    type: object
+  handler.toolSchemaDoc:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+      parameters:
+        items:
+          $ref: '#/definitions/handler.toolParamDoc'
+        type: array
+      read_only:
+        type: boolean
+      risk_level:
+        type: string
+      timeout:
+        type: string
+    type: object
+  handler.toolSchemasResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/handler.toolSchemaDoc'
+        type: array
+      error:
+        type: string
+      status:
         type: string
     type: object
   handlers.loginRequest:
@@ -229,7 +401,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: 执行 approved 动作；Phase 6 默认 disabled executor，会记录失败审计
+      description: 执行 approved 动作；K8s restart/scale 只有在 ACTION_EXECUTION_ENABLED 和
+        K8S_WRITE_ENABLED 同时开启时使用真实执行器，结果包含 target、old/new replicas、ready replicas
+        和 restart annotation 摘要。
       parameters:
       - description: 动作 ID
         in: path
@@ -248,8 +422,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/action.actionResponseEnvelope'
         "400":
           description: Bad Request
           schema:
@@ -429,11 +602,16 @@ paths:
       - alerts
   /audit-logs:
     get:
-      description: 查询动作审批、拒绝、执行、失败和权限拒绝审计日志
+      description: 查询动作审批、拒绝、执行、失败和权限拒绝审计日志；action/action_type 支持 action.execute 等审计动作，也支持
+        k8s.restart_deployment、k8s.scale_deployment 过滤 K8s 动作类型。
       parameters:
-      - description: 审计动作
+      - description: 审计动作或 K8s 动作类型
         in: query
         name: action
+        type: string
+      - description: 审计动作或 K8s 动作类型
+        in: query
+        name: action_type
         type: string
       - description: 结果
         in: query
@@ -457,8 +635,7 @@ paths:
         "200":
           description: OK
           schema:
-            additionalProperties: true
-            type: object
+            $ref: '#/definitions/action.auditListResponseEnvelope'
         "403":
           description: Forbidden
           schema:
@@ -568,6 +745,29 @@ paths:
       summary: 获取当前用户信息
       tags:
       - auth
+  /copilot/tools:
+    get:
+      description: 返回当前启用的只读工具；K8s 开启后包含 k8s.get_pods、k8s.get_deployments、k8s.get_services、k8s.get_nodes、k8s.get_events、k8s.get_logs。
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handler.toolSchemasResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/handler.response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handler.response'
+      security:
+      - BearerAuth: []
+      summary: 获取 Copilot 工具 Schema
+      tags:
+      - copilot
   /diagnosis/{id}/actions:
     post:
       consumes:

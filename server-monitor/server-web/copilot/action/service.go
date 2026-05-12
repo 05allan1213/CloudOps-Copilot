@@ -119,7 +119,7 @@ func (s *Service) CreateFromDiagnosis(ctx context.Context, reportID uint64, req 
 		if err != nil {
 			return result, err
 		}
-		if err := s.audit(ctx, actorOrCopilot(actor), "action.create_pending", "pending_action", strconv.FormatUint(created.ID, 10), json.RawMessage(created.ParamsJSON), model.AuditResultSuccess, ""); err != nil {
+		if err := s.audit(ctx, actorOrCopilot(actor), "action.create_pending", "pending_action", strconv.FormatUint(created.ID, 10), auditRequestFromAction(created), model.AuditResultSuccess, ""); err != nil {
 			return result, err
 		}
 		s.observeAction("create_pending", model.AuditResultSuccess)
@@ -264,7 +264,7 @@ func (s *Service) Execute(ctx context.Context, id uint64, actor Actor) (ActionRe
 	}
 	s.observeAction("execute", auditResult)
 	s.observeExecution(saved.ActionType, final.Status, executionSeconds)
-	if err := s.audit(ctx, actor, "action.execute", "pending_action", strconv.FormatUint(id, 10), json.RawMessage(final.ParamsJSON), auditResult, errorMessage); err != nil {
+	if err := s.audit(ctx, actor, "action.execute", "pending_action", strconv.FormatUint(id, 10), auditRequestFromAction(final), auditResult, errorMessage); err != nil {
 		return toActionResponse(final), err
 	}
 	s.publishOperationEvent(ctx, final, actor)
@@ -375,6 +375,23 @@ func (s *Service) observeExecution(actionType, status string, seconds float64) {
 	if s.observer != nil {
 		s.observer.ObserveActionExecutionDuration(actionType, status, seconds)
 	}
+}
+
+func auditRequestFromAction(action model.PendingAction) json.RawMessage {
+	params := map[string]interface{}{}
+	if strings.TrimSpace(action.ParamsJSON) != "" {
+		decoded, err := decodeObject(json.RawMessage(action.ParamsJSON))
+		if err == nil {
+			params = decoded
+		}
+	}
+	return mustMarshal(map[string]interface{}{
+		"action_type": action.ActionType,
+		"target_kind": action.TargetKind,
+		"target_name": action.TargetName,
+		"namespace":   action.Namespace,
+		"params":      params,
+	})
 }
 
 func parseRecommendations(raw string) ([]rawRecommendation, error) {

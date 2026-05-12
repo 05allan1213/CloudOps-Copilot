@@ -36,9 +36,10 @@ type healthCheckedTool interface {
 }
 
 type MemoryRegistry struct {
-	mu      sync.RWMutex
-	tools   map[string]Tool
-	logArgs bool
+	mu       sync.RWMutex
+	tools    map[string]Tool
+	logArgs  bool
+	observer Observer
 }
 
 type RegistryOption func(*MemoryRegistry)
@@ -46,6 +47,12 @@ type RegistryOption func(*MemoryRegistry)
 func WithLogArgs(enabled bool) RegistryOption {
 	return func(registry *MemoryRegistry) {
 		registry.logArgs = enabled
+	}
+}
+
+func WithObserver(observer Observer) RegistryOption {
+	return func(registry *MemoryRegistry) {
+		registry.observer = observer
 	}
 }
 
@@ -122,11 +129,13 @@ func (r *MemoryRegistry) Execute(ctx context.Context, name string, args json.Raw
 	if err != nil {
 		result := ToolResult{Success: false, Error: errorResult(err)}
 		r.logToolCall(ctx, schema, args, result, 0)
+		r.observeTool(schema.Name, StatusError, 0)
 		return result, err
 	}
 	if err := authorizeTool(ctx, schema); err != nil {
 		result := ToolResult{Success: false, Error: errorResult(err)}
 		r.logToolCall(ctx, schema, normalizedArgs, result, 0)
+		r.observeTool(schema.Name, StatusError, 0)
 		return result, err
 	}
 
@@ -164,6 +173,7 @@ func (r *MemoryRegistry) Execute(ctx context.Context, name string, args json.Raw
 		span.SetStatus(codes.Error, result.Error.Code.String())
 		span.SetAttributes(attribute.Bool("tool.success", false), attribute.Int64("tool.duration_ms", duration.Milliseconds()))
 		r.logToolCall(ctx, schema, normalizedArgs, result, duration)
+		r.observeTool(schema.Name, StatusError, duration)
 		span.End()
 		return result, err
 	}
@@ -176,8 +186,20 @@ func (r *MemoryRegistry) Execute(ctx context.Context, name string, args json.Raw
 	}
 	span.SetAttributes(attribute.Bool("tool.success", result.Success), attribute.Int64("tool.duration_ms", duration.Milliseconds()))
 	r.logToolCall(ctx, schema, normalizedArgs, result, duration)
+	if result.Success {
+		r.observeTool(schema.Name, StatusSuccess, duration)
+	} else {
+		r.observeTool(schema.Name, StatusError, duration)
+	}
 	span.End()
 	return result, nil
+}
+
+func (r *MemoryRegistry) observeTool(name, result string, duration time.Duration) {
+	if r == nil || r.observer == nil {
+		return
+	}
+	r.observer.ObserveToolExecution(name, result, duration.Seconds())
 }
 
 func (r *MemoryRegistry) HealthCheck(ctx context.Context) map[string]bool {

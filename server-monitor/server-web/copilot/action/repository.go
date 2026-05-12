@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -185,7 +186,11 @@ func (r *Repository) ListAuditLogs(ctx context.Context, filter ListFilter) ([]mo
 	filter = normalizeListFilter(filter)
 	stmt := r.db.WithContext(ctx).Model(&model.AuditLog{})
 	if filter.ActionType != "" {
-		stmt = stmt.Where("action = ?", filter.ActionType)
+		if strings.HasPrefix(filter.ActionType, "k8s.") {
+			stmt = stmt.Where("request_json LIKE ?", `%"action_type":"`+filter.ActionType+`"%`)
+		} else {
+			stmt = stmt.Where("action = ?", filter.ActionType)
+		}
 	}
 	if filter.Result != "" {
 		stmt = stmt.Where("result = ?", filter.Result)

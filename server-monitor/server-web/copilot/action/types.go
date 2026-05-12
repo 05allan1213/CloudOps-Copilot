@@ -127,8 +127,13 @@ type AuditLogResponse struct {
 }
 
 type ActionResult struct {
-	ActionType string `json:"action_type"`
-	Target     string `json:"target"`
-	Replicas   *int   `json:"replicas,omitempty"`
-	Message    string `json:"message,omitempty"`
+	ActionType    string `json:"action_type"`
+	Target        string `json:"target"`
+	Replicas      *int   `json:"replicas,omitempty"`
+	OldReplicas   *int   `json:"old_replicas,omitempty"`
+	NewReplicas   *int   `json:"new_replicas,omitempty"`
+	ReadyReplicas *int   `json:"ready_replicas,omitempty"`
+	OldAnnotation string `json:"old_annotation,omitempty"`
+	NewAnnotation string `json:"new_annotation,omitempty"`
+	Message       string `json:"message,omitempty"`
 }

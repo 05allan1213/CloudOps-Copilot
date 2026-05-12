@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -216,6 +217,47 @@ type Config struct {
 	// 默认值：true
 	ActionStatusPushEnabled bool
 
+	// K8SEnabled 是否启用 K8s 只读工具和诊断证据采集
+	// 默认值：false
+	K8SEnabled bool
+
+	// K8SWriteEnabled 是否启用审批后的真实 K8s 写操作
+	// 默认值：false
+	K8SWriteEnabled bool
+
+	// K8SInCluster 是否优先使用集群内 ServiceAccount 配置
+	// 默认值：true
+	K8SInCluster bool
+
+	// K8SKubeconfig 本地或 Compose 模式使用的 kubeconfig 路径
+	// 默认值：空
+	// 敏感：路径本身不敏感，文件内容敏感
+	K8SKubeconfig string
+
+	// K8SAllowedNamespaces 允许访问的 namespace，空环境变量默认只允许 default
+	// 默认值：default
+	K8SAllowedNamespaces []string
+
+	// K8SDefaultNamespace 未指定 namespace 时使用的默认 namespace
+	// 默认值：default
+	K8SDefaultNamespace string
+
+	// K8SRequestTimeout 单次 K8s API 调用超时时间
+	// 默认值：10s
+	K8SRequestTimeout time.Duration
+
+	// K8SLogTailLines k8s.get_logs 默认日志行数
+	// 默认值：100
+	K8SLogTailLines int
+
+	// K8SLogMaxBytes k8s.get_logs 单次最大返回字节数
+	// 默认值：32768
+	K8SLogMaxBytes int
+
+	// K8SEventLimit k8s.get_events 默认返回条数
+	// 默认值：50
+	K8SEventLimit int
+
 	// CopilotSessionTTL Copilot Redis 会话 TTL
 	// 默认值：7200s（2 小时）
 	CopilotSessionTTL time.Duration
@@ -410,6 +452,16 @@ func Load() Config {
 		ActionPendingTTL:             time.Duration(configutil.PositiveInt("ACTION_PENDING_TTL_HOURS", 24)) * time.Hour,
 		ActionOperationEventsEnabled: configutil.Bool("ACTION_OPERATION_EVENTS_ENABLED", true),
 		ActionStatusPushEnabled:      configutil.Bool("ACTION_STATUS_PUSH_ENABLED", true),
+		K8SEnabled:                   configutil.Bool("K8S_ENABLED", false),
+		K8SWriteEnabled:              configutil.Bool("K8S_WRITE_ENABLED", false),
+		K8SInCluster:                 configutil.Bool("K8S_IN_CLUSTER", true),
+		K8SKubeconfig:                configutil.String("K8S_KUBECONFIG", ""),
+		K8SAllowedNamespaces:         defaultList(configutil.List("K8S_ALLOWED_NAMESPACES"), []string{"default"}),
+		K8SDefaultNamespace:          configutil.String("K8S_DEFAULT_NAMESPACE", "default"),
+		K8SRequestTimeout:            configutil.DurationSeconds("K8S_REQUEST_TIMEOUT_SECONDS", 10),
+		K8SLogTailLines:              configutil.PositiveInt("K8S_LOG_TAIL_LINES", 100),
+		K8SLogMaxBytes:               configutil.PositiveInt("K8S_LOG_MAX_BYTES", 32768),
+		K8SEventLimit:                configutil.PositiveInt("K8S_EVENT_LIMIT", 50),
 		CopilotSessionTTL:            configutil.DurationSeconds("COPILOT_SESSION_TTL_SECONDS", 7200),
 		CopilotMaxMessageLength:      configutil.PositiveInt("COPILOT_MAX_MESSAGE_LENGTH", 2000),
 		CopilotMaxSessionMessages:    configutil.PositiveInt("COPILOT_MAX_SESSION_MESSAGES", 50),
@@ -538,6 +590,42 @@ func (c Config) Validate() error {
 	if c.ActionPendingTTL < time.Hour || c.ActionPendingTTL > 168*time.Hour {
 		return fmt.Errorf("ACTION_PENDING_TTL_HOURS must be in range 1-168, got %v", c.ActionPendingTTL)
 	}
+	if c.K8SWriteEnabled {
+		if !c.K8SEnabled {
+			return fmt.Errorf("K8S_ENABLED must be true when K8S_WRITE_ENABLED is true")
+		}
+		if !c.ActionApprovalEnabled {
+			return fmt.Errorf("ACTION_APPROVAL_ENABLED must be true when K8S_WRITE_ENABLED is true")
+		}
+		if !c.ActionExecutionEnabled {
+			return fmt.Errorf("ACTION_EXECUTION_ENABLED must be true when K8S_WRITE_ENABLED is true")
+		}
+	}
+	if err := validateK8SNamespace("K8S_DEFAULT_NAMESPACE", c.K8SDefaultNamespace); err != nil {
+		return err
+	}
+	allowed := map[string]struct{}{}
+	for _, namespace := range c.K8SAllowedNamespaces {
+		if err := validateK8SNamespace("K8S_ALLOWED_NAMESPACES", namespace); err != nil {
+			return err
+		}
+		allowed[namespace] = struct{}{}
+	}
+	if _, ok := allowed[c.K8SDefaultNamespace]; !ok {
+		return fmt.Errorf("K8S_DEFAULT_NAMESPACE must be included in K8S_ALLOWED_NAMESPACES")
+	}
+	if c.K8SRequestTimeout < time.Second || c.K8SRequestTimeout > 60*time.Second {
+		return fmt.Errorf("K8S_REQUEST_TIMEOUT_SECONDS must be in range 1-60, got %v", c.K8SRequestTimeout)
+	}
+	if c.K8SLogTailLines < 1 || c.K8SLogTailLines > 1000 {
+		return fmt.Errorf("K8S_LOG_TAIL_LINES must be in range 1-1000, got %d", c.K8SLogTailLines)
+	}
+	if c.K8SLogMaxBytes < 1024 || c.K8SLogMaxBytes > 262144 {
+		return fmt.Errorf("K8S_LOG_MAX_BYTES must be in range 1024-262144, got %d", c.K8SLogMaxBytes)
+	}
+	if c.K8SEventLimit < 1 || c.K8SEventLimit > 200 {
+		return fmt.Errorf("K8S_EVENT_LIMIT must be in range 1-200, got %d", c.K8SEventLimit)
+	}
 	if c.CopilotSessionTTL <= 0 {
 		return fmt.Errorf("COPILOT_SESSION_TTL_SECONDS must be positive, got %v", c.CopilotSessionTTL)
 	}
@@ -607,4 +695,23 @@ func validatePort(name, raw string) error {
 		return fmt.Errorf("%s port must be in range 1-65535, got %q", name, raw)
 	}
 	return nil
+}
+
+var k8sNamespacePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
+
+func validateK8SNamespace(name, namespace string) error {
+	if strings.TrimSpace(namespace) == "" {
+		return fmt.Errorf("%s is required", name)
+	}
+	if len(namespace) > 63 || !k8sNamespacePattern.MatchString(namespace) {
+		return fmt.Errorf("%s contains invalid namespace %q", name, namespace)
+	}
+	return nil
+}
+
+func defaultList(values, defaults []string) []string {
+	if len(values) > 0 {
+		return values
+	}
+	return defaults
 }
