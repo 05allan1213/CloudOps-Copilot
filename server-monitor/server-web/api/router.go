@@ -139,7 +139,7 @@ func NewRouterWithRuntime(cfg config.Config, promClient *promclient.Client, cach
 			DashboardTTL: cfg.DashboardOverviewTTL,
 		})
 		copilotHostService := apphost.NewService(promClient, copilotCacheService, apphost.Options{
-			RequestTimeout: cfg.RequestTimeout,
+			RequestTimeout: cfg.CopilotToolDefaultTimeout,
 			CacheTimeout:   cfg.CacheWriteTimeout,
 		})
 		var tools copilotservice.ToolExecutor
@@ -225,6 +225,7 @@ func NewRouterWithRuntime(cfg config.Config, promClient *promclient.Client, cach
 		protected.GET("/api/v1/copilot/tools", copilotHandler.ListTools)
 		protected.POST("/api/v1/copilot/chat", copilotHandler.Chat)
 		protected.GET("/api/v1/copilot/sessions", copilotHandler.ListSessions)
+		protected.GET("/api/v1/copilot/sessions/:id", copilotHandler.GetSession)
 		protected.GET("/api/v1/copilot/sessions/:id/messages", copilotHandler.ListMessages)
 		protected.DELETE("/api/v1/copilot/sessions/:id", copilotHandler.DeleteSession)
 		protected.POST("/api/v1/diagnosis", diagnosisHandler.Trigger)
@@ -255,6 +256,7 @@ func NewRouterWithRuntime(cfg config.Config, promClient *promclient.Client, cach
 				OperationEventsEnabled: cfg.ActionOperationEventsEnabled,
 				StatusPushEnabled:      cfg.ActionStatusPushEnabled,
 				ActionExecutionEnabled: actionExecutionEnabled,
+				PendingTTL:             cfg.ActionPendingTTL,
 			})
 			actionHandler := copilotaction.NewHandler(actionService)
 			actionAdmin := router.Group("/api/v1")

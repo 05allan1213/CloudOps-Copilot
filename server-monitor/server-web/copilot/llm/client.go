@@ -16,6 +16,8 @@ import (
 
 const defaultMaxResponseBytes int64 = 64 * 1024
 const maxErrorResponseBytes int64 = 4 * 1024
+const maxRetries = 2
+const initialRetryBackoff = 500 * time.Millisecond
 
 var (
 	ErrDisabled        = errors.New("llm classifier disabled")
@@ -102,6 +104,40 @@ func (c *Client) Generate(ctx context.Context, systemPrompt, userPrompt string) 
 	if c == nil || c.apiKey == "" || c.apiURL == "" || c.model == "" {
 		return "", ErrDisabled
 	}
+
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			backoff := initialRetryBackoff * time.Duration(1<<(attempt-1))
+			timer := time.NewTimer(backoff)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return "", ctx.Err()
+			case <-timer.C:
+			}
+		}
+
+		result, err := c.doRequest(ctx, systemPrompt, userPrompt)
+		if err == nil {
+			return result, nil
+		}
+		lastErr = err
+		if !isRetryableError(err) {
+			return "", err
+		}
+	}
+	return "", lastErr
+}
+
+func isRetryableError(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return false
+	}
+	return true
+}
+
+func (c *Client) doRequest(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
@@ -234,7 +270,7 @@ func systemPrompt() string {
 		"You classify CloudOps Copilot user messages.",
 		"Return JSON only, without markdown.",
 		"Allowed intents: alert_query, alert_event_query, alert_history_query, diagnosis_request, host_query, metric_query, general_chat, unknown.",
-		"Allowed entities: instance, severity, status, window, query, count, alert_name, fingerprint, alert_history_id, page, page_size, search, sort, risk, group_id.",
+		"Allowed entities: instance, severity, status, window, query, count, alert_name, fingerprint, alert_history_id, page, page_size, search, sort, risk, group_id, namespace, metric_type, resource_type, resource_name.",
 		"Use query only for explicit PromQL or query_range requests.",
 		"Never return commands or write actions.",
 		`Example: {"intent":"host_query","confidence":0.7,"entities":{"status":"down"}}`,

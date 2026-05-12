@@ -88,6 +88,19 @@ func (h *Handler) ListSessions(c *gin.Context) {
 	})
 }
 
+func (h *Handler) GetSession(c *gin.Context) {
+	session, err := h.service.GetSession(c.Request.Context(), currentUser(c), c.Param("id"))
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, response{
+		Status: "success",
+		Data:   session,
+	})
+}
+
 func (h *Handler) ListMessages(c *gin.Context) {
 	messages, err := h.service.ListMessages(c.Request.Context(), currentUser(c), c.Param("id"))
 	if err != nil {

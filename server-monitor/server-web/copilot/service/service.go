@@ -240,6 +240,22 @@ func (s *Service) ListMessages(ctx context.Context, user User, sessionID string)
 	return s.store.ListMessages(ctx, sessionID)
 }
 
+func (s *Service) GetSession(ctx context.Context, user User, sessionID string) (SessionSummary, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return SessionSummary{}, ErrSessionRequired
+	}
+	meta, err := s.requireOwnedSession(ctx, user, sessionID)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	return SessionSummary{
+		ID:        meta.ID,
+		Title:     meta.Title,
+		UpdatedAt: meta.UpdatedAt.UTC().Format(time.RFC3339),
+	}, nil
+}
+
 func (s *Service) DeleteSession(ctx context.Context, user User, sessionID string) error {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
