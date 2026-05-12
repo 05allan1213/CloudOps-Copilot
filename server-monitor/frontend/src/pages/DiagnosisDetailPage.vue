@@ -19,6 +19,7 @@ const metrics = computed(() => report.value?.evidence?.metrics ?? []);
 const ruleResults = computed(() => report.value?.rule_analysis?.results ?? []);
 const actions = computed(() => report.value?.recommended_actions ?? []);
 const collectionErrors = computed(() => report.value?.evidence?.collection_errors ?? []);
+const k8sEvidence = computed(() => report.value?.evidence?.k8s);
 const runbooks = computed(() => {
   const direct = report.value?.runbooks ?? [];
   if (direct.length > 0) return direct;
@@ -165,6 +166,72 @@ onMounted(loadReport);
             <p>{{ rule.detail }}</p>
           </div>
         </div>
+      </section>
+
+      <section class="panel">
+        <h3>K8s 证据</h3>
+        <div v-if="!k8sEvidence?.enabled" class="empty-line">当前诊断未采集 K8s 证据。</div>
+        <template v-else>
+          <div class="k8s-head">
+            <span>{{ k8sEvidence.namespace || "-" }}</span>
+            <strong>{{ k8sEvidence.target_kind || "-" }} / {{ k8sEvidence.target_name || "-" }}</strong>
+            <small>{{ formatTime(k8sEvidence.collected_at) }}</small>
+          </div>
+          <div v-if="k8sEvidence.deployments?.length" class="mini-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Deployment</th>
+                  <th>ready</th>
+                  <th>updated</th>
+                  <th>available</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="deployment in k8sEvidence.deployments" :key="deployment.name">
+                  <td>{{ deployment.namespace }}/{{ deployment.name }}</td>
+                  <td>{{ deployment.ready_replicas }}/{{ deployment.replicas }}</td>
+                  <td>{{ deployment.updated_replicas }}</td>
+                  <td>{{ deployment.available_replicas }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div v-if="k8sEvidence.pods?.length" class="mini-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Pod</th>
+                  <th>phase</th>
+                  <th>ready</th>
+                  <th>restarts</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="pod in k8sEvidence.pods" :key="pod.name">
+                  <td>{{ pod.namespace }}/{{ pod.name }}</td>
+                  <td>{{ pod.phase }}</td>
+                  <td>{{ pod.ready_containers }}/{{ pod.total_containers }}</td>
+                  <td>{{ pod.restart_count }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <ul v-if="k8sEvidence.events?.length" class="error-list">
+            <li v-for="event in k8sEvidence.events" :key="`${event.name}-${event.reason}`">
+              {{ event.type || "Event" }} · {{ event.reason || "-" }} · {{ event.message || event.name }}
+            </li>
+          </ul>
+          <details v-for="log in k8sEvidence.logs" :key="`${log.namespace}-${log.pod_name}-${log.container}`" class="runbook-snippet">
+            <summary>{{ log.namespace }}/{{ log.pod_name }}{{ log.container ? ` · ${log.container}` : "" }} 日志</summary>
+            <pre>{{ (log.lines || []).join("\n") }}</pre>
+          </details>
+          <ul v-if="k8sEvidence.errors?.length" class="error-list">
+            <li v-for="item in k8sEvidence.errors" :key="`${item.source}-${item.error}`">
+              {{ item.source }}：{{ item.error }}
+            </li>
+          </ul>
+        </template>
       </section>
 
       <section class="panel">
@@ -320,6 +387,22 @@ h3 {
 table {
   width: 100%;
   border-collapse: collapse;
+}
+
+.mini-table-wrap {
+  margin-top: 0.75rem;
+}
+
+.k8s-head {
+  display: flex;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.k8s-head strong {
+  color: var(--text-secondary);
 }
 
 th,

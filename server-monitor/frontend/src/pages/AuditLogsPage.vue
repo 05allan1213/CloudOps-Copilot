@@ -12,10 +12,27 @@ const filters = reactive({
   result: "",
   actor: "",
 });
+const actionOptions = [
+  { value: "", label: "全部动作" },
+  { value: "action.create_pending", label: "创建待审批" },
+  { value: "action.approve", label: "审批通过" },
+  { value: "action.reject", label: "审批拒绝" },
+  { value: "action.execute", label: "执行动作" },
+  { value: "k8s.restart_deployment", label: "K8s 重启 Deployment" },
+  { value: "k8s.scale_deployment", label: "K8s 扩缩 Deployment" },
+];
 
 function formatTime(value?: string) {
   if (!value) return "-";
   return new Date(value).toLocaleString("zh-CN", { hour12: false });
+}
+
+function requestActionType(log: AuditLog): string {
+  const request = log.request;
+  if (!request || typeof request.action_type !== "string") {
+    return "-";
+  }
+  return request.action_type;
 }
 
 async function loadLogs() {
@@ -50,7 +67,11 @@ onMounted(loadLogs);
     </header>
 
     <section class="toolbar">
-      <input v-model.trim="filters.action" placeholder="action" @keydown.enter="loadLogs" />
+      <select v-model="filters.action" @change="loadLogs">
+        <option v-for="option in actionOptions" :key="option.value" :value="option.value">
+          {{ option.label }}
+        </option>
+      </select>
       <select v-model="filters.result" @change="loadLogs">
         <option value="">全部结果</option>
         <option value="success">success</option>
@@ -72,6 +93,7 @@ onMounted(loadLogs);
             <th>时间</th>
             <th>操作者</th>
             <th>动作</th>
+            <th>动作类型</th>
             <th>资源</th>
             <th>结果</th>
             <th>trace_id</th>
@@ -83,13 +105,14 @@ onMounted(loadLogs);
             <td>{{ formatTime(log.created_at) }}</td>
             <td>{{ log.actor }} · {{ log.actor_role }}</td>
             <td class="mono-cell">{{ log.action }}</td>
+            <td class="mono-cell">{{ requestActionType(log) }}</td>
             <td>{{ log.resource_type }} #{{ log.resource_id }}</td>
             <td :class="`result-${log.result}`">{{ log.result }}</td>
             <td class="mono-cell">{{ log.trace_id || "-" }}</td>
             <td class="error-cell">{{ log.error_message || "-" }}</td>
           </tr>
           <tr v-if="logs.length === 0">
-            <td colspan="7" class="empty-line">暂无审计日志</td>
+            <td colspan="8" class="empty-line">暂无审计日志</td>
           </tr>
         </tbody>
       </table>

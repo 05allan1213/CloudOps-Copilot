@@ -23,6 +23,20 @@ function formatJSON(value: unknown) {
   return JSON.stringify(value ?? {}, null, 2);
 }
 
+const resultSummary = computed(() => {
+  const result = action.value?.result;
+  if (!result) return [];
+  return [
+    ["目标", result.target],
+    ["旧副本数", result.old_replicas],
+    ["新副本数", result.new_replicas ?? result.replicas],
+    ["Ready 副本", result.ready_replicas],
+    ["旧重启标记", result.old_annotation],
+    ["新重启标记", result.new_annotation],
+    ["消息", result.message],
+  ].filter((item): item is [string, string | number | boolean] => item[1] !== undefined && item[1] !== null && item[1] !== "");
+});
+
 async function loadAction() {
   if (!Number.isFinite(actionID.value) || actionID.value <= 0) {
     error.value = "无效动作 ID";
@@ -108,6 +122,12 @@ onMounted(loadAction);
 
       <section class="panel">
         <h3>执行结果</h3>
+        <div v-if="resultSummary.length" class="result-grid">
+          <div v-for="[label, value] in resultSummary" :key="label">
+            <span>{{ label }}</span>
+            <strong>{{ value }}</strong>
+          </div>
+        </div>
         <pre>{{ formatJSON(action.result) }}</pre>
         <p v-if="action.error_message" class="error-text">{{ action.error_message }}</p>
       </section>
@@ -149,6 +169,26 @@ onMounted(loadAction);
 .info-grid div {
   display: grid;
   gap: 0.25rem;
+}
+
+.result-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.6rem;
+  margin-bottom: 0.8rem;
+}
+
+.result-grid div {
+  display: grid;
+  gap: 0.2rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 0.55rem;
+}
+
+.result-grid span {
+  color: var(--text-muted);
+  font-size: 0.72rem;
 }
 
 .info-grid span,

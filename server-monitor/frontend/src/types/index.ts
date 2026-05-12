@@ -179,6 +179,67 @@ export interface DiagnosisMetricEvidence {
   collected_at?: string;
 }
 
+export interface K8sPodSummary {
+  namespace: string;
+  name: string;
+  phase: string;
+  ready_containers: number;
+  total_containers: number;
+  restart_count: number;
+  node_name?: string;
+  pod_ip?: string;
+  owner_kind?: string;
+  owner_name?: string;
+  start_time?: string;
+  collected_at?: string;
+}
+
+export interface K8sDeploymentSummary {
+  namespace: string;
+  name: string;
+  replicas: number;
+  ready_replicas: number;
+  updated_replicas: number;
+  available_replicas: number;
+  strategy?: string;
+  collected_at?: string;
+}
+
+export interface K8sEventSummary {
+  namespace?: string;
+  name: string;
+  type?: string;
+  reason?: string;
+  message?: string;
+  involved_kind?: string;
+  involved_name?: string;
+  count?: number;
+  last_seen?: string;
+  collected_at?: string;
+}
+
+export interface K8sLogSnippet {
+  namespace: string;
+  pod_name: string;
+  container?: string;
+  lines: string[];
+  truncated: boolean;
+  collected_at?: string;
+}
+
+export interface K8sEvidence {
+  enabled: boolean;
+  namespace?: string;
+  target_kind?: string;
+  target_name?: string;
+  pods?: K8sPodSummary[];
+  deployments?: K8sDeploymentSummary[];
+  events?: K8sEventSummary[];
+  logs?: K8sLogSnippet[];
+  errors?: Array<{ source: string; error: string }>;
+  collected_at?: string;
+}
+
 export interface DiagnosisRuleResult {
   rule: string;
   passed: boolean;
@@ -297,6 +358,7 @@ export interface DiagnosisEvidence {
   metrics?: DiagnosisMetricEvidence[];
   history?: Record<string, unknown>[];
   runbooks?: RunbookEvidence[];
+  k8s?: K8sEvidence;
   collection_errors?: Array<{ source: string; error: string }>;
   collected_at?: string;
 }

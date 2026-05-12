@@ -191,6 +191,59 @@ function toolResultPreview(value: unknown): string {
   return text.length > 420 ? `${text.slice(0, 420)}...` : text;
 }
 
+function isK8sTool(tool: CopilotToolCall): boolean {
+  return tool.name.startsWith("k8s.");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function k8sRecords(value: unknown): Record<string, unknown>[] {
+  if (Array.isArray(value)) {
+    return value.filter(isRecord);
+  }
+  return isRecord(value) ? [value] : [];
+}
+
+function k8sColumns(toolName: string): string[] {
+  switch (toolName) {
+    case "k8s.get_pods":
+      return ["namespace", "name", "phase", "ready_containers", "total_containers", "restart_count", "node_name"];
+    case "k8s.get_deployments":
+      return ["namespace", "name", "replicas", "ready_replicas", "updated_replicas", "available_replicas"];
+    case "k8s.get_services":
+      return ["namespace", "name", "type", "cluster_ip", "ports"];
+    case "k8s.get_nodes":
+      return ["name", "ready", "kubelet_version", "os_image"];
+    case "k8s.get_events":
+      return ["namespace", "type", "reason", "involved_kind", "involved_name", "message"];
+    default:
+      return [];
+  }
+}
+
+function k8sValue(row: Record<string, unknown>, key: string): string {
+  const value = row[key];
+  if (value === undefined || value === null || value === "") {
+    return "-";
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item)).join(", ");
+  }
+  if (typeof value === "object") {
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+function k8sLogLines(value: unknown): string[] {
+  if (!isRecord(value) || !Array.isArray(value.lines)) {
+    return [];
+  }
+  return value.lines.map((line) => String(line));
+}
+
 function diagnosisReportId(message: LocalMessage): number | null {
   const result = message.tool_calls?.find((tool) => tool.name === "diagnosis.trigger" && tool.status === "success")?.result;
   if (result && typeof result === "object" && "id" in result) {
@@ -297,6 +350,26 @@ function normalizeError(err: unknown): string {
                   <strong>{{ tool.status }}</strong>
                 </summary>
                 <pre v-if="tool.error">{{ tool.error }}</pre>
+                <div v-else-if="isK8sTool(tool)" class="k8s-tool-result">
+                  <div v-if="k8sLogLines(tool.result).length" class="k8s-log-lines">
+                    <code v-for="(line, lineIndex) in k8sLogLines(tool.result)" :key="lineIndex">{{ line }}</code>
+                  </div>
+                  <table v-else-if="k8sRecords(tool.result).length && k8sColumns(tool.name).length">
+                    <thead>
+                      <tr>
+                        <th v-for="column in k8sColumns(tool.name)" :key="column">{{ column }}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="(row, rowIndex) in k8sRecords(tool.result)" :key="rowIndex">
+                        <td v-for="column in k8sColumns(tool.name)" :key="column">
+                          {{ k8sValue(row, column) }}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                  <div v-else class="empty-inline">暂无 K8s 结果</div>
+                </div>
                 <pre v-else>{{ toolResultPreview(tool.result) }}</pre>
               </details>
             </div>
@@ -585,6 +658,46 @@ function normalizeError(err: unknown): string {
   font-size: 0.72rem;
   line-height: 1.45;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.k8s-tool-result {
+  max-height: 240px;
+  overflow: auto;
+  border-top: 1px solid var(--border-color);
+  padding: 0.65rem;
+}
+
+.k8s-tool-result table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.72rem;
+}
+
+.k8s-tool-result th,
+.k8s-tool-result td {
+  border-bottom: 1px solid var(--border-color);
+  padding: 0.38rem;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.k8s-tool-result th {
+  color: var(--text-secondary);
+  font-weight: 700;
+}
+
+.k8s-log-lines {
+  display: grid;
+  gap: 0.25rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.72rem;
+}
+
+.k8s-log-lines code,
+.empty-inline {
+  color: var(--text-muted);
   overflow-wrap: anywhere;
 }
 
