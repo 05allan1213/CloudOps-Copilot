@@ -43,6 +43,16 @@ data:
   ACTION_PENDING_TTL_HOURS: {{ .Values.config.actionPendingTTLHours | quote }}
   ACTION_OPERATION_EVENTS_ENABLED: {{ .Values.config.actionOperationEventsEnabled | quote }}
   ACTION_STATUS_PUSH_ENABLED: {{ .Values.config.actionStatusPushEnabled | quote }}
+  K8S_ENABLED: {{ .Values.k8sIntegration.enabled | quote }}
+  K8S_WRITE_ENABLED: {{ .Values.k8sIntegration.writeEnabled | quote }}
+  K8S_IN_CLUSTER: {{ .Values.k8sIntegration.inCluster | quote }}
+  K8S_KUBECONFIG: {{ .Values.k8sIntegration.kubeconfig | quote }}
+  K8S_ALLOWED_NAMESPACES: {{ join "," .Values.k8sIntegration.allowedNamespaces | quote }}
+  K8S_DEFAULT_NAMESPACE: {{ .Values.k8sIntegration.defaultNamespace | quote }}
+  K8S_REQUEST_TIMEOUT_SECONDS: {{ .Values.k8sIntegration.requestTimeoutSeconds | quote }}
+  K8S_LOG_TAIL_LINES: {{ .Values.k8sIntegration.logTailLines | quote }}
+  K8S_LOG_MAX_BYTES: {{ .Values.k8sIntegration.logMaxBytes | quote }}
+  K8S_EVENT_LIMIT: {{ .Values.k8sIntegration.eventLimit | quote }}
   COPILOT_SESSION_TTL_SECONDS: {{ .Values.config.copilotSessionTTLSeconds | quote }}
   COPILOT_MAX_MESSAGE_LENGTH: {{ .Values.config.copilotMaxMessageLength | quote }}
   COPILOT_MAX_SESSION_MESSAGES: {{ .Values.config.copilotMaxSessionMessages | quote }}

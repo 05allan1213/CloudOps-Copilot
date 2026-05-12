@@ -22,6 +22,7 @@ spec:
       labels:
         app: server-web
     spec:
+      serviceAccountName: cloudops-copilot
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -287,6 +288,56 @@ spec:
                 configMapKeyRef:
                   name: monitor-config
                   key: ACTION_STATUS_PUSH_ENABLED
+            - name: K8S_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: K8S_ENABLED
+            - name: K8S_WRITE_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: K8S_WRITE_ENABLED
+            - name: K8S_IN_CLUSTER
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: K8S_IN_CLUSTER
+            - name: K8S_KUBECONFIG
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: K8S_KUBECONFIG
+            - name: K8S_ALLOWED_NAMESPACES
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: K8S_ALLOWED_NAMESPACES
+            - name: K8S_DEFAULT_NAMESPACE
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: K8S_DEFAULT_NAMESPACE
+            - name: K8S_REQUEST_TIMEOUT_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: K8S_REQUEST_TIMEOUT_SECONDS
+            - name: K8S_LOG_TAIL_LINES
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: K8S_LOG_TAIL_LINES
+            - name: K8S_LOG_MAX_BYTES
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: K8S_LOG_MAX_BYTES
+            - name: K8S_EVENT_LIMIT
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: K8S_EVENT_LIMIT
             - name: COPILOT_SESSION_TTL_SECONDS
               valueFrom:
                 configMapKeyRef:

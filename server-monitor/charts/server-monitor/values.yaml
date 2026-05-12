@@ -56,6 +56,22 @@ config:
   runbookMaxFileBytes: "65536"
   runbookSearchTopN: "2"
 
+k8sIntegration:
+  enabled: false
+  writeEnabled: false
+  inCluster: true
+  kubeconfig: ""
+  allowedNamespaces:
+    - default
+  defaultNamespace: default
+  requestTimeoutSeconds: "10"
+  logTailLines: "100"
+  logMaxBytes: "32768"
+  eventLimit: "50"
+  rbac:
+    create: true
+    bindWriteRole: false
+
 secret:
   create: true
   name: monitor-secret
