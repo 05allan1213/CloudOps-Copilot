@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import { approveAction, executeAction, getAction, rejectAction } from "../api/actions";
+import { formatTime } from "../utils/format";
 import type { PendingAction } from "../types";
 
 const route = useRoute();
@@ -13,11 +14,6 @@ const acting = ref(false);
 const error = ref("");
 
 const actionID = computed(() => Number(route.params.id));
-
-function formatTime(value?: string) {
-  if (!value) return "-";
-  return new Date(value).toLocaleString("zh-CN", { hour12: false });
-}
 
 function formatJSON(value: unknown) {
   return JSON.stringify(value ?? {}, null, 2);

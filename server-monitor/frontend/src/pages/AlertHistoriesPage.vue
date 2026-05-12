@@ -5,6 +5,7 @@ import { useRouter } from "vue-router";
 import { fetchAlertHistories, type AlertHistoryQuery } from "../api/alertHistories";
 import { createDiagnosis } from "../api/diagnosis";
 import { fetchHostGroups } from "../api/hostGroups";
+import { formatTime } from "../utils/format";
 import type { AlertHistory, AlertHistoryListResponse, HostGroup } from "../types";
 
 const router = useRouter();
@@ -43,11 +44,6 @@ function severityLabel(value: string) {
     default:
       return value || "-";
   }
-}
-
-function formatTime(value?: string) {
-  if (!value) return "-";
-  return new Date(value).toLocaleString("zh-CN", { hour12: false });
 }
 
 async function loadGroups() {

@@ -3,6 +3,7 @@ import { computed } from "vue";
 import { RouterLink } from "vue-router";
 
 import type { Host } from "../types";
+import { formatTime } from "../utils/format";
 
 const props = defineProps<{
   host: Host;
@@ -90,14 +91,6 @@ function hostRiskHint(host: Host): string {
 
 function isHostUp(status: string): boolean {
   return status === "up";
-}
-
-function formatTime(iso: string): string {
-  try {
-    return new Date(iso).toLocaleString("zh-CN");
-  } catch {
-    return iso;
-  }
 }
 </script>
 

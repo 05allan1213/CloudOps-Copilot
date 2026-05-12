@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from "vue";
 
 import { fetchDashboardOverview } from "../api/hosts";
 import { fetchHealthz, fetchReadyz } from "../api/status";
+import { formatTime } from "../utils/format";
 import type {
   ApiResponse,
   DashboardOverview,
@@ -78,13 +79,6 @@ function depLabel(value: string | undefined): string {
 
 function formatPercent(value: number | undefined): string {
   return value === undefined ? "--" : `${value.toFixed(1)}%`;
-}
-
-function formatTime(value: string | undefined): string {
-  if (!value) {
-    return "--";
-  }
-  return new Date(value).toLocaleString("zh-CN");
 }
 </script>
 

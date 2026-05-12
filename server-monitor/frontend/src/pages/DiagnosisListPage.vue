@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from "vue";
 import { RouterLink } from "vue-router";
 
 import { fetchDiagnosisList, type DiagnosisQuery } from "../api/diagnosis";
+import { formatTime } from "../utils/format";
 import type { DiagnosisListResponse } from "../types";
 
 const reports = ref<DiagnosisListResponse>({
@@ -54,11 +55,6 @@ function triggerLabel(value: string) {
 
 function formatPercent(value: number) {
   return `${Math.round(value * 100)}%`;
-}
-
-function formatTime(value?: string) {
-  if (!value) return "-";
-  return new Date(value).toLocaleString("zh-CN", { hour12: false });
 }
 
 async function loadReports() {

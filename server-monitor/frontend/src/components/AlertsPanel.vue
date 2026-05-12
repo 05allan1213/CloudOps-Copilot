@@ -2,6 +2,7 @@
 import { RouterLink } from "vue-router";
 
 import type { AlertRecord } from "../types";
+import { formatTime, severityClass } from "../utils/format";
 
 type SeverityFilter = "all" | "critical" | "warning" | "info";
 
@@ -18,17 +19,6 @@ const emit = defineEmits<{
   diagnose: [alert: AlertRecord];
 }>();
 
-function severityClass(severity: string | undefined): string {
-  switch (severity ?? "info") {
-    case "critical":
-      return "severity-critical";
-    case "warning":
-      return "severity-warning";
-    default:
-      return "severity-info";
-  }
-}
-
 function severityLabel(severity: string | undefined): string {
   switch (severity ?? "info") {
     case "critical":
@@ -37,14 +27,6 @@ function severityLabel(severity: string | undefined): string {
       return "警告";
     default:
       return "提示";
-  }
-}
-
-function formatTime(iso: string): string {
-  try {
-    return new Date(iso).toLocaleString("zh-CN");
-  } catch {
-    return iso;
   }
 }
 

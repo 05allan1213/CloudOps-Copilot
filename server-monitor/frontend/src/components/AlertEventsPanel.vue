@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { AlertEvent } from "../types";
+import { formatTime, severityClass } from "../utils/format";
 
 type EventStatusFilter = "all" | "firing" | "resolved";
 type SeverityFilter = "all" | "critical" | "warning" | "info";
@@ -15,17 +16,6 @@ const emit = defineEmits<{
   statusChange: [value: EventStatusFilter];
   severityChange: [value: SeverityFilter];
 }>();
-
-function severityClass(severity: string | undefined): string {
-  switch (severity ?? "info") {
-    case "critical":
-      return "severity-critical";
-    case "warning":
-      return "severity-warning";
-    default:
-      return "severity-info";
-  }
-}
 
 function severityLabel(severity: string | undefined): string {
   switch (severity ?? "info") {
@@ -44,14 +34,6 @@ function eventStatusLabel(status: AlertEvent["status"]): string {
 
 function eventStatusClass(status: AlertEvent["status"]): string {
   return status === "resolved" ? "event-status-resolved" : "event-status-firing";
-}
-
-function formatTime(iso: string): string {
-  try {
-    return new Date(iso).toLocaleString("zh-CN");
-  } catch {
-    return iso;
-  }
 }
 </script>
 

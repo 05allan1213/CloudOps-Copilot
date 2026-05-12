@@ -4,6 +4,7 @@ import { useRoute } from "vue-router";
 
 import { createActionsFromDiagnosis } from "../api/actions";
 import { fetchDiagnosis } from "../api/diagnosis";
+import { formatTime } from "../utils/format";
 import { useAuthStore } from "../stores/auth";
 import type { DiagnosisReport } from "../types";
 
@@ -28,11 +29,6 @@ const runbooks = computed(() => {
 
 function formatPercent(value?: number) {
   return `${Math.round((value ?? 0) * 100)}%`;
-}
-
-function formatTime(value?: string) {
-  if (!value) return "-";
-  return new Date(value).toLocaleString("zh-CN", { hour12: false });
 }
 
 function formatJSON(value: unknown) {
