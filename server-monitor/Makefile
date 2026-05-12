@@ -41,17 +41,17 @@ dev-deps:
 	docker compose up -d redis prometheus alertmanager grafana server-probe
 	@echo "依赖服务已启动"
 	@echo "  Redis:        localhost:6379"
-	@echo "  Prometheus:   http://localhost:9091"
+	@echo "  Prometheus:   http://localhost:9090"
 	@echo "  AlertManager: http://localhost:9093"
 	@echo "  Grafana:      http://localhost:3000"
-	@echo "  server-probe: http://localhost:9090"
+	@echo "  server-probe: http://localhost:8082"
 	@echo "提示: Prometheus 首次抓取和规则加载通常需要 15-30 秒"
 
 dev-web:
 	@echo "本地启动 server-web..."
-	@echo "环境变量: PROMETHEUS_URL=http://localhost:9091 REDIS_ADDR=localhost:6379 REDIS_PASSWORD=server-monitor-local-redis"
+	@echo "环境变量: PROMETHEUS_URL=http://localhost:9090 REDIS_ADDR=localhost:6379 REDIS_PASSWORD=server-monitor-local-redis"
 	@echo "访问地址: http://localhost:8080/healthz 和 http://localhost:8080/readyz"
-	cd server-web && PROMETHEUS_URL=http://localhost:9091 REDIS_ADDR=localhost:6379 REDIS_PASSWORD=server-monitor-local-redis GIN_MODE=debug go run main.go
+	cd server-web && PROMETHEUS_URL=http://localhost:9090 REDIS_ADDR=localhost:6379 REDIS_PASSWORD=server-monitor-local-redis GIN_MODE=debug go run main.go
 
 dev-frontend:
 	@echo "本地启动前端开发服务器..."
@@ -76,7 +76,7 @@ docker-up:
 	docker compose up -d
 	@echo "服务已启动"
 	@echo "  监控大屏:     http://localhost:8080"
-	@echo "  Prometheus:   http://localhost:9091"
+	@echo "  Prometheus:   http://localhost:9090"
 	@echo "  AlertManager: http://localhost:9093"
 	@echo "  Grafana:      http://localhost:3000"
 	@echo "  Elasticsearch:http://localhost:9200"
