@@ -257,12 +257,13 @@ func initDiagnosisConsumer(cfg config.Config, redisClient *rediscache.Client, ru
 		notifier = copilotdiagnosis.NewWebSocketNotifier(hub)
 	}
 	worker := copilotdiagnosis.NewWorker(copilotdiagnosis.WorkerConfig{
-		Service:   runtime.DiagnosisService,
-		TaskStore: copilotdiagnosis.NewRedisTaskStore(redisClient, nil),
-		Notifier:  notifier,
-		Timeout:   cfg.DiagnosisTaskTimeout,
-		TTL:       cfg.DiagnosisTaskTTL,
-		Logger:    zap.L(),
+		Service:     runtime.DiagnosisService,
+		TaskStore:   copilotdiagnosis.NewRedisTaskStore(redisClient, nil),
+		Notifier:    notifier,
+		Timeout:     cfg.DiagnosisTaskTimeout,
+		TTL:         cfg.DiagnosisTaskTTL,
+		Concurrency: cfg.DiagnosisWorkerCount,
+		Logger:      zap.L(),
 	})
 	consumer, err := eventbus.NewConsumer(cfg.KafkaBrokers, cfg.DiagnosisKafkaGroupID, worker)
 	if err != nil {
@@ -340,7 +341,14 @@ func startBackgroundTasks(app *app) {
 		}
 	}()
 
-	go broadcastHosts(app.ctx, app.prometheusClient, app.websocketHub, app.cfg.RequestTimeout, app.cfg.HostsBroadcastInterval)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				zap.L().Error("broadcastHosts goroutine recovered from panic", zap.Any("panic", r))
+			}
+		}()
+		broadcastHosts(app.ctx, app.prometheusClient, app.websocketHub, app.cfg.RequestTimeout, app.cfg.HostsBroadcastInterval)
+	}()
 
 	if app.diagnosisConsumer != nil {
 		done := make(chan struct{})

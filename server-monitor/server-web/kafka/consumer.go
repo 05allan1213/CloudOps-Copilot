@@ -122,7 +122,7 @@ func NewConsumer(brokers []string, groupID string, processor AlertProcessor) (*C
 func newConsumerConfig() *sarama.Config {
 	config := sarama.NewConfig()
 	config.Consumer.Group.Rebalance.GroupStrategies = []sarama.BalanceStrategy{sarama.NewBalanceStrategyRange()}
-	config.Consumer.Offsets.Initial = sarama.OffsetNewest
+	config.Consumer.Offsets.Initial = sarama.OffsetOldest
 	return config
 }
 
