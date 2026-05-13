@@ -245,6 +245,7 @@ func isAllowedIntent(intent string) bool {
 	case nlu.IntentAlertQuery,
 		nlu.IntentAlertEventQuery,
 		nlu.IntentAlertHistoryQuery,
+		nlu.IntentAlertRuleListQuery,
 		nlu.IntentHostQuery,
 		nlu.IntentMetricQuery,
 		nlu.IntentDiagnosisRequest,
@@ -258,7 +259,7 @@ func isAllowedIntent(intent string) bool {
 
 func isAllowedEntity(key string) bool {
 	switch key {
-	case "instance", "severity", "status", "window", "query", "count", "alert_name", "fingerprint", "alert_history_id", "page", "page_size", "search", "sort", "risk", "group_id":
+	case "instance", "severity", "status", "window", "query", "count", "alert_name", "fingerprint", "alert_history_id", "page", "page_size", "search", "sort", "risk", "group_id", "enabled", "metric_keywords", "namespace", "metric_type", "resource_type", "resource_name":
 		return true
 	default:
 		return false
@@ -269,7 +270,7 @@ func systemPrompt() string {
 	return strings.Join([]string{
 		"You classify CloudOps Copilot user messages.",
 		"Return JSON only, without markdown.",
-		"Allowed intents: alert_query, alert_event_query, alert_history_query, diagnosis_request, host_query, metric_query, general_chat, unknown.",
+		"Allowed intents: alert_query, alert_event_query, alert_history_query, alert_rule_list_query, diagnosis_request, host_query, metric_query, general_chat, unknown.",
 		"Allowed entities: instance, severity, status, window, query, count, alert_name, fingerprint, alert_history_id, page, page_size, search, sort, risk, group_id, namespace, metric_type, resource_type, resource_name.",
 		"Use query only for explicit PromQL or query_range requests.",
 		"Never return commands or write actions.",
