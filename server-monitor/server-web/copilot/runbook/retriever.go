@@ -129,10 +129,6 @@ func (r *Retriever) Search(ctx context.Context, req SearchRequest) ([]SearchResu
 		})
 	}
 
-	if len(results) > limit {
-		results = results[:limit]
-	}
-
 	if req.Rerank && r.reranker != nil && len(results) > 0 {
 		var queryParts []string
 		if alertName != "" {
@@ -145,6 +141,10 @@ func (r *Retriever) Search(ctx context.Context, req SearchRequest) ([]SearchResu
 		if rerankErr == nil && len(reranked) > 0 {
 			results = reranked
 		}
+	}
+
+	if len(results) > limit {
+		results = results[:limit]
 	}
 
 	if r.observer != nil {

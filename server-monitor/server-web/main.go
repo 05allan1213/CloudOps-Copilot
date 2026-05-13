@@ -71,7 +71,10 @@ func main() {
 	}
 	defer logger.Sync(log)
 
-	app, err := initApp(context.Background())
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	app, err := initApp(ctx)
 	if err != nil {
 		zap.L().Error("server-web init failed", zap.Error(err))
 		os.Exit(1)
@@ -126,7 +129,7 @@ func initApp(ctx context.Context) (*app, error) {
 	alertHub := pubsub.NewHub(64)
 	websocketHub := ws.NewHub(cfg.WSMaxConnections, cfg.CORSOrigins)
 
-	router, copilotRuntime, err := api.NewRouterWithRuntime(cfg, prometheusClient, redisClient, mysqlClient, authService, websocketHub, kafkaProducer)
+	router, copilotRuntime, err := api.NewRouterWithRuntime(ctx, cfg, prometheusClient, redisClient, mysqlClient, authService, websocketHub, kafkaProducer)
 	if err != nil {
 		return nil, fmt.Errorf("create router: %w", err)
 	}
@@ -135,7 +138,7 @@ func initApp(ctx context.Context) (*app, error) {
 		return nil, err
 	}
 
-	appCtx, cancel := context.WithCancel(context.Background())
+	appCtx, cancel := context.WithCancel(ctx)
 	return &app{
 		cfg:               cfg,
 		shutdownTracer:    shutdownTracer,
@@ -296,6 +299,8 @@ func runApp(app *app) int {
 	select {
 	case sig := <-quit:
 		zap.L().Info("server-web received shutdown signal", zap.String("signal", sig.String()))
+	case <-app.ctx.Done():
+		zap.L().Info("server-web context canceled")
 	case err := <-serverErr:
 		exitCode = 1
 		zap.L().Error("server-web exited", zap.Error(err))

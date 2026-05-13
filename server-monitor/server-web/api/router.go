@@ -52,12 +52,12 @@ type CopilotRuntime struct {
 	KafkaObserver    eventbus.ConsumerObserver
 }
 
-func NewRouter(cfg config.Config, promClient *promclient.Client, cacheClient *rediscache.Client, mysqlClient *database.MySQL, authService authService, websocketHub *ws.Hub, alertProducer *eventbus.Producer) (*gin.Engine, error) {
-	router, _, err := NewRouterWithRuntime(cfg, promClient, cacheClient, mysqlClient, authService, websocketHub, alertProducer)
+func NewRouter(ctx context.Context, cfg config.Config, promClient *promclient.Client, cacheClient *rediscache.Client, mysqlClient *database.MySQL, authService authService, websocketHub *ws.Hub, alertProducer *eventbus.Producer) (*gin.Engine, error) {
+	router, _, err := NewRouterWithRuntime(ctx, cfg, promClient, cacheClient, mysqlClient, authService, websocketHub, alertProducer)
 	return router, err
 }
 
-func NewRouterWithRuntime(cfg config.Config, promClient *promclient.Client, cacheClient *rediscache.Client, mysqlClient *database.MySQL, authService authService, websocketHub *ws.Hub, alertProducer *eventbus.Producer) (*gin.Engine, *CopilotRuntime, error) {
+func NewRouterWithRuntime(ctx context.Context, cfg config.Config, promClient *promclient.Client, cacheClient *rediscache.Client, mysqlClient *database.MySQL, authService authService, websocketHub *ws.Hub, alertProducer *eventbus.Producer) (*gin.Engine, *CopilotRuntime, error) {
 	router := gin.New()
 	metrics := middleware.NewMetrics()
 	if websocketHub != nil {
@@ -174,7 +174,9 @@ func NewRouterWithRuntime(cfg config.Config, promClient *promclient.Client, cach
 				Dimensions: cfg.EmbeddingDims,
 			})
 			var buildErr error
-			runbookVectorStore, buildErr = buildRunbookVectorStore(context.Background(), runbookDocs, runbookEmbedder, cfg.EmbeddingIndexBuildTimeout)
+			buildCtx, buildCancel := context.WithTimeout(ctx, cfg.EmbeddingIndexBuildTimeout)
+			runbookVectorStore, buildErr = buildRunbookVectorStore(buildCtx, runbookDocs, runbookEmbedder, &buildIndexLogger{})
+			buildCancel()
 			if buildErr != nil {
 				zap.L().Warn("failed to build runbook vector index, falling back to structured+BM25", zap.Error(buildErr))
 				runbookVectorStore = nil
@@ -441,15 +443,13 @@ func limitRequestBody(maxBytes int64) gin.HandlerFunc {
 	}
 }
 
-func buildRunbookVectorStore(ctx context.Context, docs []copilotrunbook.Document, embedder *copilotrunbook.Embedder, timeout time.Duration) (*copilotrunbook.MemoryVectorStore, error) {
+func buildRunbookVectorStore(ctx context.Context, docs []copilotrunbook.Document, embedder *copilotrunbook.Embedder, observers ...copilotrunbook.BuildIndexObserver) (*copilotrunbook.MemoryVectorStore, error) {
 	if embedder == nil {
 		return nil, nil
 	}
-	buildCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
 
 	chunks := copilotrunbook.ChunkDocuments(docs)
-	store, err := copilotrunbook.BuildMemoryIndex(buildCtx, embedder, chunks)
+	store, err := copilotrunbook.BuildMemoryIndex(ctx, embedder, chunks, observers...)
 	if err != nil {
 		return nil, fmt.Errorf("build runbook vector index: %w", err)
 	}
@@ -465,6 +465,12 @@ func buildRunbookReranker(cfg config.Config, llmClient *copilotllm.Client) *copi
 		TopN:    cfg.RerankerTopN,
 		Timeout: cfg.RerankerTimeout,
 	})
+}
+
+type buildIndexLogger struct{}
+
+func (l *buildIndexLogger) ObserveBuildIndexBatchError(batchStart, batchEnd int, err error) {
+	zap.L().Warn("runbook embedding batch failed", zap.Int("batch_start", batchStart), zap.Int("batch_end", batchEnd), zap.Error(err))
 }
 
 func k8sConfigFromApp(cfg config.Config) copilotk8s.Config {

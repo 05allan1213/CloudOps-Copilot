@@ -26,7 +26,7 @@ func NewMemoryVectorStore(dims int) *MemoryVectorStore {
 	return &MemoryVectorStore{dims: dims}
 }
 
-func BuildMemoryIndex(ctx context.Context, embedder EmbeddingClient, chunks []Chunk) (*MemoryVectorStore, error) {
+func BuildMemoryIndex(ctx context.Context, embedder EmbeddingClient, chunks []Chunk, observers ...BuildIndexObserver) (*MemoryVectorStore, error) {
 	if embedder == nil {
 		return nil, fmt.Errorf("embedder is nil")
 	}
@@ -52,7 +52,9 @@ func BuildMemoryIndex(ctx context.Context, embedder EmbeddingClient, chunks []Ch
 
 		vecs, err := embedder.EmbedBatch(ctx, texts)
 		if err != nil {
-			fmt.Printf("runbook: embedding batch %d-%d failed: %v\n", i, end-1, err)
+			for _, obs := range observers {
+				obs.ObserveBuildIndexBatchError(i, end-1, err)
+			}
 			continue
 		}
 

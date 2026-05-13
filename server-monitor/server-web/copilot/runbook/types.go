@@ -53,6 +53,10 @@ type EmbeddingClient interface {
 	EmbedBatch(ctx context.Context, texts []string) ([][]float32, error)
 }
 
+type BuildIndexObserver interface {
+	ObserveBuildIndexBatchError(batchStart, batchEnd int, err error)
+}
+
 type RetrieverOptions struct {
 	DefaultLimit int
 	MaxLimit     int
