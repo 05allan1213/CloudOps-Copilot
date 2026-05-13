@@ -408,6 +408,42 @@ spec:
                 configMapKeyRef:
                   name: monitor-config
                   key: RUNBOOK_BM25_B
+            - name: EMBEDDING_API_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: EMBEDDING_API_URL
+            - name: EMBEDDING_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: EMBEDDING_MODEL
+            - name: EMBEDDING_TIMEOUT_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: EMBEDDING_TIMEOUT_SECONDS
+            - name: EMBEDDING_INDEX_BUILD_TIMEOUT_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: EMBEDDING_INDEX_BUILD_TIMEOUT_SECONDS
+            - name: EMBEDDING_DIMS
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: EMBEDDING_DIMS
+            - name: RUNBOOK_RRF_K
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: RUNBOOK_RRF_K
+            - name: EMBEDDING_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: monitor-secret
+                  key: EMBEDDING_API_KEY
+                  optional: true
             - name: READY_TIMEOUT_SECONDS
               valueFrom:
                 configMapKeyRef:

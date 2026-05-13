@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -161,13 +162,34 @@ func NewRouterWithRuntime(cfg config.Config, promClient *promclient.Client, cach
 		if err != nil {
 			return nil, nil, err
 		}
+		var runbookEmbedder *copilotrunbook.Embedder
+		var runbookVectorStore *copilotrunbook.MemoryVectorStore
+
+		if cfg.EmbeddingAPIURL != "" && cfg.EmbeddingAPIKey != "" && cfg.EmbeddingModel != "" {
+			runbookEmbedder = copilotrunbook.NewEmbedder(copilotrunbook.EmbedderOptions{
+				APIURL:     cfg.EmbeddingAPIURL,
+				APIKey:     cfg.EmbeddingAPIKey,
+				Model:      cfg.EmbeddingModel,
+				Timeout:    cfg.EmbeddingTimeout,
+				Dimensions: cfg.EmbeddingDims,
+			})
+			var buildErr error
+			runbookVectorStore, buildErr = buildRunbookVectorStore(context.Background(), runbookDocs, runbookEmbedder, cfg.EmbeddingIndexBuildTimeout)
+			if buildErr != nil {
+				zap.L().Warn("failed to build runbook vector index, falling back to structured+BM25", zap.Error(buildErr))
+				runbookVectorStore = nil
+			}
+		}
+
 		runbookRetriever := copilotrunbook.NewRetriever(runbookDocs, copilotrunbook.RetrieverOptions{
 			DefaultLimit: cfg.RunbookSearchTopN,
 			MaxLimit:     5,
-			BM25Weight:   cfg.RunbookBM25Weight,
 			BM25K1:       cfg.RunbookBM25K1,
 			BM25B:        cfg.RunbookBM25B,
 			Observer:     metrics,
+			Embedder:     runbookEmbedder,
+			VectorStore:  runbookVectorStore,
+			RRFK:         cfg.RunbookRRFK,
 		})
 		if cfg.CopilotToolRegistryEnabled {
 			toolExecutor, err = copilottool.NewExecutor(copilottool.Options{
@@ -414,6 +436,21 @@ func limitRequestBody(maxBytes int64) gin.HandlerFunc {
 		}
 		c.Next()
 	}
+}
+
+func buildRunbookVectorStore(ctx context.Context, docs []copilotrunbook.Document, embedder *copilotrunbook.Embedder, timeout time.Duration) (*copilotrunbook.MemoryVectorStore, error) {
+	if embedder == nil {
+		return nil, nil
+	}
+	buildCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	chunks := copilotrunbook.ChunkDocuments(docs)
+	store, err := copilotrunbook.BuildMemoryIndex(buildCtx, embedder, chunks)
+	if err != nil {
+		return nil, fmt.Errorf("build runbook vector index: %w", err)
+	}
+	return store, nil
 }
 
 func k8sConfigFromApp(cfg config.Config) copilotk8s.Config {

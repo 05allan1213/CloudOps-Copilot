@@ -144,6 +144,14 @@ type Config struct {
 	RunbookBM25K1     float64
 	RunbookBM25B      float64
 
+	EmbeddingAPIURL            string
+	EmbeddingAPIKey            string
+	EmbeddingModel             string
+	EmbeddingTimeout           time.Duration
+	EmbeddingIndexBuildTimeout time.Duration
+	EmbeddingDims              int
+	RunbookRRFK                int
+
 	// LLMAPIKey LLM API Key，用于后续 LLM 兜底
 	// 默认值：空（禁用 LLM 调用）
 	// 敏感：是
@@ -444,6 +452,13 @@ func Load() Config {
 		RunbookBM25Weight:            configutil.FloatRange("RUNBOOK_BM25_WEIGHT", 0.3, 0, 1),
 		RunbookBM25K1:                configutil.FloatRange("RUNBOOK_BM25_K1", 1.2, 0, 10),
 		RunbookBM25B:                 configutil.FloatRange("RUNBOOK_BM25_B", 0.75, 0, 1),
+		EmbeddingAPIURL:            configutil.String("EMBEDDING_API_URL", ""),
+		EmbeddingAPIKey:            configutil.String("EMBEDDING_API_KEY", ""),
+		EmbeddingModel:             configutil.String("EMBEDDING_MODEL", ""),
+		EmbeddingTimeout:           configutil.DurationSeconds("EMBEDDING_TIMEOUT_SECONDS", 10),
+		EmbeddingIndexBuildTimeout: configutil.DurationSeconds("EMBEDDING_INDEX_BUILD_TIMEOUT_SECONDS", 30),
+		EmbeddingDims:              configutil.NonNegativeInt("EMBEDDING_DIMS", 0),
+		RunbookRRFK:                configutil.PositiveInt("RUNBOOK_RRF_K", 60),
 		LLMAPIKey:                    configutil.String("LLM_API_KEY", ""),
 		LLMAPIURL:                    configutil.String("LLM_API_URL", "https://api.deepseek.com/v1/chat/completions"),
 		LLMModel:                     configutil.String("LLM_MODEL", "deepseek-chat"),
@@ -661,6 +676,23 @@ func (c Config) Validate() error {
 	}
 	if c.RunbookSearchTopN <= 0 || c.RunbookSearchTopN > 5 {
 		return fmt.Errorf("RUNBOOK_SEARCH_TOP_N must be in range 1-5, got %d", c.RunbookSearchTopN)
+	}
+	if c.EmbeddingAPIURL != "" {
+		if err := validateHTTPURL("EMBEDDING_API_URL", c.EmbeddingAPIURL); err != nil {
+			return err
+		}
+	}
+	if c.EmbeddingTimeout < time.Second || c.EmbeddingTimeout > 60*time.Second {
+		return fmt.Errorf("EMBEDDING_TIMEOUT_SECONDS must be in range 1-60, got %v", c.EmbeddingTimeout)
+	}
+	if c.EmbeddingIndexBuildTimeout < time.Second || c.EmbeddingIndexBuildTimeout > 300*time.Second {
+		return fmt.Errorf("EMBEDDING_INDEX_BUILD_TIMEOUT_SECONDS must be in range 1-300, got %v", c.EmbeddingIndexBuildTimeout)
+	}
+	if c.EmbeddingDims < 0 || c.EmbeddingDims > 4096 {
+		return fmt.Errorf("EMBEDDING_DIMS must be in range 0-4096, got %d", c.EmbeddingDims)
+	}
+	if c.RunbookRRFK < 1 || c.RunbookRRFK > 200 {
+		return fmt.Errorf("RUNBOOK_RRF_K must be in range 1-200, got %d", c.RunbookRRFK)
 	}
 	if c.RateLimit.Enabled {
 		if c.RateLimit.Requests <= 0 {

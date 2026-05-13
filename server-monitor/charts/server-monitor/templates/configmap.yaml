@@ -67,6 +67,12 @@ data:
   RUNBOOK_BM25_WEIGHT: {{ .Values.config.runbookBM25Weight | quote }}
   RUNBOOK_BM25_K1: {{ .Values.config.runbookBM25K1 | quote }}
   RUNBOOK_BM25_B: {{ .Values.config.runbookBM25B | quote }}
+  EMBEDDING_API_URL: {{ .Values.config.embeddingApiUrl | quote }}
+  EMBEDDING_MODEL: {{ .Values.config.embeddingModel | quote }}
+  EMBEDDING_TIMEOUT_SECONDS: {{ .Values.config.embeddingTimeoutSeconds | quote }}
+  EMBEDDING_INDEX_BUILD_TIMEOUT_SECONDS: {{ .Values.config.embeddingIndexBuildTimeoutSeconds | quote }}
+  EMBEDDING_DIMS: {{ .Values.config.embeddingDims | quote }}
+  RUNBOOK_RRF_K: {{ .Values.config.runbookRRFK | quote }}
   GIN_MODE: {{ .Values.config.ginMode | quote }}
   READY_TIMEOUT_SECONDS: {{ .Values.config.readyTimeoutSeconds | quote }}
   REQUEST_TIMEOUT_SECONDS: {{ .Values.config.requestTimeoutSeconds | quote }}

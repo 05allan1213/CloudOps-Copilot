@@ -58,6 +58,12 @@ config:
   runbookBM25Weight: "0.3"
   runbookBM25K1: "1.2"
   runbookBM25B: "0.75"
+  embeddingApiUrl: ""
+  embeddingModel: ""
+  embeddingTimeoutSeconds: "10"
+  embeddingIndexBuildTimeoutSeconds: "30"
+  embeddingDims: "0"
+  runbookRRFK: "60"
 
 k8sIntegration:
   enabled: false
@@ -87,6 +93,7 @@ secret:
   jwtSecret: server-monitor-dev-jwt-secret-change-me
   adminPassword: server-monitor-change-me
   llmApiKey: ""
+  embeddingApiKey: ""
   grafanaAdminUser: admin
   grafanaAdminPassword: server-monitor-change-me
 

@@ -2,7 +2,6 @@ package runbook
 
 import (
 	"context"
-	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -23,8 +22,9 @@ type Retriever struct {
 	defaultLimit int
 	maxLimit     int
 	bm25         *BM25Engine
-	bm25Weight   float64
-	structWeight float64
+	vectorStore  *MemoryVectorStore
+	embedder     EmbeddingClient
+	rrfK         int
 	observer     RAGObserver
 }
 
@@ -41,24 +41,18 @@ func NewRetriever(docs []Document, options RetrieverOptions) *Retriever {
 		defaultLimit = maxLimit
 	}
 
-	bm25Weight := options.BM25Weight
-	if bm25Weight > 1 {
-		bm25Weight = 1
-	}
-	structWeight := 1 - bm25Weight
-
-	k1 := options.BM25K1
-	if k1 <= 0 {
-		k1 = 1.2
-	}
-	b := options.BM25B
-	if b < 0 || b > 1 {
-		b = 0.75
-	}
-
 	var bm25 *BM25Engine
-	if bm25Weight > 0 {
-		bm25 = NewBM25Engine(docs, k1, b)
+	if options.BM25K1 > 0 {
+		b := options.BM25B
+		if b < 0 || b > 1 {
+			b = 0.75
+		}
+		bm25 = NewBM25Engine(docs, options.BM25K1, b)
+	}
+
+	rrfK := options.RRFK
+	if rrfK <= 0 {
+		rrfK = 60
 	}
 
 	return &Retriever{
@@ -66,8 +60,9 @@ func NewRetriever(docs []Document, options RetrieverOptions) *Retriever {
 		defaultLimit: defaultLimit,
 		maxLimit:     maxLimit,
 		bm25:         bm25,
-		bm25Weight:   bm25Weight,
-		structWeight: structWeight,
+		vectorStore:  options.VectorStore,
+		embedder:     options.Embedder,
+		rrfK:         rrfK,
 		observer:     options.Observer,
 	}
 }
@@ -97,76 +92,41 @@ func (r *Retriever) Search(ctx context.Context, req SearchRequest) ([]SearchResu
 
 	queryTokens := buildQueryTokens(alertName, keywords, metrics)
 
-	type candidate struct {
-		docIdx          int
-		rawStructScore  float64
-		rawBM25Score    float64
-		matchedAlerts   []string
-		matchedKeywords []string
-		matchedMetrics  []string
+	structRanking := r.structSearch(alertName, keywords, metrics)
+	bm25Ranking := r.bm25Search(queryTokens)
+	vectorRanking := r.vectorSearch(ctx, alertName, keywords, metrics)
+
+	rrfResults := RRF([][]RankItem{structRanking, bm25Ranking, vectorRanking}, r.rrfK)
+
+	if len(rrfResults) == 0 {
+		if r.observer != nil {
+			r.observer.ObserveRAGSearch("false", 0, time.Since(start).Seconds())
+		}
+		return nil, nil
 	}
 
-	candidates := make([]candidate, 0, len(r.docs))
-	var maxStructScore float64
-	var maxBM25Score float64
-
-	for i, doc := range r.docs {
-		rawStructScore, matchedAlerts, matchedKeywords, matchedMetrics := scoreDocument(doc, alertName, keywords, metrics)
-		var rawBM25Score float64
-		if r.bm25 != nil {
-			rawBM25Score = r.bm25.Score(queryTokens, i)
+	topScore := rrfResults[0].Score
+	results := make([]SearchResult, 0, len(rrfResults))
+	for _, item := range rrfResults {
+		score := 0.0
+		if topScore > 0 {
+			score = item.Score / topScore
 		}
-		if rawStructScore <= 0 && rawBM25Score <= 0 {
+		if score <= 0 {
 			continue
 		}
-		if rawStructScore > maxStructScore {
-			maxStructScore = rawStructScore
-		}
-		if rawBM25Score > maxBM25Score {
-			maxBM25Score = rawBM25Score
-		}
-		candidates = append(candidates, candidate{
-			docIdx:          i,
-			rawStructScore:  rawStructScore,
-			rawBM25Score:    rawBM25Score,
-			matchedAlerts:   matchedAlerts,
-			matchedKeywords: matchedKeywords,
-			matchedMetrics:  matchedMetrics,
-		})
-	}
-
-	results := make([]SearchResult, 0, len(candidates))
-	for _, c := range candidates {
-		structNorm := 0.0
-		if maxStructScore > 0 {
-			structNorm = c.rawStructScore / maxStructScore
-		}
-		bm25Norm := 0.0
-		if maxBM25Score > 0 {
-			bm25Norm = c.rawBM25Score / maxBM25Score
-		}
-		finalScore := structNorm*r.structWeight + bm25Norm*r.bm25Weight
-		if finalScore <= 0 {
-			continue
-		}
-		doc := r.docs[c.docIdx]
+		doc := r.docs[item.DocIdx]
 		results = append(results, SearchResult{
 			Title:           doc.Title,
 			File:            doc.File,
-			Score:           finalScore,
-			MatchedAlerts:   c.matchedAlerts,
-			MatchedKeywords: c.matchedKeywords,
-			MatchedMetrics:  c.matchedMetrics,
+			Score:           score,
+			MatchedAlerts:   item.MatchedAlerts,
+			MatchedKeywords: item.MatchedKeywords,
+			MatchedMetrics:  item.MatchedMetrics,
 			Snippet:         snippetFor(doc, alertName, keywords, metrics),
 		})
 	}
 
-	sort.SliceStable(results, func(i, j int) bool {
-		if results[i].Score == results[j].Score {
-			return results[i].Title < results[j].Title
-		}
-		return results[i].Score > results[j].Score
-	})
 	if len(results) > limit {
 		results = results[:limit]
 	}
@@ -182,6 +142,80 @@ func (r *Retriever) Search(ctx context.Context, req SearchRequest) ([]SearchResu
 	}
 
 	return results, nil
+}
+
+func (r *Retriever) structSearch(alertName string, keywords, metrics []string) []RankItem {
+	var items []RankItem
+	for i, doc := range r.docs {
+		rawScore, matchedAlerts, matchedKeywords, matchedMetrics := scoreDocument(doc, alertName, keywords, metrics)
+		if rawScore > 0 {
+			items = append(items, RankItem{
+				DocIdx:          i,
+				Score:           rawScore,
+				MatchedAlerts:   matchedAlerts,
+				MatchedKeywords: matchedKeywords,
+				MatchedMetrics:  matchedMetrics,
+			})
+		}
+	}
+	return items
+}
+
+func (r *Retriever) bm25Search(queryTokens []string) []RankItem {
+	if r.bm25 == nil || len(queryTokens) == 0 {
+		return nil
+	}
+	var items []RankItem
+	for i := range r.docs {
+		score := r.bm25.Score(queryTokens, i)
+		if score > 0 {
+			items = append(items, RankItem{DocIdx: i, Score: score})
+		}
+	}
+	return items
+}
+
+func (r *Retriever) vectorSearch(ctx context.Context, alertName string, keywords, metrics []string) []RankItem {
+	if r.embedder == nil || r.vectorStore == nil || r.vectorStore.Len() == 0 {
+		return nil
+	}
+
+	var parts []string
+	if alertName != "" {
+		parts = append(parts, alertName)
+	}
+	parts = append(parts, keywords...)
+	parts = append(parts, metrics...)
+	queryText := strings.Join(parts, " ")
+
+	if queryText == "" {
+		return nil
+	}
+
+	queryVec, err := r.embedder.Embed(ctx, queryText)
+	if err != nil {
+		return nil
+	}
+
+	hits := r.vectorStore.Search(queryVec, 10)
+
+	docScores := make(map[int]float64)
+	for _, hit := range hits {
+		for i, doc := range r.docs {
+			if doc.File == hit.DocFile {
+				if hit.Similarity > docScores[i] {
+					docScores[i] = hit.Similarity
+				}
+				break
+			}
+		}
+	}
+
+	var items []RankItem
+	for idx, score := range docScores {
+		items = append(items, RankItem{DocIdx: idx, Score: score})
+	}
+	return items
 }
 
 func (r *Retriever) HealthCheck(ctx context.Context) bool {

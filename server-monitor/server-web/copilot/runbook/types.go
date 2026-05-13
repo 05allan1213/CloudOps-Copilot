@@ -1,6 +1,7 @@
 package runbook
 
 import (
+	"context"
 	"errors"
 	"time"
 )
@@ -46,6 +47,11 @@ type LoadOptions struct {
 	MaxFileBytes int64
 }
 
+type EmbeddingClient interface {
+	Embed(ctx context.Context, text string) ([]float32, error)
+	EmbedBatch(ctx context.Context, texts []string) ([][]float32, error)
+}
+
 type RetrieverOptions struct {
 	DefaultLimit int
 	MaxLimit     int
@@ -53,4 +59,7 @@ type RetrieverOptions struct {
 	BM25K1       float64
 	BM25B        float64
 	Observer     RAGObserver
+	Embedder     EmbeddingClient
+	VectorStore  *MemoryVectorStore
+	RRFK         int
 }
