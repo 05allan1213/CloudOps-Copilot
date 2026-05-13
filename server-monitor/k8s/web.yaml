@@ -438,6 +438,21 @@ spec:
                 configMapKeyRef:
                   name: monitor-config
                   key: RUNBOOK_RRF_K
+            - name: RERANKER_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: RERANKER_ENABLED
+            - name: RERANKER_TOP_N
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: RERANKER_TOP_N
+            - name: RERANKER_TIMEOUT_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: RERANKER_TIMEOUT_SECONDS
             - name: EMBEDDING_API_KEY
               valueFrom:
                 secretKeyRef:

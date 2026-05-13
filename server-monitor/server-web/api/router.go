@@ -181,6 +181,15 @@ func NewRouterWithRuntime(cfg config.Config, promClient *promclient.Client, cach
 			}
 		}
 
+		llmClient := copilotllm.NewClient(copilotllm.Options{
+			APIKey:    cfg.LLMAPIKey,
+			APIURL:    cfg.LLMAPIURL,
+			Model:     cfg.LLMModel,
+			Timeout:   cfg.LLMTimeout,
+			MaxTokens: cfg.LLMMaxTokens,
+			Observer:  metrics,
+		})
+
 		runbookRetriever := copilotrunbook.NewRetriever(runbookDocs, copilotrunbook.RetrieverOptions{
 			DefaultLimit: cfg.RunbookSearchTopN,
 			MaxLimit:     5,
@@ -190,6 +199,7 @@ func NewRouterWithRuntime(cfg config.Config, promClient *promclient.Client, cach
 			Embedder:     runbookEmbedder,
 			VectorStore:  runbookVectorStore,
 			RRFK:         cfg.RunbookRRFK,
+			Reranker:     buildRunbookReranker(cfg, llmClient),
 		})
 		if cfg.CopilotToolRegistryEnabled {
 			toolExecutor, err = copilottool.NewExecutor(copilottool.Options{
@@ -211,14 +221,6 @@ func NewRouterWithRuntime(cfg config.Config, promClient *promclient.Client, cach
 		} else {
 			tools = copilottool.NewDisabledExecutor()
 		}
-		llmClient := copilotllm.NewClient(copilotllm.Options{
-			APIKey:    cfg.LLMAPIKey,
-			APIURL:    cfg.LLMAPIURL,
-			Model:     cfg.LLMModel,
-			Timeout:   cfg.LLMTimeout,
-			MaxTokens: cfg.LLMMaxTokens,
-			Observer:  metrics,
-		})
 		var runner copilotdiagnosis.ToolRunner
 		if toolExecutor != nil {
 			runner = diagnosisToolRunner{executor: toolExecutor}
@@ -231,9 +233,10 @@ func NewRouterWithRuntime(cfg config.Config, promClient *promclient.Client, cach
 				Timeout:      cfg.CopilotToolDefaultTimeout,
 			}),
 			Collector: copilotdiagnosis.NewEvidenceCollector(copilotdiagnosis.EvidenceOptions{
-				Runner:       runner,
-				Timeout:      45 * time.Second,
-				RunbookLimit: cfg.RunbookSearchTopN,
+				Runner:        runner,
+				Timeout:       45 * time.Second,
+				RunbookLimit:  cfg.RunbookSearchTopN,
+				RerankEnabled: cfg.RerankerEnabled,
 			}),
 			Summarizer: copilotdiagnosis.NewLLMSummarizerWithOptions(llmClient, copilotdiagnosis.LLMSummarizerOptions{
 				Timeout:  cfg.DiagnosisLLMTimeout,
@@ -451,6 +454,17 @@ func buildRunbookVectorStore(ctx context.Context, docs []copilotrunbook.Document
 		return nil, fmt.Errorf("build runbook vector index: %w", err)
 	}
 	return store, nil
+}
+
+func buildRunbookReranker(cfg config.Config, llmClient *copilotllm.Client) *copilotrunbook.Reranker {
+	if !cfg.RerankerEnabled || llmClient == nil {
+		return nil
+	}
+	return copilotrunbook.NewReranker(copilotrunbook.RerankerOptions{
+		LLM:     llmClient,
+		TopN:    cfg.RerankerTopN,
+		Timeout: cfg.RerankerTimeout,
+	})
 }
 
 func k8sConfigFromApp(cfg config.Config) copilotk8s.Config {

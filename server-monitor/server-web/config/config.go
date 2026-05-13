@@ -152,6 +152,10 @@ type Config struct {
 	EmbeddingDims              int
 	RunbookRRFK                int
 
+	RerankerEnabled bool
+	RerankerTopN    int
+	RerankerTimeout time.Duration
+
 	// LLMAPIKey LLM API Key，用于后续 LLM 兜底
 	// 默认值：空（禁用 LLM 调用）
 	// 敏感：是
@@ -459,6 +463,9 @@ func Load() Config {
 		EmbeddingIndexBuildTimeout: configutil.DurationSeconds("EMBEDDING_INDEX_BUILD_TIMEOUT_SECONDS", 30),
 		EmbeddingDims:              configutil.NonNegativeInt("EMBEDDING_DIMS", 0),
 		RunbookRRFK:                configutil.PositiveInt("RUNBOOK_RRF_K", 60),
+		RerankerEnabled:            configutil.Bool("RERANKER_ENABLED", false),
+		RerankerTopN:               configutil.PositiveInt("RERANKER_TOP_N", 2),
+		RerankerTimeout:            configutil.DurationSeconds("RERANKER_TIMEOUT_SECONDS", 10),
 		LLMAPIKey:                    configutil.String("LLM_API_KEY", ""),
 		LLMAPIURL:                    configutil.String("LLM_API_URL", "https://api.deepseek.com/v1/chat/completions"),
 		LLMModel:                     configutil.String("LLM_MODEL", "deepseek-chat"),
@@ -693,6 +700,12 @@ func (c Config) Validate() error {
 	}
 	if c.RunbookRRFK < 1 || c.RunbookRRFK > 200 {
 		return fmt.Errorf("RUNBOOK_RRF_K must be in range 1-200, got %d", c.RunbookRRFK)
+	}
+	if c.RerankerTopN < 1 || c.RerankerTopN > 5 {
+		return fmt.Errorf("RERANKER_TOP_N must be in range 1-5, got %d", c.RerankerTopN)
+	}
+	if c.RerankerTimeout < time.Second || c.RerankerTimeout > 30*time.Second {
+		return fmt.Errorf("RERANKER_TIMEOUT_SECONDS must be in range 1-30, got %v", c.RerankerTimeout)
 	}
 	if c.RateLimit.Enabled {
 		if c.RateLimit.Requests <= 0 {

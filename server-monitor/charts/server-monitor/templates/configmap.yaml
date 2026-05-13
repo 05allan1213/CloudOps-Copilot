@@ -73,6 +73,9 @@ data:
   EMBEDDING_INDEX_BUILD_TIMEOUT_SECONDS: {{ .Values.config.embeddingIndexBuildTimeoutSeconds | quote }}
   EMBEDDING_DIMS: {{ .Values.config.embeddingDims | quote }}
   RUNBOOK_RRF_K: {{ .Values.config.runbookRRFK | quote }}
+  RERANKER_ENABLED: {{ .Values.config.rerankerEnabled | quote }}
+  RERANKER_TOP_N: {{ .Values.config.rerankerTopN | quote }}
+  RERANKER_TIMEOUT_SECONDS: {{ .Values.config.rerankerTimeoutSeconds | quote }}
   GIN_MODE: {{ .Values.config.ginMode | quote }}
   READY_TIMEOUT_SECONDS: {{ .Values.config.readyTimeoutSeconds | quote }}
   REQUEST_TIMEOUT_SECONDS: {{ .Values.config.requestTimeoutSeconds | quote }}

@@ -25,6 +25,7 @@ type Retriever struct {
 	vectorStore  *MemoryVectorStore
 	embedder     EmbeddingClient
 	rrfK         int
+	reranker     *Reranker
 	observer     RAGObserver
 }
 
@@ -63,6 +64,7 @@ func NewRetriever(docs []Document, options RetrieverOptions) *Retriever {
 		vectorStore:  options.VectorStore,
 		embedder:     options.Embedder,
 		rrfK:         rrfK,
+		reranker:     options.Reranker,
 		observer:     options.Observer,
 	}
 }
@@ -129,6 +131,20 @@ func (r *Retriever) Search(ctx context.Context, req SearchRequest) ([]SearchResu
 
 	if len(results) > limit {
 		results = results[:limit]
+	}
+
+	if req.Rerank && r.reranker != nil && len(results) > 0 {
+		var queryParts []string
+		if alertName != "" {
+			queryParts = append(queryParts, alertName)
+		}
+		queryParts = append(queryParts, keywords...)
+		queryParts = append(queryParts, metrics...)
+		queryText := strings.Join(queryParts, " ")
+		reranked, rerankErr := r.reranker.Rerank(ctx, queryText, results)
+		if rerankErr == nil && len(reranked) > 0 {
+			results = reranked
+		}
 	}
 
 	if r.observer != nil {

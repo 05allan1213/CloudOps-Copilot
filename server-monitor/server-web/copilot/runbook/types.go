@@ -30,6 +30,7 @@ type SearchRequest struct {
 	Keywords  []string `json:"keywords,omitempty"`
 	Metrics   []string `json:"metrics,omitempty"`
 	Limit     int      `json:"limit,omitempty"`
+	Rerank    bool     `json:"rerank,omitempty"`
 }
 
 type SearchResult struct {
@@ -62,4 +63,5 @@ type RetrieverOptions struct {
 	Embedder     EmbeddingClient
 	VectorStore  *MemoryVectorStore
 	RRFK         int
+	Reranker     *Reranker
 }

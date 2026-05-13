@@ -486,6 +486,9 @@ services:
       EMBEDDING_DIMS: ${EMBEDDING_DIMS:-0}
       EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
       RUNBOOK_RRF_K: ${RUNBOOK_RRF_K:-60}
+      RERANKER_ENABLED: ${RERANKER_ENABLED:-false}
+      RERANKER_TOP_N: ${RERANKER_TOP_N:-2}
+      RERANKER_TIMEOUT_SECONDS: ${RERANKER_TIMEOUT_SECONDS:-10}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_API_URL: ${LLM_API_URL:-https://api.deepseek.com/v1/chat/completions}
       LLM_MODEL: ${LLM_MODEL:-deepseek-chat}

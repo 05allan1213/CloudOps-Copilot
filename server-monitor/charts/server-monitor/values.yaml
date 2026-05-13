@@ -64,6 +64,9 @@ config:
   embeddingIndexBuildTimeoutSeconds: "30"
   embeddingDims: "0"
   runbookRRFK: "60"
+  rerankerEnabled: "false"
+  rerankerTopN: "2"
+  rerankerTimeoutSeconds: "10"
 
 k8sIntegration:
   enabled: false

@@ -47,6 +47,9 @@ data:
   EMBEDDING_INDEX_BUILD_TIMEOUT_SECONDS: "30"
   EMBEDDING_DIMS: "0"
   RUNBOOK_RRF_K: "60"
+  RERANKER_ENABLED: "false"
+  RERANKER_TOP_N: "2"
+  RERANKER_TIMEOUT_SECONDS: "10"
   LLM_API_URL: https://api.deepseek.com/v1/chat/completions
   LLM_MODEL: deepseek-chat
   LLM_TIMEOUT_SECONDS: "60"

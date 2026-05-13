@@ -45,19 +45,21 @@ type ToolResult struct {
 }
 
 type EvidenceCollector struct {
-	runner       ToolRunner
-	timeout      time.Duration
-	toolTimeout  time.Duration
-	runbookLimit int
-	now          func() time.Time
+	runner        ToolRunner
+	timeout       time.Duration
+	toolTimeout   time.Duration
+	runbookLimit  int
+	rerankEnabled bool
+	now           func() time.Time
 }
 
 type EvidenceOptions struct {
-	Runner       ToolRunner
-	Timeout      time.Duration
-	ToolTimeout  time.Duration
-	RunbookLimit int
-	Now          func() time.Time
+	Runner        ToolRunner
+	Timeout       time.Duration
+	ToolTimeout   time.Duration
+	RunbookLimit  int
+	RerankEnabled bool
+	Now           func() time.Time
 }
 
 func NewEvidenceCollector(options EvidenceOptions) *EvidenceCollector {
@@ -80,7 +82,7 @@ func NewEvidenceCollector(options EvidenceOptions) *EvidenceCollector {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	return &EvidenceCollector{runner: options.Runner, timeout: timeout, toolTimeout: toolTimeout, runbookLimit: runbookLimit, now: now}
+	return &EvidenceCollector{runner: options.Runner, timeout: timeout, toolTimeout: toolTimeout, runbookLimit: runbookLimit, rerankEnabled: options.RerankEnabled, now: now}
 }
 
 func (c *EvidenceCollector) Collect(ctx context.Context, alert AlertContext) EvidenceBundle {
@@ -354,6 +356,7 @@ func (c *EvidenceCollector) collectRunbooks(ctx context.Context, alert AlertCont
 		"keywords":   runbookKeywords(alert),
 		"metrics":    runbookMetrics(alert),
 		"limit":      c.runbookLimit,
+		"rerank":     c.rerankEnabled,
 	})
 	result, err := c.runner.ExecuteTool(ctx, ToolRunbookSearch, args)
 	if err != nil {
