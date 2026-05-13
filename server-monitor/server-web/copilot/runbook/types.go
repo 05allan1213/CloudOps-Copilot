@@ -49,4 +49,8 @@ type LoadOptions struct {
 type RetrieverOptions struct {
 	DefaultLimit int
 	MaxLimit     int
+	BM25Weight   float64
+	BM25K1       float64
+	BM25B        float64
+	Observer     RAGObserver
 }

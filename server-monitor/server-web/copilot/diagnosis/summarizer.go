@@ -21,13 +21,19 @@ type Summarizer interface {
 	Summarize(ctx context.Context, alert AlertContext, evidence EvidenceBundle, rules RuleAnalysis) (DiagnosisSummary, LLMMetadata, error)
 }
 
+type DiagnosisObserver interface {
+	ObserveDiagnosis(confidence float64, result string, source string, durationSeconds float64)
+}
+
 type LLMSummarizer struct {
-	llm     LLMGenerator
-	timeout time.Duration
+	llm      LLMGenerator
+	timeout  time.Duration
+	observer DiagnosisObserver
 }
 
 type LLMSummarizerOptions struct {
-	Timeout time.Duration
+	Timeout  time.Duration
+	Observer DiagnosisObserver
 }
 
 func NewLLMSummarizer(llm LLMGenerator) *LLMSummarizer {
@@ -35,15 +41,22 @@ func NewLLMSummarizer(llm LLMGenerator) *LLMSummarizer {
 }
 
 func NewLLMSummarizerWithOptions(llm LLMGenerator, options LLMSummarizerOptions) *LLMSummarizer {
-	return &LLMSummarizer{llm: llm, timeout: options.Timeout}
+	return &LLMSummarizer{llm: llm, timeout: options.Timeout, observer: options.Observer}
 }
 
 func (s *LLMSummarizer) Summarize(ctx context.Context, alert AlertContext, evidence EvidenceBundle, rules RuleAnalysis) (DiagnosisSummary, LLMMetadata, error) {
+	start := time.Now()
 	prompt, hash, err := buildPrompt(alert, evidence, rules)
 	if err != nil {
+		if s.observer != nil {
+			s.observer.ObserveDiagnosis(rules.Confidence, "fallback", "rule", time.Since(start).Seconds())
+		}
 		return RuleOnlySummary(alert, rules), LLMMetadata{Model: "rule-only"}, nil
 	}
 	if s == nil || s.llm == nil {
+		if s.observer != nil {
+			s.observer.ObserveDiagnosis(rules.Confidence, "fallback", "rule", time.Since(start).Seconds())
+		}
 		return RuleOnlySummary(alert, rules), LLMMetadata{Model: "rule-only", PromptHash: hash}, nil
 	}
 
@@ -55,11 +68,21 @@ func (s *LLMSummarizer) Summarize(ctx context.Context, alert AlertContext, evide
 	}
 	raw, err := s.llm.Generate(llmCtx, diagnosisSystemPrompt(), prompt)
 	if err != nil {
+		if s.observer != nil {
+			s.observer.ObserveDiagnosis(0, "fallback", "rule", time.Since(start).Seconds())
+		}
 		return RuleOnlySummary(alert, rules), LLMMetadata{Model: "rule-only", PromptHash: hash}, err
 	}
 	summary, err := ParseDiagnosisSummary(raw)
 	if err != nil {
+		if s.observer != nil {
+			s.observer.ObserveDiagnosis(0, "fallback", "rule", time.Since(start).Seconds())
+		}
 		return RuleOnlySummary(alert, rules), LLMMetadata{Model: "rule-only", PromptHash: hash}, err
+	}
+	confidence := confidenceToFloat(summary.RootCauseHypotheses)
+	if s.observer != nil {
+		s.observer.ObserveDiagnosis(confidence, "success", "llm", time.Since(start).Seconds())
 	}
 	return summary, LLMMetadata{Model: s.llm.Model(), PromptHash: hash}, nil
 }
@@ -298,11 +321,11 @@ func isAllowedRisk(value string) bool {
 
 func normalizeRisk(value string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "low", "低":
+	case "low", "low risk", "minimal", "minor", "safe", "低", "低风险", "安全":
 		return "low", true
-	case "medium", "moderate", "中", "中等":
+	case "medium", "medium risk", "moderate", "moderate risk", "中", "中等", "中风险", "中等风险":
 		return "medium", true
-	case "high", "高":
+	case "high", "high risk", "高", "高风险":
 		return "high", true
 	default:
 		return "", false
@@ -319,5 +342,26 @@ func isAllowedConfidence(value string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func confidenceToFloat(hypotheses []RootCauseHypothesis) float64 {
+	if len(hypotheses) == 0 {
+		return 0
+	}
+	confidence := hypotheses[0].Confidence
+	normalized := strings.ToLower(strings.TrimSpace(confidence))
+	if numeric, err := strconv.ParseFloat(normalized, 64); err == nil {
+		return numeric
+	}
+	switch normalized {
+	case ConfidenceHigh:
+		return 0.9
+	case ConfidenceMedium:
+		return 0.6
+	case ConfidenceLow:
+		return 0.3
+	default:
+		return 0.5
 	}
 }

@@ -21,6 +21,17 @@ type Metrics struct {
 	actionDuration       *prometheus.HistogramVec
 	copilotToolEvents    *prometheus.CounterVec
 	copilotToolDuration  *prometheus.HistogramVec
+	diagnosisConfidence  prometheus.Histogram
+	diagnosisLLMTotal    *prometheus.CounterVec
+	diagnosisDuration    *prometheus.HistogramVec
+	llmRequestTotal      *prometheus.CounterVec
+	llmRequestDuration   *prometheus.HistogramVec
+	llmTokensTotal       *prometheus.CounterVec
+	nluClassifyTotal     *prometheus.CounterVec
+	nluClassifyDuration  *prometheus.HistogramVec
+	ragSearchTotal       *prometheus.CounterVec
+	ragSearchScore       prometheus.Histogram
+	ragSearchDuration    prometheus.Histogram
 }
 
 func NewMetrics() *Metrics {
@@ -65,6 +76,56 @@ func NewMetrics() *Metrics {
 			Help:    "Copilot tool execution duration in seconds.",
 			Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
 		}, []string{"tool", "result"}),
+		nluClassifyTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "copilot_nlu_classify_total",
+			Help: "Total number of NLU classifications.",
+		}, []string{"intent", "source"}),
+		nluClassifyDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "copilot_nlu_classify_duration_seconds",
+			Help:    "NLU classification duration in seconds.",
+			Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25},
+		}, []string{"source"}),
+		ragSearchTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "copilot_rag_search_total",
+			Help: "Total number of RAG searches.",
+		}, []string{"has_result"}),
+		ragSearchScore: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "copilot_rag_search_score",
+			Help:    "RAG search top score distribution.",
+			Buckets: []float64{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0},
+		}),
+		ragSearchDuration: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "copilot_rag_search_duration_seconds",
+			Help:    "RAG search duration in seconds.",
+			Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5},
+		}),
+		diagnosisConfidence: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "copilot_diagnosis_confidence",
+			Help:    "Diagnosis confidence distribution.",
+			Buckets: []float64{0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0},
+		}),
+		diagnosisLLMTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "copilot_diagnosis_llm_total",
+			Help: "Total number of diagnosis LLM calls.",
+		}, []string{"result"}),
+		diagnosisDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "copilot_diagnosis_duration_seconds",
+			Help:    "Diagnosis duration in seconds.",
+			Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
+		}, []string{"source"}),
+		llmRequestTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "copilot_llm_request_total",
+			Help: "Total number of LLM requests.",
+		}, []string{"model", "result"}),
+		llmRequestDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "copilot_llm_request_duration_seconds",
+			Help:    "LLM request duration in seconds.",
+			Buckets: []float64{0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60},
+		}, []string{"model"}),
+		llmTokensTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "copilot_llm_tokens_total",
+			Help: "Total number of LLM tokens.",
+		}, []string{"model", "direction"}),
 	}
 
 	metrics.registry.MustRegister(
@@ -77,6 +138,17 @@ func NewMetrics() *Metrics {
 		metrics.actionDuration,
 		metrics.copilotToolEvents,
 		metrics.copilotToolDuration,
+		metrics.nluClassifyTotal,
+		metrics.nluClassifyDuration,
+		metrics.ragSearchTotal,
+		metrics.ragSearchScore,
+		metrics.ragSearchDuration,
+		metrics.diagnosisConfidence,
+		metrics.diagnosisLLMTotal,
+		metrics.diagnosisDuration,
+		metrics.llmRequestTotal,
+		metrics.llmRequestDuration,
+		metrics.llmTokensTotal,
 	)
 	return metrics
 }
@@ -140,4 +212,44 @@ func (m *Metrics) ObserveToolExecution(name, result string, seconds float64) {
 	}
 	m.copilotToolEvents.WithLabelValues(name, result).Inc()
 	m.copilotToolDuration.WithLabelValues(name, result).Observe(seconds)
+}
+
+func (m *Metrics) ObserveNLUClassify(intent, source string, durationSeconds float64) {
+	if m == nil {
+		return
+	}
+	m.nluClassifyTotal.WithLabelValues(intent, source).Inc()
+	m.nluClassifyDuration.WithLabelValues(source).Observe(durationSeconds)
+}
+
+func (m *Metrics) ObserveRAGSearch(hasResult string, score, durationSeconds float64) {
+	if m == nil {
+		return
+	}
+	m.ragSearchTotal.WithLabelValues(hasResult).Inc()
+	m.ragSearchScore.Observe(score)
+	m.ragSearchDuration.Observe(durationSeconds)
+}
+
+func (m *Metrics) ObserveDiagnosis(confidence float64, result string, source string, durationSeconds float64) {
+	if m == nil {
+		return
+	}
+	m.diagnosisConfidence.Observe(confidence)
+	m.diagnosisLLMTotal.WithLabelValues(result).Inc()
+	m.diagnosisDuration.WithLabelValues(source).Observe(durationSeconds)
+}
+
+func (m *Metrics) ObserveLLMRequest(model, result string, durationSeconds float64, inputTokens, outputTokens int) {
+	if m == nil {
+		return
+	}
+	m.llmRequestTotal.WithLabelValues(model, result).Inc()
+	m.llmRequestDuration.WithLabelValues(model).Observe(durationSeconds)
+	if inputTokens > 0 {
+		m.llmTokensTotal.WithLabelValues(model, "input").Add(float64(inputTokens))
+	}
+	if outputTokens > 0 {
+		m.llmTokensTotal.WithLabelValues(model, "output").Add(float64(outputTokens))
+	}
 }

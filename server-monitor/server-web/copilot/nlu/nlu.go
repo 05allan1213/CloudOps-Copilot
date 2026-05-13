@@ -3,6 +3,7 @@ package nlu
 import (
 	"regexp"
 	"strings"
+	"time"
 )
 
 const (
@@ -23,7 +24,21 @@ type Result struct {
 	Entities   map[string]string
 }
 
-type Classifier struct{}
+type NLUObserver interface {
+	ObserveNLUClassify(intent, source string, durationSeconds float64)
+}
+
+type Classifier struct {
+	observer NLUObserver
+}
+
+type ClassifierOption func(*Classifier)
+
+func WithNLUObserver(obs NLUObserver) ClassifierOption {
+	return func(c *Classifier) {
+		c.observer = obs
+	}
+}
 
 var (
 	instancePattern = regexp.MustCompile(`(?i)\b([a-z0-9][a-z0-9._-]*(:\d{2,5})?|(?:\d{1,3}\.){3}\d{1,3}(:\d{2,5})?)\b`)
@@ -73,14 +88,21 @@ var (
 	}
 )
 
-func NewClassifier() *Classifier {
-	return &Classifier{}
+func NewClassifier(opts ...ClassifierOption) *Classifier {
+	c := &Classifier{}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 func (c *Classifier) Classify(message string) Result {
+	start := time.Now()
 	normalized := strings.ToLower(strings.TrimSpace(message))
 	if normalized == "" {
-		return unknownResult()
+		result := unknownResult()
+		c.observeResult(result, start)
+		return result
 	}
 
 	entities := extractEntities(message, normalized)
@@ -94,28 +116,43 @@ func (c *Classifier) Classify(message string) Result {
 	hasHostListOption := containsAny(normalized, "search", "q=", "group", "group_id", "sort", "risk", "high cpu", "high memory", "高cpu", "高内存", "cpu_desc", "memory_desc")
 	hasGeneral := containsAny(normalized, "能做什么", "help", "帮助", "what can you do", "解释", "explain")
 
+	var result Result
 	switch {
 	case hasDiagnosis && hasAlert:
-		return Result{Intent: IntentDiagnosisRequest, Confidence: 0.9, Entities: entities}
+		result = Result{Intent: IntentDiagnosisRequest, Confidence: 0.9, Entities: entities}
 	case hasAlertRule:
-		return Result{Intent: IntentAlertRuleListQuery, Confidence: 0.89, Entities: entities}
+		result = Result{Intent: IntentAlertRuleListQuery, Confidence: 0.89, Entities: entities}
 	case hasAlert && hasHistory:
-		return Result{Intent: IntentAlertHistoryQuery, Confidence: 0.9, Entities: entities}
+		result = Result{Intent: IntentAlertHistoryQuery, Confidence: 0.9, Entities: entities}
 	case hasAlert && hasEvent:
-		return Result{Intent: IntentAlertEventQuery, Confidence: 0.88, Entities: entities}
+		result = Result{Intent: IntentAlertEventQuery, Confidence: 0.88, Entities: entities}
 	case hasAlert:
-		return Result{Intent: IntentAlertQuery, Confidence: 0.9, Entities: entities}
+		result = Result{Intent: IntentAlertQuery, Confidence: 0.9, Entities: entities}
 	case hasHost && hasHostListOption:
-		return Result{Intent: IntentHostQuery, Confidence: 0.87, Entities: entities}
+		result = Result{Intent: IntentHostQuery, Confidence: 0.87, Entities: entities}
 	case hasMetric:
-		return Result{Intent: IntentMetricQuery, Confidence: 0.84, Entities: entities}
+		result = Result{Intent: IntentMetricQuery, Confidence: 0.84, Entities: entities}
 	case hasHost:
-		return Result{Intent: IntentHostQuery, Confidence: 0.85, Entities: entities}
+		result = Result{Intent: IntentHostQuery, Confidence: 0.85, Entities: entities}
 	case hasGeneral:
-		return Result{Intent: IntentGeneralChat, Confidence: 0.72, Entities: entities}
+		result = Result{Intent: IntentGeneralChat, Confidence: 0.72, Entities: entities}
 	default:
-		return unknownResult()
+		result = unknownResult()
 	}
+
+	c.observeResult(result, start)
+	return result
+}
+
+func (c *Classifier) observeResult(result Result, start time.Time) {
+	if c.observer == nil {
+		return
+	}
+	source := "rule"
+	if result.Confidence < 0.6 {
+		source = "rule-low"
+	}
+	c.observer.ObserveNLUClassify(result.Intent, source, time.Since(start).Seconds())
 }
 
 func extractEntities(original, normalized string) map[string]string {

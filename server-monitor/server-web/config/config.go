@@ -140,6 +140,10 @@ type Config struct {
 	// 默认值：2
 	RunbookSearchTopN int
 
+	RunbookBM25Weight float64
+	RunbookBM25K1     float64
+	RunbookBM25B      float64
+
 	// LLMAPIKey LLM API Key，用于后续 LLM 兜底
 	// 默认值：空（禁用 LLM 调用）
 	// 敏感：是
@@ -437,6 +441,9 @@ func Load() Config {
 		RunbookMaxFiles:              configutil.PositiveInt("RUNBOOK_MAX_FILES", 100),
 		RunbookMaxFileBytes:          int64(configutil.PositiveInt("RUNBOOK_MAX_FILE_BYTES", 65536)),
 		RunbookSearchTopN:            configutil.PositiveInt("RUNBOOK_SEARCH_TOP_N", 2),
+		RunbookBM25Weight:            configutil.FloatRange("RUNBOOK_BM25_WEIGHT", 0.3, 0, 1),
+		RunbookBM25K1:                configutil.FloatRange("RUNBOOK_BM25_K1", 1.2, 0, 10),
+		RunbookBM25B:                 configutil.FloatRange("RUNBOOK_BM25_B", 0.75, 0, 1),
 		LLMAPIKey:                    configutil.String("LLM_API_KEY", ""),
 		LLMAPIURL:                    configutil.String("LLM_API_URL", "https://api.deepseek.com/v1/chat/completions"),
 		LLMModel:                     configutil.String("LLM_MODEL", "deepseek-chat"),

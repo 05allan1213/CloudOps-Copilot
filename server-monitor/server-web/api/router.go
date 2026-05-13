@@ -27,6 +27,7 @@ import (
 	copilothandler "server-web/copilot/handler"
 	copilotk8s "server-web/copilot/k8s"
 	copilotllm "server-web/copilot/llm"
+	copilotnlu "server-web/copilot/nlu"
 	copilotrunbook "server-web/copilot/runbook"
 	copilotservice "server-web/copilot/service"
 	copilotsession "server-web/copilot/session"
@@ -163,6 +164,10 @@ func NewRouterWithRuntime(cfg config.Config, promClient *promclient.Client, cach
 		runbookRetriever := copilotrunbook.NewRetriever(runbookDocs, copilotrunbook.RetrieverOptions{
 			DefaultLimit: cfg.RunbookSearchTopN,
 			MaxLimit:     5,
+			BM25Weight:   cfg.RunbookBM25Weight,
+			BM25K1:       cfg.RunbookBM25K1,
+			BM25B:        cfg.RunbookBM25B,
+			Observer:     metrics,
 		})
 		if cfg.CopilotToolRegistryEnabled {
 			toolExecutor, err = copilottool.NewExecutor(copilottool.Options{
@@ -190,6 +195,7 @@ func NewRouterWithRuntime(cfg config.Config, promClient *promclient.Client, cach
 			Model:     cfg.LLMModel,
 			Timeout:   cfg.LLMTimeout,
 			MaxTokens: cfg.LLMMaxTokens,
+			Observer:  metrics,
 		})
 		var runner copilotdiagnosis.ToolRunner
 		if toolExecutor != nil {
@@ -208,7 +214,8 @@ func NewRouterWithRuntime(cfg config.Config, promClient *promclient.Client, cach
 				RunbookLimit: cfg.RunbookSearchTopN,
 			}),
 			Summarizer: copilotdiagnosis.NewLLMSummarizerWithOptions(llmClient, copilotdiagnosis.LLMSummarizerOptions{
-				Timeout: cfg.DiagnosisLLMTimeout,
+				Timeout:  cfg.DiagnosisLLMTimeout,
+				Observer: metrics,
 			}),
 		})
 		copilotRuntime = &CopilotRuntime{DiagnosisService: diagnosisService, KafkaObserver: metrics}
@@ -217,6 +224,7 @@ func NewRouterWithRuntime(cfg config.Config, promClient *promclient.Client, cach
 			SessionTTL:         cfg.CopilotSessionTTL,
 			MaxSessionMessages: cfg.CopilotMaxSessionMessages,
 			Store:              copilotsession.NewRedisStore(cacheClient),
+			Classifier:         copilotnlu.NewClassifier(copilotnlu.WithNLUObserver(metrics)),
 			LLM:                llmClient,
 			Tools:              tools,
 			Diagnosis:          diagnosisService,

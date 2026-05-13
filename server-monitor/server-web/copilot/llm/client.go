@@ -24,6 +24,10 @@ var (
 	ErrInvalidResponse = errors.New("invalid llm classifier response")
 )
 
+type LLMObserver interface {
+	ObserveLLMRequest(model, result string, durationSeconds float64, inputTokens, outputTokens int)
+}
+
 type Client struct {
 	apiKey           string
 	apiURL           string
@@ -32,6 +36,7 @@ type Client struct {
 	httpClient       *http.Client
 	maxResponseBytes int64
 	maxTokens        int
+	observer         LLMObserver
 }
 
 type Options struct {
@@ -42,6 +47,7 @@ type Options struct {
 	HTTPClient       *http.Client
 	MaxResponseBytes int64
 	MaxTokens        int
+	Observer         LLMObserver
 }
 
 type chatRequest struct {
@@ -60,6 +66,13 @@ type chatResponse struct {
 	Choices []struct {
 		Message chatMessage `json:"message"`
 	} `json:"choices"`
+	Usage *chatUsage `json:"usage,omitempty"`
+}
+
+type chatUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
 }
 
 type intentPayload struct {
@@ -89,6 +102,7 @@ func NewClient(options Options) *Client {
 		httpClient:       httpClient,
 		maxResponseBytes: maxResponseBytes,
 		maxTokens:        options.MaxTokens,
+		observer:         options.Observer,
 	}
 }
 
@@ -102,10 +116,15 @@ func (c *Client) Classify(ctx context.Context, message string) (nlu.Result, erro
 
 func (c *Client) Generate(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
 	if c == nil || c.apiKey == "" || c.apiURL == "" || c.model == "" {
+		if c != nil && c.observer != nil {
+			c.observer.ObserveLLMRequest(c.model, "error", 0, 0, 0)
+		}
 		return "", ErrDisabled
 	}
 
+	start := time.Now()
 	var lastErr error
+	var lastUsage *chatUsage
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
 			backoff := initialRetryBackoff * time.Duration(1<<(attempt-1))
@@ -113,21 +132,44 @@ func (c *Client) Generate(ctx context.Context, systemPrompt, userPrompt string) 
 			select {
 			case <-ctx.Done():
 				timer.Stop()
+				if c.observer != nil {
+					c.observer.ObserveLLMRequest(c.model, "error", time.Since(start).Seconds(), 0, 0)
+				}
 				return "", ctx.Err()
 			case <-timer.C:
 			}
 		}
 
-		result, err := c.doRequest(ctx, systemPrompt, userPrompt)
+		result, usage, err := c.doRequest(ctx, systemPrompt, userPrompt)
 		if err == nil {
+			if c.observer != nil {
+				inputTokens, outputTokens := tokenCountsFromUsage(usage)
+				c.observer.ObserveLLMRequest(c.model, "success", time.Since(start).Seconds(), inputTokens, outputTokens)
+			}
 			return result, nil
 		}
 		lastErr = err
+		lastUsage = usage
 		if !isRetryableError(err) {
+			if c.observer != nil {
+				inputTokens, outputTokens := tokenCountsFromUsage(lastUsage)
+				c.observer.ObserveLLMRequest(c.model, "error", time.Since(start).Seconds(), inputTokens, outputTokens)
+			}
 			return "", err
 		}
 	}
+	if c.observer != nil {
+		inputTokens, outputTokens := tokenCountsFromUsage(lastUsage)
+		c.observer.ObserveLLMRequest(c.model, "error", time.Since(start).Seconds(), inputTokens, outputTokens)
+	}
 	return "", lastErr
+}
+
+func tokenCountsFromUsage(usage *chatUsage) (int, int) {
+	if usage == nil {
+		return 0, 0
+	}
+	return usage.PromptTokens, usage.CompletionTokens
 }
 
 func isRetryableError(err error) bool {
@@ -137,7 +179,7 @@ func isRetryableError(err error) bool {
 	return true
 }
 
-func (c *Client) doRequest(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
+func (c *Client) doRequest(ctx context.Context, systemPrompt, userPrompt string) (string, *chatUsage, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
@@ -151,34 +193,34 @@ func (c *Client) doRequest(ctx context.Context, systemPrompt, userPrompt string)
 		MaxTokens:   c.maxTokens,
 	})
 	if err != nil {
-		return "", fmt.Errorf("marshal llm request: %w", err)
+		return "", nil, fmt.Errorf("marshal llm request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.apiURL, bytes.NewReader(body))
 	if err != nil {
-		return "", fmt.Errorf("create llm request: %w", err)
+		return "", nil, fmt.Errorf("create llm request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("call llm: %w", err)
+		return "", nil, fmt.Errorf("call llm: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return "", fmt.Errorf("llm returned status %d%s", resp.StatusCode, responseBodyDetail(resp.Body))
+		return "", nil, fmt.Errorf("llm returned status %d%s", resp.StatusCode, responseBodyDetail(resp.Body))
 	}
 
 	var decoded chatResponse
 	limited := io.LimitReader(resp.Body, c.maxResponseBytes)
 	if err := json.NewDecoder(limited).Decode(&decoded); err != nil {
-		return "", fmt.Errorf("decode llm response: %w", err)
+		return "", nil, fmt.Errorf("decode llm response: %w", err)
 	}
 	if len(decoded.Choices) == 0 {
-		return "", ErrInvalidResponse
+		return "", nil, ErrInvalidResponse
 	}
-	return decoded.Choices[0].Message.Content, nil
+	return decoded.Choices[0].Message.Content, decoded.Usage, nil
 }
 
 func responseBodyDetail(body io.Reader) string {
