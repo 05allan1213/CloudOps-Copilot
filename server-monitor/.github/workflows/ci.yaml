@@ -64,14 +64,14 @@ jobs:
       - name: NLU Evaluation
         working-directory: server-web
         run: |
+          set -o pipefail
           go test ./copilot/nlu/eval/ -run TestEvaluate -v -count=1 2>&1 | tee nlu-eval-report.txt
-          echo "NLU evaluation completed"
 
       - name: RAG Evaluation
         working-directory: server-web
         run: |
+          set -o pipefail
           go test ./copilot/runbook/eval/ -run TestRAGEval -v -count=1 2>&1 | tee rag-eval-report.txt
-          echo "RAG evaluation completed"
 
   alert-service:
     name: alert-service checks
