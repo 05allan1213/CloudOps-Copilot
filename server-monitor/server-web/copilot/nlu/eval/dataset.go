@@ -464,3 +464,50 @@ func GoldenSet() []EvalCase {
 		},
 	}
 }
+
+type MultiEvalCase struct {
+	Input       string
+	WantIntents []string
+	Description string
+}
+
+func MultiEvalSet() []MultiEvalCase {
+	return []MultiEvalCase{
+		{Input: "查告警并诊断", WantIntents: []string{"alert_query", "diagnosis_request"}, Description: "双意图-并"},
+		{Input: "查看主机和指标", WantIntents: []string{"host_query", "metric_query"}, Description: "双意图-和"},
+		{Input: "查告警然后看主机状态", WantIntents: []string{"alert_query", "host_query"}, Description: "双意图-然后"},
+		{Input: "查看 node-1 的 CPU 和内存", WantIntents: []string{"metric_query", "metric_query"}, Description: "双意图-同意图不同实体"},
+		{Input: "查看告警并看主机", WantIntents: []string{"alert_query", "host_query"}, Description: "双意图-并"},
+		{Input: "查告警和诊断", WantIntents: []string{"alert_query", "diagnosis_request"}, Description: "双意图-和"},
+		{Input: "查看主机同时查指标", WantIntents: []string{"host_query", "metric_query"}, Description: "双意图-同时"},
+		{Input: "查告警然后诊断", WantIntents: []string{"alert_query", "diagnosis_request"}, Description: "双意图-然后"},
+		{Input: "查看指标再看主机", WantIntents: []string{"metric_query", "host_query"}, Description: "双意图-再"},
+		{Input: "查告警接着看主机", WantIntents: []string{"alert_query", "host_query"}, Description: "双意图-接着"},
+		{Input: "查看告警以及主机状态", WantIntents: []string{"alert_query", "host_query"}, Description: "双意图-以及"},
+		{Input: "查告警且看主机", WantIntents: []string{"alert_query", "host_query"}, Description: "双意图-且"},
+		{Input: "check alerts and host status", WantIntents: []string{"alert_query", "host_query"}, Description: "双意图-英文and"},
+		{Input: "show CPU then memory", WantIntents: []string{"metric_query", "metric_query"}, Description: "双意图-英文then"},
+		{Input: "check alerts and diagnose", WantIntents: []string{"alert_query", "diagnosis_request"}, Description: "双意图-英文and"},
+		{Input: "show hosts also metrics", WantIntents: []string{"host_query", "metric_query"}, Description: "双意图-英文also"},
+		{Input: "查告警并看主机然后查指标", WantIntents: []string{"alert_query", "host_query", "metric_query"}, Description: "三意图"},
+		{Input: "查看告警和主机以及指标", WantIntents: []string{"alert_query", "host_query", "metric_query"}, Description: "三意图"},
+		{Input: "查告警然后看主机再查指标", WantIntents: []string{"alert_query", "host_query", "metric_query"}, Description: "三意图"},
+		{Input: "查看告警并诊断然后看主机", WantIntents: []string{"alert_query", "diagnosis_request", "host_query"}, Description: "三意图"},
+		{Input: "当前有哪些告警", WantIntents: []string{"alert_query"}, Description: "单意图-不退化"},
+		{Input: "主机列表", WantIntents: []string{"host_query"}, Description: "单意图-不退化"},
+		{Input: "CPU使用率", WantIntents: []string{"metric_query"}, Description: "单意图-不退化"},
+		{Input: "诊断HighCPU告警", WantIntents: []string{"diagnosis_request"}, Description: "单意图-不退化"},
+		{Input: "你好", WantIntents: []string{"general_chat"}, Description: "单意图-不退化"},
+		{Input: "告警规则列表", WantIntents: []string{"alert_rule_list_query"}, Description: "单意图-不退化"},
+		{Input: "CPU告警历史", WantIntents: []string{"alert_history_query"}, Description: "单意图-不退化"},
+		{Input: "最新5条告警事件", WantIntents: []string{"alert_event_query"}, Description: "单意图-不退化"},
+		{Input: "Show offline hosts", WantIntents: []string{"host_query"}, Description: "单意图-不退化"},
+		{Input: "What can you do?", WantIntents: []string{"general_chat"}, Description: "单意图-不退化"},
+		{Input: "和运维相关的告警", WantIntents: []string{"alert_query"}, Description: "边界-和非连接词"},
+		{Input: "查看告警和", WantIntents: []string{"alert_query"}, Description: "边界-连接词在句末"},
+		{Input: "和谐的主机", WantIntents: []string{"host_query"}, Description: "边界-和作为非连接词"},
+		{Input: "查看告警同时", WantIntents: []string{"alert_query"}, Description: "边界-同时作为非连接词"},
+		{Input: "查看告警然后", WantIntents: []string{"alert_query"}, Description: "边界-然后作为非连接词"},
+		{Input: "查看告警再说", WantIntents: []string{"alert_query"}, Description: "边界-再说"},
+	}
+}

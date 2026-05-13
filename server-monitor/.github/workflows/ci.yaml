@@ -73,6 +73,12 @@ jobs:
           set -o pipefail
           go test ./copilot/runbook/eval/ -run TestRAGEval -v -count=1 2>&1 | tee rag-eval-report.txt
 
+      - name: NLU Multi-Intent Evaluation
+        working-directory: server-web
+        run: |
+          set -o pipefail
+          go test ./copilot/nlu/eval/ -run TestEvaluateMulti -v -count=1 2>&1 | tee nlu-multi-eval-report.txt
+
   alert-service:
     name: alert-service checks
     runs-on: ubuntu-latest
