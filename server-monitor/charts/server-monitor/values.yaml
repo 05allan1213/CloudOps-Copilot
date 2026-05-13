@@ -383,6 +383,16 @@ alertRuleSync:
   promtoolPath: /usr/local/bin/promtool
   timeoutSeconds: "10"
 
+aiQualityAlerts:
+  enabled: true
+  llmErrorRateWarning: "0.2"
+  llmErrorRateCritical: "0.5"
+  diagnosisFallbackRate: "0.3"
+  ragNoResultRate: "0.4"
+  nluLowConfidenceRate: "0.3"
+  diagnosisP95LatencySeconds: "30"
+  llmP95LatencySeconds: "15"
+
 prometheus:
   enabled: true
   image: prom/prometheus:v2.51.0

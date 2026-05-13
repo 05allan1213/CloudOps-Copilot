@@ -188,6 +188,117 @@ data:
               summary: "High latency on {{ "{{" }} $labels.instance {{ "}}" }}"
               description: "HTTP P95 latency is above 1s."
 
+{{- if .Values.aiQualityAlerts.enabled }}
+  copilot-ai-quality-rules.yml: |
+    groups:
+      - name: copilot-ai-quality
+        rules:
+          - alert: CopilotLLMHighErrorRate
+            expr: >
+              (sum(rate(copilot_llm_request_total{result="error"}[10m]))
+               / sum(rate(copilot_llm_request_total[10m]))) > {{ .Values.aiQualityAlerts.llmErrorRateWarning }}
+            for: 5m
+            labels:
+              severity: warning
+              alertgroup: copilot-ai-quality
+            annotations:
+              summary: "Copilot LLM error rate is high"
+              description: >
+                LLM request error rate is {{ "{{" }} $value | humanizePercentage {{ "}}" }}
+                (threshold: 20%) over the last 10 minutes.
+                Check LLM provider availability and API key validity.
+
+          - alert: CopilotLLMCriticalErrorRate
+            expr: >
+              (sum(rate(copilot_llm_request_total{result="error"}[10m]))
+               / sum(rate(copilot_llm_request_total[10m]))) > {{ .Values.aiQualityAlerts.llmErrorRateCritical }}
+            for: 3m
+            labels:
+              severity: critical
+              alertgroup: copilot-ai-quality
+            annotations:
+              summary: "Copilot LLM error rate is critical"
+              description: >
+                LLM request error rate is {{ "{{" }} $value | humanizePercentage {{ "}}" }}
+                (threshold: 50%) over the last 10 minutes.
+                All AI features relying on LLM are degraded.
+
+          - alert: CopilotDiagnosisHighFallbackRate
+            expr: >
+              (sum(rate(copilot_diagnosis_llm_total{result="fallback"}[15m]))
+               / sum(rate(copilot_diagnosis_llm_total[15m]))) > {{ .Values.aiQualityAlerts.diagnosisFallbackRate }}
+            for: 10m
+            labels:
+              severity: warning
+              alertgroup: copilot-ai-quality
+            annotations:
+              summary: "Copilot diagnosis fallback rate is high"
+              description: >
+                Diagnosis LLM fallback rate is {{ "{{" }} $value | humanizePercentage {{ "}}" }}
+                (threshold: 30%) over the last 15 minutes.
+                LLM summarization is frequently falling back to rule-only.
+
+          - alert: CopilotRAGHighNoResultRate
+            expr: >
+              (sum(rate(copilot_rag_search_total{has_result="false"}[15m]))
+               / sum(rate(copilot_rag_search_total[15m]))) > {{ .Values.aiQualityAlerts.ragNoResultRate }}
+            for: 10m
+            labels:
+              severity: warning
+              alertgroup: copilot-ai-quality
+            annotations:
+              summary: "Copilot RAG no-result rate is high"
+              description: >
+                RAG search no-result rate is {{ "{{" }} $value | humanizePercentage {{ "}}" }}
+                (threshold: 40%) over the last 15 minutes.
+                Check Runbook coverage and embedding service availability.
+
+          - alert: CopilotNLULowConfidenceRate
+            expr: >
+              (sum(rate(copilot_nlu_classify_total{source="rule-low"}[15m]))
+               / sum(rate(copilot_nlu_classify_total[15m]))) > {{ .Values.aiQualityAlerts.nluLowConfidenceRate }}
+            for: 15m
+            labels:
+              severity: warning
+              alertgroup: copilot-ai-quality
+            annotations:
+              summary: "Copilot NLU low-confidence rate is high"
+              description: >
+                NLU low-confidence classification rate is {{ "{{" }} $value | humanizePercentage {{ "}}" }}
+                (threshold: 30%) over the last 15 minutes.
+                Many queries are not matching rules and may need LLM fallback.
+
+          - alert: CopilotDiagnosisHighLatency
+            expr: >
+              histogram_quantile(0.95,
+                sum by(le) (rate(copilot_diagnosis_duration_seconds_bucket[10m]))
+              ) > {{ .Values.aiQualityAlerts.diagnosisP95LatencySeconds }}
+            for: 10m
+            labels:
+              severity: warning
+              alertgroup: copilot-ai-quality
+            annotations:
+              summary: "Copilot diagnosis P95 latency is high"
+              description: >
+                Diagnosis P95 latency is {{ "{{" }} $value {{ "}}" }}s (threshold: 30s)
+                over the last 10 minutes. LLM or evidence collection may be slow.
+
+          - alert: CopilotLLMHighLatency
+            expr: >
+              histogram_quantile(0.95,
+                sum by(le) (rate(copilot_llm_request_duration_seconds_bucket[10m]))
+              ) > {{ .Values.aiQualityAlerts.llmP95LatencySeconds }}
+            for: 10m
+            labels:
+              severity: warning
+              alertgroup: copilot-ai-quality
+            annotations:
+              summary: "Copilot LLM P95 latency is high"
+              description: >
+                LLM request P95 latency is {{ "{{" }} $value {{ "}}" }}s (threshold: 15s)
+                over the last 10 minutes. LLM provider may be overloaded.
+{{- end }}
+
 ---
 # ------------------------------------------
 # 3. Prometheus RBAC

@@ -134,6 +134,7 @@ services:
       - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./docker/alerts.yml:/etc/prometheus/rules/alerts.yml:ro
       - ./docker/custom-alerts.yml:/etc/prometheus/rules/custom-alerts.yml:ro
+      - ./docker/copilot-ai-quality-rules.yml:/etc/prometheus/rules/copilot-ai-quality-rules.yml:ro
       - prometheus-data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
