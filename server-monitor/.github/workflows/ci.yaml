@@ -61,6 +61,18 @@ jobs:
         working-directory: server-web
         run: go vet ./...
 
+      - name: NLU Evaluation
+        working-directory: server-web
+        run: |
+          go test ./copilot/nlu/eval/ -run TestEvaluate -v -count=1 2>&1 | tee nlu-eval-report.txt
+          echo "NLU evaluation completed"
+
+      - name: RAG Evaluation
+        working-directory: server-web
+        run: |
+          go test ./copilot/runbook/eval/ -run TestRAGEval -v -count=1 2>&1 | tee rag-eval-report.txt
+          echo "RAG evaluation completed"
+
   alert-service:
     name: alert-service checks
     runs-on: ubuntu-latest
@@ -129,6 +141,14 @@ jobs:
             -v "${{ github.workspace }}/docker/alerts.yml:/etc/prometheus/alerts.yml:ro" \
             prom/prometheus:v2.51.0 \
             check rules /etc/prometheus/alerts.yml
+
+      - name: Check AI quality alert rules
+        run: |
+          docker run --rm \
+            --entrypoint promtool \
+            -v "${{ github.workspace }}/docker/copilot-ai-quality-rules.yml:/etc/prometheus/rules/copilot-ai-quality-rules.yml:ro" \
+            prom/prometheus:v2.51.0 \
+            check rules /etc/prometheus/rules/copilot-ai-quality-rules.yml
 
   helm:
     name: helm chart checks
