@@ -350,6 +350,21 @@ spec:
                 configMapKeyRef:
                   name: monitor-config
                   key: RUNBOOK_SEARCH_TOP_N
+            - name: RUNBOOK_BM25_WEIGHT
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: RUNBOOK_BM25_WEIGHT
+            - name: RUNBOOK_BM25_K1
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: RUNBOOK_BM25_K1
+            - name: RUNBOOK_BM25_B
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: RUNBOOK_BM25_B
             - name: READY_TIMEOUT_SECONDS
               valueFrom:
                 configMapKeyRef:

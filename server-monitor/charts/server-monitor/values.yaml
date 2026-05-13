@@ -55,6 +55,9 @@ config:
   runbookMaxFiles: "100"
   runbookMaxFileBytes: "65536"
   runbookSearchTopN: "2"
+  runbookBM25Weight: "0.3"
+  runbookBM25K1: "1.2"
+  runbookBM25B: "0.75"
 
 k8sIntegration:
   enabled: false

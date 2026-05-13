@@ -1,6 +1,6 @@
 # CloudOps Copilot — AI 模块演进方案
 
-> 文档版本：v3.0 | 更新时间：2026-05-12
+> 文档版本：v3.2 | 更新时间：2026-05-13
 > 文档定位：CloudOps Copilot AI 引擎的完整演进路线图——从原型到生产，从关键词到语义，从功能可用到质量可量化。
 > 前置文档：`server-monitor` 技术方案 v3.1（系统架构、数据模型、API 规范）
 
@@ -57,11 +57,23 @@ chatops 独立原型    →    server-monitor 二改      →    AI 模块补充
 | CORS OPTIONS 请求返回 404 | 空 Origins 配置导致中间件跳过，OPTIONS 无 handler | 重写 CORS 中间件，增加 PUT/DELETE | 全局 |
 | Runbook 关键词触发不完整 | NLU 缺少 metric keyword 提取，"CPU"无法路由到 `runbook.search` | 新增 `extractMetricKeywords()` + `metricKeywordDefs` | Phase 4 |
 
-**测试验证**：151 用例，143 PASS / 2 FAIL（LLM 非确定性）/ 6 SKIP（环境限制），验收标准 8/8 全部满足。
+**测试验证基线**：阶段二收口时曾以 151 用例作为回归基线，最近一次记录为 143 PASS / 2 FAIL（LLM 非确定性）/ 6 SKIP（环境限制）。阶段三启动前必须重新运行当前代码基线，所有后续 Sprint 只能以重新运行后的结果作为准入和回归对照。
 
 ### 1.4 阶段三：质量深化（当前目标）
 
 二改解决了"能不能上线"的问题，但 AI 模块在**检索深度、评估体系、Prompt 工程**三个维度存在明显短板。阶段三的目标是让 AI 能力从"功能可用"升级到"质量可量化、深度可演进"。
+
+### 1.5 事实边界与目标口径
+
+本文档把内容分为三类，后续实现和面试讲述必须按这个边界表达：
+
+| 类型 | 含义 | 表述方式 |
+|---|---|---|
+| 当前事实 | 已在当前代码中存在，或已通过本地命令/运行环境验证 | 使用"已实现"、"当前代码"、"最近一次验证" |
+| 近期目标 | 阶段三 Sprint 1-3 计划实现，尚未完成 | 使用"目标"、"计划"、"验收标准" |
+| 远期演进 | Embedding、Hybrid Search、Reranker、多意图、在线学习等扩展方向 | 使用"可选"、"后续"、"演进路径" |
+
+文档中的准确率、命中率、格式稳定性、Top-1 准确率等指标，除非明确标注"已运行命令得到"，否则均视为目标值或示例输出格式，不作为当前事实。
 
 ---
 
@@ -78,7 +90,7 @@ chatops 独立原型    →    server-monitor 二改      →    AI 模块补充
 │                                                              │
 │  Classify(message)                                           │
 │    ├── 规则匹配: containsAny → switch-case → intent          │
-│    │   8 种意图: alert_query / alert_event_query /           │
+│    │   9 种意图(含 unknown): alert_query / alert_event_query /           │
 │    │   alert_history_query / alert_rule_list_query /         │
 │    │   diagnosis_request / host_query / metric_query /       │
 │    │   general_chat / unknown                                │
@@ -112,7 +124,9 @@ chatops 独立原型    →    server-monitor 二改      →    AI 模块补充
 │    │   ├── RuleAnalyzer: 确定性规则分析                       │
 │    │   │       cpu_sustained_high / load_correlated /         │
 │    │   │       memory_sustained_high / disk_usage_high /      │
-│    │   │       host_unreachable / k8s_* / history_recurring   │
+│    │   │       high_error_rate / high_latency /               │
+│    │   │       host_unreachable / k8s_* / history_recurring / │
+│    │   │       evidence_incomplete                            │
 │    │   ├── LLMSummarizer: 证据 + 规则 → 诊断报告             │
 │    │   │       失败降级 → RuleOnlySummary                     │
 │    │   └── MySQL 持久化 + WebSocket 推送                      │
@@ -123,7 +137,11 @@ chatops 独立原型    →    server-monitor 二改      →    AI 模块补充
 │          alert_event_query  → alert.events                    │
 │          alert_history_query → alert.history                  │
 │          alert_rule_list_query → alert.rule_list              │
-│          metric_query       → host.metrics / prom.query_range │
+│          metric_query       → runbook.search(alert_name) /    │
+│                             runbook.search(metric_keywords) / │
+│                             prom.query_range(query) /         │
+│                             host.metrics(instance) /          │
+│                             host.list(default)                │
 │          host_query         → host.list                       │
 │        (copilot/tool/executor.go: planToolCall)               │
 └──────────────────────┬──────────────────────────────────────┘
@@ -333,7 +351,9 @@ BM25(D, Q) = Σ IDF(qi) × f(qi,D) × (k1 + 1) / (f(qi,D) + k1 × (1 - b + b × 
 **评分融合设计**（修改 `retriever.go`）：
 
 ```
-final_score = structured_score × α + bm25_score × (1 - α)
+structured_norm = normalize(structured_score)
+bm25_norm       = normalize(bm25_score)
+final_score     = structured_norm × α + bm25_norm × (1 - α)
 
 α = 0.7（结构化评分权重）
 
@@ -343,9 +363,11 @@ final_score = structured_score × α + bm25_score × (1 - α)
      - metric 精确匹配 Metrics → +5（运维场景指标名唯一性强）
   2. BM25 对全文做模糊匹配，覆盖宽但可能引入噪声
      - 单字分词粒度粗，"高"可能匹配到多个不相关文档
-  3. 0.7/0.3 保证：精确匹配仍排前面，模糊匹配补充召回
-  4. 实测校准：在 9 个 Runbook 上，α=0.7 时精确查询 Top-1 准确率 100%，模糊查询 Top-1 准确率 >80%
+  3. 两路分数必须先归一化，避免 BM25 原始分数和结构化硬编码分数尺度不一致
+  4. 0.7/0.3 是初始参数，最终值以固定查询集评估结果为准
 ```
+
+归一化规则：每次查询内对候选文档做 max-score 归一化。若某一路最大分数为 0，则该路归一化分数全部置为 0。这样能保持实现简单，且不会把 BM25 原始分数误当成与结构化分数同一尺度。
 
 **Retriever 结构扩展**：
 
@@ -368,43 +390,33 @@ type RetrieverOptions struct {
 }
 ```
 
-**Search 方法修改**：
+**Search 方法修改（伪代码）**：
 
-```go
-func (r *Retriever) Search(ctx context.Context, req SearchRequest) ([]SearchResult, error) {
-    // ... 现有校验逻辑不变 ...
-
-    queryTokens := tokenize(strings.Join(
-        append(append(req.Keywords, req.AlertName), req.Metrics...), " "))
-
-    results := make([]SearchResult, 0, len(r.docs))
-    for i, doc := range r.docs {
-        structScore, matchedAlerts, matchedKeywords, matchedMetrics := scoreDocument(
-            doc, alertName, keywords, metrics)
-
-        bm25Score := 0.0
-        if r.bm25 != nil {
-            bm25Score = r.bm25.Score(queryTokens, i)
-        }
-
-        score := structScore*r.structWeight + bm25Score*r.bm25Weight
-        if score <= 0 {
-            continue
-        }
-        // ... SearchResult 构建和排序逻辑不变 ...
-    }
-}
+```text
+1. 保留现有 ctx、nil retriever、空文档、limit 校验逻辑
+2. 从 AlertName、Keywords、Metrics 构造 queryTokens
+3. 遍历 docs，分别计算:
+   - raw_struct_score
+   - raw_bm25_score
+   - matched alerts / keywords / metrics
+4. 记录本次查询的 max_struct_score 和 max_bm25_score
+5. 对每个候选做归一化:
+   - struct_norm = raw_struct_score / max_struct_score（最大值为 0 时置 0）
+   - bm25_norm = raw_bm25_score / max_bm25_score（最大值为 0 时置 0）
+6. final_score = struct_norm * struct_weight + bm25_norm * bm25_weight
+7. 丢弃 final_score <= 0 的候选，按 final_score 降序排序并截断 limit
+8. SearchResult.Score 返回 final_score；必要时测试中额外断言排序而不是依赖原始分数
 ```
 
 #### 4.1.4 效果对比
 
 | 查询 | 当前结果 | 升级后结果 | 改善原因 |
 |---|---|---|---|
-| `"HighCPU"` | `high-cpu.md`（+10 精确匹配） | `high-cpu.md`（7.0 + BM25） | 精确匹配不受影响 |
-| `"CPU飙高"` | **无匹配**（+0，Contains 失败） | `high-cpu.md`（0 + BM25 "cpu" 命中） | BM25 分词后 "cpu" 匹配 |
-| `"磁盘满了"` | **无匹配** | `high-disk.md`（0 + BM25 "磁""盘" 命中） | BM25 中文单字匹配 |
-| `"内存使用率趋势"` | **无匹配** | `high-memory.md`（0 + BM25 "内""存" 命中） | BM25 中文单字匹配 |
-| `"服务器卡住了"` | **无匹配** | `high-cpu.md` 或 `high-latency.md`（BM25 部分命中） | BM25 模糊召回 |
+| `"HighCPU"` | `high-cpu.md`（+10 精确匹配） | 目标：`high-cpu.md` Top-1 不变 | 精确匹配不受影响 |
+| `"CPU飙高"` | **无匹配**（+0，Contains 失败） | 目标：`high-cpu.md` Top-1 | BM25 分词后 "cpu" 命中 |
+| `"磁盘满了"` | **无匹配** | 目标：`high-disk.md` Top-1 | BM25 中文单字匹配 |
+| `"内存使用率趋势"` | **无匹配** | 目标：`high-memory.md` Top-1 | BM25 中文单字匹配 |
+| `"服务器卡住了"` | **无匹配** | 观察项：可能需要 Embedding 才能稳定命中 | 语义表达弱，BM25 只能部分补召回 |
 
 #### 4.1.5 配置项
 
@@ -414,12 +426,27 @@ func (r *Retriever) Search(ctx context.Context, req SearchRequest) ([]SearchResu
 | `RUNBOOK_BM25_K1` | 1.2 | 0-10 | 词频饱和参数，越大高频词贡献越大 |
 | `RUNBOOK_BM25_B` | 0.75 | 0-1 | 文档长度归一化，0=不考虑长度，1=完全归一化 |
 
+配置落地必须同步四处：`server-monitor/server-web/config/config.go`、`server-monitor/k8s/configmap.yaml`、`server-monitor/charts/server-monitor/templates/configmap.yaml`、`server-monitor/charts/server-monitor/values.yaml`。如果 Docker Compose 使用 `.env` 或 compose 环境变量透传，也需要同步示例配置，避免本地、K8s raw manifest、Helm 三套部署行为不一致。
+
 #### 4.1.6 验证标准
 
 1. 精确查询（`"HighCPU"`）Top-1 结果不变
 2. 模糊查询（`"CPU飙高"`、`"磁盘满了"`、`"内存占用高"`）Top-1 结果正确
-3. 现有 151 个集成测试全部通过（接口不变，内部实现升级）
+3. 阶段三启动前重新确认的测试基线不退化（接口不变，内部实现升级）
 4. 新增 BM25 单元测试覆盖：分词、评分、融合、边界情况
+
+固定查询集至少包含以下样本，避免只用单个成功 case 证明检索质量：
+
+| 类型 | 查询 | 期望 |
+|---|---|---|
+| 精确 | `HighCPU` | `high-cpu.md` Top-1 |
+| 精确 | `HighMemory` | `high-memory.md` Top-1 |
+| 模糊 | `CPU飙高` | `high-cpu.md` Top-1 |
+| 模糊 | `内存占用高` | `high-memory.md` Top-1 |
+| 模糊 | `磁盘满了` | `high-disk.md` Top-1 |
+| 模糊 | `机器离线` | `host-down.md` 或对应主机不可达 Runbook Top-1 |
+| 歧义 | `系统变慢了` | 允许多候选，但必须有可解释排序和非空 snippet |
+| 无结果 | `帮我修改密码` | 不应强行返回无关 Runbook |
 
 ---
 
@@ -470,14 +497,15 @@ copilot/nlu/
 | `general_chat` | 8 | 问候/帮助/介绍 |
 | 边界/困难用例 | 8 | 多意图混合、歧义输入 |
 
-**评估器输出格式**：
+**评估器输出格式（示例，非当前已验证结果）**：
 
 ```
 === NLU Evaluation Report ===
-Total: 86, Correct: 76, Accuracy: 88.4%
+Mode: rule-only
+Total: 86, Correct: 69, Accuracy: 80.2%
 
-Rule hit rate: 82.6% (71/86)
-LLM fallback rate: 17.4% (15/86)
+Rule confident rate: 82.6% (71/86)
+Low confidence rate: 17.4% (15/86)
 
 Intent                     Precision  Recall     F1         Support
 -----------------------------------------------------------------
@@ -493,10 +521,19 @@ metric_query               0.83       0.83       0.83       18
 
 **关键指标解读**：
 
-- **Rule hit rate 82.6%**：82.6% 的输入被规则分类器正确处理（confidence ≥ 0.6），无需 LLM 调用，零 Token 消耗
-- **LLM fallback rate 17.4%**：17.4% 的输入需要 LLM 兜底，这是规则覆盖的盲区
-- **metric_query F1=0.83**：最低，因为中英文混合关键词（"CPU飙高"）和 metric_query 与 diagnosis_request 的边界模糊
-- **alert_history_query F1=0.75**：偏低，因为"告警历史"和"告警"的区分依赖"历史"关键词，部分输入缺少此关键词
+- **Rule-only Accuracy**：只评估 `copilot/nlu` 规则分类器，不调用外部 LLM，用于发现规则覆盖盲区。
+- **Rule confident rate**：规则分类结果 `confidence >= 0.6` 的比例，代表不需要进入 LLM fallback 的输入占比。
+- **Low confidence rate**：规则低置信度或 unknown 的比例，代表后续需要 LLM fallback 或规则补充的输入。
+- **per-intent F1**：定位薄弱意图，例如 metric_query 与 diagnosis_request 的边界、alert_query 与 alert_history_query 的边界。
+
+评估分两层执行：
+
+| 模式 | 范围 | 是否调用 LLM | 用途 |
+|---|---|---|---|
+| rule-only | `nlu.NewClassifier().Classify()` | 否 | 固定、可重复、适合 CI |
+| end-to-end | `service.classifyWithFallback()` 或等价封装 | 可用 mock / fixture | 验证规则 + LLM fallback 的整体路由效果 |
+
+阶段三先落地 rule-only 评估。end-to-end 评估可以在 LLM fixture 稳定后补充，避免外部 API 波动污染 CI 结果。
 
 #### 4.2.4 验证标准
 
@@ -532,7 +569,7 @@ metric_query               0.83       0.83       0.83       18
 2. 诊断 Prompt 在 `buildPrompt()` 中注入 `output_schema` 字段，明确定义 5 个顶层字段的类型和枚举值
 
 效果：
-- JSON 格式稳定性从 ~70% 提升到 ~95%（`extractJSONBody()` 容错逻辑仍保留作为防御）
+- 目标是提升 JSON 格式稳定性；具体提升幅度必须通过固定 Prompt 样本集统计，不能只凭开发体感判断
 - 诊断报告结构化程度提升，字段名统一
 
 问题：
@@ -550,7 +587,7 @@ metric_query               0.83       0.83       0.83       18
 
 效果：
 - 幻觉率明显下降（Rule Analyzer 锚点提供了确定性推理基础）
-- 诊断报告结构化程度高，字段校验通过率 > 98%
+- 诊断报告结构化程度高；字段校验通过率需要在阶段三补充 Prompt 样本集或真实诊断样本后量化
 - LLM 失败时自动降级为 `RuleOnlySummary`（纯规则分析结果，保证系统可用性）
 
 **降级链**：
@@ -567,7 +604,7 @@ metric_query               0.83       0.83       0.83       18
 
 #### 4.3.3 面试讲述主线
 
-> "Prompt 迭代了 3 版。v1 基础 Prompt，JSON 格式不稳定（~70%）；v2 加 few-shot + 输出 Schema，格式稳定性提升到 ~95%，但仍有幻觉；v3 加证据约束 + Rule Analyzer 锚点，明确要求 LLM 只基于证据推理，并把规则分析结果作为确定性锚点注入，幻觉率明显下降。同时增加输出校验白名单，解析失败自动降级为纯规则分析，保证系统可用性。"
+> "Prompt 迭代了 3 版。v1 是基础 Prompt，主要问题是 JSON 格式和字段名不稳定；v2 加 few-shot + 输出 Schema，提高结构化输出稳定性；v3 加证据约束 + Rule Analyzer 锚点，明确要求 LLM 只基于证据推理，并把规则分析结果作为确定性锚点注入。同时增加输出校验白名单，解析失败自动降级为纯规则分析。下一步我会用固定样本集量化格式稳定性和幻觉率，而不是只凭主观体验描述效果。"
 
 ---
 
@@ -621,21 +658,21 @@ copilot/runbook/
 
 | 模型 | 维度 | 中文支持 | 延迟 | 成本 |
 |---|---|---|---|---|
-| DeepSeek Embedding | 1024 | 良好 | ~100ms | 低（复用现有 API Key） |
+| DeepSeek 或兼容 Embedding API | 以实际模型为准 | 待验证 | 待压测 | 低（优先复用现有 API Key） |
 | bge-m3 (BAAI) | 1024 | 优秀 | ~200ms | 中（需部署或 API） |
 | text-embedding-3-small (OpenAI) | 1536 | 一般 | ~150ms | 中 |
 
-**推荐**：DeepSeek Embedding（复用现有 API Key 和基础设施，零额外部署）。
+**推荐原则**：优先选择与当前 LLM Provider 兼容、可复用现有鉴权和超时配置的 Embedding API。具体模型、维度、价格和延迟必须在进入该阶段前重新查证并压测，不能写死为当前事实。
 
 **向量存储选择**：
 
 | 方案 | 优势 | 劣势 |
 |---|---|---|
-| Redis Search (FT.SEARCH) | 已有 Redis，零额外部署 | 需要 RediSearch 模块 |
+| Redis Search (FT.SEARCH) | 复用 Redis 生态，支持 KNN | 需要 RediSearch 模块，当前 Redis 镜像是否支持需验证 |
 | 内存 HNSW | 零依赖，9 个 Runbook 够用 | 重启后需重建索引 |
 | SQLite + faiss | 持久化，轻量 | 需要 cgo |
 
-**推荐**：Redis Search（项目已有 Redis，只需启用 RediSearch 模块）。
+**推荐原则**：若现有 Redis 镜像可启用 RediSearch，则优先 Redis Search；若启用模块会改变部署复杂度，则先选内存向量索引作为过渡方案，避免为了 9 个 Runbook 引入额外服务。
 
 **改动文件**：
 
@@ -737,7 +774,7 @@ Phase 1 (已完成)     Phase 2 (近期补充)    Phase 3              Phase 4  
 
 #### Phase 3：LLM Function Calling
 
-**目标**：用 DeepSeek Function Calling API 替代自定义 JSON 协议，提升工具调用的格式稳定性。
+**目标**：在当前 LLM Provider 支持稳定工具调用协议时，用兼容 Function Calling / tools 的结构化调用替代自定义 JSON 协议，提升工具调用的格式稳定性。
 
 **当前协议**（`copilot/llm/client.go`）：
 
@@ -748,21 +785,21 @@ LLM 返回自定义 JSON → parseIntentPayload() → isAllowedIntent() 校验 �
 **升级后协议**：
 
 ```
-LLM Function Calling API → 结构化 function_call → 直接映射到 Tool Registry
+LLM tools/function_call API → 结构化 tool call → 直接映射到 Tool Registry
 ```
 
 **改动文件**：
 
 | 文件 | 改动 |
 |---|---|
-| 修改 `llm/client.go` | 新增 `FunctionCall()` 方法，构造 `tools` 参数 |
+| 修改 `llm/client.go` | 新增结构化工具调用方法，构造 provider 兼容的 `tools` / `function_call` 参数 |
 | 修改 `tool/executor.go` | 从 `function_call.arguments` 提取工具调用参数 |
 | 修改 `service/service.go` | `classifyWithFallback` 支持 Function Calling 路径 |
 
-**降级策略**：保留自定义 JSON 协议作为降级路径。Function Calling API 不可用时回退到当前协议。
+**降级策略**：保留自定义 JSON 协议作为降级路径。若当前 Provider 的工具调用能力不可用、格式不兼容或延迟不可接受，回退到当前协议。
 
 **验证标准**：
-1. 工具调用格式稳定性 ≥ 99%（vs 当前 ~95%）
+1. 工具调用格式稳定性目标 ≥ 99%（以固定评估集验证，并与当前自定义 JSON 协议对比）
 2. 参数校验通过率 ≥ 99%
 3. 降级路径正常工作
 
@@ -919,7 +956,7 @@ Row 4: LLM 性能
 | ADR-002 | 中文分词用单字而不是 jieba/gse | 单字 / jieba / gse | 零依赖、运维领域英文为主、IDF 自动降权高频字 |
 | ADR-003 | NLU 评估用离线而不是在线 A/B | 离线 / 在线 A/B | 实现成本低、可重复、适合当前阶段 |
 | ADR-004 | 评分融合用 0.7/0.3 权重 | 0.7/0.3 / 0.5/0.5 / RRF | 结构化评分精确度高应占主导，BM25 补充召回 |
-| ADR-005 | 向量存储用 Redis Search | Redis Search / 内存 HNSW / Milvus | 已有 Redis、零额外部署、支持 KNN |
+| ADR-005 | 向量存储优先评估 Redis Search | Redis Search / 内存 HNSW / Milvus | 优先复用 Redis 生态；若 RediSearch 增加部署复杂度，则以内存索引过渡 |
 | ADR-006 | Hybrid Search 用 RRF 而不是加权融合 | RRF / 加权融合 | 基于排名无需归一化、对异常值不敏感、工业标准 |
 | ADR-007 | 不做模型微调 | 微调 / 规则+Prompt 优化 | 成本太高、秋招前不现实、规则+Prompt 优化闭环够用 |
 
@@ -930,7 +967,7 @@ Row 4: LLM 性能
 | 优先级 | 补充项 | 工作量 | 面试收益 | 竞争力提升 |
 |---|---|---|---|---|
 | 🥇 | BM25 RAG 升级 | 1-2 天 | 讲出"关键词→BM25→Embedding→RRF"完整演进 | 高 |
-| 🥈 | NLU 评估数据集 | 半天 | 从"我觉得准"到"88.4% 准确率，规则覆盖 82.6%" | 高 |
+| 🥈 | NLU 评估数据集 | 半天 | 从"我觉得准"到"有固定样本集、可重复 Accuracy/F1 基线" | 高 |
 | 🥉 | Prompt 迭代记录 | 1 小时 | 从"写了个 prompt"到"系统化迭代 3 版" | 中 |
 | 4 | AI 质量指标 | 1 天 | 数据驱动的 AI 监控，差异化 | 中 |
 | 5 | LLM Function Calling | 2 天 | 更稳定的工具调用协议 | 低 |
@@ -953,7 +990,7 @@ Row 4: LLM 性能
 | 卖点 | 阶段二（当前） | 阶段三（补充后） | 阶段三+（扩展后） |
 |---|---|---|---|
 | RAG | "关键词匹配" | "结构化评分 + BM25 融合" | "BM25 + Embedding + RRF 三路融合" |
-| NLU | "正则 + LLM 回退" | "88.4% 准确率，规则覆盖 82.6%" | "Function Calling + 多意图识别" |
+| NLU | "正则 + LLM 回退" | "固定样本集 + rule-only Accuracy/F1 基线" | "Function Calling + 多意图识别" |
 | Prompt | "写了个 prompt" | "系统化迭代 3 版，降级链完整" | "A/B 测试 + 在线评估" |
 | 评估 | "功能测试全过" | "86 条标注 + precision/recall/F1" | "在线 AI 质量指标 + Grafana 大盘" |
 
@@ -965,21 +1002,21 @@ Row 4: LLM 性能
 2. 方案: 在监控闭环上构建 AI 诊断引擎
    │
 3. 核心设计:
-   │  ├── NLU: 规则+LLM 两级路由 → 意图识别（88.4% 准确率）
+   │  ├── NLU: 规则+LLM 两级路由 → 先建立 rule-only 评估基线，再评估端到端 fallback
    │  ├── 证据融合: 并行采集多源数据 → Evidence Bundle
    │  ├── 混合推理: Rule Analyzer + LLM → 诊断报告（降级链完整）
    │  ├── RAG: 结构化评分 + BM25 融合（可演进到 Embedding + RRF）
    │  └── 安全执行: Tool Registry + HITL → 可控操作
    │
 4. 技术细节:
-   │  ├── Prompt 工程: 3 版迭代，格式稳定性 70%→95%，幻觉率下降
+   │  ├── Prompt 工程: 3 版迭代，输出 Schema + 证据约束 + Rule Analyzer 锚点
    │  ├── Token 管理: 证据优先级截断 + 查询缓存 + 规则前置
    │  └── 性能优化: 异步诊断 + 并行工具调用 + WebSocket 推送
    │
 5. 工程落地:
    │  ├── Go + Gin + Redis + MySQL + Kafka + Prometheus
    │  ├── Docker Compose + Kubernetes + Helm
-   │  └── 151 测试用例 + 86 条 NLU 评估数据 + AI 质量指标
+   │  └── 回归测试基线 + 86 条 NLU 评估数据 + AI 质量指标
 ```
 
 ---
@@ -999,7 +1036,18 @@ Row 4: LLM 性能
 
 ---
 
-## 10. 阶段三实施计划
+## 10. 阶段三核心落地计划
+
+本章只覆盖阶段三的近期核心交付：3 个 Sprint、12 个 Task、预计 3.5-4 个工作日。它的目标是建立可验证闭环，而不是一次性吃下所有长期演进能力。
+
+阶段三核心交付和阶段三+ Backlog 的边界如下：
+
+| 范围 | 内容 | 是否计入当前工期 | 完成后价值 |
+|---|---|---|---|
+| 阶段三核心落地 | BM25 RAG、NLU rule-only 评估、Prompt 迭代记录、AI metrics + Dashboard | 是 | AI 能力可量化、可验证、可讲清楚 |
+| 阶段三+ Backlog | Embedding、Hybrid/RRF、Reranker、Function Calling、多意图、质量运营、用户反馈 | 否 | AI 能力可持续演进，可按优先级逐步增强 |
+
+阶段三核心完成后，才进入 §11 的 Backlog。Backlog 不作为当前阶段三完成标准的一部分，避免把 4 天可闭环的目标扩张成数周级研发项目。
 
 ### 10.1 项目启动与准备
 
@@ -1007,17 +1055,17 @@ Row 4: LLM 性能
 
 | # | 检查项 | 当前状态 | 达标要求 | 不达标处理 |
 |---|---|---|---|---|
-| 1 | 二改代码已合并到主分支 | 4 个 Bug 修复未 commit | 全部 commit 并 push | 立即 commit |
-| 2 | Docker Compose 全服务可用 | 运行中 | `docker compose ps` 全部 healthy | 重启异常服务 |
-| 3 | 151 集成测试基线通过 | 143 PASS / 2 FAIL / 6 SKIP | FAIL ≤ 2 且均为 LLM 非确定性 | 修复产品 Bug |
-| 4 | Go 开发环境就绪 | Go 1.26 | `go version` 输出 ≥ 1.26 | 升级 Go |
-| 5 | LLM API Key 有效 | `sk-57c2...` | 调用 `POST /api/v1/chat` 返回 200 | 更换 Key |
-| 6 | Git 工作区干净 | 测试脚本已删除 | `git status` 无未跟踪文件 | 清理或 commit |
+| 1 | Git 工作区状态 | 阶段三启动时现场确认 | `git status --short` 清楚列出未提交/未跟踪文件，且不覆盖用户改动 | 先确认归属；必要时拆分提交或暂缓 |
+| 2 | Docker Compose 全服务可用 | 阶段三启动时现场确认 | `docker compose ps` 核心服务 healthy 或状态可解释 | 重启异常服务并记录原因 |
+| 3 | 当前测试基线通过 | 阶段三启动时重新运行 | `go test ./copilot/... -count=1` 通过；需要全量时再跑 `go test ./...` | 先修复产品 Bug，不带病开新 Sprint |
+| 4 | Go 开发环境就绪 | `go.mod` 当前为 Go 1.26.0 | `go version` 与项目要求兼容 | 使用项目指定 Go 版本 |
+| 5 | LLM API Key 有效 | 通过环境变量或 Secret 注入 | 不在文档记录 Key；以真实请求成功和 `llm_model` 记录证明 | 更换 Secret 或切回 rule-only 降级 |
+| 6 | 部署配置可同步 | raw K8s / Helm / Compose 均存在配置入口 | 新增配置必须同步三套部署入口 | 补齐配置后再验收 |
 
 #### 10.1.2 分支策略
 
 ```
-main (生产分支，已通过全部测试)
+main (主分支，阶段三启动前重新确认测试基线)
   │
   ├── feature/bm25-rag          ← Sprint 1: BM25 检索升级
   ├── feature/nlu-eval          ← Sprint 2: NLU 评估数据集
@@ -1026,7 +1074,7 @@ main (生产分支，已通过全部测试)
 合并规则:
   - 每个 feature 分支完成后提 PR
   - PR 必须通过 go test ./... + go vet ./...
-  - PR 必须通过现有 151 集成测试（不退化）
+  - PR 必须通过阶段三启动时确认的测试基线（不退化）
   - 合并后删除 feature 分支
 ```
 
@@ -1034,7 +1082,7 @@ main (生产分支，已通过全部测试)
 
 | 工具 | 版本 | 用途 |
 |---|---|---|
-| Go | 1.26 | 编译和测试 |
+| Go | 以 `server-monitor/server-web/go.mod` 为准 | 编译和测试 |
 | goimports | latest | 代码格式化 |
 | docker compose | v2 | 本地服务运行 |
 | curl / httpie | latest | API 测试 |
@@ -1063,7 +1111,7 @@ BM25 RAG 升级   NLU 评估+Prompt  AI 质量指标     Embedding(可选)
 | Day 1 上午 | 分词器实现 | 编写 `tokenizer.go`：中英文分词 + 停用词过滤 | `tokenizer.go` + `tokenizer_test.go` | 5 种输入分词结果正确 |
 | Day 1 下午 | BM25 引擎实现 | 编写 `bm25.go`：IDF 计算 + BM25 评分 | `bm25.go` + `bm25_test.go` | 评分结果与手工计算一致 |
 | Day 2 上午 | 评分融合 | 修改 `retriever.go`：Retriever 扩展 + Search 融合 | 修改后的 `retriever.go` | 精确查询不退化，模糊查询 Top-1 正确 |
-| Day 2 下午 | 集成验证 | 运行 151 集成测试 + 新增模糊匹配测试 | 全部测试通过 | PASS 率不下降 |
+| Day 2 下午 | 集成验证 | 运行阶段三启动时确认的回归测试 + 新增模糊匹配测试 | 测试基线不退化 | 0 个新增失败 |
 
 **关键任务分解**：
 
@@ -1101,16 +1149,19 @@ Task 1.3: retriever.go 修改
   ├── RetrieverOptions 增加 BM25Weight/BM25K1/BM25B
   ├── Retriever struct 增加 bm25/bm25Weight/structWeight
   ├── NewRetriever 初始化 BM25Engine
-  ├── Search 方法融合评分
+  ├── Search 方法先收集结构化/BM25 原始分数，再做 max-score 归一化融合
   └── 编写 retriever_test.go 新增用例
       ├── TestSearch_BM25FuzzyMatch
       ├── TestSearch_PreciseNotDegraded
       └── TestSearch_BM25WeightConfig
 
 Task 1.4: 配置与集成
-  ├── config.go 增加 RUNBOOK_BM25_* 环境变量
+  ├── server-web/config/config.go 增加 RUNBOOK_BM25_* 环境变量
+  ├── k8s/configmap.yaml 同步 RUNBOOK_BM25_* 默认值
+  ├── charts/server-monitor/templates/configmap.yaml 同步 Helm 模板
+  ├── charts/server-monitor/values.yaml 同步 Helm values 默认值
   ├── 运行 go test ./copilot/runbook/...
-  ├── 运行 151 集成测试
+  ├── 运行阶段三启动时确认的回归测试
   └── commit: feat: add BM25 retrieval to runbook search
 ```
 
@@ -1118,7 +1169,7 @@ Task 1.4: 配置与集成
 
 | 要点 | 说明 | 风险 |
 |---|---|---|
-| BM25 分数归一化 | BM25 分数范围不确定，需与结构化评分（0-10+）做归一化后再融合 | 可用 Min-Max 归一化或直接调权重 |
+| BM25 分数归一化 | BM25 分数范围不确定，需与结构化评分（0-10+）做归一化后再融合 | 第一版使用查询内 max-score 归一化，避免直接相加 |
 | 中文单字粒度 | "高"可能匹配到多个不相关文档 | IDF 自动降权高频字；结构化评分 0.7 权重抑制噪声 |
 | 向后兼容 | BM25Weight=0 时退化为纯结构化评分 | 默认 0.3，可配置为 0 |
 
@@ -1154,7 +1205,7 @@ Task 2.2: eval/evaluator.go
   │   ├── 遍历 cases，调用 classifier.Classify
   │   ├── 计算 TP/FP/FN per intent
   │   ├── 计算 Precision/Recall/F1 per intent
-  │   └── 计算 Rule hit rate / LLM fallback rate
+  │   └── 计算 Rule confident rate / Low confidence rate
   ├── 实现 EvalResult.String() 格式化输出
   └── 编写 evaluator_test.go
       └── TestEvaluate: 运行评估 + 准确率阈值检查
@@ -1169,7 +1220,8 @@ Task 2.3: 运行评估并记录基线
 
 | 要点 | 说明 |
 |---|---|
-| 评估不含 LLM | 评估器只测规则分类器（`nlu.NewClassifier()`），不调 LLM API |
+| rule-only 评估不含 LLM | 首版评估器只测规则分类器（`nlu.NewClassifier()`），不调 LLM API |
+| end-to-end 另行补充 | 若要统计 LLM fallback 效果，必须使用 mock/fixture 或独立非 CI 命令，避免外部 API 波动影响测试 |
 | 准确率阈值 | 初始阈值 80%，后续根据基线调整 |
 | 可重复性 | 固定数据集，无随机性，输出稳定 |
 
@@ -1179,8 +1231,8 @@ Task 2.3: 运行评估并记录基线
 
 | 时间 | 任务 | 具体工作 | 产出 | 验收标准 |
 |---|---|---|---|---|
-| Day 4 上午 | NLU + RAG 指标 | 修改 `nlu.go` / `retriever.go` 增加指标埋点 | Counter + Histogram | `curl /metrics` 可见 copilot_nlu_* / copilot_rag_* |
-| Day 4 下午 | 诊断 + LLM 指标 | 修改 `summarizer.go` / `client.go` 增加指标埋点 | Counter + Histogram | `curl /metrics` 可见 copilot_diagnosis_* / copilot_llm_* |
+| Day 4 上午 | NLU + RAG 指标 | 扩展现有 `api/middleware.Metrics`，通过 Observer 注入 NLU/RAG | Counter + Histogram | `curl /metrics` 可见 copilot_nlu_* / copilot_rag_* |
+| Day 4 下午 | 诊断 + LLM 指标 | 扩展现有 `api/middleware.Metrics`，通过 Observer 注入 diagnosis/llm | Counter + Histogram | `curl /metrics` 可见 copilot_diagnosis_* / copilot_llm_* |
 | Day 5 上午 | Grafana Dashboard | 编写 `ai-quality-overview.json` | Dashboard JSON | 导入 Grafana 后 4 行面板正常显示 |
 | Day 5 下午 | 端到端验证 | 发送 Chat 请求 → 检查指标更新 → 检查 Dashboard | 全链路验证 | 指标值与请求次数一致 |
 
@@ -1188,33 +1240,36 @@ Task 2.3: 运行评估并记录基线
 
 ```
 Task 3.1: NLU 指标
+  ├── api/middleware/metrics.go: 统一注册 copilot_nlu_* 指标
+  ├── copilot/nlu: 定义小接口或回调，避免直接依赖 Prometheus
   ├── nlu.go: Classify 结束后
   │   ├── copilot_nlu_classify_total{intent, source}.Inc()
   │   └── copilot_nlu_classify_duration_seconds.Observe(elapsed)
-  └── 新增 copilot/nlu/metrics.go
-      ├── 定义 prometheus.CounterVec
-      └── 定义 prometheus.HistogramVec
+  └── 测试: 使用 fake observer 断言埋点被调用
 
 Task 3.2: RAG 指标
+  ├── api/middleware/metrics.go: 统一注册 copilot_rag_* 指标
   ├── retriever.go: Search 结束后
   │   ├── copilot_rag_search_total{has_result}.Inc()
   │   ├── copilot_rag_search_score.Observe(topScore)
   │   └── copilot_rag_search_duration_seconds.Observe(elapsed)
-  └── 新增 copilot/runbook/metrics.go
+  └── 测试: 使用 fake observer 断言有结果/无结果两类路径
 
 Task 3.3: 诊断指标
+  ├── api/middleware/metrics.go: 统一注册 copilot_diagnosis_* 指标
   ├── summarizer.go: Summarize 结束后
   │   ├── copilot_diagnosis_confidence.Observe(confidence)
   │   ├── copilot_diagnosis_llm_total{result}.Inc()
   │   └── copilot_diagnosis_duration_seconds{source}.Observe(elapsed)
-  └── 新增 copilot/diagnosis/metrics.go
+  └── 复用或扩展现有 observer 注入方式
 
 Task 3.4: LLM 指标
+  ├── api/middleware/metrics.go: 统一注册 copilot_llm_* 指标
   ├── client.go: 请求结束后
   │   ├── copilot_llm_request_total{model, result}.Inc()
   │   ├── copilot_llm_request_duration_seconds{model}.Observe(elapsed)
   │   └── copilot_llm_tokens_total{model, direction}.Add(tokens)
-  └── 新增 copilot/llm/metrics.go
+  └── 注意: 若上游响应不返回 token usage，tokens 指标必须允许缺省，不伪造数值
 
 Task 3.5: Grafana Dashboard
   └── 编写 ai-quality-overview.json
@@ -1247,11 +1302,11 @@ Task 3.5: Grafana Dashboard
 | Sprint 1 | `tokenizer.go` + `tokenizer_test.go` | 代码 | `copilot/runbook/` |
 | Sprint 1 | `bm25.go` + `bm25_test.go` | 代码 | `copilot/runbook/` |
 | Sprint 1 | 修改后的 `retriever.go` + `types.go` | 代码 | `copilot/runbook/` |
-| Sprint 1 | 修改后的 `config.go` | 代码 | `config/` |
+| Sprint 1 | 修改后的 `config.go` + raw K8s/Helm 配置 | 代码+配置 | `server-web/config/`、`k8s/`、`charts/server-monitor/` |
 | Sprint 2 | `eval/dataset.go` | 代码+数据 | `copilot/nlu/eval/` |
 | Sprint 2 | `eval/evaluator.go` + `evaluator_test.go` | 代码 | `copilot/nlu/eval/` |
 | Sprint 2 | NLU 评估基线报告 | 文档 | `docs/design.md` §4.2 |
-| Sprint 3 | `metrics.go`（4 个模块各 1 个） | 代码 | `copilot/*/` |
+| Sprint 3 | 扩展现有 metrics registry + 模块 Observer 接口 | 代码 | `api/middleware/metrics.go` + `copilot/*/` |
 | Sprint 3 | `ai-quality-overview.json` | 配置 | `docker/grafana/dashboards/` |
 
 #### 10.3.2 质量门禁
@@ -1260,11 +1315,11 @@ Task 3.5: Grafana Dashboard
 
 | # | 门禁 | 命令 | 通过标准 |
 |---|---|---|---|
-| 1 | 单元测试 | `go test ./copilot/... -count=1` | 0 FAIL |
+| 1 | 单元测试 | 在 `server-monitor/server-web` 下运行 `go test ./copilot/... -count=1` | 0 FAIL |
 | 2 | 代码规范 | `goimports -l .` | 0 输出 |
 | 3 | 静态检查 | `go vet ./...` | 0 输出 |
 | 4 | 编译通过 | `go build ./...` | 0 错误 |
-| 5 | 集成测试不退化 | 运行 151 集成测试 | PASS 率不下降 |
+| 5 | 集成测试不退化 | 运行阶段三启动时确认的回归测试 | 0 个新增失败 |
 | 6 | 无新增依赖 | `git diff go.mod` | 无新增 require（除非有 ADR） |
 
 #### 10.3.3 验收标准细化
@@ -1277,7 +1332,7 @@ Task 3.5: Grafana Dashboard
 | 2 | BM25 评分正确性 | `go test -run TestBM25` | 与手工计算一致（误差 < 0.01） |
 | 3 | 精确查询不退化 | `Search("HighCPU")` | Top-1 = `high-cpu.md` |
 | 4 | 模糊查询可召回 | `Search("CPU飙高")` | Top-1 = `high-cpu.md` |
-| 5 | 集成测试通过 | 151 用例 | PASS 率 ≥ 143（不下降） |
+| 5 | 回归测试通过 | 阶段三启动时确认的测试基线 | 0 个新增失败 |
 | 6 | 配置可调 | `RUNBOOK_BM25_WEIGHT=0` | 退化为纯结构化评分 |
 
 **Sprint 2 验收**：
@@ -1287,7 +1342,7 @@ Task 3.5: Grafana Dashboard
 | 1 | 评估脚本可运行 | `go test -run TestEvaluate` | 输出完整报告 |
 | 2 | 整体准确率 | 报告中 Accuracy | ≥ 80% |
 | 3 | 每意图 F1 可追溯 | 报告中 ByIntent | 所有意图均有 F1 值 |
-| 4 | 规则命中率可量化 | 报告中 RuleHitRate | 有具体数值 |
+| 4 | 规则置信覆盖可量化 | 报告中 RuleConfidentRate / LowConfidenceRate | 有具体数值 |
 
 **Sprint 3 验收**：
 
@@ -1307,12 +1362,12 @@ Task 3.5: Grafana Dashboard
 | # | 风险 | 概率 | 影响 | 等级 | 应对策略 |
 |---|---|---|---|---|---|
 | R1 | BM25 中文单字分词粒度粗，引入噪声 | 中 | 低 | 🟡 | 结构化评分 0.7 权重抑制；BM25Weight 可配置为 0 回退 |
-| R2 | BM25 分数与结构化分数尺度不匹配 | 中 | 中 | 🟡 | Min-Max 归一化或调权重；Sprint 1 Day 2 上午验证 |
+| R2 | BM25 分数与结构化分数尺度不匹配 | 低 | 中 | 🟡 | 第一版即采用查询内 max-score 归一化；固定查询集验证后再调权重 |
 | R3 | NLU 评估准确率低于 80% | 低 | 高 | 🟡 | 补充规则覆盖失败 case；调整阈值到 75% |
 | R4 | LLM API 不可用影响评估 | 中 | 低 | 🟢 | 评估器只测规则分类器，不依赖 LLM |
-| R5 | Prometheus 指标命名冲突 | 低 | 低 | 🟢 | 统一 `copilot_` 前缀，检查现有指标 |
+| R5 | Prometheus 指标命名冲突 | 低 | 低 | 🟢 | 复用现有 `api/middleware.Metrics` 注册入口，统一 `copilot_` 前缀并检查现有指标 |
 | R6 | Grafana Dashboard JSON 兼容性 | 低 | 低 | 🟢 | 使用通用面板类型，避免版本特定功能 |
-| R7 | 集成测试退化 | 低 | 高 | 🔴 | 每个 Sprint 合并前运行全量测试；Git bisect 定位 |
+| R7 | 集成测试退化 | 低 | 高 | 🔴 | 每个 Sprint 合并前运行阶段三基线测试；必要时再运行全量测试并定位 |
 | R8 | go.mod 新增依赖被拒绝 | 低 | 中 | 🟡 | BM25 和分词器零依赖实现；如需引入 gse 需 ADR |
 | R9 | Docker Compose 服务不稳定 | 中 | 中 | 🟡 | 每次测试前 `docker compose ps` 检查；异常时重启 |
 | R10 | 时间超期 | 中 | 中 | 🟡 | Sprint 4 可选；Sprint 1-3 核心必须完成 |
@@ -1337,9 +1392,9 @@ Task 3.5: Grafana Dashboard
 场景: 结构化评分范围 0-10+，BM25 评分范围 0-5+
 影响: 融合后某一路评分占主导
 应对:
-  1. Sprint 1 Day 2 上午实测 9 个 Runbook 的评分分布
-  2. 如发现尺度不匹配，对 BM25 分数做 Min-Max 归一化
-  3. 或调整权重（如 0.8/0.2 → 0.6/0.4）
+  1. Search 内先收集候选文档的结构化分数和 BM25 分数
+  2. 对每一路做查询内 max-score 归一化，最大值为 0 时该路全部置 0
+  3. 固定查询集验证后再调整权重（如 0.8/0.2 → 0.6/0.4）
 ```
 
 **R7: 集成测试退化**
@@ -1348,7 +1403,7 @@ Task 3.5: Grafana Dashboard
 场景: BM25 修改导致现有测试 FAIL
 影响: 阻塞合并
 应对:
-  1. 每个 Sprint 合并前运行全量 151 集成测试
+  1. 每个 Sprint 合并前运行阶段三启动时确认的测试基线
   2. 如 FAIL，git stash 新代码 → 运行测试确认基线 → git stash pop → 定位差异
   3. BM25 是评分增强，不改变 API 接口，理论上不应退化
   4. 如确有退化，先修复再合并，不降级验收标准
@@ -1437,7 +1492,7 @@ Task 3.5: Grafana Dashboard
 | 场景 | 回滚方式 |
 |---|---|
 | 单个文件修改引入 Bug | `git revert <commit>` |
-| 整个 Sprint 失败 | `git reset --hard main` → 重新实现 |
+| 整个 Sprint 失败 | 停止合并，保留问题分支；若已提交则用 `git revert` 生成反向提交 |
 | 配置变更导致异常 | 修改环境变量回退到默认值 |
 
 ---
@@ -1448,8 +1503,8 @@ Task 3.5: Grafana Dashboard
 
 | Phase | 具体目标 | 关键任务 | 技术要点 | 里程碑 | 前置依赖 |
 |---|---|---|---|---|---|
-| **Phase 2** | 模糊匹配可召回 | T1.1 分词器、T1.2 BM25 引擎、T1.3 评分融合、T1.4 配置集成 | 单字分词 + IDF 降权 + 0.7/0.3 融合 | "CPU飙高" → high-cpu.md | 无 |
-| **Phase 3** | 语义匹配可召回 | T3.1 Embedding 客户端、T3.2 向量存储、T3.3 Retriever 集成 | DeepSeek Embedding + Redis Search KNN | "服务器卡住了" → high-cpu.md | Phase 2 完成 |
+| **Phase 2** | 模糊匹配可召回 | T1.1 分词器、T1.2 BM25 引擎、T1.3 评分融合、T1.4 配置集成 | 单字分词 + IDF 降权 + max-score 归一化 + 0.7/0.3 初始权重 | "CPU飙高" → high-cpu.md | 无 |
+| **Phase 3** | 语义匹配可召回 | T3.1 Embedding 客户端、T3.2 向量存储、T3.3 Retriever 集成 | Provider 兼容 Embedding + Redis Search 或内存索引 | "服务器卡住了" → high-cpu.md | Phase 2 完成 |
 | **Phase 4** | 三路融合工业级 | T4.1 RRF 算法、T4.2 三路检索集成、T4.3 参数调优 | RRF(k=60) + 三路排名融合 | 精确 ≥95%、模糊 ≥80%、语义 ≥70% | Phase 3 完成 |
 | **Phase 5** | LLM 精排 | T5.1 Reranker 实现、T5.2 诊断集成、T5.3 延迟优化 | LLM-as-judge + 低温度 + Top-N 截断 | 诊断场景 Top-1 准确率提升 5%+ | Phase 4 完成 |
 
@@ -1458,7 +1513,7 @@ Task 3.5: Grafana Dashboard
 | Phase | 具体目标 | 关键任务 | 技术要点 | 里程碑 | 前置依赖 |
 |---|---|---|---|---|---|
 | **Phase 2** | 准确率可量化 | T2.1 标注数据集(86条)、T2.2 评估器、T2.3 基线报告 | precision/recall/F1 + 规则命中率 | 输出完整评估报告 | 无 |
-| **Phase 3** | 工具调用协议升级 | T3.1 FunctionCall 方法、T3.2 参数提取、T3.3 降级路径 | DeepSeek tools 参数 + JSON Schema 校验 | 格式稳定性 ≥99% | Phase 2 完成 |
+| **Phase 3** | 工具调用协议升级 | T3.1 结构化工具调用方法、T3.2 参数提取、T3.3 降级路径 | Provider tools/function_call 参数 + JSON Schema 校验 | 格式稳定性目标 ≥99%，以评估集验证 | Phase 2 完成 |
 | **Phase 4** | 多意图识别 | T4.1 连接词检测、T4.2 多意图分类、T4.3 串行执行 | "并/和/同时" 拆分 + intent 数组 | "查告警并诊断" 正确拆分 | Phase 3 完成 |
 | **Phase 5** | 在线学习闭环 | T5.1 反馈 API、T5.2 失败 case 分析、T5.3 对比评估 | feedback → 规则补充 → 重评估 | 优化后 F1 提升 5%+ | Phase 4 完成 |
 
@@ -1481,6 +1536,130 @@ Task 3.5: Grafana Dashboard
 | 2 | NLU 评估基线已建立 | `go test -run TestEvaluate` 输出报告，准确率 ≥ 80% |
 | 3 | Prompt 迭代记录已补充 | design.md §4.3 包含 v1→v2→v3 迭代记录 |
 | 4 | AI 质量指标已上线 | `curl /metrics` 可见 copilot_* 指标 |
-| 5 | 集成测试不退化 | 151 用例 PASS 率 ≥ 143 |
+| 5 | 集成测试不退化 | 阶段三启动时确认的回归测试无新增失败 |
 | 6 | 无新增外部依赖 | `git diff go.mod` 无新增 require |
-| 7 | 文档已更新 | design.md 版本号更新为 v3.0 |
+| 7 | 文档已更新 | design.md 版本号更新为 v3.2 |
+
+---
+
+## 11. 阶段三+ 演进 Backlog
+
+阶段三+ Backlog 是阶段三核心闭环之后的增强路线，不计入当前 3.5-4 个工作日承诺。它解决的问题不是"AI 能力是否可验证"，而是"AI 能力如何继续变深、变稳、可运营"。
+
+### 11.1 Backlog 总览
+
+| Backlog | 主题 | 预计工作量 | 优先级 | 前置条件 | 核心收益 |
+|---|---|---:|---|---|---|
+| B1 | RAG 语义增强 | 4-6 天 | 高 | BM25 + NLU 评估完成 | 从关键词/BM25 走向语义检索和多路融合 |
+| B3 | AI 质量运营闭环 | 3-4 天 | 中高 | AI metrics 已上线 | 从"有指标"走向可视化、告警、日报和退化定位 |
+| B2 | NLU 协议与多意图 | 4-5 天 | 中高 | NLU 评估基线稳定 | 从单意图规则路由走向结构化工具调用和组合任务 |
+| B4 | 用户反馈与在线优化 | 3-5 天 | 中 | 诊断报告和评估体系稳定 | 从离线评估走向真实反馈驱动的持续优化 |
+
+推荐顺序：先完成阶段三核心 12 Task，再做 B1 的 Embedding + Hybrid/RRF；随后做 B3，把质量指标变成运营闭环；再做 B2 提升交互复杂度；最后做 B4，等有真实诊断样本和用户反馈后再沉淀在线优化能力。
+
+### 11.2 B1：RAG 语义增强
+
+**目标**：从"结构化评分 + BM25"升级到"BM25 + Vector + Structured 多路融合"，让 Runbook 检索既能处理精确关键词，也能处理"服务器卡住了""系统变慢了"这类语义表达。
+
+| Task | 内容 | 产出 | 验收标准 |
+|---|---|---|---|
+| B1.1 | Embedding Provider 调研和压测 | 模型选择记录、延迟/成本对比、失败降级策略 | 明确模型、维度、超时、成本；不把未查证模型能力写成事实 |
+| B1.2 | Runbook 分段与 embedding 生成 | `embedder.go`、section chunk 逻辑、批量生成入口 | 每个 Runbook section 可生成稳定 chunk ID 和向量 |
+| B1.3 | 向量索引实现 | Redis Search 或内存索引实现 | 启动后可构建索引；RediSearch 不可用时有内存索引过渡方案 |
+| B1.4 | Vector Retriever 集成 | `retriever.go` 增加向量召回路径 | 精确查询不退化，语义查询有候选召回 |
+| B1.5 | RRF 排名融合 | `hybrid.go` | BM25 / Vector / Structured 三路排名可融合，无需手工归一化分数尺度 |
+| B1.6 | 语义查询评估集 | RAG eval cases | 覆盖精确、模糊、语义、歧义、无结果 5 类查询 |
+| B1.7 | LLM Reranker（可选） | `reranker.go` + 诊断场景开关 | 只在诊断报告生成前启用；Chat 快速查询默认不启用 |
+
+**风险控制**：
+
+- Embedding 和向量索引不应阻塞现有 `runbook.search`；失败时回退到 BM25 + Structured。
+- RediSearch 如果改变部署复杂度，先用内存索引过渡，不为了 9 个 Runbook 强行引入新服务。
+- LLM Reranker 必须默认关闭或仅在诊断路径启用，避免普通 Chat 查询延迟失控。
+
+### 11.3 B3：AI 质量运营闭环
+
+**目标**：在阶段三核心指标上线之后，补齐可视化、告警、日报和退化排查，让 AI 模块不仅能跑，还能被持续运营。
+
+| Task | 内容 | 产出 | 验收标准 |
+|---|---|---|---|
+| B3.1 | Grafana Dashboard 完善 | AI 质量总览大盘 | NLU、RAG、诊断、LLM 4 类面板都有数据 |
+| B3.2 | Prometheus 告警规则 | `copilot-ai-quality-rules.yml` 或现有规则文件扩展 | LLM error rate、fallback rate、RAG no-result rate 可触发告警 |
+| B3.3 | 质量日报脚本 | NLU/RAG/诊断指标摘要脚本 | 可输出过去 24h 的调用量、失败率、延迟、降级率 |
+| B3.4 | 回归评估 CI 化 | 固定评估命令和报告输出 | NLU/RAG 评估可在 CI 或本地一键运行 |
+| B3.5 | 质量退化排查 Runbook | AI 质量问题处理文档 | 对无结果率升高、LLM 超时、fallback 激增有明确排查步骤 |
+
+**风险控制**：
+
+- 指标标签要控制基数，不能把用户输入、fingerprint、instance 这类高基数字段直接放进 label。
+- Dashboard 不能只展示"请求量"，必须能回答"质量是否退化"。
+- 告警阈值先保守，避免 AI 模块上线初期造成告警噪音。
+
+### 11.4 B2：NLU 协议与多意图
+
+**目标**：从"单意图规则分类 + 自定义 JSON 协议"升级到"Provider tools/function_call + 多意图编排"，支持"查告警并诊断""查 CPU 趋势然后给建议"这类组合请求。
+
+| Task | 内容 | 产出 | 验收标准 |
+|---|---|---|---|
+| B2.1 | Provider tools/function_call 能力验证 | ADR + fallback 方案 | 明确当前 LLM Provider 是否支持稳定工具调用，失败时回退自定义 JSON |
+| B2.2 | LLM 结构化工具调用封装 | `llm` client 扩展 | tools 参数生成、响应解析、超时和错误处理可测试 |
+| B2.3 | Tool Registry schema 复用 | tools schema 生成逻辑 | 工具参数 schema 来自现有 Tool Registry，不重复维护两套定义 |
+| B2.4 | 多意图拆分规则 | NLU 多意图拆分逻辑 | "并/和/同时/然后/再" 等连接词可拆分子句 |
+| B2.5 | 多意图串行执行 | service 层编排 | 前一个意图结果可作为后一个意图上下文，失败时有局部错误返回 |
+| B2.6 | 多意图评估集 | 组合意图 eval cases | 单意图不退化，多意图拆分准确率目标 ≥90% |
+
+**风险控制**：
+
+- 多意图不能改变现有单意图 API 响应结构；需要向后兼容。
+- 写操作仍必须走审批，不允许 LLM tools 直接绕过 HITL。
+- Function Calling 是增强路径，不是硬依赖；Provider 不稳定时保留现有 JSON 协议。
+
+### 11.5 B4：用户反馈与在线优化
+
+**目标**：让诊断报告从"生成一次"变成"可反馈、可积累、可优化"，用真实反馈补充 NLU、RAG、Prompt 的评估集。
+
+| Task | 内容 | 产出 | 验收标准 |
+|---|---|---|---|
+| B4.1 | 诊断反馈 API | useful / not useful / comment 接口 | 用户可对诊断报告提交反馈；接口有鉴权和参数校验 |
+| B4.2 | feedback 存储设计 | MySQL model / migration 或现有迁移机制扩展 | 反馈与 diagnosis_report 可关联，敏感内容不入日志 |
+| B4.3 | 前端反馈入口 | 诊断详情页反馈按钮 | 反馈操作清晰，不影响诊断详情浏览 |
+| B4.4 | 失败 case 导出 | 评估样本导出脚本 | 可把低评分/负反馈样本导出为 NLU/RAG/Prompt 评估候选 |
+| B4.5 | 优化前后对比报告 | baseline vs current 报告 | 每次规则/Prompt/RAG 调整后能说明指标变化 |
+
+**风险控制**：
+
+- 没有真实用户数据前，B4 不应排在最前；否则容易变成只有表和按钮的空功能。
+- feedback comment 可能包含敏感信息，存储和日志必须做长度限制与脱敏。
+- 在线优化不做模型微调，优先走规则补充、Prompt 修订、Runbook 补充和评估集扩展。
+
+### 11.6 Backlog 工期与交付节奏
+
+| 范围 | 工期 | 是否当前承诺 |
+|---|---:|---|
+| 阶段三核心 12 Task | 3.5-4 天 | 是 |
+| B1 RAG 语义增强 | 4-6 天 | 否 |
+| B3 AI 质量运营闭环 | 3-4 天 | 否 |
+| B2 NLU 协议与多意图 | 4-5 天 | 否 |
+| B4 用户反馈与在线优化 | 3-5 天 | 否 |
+| 阶段三+ 全部 Backlog | 约 14-20 个工作日 | 否 |
+
+阶段三+ 的推荐交付节奏：
+
+1. **Backlog 入口检查**：阶段三核心 12 Task 已完成，BM25 / NLU eval / AI metrics 均有稳定基线。
+2. **B1 优先交付**：先做 Embedding + Vector Retriever + RRF，暂缓 LLM Reranker。
+3. **B3 建立运营闭环**：把已上线指标接入 Dashboard、告警和日报。
+4. **B2 提升交互能力**：在评估集稳定后引入 tools/function_call 和多意图编排。
+5. **B4 等真实反馈后启动**：积累诊断样本和用户反馈，再做反馈闭环和优化前后对比。
+
+### 11.7 Backlog 完成标志
+
+阶段三+ 不要求一次性全部完成。每个 Backlog 可以独立验收：
+
+| Backlog | 完成标志 |
+|---|---|
+| B1 | 语义查询评估集通过，Hybrid/RRF 不导致精确查询退化，Embedding 失败可回退 |
+| B3 | Dashboard 有有效数据，质量告警可触发，日报能输出近 24h AI 质量摘要 |
+| B2 | Function Calling/tools 有降级路径，多意图评估集通过，单意图行为不退化 |
+| B4 | 用户反馈可采集、可导出、可进入评估集，并能形成优化前后对比报告 |
+
+阶段三核心落地解决"AI 能力可量化、可验证"；阶段三+ Backlog 解决"AI 能力可持续演进"。当前承诺仍以 §10 的 12 个 Task 为准，§11 作为增强路线按优先级逐步推进。

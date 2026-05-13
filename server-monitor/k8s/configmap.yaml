@@ -38,6 +38,9 @@ data:
   RUNBOOK_MAX_FILES: "100"
   RUNBOOK_MAX_FILE_BYTES: "65536"
   RUNBOOK_SEARCH_TOP_N: "2"
+  RUNBOOK_BM25_WEIGHT: "0.3"
+  RUNBOOK_BM25_K1: "1.2"
+  RUNBOOK_BM25_B: "0.75"
   LLM_API_URL: https://api.deepseek.com/v1/chat/completions
   LLM_MODEL: deepseek-chat
   LLM_TIMEOUT_SECONDS: "60"

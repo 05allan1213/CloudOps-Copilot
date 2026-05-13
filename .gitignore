@@ -53,6 +53,9 @@ frontend/dist/
 frontend/.vite/
 
 # AI file
+.agents/
+.codex/
 .codex
 AGENTS.md
+.trae/
 

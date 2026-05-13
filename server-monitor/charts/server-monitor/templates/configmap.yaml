@@ -64,6 +64,9 @@ data:
   RUNBOOK_MAX_FILES: {{ .Values.config.runbookMaxFiles | quote }}
   RUNBOOK_MAX_FILE_BYTES: {{ .Values.config.runbookMaxFileBytes | quote }}
   RUNBOOK_SEARCH_TOP_N: {{ .Values.config.runbookSearchTopN | quote }}
+  RUNBOOK_BM25_WEIGHT: {{ .Values.config.runbookBM25Weight | quote }}
+  RUNBOOK_BM25_K1: {{ .Values.config.runbookBM25K1 | quote }}
+  RUNBOOK_BM25_B: {{ .Values.config.runbookBM25B | quote }}
   GIN_MODE: {{ .Values.config.ginMode | quote }}
   READY_TIMEOUT_SECONDS: {{ .Values.config.readyTimeoutSeconds | quote }}
   REQUEST_TIMEOUT_SECONDS: {{ .Values.config.requestTimeoutSeconds | quote }}
