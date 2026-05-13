@@ -51,15 +51,19 @@ type Options struct {
 }
 
 type chatRequest struct {
-	Model       string        `json:"model"`
-	Messages    []chatMessage `json:"messages"`
-	Temperature float64       `json:"temperature"`
-	MaxTokens   int           `json:"max_tokens,omitempty"`
+	Model       string           `json:"model"`
+	Messages    []chatMessage    `json:"messages"`
+	Tools       []ToolDefinition `json:"tools,omitempty"`
+	ToolChoice  interface{}      `json:"tool_choice,omitempty"`
+	Temperature float64          `json:"temperature"`
+	MaxTokens   int              `json:"max_tokens,omitempty"`
 }
 
 type chatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string           `json:"role"`
+	Content    string           `json:"content,omitempty"`
+	ToolCalls  []toolCallResult `json:"tool_calls,omitempty"`
+	ToolCallID string           `json:"tool_call_id,omitempty"`
 }
 
 type chatResponse struct {
@@ -73,6 +77,26 @@ type chatUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+}
+
+type ToolDefinition struct {
+	Type     string       `json:"type"`
+	Function ToolFunction `json:"function"`
+}
+
+type ToolFunction struct {
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Parameters  map[string]interface{} `json:"parameters"`
+}
+
+type toolCallResult struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
 }
 
 type intentPayload struct {
@@ -112,6 +136,138 @@ func (c *Client) Classify(ctx context.Context, message string) (nlu.Result, erro
 		return nlu.Result{}, err
 	}
 	return parseIntentPayload(content)
+}
+
+func parseToolArguments(arguments string) (map[string]string, error) {
+	entities := map[string]string{}
+	if arguments == "" {
+		return entities, nil
+	}
+	var args map[string]interface{}
+	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+		return nil, fmt.Errorf("invalid tool arguments json: %w", err)
+	}
+	for k, v := range args {
+		switch val := v.(type) {
+		case string:
+			if val != "" {
+				entities[k] = val
+			}
+		default:
+			entities[k] = fmt.Sprintf("%v", val)
+		}
+	}
+	return entities, nil
+}
+
+func (c *Client) ClassifyWithTools(ctx context.Context, message string, tools []ToolDefinition) (nlu.Result, error) {
+	if c == nil || c.apiKey == "" || c.apiURL == "" || c.model == "" {
+		return nlu.Result{}, ErrDisabled
+	}
+	if len(tools) == 0 {
+		return nlu.Result{}, fmt.Errorf("%w: tools list is empty", ErrInvalidResponse)
+	}
+
+	content, usage, err := c.doRequestWithTools(ctx, toolsSystemPrompt(), message, tools)
+	if err != nil {
+		return nlu.Result{}, err
+	}
+	if c.observer != nil {
+		inputTokens, outputTokens := tokenCountsFromUsage(usage)
+		c.observer.ObserveLLMRequest(c.model, "success", 0, inputTokens, outputTokens)
+	}
+
+	if len(content.ToolCalls) > 0 {
+		tc := content.ToolCalls[0]
+		intent, ok := toolNameToIntent[tc.Function.Name]
+		if !ok {
+			return nlu.Result{}, fmt.Errorf("%w: unsupported tool %q", ErrInvalidResponse, tc.Function.Name)
+		}
+		entities, parseErr := parseToolArguments(tc.Function.Arguments)
+		if parseErr != nil {
+			return nlu.Result{}, fmt.Errorf("tool %q: %w", tc.Function.Name, parseErr)
+		}
+		return nlu.Result{
+			Intent:       intent,
+			Confidence:   0.8,
+			Entities:     entities,
+			SelectedTool: tc.Function.Name,
+		}, nil
+	}
+
+	if content.Content != "" {
+		return parseIntentPayload(content.Content)
+	}
+
+	return nlu.Result{}, ErrInvalidResponse
+}
+
+func (c *Client) ClassifyWithToolsMulti(ctx context.Context, message string, tools []ToolDefinition) (nlu.Result, error) {
+	if c == nil || c.apiKey == "" || c.apiURL == "" || c.model == "" {
+		return nlu.Result{}, ErrDisabled
+	}
+	if len(tools) == 0 {
+		return nlu.Result{}, fmt.Errorf("%w: tools list is empty", ErrInvalidResponse)
+	}
+
+	content, usage, err := c.doRequestWithTools(ctx, toolsSystemPrompt(), message, tools)
+	if err != nil {
+		return nlu.Result{}, err
+	}
+	if c.observer != nil {
+		inputTokens, outputTokens := tokenCountsFromUsage(usage)
+		c.observer.ObserveLLMRequest(c.model, "success", 0, inputTokens, outputTokens)
+	}
+
+	if len(content.ToolCalls) > 0 {
+		var intents []nlu.IntentScore
+		primaryIntent := ""
+		primaryConfidence := 0.0
+		primaryEntities := map[string]string{}
+		var primarySelectedTool string
+
+		for _, tc := range content.ToolCalls {
+			intent, ok := toolNameToIntent[tc.Function.Name]
+			if !ok {
+				continue
+			}
+			entities, parseErr := parseToolArguments(tc.Function.Arguments)
+			if parseErr != nil {
+				continue
+			}
+			is := nlu.IntentScore{
+				Intent:       intent,
+				Confidence:   0.8,
+				Entities:     entities,
+				SelectedTool: tc.Function.Name,
+			}
+			intents = append(intents, is)
+			if primaryIntent == "" {
+				primaryIntent = intent
+				primaryConfidence = 0.8
+				primaryEntities = entities
+				primarySelectedTool = tc.Function.Name
+			}
+		}
+
+		if primaryIntent == "" {
+			return nlu.Result{}, fmt.Errorf("%w: no valid tool calls", ErrInvalidResponse)
+		}
+
+		return nlu.Result{
+			Intent:       primaryIntent,
+			Confidence:   primaryConfidence,
+			Entities:     primaryEntities,
+			Intents:      intents,
+			SelectedTool: primarySelectedTool,
+		}, nil
+	}
+
+	if content.Content != "" {
+		return parseMultiIntentPayload(content.Content)
+	}
+
+	return nlu.Result{}, ErrInvalidResponse
 }
 
 func (c *Client) Generate(ctx context.Context, systemPrompt, userPrompt string) (string, error) {
@@ -223,6 +379,52 @@ func (c *Client) doRequest(ctx context.Context, systemPrompt, userPrompt string)
 	return decoded.Choices[0].Message.Content, decoded.Usage, nil
 }
 
+func (c *Client) doRequestWithTools(ctx context.Context, sysPrompt, userPrompt string, tools []ToolDefinition) (chatMessage, *chatUsage, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
+	body, err := json.Marshal(chatRequest{
+		Model: c.model,
+		Messages: []chatMessage{
+			{Role: "system", Content: strings.TrimSpace(sysPrompt)},
+			{Role: "user", Content: strings.TrimSpace(userPrompt)},
+		},
+		Tools:       tools,
+		ToolChoice:  "auto",
+		Temperature: 0,
+		MaxTokens:   c.maxTokens,
+	})
+	if err != nil {
+		return chatMessage{}, nil, fmt.Errorf("marshal llm request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.apiURL, bytes.NewReader(body))
+	if err != nil {
+		return chatMessage{}, nil, fmt.Errorf("create llm request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return chatMessage{}, nil, fmt.Errorf("call llm: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return chatMessage{}, nil, fmt.Errorf("llm returned status %d%s", resp.StatusCode, responseBodyDetail(resp.Body))
+	}
+
+	var decoded chatResponse
+	limited := io.LimitReader(resp.Body, c.maxResponseBytes)
+	if err := json.NewDecoder(limited).Decode(&decoded); err != nil {
+		return chatMessage{}, nil, fmt.Errorf("decode llm response: %w", err)
+	}
+	if len(decoded.Choices) == 0 {
+		return chatMessage{}, nil, ErrInvalidResponse
+	}
+	return decoded.Choices[0].Message, decoded.Usage, nil
+}
+
 func responseBodyDetail(body io.Reader) string {
 	if body == nil {
 		return ""
@@ -264,6 +466,43 @@ func parseIntentPayload(content string) (nlu.Result, error) {
 		Confidence: confidence,
 		Entities:   sanitizeEntities(payload.Entities),
 	}, nil
+}
+
+func parseMultiIntentPayload(content string) (nlu.Result, error) {
+	content = strings.TrimSpace(strings.Trim(content, "`"))
+
+	var multiPayload struct {
+		Intents []intentPayload `json:"intents"`
+	}
+	if err := json.Unmarshal([]byte(content), &multiPayload); err == nil && len(multiPayload.Intents) > 0 {
+		var intents []nlu.IntentScore
+		for _, ip := range multiPayload.Intents {
+			intent := strings.TrimSpace(ip.Intent)
+			if !isAllowedIntent(intent) {
+				continue
+			}
+			confidence := ip.Confidence
+			if confidence <= 0 || confidence > 1 {
+				confidence = 0.6
+			}
+			intents = append(intents, nlu.IntentScore{
+				Intent:     intent,
+				Confidence: confidence,
+				Entities:   sanitizeEntities(ip.Entities),
+			})
+		}
+		if len(intents) == 0 {
+			return nlu.Result{}, fmt.Errorf("%w: no valid intents in multi-intent response", ErrInvalidResponse)
+		}
+		return nlu.Result{
+			Intent:     intents[0].Intent,
+			Confidence: intents[0].Confidence,
+			Entities:   intents[0].Entities,
+			Intents:    intents,
+		}, nil
+	}
+
+	return parseIntentPayload(content)
 }
 
 func sanitizeEntities(entities map[string]string) map[string]string {
@@ -308,6 +547,27 @@ func isAllowedEntity(key string) bool {
 	}
 }
 
+var toolNameToIntent = map[string]string{
+	"alert_list_active":   nlu.IntentAlertQuery,
+	"alert_events":        nlu.IntentAlertEventQuery,
+	"alert_history":       nlu.IntentAlertHistoryQuery,
+	"alert_rule_list":     nlu.IntentAlertRuleListQuery,
+	"host_list":           nlu.IntentHostQuery,
+	"host_metrics":        nlu.IntentMetricQuery,
+	"prom_query_range":    nlu.IntentMetricQuery,
+	"runbook_search":      nlu.IntentMetricQuery,
+	"k8s_get_pods":        nlu.IntentMetricQuery,
+	"k8s_get_deployments": nlu.IntentMetricQuery,
+	"k8s_get_services":    nlu.IntentMetricQuery,
+	"k8s_get_nodes":       nlu.IntentMetricQuery,
+	"k8s_get_events":      nlu.IntentMetricQuery,
+	"k8s_get_logs":        nlu.IntentMetricQuery,
+}
+
+func openAIToolNameToRegistryName(name string) string {
+	return strings.ReplaceAll(name, "_", ".")
+}
+
 func systemPrompt() string {
 	return strings.Join([]string{
 		"You classify CloudOps Copilot user messages.",
@@ -316,6 +576,18 @@ func systemPrompt() string {
 		"Allowed entities: instance, severity, status, window, query, count, alert_name, fingerprint, alert_history_id, page, page_size, search, sort, risk, group_id, namespace, metric_type, resource_type, resource_name.",
 		"Use query only for explicit PromQL or query_range requests.",
 		"Never return commands or write actions.",
+		`Allowed response formats:`,
+		`  Single intent: {"intent":"...","confidence":0.8,"entities":{...}}`,
+		`  Multiple intents: {"intents":[{"intent":"...","confidence":0.8,"entities":{...}}, ...]}`,
 		`Example: {"intent":"host_query","confidence":0.7,"entities":{"status":"down"}}`,
+	}, "\n")
+}
+
+func toolsSystemPrompt() string {
+	return strings.Join([]string{
+		"You classify CloudOps Copilot user messages.",
+		"Select the appropriate tool to handle the user's request.",
+		"If no tool matches, respond with a helpful message.",
+		"Never return commands or write actions.",
 	}, "\n")
 }

@@ -19,9 +19,19 @@ const (
 )
 
 type Result struct {
-	Intent     string
-	Confidence float64
-	Entities   map[string]string
+	Intent       string
+	Confidence   float64
+	Entities     map[string]string
+	Intents      []IntentScore
+	SelectedTool string
+	Source       string
+}
+
+type IntentScore struct {
+	Intent       string
+	Confidence   float64
+	Entities     map[string]string
+	SelectedTool string
 }
 
 type NLUObserver interface {
@@ -88,6 +98,17 @@ var (
 	}
 )
 
+var multiIntentConnectors = []string{
+	"并", "并且", "和", "同时", "然后", "再", "接着",
+	"以及", "且", "还有", "另外",
+	"and", "then", "also", "plus",
+}
+
+var multiIntentHints = []string{
+	"并", "和", "同时", "然后", "再", "接着", "以及", "且", "还有", "另外",
+	"and", "then", "also", "plus", "as well as",
+}
+
 func NewClassifier(opts ...ClassifierOption) *Classifier {
 	c := &Classifier{}
 	for _, opt := range opts {
@@ -112,9 +133,9 @@ func (c *Classifier) Classify(message string) Result {
 	hasHistory := containsAny(normalized, "历史", "history", "过去", "最近一周", "last week")
 	hasEvent := containsAny(normalized, "事件", "event", "events", "最新", "latest")
 	hasHost := containsAny(normalized, "主机", "host", "hosts", "instance", "机器", "节点", "node", "nodes", "离线", "offline")
-	hasMetric := containsAny(normalized, "cpu", "内存", "memory", "磁盘", "disk", "负载", "load", "网络", "network", "metric", "metrics", "趋势", "trend", "promql", "query_range")
+	hasMetric := containsAny(normalized, "cpu", "内存", "memory", "磁盘", "disk", "负载", "load", "网络", "network", "metric", "metrics", "趋势", "trend", "promql", "query_range", "指标")
 	hasHostListOption := containsAny(normalized, "search", "q=", "group", "group_id", "sort", "risk", "high cpu", "high memory", "高cpu", "高内存", "cpu_desc", "memory_desc")
-	hasGeneral := containsAny(normalized, "能做什么", "help", "帮助", "what can you do", "解释", "explain")
+	hasGeneral := containsAny(normalized, "能做什么", "help", "帮助", "what can you do", "解释", "explain", "你好", "hello", "hi")
 
 	var result Result
 	switch {
@@ -419,6 +440,232 @@ func isCommonKeyword(value string) bool {
 	default:
 		return false
 	}
+}
+
+func (c *Classifier) ClassifyMulti(message string) Result {
+	return c.ClassifyMultiWithMax(message, 3)
+}
+
+func (c *Classifier) ClassifyMultiWithMax(message string, maxIntents int) Result {
+	if maxIntents <= 0 {
+		maxIntents = 3
+	}
+	normalized := strings.ToLower(strings.TrimSpace(message))
+	if normalized == "" {
+		result := unknownResult()
+		c.observeResult(result, time.Now())
+		return result
+	}
+
+	_, connStart := findFirstValidConnector(normalized)
+	if connStart < 0 {
+		result := c.Classify(message)
+		return result
+	}
+
+	clauses := splitByConnectors(message)
+	if len(clauses) < 2 {
+		result := c.Classify(message)
+		return result
+	}
+
+	var intents []IntentScore
+
+	for i, clause := range clauses {
+		if len(intents) >= maxIntents {
+			break
+		}
+		classifyInput := clause
+		if i > 0 && len(intents) > 0 {
+			classifyInput = augmentClauseWithContext(clause, intents[0])
+		}
+		clauseResult := c.Classify(classifyInput)
+		if i > 0 {
+			clauseResult = inheritContext(clauseResult, intents[0], clause)
+		}
+		if clauseResult.Intent == IntentUnknown || clauseResult.Confidence < 0.5 {
+			clauseResult = c.Classify(clause)
+			if i > 0 {
+				clauseResult = inheritContext(clauseResult, intents[0], clause)
+			}
+		}
+		dupIdx := findDuplicateIntent(intents, clauseResult)
+		if dupIdx >= 0 && entitiesEqual(intents[dupIdx].Entities, clauseResult.Entities) {
+			continue
+		}
+		if dupIdx >= 0 {
+			intents = append(intents, IntentScore{
+				Intent:       clauseResult.Intent,
+				Confidence:   clauseResult.Confidence,
+				Entities:     clauseResult.Entities,
+				SelectedTool: clauseResult.SelectedTool,
+			})
+			continue
+		}
+		intents = append(intents, IntentScore{
+			Intent:       clauseResult.Intent,
+			Confidence:   clauseResult.Confidence,
+			Entities:     clauseResult.Entities,
+			SelectedTool: clauseResult.SelectedTool,
+		})
+	}
+
+	if len(intents) == 0 {
+		return c.Classify(message)
+	}
+
+	return Result{
+		Intent:     intents[0].Intent,
+		Confidence: intents[0].Confidence,
+		Entities:   intents[0].Entities,
+		Intents:    intents,
+	}
+}
+
+func TrimIntents(result Result, max int) Result {
+	if max <= 0 || len(result.Intents) <= max {
+		return result
+	}
+	trimmed := make([]IntentScore, max)
+	copy(trimmed, result.Intents[:max])
+	return Result{
+		Intent:       result.Intent,
+		Confidence:   result.Confidence,
+		Entities:     result.Entities,
+		Intents:      trimmed,
+		SelectedTool: result.SelectedTool,
+		Source:       result.Source,
+	}
+}
+
+func splitByConnectors(message string) []string {
+	lower := strings.ToLower(message)
+	connector, connStart := findFirstValidConnector(lower)
+	if connector == "" {
+		return []string{message}
+	}
+
+	clause1 := strings.TrimSpace(message[:connStart])
+	remainder := strings.TrimSpace(message[connStart+len(connector):])
+
+	if clause1 == "" || remainder == "" {
+		return []string{message}
+	}
+
+	rest := splitByConnectors(remainder)
+	return append([]string{clause1}, rest...)
+}
+
+func findFirstValidConnector(lower string) (string, int) {
+	bestConn := ""
+	bestIdx := -1
+
+	for _, conn := range multiIntentConnectors {
+		searchFrom := 0
+		for {
+			idx := strings.Index(lower[searchFrom:], conn)
+			if idx < 0 {
+				break
+			}
+			absIdx := searchFrom + idx
+			if isFalseConnector(lower, absIdx, conn) {
+				searchFrom = absIdx + len(conn)
+				continue
+			}
+			if bestIdx < 0 || absIdx < bestIdx {
+				bestConn = conn
+				bestIdx = absIdx
+			}
+			break
+		}
+	}
+	return bestConn, bestIdx
+}
+
+var falseConnectorPatterns = []string{"再说", "和谐", "同时期", "然后呢"}
+
+func isFalseConnector(lower string, idx int, conn string) bool {
+	after := lower[idx:]
+	for _, p := range falseConnectorPatterns {
+		if strings.HasPrefix(after, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func augmentClauseWithContext(clause string, primary IntentScore) string {
+	lower := strings.ToLower(clause)
+	hasDiag := containsAny(lower, "诊断", "分析", "diagnose", "diagnosis", "analyze")
+	if !hasDiag {
+		return clause
+	}
+	switch primary.Intent {
+	case IntentAlertQuery, IntentAlertEventQuery, IntentAlertHistoryQuery:
+		return clause + " 告警"
+	default:
+		return clause
+	}
+}
+
+func findDuplicateIntent(intents []IntentScore, result Result) int {
+	for i, is := range intents {
+		if is.Intent == result.Intent {
+			return i
+		}
+	}
+	return -1
+}
+
+func entitiesEqual(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+func inheritContext(result Result, primary IntentScore, clause string) Result {
+	if result.Entities == nil {
+		result.Entities = map[string]string{}
+	}
+	for k, v := range primary.Entities {
+		if _, exists := result.Entities[k]; !exists {
+			result.Entities[k] = v
+		}
+	}
+	return result
+}
+
+func mergeIntentEntities(intents []IntentScore, newIntent Result, key string) []IntentScore {
+	for i := range intents {
+		if intents[i].Intent == key {
+			if intents[i].Entities == nil {
+				intents[i].Entities = map[string]string{}
+			}
+			for k, v := range newIntent.Entities {
+				if v != "" {
+					intents[i].Entities[k] = v
+				}
+			}
+			return intents
+		}
+	}
+	return nil
+}
+
+func HasMultiIntentHints(message string) bool {
+	lower := strings.ToLower(message)
+	for _, hint := range multiIntentHints {
+		if strings.Contains(lower, hint) {
+			return true
+		}
+	}
+	return false
 }
 
 func unknownResult() Result {
