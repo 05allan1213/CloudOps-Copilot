@@ -68,6 +68,11 @@ config:
   rerankerTopN: "2"
   rerankerTimeoutSeconds: "10"
 
+copilot:
+  toolsClassifyEnabled: false
+  multiIntentEnabled: false
+  multiIntentMax: 3
+
 k8sIntegration:
   enabled: false
   writeEnabled: false

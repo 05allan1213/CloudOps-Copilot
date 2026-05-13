@@ -246,15 +246,23 @@ func NewRouterWithRuntime(ctx context.Context, cfg config.Config, promClient *pr
 			}),
 		})
 		copilotRuntime = &CopilotRuntime{DiagnosisService: diagnosisService, KafkaObserver: metrics}
+		var toolDefs []copilotllm.ToolDefinition
+		if toolExecutor != nil {
+			toolDefs = copilottool.ConvertToOpenAITools(toolExecutor.Registry().List())
+		}
 		copilotHandler := copilothandler.NewHandler(copilotservice.NewService(copilotservice.Config{
-			MaxMessageLength:   cfg.CopilotMaxMessageLength,
-			SessionTTL:         cfg.CopilotSessionTTL,
-			MaxSessionMessages: cfg.CopilotMaxSessionMessages,
-			Store:              copilotsession.NewRedisStore(cacheClient),
-			Classifier:         copilotnlu.NewClassifier(copilotnlu.WithNLUObserver(metrics)),
-			LLM:                llmClient,
-			Tools:              tools,
-			Diagnosis:          diagnosisService,
+			MaxMessageLength:     cfg.CopilotMaxMessageLength,
+			SessionTTL:           cfg.CopilotSessionTTL,
+			MaxSessionMessages:   cfg.CopilotMaxSessionMessages,
+			Store:                copilotsession.NewRedisStore(cacheClient),
+			Classifier:           copilotnlu.NewClassifier(copilotnlu.WithNLUObserver(metrics)),
+			LLM:                  llmClient,
+			Tools:                tools,
+			Diagnosis:            diagnosisService,
+			ToolDefs:             toolDefs,
+			ToolsClassifyEnabled: cfg.CopilotToolsClassifyEnabled,
+			MultiIntentEnabled:   cfg.CopilotMultiIntentEnabled,
+			MultiIntentMax:       cfg.CopilotMultiIntentMax,
 		}))
 		diagnosisHandler := copilotdiagnosis.NewHandler(diagnosisService)
 		protected.GET("/api/v1/copilot/tools", copilotHandler.ListTools)

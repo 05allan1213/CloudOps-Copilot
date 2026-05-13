@@ -124,6 +124,10 @@ type Config struct {
 	// 默认值：false
 	CopilotToolLogArgs bool
 
+	CopilotToolsClassifyEnabled bool `env:"COPILOT_TOOLS_CLASSIFY_ENABLED" envDefault:"false"`
+	CopilotMultiIntentEnabled   bool `env:"COPILOT_MULTI_INTENT_ENABLED" envDefault:"false"`
+	CopilotMultiIntentMax       int  `env:"COPILOT_MULTI_INTENT_MAX" envDefault:"3"`
+
 	// RunbookDir Runbook Markdown 目录，为空时禁用 Runbook 检索
 	// 默认值：../runbooks
 	RunbookDir string
@@ -449,6 +453,9 @@ func Load() Config {
 		CopilotToolRegistryEnabled:   configutil.Bool("COPILOT_TOOL_REGISTRY_ENABLED", true),
 		CopilotToolDefaultTimeout:    configutil.DurationSeconds("COPILOT_TOOL_DEFAULT_TIMEOUT_SECONDS", 30),
 		CopilotToolLogArgs:           configutil.Bool("COPILOT_TOOL_LOG_ARGS", false),
+		CopilotToolsClassifyEnabled:  configutil.Bool("COPILOT_TOOLS_CLASSIFY_ENABLED", false),
+		CopilotMultiIntentEnabled:    configutil.Bool("COPILOT_MULTI_INTENT_ENABLED", false),
+		CopilotMultiIntentMax:        configutil.PositiveInt("COPILOT_MULTI_INTENT_MAX", 3),
 		RunbookDir:                   configutil.String("RUNBOOK_DIR", "../runbooks"),
 		RunbookMaxFiles:              configutil.PositiveInt("RUNBOOK_MAX_FILES", 100),
 		RunbookMaxFileBytes:          int64(configutil.PositiveInt("RUNBOOK_MAX_FILE_BYTES", 65536)),
@@ -456,16 +463,16 @@ func Load() Config {
 		RunbookBM25Weight:            configutil.FloatRange("RUNBOOK_BM25_WEIGHT", 0.3, 0, 1),
 		RunbookBM25K1:                configutil.FloatRange("RUNBOOK_BM25_K1", 1.2, 0, 10),
 		RunbookBM25B:                 configutil.FloatRange("RUNBOOK_BM25_B", 0.75, 0, 1),
-		EmbeddingAPIURL:            configutil.String("EMBEDDING_API_URL", ""),
-		EmbeddingAPIKey:            configutil.String("EMBEDDING_API_KEY", ""),
-		EmbeddingModel:             configutil.String("EMBEDDING_MODEL", ""),
-		EmbeddingTimeout:           configutil.DurationSeconds("EMBEDDING_TIMEOUT_SECONDS", 10),
-		EmbeddingIndexBuildTimeout: configutil.DurationSeconds("EMBEDDING_INDEX_BUILD_TIMEOUT_SECONDS", 30),
-		EmbeddingDims:              configutil.NonNegativeInt("EMBEDDING_DIMS", 0),
-		RunbookRRFK:                configutil.PositiveInt("RUNBOOK_RRF_K", 60),
-		RerankerEnabled:            configutil.Bool("RERANKER_ENABLED", false),
-		RerankerTopN:               configutil.PositiveInt("RERANKER_TOP_N", 2),
-		RerankerTimeout:            configutil.DurationSeconds("RERANKER_TIMEOUT_SECONDS", 10),
+		EmbeddingAPIURL:              configutil.String("EMBEDDING_API_URL", ""),
+		EmbeddingAPIKey:              configutil.String("EMBEDDING_API_KEY", ""),
+		EmbeddingModel:               configutil.String("EMBEDDING_MODEL", ""),
+		EmbeddingTimeout:             configutil.DurationSeconds("EMBEDDING_TIMEOUT_SECONDS", 10),
+		EmbeddingIndexBuildTimeout:   configutil.DurationSeconds("EMBEDDING_INDEX_BUILD_TIMEOUT_SECONDS", 30),
+		EmbeddingDims:                configutil.NonNegativeInt("EMBEDDING_DIMS", 0),
+		RunbookRRFK:                  configutil.PositiveInt("RUNBOOK_RRF_K", 60),
+		RerankerEnabled:              configutil.Bool("RERANKER_ENABLED", false),
+		RerankerTopN:                 configutil.PositiveInt("RERANKER_TOP_N", 2),
+		RerankerTimeout:              configutil.DurationSeconds("RERANKER_TIMEOUT_SECONDS", 10),
 		LLMAPIKey:                    configutil.String("LLM_API_KEY", ""),
 		LLMAPIURL:                    configutil.String("LLM_API_URL", "https://api.deepseek.com/v1/chat/completions"),
 		LLMModel:                     configutil.String("LLM_MODEL", "deepseek-chat"),
@@ -527,7 +534,7 @@ func Load() Config {
 	}
 }
 
-func (c Config) Validate() error {
+func (c *Config) Validate() error {
 	if c.AuthEnabled && len(strings.TrimSpace(c.JWTSecret)) < 32 {
 		return fmt.Errorf("JWT_SECRET must be at least 32 bytes when auth is enabled, got %d", len(strings.TrimSpace(c.JWTSecret)))
 	}
@@ -674,6 +681,12 @@ func (c Config) Validate() error {
 	}
 	if c.CopilotToolDefaultTimeout <= 0 {
 		return fmt.Errorf("COPILOT_TOOL_DEFAULT_TIMEOUT_SECONDS must be positive, got %v", c.CopilotToolDefaultTimeout)
+	}
+	if c.CopilotMultiIntentMax < 1 {
+		c.CopilotMultiIntentMax = 3
+	}
+	if c.CopilotMultiIntentMax > 5 {
+		c.CopilotMultiIntentMax = 5
 	}
 	if c.RunbookMaxFiles <= 0 {
 		return fmt.Errorf("RUNBOOK_MAX_FILES must be positive, got %d", c.RunbookMaxFiles)
