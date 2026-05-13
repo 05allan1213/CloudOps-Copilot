@@ -48,9 +48,9 @@ Thumbs.db
 main
 probe
 web
-frontend/node_modules/
-frontend/dist/
-frontend/.vite/
+**/frontend/node_modules/
+**/frontend/dist/
+**/frontend/.vite/
 
 # AI file
 .agents/
@@ -58,4 +58,5 @@ frontend/.vite/
 .codex
 AGENTS.md
 .trae/
+skills-lock.json
 
