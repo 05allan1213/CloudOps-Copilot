@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"server-web/copilot/diagnosis"
+	"server-web/copilot/llm"
 	"server-web/copilot/nlu"
 	"server-web/copilot/session"
 )
@@ -29,14 +30,18 @@ var (
 )
 
 type Config struct {
-	MaxMessageLength   int
-	SessionTTL         time.Duration
-	MaxSessionMessages int
-	Store              session.Store
-	Classifier         *nlu.Classifier
-	LLM                LLMClassifier
-	Tools              ToolExecutor
-	Diagnosis          DiagnosisService
+	MaxMessageLength     int
+	SessionTTL           time.Duration
+	MaxSessionMessages   int
+	Store                session.Store
+	Classifier           *nlu.Classifier
+	LLM                  LLMClassifier
+	Tools                ToolExecutor
+	Diagnosis            DiagnosisService
+	ToolDefs             []llm.ToolDefinition
+	ToolsClassifyEnabled bool
+	MultiIntentEnabled   bool
+	MultiIntentMax       int
 }
 
 type User struct {
@@ -57,14 +62,18 @@ func UserFromContext(ctx context.Context) (User, bool) {
 }
 
 type Service struct {
-	maxMessageLength   int
-	sessionTTL         time.Duration
-	maxSessionMessages int
-	store              session.Store
-	classifier         *nlu.Classifier
-	llm                LLMClassifier
-	tools              ToolExecutor
-	diagnosis          DiagnosisService
+	maxMessageLength     int
+	sessionTTL           time.Duration
+	maxSessionMessages   int
+	store                session.Store
+	classifier           *nlu.Classifier
+	llm                  LLMClassifier
+	tools                ToolExecutor
+	diagnosis            DiagnosisService
+	toolDefs             []llm.ToolDefinition
+	toolsClassifyEnabled bool
+	multiIntentEnabled   bool
+	multiIntentMax       int
 }
 
 type ToolExecutor interface {
@@ -79,6 +88,12 @@ type LLMClassifier interface {
 	Classify(ctx context.Context, message string) (nlu.Result, error)
 }
 
+type LLMClassifierWithTools interface {
+	LLMClassifier
+	ClassifyWithTools(ctx context.Context, message string, tools []llm.ToolDefinition) (nlu.Result, error)
+	ClassifyWithToolsMulti(ctx context.Context, message string, tools []llm.ToolDefinition) (nlu.Result, error)
+}
+
 type DiagnosisService interface {
 	Trigger(ctx context.Context, user diagnosis.User, req diagnosis.Request) (diagnosis.ReportResponse, error)
 }
@@ -89,12 +104,13 @@ type ChatRequest struct {
 }
 
 type ChatResponse struct {
-	SessionID   string     `json:"session_id"`
-	Reply       string     `json:"reply"`
-	Intent      string     `json:"intent"`
-	Confidence  float64    `json:"confidence"`
-	ToolCalls   []ToolCall `json:"tool_calls"`
-	Suggestions []string   `json:"suggestions"`
+	SessionID    string         `json:"session_id"`
+	Reply        string         `json:"reply"`
+	Intent       string         `json:"intent"`
+	Confidence   float64        `json:"confidence"`
+	ToolCalls    []ToolCall     `json:"tool_calls"`
+	Suggestions  []string       `json:"suggestions"`
+	MultiIntents []IntentResult `json:"multi_intents,omitempty"`
 }
 
 type ToolCall struct {
@@ -102,6 +118,14 @@ type ToolCall struct {
 	Status string      `json:"status"`
 	Error  string      `json:"error,omitempty"`
 	Result interface{} `json:"result,omitempty"`
+}
+
+type IntentResult struct {
+	Intent     string     `json:"intent"`
+	Confidence float64    `json:"confidence"`
+	ToolCalls  []ToolCall `json:"tool_calls"`
+	Reply      string     `json:"reply"`
+	Error      string     `json:"error,omitempty"`
 }
 
 type ToolSchema struct {
@@ -141,15 +165,26 @@ func NewService(cfg Config) *Service {
 	if maxSessionMessages <= 0 {
 		maxSessionMessages = session.DefaultMaxMessages
 	}
+	toolDefs := cfg.ToolDefs
+	toolsClassifyEnabled := cfg.ToolsClassifyEnabled
+	multiIntentEnabled := cfg.MultiIntentEnabled
+	multiIntentMax := cfg.MultiIntentMax
+	if multiIntentMax <= 0 {
+		multiIntentMax = 3
+	}
 	return &Service{
-		maxMessageLength:   maxMessageLength,
-		sessionTTL:         sessionTTL,
-		maxSessionMessages: maxSessionMessages,
-		store:              cfg.Store,
-		classifier:         defaultClassifier(cfg.Classifier),
-		llm:                cfg.LLM,
-		tools:              cfg.Tools,
-		diagnosis:          cfg.Diagnosis,
+		maxMessageLength:     maxMessageLength,
+		sessionTTL:           sessionTTL,
+		maxSessionMessages:   maxSessionMessages,
+		store:                cfg.Store,
+		classifier:           defaultClassifier(cfg.Classifier),
+		llm:                  cfg.LLM,
+		tools:                cfg.Tools,
+		diagnosis:            cfg.Diagnosis,
+		toolDefs:             toolDefs,
+		toolsClassifyEnabled: toolsClassifyEnabled,
+		multiIntentEnabled:   multiIntentEnabled,
+		multiIntentMax:       multiIntentMax,
 	}
 }
 
@@ -188,10 +223,14 @@ func (s *Service) Chat(ctx context.Context, user User, req ChatRequest) (ChatRes
 		meta.CreatedAt = existing.CreatedAt
 	}
 	meta.ID = sessionID
-	parsed := s.classifier.Classify(message)
+	parsed := s.classifier.ClassifyMultiWithMax(message, s.multiIntentMax)
+	if !s.multiIntentEnabled {
+		parsed.Intents = nil
+	}
 	parsed = s.classifyWithFallback(ctx, message, parsed)
+	parsed = nlu.TrimIntents(parsed, s.multiIntentMax)
 	ctx = WithUser(ctx, user)
-	toolCalls, toolReply, err := s.executeIntent(ctx, user, parsed)
+	toolCalls, toolReply, multiIntentResults, err := s.executeIntents(ctx, user, parsed)
 	if err != nil {
 		return ChatResponse{}, err
 	}
@@ -213,12 +252,13 @@ func (s *Service) Chat(ctx context.Context, user User, req ChatRequest) (ChatRes
 	}
 
 	return ChatResponse{
-		SessionID:   sessionID,
-		Reply:       reply,
-		Intent:      parsed.Intent,
-		Confidence:  parsed.Confidence,
-		ToolCalls:   toolCalls,
-		Suggestions: buildSuggestions(parsed),
+		SessionID:    sessionID,
+		Reply:        reply,
+		Intent:       parsed.Intent,
+		Confidence:   parsed.Confidence,
+		ToolCalls:    toolCalls,
+		Suggestions:  buildSuggestions(parsed),
+		MultiIntents: multiIntentResults,
 	}, nil
 }
 
@@ -334,6 +374,50 @@ func (s *Service) executeIntent(ctx context.Context, user User, result nlu.Resul
 	return s.executeTools(ctx, result)
 }
 
+func (s *Service) executeIntents(ctx context.Context, user User, result nlu.Result) ([]ToolCall, string, []IntentResult, error) {
+	if len(result.Intents) == 0 {
+		toolCalls, reply, err := s.executeIntent(ctx, user, result)
+		return toolCalls, reply, nil, err
+	}
+
+	var allToolCalls []ToolCall
+	var allReplies []string
+	var intentResults []IntentResult
+	contextEntities := map[string]string{}
+
+	for i, is := range result.Intents {
+		mergedEntities := mergeEntities(contextEntities, is.Entities)
+		mergedResult := nlu.Result{
+			Intent:       is.Intent,
+			Confidence:   is.Confidence,
+			Entities:     mergedEntities,
+			SelectedTool: is.SelectedTool,
+		}
+
+		toolCalls, reply, err := s.executeIntent(ctx, user, mergedResult)
+
+		ir := IntentResult{
+			Intent:     is.Intent,
+			Confidence: is.Confidence,
+			ToolCalls:  toolCalls,
+			Reply:      reply,
+		}
+		if err != nil {
+			ir.Error = err.Error()
+			allReplies = append(allReplies, fmt.Sprintf("[意图%d失败: %v]", i+1, err))
+		} else {
+			allReplies = append(allReplies, reply)
+		}
+
+		allToolCalls = append(allToolCalls, toolCalls...)
+		intentResults = append(intentResults, ir)
+		contextEntities = s.extractContextEntities(toolCalls, is.Intent)
+	}
+
+	combinedReply := strings.Join(filterEmpty(allReplies), "\n")
+	return allToolCalls, combinedReply, intentResults, nil
+}
+
 func (s *Service) executeDiagnosis(ctx context.Context, user User, result nlu.Result) ([]ToolCall, string, error) {
 	if s.diagnosis == nil {
 		return []ToolCall{{Name: "diagnosis.trigger", Status: "error", Error: "diagnosis service unavailable"}}, "", nil
@@ -401,8 +485,41 @@ func buildDiagnosisErrorReply(err error) string {
 
 func (s *Service) classifyWithFallback(ctx context.Context, message string, parsed nlu.Result) nlu.Result {
 	if s.llm == nil || parsed.Confidence >= 0.6 {
+		if parsed.Source == "" {
+			if parsed.Confidence >= 0.6 {
+				parsed.Source = "rule"
+			} else {
+				parsed.Source = "rule-low"
+			}
+		}
 		return parsed
 	}
+
+	if s.toolsClassifyEnabled && len(s.toolDefs) > 0 {
+		classifierWithTools, ok := s.llm.(LLMClassifierWithTools)
+		if ok {
+			if len(parsed.Intents) > 0 || nlu.HasMultiIntentHints(message) {
+				toolResult, err := classifierWithTools.ClassifyWithToolsMulti(ctx, message, s.toolDefs)
+				if err == nil && (toolResult.Intent != "" || len(toolResult.Intents) > 0) {
+					toolResult.Source = "tools"
+					if toolResult.Entities == nil {
+						toolResult.Entities = map[string]string{}
+					}
+					return toolResult
+				}
+			} else {
+				toolResult, err := classifierWithTools.ClassifyWithTools(ctx, message, s.toolDefs)
+				if err == nil && toolResult.Intent != "" {
+					toolResult.Source = "tools"
+					if toolResult.Entities == nil {
+						toolResult.Entities = map[string]string{}
+					}
+					return toolResult
+				}
+			}
+		}
+	}
+
 	llmResult, err := s.llm.Classify(ctx, message)
 	if err != nil {
 		return parsed
@@ -413,6 +530,7 @@ func (s *Service) classifyWithFallback(ctx context.Context, message string, pars
 	if llmResult.Entities == nil {
 		llmResult.Entities = map[string]string{}
 	}
+	llmResult.Source = "json"
 	return llmResult
 }
 
@@ -464,4 +582,68 @@ func buildSuggestions(result nlu.Result) []string {
 	default:
 		return []string{"What alerts are firing?", "Which hosts are offline?", "Show CPU trend for node-1"}
 	}
+}
+
+func (s *Service) extractContextEntities(toolCalls []ToolCall, intent string) map[string]string {
+	entities := map[string]string{}
+	if len(toolCalls) == 0 {
+		return entities
+	}
+
+	switch intent {
+	case nlu.IntentAlertQuery, nlu.IntentAlertEventQuery, nlu.IntentAlertHistoryQuery:
+		if len(toolCalls) == 1 && toolCalls[0].Status == "success" {
+			if result, ok := toolCalls[0].Result.(map[string]interface{}); ok {
+				if items, ok := result["items"].([]interface{}); ok && len(items) == 1 {
+					if item, ok := items[0].(map[string]interface{}); ok {
+						if alertName, ok := item["alert_name"].(string); ok && alertName != "" {
+							entities["alert_name"] = alertName
+						}
+						if fingerprint, ok := item["fingerprint"].(string); ok && fingerprint != "" {
+							entities["fingerprint"] = fingerprint
+						}
+						if severity, ok := item["severity"].(string); ok && severity != "" {
+							entities["severity"] = severity
+						}
+					}
+				}
+			}
+		}
+	case nlu.IntentHostQuery:
+		if len(toolCalls) == 1 && toolCalls[0].Status == "success" {
+			if result, ok := toolCalls[0].Result.(map[string]interface{}); ok {
+				if hosts, ok := result["hosts"].([]interface{}); ok && len(hosts) == 1 {
+					if host, ok := hosts[0].(map[string]interface{}); ok {
+						if instance, ok := host["instance"].(string); ok && instance != "" {
+							entities["instance"] = instance
+						}
+					}
+				}
+			}
+		}
+	}
+	return entities
+}
+
+func mergeEntities(base, override map[string]string) map[string]string {
+	merged := make(map[string]string, len(base)+len(override))
+	for k, v := range base {
+		merged[k] = v
+	}
+	for k, v := range override {
+		if v != "" {
+			merged[k] = v
+		}
+	}
+	return merged
+}
+
+func filterEmpty(ss []string) []string {
+	var result []string
+	for _, s := range ss {
+		if s != "" {
+			result = append(result, s)
+		}
+	}
+	return result
 }

@@ -184,11 +184,77 @@ func newExecutor(options Options, registry Registry) (*Executor, error) {
 }
 
 func (e *Executor) Execute(ctx context.Context, result nlu.Result) ([]copilot.ToolCall, string, error) {
+	if result.SelectedTool != "" {
+		toolName := openAIToolNameToRegistryName(result.SelectedTool)
+		args := e.typedEntitiesToToolArgs(toolName, result.Entities)
+		return e.executeTool(ctx, toolName, args)
+	}
 	name, args, ok := e.planToolCall(result)
 	if !ok {
 		return []copilot.ToolCall{}, "", nil
 	}
 	return e.executeTool(ctx, name, args)
+}
+
+func (e *Executor) typedEntitiesToToolArgs(toolName string, entities map[string]string) json.RawMessage {
+	if len(entities) == 0 {
+		return json.RawMessage(`{}`)
+	}
+	schema := e.registrySchema(toolName)
+	paramTypes := make(map[string]ParamType, len(schema.Parameters))
+	for _, p := range schema.Parameters {
+		paramTypes[p.Name] = p.Type
+	}
+	args := make(map[string]interface{}, len(entities))
+	for k, v := range entities {
+		if v == "" {
+			continue
+		}
+		if pt, ok := paramTypes[k]; ok {
+			args[k] = coerceParam(v, pt)
+		} else {
+			args[k] = v
+		}
+	}
+	data, err := json.Marshal(args)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return data
+}
+
+func (e *Executor) registrySchema(toolName string) ToolSchema {
+	if e.registry == nil {
+		return ToolSchema{}
+	}
+	for _, t := range e.registry.List() {
+		if t.Name == toolName {
+			return t
+		}
+	}
+	return ToolSchema{}
+}
+
+func coerceParam(value string, paramType ParamType) interface{} {
+	switch paramType {
+	case ParamTypeInteger:
+		if parsed, err := strconv.ParseInt(value, 10, 64); err == nil {
+			return parsed
+		}
+	case ParamTypeNumber:
+		if parsed, err := strconv.ParseFloat(value, 64); err == nil {
+			return parsed
+		}
+	case ParamTypeBoolean:
+		if parsed, err := strconv.ParseBool(value); err == nil {
+			return parsed
+		}
+	}
+	return value
+}
+
+func openAIToolNameToRegistryName(name string) string {
+	return strings.ReplaceAll(name, "_", ".")
 }
 
 func (e *Executor) ExecuteTool(ctx context.Context, name string, args json.RawMessage) (ToolResult, error) {
@@ -208,6 +274,10 @@ func (e *Executor) ToolSchemas() []copilot.ToolSchema {
 		result = append(result, toServiceToolSchema(schema))
 	}
 	return result
+}
+
+func (e *Executor) Registry() Registry {
+	return e.registry
 }
 
 func toServiceToolSchema(schema ToolSchema) copilot.ToolSchema {
