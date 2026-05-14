@@ -4,6 +4,10 @@ import { RouterLink } from "vue-router";
 
 import { fetchDiagnosisList, type DiagnosisQuery } from "../api/diagnosis";
 import { formatTime } from "../utils/format";
+import { usePagination } from "../composables/usePagination";
+import FilterPanel from "../components/common/FilterPanel.vue";
+import PageHeader from "../components/common/PageHeader.vue";
+import StateWrapper from "../components/common/StateWrapper.vue";
 import type { DiagnosisListResponse } from "../types";
 
 const reports = ref<DiagnosisListResponse>({
@@ -21,9 +25,29 @@ const filters = reactive<DiagnosisQuery>({
   page_size: 20,
 });
 
-const pageCount = computed(() =>
-  Math.max(1, Math.ceil(reports.value.total / reports.value.page_size)),
-);
+const { page, pageSize, total, goToPage, resetPage } = usePagination(20);
+
+const stateKey = computed(() => {
+  if (loading.value) return "loading" as const;
+  if (error.value) return "error" as const;
+  if (reports.value.items.length === 0) return "empty" as const;
+  return "default" as const;
+});
+
+function statusTagType(value: string): "info" | "success" | "danger" | "warning" | "" {
+  switch (value) {
+    case "pending":
+      return "info";
+    case "running":
+      return "warning";
+    case "completed":
+      return "success";
+    case "failed":
+      return "danger";
+    default:
+      return "";
+  }
+}
 
 function statusLabel(value: string) {
   switch (value) {
@@ -37,6 +61,19 @@ function statusLabel(value: string) {
       return "失败";
     default:
       return value || "-";
+  }
+}
+
+function triggerTagType(value: string): "" | "primary" | "success" | "warning" {
+  switch (value) {
+    case "manual":
+      return "primary";
+    case "chat":
+      return "success";
+    case "auto":
+      return "warning";
+    default:
+      return "";
   }
 }
 
@@ -61,7 +98,10 @@ async function loadReports() {
   loading.value = true;
   error.value = "";
   try {
+    filters.page = page.value;
+    filters.page_size = pageSize.value;
     reports.value = await fetchDiagnosisList(filters);
+    total.value = reports.value.total;
   } catch (err) {
     error.value = err instanceof Error ? err.message : "加载诊断报告失败";
   } finally {
@@ -70,12 +110,19 @@ async function loadReports() {
 }
 
 function applyFilters() {
-  filters.page = 1;
+  resetPage();
   loadReports();
 }
 
-function changePage(nextPage: number) {
-  filters.page = Math.min(Math.max(nextPage, 1), pageCount.value);
+function resetFilters() {
+  filters.status = "";
+  filters.trigger_type = "";
+  resetPage();
+  loadReports();
+}
+
+function handlePageChange(newPage: number) {
+  goToPage(newPage);
   loadReports();
 }
 
@@ -84,185 +131,113 @@ onMounted(loadReports);
 
 <template>
   <section class="diagnosis-page">
-    <header class="page-header">
-      <div>
-        <h2>诊断报告</h2>
-        <p>查看手动或 Copilot 触发的告警诊断结果。</p>
-      </div>
-    </header>
+    <PageHeader title="诊断报告" subtitle="查看手动或 Copilot 触发的告警诊断结果。" />
 
-    <form class="filter-panel" @submit.prevent="applyFilters">
-      <label>
-        <span>状态</span>
-        <select v-model="filters.status">
-          <option value="">全部</option>
-          <option value="pending">pending</option>
-          <option value="running">running</option>
-          <option value="completed">completed</option>
-          <option value="failed">failed</option>
-        </select>
-      </label>
-      <label>
-        <span>来源</span>
-        <select v-model="filters.trigger_type">
-          <option value="">全部</option>
-          <option value="manual">手动</option>
-          <option value="chat">对话</option>
-          <option value="auto">自动</option>
-        </select>
-      </label>
-      <div class="filter-actions">
-        <button class="primary-btn" type="submit">查询</button>
-      </div>
-    </form>
+    <FilterPanel @search="applyFilters" @reset="resetFilters">
+      <el-form-item label="状态">
+        <el-select v-model="filters.status" placeholder="全部" clearable style="width: 140px">
+          <el-option label="pending" value="pending" />
+          <el-option label="running" value="running" />
+          <el-option label="completed" value="completed" />
+          <el-option label="failed" value="failed" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="来源">
+        <el-select v-model="filters.trigger_type" placeholder="全部" clearable style="width: 140px">
+          <el-option label="手动" value="manual" />
+          <el-option label="对话" value="chat" />
+          <el-option label="自动" value="auto" />
+        </el-select>
+      </el-form-item>
+    </FilterPanel>
 
-    <div v-if="error" class="message error">{{ error }}</div>
+    <StateWrapper :state="stateKey" :error-text="error" empty-text="暂无诊断报告">
+      <template #retry>
+        <el-button type="primary" @click="loadReports">重试</el-button>
+      </template>
 
-    <div class="table-panel">
-      <div class="table-head">
-        <span>共 {{ reports.total }} 条</span>
-        <span>第 {{ reports.page }} / {{ pageCount }} 页</span>
+      <el-table :data="reports.items" stripe style="width: 100%">
+        <el-table-column label="ID" width="100">
+          <template #default="{ row }">
+            <RouterLink class="detail-link" :to="`/diagnosis/${row.id}`">#{{ row.id }}</RouterLink>
+          </template>
+        </el-table-column>
+        <el-table-column label="告警名" min-width="140" prop="alert_name" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ row.alert_name || "-" }}
+          </template>
+        </el-table-column>
+        <el-table-column label="目标" min-width="120" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="mono-text">{{ row.target_name || "-" }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="100" align="center">
+          <template #default="{ row }">
+            <el-tag :type="statusTagType(row.status)" size="small">
+              {{ statusLabel(row.status) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="来源" width="90" align="center">
+          <template #default="{ row }">
+            <el-tag :type="triggerTagType(row.trigger_type)" size="small" effect="plain">
+              {{ triggerLabel(row.trigger_type) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="置信度" width="90" align="center">
+          <template #default="{ row }">
+            {{ formatPercent(row.confidence) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="摘要" min-width="200" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ row.summary || "-" }}
+          </template>
+        </el-table-column>
+        <el-table-column label="创建时间" width="170">
+          <template #default="{ row }">
+            {{ formatTime(row.created_at) }}
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <div class="pagination-wrap">
+        <el-pagination
+          v-model:current-page="page"
+          :page-size="pageSize"
+          :total="total"
+          layout="total, prev, pager, next"
+          background
+          @current-change="handlePageChange"
+        />
       </div>
-      <div v-if="loading" class="empty-line">加载中</div>
-      <div v-else-if="reports.items.length === 0" class="empty-line">暂无诊断报告</div>
-      <table v-else>
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>告警</th>
-            <th>目标</th>
-            <th>状态</th>
-            <th>来源</th>
-            <th>置信度</th>
-            <th>摘要</th>
-            <th>创建时间</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="item in reports.items" :key="item.id">
-            <td>
-              <RouterLink class="detail-link" :to="`/diagnosis/${item.id}`">#{{ item.id }}</RouterLink>
-            </td>
-            <td>{{ item.alert_name || "-" }}</td>
-            <td class="mono-cell">{{ item.target_name || "-" }}</td>
-            <td>{{ statusLabel(item.status) }}</td>
-            <td>{{ triggerLabel(item.trigger_type) }}</td>
-            <td>{{ formatPercent(item.confidence) }}</td>
-            <td class="summary-cell">{{ item.summary || "-" }}</td>
-            <td>{{ formatTime(item.created_at) }}</td>
-          </tr>
-        </tbody>
-      </table>
-      <div class="pager">
-        <button type="button" :disabled="reports.page <= 1" @click="changePage(reports.page - 1)">
-          上一页
-        </button>
-        <button type="button" :disabled="reports.page >= pageCount" @click="changePage(reports.page + 1)">
-          下一页
-        </button>
-      </div>
-    </div>
+    </StateWrapper>
   </section>
 </template>
 
 <style scoped>
 .diagnosis-page {
-  display: grid;
-  gap: 1rem;
-}
-
-.page-header h2 {
-  font-size: 1.25rem;
-  margin: 0;
-}
-
-.page-header p {
-  color: var(--text-muted);
-  font-size: 0.82rem;
-  margin-top: 0.3rem;
-}
-
-.filter-panel,
-.table-panel,
-.message {
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  padding: 1rem;
-}
-
-.filter-panel {
   display: flex;
-  gap: 0.85rem;
-  align-items: end;
-}
-
-label {
-  display: grid;
-  gap: 0.4rem;
-  color: var(--text-secondary);
-  font-size: 0.78rem;
-  font-weight: 700;
-}
-
-select {
-  color: var(--text-primary);
-  background: rgba(11, 15, 23, 0.72);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  padding: 0.62rem 0.7rem;
-}
-
-.table-head,
-.pager {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  color: var(--text-muted);
-  font-size: 0.78rem;
-  margin-bottom: 0.75rem;
-}
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-th,
-td {
-  border-top: 1px solid var(--border-color);
-  padding: 0.68rem 0.5rem;
-  text-align: left;
-  font-size: 0.82rem;
-}
-
-th {
-  color: var(--text-muted);
-  font-size: 0.72rem;
-}
-
-.summary-cell {
-  max-width: 360px;
-  overflow-wrap: anywhere;
-}
-
-.mono-cell {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .detail-link {
-  color: var(--accent);
-  font-weight: 700;
+  color: var(--el-color-primary);
+  font-weight: 600;
+  text-decoration: none;
 }
 
-.empty-line {
-  color: var(--text-muted);
-  padding: 1rem 0;
-  text-align: center;
+.mono-text {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.82rem;
 }
 
-.message.error {
-  color: var(--danger);
-  background: var(--danger-soft);
+.pagination-wrap {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
 }
 </style>

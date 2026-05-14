@@ -1,21 +1,26 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
+import { Refresh } from "@element-plus/icons-vue";
 
 import { listAuditLogs } from "../api/auditLogs";
 import { formatTime } from "../utils/format";
+import { usePagination } from "../composables/usePagination";
+import FilterPanel from "../components/common/FilterPanel.vue";
+import PageHeader from "../components/common/PageHeader.vue";
+import StateWrapper from "../components/common/StateWrapper.vue";
 import type { AuditLog } from "../types";
 
 const logs = ref<AuditLog[]>([]);
 const loading = ref(false);
 const error = ref("");
-const total = ref(0);
-const page = ref(1);
-const pageSize = 50;
 const filters = reactive({
   action: "",
   result: "",
   actor: "",
 });
+
+const { page, pageSize, total, goToPage, resetPage } = usePagination(50);
+
 const actionOptions = [
   { value: "", label: "全部动作" },
   { value: "action.create_pending", label: "创建待审批" },
@@ -26,6 +31,13 @@ const actionOptions = [
   { value: "k8s.scale_deployment", label: "K8s 扩缩 Deployment" },
 ];
 
+const stateKey = computed(() => {
+  if (loading.value) return "loading" as const;
+  if (error.value) return "error" as const;
+  if (logs.value.length === 0) return "empty" as const;
+  return "default" as const;
+});
+
 function requestActionType(log: AuditLog): string {
   const request = log.request;
   if (!request || typeof request.action_type !== "string") {
@@ -34,12 +46,19 @@ function requestActionType(log: AuditLog): string {
   return request.action_type;
 }
 
-const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)));
-
-function goToPage(p: number) {
-  if (p < 1 || p > totalPages.value) return;
-  page.value = p;
-  loadLogs();
+function resultTagType(result: string): "success" | "danger" | "warning" | "info" | "" {
+  switch (result) {
+    case "success":
+      return "success";
+    case "failure":
+      return "danger";
+    case "denied":
+      return "warning";
+    case "timeout":
+      return "info";
+    default:
+      return "";
+  }
 }
 
 async function loadLogs() {
@@ -51,7 +70,7 @@ async function loadLogs() {
       result: filters.result || undefined,
       actor: filters.actor || undefined,
       page: page.value,
-      page_size: pageSize,
+      page_size: pageSize.value,
     });
     logs.value = response.items;
     total.value = response.total ?? 0;
@@ -62,198 +81,149 @@ async function loadLogs() {
   }
 }
 
+function applyFilters() {
+  resetPage();
+  loadLogs();
+}
+
+function resetFilters() {
+  filters.action = "";
+  filters.result = "";
+  filters.actor = "";
+  resetPage();
+  loadLogs();
+}
+
+function handlePageChange(newPage: number) {
+  goToPage(newPage);
+  loadLogs();
+}
+
 onMounted(loadLogs);
 </script>
 
 <template>
   <section class="audit-page">
-    <header class="page-header">
-      <div>
-        <h2>审计日志</h2>
-        <p>动作创建、审批、拒绝、执行和权限拒绝的可追溯记录。</p>
+    <PageHeader title="审计日志" subtitle="动作创建、审批、拒绝、执行和权限拒绝的可追溯记录。">
+      <template #default>
+        <el-button :icon="Refresh" :loading="loading" @click="loadLogs">刷新</el-button>
+      </template>
+    </PageHeader>
+
+    <FilterPanel @search="applyFilters" @reset="resetFilters">
+      <el-form-item label="动作">
+        <el-select v-model="filters.action" placeholder="全部动作" clearable style="width: 180px">
+          <el-option
+            v-for="option in actionOptions"
+            :key="option.value"
+            :label="option.label"
+            :value="option.value"
+          />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="结果">
+        <el-select v-model="filters.result" placeholder="全部结果" clearable style="width: 140px">
+          <el-option label="success" value="success" />
+          <el-option label="failure" value="failure" />
+          <el-option label="denied" value="denied" />
+          <el-option label="timeout" value="timeout" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="操作者">
+        <el-input v-model.trim="filters.actor" placeholder="actor" clearable style="width: 160px" />
+      </el-form-item>
+    </FilterPanel>
+
+    <StateWrapper :state="stateKey" :error-text="error" empty-text="暂无审计日志">
+      <template #retry>
+        <el-button type="primary" @click="loadLogs">重试</el-button>
+      </template>
+
+      <el-table :data="logs" stripe style="width: 100%">
+        <el-table-column label="时间" width="170">
+          <template #default="{ row }">
+            {{ formatTime(row.created_at) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="操作者" min-width="120" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ row.actor }} · {{ row.actor_role }}
+          </template>
+        </el-table-column>
+        <el-table-column label="动作" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="mono-text">{{ row.action }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="动作类型" min-width="120" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="mono-text">{{ requestActionType(row) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="资源" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ row.resource_type }} #{{ row.resource_id }}
+          </template>
+        </el-table-column>
+        <el-table-column label="结果" width="100" align="center">
+          <template #default="{ row }">
+            <el-tag :type="resultTagType(row.result)" size="small">
+              {{ row.result }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="trace_id" min-width="120" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="mono-text">{{ row.trace_id || "-" }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="错误" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span v-if="row.error_message" class="error-text">{{ row.error_message }}</span>
+            <span v-else class="text-muted">-</span>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <div class="pagination-wrap">
+        <el-pagination
+          v-model:current-page="page"
+          :page-size="pageSize"
+          :total="total"
+          layout="total, prev, pager, next"
+          background
+          @current-change="handlePageChange"
+        />
       </div>
-      <button type="button" @click="loadLogs">刷新</button>
-    </header>
-
-    <section class="toolbar">
-      <select v-model="filters.action" @change="loadLogs">
-        <option v-for="option in actionOptions" :key="option.value" :value="option.value">
-          {{ option.label }}
-        </option>
-      </select>
-      <select v-model="filters.result" @change="loadLogs">
-        <option value="">全部结果</option>
-        <option value="success">success</option>
-        <option value="failure">failure</option>
-        <option value="denied">denied</option>
-        <option value="timeout">timeout</option>
-      </select>
-      <input v-model.trim="filters.actor" placeholder="actor" @keydown.enter="loadLogs" />
-      <button type="button" @click="loadLogs">筛选</button>
-    </section>
-
-    <div v-if="error" class="message error">{{ error }}</div>
-    <div v-if="loading" class="empty-line">加载中</div>
-
-    <div v-else class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>时间</th>
-            <th>操作者</th>
-            <th>动作</th>
-            <th>动作类型</th>
-            <th>资源</th>
-            <th>结果</th>
-            <th>trace_id</th>
-            <th>错误</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="log in logs" :key="log.id">
-            <td>{{ formatTime(log.created_at) }}</td>
-            <td>{{ log.actor }} · {{ log.actor_role }}</td>
-            <td class="mono-cell">{{ log.action }}</td>
-            <td class="mono-cell">{{ requestActionType(log) }}</td>
-            <td>{{ log.resource_type }} #{{ log.resource_id }}</td>
-            <td :class="`result-${log.result}`">{{ log.result }}</td>
-            <td class="mono-cell">{{ log.trace_id || "-" }}</td>
-            <td class="error-cell">{{ log.error_message || "-" }}</td>
-          </tr>
-          <tr v-if="logs.length === 0">
-            <td colspan="8" class="empty-line">暂无审计日志</td>
-          </tr>
-        </tbody>
-      </table>
-      <div v-if="totalPages > 1" class="pagination">
-        <button type="button" :disabled="page <= 1" @click="goToPage(page - 1)">上一页</button>
-        <span class="page-info">{{ page }} / {{ totalPages }}</span>
-        <button type="button" :disabled="page >= totalPages" @click="goToPage(page + 1)">下一页</button>
-      </div>
-    </div>
+    </StateWrapper>
   </section>
 </template>
 
 <style scoped>
 .audit-page {
-  display: grid;
-  gap: 1rem;
-}
-
-.page-header,
-.toolbar,
-.message,
-.table-wrap {
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  padding: 1rem;
-}
-
-.page-header,
-.toolbar {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 16px;
 }
 
-h2,
-p {
-  margin: 0;
+.mono-text {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.82rem;
 }
 
-.page-header p {
-  color: var(--text-muted);
-  font-size: 0.84rem;
-  margin-top: 0.35rem;
+.error-text {
+  color: var(--el-color-danger);
+  font-size: 0.82rem;
 }
 
-input,
-select {
-  background: var(--bg-hover);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  min-height: 2.25rem;
-  padding: 0 0.7rem;
+.text-muted {
+  color: var(--el-text-color-placeholder);
+  font-size: 0.82rem;
 }
 
-button {
-  background: var(--accent);
-  border: 0;
-  border-radius: var(--radius-sm);
-  color: white;
-  cursor: pointer;
-  min-height: 2.2rem;
-  padding: 0 0.8rem;
-}
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-th,
-td {
-  border-bottom: 1px solid var(--border-color);
-  padding: 0.65rem;
-  text-align: left;
-  vertical-align: top;
-}
-
-th {
-  color: var(--text-secondary);
-  font-size: 0.78rem;
-}
-
-.mono-cell,
-.error-cell {
-  overflow-wrap: anywhere;
-}
-
-.result-success {
-  color: var(--success);
-}
-
-.result-failure,
-.result-denied {
-  color: var(--danger);
-}
-
-.error {
-  color: var(--danger);
-}
-
-.empty-line {
-  color: var(--text-muted);
-  text-align: center;
-}
-
-.pagination {
+.pagination-wrap {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.75rem;
-  padding-top: 0.75rem;
-  border-top: 1px solid var(--border-color);
-  margin-top: 0.5rem;
-}
-
-.page-info {
-  font-size: 0.85rem;
-  color: var(--text-secondary);
-  min-width: 5rem;
-  text-align: center;
-}
-
-.pagination button {
-  background: var(--bg-hover);
-  border: 1px solid var(--border-color);
-  color: var(--text-primary);
-  font-size: 0.8rem;
-  padding: 0.3rem 0.7rem;
-  min-height: auto;
+  justify-content: flex-end;
+  margin-top: 16px;
 }
 </style>

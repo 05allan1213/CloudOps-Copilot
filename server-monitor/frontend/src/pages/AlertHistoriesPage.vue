@@ -6,6 +6,10 @@ import { fetchAlertHistories, type AlertHistoryQuery } from "../api/alertHistori
 import { createDiagnosis } from "../api/diagnosis";
 import { fetchHostGroups } from "../api/hostGroups";
 import { formatTime } from "../utils/format";
+import { usePagination } from "../composables/usePagination";
+import FilterPanel from "../components/common/FilterPanel.vue";
+import PageHeader from "../components/common/PageHeader.vue";
+import StateWrapper from "../components/common/StateWrapper.vue";
 import type { AlertHistory, AlertHistoryListResponse, HostGroup } from "../types";
 
 const router = useRouter();
@@ -29,9 +33,27 @@ const filters = reactive<AlertHistoryQuery>({
   page_size: 20,
 });
 
-const pageCount = computed(() =>
-  Math.max(1, Math.ceil(histories.value.total / histories.value.page_size)),
-);
+const { page, pageSize, total, totalPages, goToPage, resetPage } = usePagination(20);
+
+const stateKey = computed(() => {
+  if (loading.value) return "loading" as const;
+  if (error.value) return "error" as const;
+  if (histories.value.items.length === 0) return "empty" as const;
+  return "default" as const;
+});
+
+function severityTagType(value: string): "danger" | "warning" | "info" | "" {
+  switch (value) {
+    case "critical":
+      return "danger";
+    case "warning":
+      return "warning";
+    case "info":
+      return "info";
+    default:
+      return "";
+  }
+}
 
 function severityLabel(value: string) {
   switch (value) {
@@ -46,6 +68,10 @@ function severityLabel(value: string) {
   }
 }
 
+function statusTagType(value: string): "danger" | "success" | "" {
+  return value === "resolved" ? "success" : "danger";
+}
+
 async function loadGroups() {
   try {
     groups.value = await fetchHostGroups();
@@ -58,7 +84,10 @@ async function loadHistories() {
   loading.value = true;
   error.value = "";
   try {
+    filters.page = page.value;
+    filters.page_size = pageSize.value;
     histories.value = await fetchAlertHistories(filters);
+    total.value = histories.value.total;
   } catch (err) {
     error.value = err instanceof Error ? err.message : "加载告警历史失败";
   } finally {
@@ -67,7 +96,7 @@ async function loadHistories() {
 }
 
 function applyFilters() {
-  filters.page = 1;
+  resetPage();
   loadHistories();
 }
 
@@ -78,14 +107,13 @@ function resetFilters() {
     alert_name: "",
     instance: "",
     group: 0,
-    page: 1,
-    page_size: 20,
   });
+  resetPage();
   loadHistories();
 }
 
-function changePage(nextPage: number) {
-  filters.page = Math.min(Math.max(nextPage, 1), pageCount.value);
+function handlePageChange(newPage: number) {
+  goToPage(newPage);
   loadHistories();
 }
 
@@ -113,254 +141,119 @@ onMounted(() => {
 
 <template>
   <section class="history-page">
-    <header class="page-header">
-      <div>
-        <h2>告警历史</h2>
-        <p>查询 MySQL 中归档的告警记录。</p>
-      </div>
-    </header>
+    <PageHeader title="告警历史" subtitle="查询 MySQL 中归档的告警记录。" />
 
-    <form class="filter-panel" @submit.prevent="applyFilters">
-      <label>
-        <span>状态</span>
-        <select v-model="filters.status">
-          <option value="">全部</option>
-          <option value="firing">firing</option>
-          <option value="resolved">resolved</option>
-        </select>
-      </label>
-      <label>
-        <span>级别</span>
-        <select v-model="filters.severity">
-          <option value="">全部</option>
-          <option value="critical">critical</option>
-          <option value="warning">warning</option>
-          <option value="info">info</option>
-        </select>
-      </label>
-      <label>
-        <span>分组</span>
-        <select v-model.number="filters.group">
-          <option :value="0">全部分组</option>
-          <option v-for="group in groups" :key="group.id" :value="group.id">
-            {{ group.name }}
-          </option>
-        </select>
-      </label>
-      <label>
-        <span>告警名</span>
-        <input v-model.trim="filters.alert_name" />
-      </label>
-      <label>
-        <span>实例</span>
-        <input v-model.trim="filters.instance" />
-      </label>
-      <div class="filter-actions">
-        <button class="primary-btn" type="submit">查询</button>
-        <button class="ghost-btn" type="button" @click="resetFilters">重置</button>
-      </div>
-    </form>
+    <FilterPanel @search="applyFilters" @reset="resetFilters">
+      <el-form-item label="状态">
+        <el-select v-model="filters.status" placeholder="全部" clearable style="width: 140px">
+          <el-option label="firing" value="firing" />
+          <el-option label="resolved" value="resolved" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="级别">
+        <el-select v-model="filters.severity" placeholder="全部" clearable style="width: 140px">
+          <el-option label="critical" value="critical" />
+          <el-option label="warning" value="warning" />
+          <el-option label="info" value="info" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="分组">
+        <el-select v-model.number="filters.group" placeholder="全部分组" clearable style="width: 160px">
+          <el-option v-for="group in groups" :key="group.id" :label="group.name" :value="group.id" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="告警名">
+        <el-input v-model.trim="filters.alert_name" placeholder="告警名" clearable style="width: 160px" />
+      </el-form-item>
+      <el-form-item label="实例">
+        <el-input v-model.trim="filters.instance" placeholder="实例" clearable style="width: 160px" />
+      </el-form-item>
+    </FilterPanel>
 
-    <div v-if="error" class="message error">{{ error }}</div>
+    <StateWrapper :state="stateKey" :error-text="error" empty-text="暂无告警历史">
+      <template #retry>
+        <el-button type="primary" @click="loadHistories">重试</el-button>
+      </template>
 
-    <div class="table-panel">
-      <div class="table-head">
-        <span>共 {{ histories.total }} 条</span>
-        <span>第 {{ histories.page }} / {{ pageCount }} 页</span>
+      <el-table :data="histories.items" stripe style="width: 100%">
+        <el-table-column label="告警名" min-width="160" prop="alert_name" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ row.alert_name || "-" }}
+          </template>
+        </el-table-column>
+        <el-table-column label="实例" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="mono-text">{{ row.instance || "-" }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="级别" width="90" align="center">
+          <template #default="{ row }">
+            <el-tag :type="severityTagType(row.severity)" size="small" effect="dark">
+              {{ severityLabel(row.severity) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="100" align="center">
+          <template #default="{ row }">
+            <el-tag :type="statusTagType(row.status)" size="small">
+              {{ row.status }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="触发时间" width="170">
+          <template #default="{ row }">
+            {{ formatTime(row.fired_at) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="摘要" min-width="200" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ row.summary || "-" }}
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="100" align="center">
+          <template #default="{ row }">
+            <el-button
+              type="primary"
+              link
+              size="small"
+              :loading="diagnosisLoading[row.id]"
+              @click="diagnose(row)"
+            >
+              诊断
+            </el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <div class="pagination-wrap">
+        <el-pagination
+          v-model:current-page="page"
+          :page-size="pageSize"
+          :total="total"
+          layout="total, prev, pager, next"
+          background
+          @current-change="handlePageChange"
+        />
       </div>
-      <div v-if="loading" class="empty-line">加载中</div>
-      <div v-else-if="histories.items.length === 0" class="empty-line">暂无告警历史</div>
-      <table v-else>
-        <thead>
-          <tr>
-            <th>告警</th>
-            <th>实例</th>
-            <th>级别</th>
-            <th>状态</th>
-            <th>触发时间</th>
-            <th>摘要</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="item in histories.items" :key="item.id">
-            <td>{{ item.alert_name || "-" }}</td>
-            <td class="mono-cell">{{ item.instance || "-" }}</td>
-            <td>{{ severityLabel(item.severity) }}</td>
-            <td>{{ item.status }}</td>
-            <td>{{ formatTime(item.fired_at) }}</td>
-            <td class="summary-cell">{{ item.summary || "-" }}</td>
-            <td>
-              <button
-                class="ghost-btn"
-                type="button"
-                :disabled="diagnosisLoading[item.id]"
-                @click="diagnose(item)"
-              >
-                {{ diagnosisLoading[item.id] ? "生成中" : "诊断" }}
-              </button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-      <div class="pager">
-        <button type="button" :disabled="histories.page <= 1" @click="changePage(histories.page - 1)">
-          上一页
-        </button>
-        <button type="button" :disabled="histories.page >= pageCount" @click="changePage(histories.page + 1)">
-          下一页
-        </button>
-      </div>
-    </div>
+    </StateWrapper>
   </section>
 </template>
 
 <style scoped>
 .history-page {
-  display: grid;
-  gap: 1rem;
-}
-
-.page-header h2 {
-  font-size: 1.25rem;
-  margin: 0;
-}
-
-.page-header p {
-  color: var(--text-muted);
-  font-size: 0.82rem;
-  margin-top: 0.3rem;
-}
-
-.filter-panel,
-.table-panel,
-.message {
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  padding: 1rem;
-}
-
-.filter-panel {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 0.85rem;
-  align-items: end;
-}
-
-label {
-  display: grid;
-  gap: 0.4rem;
-  color: var(--text-secondary);
-  font-size: 0.78rem;
-  font-weight: 700;
-}
-
-input,
-select {
-  width: 100%;
-  color: var(--text-primary);
-  background: rgba(11, 15, 23, 0.72);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  padding: 0.62rem 0.7rem;
-}
-
-input {
-  cursor: text;
-}
-
-select {
-  cursor: pointer;
-}
-
-.filter-actions,
-.pager {
   display: flex;
-  gap: 0.5rem;
-  align-items: center;
+  flex-direction: column;
+  gap: 16px;
 }
 
-.primary-btn,
-.ghost-btn,
-.pager button {
-  border-radius: var(--radius-sm);
-  padding: 0.55rem 0.8rem;
-  font-weight: 800;
-}
-
-.primary-btn {
-  color: #fff;
-  background: var(--accent);
-}
-
-.ghost-btn,
-.pager button {
-  color: var(--text-secondary);
-  background: var(--bg-hover);
-  border: 1px solid var(--border-color);
-}
-
-.pager button:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
-.message.error {
-  color: var(--danger);
-  border-color: rgba(239, 68, 68, 0.3);
-}
-
-.table-head {
-  display: flex;
-  justify-content: space-between;
-  color: var(--text-muted);
-  font-size: 0.78rem;
-  margin-bottom: 0.75rem;
-}
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-th,
-td {
-  border-bottom: 1px solid var(--border-color);
-  padding: 0.75rem 0.5rem;
-  text-align: left;
-  vertical-align: top;
-  font-size: 0.82rem;
-}
-
-th {
-  color: var(--text-muted);
-  font-size: 0.72rem;
-}
-
-.mono-cell {
+.mono-text {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.82rem;
 }
 
-.summary-cell {
-  max-width: 360px;
-  color: var(--text-secondary);
-}
-
-.empty-line {
-  color: var(--text-muted);
-  font-size: 0.86rem;
-}
-
-.pager {
+.pagination-wrap {
+  display: flex;
   justify-content: flex-end;
-  margin-top: 0.9rem;
-}
-
-@media (max-width: 720px) {
-  table {
-    display: block;
-    overflow-x: auto;
-  }
+  margin-top: 16px;
 }
 </style>
