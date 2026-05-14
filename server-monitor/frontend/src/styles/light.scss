@@ -1,0 +1,95 @@
+html.light {
+  --cloudops-bg-primary: #ffffff;
+  --cloudops-bg-secondary: #f8fafc;
+  --cloudops-bg-card: #ffffff;
+  --cloudops-bg-hover: rgba(241, 245, 249, 0.8);
+  --cloudops-bg-active: rgba(59, 130, 246, 0.06);
+
+  --cloudops-border-color: #e2e8f0;
+  --cloudops-border-hover: #cbd5e1;
+
+  --cloudops-text-primary: #1e293b;
+  --cloudops-text-secondary: #64748b;
+  --cloudops-text-muted: #94a3b8;
+
+  --cloudops-accent: #3b82f6;
+  --cloudops-accent-soft: rgba(59, 130, 246, 0.08);
+  --cloudops-accent-glow: rgba(59, 130, 246, 0.15);
+
+  --cloudops-success: #16a34a;
+  --cloudops-success-soft: rgba(22, 163, 74, 0.08);
+  --cloudops-warning: #d97706;
+  --cloudops-warning-soft: rgba(217, 119, 6, 0.08);
+  --cloudops-danger: #dc2626;
+  --cloudops-danger-soft: rgba(220, 38, 38, 0.08);
+  --cloudops-info: #0891b2;
+  --cloudops-info-soft: rgba(8, 145, 178, 0.08);
+
+  --cloudops-radius-sm: 6px;
+  --cloudops-radius-md: 10px;
+  --cloudops-radius-lg: 14px;
+
+  --cloudops-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
+  --cloudops-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --cloudops-shadow-glow: 0 0 20px var(--cloudops-accent-glow);
+
+  --cloudops-sidebar-bg: #f8fafc;
+  --cloudops-sidebar-width: 220px;
+  --cloudops-sidebar-collapsed-width: 64px;
+  --cloudops-header-height: 56px;
+
+  --bg-primary: var(--cloudops-bg-primary);
+  --bg-secondary: var(--cloudops-bg-secondary);
+  --bg-card: var(--cloudops-bg-card);
+  --bg-hover: var(--cloudops-bg-hover);
+
+  --border-color: var(--cloudops-border-color);
+  --border-hover: var(--cloudops-border-hover);
+
+  --text-primary: var(--cloudops-text-primary);
+  --text-secondary: var(--cloudops-text-secondary);
+  --text-muted: var(--cloudops-text-muted);
+
+  --accent: var(--cloudops-accent);
+  --accent-soft: var(--cloudops-accent-soft);
+  --accent-glow: var(--cloudops-accent-glow);
+
+  --success: var(--cloudops-success);
+  --success-soft: var(--cloudops-success-soft);
+  --warning: var(--cloudops-warning);
+  --warning-soft: var(--cloudops-warning-soft);
+  --danger: var(--cloudops-danger);
+  --danger-soft: var(--cloudops-danger-soft);
+  --info: var(--cloudops-info);
+  --info-soft: var(--cloudops-info-soft);
+
+  --radius-sm: var(--cloudops-radius-sm);
+  --radius-md: var(--cloudops-radius-md);
+  --radius-lg: var(--cloudops-radius-lg);
+
+  --shadow-sm: var(--cloudops-shadow-sm);
+  --shadow-md: var(--cloudops-shadow-md);
+  --shadow-glow: var(--cloudops-shadow-glow);
+
+  --el-bg-color: #ffffff;
+  --el-bg-color-overlay: #ffffff;
+  --el-bg-color-page: #f8fafc;
+
+  --el-text-color-primary: #1e293b;
+  --el-text-color-regular: #334155;
+  --el-text-color-secondary: #64748b;
+  --el-text-color-placeholder: #94a3b8;
+
+  --el-border-color: #e2e8f0;
+  --el-border-color-light: #f1f5f9;
+  --el-border-color-lighter: #f8fafc;
+
+  --el-fill-color: #f1f5f9;
+  --el-fill-color-light: #f8fafc;
+  --el-fill-color-lighter: #ffffff;
+  --el-fill-color-blank: #ffffff;
+
+  --el-mask-color: rgba(0, 0, 0, 0.4);
+
+  color-scheme: light;
+}

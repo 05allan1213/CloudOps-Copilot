@@ -1,5 +1,6 @@
 import { computed, ref } from "vue";
 import { defineStore } from "pinia";
+import { ElNotification } from "element-plus";
 
 import { fetchActiveAlerts, fetchAlertEvents } from "../api/alerts";
 import { fetchHosts } from "../api/hosts";
@@ -33,9 +34,6 @@ export const useMonitorStore = defineStore("monitor", () => {
   const selectedEventSeverity = ref<SeverityFilter>("all");
   const lastUpdateTime = ref(Date.now());
   const updateAgo = ref("");
-  const toasts = ref<{ id: number; message: string; severity: string }[]>([]);
-  const toastTimers: number[] = [];
-  let toastId = 0;
 
   const alertEventsLimit = 8;
 
@@ -352,25 +350,22 @@ export const useMonitorStore = defineStore("monitor", () => {
     }
   }
 
-  function clearToastTimers() {
-    toastTimers.forEach((id) => clearTimeout(id));
-    toastTimers.length = 0;
-  }
-
   function showToast(message: string, severity: string) {
-    const id = ++toastId;
-    toasts.value.push({ id, message, severity });
-    if (toasts.value.length > 10) {
-      toasts.value.splice(0, toasts.value.length - 10);
-    }
-    const timerId = window.setTimeout(() => {
-      toasts.value = toasts.value.filter((t) => t.id !== id);
-      const idx = toastTimers.indexOf(timerId);
-      if (idx !== -1) {
-        toastTimers.splice(idx, 1);
-      }
-    }, 4000);
-    toastTimers.push(timerId);
+    const typeMap: Record<string, "error" | "warning" | "info" | "success"> = {
+      critical: "error",
+      warning: "warning",
+      info: "info",
+    };
+    const notificationType = typeMap[severity] || "info";
+    const title = severityLabel(severity);
+
+    ElNotification({
+      title,
+      message,
+      type: notificationType,
+      duration: 4000,
+      position: "top-right",
+    });
   }
 
   function isHighCPU(host: Host): boolean {
@@ -469,7 +464,6 @@ export const useMonitorStore = defineStore("monitor", () => {
     selectedEventSeverity,
     lastUpdateTime,
     updateAgo,
-    toasts,
     criticalCount,
     warningCount,
     infoCount,
@@ -501,6 +495,5 @@ export const useMonitorStore = defineStore("monitor", () => {
     applyIncomingDiagnosisUpdate,
     applyIncomingActionUpdate,
     updateAgoText,
-    clearToastTimers,
   };
 });
