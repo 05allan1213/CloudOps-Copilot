@@ -32,6 +32,8 @@ type Metrics struct {
 	ragSearchTotal       *prometheus.CounterVec
 	ragSearchScore       prometheus.Histogram
 	ragSearchDuration    prometheus.Histogram
+	feedbackTotal        *prometheus.CounterVec
+	feedbackCommentTotal prometheus.Counter
 }
 
 func NewMetrics() *Metrics {
@@ -126,6 +128,14 @@ func NewMetrics() *Metrics {
 			Name: "copilot_llm_tokens_total",
 			Help: "Total number of LLM tokens.",
 		}, []string{"model", "direction"}),
+		feedbackTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "copilot_feedback_total",
+			Help: "Total number of diagnosis feedback submissions.",
+		}, []string{"rating"}),
+		feedbackCommentTotal: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "copilot_feedback_comment_total",
+			Help: "Total number of diagnosis feedback with comments.",
+		}),
 	}
 
 	metrics.registry.MustRegister(
@@ -149,6 +159,8 @@ func NewMetrics() *Metrics {
 		metrics.llmRequestTotal,
 		metrics.llmRequestDuration,
 		metrics.llmTokensTotal,
+		metrics.feedbackTotal,
+		metrics.feedbackCommentTotal,
 	)
 	return metrics
 }
@@ -251,5 +263,15 @@ func (m *Metrics) ObserveLLMRequest(model, result string, durationSeconds float6
 	}
 	if outputTokens > 0 {
 		m.llmTokensTotal.WithLabelValues(model, "output").Add(float64(outputTokens))
+	}
+}
+
+func (m *Metrics) ObserveFeedback(rating string, hasComment bool) {
+	if m == nil {
+		return
+	}
+	m.feedbackTotal.WithLabelValues(rating).Inc()
+	if hasComment {
+		m.feedbackCommentTotal.Inc()
 	}
 }

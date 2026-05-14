@@ -25,6 +25,7 @@ import (
 	"server-web/config"
 	copilotaction "server-web/copilot/action"
 	copilotdiagnosis "server-web/copilot/diagnosis"
+	copilotfeedback "server-web/copilot/feedback"
 	copilothandler "server-web/copilot/handler"
 	copilotk8s "server-web/copilot/k8s"
 	copilotllm "server-web/copilot/llm"
@@ -227,8 +228,10 @@ func NewRouterWithRuntime(ctx context.Context, cfg config.Config, promClient *pr
 		if toolExecutor != nil {
 			runner = diagnosisToolRunner{executor: toolExecutor}
 		}
+		diagnosisRepo := copilotdiagnosis.NewRepository(db)
+		feedbackRepo := copilotfeedback.NewMySQLRepository(db)
 		diagnosisService := copilotdiagnosis.NewService(copilotdiagnosis.Config{
-			Repository: copilotdiagnosis.NewRepository(db),
+			Repository: diagnosisRepo,
 			Resolver: copilotdiagnosis.NewResolver(copilotdiagnosis.ResolverOptions{
 				DB:           db,
 				AlertService: alertService,
@@ -244,6 +247,7 @@ func NewRouterWithRuntime(ctx context.Context, cfg config.Config, promClient *pr
 				Timeout:  cfg.DiagnosisLLMTimeout,
 				Observer: metrics,
 			}),
+			FeedbackRepository: feedbackRepo,
 		})
 		copilotRuntime = &CopilotRuntime{DiagnosisService: diagnosisService, KafkaObserver: metrics}
 		var toolDefs []copilotllm.ToolDefinition
@@ -274,6 +278,12 @@ func NewRouterWithRuntime(ctx context.Context, cfg config.Config, promClient *pr
 		protected.POST("/api/v1/diagnosis", diagnosisHandler.Trigger)
 		protected.GET("/api/v1/diagnosis", diagnosisHandler.List)
 		protected.GET("/api/v1/diagnosis/:id", diagnosisHandler.Get)
+		feedbackService := copilotfeedback.NewService(feedbackRepo, metrics)
+		reportAccess := &diagnosisAccessAdapter{repo: diagnosisRepo}
+		feedbackHandler := copilotfeedback.NewHandler(feedbackService, reportAccess, cfg.FeedbackCommentMaxLength)
+		if cfg.FeedbackEnabled {
+			protected.POST("/api/v1/diagnosis/:id/feedback", feedbackHandler.Submit)
+		}
 		if cfg.ActionApprovalEnabled {
 			actionExecutionEnabled := cfg.ActionExecutionEnabled && cfg.K8SWriteEnabled
 			actionExecutor := copilotaction.K8sExecutor(copilotaction.DisabledK8sExecutor{})

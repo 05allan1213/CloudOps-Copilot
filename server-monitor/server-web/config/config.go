@@ -213,6 +213,9 @@ type Config struct {
 	// 默认值：true
 	DiagnosisStatusPushEnabled bool
 
+	FeedbackEnabled          bool
+	FeedbackCommentMaxLength int
+
 	// ActionApprovalEnabled 是否启用动作审批 API
 	// 默认值：true
 	ActionApprovalEnabled bool
@@ -486,6 +489,8 @@ func Load() Config {
 		DiagnosisTaskTimeout:         configutil.DurationSeconds("DIAGNOSIS_TASK_TIMEOUT_SECONDS", 120),
 		DiagnosisRetryableErrors:     configutil.Bool("DIAGNOSIS_RETRYABLE_ERRORS", true),
 		DiagnosisStatusPushEnabled:   configutil.Bool("DIAGNOSIS_STATUS_PUSH_ENABLED", true),
+		FeedbackEnabled:              configutil.Bool("FEEDBACK_ENABLED", true),
+		FeedbackCommentMaxLength:     configutil.PositiveInt("FEEDBACK_COMMENT_MAX_LENGTH", 500),
 		ActionApprovalEnabled:        configutil.Bool("ACTION_APPROVAL_ENABLED", true),
 		ActionExecutionEnabled:       configutil.Bool("ACTION_EXECUTION_ENABLED", false),
 		ActionMaxReplicas:            configutil.PositiveInt("ACTION_MAX_REPLICAS", 10),
@@ -624,6 +629,9 @@ func (c *Config) Validate() error {
 		if strings.TrimSpace(c.RedisAddr) == "" {
 			return fmt.Errorf("REDIS_ADDR is required when DIAGNOSIS_ENABLED is true")
 		}
+	}
+	if c.FeedbackCommentMaxLength < 100 || c.FeedbackCommentMaxLength > 2000 {
+		return fmt.Errorf("FEEDBACK_COMMENT_MAX_LENGTH must be in range 100-2000, got %d", c.FeedbackCommentMaxLength)
 	}
 	if c.ActionMaxReplicas < 1 || c.ActionMaxReplicas > 100 {
 		return fmt.Errorf("ACTION_MAX_REPLICAS must be in range 1-100, got %d", c.ActionMaxReplicas)
