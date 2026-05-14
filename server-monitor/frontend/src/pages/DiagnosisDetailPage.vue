@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 
 import { createActionsFromDiagnosis } from "../api/actions";
-import { fetchDiagnosis } from "../api/diagnosis";
+import { fetchDiagnosis, submitDiagnosisFeedback } from "../api/diagnosis";
 import { formatTime } from "../utils/format";
 import { useAuthStore } from "../stores/auth";
 import type { DiagnosisReport } from "../types";
@@ -15,6 +15,12 @@ const loading = ref(false);
 const creatingActions = ref(false);
 const error = ref("");
 const actionMessage = ref("");
+const feedbackRating = ref<string | null>(null);
+const feedbackComment = ref("");
+const showCommentInput = ref(false);
+const submitting = ref(false);
+const feedbackSubmitted = ref(false);
+const feedbackError = ref(false);
 
 const metrics = computed(() => report.value?.evidence?.metrics ?? []);
 const ruleResults = computed(() => report.value?.rule_analysis?.results ?? []);
@@ -61,6 +67,11 @@ async function loadReport() {
   error.value = "";
   try {
     report.value = await fetchDiagnosis(id);
+    if (report.value.my_feedback) {
+      feedbackRating.value = report.value.my_feedback.rating;
+      feedbackComment.value = report.value.my_feedback.comment || "";
+      feedbackSubmitted.value = true;
+    }
   } catch (err) {
     error.value = err instanceof Error ? err.message : "加载诊断报告失败";
   } finally {
@@ -86,6 +97,28 @@ async function createApprovalActions() {
   }
 }
 
+async function submitFeedback(rating: string) {
+  feedbackRating.value = rating;
+  submitting.value = true;
+  feedbackError.value = false;
+  try {
+    await submitDiagnosisFeedback(report.value!.id, {
+      rating: rating as "useful" | "not_useful",
+      comment: feedbackComment.value || undefined,
+    });
+    feedbackSubmitted.value = true;
+  } catch {
+    feedbackError.value = true;
+  } finally {
+    submitting.value = false;
+  }
+}
+
+function submitFeedbackWithComment() {
+  if (!feedbackRating.value) return;
+  submitFeedback(feedbackRating.value);
+}
+
 onMounted(loadReport);
 </script>
 
@@ -104,6 +137,56 @@ onMounted(loadReport);
           <span>{{ report.confidence_level }}</span>
         </div>
       </header>
+
+      <section v-if="report.status === 'completed'" class="feedback-section">
+        <span class="feedback-label">这份诊断报告对您有帮助吗？</span>
+        <button
+          type="button"
+          class="feedback-btn"
+          :class="{ active: feedbackRating === 'useful' }"
+          :disabled="submitting"
+          @click="submitFeedback('useful')"
+        >
+          👍 有用
+        </button>
+        <button
+          type="button"
+          class="feedback-btn"
+          :class="{ active: feedbackRating === 'not_useful' }"
+          :disabled="submitting"
+          @click="submitFeedback('not_useful')"
+        >
+          👎 没用
+        </button>
+        <button
+          type="button"
+          class="feedback-btn comment-btn"
+          @click="showCommentInput = !showCommentInput"
+        >
+          💬 评论
+        </button>
+        <div v-if="showCommentInput" class="comment-input">
+          <textarea
+            v-model="feedbackComment"
+            maxlength="500"
+            placeholder="请输入您的反馈（可选，最多 500 字符）"
+            rows="3"
+          />
+          <div class="comment-actions">
+            <span class="char-count">{{ feedbackComment.length }}/500</span>
+            <button
+              type="button"
+              class="submit-btn"
+              :disabled="submitting || !feedbackRating"
+              @click="submitFeedbackWithComment"
+            >
+              提交
+            </button>
+          </div>
+        </div>
+        <span v-if="feedbackSubmitted" class="feedback-thanks">感谢您的反馈！</span>
+        <span v-if="feedbackError" class="feedback-error">反馈提交失败，请稍后重试</span>
+      </section>
 
       <section class="summary-panel">
         <h3>摘要</h3>
@@ -578,5 +661,100 @@ pre {
   .runbook-head span {
     white-space: normal;
   }
+}
+
+.feedback-section {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 0.75rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.feedback-label {
+  color: var(--text-secondary);
+  font-size: 0.84rem;
+  margin-right: 0.25rem;
+}
+
+.feedback-btn {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.8rem;
+  padding: 0.35rem 0.7rem;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.feedback-btn:hover {
+  border-color: var(--accent);
+}
+
+.feedback-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+
+.feedback-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.comment-input {
+  width: 100%;
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 0.35rem;
+}
+
+.comment-input textarea {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 0.82rem;
+  padding: 0.5rem;
+  resize: vertical;
+}
+
+.comment-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.char-count {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.submit-btn {
+  background: var(--accent);
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: white;
+  cursor: pointer;
+  font-size: 0.8rem;
+  padding: 0.35rem 0.9rem;
+}
+
+.submit-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.feedback-thanks {
+  color: #22c55e;
+  font-size: 0.82rem;
+}
+
+.feedback-error {
+  color: var(--danger);
+  font-size: 0.82rem;
 }
 </style>

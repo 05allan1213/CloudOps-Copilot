@@ -410,6 +410,16 @@ export interface DiagnosisReport {
   created_by: number;
   created_at: string;
   updated_at: string;
+  my_feedback?: { rating: string; comment?: string };
+}
+
+export interface DiagnosisFeedback {
+  id: number;
+  diagnosis_id: number;
+  rating: "useful" | "not_useful";
+  comment?: string;
+  created_by: number;
+  created_at: string;
 }
 
 export interface DiagnosisListResponse {

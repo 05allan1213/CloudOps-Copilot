@@ -28,3 +28,27 @@ export async function fetchDiagnosisList(
 export async function fetchDiagnosis(id: number | string): Promise<DiagnosisReport> {
   return getApiData<DiagnosisReport>(`/api/v1/diagnosis/${id}`);
 }
+
+export interface FeedbackRequest {
+  rating: "useful" | "not_useful";
+  comment?: string;
+}
+
+export interface FeedbackResponse {
+  id: number;
+  diagnosis_id: number;
+  rating: string;
+  comment?: string;
+  created_by: number;
+  created_at: string;
+}
+
+export async function submitDiagnosisFeedback(
+  id: number | string,
+  request: FeedbackRequest,
+): Promise<FeedbackResponse> {
+  return postApiData<FeedbackResponse, FeedbackRequest>(
+    `/api/v1/diagnosis/${id}/feedback`,
+    request,
+  );
+}
