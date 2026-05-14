@@ -36,14 +36,12 @@ watch(
 function toggleFullscreen() {
   fullscreenError.value = "";
   if (!document.fullscreenElement) {
-    document.documentElement.requestFullscreen().catch((err) => {
+    document.documentElement.requestFullscreen().catch(() => {
       fullscreenError.value = "无法进入全屏模式";
-      console.warn("Fullscreen request failed:", err);
     });
   } else {
-    document.exitFullscreen().catch((err) => {
+    document.exitFullscreen().catch(() => {
       fullscreenError.value = "无法退出全屏模式";
-      console.warn("Exit fullscreen failed:", err);
     });
   }
 }

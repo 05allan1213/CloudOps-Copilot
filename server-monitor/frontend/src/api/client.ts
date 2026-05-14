@@ -1,4 +1,5 @@
 import axios, { AxiosError, type AxiosRequestConfig } from "axios";
+import { ElMessage, ElNotification } from "element-plus";
 
 import type { ApiResponse } from "../types";
 import { clearStoredAuth, getStoredExpiresAt, getStoredToken } from "./authStorage";
@@ -34,9 +35,31 @@ httpClient.interceptors.response.use(
   (error: AxiosError<ApiResponse<unknown>>) => {
     if (error.response?.status === 401) {
       clearStoredAuth();
+      ElMessage.warning("登录已过期");
       if (window.location.pathname !== "/login") {
         window.location.href = "/login";
       }
+    } else if (error.response?.status === 403) {
+      ElNotification({
+        title: "权限不足",
+        message: "您没有权限执行此操作",
+        type: "warning",
+        duration: 4000,
+      });
+    } else if (error.response?.status === 500) {
+      ElNotification({
+        title: "服务器错误",
+        message: "服务器内部错误，请稍后重试",
+        type: "error",
+        duration: 5000,
+      });
+    } else if (!error.response) {
+      ElNotification({
+        title: "网络错误",
+        message: "网络连接失败，请检查网络设置",
+        type: "error",
+        duration: 5000,
+      });
     }
     return Promise.reject(error);
   },

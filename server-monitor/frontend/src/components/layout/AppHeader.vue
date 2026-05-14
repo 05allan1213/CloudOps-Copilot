@@ -136,6 +136,7 @@ onBeforeUnmount(() => {
         inline-prompt
         active-text="暗"
         inactive-text="亮"
+        aria-label="切换暗亮主题"
         @change="toggleTheme"
       />
       <div class="header-user">

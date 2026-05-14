@@ -143,7 +143,7 @@ export function useAlertsWebSocket(
         } else if (isValidActionMessage(payload)) {
           onAction?.(payload.data);
         } else {
-          console.warn("Unknown websocket message", payload);
+          // Unknown message type, silently ignore
         }
       } catch (error) {
         console.error("Failed to parse websocket message", error);

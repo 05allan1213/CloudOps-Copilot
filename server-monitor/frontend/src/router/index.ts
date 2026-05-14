@@ -114,7 +114,7 @@ export const router = createRouter({
       path: "/:pathMatch(.*)*",
       name: "not-found",
       component: () => import("../pages/NotFoundPage.vue"),
-      meta: { public: true, title: "404", hidden: true },
+      meta: { title: "404", hidden: true },
     },
   ],
 });
