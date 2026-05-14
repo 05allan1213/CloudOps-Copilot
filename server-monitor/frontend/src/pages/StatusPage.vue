@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { Refresh } from "@element-plus/icons-vue";
 
 import { fetchDashboardOverview } from "../api/hosts";
 import { fetchHealthz, fetchReadyz } from "../api/status";
@@ -10,6 +11,8 @@ import type {
   HealthStatus,
   ReadyStatus,
 } from "../types";
+import PageHeader from "../components/common/PageHeader.vue";
+import StateWrapper from "../components/common/StateWrapper.vue";
 
 const loading = ref(true);
 const health = ref<ApiResponse<HealthStatus> | null>(null);
@@ -20,6 +23,11 @@ const error = ref("");
 const serviceReady = computed(() => ready.value?.data?.ready === true);
 const serviceHealthy = computed(() => health.value?.data?.healthy === true);
 const dependencies = computed(() => ready.value?.data?.dependencies ?? {});
+
+const stateKey = computed(() => {
+  if (loading.value) return "loading";
+  return "default";
+});
 
 onMounted(() => {
   loadStatus();
@@ -45,14 +53,11 @@ async function loadStatus() {
       overview.value = overviewResult.value;
     }
 
-    const failed = [healthResult, readyResult, overviewResult].filter(
-      (result) => result.status === "rejected",
-    );
-    if (failed.length > 0) {
-      const failedNames: string[] = [];
-      if (healthResult.status === "rejected") failedNames.push("健康检查");
-      if (readyResult.status === "rejected") failedNames.push("就绪检查");
-      if (overviewResult.status === "rejected") failedNames.push("监控概览");
+    const failedNames: string[] = [];
+    if (healthResult.status === "rejected") failedNames.push("健康检查");
+    if (readyResult.status === "rejected") failedNames.push("就绪检查");
+    if (overviewResult.status === "rejected") failedNames.push("监控概览");
+    if (failedNames.length > 0) {
       error.value = `以下接口暂时不可用: ${failedNames.join("、")}`;
     }
   } finally {
@@ -60,8 +65,17 @@ async function loadStatus() {
   }
 }
 
-function statusLabel(value: boolean): string {
-  return value ? "正常" : "异常";
+function depTagType(value: string | undefined) {
+  switch (value) {
+    case "ok":
+      return "success";
+    case "disabled":
+      return "info";
+    case "unreachable":
+      return "danger";
+    default:
+      return "info";
+  }
 }
 
 function depLabel(value: string | undefined): string {
@@ -83,207 +97,154 @@ function formatPercent(value: number | undefined): string {
 </script>
 
 <template>
-  <section class="status-header">
-    <div>
-      <h2>系统状态</h2>
-      <p>服务健康、依赖就绪与监控概览</p>
-    </div>
-    <button type="button" class="refresh-btn" :disabled="loading" @click="loadStatus">
-      刷新
-    </button>
-  </section>
+  <section class="status-page">
+    <PageHeader title="系统状态" subtitle="服务健康、依赖就绪与监控概览">
+      <el-button :icon="Refresh" :loading="loading" @click="loadStatus">刷新</el-button>
+    </PageHeader>
 
-  <div v-if="error" class="status-message">{{ error }}</div>
+    <el-alert
+      v-if="error"
+      :title="error"
+      type="warning"
+      show-icon
+      closable
+      style="margin-bottom: 16px"
+    />
 
-  <section class="status-grid">
-    <div class="status-card">
-      <span>健康检查</span>
-      <strong :class="serviceHealthy ? 'ok' : 'bad'">
-        {{ statusLabel(serviceHealthy) }}
-      </strong>
-    </div>
-    <div class="status-card">
-      <span>就绪检查</span>
-      <strong :class="serviceReady ? 'ok' : 'bad'">
-        {{ statusLabel(serviceReady) }}
-      </strong>
-    </div>
-    <div class="status-card">
-      <span>Prometheus</span>
-      <strong :class="dependencies.prometheus === 'ok' ? 'ok' : 'bad'">
-        {{ depLabel(dependencies.prometheus) }}
-      </strong>
-    </div>
-    <div class="status-card">
-      <span>Redis</span>
-      <strong :class="dependencies.redis === 'ok' ? 'ok' : 'muted'">
-        {{ depLabel(dependencies.redis) }}
-      </strong>
-    </div>
-  </section>
+    <StateWrapper :state="stateKey" empty-text="暂无状态数据">
+      <template #retry>
+        <el-button type="primary" @click="loadStatus">重试</el-button>
+      </template>
 
-  <section class="panel">
-    <div class="panel-header">
-      <div class="panel-title">
-        <h2>监控概览</h2>
-      </div>
-      <span class="panel-badge">
-        {{ loading ? "更新中" : formatTime(overview?.generated_at) }}
-      </span>
-    </div>
-    <div class="overview-grid">
-      <div class="overview-item">
-        <span>主机总数</span>
-        <strong>{{ overview?.total_hosts ?? "--" }}</strong>
-      </div>
-      <div class="overview-item">
-        <span>健康主机</span>
-        <strong>{{ overview?.healthy_hosts ?? "--" }}</strong>
-      </div>
-      <div class="overview-item">
-        <span>离线主机</span>
-        <strong>{{ overview?.down_hosts ?? "--" }}</strong>
-      </div>
-      <div class="overview-item">
-        <span>活跃告警</span>
-        <strong>{{ overview?.active_alerts ?? "--" }}</strong>
-      </div>
-      <div class="overview-item">
-        <span>平均 CPU</span>
-        <strong>{{ formatPercent(overview?.avg_cpu) }}</strong>
-      </div>
-      <div class="overview-item">
-        <span>平均内存</span>
-        <strong>{{ formatPercent(overview?.avg_memory) }}</strong>
-      </div>
-    </div>
+      <el-row :gutter="16" class="status-row">
+        <el-col :xs="12" :sm="6">
+          <el-card shadow="hover" class="status-card">
+            <div class="status-card-inner">
+              <span class="status-label">健康检查</span>
+              <el-tag :type="serviceHealthy ? 'success' : 'danger'" size="large" effect="dark">
+                {{ serviceHealthy ? "正常" : "异常" }}
+              </el-tag>
+            </div>
+          </el-card>
+        </el-col>
+        <el-col :xs="12" :sm="6">
+          <el-card shadow="hover" class="status-card">
+            <div class="status-card-inner">
+              <span class="status-label">就绪检查</span>
+              <el-tag :type="serviceReady ? 'success' : 'danger'" size="large" effect="dark">
+                {{ serviceReady ? "正常" : "异常" }}
+              </el-tag>
+            </div>
+          </el-card>
+        </el-col>
+        <el-col :xs="12" :sm="6">
+          <el-card shadow="hover" class="status-card">
+            <div class="status-card-inner">
+              <span class="status-label">Prometheus</span>
+              <el-tag :type="depTagType(dependencies.prometheus)" size="large" effect="dark">
+                {{ depLabel(dependencies.prometheus) }}
+              </el-tag>
+            </div>
+          </el-card>
+        </el-col>
+        <el-col :xs="12" :sm="6">
+          <el-card shadow="hover" class="status-card">
+            <div class="status-card-inner">
+              <span class="status-label">Redis</span>
+              <el-tag :type="depTagType(dependencies.redis)" size="large" effect="dark">
+                {{ depLabel(dependencies.redis) }}
+              </el-tag>
+            </div>
+          </el-card>
+        </el-col>
+      </el-row>
+
+      <el-card shadow="never" class="overview-card">
+        <template #header>
+          <div class="overview-header">
+            <span class="overview-title">监控概览</span>
+            <el-tag size="small" type="info" effect="plain">
+              {{ loading ? "更新中" : formatTime(overview?.generated_at) }}
+            </el-tag>
+          </div>
+        </template>
+        <el-row :gutter="16">
+          <el-col :xs="12" :sm="8" :md="4">
+            <el-statistic title="主机总数" :value="overview?.total_hosts ?? '--'" />
+          </el-col>
+          <el-col :xs="12" :sm="8" :md="4">
+            <el-statistic title="健康主机" :value="overview?.healthy_hosts ?? '--'" />
+          </el-col>
+          <el-col :xs="12" :sm="8" :md="4">
+            <el-statistic title="离线主机" :value="overview?.down_hosts ?? '--'" />
+          </el-col>
+          <el-col :xs="12" :sm="8" :md="4">
+            <el-statistic title="活跃告警" :value="overview?.active_alerts ?? '--'" />
+          </el-col>
+          <el-col :xs="12" :sm="8" :md="4">
+            <el-statistic title="平均 CPU" :value="formatPercent(overview?.avg_cpu)" />
+          </el-col>
+          <el-col :xs="12" :sm="8" :md="4">
+            <el-statistic title="平均内存" :value="formatPercent(overview?.avg_memory)" />
+          </el-col>
+        </el-row>
+      </el-card>
+    </StateWrapper>
   </section>
 </template>
 
 <style scoped>
-.status-header {
+.status-page {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 1rem;
+  flex-direction: column;
+  gap: 16px;
 }
 
-.status-header h2 {
-  margin: 0;
-  font-size: 1.2rem;
+.status-row {
+  margin-bottom: 0;
 }
 
-.status-header p {
-  margin-top: 0.35rem;
-  color: var(--text-muted);
-  font-size: 0.82rem;
+.status-card {
+  height: 100%;
 }
 
-.refresh-btn {
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-radius: var(--radius-sm);
-  padding: 0.45rem 0.8rem;
-  font-size: 0.78rem;
-  font-weight: 700;
+.status-card :deep(.el-card__body) {
+  padding: 20px;
 }
 
-.refresh-btn:disabled {
-  color: var(--text-muted);
-  cursor: default;
-}
-
-.status-message {
-  margin-bottom: 1rem;
-  color: var(--warning);
-  background: var(--warning-soft);
-  border: 1px solid rgba(245, 158, 11, 0.24);
-  border-radius: var(--radius-md);
-  padding: 0.75rem 1rem;
-  font-size: 0.82rem;
-}
-
-.status-grid,
-.overview-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 0.75rem;
-}
-
-.status-grid {
-  margin-bottom: 1rem;
-}
-
-.status-card,
-.overview-item {
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  padding: 0.9rem;
-}
-
-.status-card span,
-.overview-item span {
-  display: block;
-  color: var(--text-muted);
-  font-size: 0.72rem;
-  font-weight: 700;
-  margin-bottom: 0.45rem;
-}
-
-.status-card strong,
-.overview-item strong {
-  font-size: 1.05rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.ok {
-  color: var(--success);
-}
-
-.bad {
-  color: var(--danger);
-}
-
-.muted {
-  color: var(--text-secondary);
-}
-
-.panel {
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
-  padding: 1.25rem 1.5rem;
-  margin-bottom: 1.5rem;
-}
-
-.panel-header {
+.status-card-inner {
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
   align-items: center;
-  gap: 1rem;
-  margin-bottom: 1rem;
+  gap: 12px;
 }
 
-.panel-title h2 {
-  font-size: 1rem;
-  margin: 0;
+.status-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--el-text-color-secondary);
 }
 
-.panel-badge {
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-radius: var(--radius-sm);
-  padding: 0.2rem 0.6rem;
-  font-size: 0.7rem;
-  font-weight: 700;
+.overview-card :deep(.el-card__body) {
+  padding: 20px;
+}
+
+.overview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.overview-title {
+  font-size: 15px;
+  font-weight: 600;
 }
 
 @media (max-width: 768px) {
-  .status-header,
-  .panel-header {
-    flex-direction: column;
+  .status-card-inner {
+    flex-direction: row;
+    justify-content: space-between;
   }
 }
 </style>

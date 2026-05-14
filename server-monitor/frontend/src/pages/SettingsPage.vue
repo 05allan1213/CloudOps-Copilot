@@ -1,76 +1,120 @@
+<script setup lang="ts">
+import { Bell, ChatDotRound, User } from "@element-plus/icons-vue";
+import { RouterLink } from "vue-router";
+
+import PageHeader from "../components/common/PageHeader.vue";
+
+const settingsItems = [
+  {
+    to: "/settings/alert-rules",
+    icon: Bell,
+    title: "告警规则",
+    desc: "维护 MySQL 中的自定义 Prometheus 告警规则，并触发同步。",
+  },
+  {
+    to: "/settings/channels",
+    icon: ChatDotRound,
+    title: "通知渠道",
+    desc: "维护 Webhook 通知地址，并执行受限连通性测试。",
+  },
+  {
+    to: "/settings/users",
+    icon: User,
+    title: "用户管理",
+    desc: "管理系统用户和角色分配。",
+  },
+];
+</script>
+
 <template>
   <section class="settings-page">
-    <header class="page-header">
-      <div>
-        <h2>设置</h2>
-        <p>管理第四阶段的业务配置。</p>
-      </div>
-    </header>
+    <PageHeader title="设置" subtitle="管理系统的业务配置" />
 
-    <div class="settings-grid">
-      <RouterLink class="settings-item" to="/settings/alert-rules">
-        <span class="item-title">告警规则</span>
-        <span class="item-desc">维护 MySQL 中的自定义 Prometheus 告警规则，并触发同步。</span>
-      </RouterLink>
-      <RouterLink class="settings-item" to="/settings/channels">
-        <span class="item-title">通知渠道</span>
-        <span class="item-desc">维护 Webhook 通知地址，并执行受限连通性测试。</span>
-      </RouterLink>
-      <RouterLink class="settings-item" to="/settings/users">
-        <span class="item-title">用户管理</span>
-        <span class="item-desc">管理系统用户和角色分配。</span>
-      </RouterLink>
-    </div>
+    <el-row :gutter="16">
+      <el-col
+        v-for="item in settingsItems"
+        :key="item.to"
+        :xs="24"
+        :sm="12"
+        :md="8"
+      >
+        <RouterLink :to="item.to" class="settings-card-link">
+          <el-card shadow="hover" class="settings-card">
+            <div class="settings-card-body">
+              <div class="settings-card-icon">
+                <el-icon :size="24"><component :is="item.icon" /></el-icon>
+              </div>
+              <div class="settings-card-text">
+                <span class="settings-card-title">{{ item.title }}</span>
+                <span class="settings-card-desc">{{ item.desc }}</span>
+              </div>
+            </div>
+          </el-card>
+        </RouterLink>
+      </el-col>
+    </el-row>
   </section>
 </template>
 
 <style scoped>
 .settings-page {
-  display: grid;
-  gap: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
 }
 
-.page-header h2 {
-  font-size: 1.25rem;
-  margin: 0;
+.settings-card-link {
+  text-decoration: none;
+  display: block;
+  margin-bottom: 16px;
 }
 
-.page-header p {
-  color: var(--text-muted);
-  font-size: 0.82rem;
-  margin-top: 0.3rem;
+.settings-card {
+  cursor: pointer;
+  transition: transform 0.2s, box-shadow 0.2s;
 }
 
-.settings-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 1rem;
+.settings-card:hover {
+  transform: translateY(-2px);
 }
 
-.settings-item {
-  display: grid;
-  gap: 0.5rem;
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  padding: 1rem;
-  transition: border-color 0.15s, transform 0.15s;
+.settings-card :deep(.el-card__body) {
+  padding: 20px;
 }
 
-.settings-item:hover {
-  border-color: var(--accent);
-  transform: translateY(-1px);
+.settings-card-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
 }
 
-.item-title {
-  color: var(--text-primary);
-  font-size: 0.98rem;
-  font-weight: 800;
+.settings-card-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  background: rgba(59, 130, 246, 0.1);
+  color: var(--el-color-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
 }
 
-.item-desc {
-  color: var(--text-muted);
-  font-size: 0.82rem;
-  line-height: 1.55;
+.settings-card-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-card-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.settings-card-desc {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.5;
 }
 </style>
