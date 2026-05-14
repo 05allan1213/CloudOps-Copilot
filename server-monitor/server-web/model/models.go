@@ -9,6 +9,7 @@ func AllModels() []interface{} {
 		&NotificationChannel{},
 		&AlertHistory{},
 		&DiagnosisReport{},
+		&DiagnosisFeedback{},
 		&PendingAction{},
 		&AuditLog{},
 	}
