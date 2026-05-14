@@ -2,6 +2,7 @@ package eval
 
 import (
 	"context"
+	"encoding/json"
 
 	"server-web/copilot/runbook"
 )
@@ -60,4 +61,13 @@ func EvaluateRAG(retriever *runbook.Retriever, cases []RAGEvalCase) RAGEvalResul
 	}
 
 	return result
+}
+
+func (r RAGEvalResult) ToJSON() ([]byte, error) {
+	return json.Marshal(r)
+}
+
+func RAGEvalResultFromJSON(data []byte) (RAGEvalResult, error) {
+	var r RAGEvalResult
+	return r, json.Unmarshal(data, &r)
 }

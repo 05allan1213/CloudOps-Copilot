@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -146,4 +147,13 @@ func (r EvalResult) String() string {
 	}
 
 	return b.String()
+}
+
+func (r EvalResult) ToJSON() ([]byte, error) {
+	return json.Marshal(r)
+}
+
+func EvalResultFromJSON(data []byte) (EvalResult, error) {
+	var r EvalResult
+	return r, json.Unmarshal(data, &r)
 }
