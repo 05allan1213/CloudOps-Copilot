@@ -258,6 +258,11 @@ type ListResult struct {
 	PageSize int              `json:"page_size"`
 }
 
+type FeedbackBrief struct {
+	Rating  string `json:"rating"`
+	Comment string `json:"comment,omitempty"`
+}
+
 type ReportResponse struct {
 	ID                 uint64          `json:"id"`
 	AlertHistoryID     uint64          `json:"alert_history_id"`
@@ -282,4 +287,5 @@ type ReportResponse struct {
 	CreatedBy          uint64          `json:"created_by"`
 	CreatedAt          time.Time       `json:"created_at"`
 	UpdatedAt          time.Time       `json:"updated_at"`
+	MyFeedback         *FeedbackBrief  `json:"my_feedback,omitempty"`
 }

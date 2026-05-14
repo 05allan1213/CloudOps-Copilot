@@ -10,22 +10,28 @@ import (
 	"server-web/model"
 )
 
+type FeedbackQueryRepository interface {
+	GetByDiagnosisIDAndUserID(ctx context.Context, diagnosisID uint64, userID uint64) (*model.DiagnosisFeedback, error)
+}
+
 type Service struct {
-	repo       *Repository
-	resolver   *Resolver
-	collector  *EvidenceCollector
-	analyzer   RuleAnalyzer
-	summarizer Summarizer
-	now        func() time.Time
+	repo         *Repository
+	resolver     *Resolver
+	collector    *EvidenceCollector
+	analyzer     RuleAnalyzer
+	summarizer   Summarizer
+	feedbackRepo FeedbackQueryRepository
+	now          func() time.Time
 }
 
 type Config struct {
-	Repository *Repository
-	Resolver   *Resolver
-	Collector  *EvidenceCollector
-	Analyzer   RuleAnalyzer
-	Summarizer Summarizer
-	Now        func() time.Time
+	Repository         *Repository
+	Resolver           *Resolver
+	Collector          *EvidenceCollector
+	Analyzer           RuleAnalyzer
+	Summarizer         Summarizer
+	FeedbackRepository FeedbackQueryRepository
+	Now                func() time.Time
 }
 
 func NewService(cfg Config) *Service {
@@ -42,12 +48,13 @@ func NewService(cfg Config) *Service {
 		now = func() time.Time { return time.Now().UTC() }
 	}
 	return &Service{
-		repo:       cfg.Repository,
-		resolver:   cfg.Resolver,
-		collector:  cfg.Collector,
-		analyzer:   analyzer,
-		summarizer: summarizer,
-		now:        now,
+		repo:         cfg.Repository,
+		resolver:     cfg.Resolver,
+		collector:    cfg.Collector,
+		analyzer:     analyzer,
+		summarizer:   summarizer,
+		feedbackRepo: cfg.FeedbackRepository,
+		now:          now,
 	}
 }
 
@@ -125,7 +132,7 @@ func (s *Service) Trigger(ctx context.Context, user User, req Request) (ReportRe
 	if err != nil {
 		return ReportResponse{}, err
 	}
-	return toReportResponse(updated), nil
+	return toReportResponse(updated, nil), nil
 }
 
 func (s *Service) Get(ctx context.Context, user User, id uint64) (ReportResponse, error) {
@@ -136,7 +143,13 @@ func (s *Service) Get(ctx context.Context, user User, id uint64) (ReportResponse
 	if err != nil {
 		return ReportResponse{}, err
 	}
-	return toReportResponse(report), nil
+	var myFeedback *model.DiagnosisFeedback
+	if s.feedbackRepo != nil {
+		if fb, fbErr := s.feedbackRepo.GetByDiagnosisIDAndUserID(ctx, id, user.ID); fbErr == nil && fb != nil {
+			myFeedback = fb
+		}
+	}
+	return toReportResponse(report, myFeedback), nil
 }
 
 func (s *Service) List(ctx context.Context, user User, filter ListFilter) (ListResult, error) {
@@ -149,7 +162,7 @@ func (s *Service) List(ctx context.Context, user User, filter ListFilter) (ListR
 	}
 	items := make([]ReportResponse, 0, len(reports))
 	for _, report := range reports {
-		items = append(items, toReportResponse(report))
+		items = append(items, toReportResponse(report, nil))
 	}
 	return ListResult{Items: items, Total: total, Page: normalized.Page, PageSize: normalized.PageSize}, nil
 }

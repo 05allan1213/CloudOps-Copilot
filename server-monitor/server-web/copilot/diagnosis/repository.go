@@ -134,7 +134,14 @@ func validReportStatus(status string) bool {
 	}
 }
 
-func toReportResponse(report model.DiagnosisReport) ReportResponse {
+func toReportResponse(report model.DiagnosisReport, myFeedback *model.DiagnosisFeedback) ReportResponse {
+	var feedbackBrief *FeedbackBrief
+	if myFeedback != nil {
+		feedbackBrief = &FeedbackBrief{
+			Rating:  myFeedback.Rating,
+			Comment: myFeedback.Comment,
+		}
+	}
 	return ReportResponse{
 		ID:                 report.ID,
 		AlertHistoryID:     report.AlertHistoryID,
@@ -159,5 +166,6 @@ func toReportResponse(report model.DiagnosisReport) ReportResponse {
 		CreatedBy:          report.CreatedBy,
 		CreatedAt:          report.CreatedAt,
 		UpdatedAt:          report.UpdatedAt,
+		MyFeedback:         feedbackBrief,
 	}
 }
