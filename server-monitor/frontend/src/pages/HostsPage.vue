@@ -2,6 +2,7 @@
 import { onMounted, ref } from "vue";
 
 import { fetchHostGroups } from "../api/hostGroups";
+import FilterPanel from "../components/common/FilterPanel.vue";
 import HostsPanel from "../components/HostsPanel.vue";
 import { useMonitorStore } from "../stores/monitor";
 import type { HostGroup } from "../types";
@@ -19,32 +20,43 @@ async function loadHostGroups() {
   }
 }
 
-function onGroupChange(event: Event) {
-  const value = Number((event.target as HTMLSelectElement).value);
-  monitor.setHostGroup(Number.isFinite(value) ? value : 0);
+function onGroupChange(value: number) {
+  monitor.setHostGroup(value);
 }
 
 onMounted(loadHostGroups);
 </script>
 
 <template>
-  <div v-if="monitor.hostsError" class="hosts-error">
-    {{ monitor.hostsError }}
-  </div>
-  <div v-if="groupsError" class="hosts-error">
-    {{ groupsError }}
-  </div>
-  <div class="group-filter">
-    <label>
-      <span>主机分组</span>
-      <select :value="monitor.selectedHostGroup" @change="onGroupChange">
-        <option :value="0">全部分组</option>
-        <option v-for="group in hostGroups" :key="group.id" :value="group.id">
-          {{ group.name }} ({{ group.member_count }})
-        </option>
-      </select>
-    </label>
-  </div>
+  <el-alert
+    v-if="monitor.hostsError || groupsError"
+    :title="monitor.hostsError || groupsError"
+    type="error"
+    show-icon
+    closable
+    style="margin-bottom: 16px"
+  />
+
+  <FilterPanel @search="monitor.applyHostSearch" @reset="monitor.resetHostFilters">
+    <el-form-item label="主机分组">
+      <el-select
+        :model-value="monitor.selectedHostGroup"
+        placeholder="全部分组"
+        clearable
+        style="width: 200px"
+        @change="onGroupChange"
+      >
+        <el-option :value="0" label="全部分组" />
+        <el-option
+          v-for="group in hostGroups"
+          :key="group.id"
+          :value="group.id"
+          :label="`${group.name} (${group.member_count})`"
+        />
+      </el-select>
+    </el-form-item>
+  </FilterPanel>
+
   <HostsPanel
     :hosts="monitor.hosts"
     :loading="monitor.loading"
@@ -64,40 +76,3 @@ onMounted(loadHostGroups);
     @reset-filters="monitor.resetHostFilters"
   />
 </template>
-
-<style scoped>
-.group-filter {
-  margin-bottom: 1rem;
-  display: flex;
-  justify-content: flex-end;
-}
-
-.group-filter label {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  color: var(--text-secondary);
-  font-size: 0.82rem;
-  font-weight: 700;
-}
-
-.group-filter select {
-  min-width: 180px;
-  cursor: pointer;
-  color: var(--text-primary);
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  padding: 0.48rem 0.7rem;
-}
-
-.hosts-error {
-  margin-bottom: 1rem;
-  color: var(--danger);
-  background: var(--danger-soft);
-  border: 1px solid rgba(239, 68, 68, 0.24);
-  border-radius: var(--radius-md);
-  padding: 0.75rem 1rem;
-  font-size: 0.82rem;
-}
-</style>

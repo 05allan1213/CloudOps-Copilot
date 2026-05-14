@@ -8,9 +8,12 @@ import {
 import * as echarts from "echarts/core";
 import { CanvasRenderer } from "echarts/renderers";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { RouterLink } from "vue-router";
+import { useRouter } from "vue-router";
+import { ArrowLeft } from "@element-plus/icons-vue";
 
 import { fetchHostMetrics } from "../api/hosts";
+import { useTheme } from "../composables/useTheme";
+import StateWrapper from "../components/common/StateWrapper.vue";
 import { useMonitorStore } from "../stores/monitor";
 import type { HostMetricsResponse, RangeSeries } from "../types";
 
@@ -22,7 +25,10 @@ const props = defineProps<{
 
 type RangeOption = "15m" | "1h" | "6h" | "24h";
 
+const router = useRouter();
 const monitor = useMonitorStore();
+const { isDark, getEChartsTheme } = useTheme();
+
 const selectedRange = ref<RangeOption>("1h");
 const metrics = ref<HostMetricsResponse | null>(null);
 const loading = ref(true);
@@ -38,12 +44,29 @@ const currentHost = computed(() =>
 const hasPercentSeries = computed(() =>
   ["cpu", "memory", "disk"].some((name) => firstSeries(name)?.values.length),
 );
+const pageState = computed<"loading" | "error" | "default">(() => {
+  if (loading.value) return "loading";
+  if (error.value) return "error";
+  return "default";
+});
+
 const rangeOptions: { label: string; value: RangeOption }[] = [
   { label: "15 分钟", value: "15m" },
   { label: "1 小时", value: "1h" },
   { label: "6 小时", value: "6h" },
   { label: "24 小时", value: "24h" },
 ];
+
+const metricCards = computed(() => [
+  { label: "CPU", value: formatPercent(latestMetricValue("cpu")), icon: "cpu" },
+  { label: "内存", value: formatPercent(latestMetricValue("memory")), icon: "memory" },
+  { label: "磁盘", value: formatPercent(latestMetricValue("disk")), icon: "disk" },
+  { label: "接收速率", value: formatBytesPerSecond(latestMetricValue("network_recv")), icon: "download" },
+  { label: "发送速率", value: formatBytesPerSecond(latestMetricValue("network_sent")), icon: "upload" },
+  { label: "Load 1m", value: formatNumber(latestMetricValue("load1")), icon: "load" },
+  { label: "进程数", value: formatNumber(latestMetricValue("process_count")), icon: "process" },
+  { label: "运行时间", value: formatUptime(latestMetricValue("uptime")), icon: "uptime" },
+]);
 
 onMounted(() => {
   initChart();
@@ -60,12 +83,13 @@ watch(selectedRange, () => {
   loadMetrics();
 });
 
-watch(
-  metrics,
-  () => {
-    renderChart();
-  },
-);
+watch(metrics, () => {
+  renderChart();
+});
+
+watch(isDark, () => {
+  renderChart();
+});
 
 let abortController: AbortController | null = null;
 let metricsRequestId = 0;
@@ -111,7 +135,7 @@ function initChart() {
     return;
   }
 
-  chart = echarts.init(chartEl.value, "dark");
+  chart = echarts.init(chartEl.value);
   resizeObserver = new ResizeObserver(() => {
     if (resizeDebounceTimer !== null) {
       clearTimeout(resizeDebounceTimer);
@@ -131,14 +155,12 @@ function renderChart() {
       return;
     }
 
+    const theme = getEChartsTheme(isDark.value);
     const xValues = timeAxisValues();
+
     chart.setOption({
-      backgroundColor: "transparent",
-      color: [
-        cssVar("--warning", "#f59e0b"),
-        cssVar("--info", "#06b6d4"),
-        cssVar("--danger", "#ef4444"),
-      ],
+      backgroundColor: theme.backgroundColor,
+      color: ["#f59e0b", "#06b6d4", "#ef4444"],
       grid: {
         left: 42,
         right: 20,
@@ -148,12 +170,13 @@ function renderChart() {
       legend: {
         top: 0,
         right: 0,
-        textStyle: {
-          color: cssVar("--text-secondary", "#9ca3af"),
-        },
+        textStyle: theme.legend.textStyle,
       },
       tooltip: {
         trigger: "axis",
+        backgroundColor: theme.tooltip.backgroundColor,
+        borderColor: theme.tooltip.borderColor,
+        textStyle: theme.tooltip.textStyle,
         valueFormatter: (value: unknown) => {
           const num = typeof value === "number" ? value : Number(value);
           return Number.isFinite(num) ? `${roundMetric(num)}%` : "--";
@@ -162,28 +185,18 @@ function renderChart() {
       xAxis: {
         type: "category",
         data: xValues,
-        axisLabel: {
-          color: cssVar("--text-secondary", "#9ca3af"),
-        },
-        axisLine: {
-          lineStyle: {
-            color: cssVar("--border-color", "rgba(75, 85, 99, 0.35)"),
-          },
-        },
+        axisLabel: theme.xAxis.axisLabel,
+        axisLine: theme.xAxis.axisLine,
       },
       yAxis: {
         type: "value",
         min: 0,
         max: 100,
         axisLabel: {
-          color: cssVar("--text-secondary", "#9ca3af"),
+          ...theme.yAxis.axisLabel,
           formatter: "{value}%",
         },
-        splitLine: {
-          lineStyle: {
-            color: cssVar("--border-color", "rgba(75, 85, 99, 0.35)"),
-          },
-        },
+        splitLine: theme.yAxis.splitLine,
       },
       series: [
         lineSeries("CPU", "cpu"),
@@ -266,17 +279,19 @@ function formatUptime(value: number | null): string {
 function roundMetric(value: number): number {
   return Number(value.toFixed(1));
 }
-
-function cssVar(name: string, fallback: string): string {
-  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  return value || fallback;
-}
 </script>
 
 <template>
-  <section class="detail-header">
+  <div class="detail-header">
     <div>
-      <RouterLink to="/hosts" class="back-link">返回主机列表</RouterLink>
+      <el-button
+        type="primary"
+        link
+        :icon="ArrowLeft"
+        @click="router.push('/hosts')"
+      >
+        返回主机列表
+      </el-button>
       <h2>{{ instanceName }}</h2>
       <p>
         {{
@@ -288,67 +303,49 @@ function cssVar(name: string, fallback: string): string {
         }}
       </p>
     </div>
-    <div class="range-tabs">
-      <button
+    <el-radio-group v-model="selectedRange" size="small">
+      <el-radio-button
         v-for="option in rangeOptions"
         :key="option.value"
-        type="button"
-        class="range-btn"
-        :class="{ active: selectedRange === option.value }"
-        @click="selectedRange = option.value"
+        :value="option.value"
       >
         {{ option.label }}
-      </button>
-    </div>
-  </section>
+      </el-radio-button>
+    </el-radio-group>
+  </div>
 
-  <section class="metric-grid">
-    <div class="metric-card">
-      <span>CPU</span>
-      <strong>{{ formatPercent(latestMetricValue("cpu")) }}</strong>
-    </div>
-    <div class="metric-card">
-      <span>内存</span>
-      <strong>{{ formatPercent(latestMetricValue("memory")) }}</strong>
-    </div>
-    <div class="metric-card">
-      <span>磁盘</span>
-      <strong>{{ formatPercent(latestMetricValue("disk")) }}</strong>
-    </div>
-    <div class="metric-card">
-      <span>接收速率</span>
-      <strong>{{ formatBytesPerSecond(latestMetricValue("network_recv")) }}</strong>
-    </div>
-    <div class="metric-card">
-      <span>发送速率</span>
-      <strong>{{ formatBytesPerSecond(latestMetricValue("network_sent")) }}</strong>
-    </div>
-    <div class="metric-card">
-      <span>Load 1m</span>
-      <strong>{{ formatNumber(latestMetricValue("load1")) }}</strong>
-    </div>
-    <div class="metric-card">
-      <span>进程数</span>
-      <strong>{{ formatNumber(latestMetricValue("process_count")) }}</strong>
-    </div>
-    <div class="metric-card">
-      <span>运行时间</span>
-      <strong>{{ formatUptime(latestMetricValue("uptime")) }}</strong>
-    </div>
-  </section>
+  <el-row :gutter="12" class="metric-grid">
+    <el-col
+      v-for="card in metricCards"
+      :key="card.label"
+      :xs="12"
+      :sm="6"
+    >
+      <el-card shadow="never" class="metric-card">
+        <el-statistic :title="card.label" :value="card.value" />
+      </el-card>
+    </el-col>
+  </el-row>
 
-  <section class="panel">
-    <div class="panel-header">
-      <div class="panel-title">
-        <h2>资源趋势</h2>
-      </div>
-      <span class="panel-badge">{{ selectedRange }}</span>
-    </div>
-    <div v-if="loading" class="chart-state">加载中</div>
-    <div v-else-if="error" class="chart-state chart-error">{{ error }}</div>
-    <div v-else-if="!hasPercentSeries" class="chart-state">暂无趋势数据</div>
-    <div ref="chartEl" class="chart-canvas" :class="{ hidden: loading || error || !hasPercentSeries }"></div>
-  </section>
+  <StateWrapper
+    :state="pageState === 'default' && !hasPercentSeries ? 'empty' : pageState"
+    empty-text="暂无趋势数据"
+    :error-text="error"
+  >
+    <template #retry>
+      <el-button type="primary" @click="loadMetrics()">重试</el-button>
+    </template>
+
+    <el-card shadow="never" class="chart-panel">
+      <template #header>
+        <div class="chart-panel-header">
+          <span class="chart-panel-title">资源趋势</span>
+          <el-tag size="small" type="info">{{ selectedRange }}</el-tag>
+        </div>
+      </template>
+      <div ref="chartEl" class="chart-canvas"></div>
+    </el-card>
+  </StateWrapper>
 </template>
 
 <style scoped>
@@ -360,125 +357,48 @@ function cssVar(name: string, fallback: string): string {
   margin-bottom: 1rem;
 }
 
-.back-link {
-  display: inline-flex;
-  margin-bottom: 0.5rem;
-  color: var(--accent);
-  font-size: 0.78rem;
-  font-weight: 700;
-}
-
 .detail-header h2 {
-  margin: 0;
+  margin: 0.5rem 0 0;
   font-size: 1.2rem;
 }
 
 .detail-header p {
   margin-top: 0.35rem;
-  color: var(--text-muted);
+  color: var(--el-text-color-secondary);
   font-size: 0.82rem;
 }
 
-.range-tabs {
-  display: flex;
-  gap: 0.25rem;
-  padding: 0.25rem;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  background: var(--bg-secondary);
-  flex-wrap: wrap;
-}
-
-.range-btn {
-  color: var(--text-muted);
-  border-radius: var(--radius-sm);
-  padding: 0.35rem 0.65rem;
-  font-size: 0.75rem;
-  font-weight: 700;
-}
-
-.range-btn.active {
-  color: var(--accent);
-  background: var(--accent-soft);
-}
-
 .metric-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 0.75rem;
   margin-bottom: 1rem;
 }
 
-.metric-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  padding: 0.9rem;
+.metric-card :deep(.el-card__body) {
+  padding: 14px;
 }
 
-.metric-card span {
-  display: block;
-  color: var(--text-muted);
-  font-size: 0.72rem;
-  font-weight: 700;
-  margin-bottom: 0.45rem;
-}
-
-.metric-card strong {
+.metric-card :deep(.el-statistic__number) {
   font-size: 1.05rem;
   font-variant-numeric: tabular-nums;
 }
 
-.panel {
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
-  padding: 1.25rem 1.5rem;
-  margin-bottom: 1.5rem;
+.chart-panel :deep(.el-card__body) {
+  padding: 0 20px 20px;
 }
 
-.panel-header {
+.chart-panel-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 1rem;
 }
 
-.panel-title h2 {
-  font-size: 1rem;
-  margin: 0;
-}
-
-.panel-badge {
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-radius: var(--radius-sm);
-  padding: 0.2rem 0.6rem;
-  font-size: 0.7rem;
-  font-weight: 700;
+.chart-panel-title {
+  font-size: 15px;
+  font-weight: 600;
 }
 
 .chart-canvas {
   height: 340px;
   width: 100%;
-}
-
-.chart-canvas.hidden {
-  visibility: hidden;
-  height: 0;
-}
-
-.chart-state {
-  min-height: 180px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-muted);
-  font-size: 0.9rem;
-}
-
-.chart-error {
-  color: var(--danger);
 }
 
 @media (max-width: 768px) {

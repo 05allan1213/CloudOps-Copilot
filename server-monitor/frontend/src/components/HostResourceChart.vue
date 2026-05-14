@@ -9,6 +9,7 @@ import * as echarts from "echarts/core";
 import { CanvasRenderer } from "echarts/renderers";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
+import { useTheme } from "../composables/useTheme";
 import type { Host } from "../types";
 
 echarts.use([BarChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
@@ -16,6 +17,8 @@ echarts.use([BarChart, GridComponent, LegendComponent, TooltipComponent, CanvasR
 const props = defineProps<{
   hosts: Host[];
 }>();
+
+const { isDark, getEChartsTheme } = useTheme();
 
 const chartEl = ref<HTMLDivElement | null>(null);
 let chart: echarts.ECharts | null = null;
@@ -47,20 +50,20 @@ onBeforeUnmount(() => {
   chart = null;
 });
 
-watch(
-  chartHosts,
-  () => {
-    renderChart();
-  },
-  { deep: true },
-);
+watch(chartHosts, () => {
+  renderChart();
+}, { deep: true });
+
+watch(isDark, () => {
+  renderChart();
+});
 
 function initChart() {
   if (!chartEl.value) {
     return;
   }
 
-  chart = echarts.init(chartEl.value, "dark");
+  chart = echarts.init(chartEl.value);
   resizeObserver = new ResizeObserver(() => {
     if (resizeDebounceTimer !== null) {
       clearTimeout(resizeDebounceTimer);
@@ -80,12 +83,11 @@ function renderChart() {
       return;
     }
 
-    const textColor = cssVar("--text-secondary", "#9ca3af");
-    const axisColor = cssVar("--border-color", "rgba(75, 85, 99, 0.35)");
+    const theme = getEChartsTheme(isDark.value);
 
     chart.setOption({
-      backgroundColor: "transparent",
-      color: [cssVar("--warning", "#f59e0b"), cssVar("--info", "#06b6d4")],
+      backgroundColor: theme.backgroundColor,
+      color: ["#f59e0b", "#06b6d4"],
       grid: {
         left: 36,
         right: 18,
@@ -95,31 +97,28 @@ function renderChart() {
       legend: {
         top: 0,
         right: 0,
-        textStyle: {
-          color: textColor,
-        },
+        textStyle: theme.legend.textStyle,
       },
       tooltip: {
         trigger: "axis",
         axisPointer: {
           type: "shadow",
         },
+        backgroundColor: theme.tooltip.backgroundColor,
+        borderColor: theme.tooltip.borderColor,
+        textStyle: theme.tooltip.textStyle,
         formatter: formatTooltip,
       },
       xAxis: {
         type: "category",
         data: chartHosts.value.map((host) => host.instance),
         axisLabel: {
-          color: textColor,
+          ...theme.xAxis.axisLabel,
           interval: 0,
           overflow: "truncate",
           width: 92,
         },
-        axisLine: {
-          lineStyle: {
-            color: axisColor,
-          },
-        },
+        axisLine: theme.xAxis.axisLine,
         axisTick: {
           show: false,
         },
@@ -129,14 +128,10 @@ function renderChart() {
         min: 0,
         max: 100,
         axisLabel: {
-          color: textColor,
+          ...theme.yAxis.axisLabel,
           formatter: "{value}%",
         },
-        splitLine: {
-          lineStyle: {
-            color: axisColor,
-          },
-        },
+        splitLine: theme.yAxis.splitLine,
       },
       series: [
         {
@@ -166,11 +161,6 @@ function roundMetric(value: number): number {
   return Number(value.toFixed(1));
 }
 
-function cssVar(name: string, fallback: string): string {
-  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  return value || fallback;
-}
-
 function escapeHtml(text: string): string {
   const div = document.createElement("div");
   div.textContent = text;
@@ -190,9 +180,7 @@ function formatTooltip(params: TooltipItem | TooltipItem[]): string {
 
 <template>
   <div class="host-resource-chart">
-    <div v-if="!hasData" class="chart-empty">
-      暂无主机指标
-    </div>
+    <el-empty v-if="!hasData" description="暂无主机指标" />
     <div ref="chartEl" class="chart-canvas" :class="{ hidden: !hasData }"></div>
   </div>
 </template>
@@ -210,15 +198,5 @@ function formatTooltip(params: TooltipItem | TooltipItem[]): string {
 
 .chart-canvas.hidden {
   visibility: hidden;
-}
-
-.chart-empty {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--text-muted);
-  font-size: 0.9rem;
 }
 </style>

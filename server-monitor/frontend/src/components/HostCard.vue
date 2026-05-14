@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { RouterLink } from "vue-router";
+import { useRouter } from "vue-router";
 
 import type { Host } from "../types";
 import { formatTime } from "../utils/format";
@@ -9,20 +9,22 @@ const props = defineProps<{
   host: Host;
 }>();
 
+const router = useRouter();
+
 const detailPath = computed(
   () => `/hosts/${encodeURIComponent(props.host.instance)}`,
 );
 
 function cpuColor(value: number): string {
-  if (value >= 80) return "var(--danger)";
-  if (value > 60) return "var(--warning)";
-  return "var(--success)";
+  if (value >= 80) return "#ef4444";
+  if (value > 60) return "#f59e0b";
+  return "#22c55e";
 }
 
 function memoryColor(value: number): string {
-  if (value >= 85) return "var(--danger)";
-  if (value > 70) return "var(--warning)";
-  return "var(--success)";
+  if (value >= 85) return "#ef4444";
+  if (value > 70) return "#f59e0b";
+  return "#22c55e";
 }
 
 function isHighCPU(host: Host): boolean {
@@ -36,223 +38,114 @@ function isHighMemory(host: Host): boolean {
 function hostRiskVariant(host: Host): "normal" | "cpu" | "memory" | "both" {
   const highCPU = isHighCPU(host);
   const highMemory = isHighMemory(host);
-
-  if (highCPU && highMemory) {
-    return "both";
-  }
-  if (highCPU) {
-    return "cpu";
-  }
-  if (highMemory) {
-    return "memory";
-  }
-
+  if (highCPU && highMemory) return "both";
+  if (highCPU) return "cpu";
+  if (highMemory) return "memory";
   return "normal";
 }
 
-function hostRiskClass(host: Host): string {
+function riskTagType(host: Host): "danger" | "warning" | "info" | "" {
   switch (hostRiskVariant(host)) {
-    case "cpu":
-      return "host-risk-cpu";
-    case "memory":
-      return "host-risk-memory";
-    case "both":
-      return "host-risk-both";
-    default:
-      return "";
+    case "both": return "danger";
+    case "cpu": return "warning";
+    case "memory": return "info";
+    default: return "";
   }
 }
 
-function hostRiskLabel(host: Host): string {
+function riskLabel(host: Host): string {
   switch (hostRiskVariant(host)) {
-    case "cpu":
-      return "高 CPU";
-    case "memory":
-      return "高内存";
-    case "both":
-      return "双高风险";
-    default:
-      return "正常";
+    case "both": return "双高风险";
+    case "cpu": return "高 CPU";
+    case "memory": return "高内存";
+    default: return "正常";
   }
-}
-
-function hostRiskHint(host: Host): string {
-  switch (hostRiskVariant(host)) {
-    case "cpu":
-      return "CPU 已达到高风险阈值";
-    case "memory":
-      return "内存已达到高风险阈值";
-    case "both":
-      return "CPU 与内存都已达到高风险阈值";
-    default:
-      return "主机状态正常";
-  }
-}
-
-function isHostUp(status: string): boolean {
-  return status === "up";
 }
 </script>
 
 <template>
-  <div class="host-card" :class="hostRiskClass(host)">
+  <el-card
+    shadow="hover"
+    class="host-card"
+    :class="{
+      'host-card--cpu': hostRiskVariant(host) === 'cpu',
+      'host-card--memory': hostRiskVariant(host) === 'memory',
+      'host-card--both': hostRiskVariant(host) === 'both',
+    }"
+  >
     <div class="host-header">
-      <div class="host-name-row">
-        <span
-          class="status-dot"
-          :class="isHostUp(host.status) ? 'dot-up' : 'dot-down'"
-        ></span>
-        <span class="host-name">{{ host.instance }}</span>
-      </div>
-      <span
-        class="host-status"
-        :class="isHostUp(host.status) ? 'status-up' : 'status-down'"
-      >
-        {{ isHostUp(host.status) ? "在线" : "离线" }}
-      </span>
+      <span class="host-name">{{ host.instance }}</span>
+      <el-tag :type="host.status === 'up' ? 'success' : 'danger'" size="small">
+        {{ host.status === "up" ? "在线" : "离线" }}
+      </el-tag>
     </div>
-    <div
-      v-if="hostRiskVariant(host) !== 'normal'"
-      class="host-risk-strip"
-      :class="hostRiskClass(host)"
-    >
-      <span class="host-risk-badge" :class="hostRiskClass(host)">
-        {{ hostRiskLabel(host) }}
-      </span>
-      <span class="host-risk-text">
-        {{ hostRiskHint(host) }}
-      </span>
+
+    <div v-if="hostRiskVariant(host) !== 'normal'" class="host-risk">
+      <el-tag :type="riskTagType(host)" size="small" effect="dark">
+        {{ riskLabel(host) }}
+      </el-tag>
     </div>
+
     <div class="host-metrics">
-      <div class="metric-row">
-        <div class="metric-label">CPU</div>
-        <div class="metric-bar-bg">
-          <div
-            class="metric-bar-fill"
-            :style="{
-              width: Math.min(host.cpu, 100) + '%',
-              background: cpuColor(host.cpu),
-            }"
-          />
-        </div>
-        <div class="metric-value" :style="{ color: cpuColor(host.cpu) }">
-          {{ host.cpu.toFixed(1) }}%
-        </div>
+      <div class="metric-item">
+        <span class="metric-label">CPU</span>
+        <el-progress
+          :percentage="Number(host.cpu.toFixed(1))"
+          :color="cpuColor(host.cpu)"
+          :stroke-width="8"
+          :format="(val: number) => val.toFixed(1) + '%'"
+        />
       </div>
-      <div class="metric-row">
-        <div class="metric-label">内存</div>
-        <div class="metric-bar-bg">
-          <div
-            class="metric-bar-fill"
-            :style="{
-              width: Math.min(host.memory, 100) + '%',
-              background: memoryColor(host.memory),
-            }"
-          />
-        </div>
-        <div
-          class="metric-value"
-          :style="{ color: memoryColor(host.memory) }"
-        >
-          {{ host.memory.toFixed(1) }}%
-        </div>
+      <div class="metric-item">
+        <span class="metric-label">内存</span>
+        <el-progress
+          :percentage="Number(host.memory.toFixed(1))"
+          :color="memoryColor(host.memory)"
+          :stroke-width="8"
+          :format="(val: number) => val.toFixed(1) + '%'"
+        />
       </div>
     </div>
+
     <div class="host-footer">
-      <svg
-        width="12"
-        height="12"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-      >
-        <circle cx="12" cy="12" r="10" />
-        <polyline points="12 6 12 12 16 14" />
-      </svg>
-      最后采集: {{ formatTime(host.lastScrape) }}
-      <RouterLink class="host-detail-link" :to="detailPath">
+      <span class="host-time">最后采集: {{ formatTime(host.lastScrape) }}</span>
+      <el-button type="primary" link size="small" @click="router.push(detailPath)">
         详情
-      </RouterLink>
+      </el-button>
     </div>
-  </div>
+  </el-card>
 </template>
 
 <style scoped>
 .host-card {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  padding: 1rem;
   transition: all 0.2s ease;
-  position: relative;
-  overflow: hidden;
-}
-
-.host-card::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: linear-gradient(90deg, var(--accent), transparent);
-  opacity: 0;
-  transition: opacity 0.2s;
-}
-
-.host-card:hover::before {
-  opacity: 1;
 }
 
 .host-card:hover {
-  border-color: var(--border-hover);
-  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
 }
 
-.host-card.host-risk-cpu {
+.host-card--cpu {
   border-color: rgba(245, 158, 11, 0.36);
-  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.08);
 }
 
-.host-card.host-risk-memory {
+.host-card--memory {
   border-color: rgba(6, 182, 212, 0.36);
-  box-shadow: 0 0 0 1px rgba(6, 182, 212, 0.08);
 }
 
-.host-card.host-risk-both {
+.host-card--both {
   border-color: rgba(239, 68, 68, 0.42);
-  box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.1);
+}
+
+.host-card :deep(.el-card__body) {
+  padding: 16px;
 }
 
 .host-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 1rem;
-}
-
-.host-name-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.dot-up {
-  background: var(--success);
-  box-shadow: 0 0 6px var(--success);
-}
-
-.dot-down {
-  background: var(--danger);
-  box-shadow: 0 0 6px var(--danger);
+  margin-bottom: 12px;
 }
 
 .host-name {
@@ -260,123 +153,44 @@ function isHostUp(status: string): boolean {
   font-size: 0.9rem;
 }
 
-.host-status {
-  font-size: 0.7rem;
-  font-weight: 600;
-  padding: 0.2em 0.6em;
-  border-radius: var(--radius-sm);
-}
-
-.status-up {
-  background: var(--success-soft);
-  color: var(--success);
-}
-
-.status-down {
-  background: var(--danger-soft);
-  color: var(--danger);
-}
-
-.host-risk-strip {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  margin-bottom: 0.9rem;
-  flex-wrap: wrap;
-}
-
-.host-risk-badge {
-  display: inline-flex;
-  align-items: center;
-  border-radius: 999px;
-  padding: 0.2rem 0.65rem;
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  border: 1px solid transparent;
-}
-
-.host-risk-badge.host-risk-cpu {
-  color: var(--warning);
-  background: rgba(245, 158, 11, 0.12);
-  border-color: rgba(245, 158, 11, 0.22);
-}
-
-.host-risk-badge.host-risk-memory {
-  color: var(--info);
-  background: rgba(6, 182, 212, 0.12);
-  border-color: rgba(6, 182, 212, 0.22);
-}
-
-.host-risk-badge.host-risk-both {
-  color: var(--danger);
-  background: rgba(239, 68, 68, 0.12);
-  border-color: rgba(239, 68, 68, 0.24);
-}
-
-.host-risk-text {
-  font-size: 0.72rem;
-  color: var(--text-secondary);
+.host-risk {
+  margin-bottom: 12px;
 }
 
 .host-metrics {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 10px;
 }
 
-.metric-row {
-  display: grid;
-  grid-template-columns: 2.5rem 1fr 3.5rem;
+.metric-item {
+  display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 12px;
 }
 
 .metric-label {
   font-size: 0.75rem;
-  color: var(--text-muted);
+  color: var(--el-text-color-secondary);
   font-weight: 500;
+  min-width: 32px;
 }
 
-.metric-bar-bg {
-  height: 8px;
-  background: rgba(255, 255, 255, 0.06);
-  border-radius: 4px;
-  overflow: hidden;
-}
-
-.metric-bar-fill {
-  height: 100%;
-  border-radius: 4px;
-  transition: width 0.6s ease;
-}
-
-.metric-value {
-  font-size: 0.8rem;
-  font-weight: 600;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
+.metric-item :deep(.el-progress) {
+  flex: 1;
 }
 
 .host-footer {
-  margin-top: 0.875rem;
-  padding-top: 0.75rem;
-  border-top: 1px solid var(--border-color);
-  font-size: 0.7rem;
-  color: var(--text-muted);
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--el-border-color-lighter);
   display: flex;
+  justify-content: space-between;
   align-items: center;
-  gap: 0.35rem;
-  flex-wrap: wrap;
 }
 
-.host-detail-link {
-  margin-left: auto;
-  color: var(--accent);
-  font-weight: 700;
-}
-
-.host-detail-link:hover {
-  color: var(--text-primary);
+.host-time {
+  font-size: 0.7rem;
+  color: var(--el-text-color-secondary);
 }
 </style>

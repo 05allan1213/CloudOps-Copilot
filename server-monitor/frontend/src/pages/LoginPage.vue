@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, reactive, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { ElMessage, type FormInstance, type FormRules } from "element-plus";
+import { Key, User } from "@element-plus/icons-vue";
 
 import { useAuthStore } from "../stores/auth";
 
@@ -8,9 +10,17 @@ const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
 
-const username = ref("");
-const password = ref("");
+const formRef = ref<FormInstance>();
+const form = reactive({
+  username: "",
+  password: "",
+});
 const formError = ref("");
+
+const rules: FormRules = {
+  username: [{ required: true, message: "请输入用户名", trigger: "blur" }],
+  password: [{ required: true, message: "请输入密码", trigger: "blur" }],
+};
 
 const redirectTarget = computed(() => {
   const redirect = route.query.redirect;
@@ -21,15 +31,13 @@ const redirectTarget = computed(() => {
 });
 
 async function onSubmit() {
-  formError.value = "";
-  const nextUsername = username.value.trim();
-  if (!nextUsername || !password.value) {
-    formError.value = "请输入用户名和密码";
-    return;
-  }
+  if (!formRef.value) return;
+  const valid = await formRef.value.validate().catch(() => false);
+  if (!valid) return;
 
+  formError.value = "";
   try {
-    await auth.login(nextUsername, password.value);
+    await auth.login(form.username.trim(), form.password);
     await router.replace(redirectTarget.value);
   } catch (err) {
     formError.value = err instanceof Error ? err.message : "登录失败";
@@ -39,7 +47,7 @@ async function onSubmit() {
 
 <template>
   <main class="login-page">
-    <section class="login-shell" aria-label="登录">
+    <el-card class="login-card" shadow="always">
       <div class="login-brand">
         <div class="login-logo"></div>
         <div>
@@ -48,37 +56,58 @@ async function onSubmit() {
         </div>
       </div>
 
-      <form class="login-form" @submit.prevent="onSubmit">
-        <label class="field">
-          <span>用户名</span>
-          <input
-            v-model="username"
+      <el-alert
+        v-if="formError || auth.error"
+        :title="formError || auth.error || ''"
+        type="error"
+        show-icon
+        :closable="true"
+        class="login-alert"
+      />
+
+      <el-form
+        ref="formRef"
+        :model="form"
+        :rules="rules"
+        label-position="top"
+        :disabled="auth.loading"
+        @submit.prevent="onSubmit"
+      >
+        <el-form-item label="用户名" prop="username">
+          <el-input
+            v-model="form.username"
             autocomplete="username"
-            autofocus
-            type="text"
             placeholder="请输入用户名"
+            :prefix-icon="User"
+            size="large"
           />
-        </label>
+        </el-form-item>
 
-        <label class="field">
-          <span>密码</span>
-          <input
-            v-model="password"
-            autocomplete="current-password"
+        <el-form-item label="密码" prop="password">
+          <el-input
+            v-model="form.password"
             type="password"
+            autocomplete="current-password"
             placeholder="请输入密码"
+            :prefix-icon="Key"
+            size="large"
+            show-password
           />
-        </label>
+        </el-form-item>
 
-        <p v-if="formError || auth.error" class="login-error">
-          {{ formError || auth.error }}
-        </p>
-
-        <button class="login-submit" type="submit" :disabled="auth.loading">
-          {{ auth.loading ? "登录中" : "登录" }}
-        </button>
-      </form>
-    </section>
+        <el-form-item>
+          <el-button
+            type="primary"
+            size="large"
+            :loading="auth.loading"
+            class="login-submit"
+            @click="onSubmit"
+          >
+            {{ auth.loading ? "登录中" : "登录" }}
+          </el-button>
+        </el-form-item>
+      </el-form>
+    </el-card>
   </main>
 </template>
 
@@ -90,12 +119,11 @@ async function onSubmit() {
   padding: 1.5rem;
 }
 
-.login-shell {
+.login-card {
   width: min(100%, 420px);
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-md);
+}
+
+.login-card :deep(.el-card__body) {
   padding: 1.5rem;
 }
 
@@ -110,9 +138,9 @@ async function onSubmit() {
   width: 42px;
   height: 42px;
   flex: 0 0 auto;
-  border-radius: var(--radius-md);
-  background: linear-gradient(135deg, var(--accent), var(--info));
-  box-shadow: 0 0 16px var(--accent-glow);
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--el-color-primary), var(--el-color-info));
+  box-shadow: 0 0 16px rgba(59, 130, 246, 0.3);
   position: relative;
 }
 
@@ -131,72 +159,17 @@ async function onSubmit() {
 }
 
 .login-brand p {
-  color: var(--text-muted);
+  color: var(--el-text-color-secondary);
   font-size: 0.82rem;
   line-height: 1.6;
   margin-top: 0.3rem;
 }
 
-.login-form {
-  display: grid;
-  gap: 0.9rem;
-}
-
-.field {
-  display: grid;
-  gap: 0.45rem;
-}
-
-.field span {
-  color: var(--text-secondary);
-  font-size: 0.78rem;
-  font-weight: 700;
-}
-
-.field input {
-  width: 100%;
-  cursor: text;
-  color: var(--text-primary);
-  background: rgba(11, 15, 23, 0.72);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  padding: 0.75rem 0.8rem;
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-
-.field input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-}
-
-.field input::placeholder {
-  color: var(--text-muted);
-}
-
-.login-error {
-  color: var(--danger);
-  background: var(--danger-soft);
-  border: 1px solid rgba(239, 68, 68, 0.25);
-  border-radius: var(--radius-sm);
-  padding: 0.7rem 0.8rem;
-  font-size: 0.82rem;
+.login-alert {
+  margin-bottom: 1rem;
 }
 
 .login-submit {
-  color: #fff;
-  background: var(--accent);
-  border-radius: var(--radius-sm);
-  padding: 0.78rem 1rem;
-  font-weight: 800;
-  transition: opacity 0.15s, transform 0.15s;
-}
-
-.login-submit:hover:not(:disabled) {
-  transform: translateY(-1px);
-}
-
-.login-submit:disabled {
-  cursor: not-allowed;
-  opacity: 0.65;
+  width: 100%;
 }
 </style>
