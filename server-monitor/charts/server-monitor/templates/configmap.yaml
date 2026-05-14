@@ -37,6 +37,8 @@ data:
   DIAGNOSIS_TASK_TIMEOUT_SECONDS: {{ .Values.config.diagnosisTaskTimeoutSeconds | quote }}
   DIAGNOSIS_RETRYABLE_ERRORS: {{ .Values.config.diagnosisRetryableErrors | quote }}
   DIAGNOSIS_STATUS_PUSH_ENABLED: {{ .Values.config.diagnosisStatusPushEnabled | quote }}
+  FEEDBACK_ENABLED: {{ .Values.config.feedbackEnabled | default true | quote }}
+  FEEDBACK_COMMENT_MAX_LENGTH: {{ .Values.config.feedbackCommentMaxLength | default 500 | quote }}
   ACTION_APPROVAL_ENABLED: {{ .Values.config.actionApprovalEnabled | quote }}
   ACTION_EXECUTION_ENABLED: {{ .Values.config.actionExecutionEnabled | quote }}
   ACTION_MAX_REPLICAS: {{ .Values.config.actionMaxReplicas | quote }}

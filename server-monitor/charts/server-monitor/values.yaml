@@ -39,6 +39,8 @@ config:
   diagnosisTaskTimeoutSeconds: "120"
   diagnosisRetryableErrors: "true"
   diagnosisStatusPushEnabled: "true"
+  feedbackEnabled: true
+  feedbackCommentMaxLength: 500
   actionApprovalEnabled: "true"
   actionExecutionEnabled: "false"
   actionMaxReplicas: "10"
