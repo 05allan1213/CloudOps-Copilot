@@ -1,6 +1,9 @@
 package runbook
 
-import "math"
+import (
+	"math"
+	"strings"
+)
 
 type BM25Engine struct {
 	docTokens [][]string
@@ -25,7 +28,25 @@ func NewBM25Engine(docs []Document, k1, b float64) *BM25Engine {
 	df := make(map[string]int)
 
 	for i, doc := range docs {
-		tokens := Tokenize(doc.Body)
+		var buf strings.Builder
+		buf.WriteString(doc.Title)
+		buf.WriteString(" ")
+		for _, a := range doc.ApplicableAlerts {
+			buf.WriteString(a)
+			buf.WriteString(" ")
+		}
+		for _, kw := range doc.Keywords {
+			buf.WriteString(kw)
+			buf.WriteString(" ")
+		}
+		for _, m := range doc.Metrics {
+			buf.WriteString(m)
+			buf.WriteString(" ")
+		}
+		buf.WriteString(doc.Body)
+
+		unigrams := Tokenize(buf.String())
+		tokens := TokenizeBigram(unigrams)
 		docTokens[i] = tokens
 		seen := make(map[string]struct{})
 		for _, t := range tokens {

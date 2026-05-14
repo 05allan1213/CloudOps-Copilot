@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"server-web/api/middleware"
 	"server-web/copilot/diagnosis"
 	"server-web/model"
 )
@@ -36,6 +37,24 @@ func NewHandler(feedbackService *Service, reportAccess ReportAccessChecker, comm
 	}
 }
 
+func currentUserFromGin(c *gin.Context) diagnosis.User {
+	userID, _ := c.Get(middleware.ContextUserID)
+	username, _ := c.Get(middleware.ContextUsername)
+	role, _ := c.Get(middleware.ContextRole)
+
+	user := diagnosis.User{}
+	if id, ok := userID.(uint64); ok {
+		user.ID = id
+	}
+	if value, ok := username.(string); ok {
+		user.Username = value
+	}
+	if value, ok := role.(string); ok {
+		user.Role = value
+	}
+	return user
+}
+
 func (h *Handler) Submit(c *gin.Context) {
 	idStr := c.Param("id")
 	diagnosisID, err := strconv.ParseUint(idStr, 10, 64)
@@ -44,8 +63,8 @@ func (h *Handler) Submit(c *gin.Context) {
 		return
 	}
 
-	user, ok := diagnosis.UserFromContext(c.Request.Context())
-	if !ok {
+	user := currentUserFromGin(c)
+	if user.ID == 0 {
 		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": "unauthorized"})
 		return
 	}

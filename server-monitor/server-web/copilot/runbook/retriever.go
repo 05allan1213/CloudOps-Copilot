@@ -249,7 +249,8 @@ func buildQueryTokens(alertName string, keywords, metrics []string) []string {
 	seen := make(map[string]struct{})
 	var tokens []string
 	addTokens := func(text string) {
-		for _, t := range Tokenize(text) {
+		unigrams := Tokenize(text)
+		for _, t := range TokenizeBigram(unigrams) {
 			if _, ok := seen[t]; !ok {
 				seen[t] = struct{}{}
 				tokens = append(tokens, t)

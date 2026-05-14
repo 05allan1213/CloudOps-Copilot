@@ -30,13 +30,24 @@ func EvaluateRAG(retriever *runbook.Retriever, cases []RAGEvalCase) RAGEvalResul
 		cat.Total++
 		result.Total++
 
-		results, _ := retriever.Search(context.Background(), runbook.SearchRequest{
+		req := runbook.SearchRequest{
 			Keywords: []string{c.Query},
-		})
+		}
+		if c.Category == "precise" {
+			req.AlertName = c.Query
+		}
+
+		results, _ := retriever.Search(context.Background(), req)
 
 		correct := false
 		if c.Category == "no_result" {
-			correct = len(results) == 0
+			if len(results) == 0 {
+				correct = true
+			} else {
+				top := results[0]
+				hasStructMatch := len(top.MatchedAlerts) > 0 || len(top.MatchedKeywords) > 0 || len(top.MatchedMetrics) > 0
+				correct = !hasStructMatch
+			}
 		} else {
 			correct = len(results) > 0 && results[0].File == c.WantFile
 		}

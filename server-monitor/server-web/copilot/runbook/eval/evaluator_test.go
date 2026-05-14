@@ -68,8 +68,8 @@ func TestRAGEval_AccuracyThreshold(t *testing.T) {
 		t.Logf("  %s: %d/%d (%.1f%%)", cat, cr.Correct, cr.Total, cr.Accuracy*100)
 	}
 
-	if result.Top1Accuracy < 0.50 {
-		t.Errorf("RAG Top-1 accuracy %.1f%% is below threshold 50%%", result.Top1Accuracy*100)
+	if result.Top1Accuracy < 0.60 {
+		t.Errorf("RAG Top-1 accuracy %.1f%% is below threshold 60%%", result.Top1Accuracy*100)
 	}
 
 	preciseResult := result.ByCategory["precise"]
