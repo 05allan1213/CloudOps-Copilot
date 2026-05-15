@@ -36,10 +36,11 @@ import (
 	copilottool "server-web/copilot/tool"
 	"server-web/database"
 	apphost "server-web/host"
-	eventbus "server-web/kafka"
 	promclient "server-web/prometheus"
 	rediscache "server-web/redis"
 	ws "server-web/websocket"
+
+	eventbus "server-monitor/pkg/kafka"
 
 	_ "server-web/docs"
 )

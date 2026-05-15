@@ -28,12 +28,12 @@ import (
 	"server-web/config"
 	copilotdiagnosis "server-web/copilot/diagnosis"
 	"server-web/database"
-	eventbus "server-web/kafka"
 	promclient "server-web/prometheus"
 	"server-web/pubsub"
 	rediscache "server-web/redis"
 	ws "server-web/websocket"
 
+	eventbus "server-monitor/pkg/kafka"
 	"server-monitor/pkg/logger"
 	"server-monitor/pkg/shutdown"
 	"server-monitor/pkg/tracer"
@@ -268,7 +268,11 @@ func initDiagnosisConsumer(cfg config.Config, redisClient *rediscache.Client, ru
 		Concurrency: cfg.DiagnosisWorkerCount,
 		Logger:      zap.L(),
 	})
-	consumer, err := eventbus.NewConsumer(cfg.KafkaBrokers, cfg.DiagnosisKafkaGroupID, worker)
+	consumer, err := eventbus.NewConsumer(eventbus.ConsumerConfig{
+		Brokers:      cfg.KafkaBrokers,
+		GroupID:      cfg.DiagnosisKafkaGroupID,
+		RetryBackoff: eventbus.DefaultConsumeRetryBackoff,
+	}, worker)
 	if err != nil {
 		return nil, fmt.Errorf("diagnosis kafka consumer init failed: %w", err)
 	}

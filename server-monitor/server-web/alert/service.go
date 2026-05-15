@@ -13,9 +13,9 @@ import (
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 
+	eventbus "server-monitor/pkg/kafka"
 	"server-monitor/pkg/logger"
 
-	eventbus "server-web/kafka"
 	"server-web/model"
 	rediscache "server-web/redis"
 	"server-web/webhook"

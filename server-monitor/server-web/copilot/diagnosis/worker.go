@@ -12,7 +12,7 @@ import (
 
 	"go.uber.org/zap"
 
-	eventbus "server-web/kafka"
+	eventbus "server-monitor/pkg/kafka"
 )
 
 type TriggerService interface {

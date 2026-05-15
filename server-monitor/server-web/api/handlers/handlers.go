@@ -16,10 +16,11 @@ import (
 	authpkg "server-web/auth"
 	appcache "server-web/cache"
 	apphost "server-web/host"
-	eventbus "server-web/kafka"
 	promclient "server-web/prometheus"
 	"server-web/webhook"
 	ws "server-web/websocket"
+
+	eventbus "server-monitor/pkg/kafka"
 )
 
 type AuthService interface {
