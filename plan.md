@@ -438,9 +438,20 @@ cd server-monitor/pkg && go vet ./kafka/
 
 **验收标准**：
 
-- [ ] AlertEvent 字段与原两个服务合并后一致
-- [ ] Producer 接口与 server-web 版本行为等价
-- [ ] `go build ./kafka/` 通过
+- [x] AlertEvent 字段与原两个服务合并后一致
+- [x] Producer 接口与 server-web 版本行为等价
+- [x] `go build ./kafka/` 通过
+
+**执行记录（2026-05-15）**：
+
+- 已读取 `server-web/kafka/producer.go` 和 `alert-service/kafka/event.go`
+- AlertEvent 对比结果：两个服务字段、JSON tag 完全一致；`pkg/kafka/producer.go` 保留相同字段并补充字段注释
+- Producer 基准：以 `server-web/kafka/producer.go` 为准，保留 `NewProducer`、`SetObserver`、`SendAlertEvent`、`SendOperationEvent`、`Close`、异步 success/error 处理、observer 结果常量
+- 依赖：`pkg/go.mod` 新增直接依赖 `github.com/IBM/sarama v1.48.0`，版本与 `server-web` / `alert-service` 一致；间接依赖随 sarama 加入，`golang.org/x/*` 版本与现有两个服务模块对齐
+- 验证：`cd server-monitor/pkg && go list -m github.com/IBM/sarama` 输出 `github.com/IBM/sarama v1.48.0`
+- 验证：`cd server-monitor/pkg && go build ./kafka/` 通过
+- 验证：`cd server-monitor/pkg && go vet ./kafka/` 通过
+- 补充检查：`cd server-monitor/pkg && go test ./kafka/` 通过（当前无测试文件，Kafka 行为测试按计划在步骤 7 补齐）
 
 ---
 
