@@ -258,11 +258,20 @@ goimports -w pkg/configutil/validate.go pkg/configutil/validate_test.go
 
 **验收标准**：
 
-- [ ] 4 个导出校验函数实现完毕
-- [ ] 表驱动测试覆盖正常/边界/异常输入
-- [ ] `go test ./configutil/` 通过
-- [ ] `go vet ./configutil/` 无警告
-- [ ] `goimports` 格式正确
+- [x] 4 个导出校验函数实现完毕
+- [x] 表驱动测试覆盖正常/边界/异常输入
+- [x] `go test ./configutil/` 通过
+- [x] `go vet ./configutil/` 无警告
+- [x] `goimports` 格式正确
+
+**执行记录（2026-05-15）**：
+
+- 已对比三个服务现有校验函数，确认 `server-web/config/config.go` 版本覆盖 `ValidateHTTPURL`、`ValidateListenAddr`、`ValidateHostPort`、`ValidatePort`，另外两个服务仅有等价 `validateHostPort`
+- TDD RED：新增 `pkg/configutil/validate_test.go` 后，`go test -v ./configutil/` 因 4 个导出函数未定义失败，符合预期
+- 实现：新增 `pkg/configutil/validate.go`，仅使用标准库 `fmt`、`net`、`net/url`、`strconv`、`strings`，`pkg/go.mod` 未变更
+- 验证：`cd server-monitor/pkg && goimports -w configutil/validate.go configutil/validate_test.go && go test -count=1 -v ./configutil/` 通过
+- 验证：`cd server-monitor/pkg && go vet ./configutil/` 通过
+- Git 注意：仓库 `.gitignore` 忽略 `*_test.go`，已用 `git add -f server-monitor/pkg/configutil/validate_test.go` 纳入变更
 
 ---
 
