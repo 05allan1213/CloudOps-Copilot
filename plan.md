@@ -388,8 +388,16 @@ cd server-monitor/pkg && go vet ./kafka/
 
 **验收标准**：
 
-- [ ] Topic 常量与原两个服务一致
-- [ ] `go build ./kafka/` 通过（无需 sarama）
+- [x] Topic 常量与原两个服务一致
+- [x] `go build ./kafka/` 通过（无需 sarama）
+
+**执行记录（2026-05-15）**：
+
+- 已比对 `server-web/kafka/topics.go` 和 `alert-service/kafka/topics.go`，两个文件的 `TopicAlertEvents`、`TopicOperationEvents` 常量完全一致
+- 已新增 `pkg/kafka/topics.go`，仅包含 Topic 字符串常量
+- 验证：`cd server-monitor/pkg && gofmt -w kafka/topics.go && go build ./kafka/` 通过
+- 验证：`cd server-monitor/pkg && go vet ./kafka/` 通过
+- 依赖确认：本步骤未修改 `pkg/go.mod` / `pkg/go.sum`，未引入 sarama
 
 ---
 
