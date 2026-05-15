@@ -549,12 +549,24 @@ cd server-monitor/pkg && go test -race ./kafka/
 
 **验收标准**：
 
-- [ ] RetryBackoff 路径测试通过
-- [ ] StopOnError 路径测试通过
-- [ ] 互斥校验测试通过
-- [ ] AlertEvent 序列化测试通过
-- [ ] 无竞态条件（`-race` 通过）
-- [ ] 不依赖真实 Kafka 实例
+- [x] RetryBackoff 路径测试通过
+- [x] StopOnError 路径测试通过
+- [x] 互斥校验测试通过
+- [x] AlertEvent 序列化测试通过
+- [x] 无竞态条件（`-race` 通过）
+- [x] 不依赖真实 Kafka 实例
+
+**执行记录（2026-05-16）**：
+
+- 当前仓库没有现成的 `server-web/kafka/consumer_test.go` 可迁移，因此新增 `pkg/kafka/consumer_test.go`
+- `consumer_test.go` 使用包内 fake `consumerGroup`，不连接真实 Kafka，覆盖 `RetryBackoff` 重试路径、`StopOnError` fail-fast 路径、`RetryBackoff + StopOnError` 互斥校验、未启动 Consumer 的 `Close` nil-safe 行为
+- 已新增 `pkg/kafka/producer_test.go`，覆盖 `AlertEvent` JSON 序列化/反序列化，以及 `generatorURL,omitempty` 空值省略行为
+- TDD 说明：步骤 6 已先完成生产实现，本步骤测试首次运行即通过；后续步骤 8/9 迁移将以这些测试作为行为锁定
+- 验证说明：默认 Go cache `/home/monody/.cache/go-build` 当前只读，步骤 7 验证使用 `GOCACHE=/tmp/cloudops-gocache`
+- 验证：`cd server-monitor/pkg && GOCACHE=/tmp/cloudops-gocache go test -count=1 -v ./kafka/` 通过
+- 验证：`cd server-monitor/pkg && GOCACHE=/tmp/cloudops-gocache go test -race ./kafka/` 通过
+- 补充检查：`cd server-monitor/pkg && GOCACHE=/tmp/cloudops-gocache go vet ./kafka/` 通过
+- Git 注意：仓库 `.gitignore` 忽略 `*_test.go`，需使用 `git add -f server-monitor/pkg/kafka/consumer_test.go server-monitor/pkg/kafka/producer_test.go` 纳入变更
 
 ---
 
