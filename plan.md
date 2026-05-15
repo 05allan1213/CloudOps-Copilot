@@ -497,11 +497,25 @@ cd server-monitor/pkg && go vet ./kafka/
 
 **验收标准**：
 
-- [ ] ConsumerConfig 包含 RetryBackoff 和 StopOnError 字段
-- [ ] 互斥校验逻辑正确
-- [ ] server-web 路径（RetryBackoff）行为与原实现等价
-- [ ] alert-service 路径（StopOnError）行为与原实现等价
-- [ ] `go build ./kafka/` 通过
+- [x] ConsumerConfig 包含 RetryBackoff 和 StopOnError 字段
+- [x] 互斥校验逻辑正确
+- [x] server-web 路径（RetryBackoff）行为与原实现等价
+- [x] alert-service 路径（StopOnError）行为与原实现等价
+- [x] `go build ./kafka/` 通过
+
+**执行记录（2026-05-16）**：
+
+- 已对比 `server-web/kafka/consumer.go` 和 `alert-service/kafka/consumer.go`，确认核心差异为消费错误策略：server-web 重试，alert-service fail-fast
+- 已新增 `pkg/kafka/consumer.go`，以 server-web 版本为基准，保留 `Skipped`、`Permanent`、`SetRetryableErrors`、`SetObserver`、onReady/onNotReady、invalid JSON 提交 offset、panic recovery、observer 结果常量
+- 已新增 `ConsumerConfig`，包含 `Brokers`、`GroupID`、`Topics`、`RetryBackoff`、`StopOnError`
+- 已实现 `RetryBackoff != nil && StopOnError` 互斥校验，错误信息为 `kafka: RetryBackoff and StopOnError are mutually exclusive`
+- server-web 等价路径：`RetryBackoff` 非 nil 时，`Consume` 出错后执行 not-ready 回调并按 backoff 重试，直到 context 取消
+- alert-service 等价路径：`StopOnError: true` 或 `RetryBackoff == nil` 时，`Consume` 出错直接返回 `consume kafka topics: ...`
+- 已新增 `DefaultConsumeRetryBackoff`，供后续步骤迁移 server-web 初始化时显式配置
+- 验证说明：默认 Go cache `/home/monody/.cache/go-build` 当前只读，步骤 6 验证使用 `GOCACHE=/tmp/cloudops-gocache`
+- 验证：`cd server-monitor/pkg && GOCACHE=/tmp/cloudops-gocache go build ./kafka/` 通过
+- 验证：`cd server-monitor/pkg && GOCACHE=/tmp/cloudops-gocache go vet ./kafka/` 通过
+- 补充检查：`cd server-monitor/pkg && GOCACHE=/tmp/cloudops-gocache go test ./kafka/` 通过（当前无测试文件，Kafka 行为测试按计划在步骤 7 补齐）
 
 ---
 
