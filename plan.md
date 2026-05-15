@@ -3,7 +3,7 @@
 > 版本：v1.2  
 > 日期：2026-05-15  
 > 基准方案：design.md v2.4  
-> 状态：执行中（步骤 14 已验收）
+> 状态：执行中（步骤 15 已验收）
 > 
 > v1.2 变更：基准方案文件名更正为 design.md、方案 B 去掉 .gitignore 建议、步骤 17 mkdir 命令 cwd 统一
 > v1.1 变更：修订 9 项评审反馈——internal 目录创建补全、命令 cwd 明确、commit 策略改为建议提交点、验收标准改为待勾选、sarama 依赖推迟到步骤 5、miniredis 依赖风险补充、Makefile test 包含 pkg + .PHONY/help 同步、步骤 20 注释先于验证、文档文件处理方案
@@ -1090,11 +1090,24 @@ cd server-monitor/alert-service && go test ./...
 
 **验收标准**：
 
-- [ ] app.go 包含 initApp/runApp/shutdownApp
-- [ ] main.go < 60 行
-- [ ] `go build ./...` 通过
-- [ ] `go test ./...` 通过
-- [ ] 关闭流程无无超时 Channel 等待
+- [x] app.go 包含 initApp/runApp/shutdownApp
+- [x] main.go < 60 行
+- [x] `go build ./...` 通过
+- [x] `go test ./...` 通过
+- [x] 关闭流程无无超时 Channel 等待
+
+**执行记录（2026-05-16）**：
+
+- 已新增 `alert-service/app.go`，封装 `initApp`、`runApp`、`shutdownApp`、HTTP middleware、consumer loop 与关闭辅助函数
+- 已从 `alert-service/main.go` 迁移初始化逻辑到 `app.go`，并拆为 `initInfrastructure`（Tracer、Redis）和 `initServices`（Metrics、AlertStore、Kafka Consumer、HTTP Server）
+- 已为 `app`、`initInfrastructure`、`initServices` 添加依赖分层注释
+- `alert-service/main.go` 已精简为三段式入口，当前 `wc -l main.go` 输出 `31 main.go`
+- 关闭流程中 `app.consumerDone` 等待保留 `select { case <-app.consumerDone; case <-time.After(perPhase) }` 超时保护；无无超时 shutdown channel 等待
+- 验证：`cd server-monitor/alert-service && GOCACHE=/tmp/cloudops-gocache go build ./...` 通过
+- 验证：`cd server-monitor/alert-service && GOCACHE=/tmp/cloudops-gocache go test ./...` 通过
+- 补充检查：`cd server-monitor/alert-service && GOCACHE=/tmp/cloudops-gocache go vet ./...` 通过
+- 补充检查：`git diff --check` 通过
+- 环境说明：alert-service 全量测试包含 miniredis 单元测试，最终测试在允许本地 TCP socket 的环境中执行通过
 
 ---
 
