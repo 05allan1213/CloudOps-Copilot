@@ -7,23 +7,15 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	pkgredis "server-monitor/pkg/redis"
 )
 
 type Client struct {
-	client  *redis.Client
-	enabled bool
+	base *pkgredis.Client
 }
 
-type Options struct {
-	Addr            string
-	Password        string
-	DB              int
-	DialTimeout     time.Duration
-	ReadTimeout     time.Duration
-	WriteTimeout    time.Duration
-	ConnMaxLifetime time.Duration
-	ConnMaxIdleTime time.Duration
-}
+type Options = pkgredis.Options
 
 var applyFiringEventScript = redis.NewScript(`
 if redis.call("EXISTS", KEYS[1]) == 1 then
@@ -70,49 +62,33 @@ redis.call("SET", KEYS[1], ARGV[1], "PX", ARGV[2])
 return 1
 `)
 
-func NewClient(options Options) *Client {
-	if options.Addr == "" {
-		return &Client{}
-	}
-
-	return &Client{
-		client: redis.NewClient(&redis.Options{
-			Addr:            options.Addr,
-			Password:        options.Password,
-			DB:              options.DB,
-			DialTimeout:     options.DialTimeout,
-			ReadTimeout:     options.ReadTimeout,
-			WriteTimeout:    options.WriteTimeout,
-			ConnMaxLifetime: options.ConnMaxLifetime,
-			ConnMaxIdleTime: options.ConnMaxIdleTime,
-		}),
-		enabled: true,
-	}
+func NewClient(options pkgredis.Options) *Client {
+	return &Client{base: pkgredis.NewClient(options)}
 }
 
 func (c *Client) Enabled() bool {
-	return c != nil && c.enabled
+	return c != nil && c.base != nil && c.base.Enabled()
 }
 
 func (c *Client) Close() error {
 	if !c.Enabled() {
 		return nil
 	}
-	return c.client.Close()
+	return c.base.Close()
 }
 
 func (c *Client) Ping(ctx context.Context) error {
 	if !c.Enabled() {
 		return errors.New("redis is not enabled")
 	}
-	return c.client.Ping(ctx).Err()
+	return c.base.Ping(ctx)
 }
 
 func (c *Client) ApplyFiringEvent(ctx context.Context, dedupKey string, ttl time.Duration, fingerprint string, payload []byte, statsField string) (bool, error) {
 	if !c.Enabled() {
 		return false, errors.New("redis is not enabled")
 	}
-	result, err := applyFiringEventScript.Run(ctx, c.client,
+	result, err := applyFiringEventScript.Run(ctx, c.base.Inner(),
 		[]string{dedupKey, "alert:active", "alert:stats"},
 		"1",
 		ttl.Milliseconds(),
@@ -130,7 +106,7 @@ func (c *Client) ApplyResolvedEvent(ctx context.Context, dedupKey string, ttl ti
 	if !c.Enabled() {
 		return false, errors.New("redis is not enabled")
 	}
-	result, err := applyResolvedEventScript.Run(ctx, c.client,
+	result, err := applyResolvedEventScript.Run(ctx, c.base.Inner(),
 		[]string{dedupKey, "alert:active"},
 		"1",
 		ttl.Milliseconds(),

@@ -3,7 +3,7 @@
 > 版本：v1.2  
 > 日期：2026-05-15  
 > 基准方案：design.md v2.4  
-> 状态：执行中（步骤 10 已验收）
+> 状态：执行中（步骤 11 已验收）
 > 
 > v1.2 变更：基准方案文件名更正为 design.md、方案 B 去掉 .gitignore 建议、步骤 17 mkdir 命令 cwd 统一
 > v1.1 变更：修订 9 项评审反馈——internal 目录创建补全、命令 cwd 明确、commit 策略改为建议提交点、验收标准改为待勾选、sarama 依赖推迟到步骤 5、miniredis 依赖风险补充、Makefile test 包含 pkg + .PHONY/help 同步、步骤 20 注释先于验证、文档文件处理方案
@@ -812,11 +812,26 @@ grep -n "pkgredis" alert-service/redis/client.go
 
 **验收标准**：
 
-- [ ] alert-service/redis/client.go 使用 pkg/redis.Client 作为基础
-- [ ] Lua 脚本方法保留且功能不变
-- [ ] `package redisstore` 包名不变
-- [ ] `go build ./...` 通过
-- [ ] `go test ./...` 通过
+- [x] alert-service/redis/client.go 使用 pkg/redis.Client 作为基础
+- [x] Lua 脚本方法保留且功能不变
+- [x] `package redisstore` 包名不变
+- [x] `go build ./...` 通过
+- [x] `go test ./...` 通过
+
+**执行记录（2026-05-16）**：
+
+- 已将 `alert-service/redis/client.go` 改为内部组合 `*pkgredis.Client`，并保留 `package redisstore`
+- 已保留 `type Options = pkgredis.Options`，现有调用方仍可使用 `redisstore.Options`
+- `NewClient` 已委托 `pkgredis.NewClient`，`Enabled`、`Close`、`Ping` 已委托共享基础客户端
+- `ApplyFiringEvent`、`ApplyResolvedEvent` Lua 脚本方法保留，内部通过 `c.base.Inner()` 访问底层 go-redis client
+- 已新增 `alert-service/redis/client_test.go`，使用 miniredis 验证共享 base 组合、`Ping`、firing/resolved Lua 脚本存储、去重、活跃告警删除和统计递增行为
+- TDD RED：`cd server-monitor/alert-service && GOCACHE=/tmp/cloudops-gocache go test -count=1 -v ./redis/` 失败于 `client.base undefined`
+- 验证：`cd server-monitor/alert-service && GOCACHE=/tmp/cloudops-gocache go build ./...` 通过
+- 验证：`cd server-monitor/alert-service && GOCACHE=/tmp/cloudops-gocache go test -count=1 -v ./redis/` 通过
+- 验证：`cd server-monitor/alert-service && GOCACHE=/tmp/cloudops-gocache go test ./...` 通过
+- 补充检查：`cd server-monitor/alert-service && GOCACHE=/tmp/cloudops-gocache go vet ./redis/` 通过
+- 检查：`cd server-monitor && grep -n "pkgredis" alert-service/redis/client.go` 有匹配
+- 环境说明：miniredis 测试需要监听本地 TCP socket，最终测试在允许 socket 的环境中执行通过
 
 ---
 
