@@ -3,7 +3,7 @@
 > 版本：v1.2  
 > 日期：2026-05-15  
 > 基准方案：design.md v2.4  
-> 状态：执行中（步骤 13 已验收）
+> 状态：执行中（步骤 14 已验收）
 > 
 > v1.2 变更：基准方案文件名更正为 design.md、方案 B 去掉 .gitignore 建议、步骤 17 mkdir 命令 cwd 统一
 > v1.1 变更：修订 9 项评审反馈——internal 目录创建补全、命令 cwd 明确、commit 策略改为建议提交点、验收标准改为待勾选、sarama 依赖推迟到步骤 5、miniredis 依赖风险补充、Makefile test 包含 pkg + .PHONY/help 同步、步骤 20 注释先于验证、文档文件处理方案
@@ -1035,12 +1035,26 @@ cd server-monitor/server-web && go test ./...
 
 **验收标准**：
 
-- [ ] main.go < 80 行
-- [ ] 3 处 Channel 等待均有超时保护
-- [ ] nil channel 先检查再 select
-- [ ] 关闭流程分 4 阶段
-- [ ] `go build ./...` 通过
-- [ ] `go test ./...` 通过
+- [x] main.go < 80 行
+- [x] 3 处 Channel 等待均有超时保护
+- [x] nil channel 先检查再 select
+- [x] 关闭流程分 4 阶段
+- [x] `go build ./...` 通过
+- [x] `go test ./...` 通过
+
+**执行记录（2026-05-16）**：
+
+- 已将 `runApp`、`startBackgroundTasks`、`shutdownApp`、`broadcastHosts` 从 `server-web/main.go` 迁移到 `server-web/app.go`
+- `server-web/main.go` 已精简为三段式入口，当前 `wc -l main.go` 输出 `41 main.go`
+- 已新增 `waitWithTimeout(ch <-chan struct{}, timeout time.Duration, name string)`，函数内部先检查 nil channel，再使用 `select` 等待完成或超时
+- 已将 `app.subscriberDone`、`app.diagnosisDone`、`app.alertHubConsumers` 三处 shutdown 等待改为 `waitWithTimeout`
+- shutdown 流程已在 `shutdownApp` 中按 4 阶段组织：停止流量入口、停止消费者并等待后台循环、释放外部资源、关闭内部 hub
+- 检查：`cd server-monitor/server-web && grep -n "<-app\\." app.go main.go` 无输出
+- 验证：`cd server-monitor/server-web && GOCACHE=/tmp/cloudops-gocache go build ./...` 通过
+- 验证：`cd server-monitor/server-web && GOCACHE=/tmp/cloudops-gocache go test ./...` 通过
+- 补充检查：`cd server-monitor/server-web && GOCACHE=/tmp/cloudops-gocache go vet ./...` 通过
+- 补充检查：`git diff --check` 通过
+- 环境说明：server-web 全量测试包含 miniredis 单元测试，最终测试在允许本地 TCP socket 的环境中执行通过
 
 ---
 
