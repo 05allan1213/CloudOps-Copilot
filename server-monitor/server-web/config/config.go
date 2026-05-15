@@ -2,10 +2,7 @@ package config
 
 import (
 	"fmt"
-	"net"
-	"net/url"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -546,40 +543,40 @@ func (c *Config) Validate() error {
 	if c.ListenAddr == "" {
 		return fmt.Errorf("LISTEN_ADDR is required")
 	}
-	if err := validateListenAddr("LISTEN_ADDR", c.ListenAddr); err != nil {
+	if err := configutil.ValidateListenAddr("LISTEN_ADDR", c.ListenAddr); err != nil {
 		return err
 	}
 	if c.PrometheusURL == "" {
 		return fmt.Errorf("PROMETHEUS_URL is required")
 	}
-	if err := validateHTTPURL("PROMETHEUS_URL", c.PrometheusURL); err != nil {
+	if err := configutil.ValidateHTTPURL("PROMETHEUS_URL", c.PrometheusURL); err != nil {
 		return err
 	}
 	if c.PrometheusReloadURL != "" {
-		if err := validateHTTPURL("PROMETHEUS_RELOAD_URL", c.PrometheusReloadURL); err != nil {
+		if err := configutil.ValidateHTTPURL("PROMETHEUS_RELOAD_URL", c.PrometheusReloadURL); err != nil {
 			return err
 		}
 	}
 	if c.LLMAPIURL != "" {
-		if err := validateHTTPURL("LLM_API_URL", c.LLMAPIURL); err != nil {
+		if err := configutil.ValidateHTTPURL("LLM_API_URL", c.LLMAPIURL); err != nil {
 			return err
 		}
 	}
 	if c.RedisAddr != "" {
-		if err := validateHostPort("REDIS_ADDR", c.RedisAddr); err != nil {
+		if err := configutil.ValidateHostPort("REDIS_ADDR", c.RedisAddr); err != nil {
 			return err
 		}
 	}
-	if err := validatePort("MYSQL_PORT", c.MySQLPort); err != nil {
+	if err := configutil.ValidatePort("MYSQL_PORT", c.MySQLPort); err != nil {
 		return err
 	}
 	if c.TraceOTLPEndpoint != "" {
-		if err := validateHostPort("TRACE_OTLP_ENDPOINT", c.TraceOTLPEndpoint); err != nil {
+		if err := configutil.ValidateHostPort("TRACE_OTLP_ENDPOINT", c.TraceOTLPEndpoint); err != nil {
 			return err
 		}
 	}
 	for _, broker := range c.KafkaBrokers {
-		if err := validateHostPort("KAFKA_BROKERS", broker); err != nil {
+		if err := configutil.ValidateHostPort("KAFKA_BROKERS", broker); err != nil {
 			return err
 		}
 	}
@@ -653,12 +650,12 @@ func (c *Config) Validate() error {
 	if c.K8SNodesEnabled && !c.K8SEnabled {
 		return fmt.Errorf("K8S_ENABLED must be true when K8S_NODES_ENABLED is true")
 	}
-	if err := validateK8SNamespace("K8S_DEFAULT_NAMESPACE", c.K8SDefaultNamespace); err != nil {
+	if err := checkK8SNamespace("K8S_DEFAULT_NAMESPACE", c.K8SDefaultNamespace); err != nil {
 		return err
 	}
 	allowed := map[string]struct{}{}
 	for _, namespace := range c.K8SAllowedNamespaces {
-		if err := validateK8SNamespace("K8S_ALLOWED_NAMESPACES", namespace); err != nil {
+		if err := checkK8SNamespace("K8S_ALLOWED_NAMESPACES", namespace); err != nil {
 			return err
 		}
 		allowed[namespace] = struct{}{}
@@ -706,7 +703,7 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("RUNBOOK_SEARCH_TOP_N must be in range 1-5, got %d", c.RunbookSearchTopN)
 	}
 	if c.EmbeddingAPIURL != "" {
-		if err := validateHTTPURL("EMBEDDING_API_URL", c.EmbeddingAPIURL); err != nil {
+		if err := configutil.ValidateHTTPURL("EMBEDDING_API_URL", c.EmbeddingAPIURL); err != nil {
 			return err
 		}
 	}
@@ -739,48 +736,9 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-func validateHTTPURL(name, raw string) error {
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return fmt.Errorf("%s must be a valid http or https URL", name)
-	}
-	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return fmt.Errorf("%s must use http or https scheme, got %q", name, parsed.Scheme)
-	}
-	if parsed.Port() != "" {
-		if err := validatePort(name, parsed.Port()); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func validateListenAddr(name, raw string) error {
-	return validateHostPort(name, raw)
-}
-
-func validateHostPort(name, raw string) error {
-	host, port, err := net.SplitHostPort(raw)
-	if err != nil {
-		return fmt.Errorf("%s must use host:port format: %w", name, err)
-	}
-	if strings.TrimSpace(host) != host || strings.TrimSpace(port) != port {
-		return fmt.Errorf("%s must not contain surrounding spaces", name)
-	}
-	return validatePort(name, port)
-}
-
-func validatePort(name, raw string) error {
-	port, err := strconv.Atoi(raw)
-	if err != nil || port < 1 || port > 65535 {
-		return fmt.Errorf("%s port must be in range 1-65535, got %q", name, raw)
-	}
-	return nil
-}
-
 var k8sNamespacePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
 
-func validateK8SNamespace(name, namespace string) error {
+func checkK8SNamespace(name, namespace string) error {
 	if strings.TrimSpace(namespace) == "" {
 		return fmt.Errorf("%s is required", name)
 	}

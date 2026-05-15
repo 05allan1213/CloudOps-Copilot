@@ -2,9 +2,6 @@ package config
 
 import (
 	"fmt"
-	"net"
-	"strconv"
-	"strings"
 	"time"
 
 	"server-monitor/pkg/configutil"
@@ -82,14 +79,14 @@ func (c Config) Validate() error {
 	if c.ListenAddr == "" {
 		return fmt.Errorf("LISTEN_ADDR is required")
 	}
-	if err := validateHostPort("LISTEN_ADDR", c.ListenAddr); err != nil {
+	if err := configutil.ValidateHostPort("LISTEN_ADDR", c.ListenAddr); err != nil {
 		return err
 	}
 	if len(c.KafkaBrokers) == 0 {
 		return fmt.Errorf("KAFKA_BROKERS is required")
 	}
 	for _, broker := range c.KafkaBrokers {
-		if err := validateHostPort("KAFKA_BROKERS", broker); err != nil {
+		if err := configutil.ValidateHostPort("KAFKA_BROKERS", broker); err != nil {
 			return err
 		}
 	}
@@ -99,31 +96,16 @@ func (c Config) Validate() error {
 	if c.RedisAddr == "" {
 		return fmt.Errorf("REDIS_ADDR is required")
 	}
-	if err := validateHostPort("REDIS_ADDR", c.RedisAddr); err != nil {
+	if err := configutil.ValidateHostPort("REDIS_ADDR", c.RedisAddr); err != nil {
 		return err
 	}
 	if c.TraceOTLPEndpoint != "" {
-		if err := validateHostPort("TRACE_OTLP_ENDPOINT", c.TraceOTLPEndpoint); err != nil {
+		if err := configutil.ValidateHostPort("TRACE_OTLP_ENDPOINT", c.TraceOTLPEndpoint); err != nil {
 			return err
 		}
 	}
 	if c.ShutdownTimeout <= 0 {
 		return fmt.Errorf("SHUTDOWN_TIMEOUT_SECONDS must be positive, got %v", c.ShutdownTimeout)
-	}
-	return nil
-}
-
-func validateHostPort(name, raw string) error {
-	host, port, err := net.SplitHostPort(raw)
-	if err != nil {
-		return fmt.Errorf("%s must use host:port format: %w", name, err)
-	}
-	if strings.TrimSpace(host) != host || strings.TrimSpace(port) != port {
-		return fmt.Errorf("%s must not contain surrounding spaces", name)
-	}
-	portNumber, err := strconv.Atoi(port)
-	if err != nil || portNumber < 1 || portNumber > 65535 {
-		return fmt.Errorf("%s port must be in range 1-65535, got %q", name, port)
 	}
 	return nil
 }
