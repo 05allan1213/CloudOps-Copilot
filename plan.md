@@ -3,7 +3,7 @@
 > 版本：v1.2  
 > 日期：2026-05-15  
 > 基准方案：design.md v2.4  
-> 状态：执行中（步骤 9 已验收）
+> 状态：执行中（步骤 10 已验收）
 > 
 > v1.2 变更：基准方案文件名更正为 design.md、方案 B 去掉 .gitignore 建议、步骤 17 mkdir 命令 cwd 统一
 > v1.1 变更：修订 9 项评审反馈——internal 目录创建补全、命令 cwd 明确、commit 策略改为建议提交点、验收标准改为待勾选、sarama 依赖推迟到步骤 5、miniredis 依赖风险补充、Makefile test 包含 pkg + .PHONY/help 同步、步骤 20 注释先于验证、文档文件处理方案
@@ -742,11 +742,25 @@ cd server-monitor/pkg && go vet ./redis/
 
 **验收标准**：
 
-- [ ] 基础客户端包含 NewClient/Enabled/Close/Ping/Options/Inner
-- [ ] `Inner()` 方法可访问底层 go-redis.Client
-- [ ] `pkg/go.mod` 包含 go-redis 依赖
-- [ ] 测试使用 miniredis，不依赖真实 Redis
-- [ ] `go test ./redis/` 通过
+- [x] 基础客户端包含 NewClient/Enabled/Close/Ping/Options/Inner
+- [x] `Inner()` 方法可访问底层 go-redis.Client
+- [x] `pkg/go.mod` 包含 go-redis 依赖
+- [x] 测试使用 miniredis，不依赖真实 Redis
+- [x] `go test ./redis/` 通过
+
+**执行记录（2026-05-16）**：
+
+- 已对比 `server-web/redis/client.go` 与 `alert-service/redis/client.go`，共同基础能力为 `Options`、`NewClient`、`Enabled`、`Close`、`Ping`
+- 已新增 `pkg/redis/options.go`，定义共享 `Options` 配置结构
+- 已新增 `pkg/redis/client.go`，实现共享 Redis 基础客户端和 `Inner()` 底层客户端访问方法
+- 已新增 `pkg/redis/client_test.go`，使用 miniredis 覆盖禁用客户端、`Close`、`Ping`、`Options`、`Inner()` 行为
+- TDD RED：补齐测试依赖后，`cd server-monitor/pkg && GOCACHE=/tmp/cloudops-gocache go test -count=1 -v ./redis/` 失败于 `undefined: NewClient`、`undefined: Options`
+- 依赖：`pkg/go.mod` 已加入 `github.com/redis/go-redis/v9 v9.17.0` 与测试依赖 `github.com/alicebob/miniredis/v2 v2.37.0`；miniredis 传递依赖 `github.com/yuin/gopher-lua v1.1.1` 已补齐
+- 验证：`cd server-monitor/pkg && GOCACHE=/tmp/cloudops-gocache go build ./redis/` 通过
+- 验证：`cd server-monitor/pkg && GOCACHE=/tmp/cloudops-gocache go test -count=1 -v ./redis/` 通过
+- 验证：`cd server-monitor/pkg && GOCACHE=/tmp/cloudops-gocache go vet ./redis/` 通过
+- 补充检查：`cd server-monitor/pkg && GOCACHE=/tmp/cloudops-gocache go test ./...` 通过
+- 环境说明：miniredis 需要监听本地 TCP socket，默认 sandbox 会报 `socket: operation not permitted`；最终测试在允许 socket 的环境中执行通过
 
 ---
 
