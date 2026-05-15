@@ -11,6 +11,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
+
+	pkgredis "server-monitor/pkg/redis"
 )
 
 var (
@@ -19,43 +21,17 @@ var (
 )
 
 type Client struct {
-	client  *redis.Client
-	enabled bool
+	base *pkgredis.Client
 }
 
-type Options struct {
-	Addr            string
-	Password        string
-	DB              int
-	DialTimeout     time.Duration
-	ReadTimeout     time.Duration
-	WriteTimeout    time.Duration
-	ConnMaxLifetime time.Duration
-	ConnMaxIdleTime time.Duration
-}
+type Options = pkgredis.Options
 
-func NewClient(options Options) *Client {
-	if options.Addr == "" {
-		return &Client{}
-	}
-
-	return &Client{
-		client: redis.NewClient(&redis.Options{
-			Addr:            options.Addr,
-			Password:        options.Password,
-			DB:              options.DB,
-			DialTimeout:     options.DialTimeout,
-			ReadTimeout:     options.ReadTimeout,
-			WriteTimeout:    options.WriteTimeout,
-			ConnMaxLifetime: options.ConnMaxLifetime,
-			ConnMaxIdleTime: options.ConnMaxIdleTime,
-		}),
-		enabled: true,
-	}
+func NewClient(options pkgredis.Options) *Client {
+	return &Client{base: pkgredis.NewClient(options)}
 }
 
 func (c *Client) Enabled() bool {
-	return c != nil && c.enabled
+	return c != nil && c.base != nil && c.base.Enabled()
 }
 
 func (c *Client) Close() error {
@@ -63,7 +39,7 @@ func (c *Client) Close() error {
 		return nil
 	}
 
-	return c.client.Close()
+	return c.base.Close()
 }
 
 func (c *Client) Ping(ctx context.Context) error {
@@ -71,7 +47,7 @@ func (c *Client) Ping(ctx context.Context) error {
 		return errors.New("redis is not enabled")
 	}
 
-	return c.client.Ping(ctx).Err()
+	return c.base.Ping(ctx)
 }
 
 func (c *Client) Get(ctx context.Context, key string) ([]byte, bool) {
@@ -79,7 +55,7 @@ func (c *Client) Get(ctx context.Context, key string) ([]byte, bool) {
 		return nil, false
 	}
 
-	value, err := c.client.Get(ctx, key).Bytes()
+	value, err := c.base.Inner().Get(ctx, key).Bytes()
 	if err != nil {
 		if err != redis.Nil {
 			zap.L().Error("redis get failed",
@@ -98,7 +74,7 @@ func (c *Client) Set(ctx context.Context, key string, value []byte, ttl time.Dur
 		return errors.New("redis is not enabled")
 	}
 
-	return c.client.Set(ctx, key, value, ttl).Err()
+	return c.base.Inner().Set(ctx, key, value, ttl).Err()
 }
 
 func (c *Client) SetNX(ctx context.Context, key string, value []byte, ttl time.Duration) (bool, error) {
@@ -106,7 +82,7 @@ func (c *Client) SetNX(ctx context.Context, key string, value []byte, ttl time.D
 		return false, errors.New("redis is not enabled")
 	}
 
-	return c.client.SetNX(ctx, key, value, ttl).Result()
+	return c.base.Inner().SetNX(ctx, key, value, ttl).Result()
 }
 
 func (c *Client) HSet(ctx context.Context, key, field string, value []byte) error {
@@ -114,7 +90,7 @@ func (c *Client) HSet(ctx context.Context, key, field string, value []byte) erro
 		return errors.New("redis is not enabled")
 	}
 
-	return c.client.HSet(ctx, key, field, value).Err()
+	return c.base.Inner().HSet(ctx, key, field, value).Err()
 }
 
 func (c *Client) HDel(ctx context.Context, key, field string) error {
@@ -122,7 +98,7 @@ func (c *Client) HDel(ctx context.Context, key, field string) error {
 		return errors.New("redis is not enabled")
 	}
 
-	return c.client.HDel(ctx, key, field).Err()
+	return c.base.Inner().HDel(ctx, key, field).Err()
 }
 
 func (c *Client) HGetAll(ctx context.Context, key string) (map[string]string, error) {
@@ -130,7 +106,7 @@ func (c *Client) HGetAll(ctx context.Context, key string) (map[string]string, er
 		return nil, errors.New("redis is not enabled")
 	}
 
-	return c.client.HGetAll(ctx, key).Result()
+	return c.base.Inner().HGetAll(ctx, key).Result()
 }
 
 func (c *Client) RPush(ctx context.Context, key string, values ...[]byte) error {
@@ -145,7 +121,7 @@ func (c *Client) RPush(ctx context.Context, key string, values ...[]byte) error 
 	for _, value := range values {
 		args = append(args, string(value))
 	}
-	return c.client.RPush(ctx, key, args...).Err()
+	return c.base.Inner().RPush(ctx, key, args...).Err()
 }
 
 func (c *Client) LRange(ctx context.Context, key string, start, stop int64) ([]string, error) {
@@ -153,7 +129,7 @@ func (c *Client) LRange(ctx context.Context, key string, start, stop int64) ([]s
 		return nil, errors.New("redis is not enabled")
 	}
 
-	return c.client.LRange(ctx, key, start, stop).Result()
+	return c.base.Inner().LRange(ctx, key, start, stop).Result()
 }
 
 func (c *Client) LTrim(ctx context.Context, key string, start, stop int64) error {
@@ -161,7 +137,7 @@ func (c *Client) LTrim(ctx context.Context, key string, start, stop int64) error
 		return errors.New("redis is not enabled")
 	}
 
-	return c.client.LTrim(ctx, key, start, stop).Err()
+	return c.base.Inner().LTrim(ctx, key, start, stop).Err()
 }
 
 func (c *Client) Expire(ctx context.Context, key string, ttl time.Duration) error {
@@ -172,7 +148,7 @@ func (c *Client) Expire(ctx context.Context, key string, ttl time.Duration) erro
 		return errors.New("ttl must be positive")
 	}
 
-	return c.client.Expire(ctx, key, ttl).Err()
+	return c.base.Inner().Expire(ctx, key, ttl).Err()
 }
 
 func (c *Client) Del(ctx context.Context, keys ...string) error {
@@ -183,7 +159,7 @@ func (c *Client) Del(ctx context.Context, keys ...string) error {
 		return nil
 	}
 
-	return c.client.Del(ctx, keys...).Err()
+	return c.base.Inner().Del(ctx, keys...).Err()
 }
 
 func (c *Client) SAdd(ctx context.Context, key string, members ...string) error {
@@ -198,7 +174,7 @@ func (c *Client) SAdd(ctx context.Context, key string, members ...string) error 
 	for _, member := range members {
 		args = append(args, member)
 	}
-	return c.client.SAdd(ctx, key, args...).Err()
+	return c.base.Inner().SAdd(ctx, key, args...).Err()
 }
 
 func (c *Client) SMembers(ctx context.Context, key string) ([]string, error) {
@@ -206,7 +182,7 @@ func (c *Client) SMembers(ctx context.Context, key string) ([]string, error) {
 		return nil, errors.New("redis is not enabled")
 	}
 
-	return c.client.SMembers(ctx, key).Result()
+	return c.base.Inner().SMembers(ctx, key).Result()
 }
 
 func (c *Client) SRem(ctx context.Context, key string, members ...string) error {
@@ -221,7 +197,7 @@ func (c *Client) SRem(ctx context.Context, key string, members ...string) error 
 	for _, member := range members {
 		args = append(args, member)
 	}
-	return c.client.SRem(ctx, key, args...).Err()
+	return c.base.Inner().SRem(ctx, key, args...).Err()
 }
 
 func (c *Client) AllowSlidingWindow(ctx context.Context, key string, limit int64, window time.Duration, now time.Time) (bool, int64, error) {
@@ -238,7 +214,7 @@ func (c *Client) AllowSlidingWindow(ctx context.Context, key string, limit int64
 	nowUnixNano := now.UnixNano()
 	windowStart := now.Add(-window).UnixNano()
 
-	pipe := c.client.TxPipeline()
+	pipe := c.base.Inner().TxPipeline()
 	pipe.ZRemRangeByScore(ctx, key, "0", "("+strconv.FormatInt(windowStart, 10))
 	pipe.ZAdd(ctx, key, redis.Z{
 		Score:  float64(nowUnixNano),
@@ -272,7 +248,7 @@ func (c *Client) XAddMaxLen(ctx context.Context, key string, maxLen int64, value
 		return errors.New("max stream length must be positive")
 	}
 
-	return c.client.XAdd(ctx, &redis.XAddArgs{
+	return c.base.Inner().XAdd(ctx, &redis.XAddArgs{
 		Stream: key,
 		MaxLen: maxLen,
 		Approx: true,
@@ -293,7 +269,7 @@ func (c *Client) AddAlertEventOnce(ctx context.Context, streamKey, dedupeKey str
 		return false, errors.New("dedupe ttl must be positive")
 	}
 
-	result, err := c.client.Eval(ctx, `
+	result, err := c.base.Inner().Eval(ctx, `
 if redis.call("EXISTS", KEYS[2]) == 1 then
 	return 0
 end
@@ -327,7 +303,7 @@ func (c *Client) XRevRangeN(ctx context.Context, key string, count int64) ([]str
 		return nil, errors.New("stream count must be positive")
 	}
 
-	messages, err := c.client.XRevRangeN(ctx, key, "+", "-", count).Result()
+	messages, err := c.base.Inner().XRevRangeN(ctx, key, "+", "-", count).Result()
 	if err != nil {
 		return nil, err
 	}
@@ -364,7 +340,7 @@ func (c *Client) Publish(ctx context.Context, channel string, message []byte) er
 		return errors.New("redis is not enabled")
 	}
 
-	return c.client.Publish(ctx, channel, message).Err()
+	return c.base.Inner().Publish(ctx, channel, message).Err()
 }
 
 func (c *Client) Subscribe(ctx context.Context, channel string) (<-chan string, error) {
@@ -372,7 +348,7 @@ func (c *Client) Subscribe(ctx context.Context, channel string) (<-chan string, 
 		return nil, errors.New("redis is not enabled")
 	}
 
-	pubsub := c.client.Subscribe(ctx, channel)
+	pubsub := c.base.Inner().Subscribe(ctx, channel)
 
 	if err := pubsub.Ping(ctx); err != nil {
 		pubsub.Close()
