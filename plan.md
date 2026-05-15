@@ -3,7 +3,7 @@
 > 版本：v1.2  
 > 日期：2026-05-15  
 > 基准方案：design.md v2.4  
-> 状态：执行中（步骤 8 已验收）
+> 状态：执行中（步骤 9 已验收）
 > 
 > v1.2 变更：基准方案文件名更正为 design.md、方案 B 去掉 .gitignore 建议、步骤 17 mkdir 命令 cwd 统一
 > v1.1 变更：修订 9 项评审反馈——internal 目录创建补全、命令 cwd 明确、commit 策略改为建议提交点、验收标准改为待勾选、sarama 依赖推迟到步骤 5、miniredis 依赖风险补充、Makefile test 包含 pkg + .PHONY/help 同步、步骤 20 注释先于验证、文档文件处理方案
@@ -675,11 +675,22 @@ cd server-monitor/alert-service && go test ./...
 
 **验收标准**：
 
-- [ ] `alert-service/kafka/` 目录已删除
-- [ ] 无 `alert-service/kafka` 残留 import
-- [ ] `go build ./...` 通过
-- [ ] `go test ./...` 通过
-- [ ] Consumer 初始化使用 ConsumerConfig + StopOnError: true
+- [x] `alert-service/kafka/` 目录已删除
+- [x] 无 `alert-service/kafka` 残留 import
+- [x] `go build ./...` 通过
+- [x] `go test ./...` 通过
+- [x] Consumer 初始化使用 ConsumerConfig + StopOnError: true
+
+**执行记录（2026-05-16）**：
+
+- 已将 `alert-service/main.go`、`alert-service/alert/store.go`、`alert-service/alert/processor.go` 中的 Kafka import 从 `alert-service/kafka` 切换为 `server-monitor/pkg/kafka`
+- Alert Consumer 初始化已改为 `kafka.NewConsumer(kafka.ConsumerConfig{Brokers: cfg.KafkaBrokers, GroupID: cfg.KafkaGroupID, StopOnError: true}, store)`
+- 已通过 `git rm -r server-monitor/alert-service/kafka` 删除本地 Kafka 包
+- 残留引用检查：`rg -n '"alert-service/kafka"|alert-service/kafka' server-monitor/alert-service` 无输出
+- 验证：`cd server-monitor/alert-service && GOCACHE=/tmp/cloudops-gocache go build ./...` 通过
+- 验证：`cd server-monitor/alert-service && GOCACHE=/tmp/cloudops-gocache go test ./...` 通过
+- 补充检查：`cd server-monitor/pkg && GOCACHE=/tmp/cloudops-gocache go test -count=1 ./kafka/` 通过
+- 补充检查：`cd server-monitor/pkg && GOCACHE=/tmp/cloudops-gocache go vet ./kafka/` 通过
 
 ---
 

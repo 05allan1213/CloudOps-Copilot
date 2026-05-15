@@ -16,11 +16,11 @@ import (
 	"alert-service/alert"
 	"alert-service/config"
 	"alert-service/health"
-	"alert-service/kafka"
 	servicemetrics "alert-service/metrics"
 	redisstore "alert-service/redis"
 
 	"server-monitor/pkg/httpmiddleware"
+	"server-monitor/pkg/kafka"
 	"server-monitor/pkg/logger"
 	"server-monitor/pkg/shutdown"
 	"server-monitor/pkg/tracer"
@@ -85,7 +85,11 @@ func initApp(ctx context.Context) (*app, error) {
 
 	serviceMetrics := servicemetrics.New()
 	store := alert.NewStore(redisClient, alert.DefaultDedupTTL, serviceMetrics)
-	consumer, err := kafka.NewConsumer(cfg.KafkaBrokers, cfg.KafkaGroupID, store)
+	consumer, err := kafka.NewConsumer(kafka.ConsumerConfig{
+		Brokers:     cfg.KafkaBrokers,
+		GroupID:     cfg.KafkaGroupID,
+		StopOnError: true,
+	}, store)
 	if err != nil {
 		return nil, fmt.Errorf("kafka consumer init failed: %w", err)
 	}

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"alert-service/kafka"
+	"server-monitor/pkg/kafka"
 )
 
 const (
