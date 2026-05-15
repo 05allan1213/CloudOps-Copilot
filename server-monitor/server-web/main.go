@@ -16,51 +16,23 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
-	"server-web/api"
-	authpkg "server-web/auth"
-	"server-web/config"
-	copilotdiagnosis "server-web/copilot/diagnosis"
-	"server-web/database"
 	promclient "server-web/prometheus"
 	"server-web/pubsub"
 	rediscache "server-web/redis"
 	ws "server-web/websocket"
 
-	eventbus "server-monitor/pkg/kafka"
 	"server-monitor/pkg/logger"
 	"server-monitor/pkg/shutdown"
-	"server-monitor/pkg/tracer"
 )
 
 type wsMessage struct {
 	Type string      `json:"type"`
 	Data interface{} `json:"data"`
-}
-
-type app struct {
-	cfg               config.Config
-	shutdownTracer    func(context.Context) error
-	prometheusClient  *promclient.Client
-	redisClient       *rediscache.Client
-	mysqlClient       *database.MySQL
-	kafkaProducer     *eventbus.Producer
-	diagnosisConsumer *eventbus.Consumer
-	copilotRuntime    *api.CopilotRuntime
-	alertHub          *pubsub.Hub
-	websocketHub      *ws.Hub
-	server            *http.Server
-	ctx               context.Context
-	cancel            context.CancelFunc
-	subscriberDone    <-chan struct{}
-	diagnosisDone     <-chan struct{}
-	alertHubConsumers <-chan struct{}
 }
 
 func main() {
@@ -85,205 +57,6 @@ func main() {
 	if exitCode != 0 {
 		os.Exit(exitCode)
 	}
-}
-
-func initApp(ctx context.Context) (*app, error) {
-	cfg := config.Load()
-	if err := cfg.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid config: %w", err)
-	}
-
-	shutdownTracer := initTracer(ctx, cfg)
-	gin.SetMode(cfg.GinMode)
-	prometheusClient := promclient.NewClient(cfg.PrometheusURL, cfg.RequestTimeout)
-	redisClient := rediscache.NewClient(rediscache.Options{
-		Addr:            cfg.RedisAddr,
-		Password:        cfg.RedisPassword,
-		DB:              cfg.RedisDB,
-		DialTimeout:     cfg.RedisDialTimeout,
-		ReadTimeout:     cfg.RedisReadTimeout,
-		WriteTimeout:    cfg.RedisWriteTimeout,
-		ConnMaxLifetime: cfg.RedisConnMaxLifetime,
-		ConnMaxIdleTime: cfg.RedisConnMaxIdleTime,
-	})
-
-	mysqlClient, err := initMySQL(cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	authService, err := initAuthService(cfg, mysqlClient)
-	if err != nil {
-		return nil, err
-	}
-
-	if mysqlClient != nil {
-		zap.L().Info("mysql initialized",
-			zap.String("host", cfg.MySQLHost),
-			zap.String("port", cfg.MySQLPort),
-			zap.String("database", cfg.MySQLDatabase),
-		)
-	}
-
-	kafkaProducer := initKafkaProducer(cfg)
-	alertHub := pubsub.NewHub(64)
-	websocketHub := ws.NewHub(cfg.WSMaxConnections, cfg.CORSOrigins)
-
-	router, copilotRuntime, err := api.NewRouterWithRuntime(ctx, cfg, prometheusClient, redisClient, mysqlClient, authService, websocketHub, kafkaProducer)
-	if err != nil {
-		return nil, fmt.Errorf("create router: %w", err)
-	}
-	diagnosisConsumer, err := initDiagnosisConsumer(cfg, redisClient, copilotRuntime, websocketHub)
-	if err != nil {
-		return nil, err
-	}
-
-	appCtx, cancel := context.WithCancel(ctx)
-	return &app{
-		cfg:               cfg,
-		shutdownTracer:    shutdownTracer,
-		prometheusClient:  prometheusClient,
-		redisClient:       redisClient,
-		mysqlClient:       mysqlClient,
-		kafkaProducer:     kafkaProducer,
-		diagnosisConsumer: diagnosisConsumer,
-		copilotRuntime:    copilotRuntime,
-		alertHub:          alertHub,
-		websocketHub:      websocketHub,
-		server: &http.Server{
-			Addr:              cfg.ListenAddr,
-			Handler:           router,
-			ReadHeaderTimeout: cfg.HTTPReadHeaderTimeout,
-			ReadTimeout:       cfg.HTTPReadTimeout,
-			WriteTimeout:      cfg.HTTPWriteTimeout,
-			IdleTimeout:       cfg.HTTPIdleTimeout,
-		},
-		ctx:    appCtx,
-		cancel: cancel,
-	}, nil
-}
-
-func initTracer(ctx context.Context, cfg config.Config) func(context.Context) error {
-	shutdownTracer, err := tracer.Init(ctx, tracer.Config{
-		ServiceName:  "server-web",
-		OTLPEndpoint: cfg.TraceOTLPEndpoint,
-		SampleRate:   cfg.TraceSampleRate,
-	})
-	if err != nil {
-		zap.L().Warn("tracer init failed; tracing disabled",
-			zap.String("endpoint", cfg.TraceOTLPEndpoint),
-			zap.Error(err),
-		)
-		return func(context.Context) error { return nil }
-	}
-	if cfg.TraceOTLPEndpoint != "" {
-		zap.L().Info("tracer initialized",
-			zap.String("endpoint", cfg.TraceOTLPEndpoint),
-			zap.Float64("sample_rate", cfg.TraceSampleRate),
-		)
-	}
-	return shutdownTracer
-}
-
-func initMySQL(cfg config.Config) (*database.MySQL, error) {
-	mysqlInitCtx, mysqlInitCancel := context.WithTimeout(context.Background(), cfg.MySQLStartupTimeout)
-	mysqlClient, err := database.OpenMySQL(mysqlInitCtx, database.MySQLConfig{
-		Host:        cfg.MySQLHost,
-		Port:        cfg.MySQLPort,
-		User:        cfg.MySQLUser,
-		Password:    cfg.MySQLPassword,
-		Database:    cfg.MySQLDatabase,
-		PingTimeout: cfg.MySQLPingTimeout,
-	})
-	mysqlInitCancel()
-	if err != nil {
-		return nil, fmt.Errorf("mysql init failed: %w", err)
-	}
-	if mysqlClient != nil {
-		if err := database.Migrate(mysqlClient.DB()); err != nil {
-			return nil, fmt.Errorf("mysql migration failed: %w", err)
-		}
-	}
-	return mysqlClient, nil
-}
-
-func initAuthService(cfg config.Config, mysqlClient *database.MySQL) (*authpkg.Service, error) {
-	var authService *authpkg.Service
-	if mysqlClient != nil && len(strings.TrimSpace(cfg.JWTSecret)) >= 32 {
-		var err error
-		authService, err = authpkg.NewService(mysqlClient.DB(), cfg.JWTSecret, time.Duration(cfg.JWTExpireHours)*time.Hour)
-		if err != nil {
-			return nil, fmt.Errorf("auth service init failed: %w", err)
-		}
-		created, err := authService.EnsureInitialAdmin(context.Background(), cfg.AdminPassword)
-		if err != nil {
-			return nil, fmt.Errorf("initial admin setup failed: %w", err)
-		}
-		if created {
-			zap.L().Info("initial admin user created", zap.String("username", "admin"))
-		}
-	}
-	return authService, nil
-}
-
-func initKafkaProducer(cfg config.Config) *eventbus.Producer {
-	var kafkaProducer *eventbus.Producer
-	if len(cfg.KafkaBrokers) > 0 {
-		producer, err := eventbus.NewProducer(cfg.KafkaBrokers)
-		if err != nil {
-			zap.L().Warn("kafka producer init failed; kafka events disabled",
-				zap.Strings("brokers", cfg.KafkaBrokers),
-				zap.Error(err),
-			)
-		} else {
-			kafkaProducer = producer
-			zap.L().Info("kafka producer initialized", zap.Strings("brokers", cfg.KafkaBrokers))
-		}
-	}
-	return kafkaProducer
-}
-
-func initDiagnosisConsumer(cfg config.Config, redisClient *rediscache.Client, runtime *api.CopilotRuntime, hub *ws.Hub) (*eventbus.Consumer, error) {
-	if !cfg.DiagnosisEnabled {
-		zap.L().Info("diagnosis worker disabled")
-		return nil, nil
-	}
-	if runtime == nil || runtime.DiagnosisService == nil {
-		return nil, fmt.Errorf("diagnosis worker requires copilot diagnosis service")
-	}
-	if redisClient == nil || !redisClient.Enabled() {
-		return nil, fmt.Errorf("diagnosis worker requires redis")
-	}
-
-	var notifier copilotdiagnosis.Notifier
-	if cfg.DiagnosisStatusPushEnabled {
-		notifier = copilotdiagnosis.NewWebSocketNotifier(hub)
-	}
-	worker := copilotdiagnosis.NewWorker(copilotdiagnosis.WorkerConfig{
-		Service:     runtime.DiagnosisService,
-		TaskStore:   copilotdiagnosis.NewRedisTaskStore(redisClient, nil),
-		Notifier:    notifier,
-		Timeout:     cfg.DiagnosisTaskTimeout,
-		TTL:         cfg.DiagnosisTaskTTL,
-		Concurrency: cfg.DiagnosisWorkerCount,
-		Logger:      zap.L(),
-	})
-	consumer, err := eventbus.NewConsumer(eventbus.ConsumerConfig{
-		Brokers:      cfg.KafkaBrokers,
-		GroupID:      cfg.DiagnosisKafkaGroupID,
-		RetryBackoff: eventbus.DefaultConsumeRetryBackoff,
-	}, worker)
-	if err != nil {
-		return nil, fmt.Errorf("diagnosis kafka consumer init failed: %w", err)
-	}
-	consumer.SetRetryableErrors(cfg.DiagnosisRetryableErrors)
-	consumer.SetObserver(runtime.KafkaObserver)
-	zap.L().Info("diagnosis worker initialized",
-		zap.Strings("brokers", cfg.KafkaBrokers),
-		zap.String("group_id", cfg.DiagnosisKafkaGroupID),
-		zap.Int("worker_count", cfg.DiagnosisWorkerCount),
-	)
-	return consumer, nil
 }
 
 func runApp(app *app) int {

@@ -3,7 +3,7 @@
 > 版本：v1.2  
 > 日期：2026-05-15  
 > 基准方案：design.md v2.4  
-> 状态：执行中（步骤 12 已验收）
+> 状态：执行中（步骤 13 已验收）
 > 
 > v1.2 变更：基准方案文件名更正为 design.md、方案 B 去掉 .gitignore 建议、步骤 17 mkdir 命令 cwd 统一
 > v1.1 变更：修订 9 项评审反馈——internal 目录创建补全、命令 cwd 明确、commit 策略改为建议提交点、验收标准改为待勾选、sarama 依赖推迟到步骤 5、miniredis 依赖风险补充、Makefile test 包含 pkg + .PHONY/help 同步、步骤 20 注释先于验证、文档文件处理方案
@@ -942,12 +942,26 @@ cd server-monitor/server-web && go test ./...
 
 **验收标准**：
 
-- [ ] app.go 包含 infrastructure/services 三层结构
-- [ ] router.go 仅包含路由注册 + Dependencies 注入
-- [ ] router.go 行数 < 150
-- [ ] `go build ./...` 通过
-- [ ] `go test ./...` 通过
-- [ ] 服务启动行为与重构前等价
+- [x] app.go 包含 infrastructure/services 三层结构
+- [x] router.go 仅包含路由注册 + Dependencies 注入
+- [x] router.go 行数 < 150
+- [x] `go build ./...` 通过
+- [x] `go test ./...` 通过
+- [x] 服务启动行为与重构前等价
+
+**执行记录（2026-05-16）**：
+
+- 已新增 `server-web/app.go`，定义 `infrastructure`、`services`、`app` 分层结构，并承接基础设施初始化、服务组装、Copilot/Runbook/K8s/Action 组装逻辑
+- 已将 `api/router.go` 改为 `NewRouter(cfg config.Config, deps Dependencies) (*gin.Engine, error)`，通过 `Dependencies` 注入 metrics、cache、handler、auth、copilot handlers
+- 已新增 `api/dependencies.go`、`api/routes_action.go`、`api/static.go`，将依赖类型、Action 路由和静态资源处理拆出，保留 `router.go` 只做路由注册
+- 已新增 `api.NewReportAccessChecker`，供 `app.go` 在组装 feedback handler 时复用原 diagnosis access adapter
+- 已从 `main.go` 移出 `initApp`、`initTracer`、`initMySQL`、`initAuthService`、`initKafkaProducer`、`initDiagnosisConsumer`；`main.go` 精简到 < 80 行属于步骤 14，当前未提前执行
+- 行数：`cd server-monitor/server-web && wc -l api/router.go` 输出 `126 api/router.go`
+- 验证：`cd server-monitor/server-web && GOCACHE=/tmp/cloudops-gocache go build ./...` 通过
+- 验证：`cd server-monitor/server-web && GOCACHE=/tmp/cloudops-gocache go test ./...` 通过
+- 补充检查：`cd server-monitor/server-web && GOCACHE=/tmp/cloudops-gocache go vet ./...` 通过
+- 补充检查：`git diff --check` 通过
+- 残留检查：`rg -n "NewRouterWithRuntime|NewRouter\\(" server-monitor/server-web` 仅剩 `api.NewRouter` 定义与 `app.go` 调用
 
 ---
 
