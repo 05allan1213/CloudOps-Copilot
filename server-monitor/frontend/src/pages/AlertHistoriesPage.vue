@@ -7,6 +7,7 @@ import { createDiagnosis } from "../api/diagnosis";
 import { fetchHostGroups } from "../api/hostGroups";
 import { formatTime } from "../utils/format";
 import { usePagination } from "../composables/usePagination";
+import { severityTagType, statusTagType } from "../composables/useTagTypes";
 import FilterPanel from "../components/common/FilterPanel.vue";
 import PageHeader from "../components/common/PageHeader.vue";
 import StateWrapper from "../components/common/StateWrapper.vue";
@@ -42,19 +43,6 @@ const stateKey = computed(() => {
   return "default" as const;
 });
 
-function severityTagType(value: string): "danger" | "warning" | "info" | "" {
-  switch (value) {
-    case "critical":
-      return "danger";
-    case "warning":
-      return "warning";
-    case "info":
-      return "info";
-    default:
-      return "";
-  }
-}
-
 function severityLabel(value: string) {
   switch (value) {
     case "critical":
@@ -66,10 +54,6 @@ function severityLabel(value: string) {
     default:
       return value || "-";
   }
-}
-
-function statusTagType(value: string): "danger" | "success" | "" {
-  return value === "resolved" ? "success" : "danger";
 }
 
 async function loadGroups() {
@@ -248,7 +232,7 @@ onMounted(() => {
 
 .mono-text {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.82rem;
+  font-size: 13px;
 }
 
 .pagination-wrap {

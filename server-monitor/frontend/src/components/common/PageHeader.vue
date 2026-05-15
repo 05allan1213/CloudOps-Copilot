@@ -33,8 +33,8 @@ defineProps<{
 }
 
 .page-header-title {
-  font-size: 18px;
-  font-weight: 600;
+  font-size: 20px;
+  font-weight: 700;
   color: var(--cloudops-text-primary);
   margin: 0;
 }

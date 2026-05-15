@@ -107,7 +107,7 @@ function diagnosisReportId(message: LocalMessage): number | null {
   max-width: min(760px, 86%);
   min-width: 0;
   border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
+  border-radius: var(--cloudops-radius-md);
   padding: 12px;
   background: var(--el-fill-color-lighter);
 }

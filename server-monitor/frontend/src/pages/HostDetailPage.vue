@@ -160,7 +160,7 @@ function renderChart() {
 
     chart.setOption({
       backgroundColor: theme.backgroundColor,
-      color: ["#f59e0b", "#06b6d4", "#ef4444"],
+      color: theme.chartColors,
       grid: {
         left: 42,
         right: 20,
@@ -352,32 +352,32 @@ function roundMetric(value: number): number {
 .detail-header {
   display: flex;
   justify-content: space-between;
-  gap: 1rem;
+  gap: 16px;
   align-items: flex-start;
-  margin-bottom: 1rem;
+  margin-bottom: 16px;
 }
 
 .detail-header h2 {
-  margin: 0.5rem 0 0;
-  font-size: 1.2rem;
+  margin: 8px 0 0;
+  font-size: 19px;
 }
 
 .detail-header p {
-  margin-top: 0.35rem;
+  margin-top: 6px;
   color: var(--el-text-color-secondary);
-  font-size: 0.82rem;
+  font-size: 13px;
 }
 
 .metric-grid {
-  margin-bottom: 1rem;
+  margin-bottom: 16px;
 }
 
 .metric-card :deep(.el-card__body) {
-  padding: 14px;
+  padding: 20px;
 }
 
 .metric-card :deep(.el-statistic__number) {
-  font-size: 1.05rem;
+  font-size: 17px;
   font-variant-numeric: tabular-nums;
 }
 

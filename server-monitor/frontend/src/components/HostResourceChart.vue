@@ -87,7 +87,7 @@ function renderChart() {
 
     chart.setOption({
       backgroundColor: theme.backgroundColor,
-      color: ["#f59e0b", "#06b6d4"],
+      color: theme.chartColors,
       grid: {
         left: 36,
         right: 18,

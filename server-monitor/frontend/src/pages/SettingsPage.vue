@@ -60,7 +60,7 @@ const settingsItems = [
 .settings-page {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 16px;
 }
 
 .settings-card-link {
@@ -71,11 +71,16 @@ const settingsItems = [
 
 .settings-card {
   cursor: pointer;
-  transition: transform 0.2s, box-shadow 0.2s;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .settings-card:hover {
-  transform: translateY(-2px);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+:global(html.light) .settings-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
 }
 
 .settings-card :deep(.el-card__body) {
@@ -91,7 +96,7 @@ const settingsItems = [
 .settings-card-icon {
   width: 48px;
   height: 48px;
-  border-radius: 8px;
+  border-radius: var(--cloudops-radius-md);
   background: rgba(59, 130, 246, 0.1);
   color: var(--el-color-primary);
   display: flex;

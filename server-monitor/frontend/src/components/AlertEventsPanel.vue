@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { AlertEvent } from "../types";
 import { formatTime } from "../utils/format";
+import { severityTagType } from "../composables/useTagTypes";
 
 type EventStatusFilter = "all" | "firing" | "resolved";
 type SeverityFilter = "all" | "critical" | "warning" | "info";
@@ -16,17 +17,6 @@ const emit = defineEmits<{
   statusChange: [value: EventStatusFilter];
   severityChange: [value: SeverityFilter];
 }>();
-
-function severityTagType(severity: string | undefined): "danger" | "warning" | "info" | "" {
-  switch (severity ?? "info") {
-    case "critical":
-      return "danger";
-    case "warning":
-      return "warning";
-    default:
-      return "info";
-  }
-}
 
 function severityLabel(severity: string | undefined): string {
   switch (severity ?? "info") {
@@ -179,7 +169,7 @@ function statusLabel(status: AlertEvent["status"]): string {
 
 .mono-text {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.82rem;
+  font-size: 13px;
 }
 
 @media (max-width: 768px) {

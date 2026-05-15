@@ -208,17 +208,17 @@ onMounted(loadLogs);
 
 .mono-text {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.82rem;
+  font-size: 13px;
 }
 
 .error-text {
   color: var(--el-color-danger);
-  font-size: 0.82rem;
+  font-size: 13px;
 }
 
 .text-muted {
   color: var(--el-text-color-placeholder);
-  font-size: 0.82rem;
+  font-size: 13px;
 }
 
 .pagination-wrap {

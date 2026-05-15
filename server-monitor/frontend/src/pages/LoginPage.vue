@@ -116,7 +116,7 @@ async function onSubmit() {
   min-height: 100vh;
   display: grid;
   place-items: center;
-  padding: 1.5rem;
+  padding: 24px;
 }
 
 .login-card {
@@ -124,21 +124,21 @@ async function onSubmit() {
 }
 
 .login-card :deep(.el-card__body) {
-  padding: 1.5rem;
+  padding: 24px;
 }
 
 .login-brand {
   display: flex;
-  gap: 0.875rem;
+  gap: 14px;
   align-items: center;
-  margin-bottom: 1.25rem;
+  margin-bottom: 20px;
 }
 
 .login-logo {
   width: 42px;
   height: 42px;
   flex: 0 0 auto;
-  border-radius: 8px;
+  border-radius: var(--cloudops-radius-md);
   background: linear-gradient(135deg, var(--el-color-primary), var(--el-color-info));
   box-shadow: 0 0 16px rgba(59, 130, 246, 0.3);
   position: relative;
@@ -153,20 +153,20 @@ async function onSubmit() {
 }
 
 .login-brand h1 {
-  font-size: 1.3rem;
+  font-size: 21px;
   line-height: 1.2;
   margin: 0;
 }
 
 .login-brand p {
   color: var(--el-text-color-secondary);
-  font-size: 0.82rem;
+  font-size: 13px;
   line-height: 1.6;
-  margin-top: 0.3rem;
+  margin-top: 5px;
 }
 
 .login-alert {
-  margin-bottom: 1rem;
+  margin-bottom: 16px;
 }
 
 .login-submit {

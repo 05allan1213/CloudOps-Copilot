@@ -84,7 +84,7 @@ async function confirmDelete(sessionId: string) {
   flex-direction: column;
   min-height: 520px;
   border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
+  border-radius: var(--cloudops-radius-md);
   background: var(--el-bg-color-overlay);
 }
 

@@ -123,7 +123,7 @@ defineProps<{
 
 <style scoped>
 .stats-row {
-  margin-bottom: 1.5rem;
+  margin-bottom: 24px;
 }
 
 .stats-section {
@@ -139,7 +139,7 @@ defineProps<{
 }
 
 .stat-card :deep(.el-card__body) {
-  padding: 16px;
+  padding: 20px;
 }
 
 .stat-inner {
@@ -151,7 +151,7 @@ defineProps<{
 .stat-icon {
   width: 48px;
   height: 48px;
-  border-radius: 8px;
+  border-radius: var(--cloudops-radius-md);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -179,7 +179,7 @@ defineProps<{
 }
 
 .stat-value :deep(.el-statistic__number) {
-  font-size: 1.5rem;
+  font-size: 24px;
   font-weight: 700;
 }
 
@@ -196,7 +196,7 @@ defineProps<{
 }
 
 .stat-label {
-  font-size: 0.75rem;
+  font-size: 12px;
   color: var(--el-text-color-secondary);
   font-weight: 600;
   text-transform: uppercase;

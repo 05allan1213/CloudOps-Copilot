@@ -12,6 +12,7 @@ import {
 } from "../api/actions";
 import { formatTime } from "../utils/format";
 import { usePagination } from "../composables/usePagination";
+import { riskTagType, statusTagType } from "../composables/useTagTypes";
 import FilterPanel from "../components/common/FilterPanel.vue";
 import PageHeader from "../components/common/PageHeader.vue";
 import StateWrapper from "../components/common/StateWrapper.vue";
@@ -44,35 +45,6 @@ const rejectReason = ref("");
 
 function targetOf(action: PendingAction) {
   return `${action.namespace || "-"}/${action.target_name || "-"}`;
-}
-
-function riskTagType(level: string): "danger" | "warning" | "success" | "" {
-  switch (level) {
-    case "high":
-      return "danger";
-    case "medium":
-      return "warning";
-    case "low":
-      return "success";
-    default:
-      return "";
-  }
-}
-
-function statusTagType(status: string): "warning" | "success" | "danger" | "info" | "" {
-  switch (status) {
-    case "pending":
-      return "warning";
-    case "approved":
-      return "info";
-    case "executed":
-      return "success";
-    case "rejected":
-    case "failed":
-      return "danger";
-    default:
-      return "";
-  }
 }
 
 async function loadActions() {
@@ -360,7 +332,7 @@ onMounted(loadActions);
 
 .mono-text {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.82rem;
+  font-size: 13px;
 }
 
 .pagination-wrap {

@@ -43,6 +43,7 @@ export function getEChartsTheme(isDark: boolean) {
       axisLabel: { color: isDark ? "#94a3b8" : "#64748b" },
       splitLine: { lineStyle: { color: isDark ? "#1e293b" : "#f1f5f9" } },
     },
+    chartColors: ["#3b82f6", "#22c55e", "#f59e0b", "#ef4444", "#8b5cf6"],
     series: [
       { itemStyle: { color: "#3b82f6" } },
       { itemStyle: { color: "#22c55e" } },

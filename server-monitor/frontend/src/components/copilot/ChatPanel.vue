@@ -131,7 +131,7 @@ watch(
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   min-height: 520px;
   border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
+  border-radius: var(--cloudops-radius-md);
   background: var(--el-bg-color-overlay);
 }
 

@@ -12,6 +12,7 @@ import {
   type AlertRuleRequest,
 } from "../api/alertRules";
 import type { AlertRule, AlertRuleSyncResult } from "../types";
+import { severityTagType } from "../composables/useTagTypes";
 import PageHeader from "../components/common/PageHeader.vue";
 import StateWrapper from "../components/common/StateWrapper.vue";
 
@@ -127,19 +128,6 @@ async function syncRules() {
     ElMessage.error(err instanceof Error ? err.message : "同步告警规则失败");
   } finally {
     syncing.value = false;
-  }
-}
-
-function severityTagType(severity: string) {
-  switch (severity) {
-    case "critical":
-      return "danger";
-    case "warning":
-      return "warning";
-    case "info":
-      return "info";
-    default:
-      return "info";
   }
 }
 

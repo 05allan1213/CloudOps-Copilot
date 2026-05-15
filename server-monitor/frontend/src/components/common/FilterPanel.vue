@@ -33,7 +33,7 @@ function handleReset() {
   padding: 16px;
   background: var(--cloudops-bg-card);
   border: 1px solid var(--cloudops-border-color);
-  border-radius: 8px;
+  border-radius: var(--cloudops-radius-md);
 }
 
 .filter-form {

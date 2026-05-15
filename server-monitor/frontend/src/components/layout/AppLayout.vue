@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed } from "vue";
 import { useRoute } from "vue-router";
 
 import { useAuthStore } from "../../stores/auth";
@@ -23,11 +23,7 @@ const pageTitle = computed(() => {
     <el-container class="app-main-container">
       <AppHeader :page-title="pageTitle" />
       <el-main class="app-main">
-        <router-view v-slot="{ Component }">
-          <transition name="fade" mode="out-in">
-            <component :is="Component" />
-          </transition>
-        </router-view>
+        <RouterView />
       </el-main>
     </el-container>
   </el-container>

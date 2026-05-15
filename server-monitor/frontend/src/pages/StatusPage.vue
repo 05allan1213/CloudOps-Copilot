@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { Refresh } from "@element-plus/icons-vue";
 
 import { fetchDashboardOverview } from "../api/hosts";
@@ -19,6 +19,7 @@ const health = ref<ApiResponse<HealthStatus> | null>(null);
 const ready = ref<ApiResponse<ReadyStatus> | null>(null);
 const overview = ref<DashboardOverview | null>(null);
 const error = ref("");
+let refreshTimer: ReturnType<typeof setInterval> | null = null;
 
 const serviceReady = computed(() => ready.value?.data?.ready === true);
 const serviceHealthy = computed(() => health.value?.data?.healthy === true);
@@ -31,6 +32,14 @@ const stateKey = computed(() => {
 
 onMounted(() => {
   loadStatus();
+  refreshTimer = setInterval(loadStatus, 15000);
+});
+
+onBeforeUnmount(() => {
+  if (refreshTimer) {
+    clearInterval(refreshTimer);
+    refreshTimer = null;
+  }
 });
 
 async function loadStatus() {

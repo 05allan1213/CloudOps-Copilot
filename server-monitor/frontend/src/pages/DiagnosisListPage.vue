@@ -5,6 +5,7 @@ import { RouterLink } from "vue-router";
 import { fetchDiagnosisList, type DiagnosisQuery } from "../api/diagnosis";
 import { formatTime } from "../utils/format";
 import { usePagination } from "../composables/usePagination";
+import { statusTagType } from "../composables/useTagTypes";
 import FilterPanel from "../components/common/FilterPanel.vue";
 import PageHeader from "../components/common/PageHeader.vue";
 import StateWrapper from "../components/common/StateWrapper.vue";
@@ -33,21 +34,6 @@ const stateKey = computed(() => {
   if (reports.value.items.length === 0) return "empty" as const;
   return "default" as const;
 });
-
-function statusTagType(value: string): "info" | "success" | "danger" | "warning" | "" {
-  switch (value) {
-    case "pending":
-      return "info";
-    case "running":
-      return "warning";
-    case "completed":
-      return "success";
-    case "failed":
-      return "danger";
-    default:
-      return "";
-  }
-}
 
 function statusLabel(value: string) {
   switch (value) {
@@ -232,7 +218,7 @@ onMounted(loadReports);
 
 .mono-text {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.82rem;
+  font-size: 13px;
 }
 
 .pagination-wrap {

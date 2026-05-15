@@ -123,6 +123,11 @@ function riskLabel(host: Host): string {
 
 .host-card:hover {
   transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+:global(html.light) .host-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
 }
 
 .host-card--cpu {
@@ -150,7 +155,7 @@ function riskLabel(host: Host): string {
 
 .host-name {
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: 14px;
 }
 
 .host-risk {
@@ -170,7 +175,7 @@ function riskLabel(host: Host): string {
 }
 
 .metric-label {
-  font-size: 0.75rem;
+  font-size: 12px;
   color: var(--el-text-color-secondary);
   font-weight: 500;
   min-width: 32px;
@@ -190,7 +195,7 @@ function riskLabel(host: Host): string {
 }
 
 .host-time {
-  font-size: 0.7rem;
+  font-size: 11px;
   color: var(--el-text-color-secondary);
 }
 </style>

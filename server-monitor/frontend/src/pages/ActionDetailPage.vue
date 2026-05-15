@@ -6,6 +6,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 
 import { approveAction, executeAction, getAction, rejectAction } from "../api/actions";
 import { formatTime } from "../utils/format";
+import { statusTagType, riskTagType } from "../composables/useTagTypes";
 import type { PendingAction } from "../types";
 import PageHeader from "../components/common/PageHeader.vue";
 import StateWrapper from "../components/common/StateWrapper.vue";
@@ -48,35 +49,6 @@ const resultSummary = computed(() => {
     ["消息", result.message],
   ].filter((item): item is [string, string | number | boolean] => item[1] !== undefined && item[1] !== null && item[1] !== "");
 });
-
-function statusTagType(status: string) {
-  switch (status) {
-    case "pending":
-      return "warning";
-    case "approved":
-      return "primary";
-    case "executed":
-      return "success";
-    case "rejected":
-    case "failed":
-      return "danger";
-    default:
-      return "info";
-  }
-}
-
-function riskTagType(risk: string) {
-  switch (risk) {
-    case "high":
-      return "danger";
-    case "medium":
-      return "warning";
-    case "low":
-      return "info";
-    default:
-      return "info";
-  }
-}
 
 async function loadAction() {
   if (!Number.isFinite(actionID.value) || actionID.value <= 0) {

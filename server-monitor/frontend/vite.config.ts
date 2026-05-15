@@ -11,6 +11,14 @@ export default defineConfig({
         target: "http://localhost:8080",
         changeOrigin: true,
       },
+      "/healthz": {
+        target: "http://localhost:8080",
+        changeOrigin: true,
+      },
+      "/readyz": {
+        target: "http://localhost:8080",
+        changeOrigin: true,
+      },
       "/ws": {
         target: "ws://localhost:8080",
         ws: true,

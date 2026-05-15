@@ -7,7 +7,7 @@
 }
 
 html {
-  font-family: "Inter", "PingFang SC", "Microsoft YaHei", -apple-system,
+  font-family: "DM Sans", "PingFang SC", "Microsoft YaHei", -apple-system,
     BlinkMacSystemFont, sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -18,6 +18,7 @@ html {
 body {
   min-width: 320px;
   min-height: 100vh;
+  line-height: 1.6;
   background: var(--cloudops-bg-primary);
   color: var(--cloudops-text-primary);
 }
@@ -60,6 +61,33 @@ a {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+.el-card {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.el-button {
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.el-table__row {
+  transition: background-color 0.15s ease;
+}
+
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.app-main > section {
+  animation: page-enter 0.2s ease-out;
 }
 
 @media (prefers-reduced-motion: reduce) {
