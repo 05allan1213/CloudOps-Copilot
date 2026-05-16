@@ -1,4 +1,4 @@
-.PHONY: all build build-probe build-web build-alert-service run run-probe run-web docker docker-up docker-down docker-logs clean test help dev-deps dev-web dev-frontend dev-stop
+.PHONY: all build build-probe build-web build-alert-service run run-probe run-web docker docker-up docker-down docker-logs clean test test-pkg help dev-deps dev-web dev-frontend dev-stop
 
 all: build
 
@@ -101,9 +101,14 @@ docker-clean:
 
 test:
 	@echo "运行测试..."
+	cd pkg && go test -v ./...
 	cd server-probe && go test -v ./...
 	cd server-web && go test -v ./...
 	cd alert-service && go test -v ./...
+
+test-pkg:
+	@echo "运行 pkg 测试..."
+	cd pkg && go test -v ./...
 
 fmt:
 	@echo "格式化代码..."
@@ -171,7 +176,8 @@ help:
 	@echo "  make run-web        运行 server-web"
 	@echo ""
 	@echo "测试与检查:"
-	@echo "  make test           运行测试"
+	@echo "  make test           运行所有测试（含 pkg）"
+	@echo "  make test-pkg       仅运行 pkg 测试"
 	@echo "  make fmt            格式化代码"
 	@echo "  make lint           静态检查（需安装 golangci-lint）"
 	@echo ""

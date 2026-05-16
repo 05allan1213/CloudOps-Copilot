@@ -3,7 +3,7 @@
 > 版本：v1.2  
 > 日期：2026-05-15  
 > 基准方案：design.md v2.4  
-> 状态：执行中（步骤 18 已验收）
+> 状态：执行中（步骤 19 已验收）
 > 
 > v1.2 变更：基准方案文件名更正为 design.md、方案 B 去掉 .gitignore 建议、步骤 17 mkdir 命令 cwd 统一
 > v1.1 变更：修订 9 项评审反馈——internal 目录创建补全、命令 cwd 明确、commit 策略改为建议提交点、验收标准改为待勾选、sarama 依赖推迟到步骤 5、miniredis 依赖风险补充、Makefile test 包含 pkg + .PHONY/help 同步、步骤 20 注释先于验证、文档文件处理方案
@@ -1478,11 +1478,28 @@ grep -n "copilot/nlu/eval" .github/workflows/ci.yaml
 
 **验收标准**：
 
-- [ ] CI 新增 pkg job（goimports + test + vet）
-- [ ] 3 个 eval 测试路径加 `internal/` 前缀
-- [ ] `docker-build.needs` 包含 `pkg`
-- [ ] `make test-pkg` 可执行
-- [ ] CI YAML 语法正确
+- [x] CI 新增 pkg job（goimports + test + vet）
+- [x] 3 个 eval 测试路径加 `internal/` 前缀
+- [x] `docker-build.needs` 包含 `pkg`
+- [x] `make test-pkg` 可执行
+- [x] CI YAML 语法正确
+
+**执行记录（2026-05-16）**：
+
+- 已在 `.github/workflows/ci.yaml` 新增 `pkg` job，包含 checkout、setup-go、安装 goimports、goimports 检查、`go test ./...`、`go vet ./...`
+- 已将 server-web 的 3 个 eval 测试路径改为 `./internal/copilot/nlu/eval/` 和 `./internal/copilot/runbook/eval/`
+- 已将 `pkg` 加入 `docker-build.needs`
+- 已在 `Makefile` 的 `test` 目标中加入 `cd pkg && go test -v ./...`
+- 已新增 `test-pkg` 目标，并在 `.PHONY` 与 `help` 输出中同步 `test-pkg`
+- 路径说明：`Makefile` 位于 `server-monitor/` 根目录，实际命令使用既有风格 `cd pkg`，而非计划示例中的 `cd server-monitor/pkg`
+- 验证：`cd server-monitor && make test-pkg` 在允许本地 TCP socket 的环境中通过；沙箱内同命令因 `pkg/redis` 的 miniredis 监听 `127.0.0.1:0` 失败，错误为 `socket: operation not permitted`
+- 验证：`cd server-monitor && python3 -c "import yaml; yaml.safe_load(open('.github/workflows/ci.yaml'))"` 通过
+- 验证：`cd server-monitor/pkg && test -z "$(goimports -l .)"` 通过
+- 验证：`cd server-monitor/pkg && GOCACHE=/tmp/cloudops-gocache go vet ./...` 通过
+- 检查：`rg -n "go test ./copilot/(nlu|runbook)/eval" .github/workflows/ci.yaml` 无旧 eval 路径残留
+- 检查：`grep -n "copilot/nlu/eval" .github/workflows/ci.yaml` 输出均包含 `internal/`
+- 检查：`sed -n '196,210p' .github/workflows/ci.yaml` 确认 `docker-build.needs` 包含 `pkg`
+- 补充检查：`git diff --check` 通过
 
 ---
 
