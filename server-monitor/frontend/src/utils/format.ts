@@ -3,6 +3,16 @@ export function formatTime(value?: string): string {
   return new Date(value).toLocaleString("zh-CN", { hour12: false });
 }
 
+export function formatTimeShort(value?: string): string {
+  if (!value) return "--";
+  return new Date(value).toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 export function severityClass(severity: string | undefined): string {
   switch (severity) {
     case "critical":

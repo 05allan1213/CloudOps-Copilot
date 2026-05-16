@@ -3,6 +3,7 @@ import { ElMessageBox } from "element-plus";
 import { Plus, Delete } from "@element-plus/icons-vue";
 
 import type { CopilotSession } from "../../types";
+import { formatTimeShort } from "../../utils/format";
 
 defineProps<{
   sessions: CopilotSession[];
@@ -16,17 +17,7 @@ const emit = defineEmits<{
   delete: [sessionId: string];
 }>();
 
-function formatTime(value: string): string {
-  if (!value) return "--";
-  return new Date(value).toLocaleString("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-async function confirmDelete(sessionId: string) {
+async function handleConfirmDelete(sessionId: string) {
   try {
     await ElMessageBox.confirm("确认删除该会话？此操作不可撤销。", "删除确认", {
       confirmButtonText: "删除",
@@ -59,7 +50,7 @@ async function confirmDelete(sessionId: string) {
         @click="emit('select', session.id)"
       >
         <span class="session-title">{{ session.title || session.id }}</span>
-        <small>{{ formatTime(session.updated_at) }}</small>
+        <small>{{ formatTimeShort(session.updated_at) }}</small>
       </div>
       <el-empty v-if="!loadingSessions && sessions.length === 0" description="暂无会话" :image-size="48" />
     </div>
@@ -70,7 +61,7 @@ async function confirmDelete(sessionId: string) {
         type="danger"
         text
         size="small"
-        @click="confirmDelete(activeSessionId)"
+        @click="handleConfirmDelete(activeSessionId)"
       >
         删除当前会话
       </el-button>
@@ -83,9 +74,9 @@ async function confirmDelete(sessionId: string) {
   display: flex;
   flex-direction: column;
   min-height: 520px;
-  border: 1px solid var(--el-border-color-lighter);
+  border: 1px solid var(--cloudops-border-color);
   border-radius: var(--cloudops-radius-md);
-  background: var(--el-bg-color-overlay);
+  background: var(--cloudops-bg-card);
 }
 
 .session-panel-header {
@@ -94,7 +85,7 @@ async function confirmDelete(sessionId: string) {
   justify-content: space-between;
   gap: 12px;
   padding: 16px;
-  border-bottom: 1px solid var(--el-border-color-lighter);
+  border-bottom: 1px solid var(--cloudops-border-color);
 }
 
 .session-panel-header h2 {
@@ -120,7 +111,7 @@ async function confirmDelete(sessionId: string) {
   display: grid;
   gap: 4px;
   padding: 10px 12px;
-  border-radius: 6px;
+  border-radius: var(--cloudops-radius-sm);
   cursor: pointer;
   transition: background 0.15s;
 }
@@ -149,7 +140,7 @@ async function confirmDelete(sessionId: string) {
 
 .session-footer {
   padding: 8px 12px;
-  border-top: 1px solid var(--el-border-color-lighter);
+  border-top: 1px solid var(--cloudops-border-color);
 }
 
 @media (max-width: 860px) {

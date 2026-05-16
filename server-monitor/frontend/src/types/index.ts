@@ -462,6 +462,13 @@ export interface CopilotMessage {
   created_at: string;
 }
 
+export interface CopilotLocalMessage extends CopilotMessage {
+  intent?: string;
+  confidence?: number;
+  tool_calls?: CopilotToolCall[];
+  suggestions?: CopilotSuggestion[];
+}
+
 export interface DashboardOverview {
   total_hosts: number;
   healthy_hosts: number;

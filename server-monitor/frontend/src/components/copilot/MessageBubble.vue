@@ -2,42 +2,23 @@
 import { RouterLink } from "vue-router";
 
 import ToolCallDisplay from "./ToolCallDisplay.vue";
-import type { CopilotSuggestion, CopilotToolCall } from "../../types";
-
-type LocalMessage = {
-  role: string;
-  content: string;
-  created_at: string;
-  intent?: string;
-  confidence?: number;
-  tool_calls?: CopilotToolCall[];
-  suggestions?: CopilotSuggestion[];
-};
+import type { CopilotLocalMessage, CopilotSuggestion } from "../../types";
+import { formatTimeShort } from "../../utils/format";
 
 defineProps<{
-  message: LocalMessage;
+  message: CopilotLocalMessage;
 }>();
 
 const emit = defineEmits<{
   applySuggestion: [suggestion: CopilotSuggestion];
 }>();
 
-function formatTime(value: string): string {
-  if (!value) return "--";
-  return new Date(value).toLocaleString("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
 function formatConfidence(value: number | undefined): string {
   if (value === undefined) return "--";
   return `${Math.round(value * 100)}%`;
 }
 
-function diagnosisReportId(message: LocalMessage): number | null {
+function diagnosisReportId(message: CopilotLocalMessage): number | null {
   const result = message.tool_calls?.find(
     (tool) => tool.name === "diagnosis.trigger" && tool.status === "success",
   )?.result;
@@ -54,7 +35,7 @@ function diagnosisReportId(message: LocalMessage): number | null {
     <div class="message-bubble">
       <div class="message-meta">
         <span>{{ message.role === "user" ? "你" : "Copilot" }}</span>
-        <time>{{ formatTime(message.created_at) }}</time>
+        <time>{{ formatTimeShort(message.created_at) }}</time>
       </div>
 
       <p>{{ message.content }}</p>
@@ -106,7 +87,7 @@ function diagnosisReportId(message: LocalMessage): number | null {
 .message-bubble {
   max-width: min(760px, 86%);
   min-width: 0;
-  border: 1px solid var(--el-border-color-lighter);
+  border: 1px solid var(--cloudops-border-color);
   border-radius: var(--cloudops-radius-md);
   padding: 12px;
   background: var(--el-fill-color-lighter);
@@ -148,7 +129,7 @@ function diagnosisReportId(message: LocalMessage): number | null {
   margin-top: 10px;
   color: var(--el-color-info);
   background: var(--el-color-info-light-9);
-  border-radius: 4px;
+  border-radius: var(--cloudops-radius-sm);
   padding: 6px 10px;
   font-size: 12px;
   font-weight: 600;

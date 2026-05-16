@@ -11,21 +11,13 @@ import SessionList from "../components/copilot/SessionList.vue";
 import ChatPanel from "../components/copilot/ChatPanel.vue";
 import type {
   CopilotChatResponse,
-  CopilotMessage,
+  CopilotLocalMessage,
   CopilotSuggestion,
   CopilotSession,
-  CopilotToolCall,
 } from "../types";
 
-type LocalMessage = CopilotMessage & {
-  intent?: string;
-  confidence?: number;
-  tool_calls?: CopilotToolCall[];
-  suggestions?: CopilotSuggestion[];
-};
-
 const sessions = ref<CopilotSession[]>([]);
-const messages = ref<LocalMessage[]>([]);
+const messages = ref<CopilotLocalMessage[]>([]);
 const activeSessionId = ref("");
 const loadingSessions = ref(false);
 const loadingMessages = ref(false);
@@ -87,7 +79,7 @@ async function removeSession(sessionId: string) {
   }
 }
 
-async function submitMessage(content: string) {
+async function handleSubmit(content: string) {
   if (!content || sending.value) return;
 
   const sessionId = activeSessionId.value;
@@ -99,7 +91,7 @@ async function submitMessage(content: string) {
     created_at: new Date().toISOString(),
   });
 
-  const streamMsg: LocalMessage = {
+  const streamMsg: CopilotLocalMessage = {
     role: "assistant",
     content: "",
     created_at: new Date().toISOString(),
@@ -139,12 +131,12 @@ async function submitMessage(content: string) {
   }
 }
 
-function applySuggestion(suggestion: CopilotSuggestion) {
+function handleApplySuggestion(suggestion: CopilotSuggestion) {
   const content = (suggestion.action || suggestion.text).trim();
-  submitMessage(content);
+  handleSubmit(content);
 }
 
-function toAssistantMessage(response: CopilotChatResponse): LocalMessage {
+function toAssistantMessage(response: CopilotChatResponse): CopilotLocalMessage {
   return {
     role: "assistant",
     content: response.reply,
@@ -179,9 +171,9 @@ function normalizeError(err: unknown): string {
       :loading-messages="loadingMessages"
       :sending="sending"
       :error="error"
-      @send="submitMessage"
+      @send="handleSubmit"
       @refresh="refreshSessions"
-      @apply-suggestion="applySuggestion"
+      @apply-suggestion="handleApplySuggestion"
     />
   </div>
 </template>
