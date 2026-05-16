@@ -3,7 +3,7 @@
 > 版本：v1.2  
 > 日期：2026-05-15  
 > 基准方案：design.md v2.4  
-> 状态：执行中（步骤 17 已验收）
+> 状态：执行中（步骤 18 已验收）
 > 
 > v1.2 变更：基准方案文件名更正为 design.md、方案 B 去掉 .gitignore 建议、步骤 17 mkdir 命令 cwd 统一
 > v1.1 变更：修订 9 项评审反馈——internal 目录创建补全、命令 cwd 明确、commit 策略改为建议提交点、验收标准改为待勾选、sarama 依赖推迟到步骤 5、miniredis 依赖风险补充、Makefile test 包含 pkg + .PHONY/help 同步、步骤 20 注释先于验证、文档文件处理方案
@@ -1357,13 +1357,31 @@ ls server-web/alert/ server-web/auth/ server-web/model/ 2>&1
 
 **验收标准**：
 
-- [ ] 所有模块已移入 internal/ 对应目录
-- [ ] 无旧 import 路径残留
-- [ ] `go build ./...` 通过
-- [ ] `go test ./...` 通过
-- [ ] `go vet ./...` 无警告
-- [ ] diagnosisAccessAdapter 已改为导出构造函数
-- [ ] 原顶级业务目录已删除
+- [x] 所有模块已移入 internal/ 对应目录
+- [x] 无旧 import 路径残留
+- [x] `go build ./...` 通过
+- [x] `go test ./...` 通过
+- [x] `go vet ./...` 无警告
+- [x] diagnosisAccessAdapter 已改为导出构造函数
+- [x] 原顶级业务目录已删除
+
+**执行记录（2026-05-16）**：
+
+- 已将服务层模块移入 `internal/service/{alert,auth,cache,host}`
+- 已将剩余基础设施层模块移入 `internal/infra/{redis,pubsub}`；`redis/client.go`、`redis/cache.go` 使用 `git mv`，被 `.gitignore` 匹配的 `redis/client_test.go` 使用普通移动迁入 `internal/infra/redis/client_test.go`
+- 已将 API 层移入 `internal/handler`、`internal/middleware`、`internal/router`；除计划列出的 `router.go` 外，同包的 `dependencies.go`、`routes_action.go`、`static.go` 也同步移入 `internal/router`，确保原顶级 `api/` 目录可删除
+- 已将 `api/diagnosis_access_adapter.go` 移入 `internal/copilot/diagnosis/access_adapter.go`，并改为 `diagnosis.NewReportAccessChecker(repo *Repository) *ReportAccessChecker`
+- 已将 `config/config.go` 移入 `internal/config`
+- 已将 `copilot/` 下所有子包移入 `internal/copilot/`，保留原子包结构
+- 已全局更新 import 路径到 `server-web/internal/...`
+- 检查：`rg -n '"server-web/(alert|auth|cache|host|redis|pubsub|api|config|copilot|database|prometheus|websocket|webhook|model)(/|"|$)' .` 无旧路径残留
+- 检查：`ls alert auth cache host model database prometheus redis pubsub websocket webhook config api copilot` 均输出 `No such file or directory`
+- 检查：`rg -n 'NewReportAccessChecker|type ReportAccessChecker|type diagnosisAccessAdapter' internal/copilot/diagnosis app.go` 确认导出构造函数存在，旧 `diagnosisAccessAdapter` 类型名无残留
+- 验证：`cd server-monitor/server-web && GOCACHE=/tmp/cloudops-gocache go build ./...` 通过
+- 验证：`cd server-monitor/server-web && go test ./...` 在允许本地 TCP socket 的环境中通过；沙箱内同命令因 miniredis 监听 `127.0.0.1:0` 失败，错误为 `socket: operation not permitted`
+- 验证：`cd server-monitor/server-web && GOCACHE=/tmp/cloudops-gocache go vet ./...` 通过
+- 补充检查：`git diff --check` 通过
+- 注意：`server-monitor/server-web/internal/infra/redis/client_test.go` 仍被 `.gitignore` 的 `*_test.go` 规则匹配，提交时需使用 `git add -f`
 
 ---
 

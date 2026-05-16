@@ -17,30 +17,30 @@ import (
 	"gorm.io/gorm"
 	"k8s.io/client-go/kubernetes"
 
-	appalert "server-web/alert"
-	"server-web/api"
-	"server-web/api/handlers"
-	"server-web/api/middleware"
-	authpkg "server-web/auth"
-	appcache "server-web/cache"
-	"server-web/config"
-	copilotaction "server-web/copilot/action"
-	copilotdiagnosis "server-web/copilot/diagnosis"
-	copilotfeedback "server-web/copilot/feedback"
-	copilothandler "server-web/copilot/handler"
-	copilotk8s "server-web/copilot/k8s"
-	copilotllm "server-web/copilot/llm"
-	copilotnlu "server-web/copilot/nlu"
-	copilotrunbook "server-web/copilot/runbook"
-	copilotservice "server-web/copilot/service"
-	copilotsession "server-web/copilot/session"
-	copilottool "server-web/copilot/tool"
-	apphost "server-web/host"
+	"server-web/internal/config"
+	copilotaction "server-web/internal/copilot/action"
+	copilotdiagnosis "server-web/internal/copilot/diagnosis"
+	copilotfeedback "server-web/internal/copilot/feedback"
+	copilothandler "server-web/internal/copilot/handler"
+	copilotk8s "server-web/internal/copilot/k8s"
+	copilotllm "server-web/internal/copilot/llm"
+	copilotnlu "server-web/internal/copilot/nlu"
+	copilotrunbook "server-web/internal/copilot/runbook"
+	copilotservice "server-web/internal/copilot/service"
+	copilotsession "server-web/internal/copilot/session"
+	copilottool "server-web/internal/copilot/tool"
+	handlers "server-web/internal/handler"
 	"server-web/internal/infra/database"
 	promclient "server-web/internal/infra/prometheus"
+	"server-web/internal/infra/pubsub"
+	rediscache "server-web/internal/infra/redis"
 	ws "server-web/internal/infra/websocket"
-	"server-web/pubsub"
-	rediscache "server-web/redis"
+	"server-web/internal/middleware"
+	api "server-web/internal/router"
+	appalert "server-web/internal/service/alert"
+	authpkg "server-web/internal/service/auth"
+	appcache "server-web/internal/service/cache"
+	apphost "server-web/internal/service/host"
 
 	eventbus "server-monitor/pkg/kafka"
 	"server-monitor/pkg/shutdown"
@@ -516,7 +516,7 @@ func initCopilot(ctx context.Context, cfg config.Config, infra infrastructure, m
 	deps := &api.CopilotDeps{
 		Handler:          copilotHandler,
 		DiagnosisHandler: copilotdiagnosis.NewHandler(diagnosisService),
-		FeedbackHandler:  copilotfeedback.NewHandler(copilotfeedback.NewService(feedbackRepo, metrics), api.NewReportAccessChecker(diagnosisRepo), cfg.FeedbackCommentMaxLength),
+		FeedbackHandler:  copilotfeedback.NewHandler(copilotfeedback.NewService(feedbackRepo, metrics), copilotdiagnosis.NewReportAccessChecker(diagnosisRepo), cfg.FeedbackCommentMaxLength),
 	}
 	if cfg.ActionApprovalEnabled {
 		actionHandler, err := initActionHandler(cfg, infra, metrics, db, k8sClient)
