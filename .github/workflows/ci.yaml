@@ -18,21 +18,21 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
-          cache-dependency-path: server-probe/go.sum
+          cache-dependency-path: server-monitor/server-probe/go.sum
 
       - name: Install goimports
         run: go install golang.org/x/tools/cmd/goimports@latest
 
       - name: Goimports
-        working-directory: server-probe
+        working-directory: server-monitor/server-probe
         run: test -z "$(goimports -l .)"
 
       - name: Test
-        working-directory: server-probe
+        working-directory: server-monitor/server-probe
         run: go test ./...
 
       - name: Vet
-        working-directory: server-probe
+        working-directory: server-monitor/server-probe
         run: go vet ./...
 
   server-web:
@@ -44,37 +44,37 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
-          cache-dependency-path: server-web/go.sum
+          cache-dependency-path: server-monitor/server-web/go.sum
 
       - name: Install goimports
         run: go install golang.org/x/tools/cmd/goimports@latest
 
       - name: Goimports
-        working-directory: server-web
+        working-directory: server-monitor/server-web
         run: test -z "$(goimports -l .)"
 
       - name: Test
-        working-directory: server-web
+        working-directory: server-monitor/server-web
         run: go test ./...
 
       - name: Vet
-        working-directory: server-web
+        working-directory: server-monitor/server-web
         run: go vet ./...
 
       - name: NLU Evaluation
-        working-directory: server-web
+        working-directory: server-monitor/server-web
         run: |
           set -o pipefail
           go test ./internal/copilot/nlu/eval/ -run TestEvaluate -v -count=1 2>&1 | tee nlu-eval-report.txt
 
       - name: RAG Evaluation
-        working-directory: server-web
+        working-directory: server-monitor/server-web
         run: |
           set -o pipefail
           go test ./internal/copilot/runbook/eval/ -run TestRAGEval -v -count=1 2>&1 | tee rag-eval-report.txt
 
       - name: NLU Multi-Intent Evaluation
-        working-directory: server-web
+        working-directory: server-monitor/server-web
         run: |
           set -o pipefail
           go test ./internal/copilot/nlu/eval/ -run TestEvaluateMulti -v -count=1 2>&1 | tee nlu-multi-eval-report.txt
@@ -88,21 +88,21 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
-          cache-dependency-path: alert-service/go.sum
+          cache-dependency-path: server-monitor/alert-service/go.sum
 
       - name: Install goimports
         run: go install golang.org/x/tools/cmd/goimports@latest
 
       - name: Goimports
-        working-directory: alert-service
+        working-directory: server-monitor/alert-service
         run: test -z "$(goimports -l .)"
 
       - name: Test
-        working-directory: alert-service
+        working-directory: server-monitor/alert-service
         run: go test ./...
 
       - name: Vet
-        working-directory: alert-service
+        working-directory: server-monitor/alert-service
         run: go vet ./...
 
   pkg:
@@ -114,21 +114,21 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
-          cache-dependency-path: pkg/go.sum
+          cache-dependency-path: server-monitor/pkg/go.sum
 
       - name: Install goimports
         run: go install golang.org/x/tools/cmd/goimports@latest
 
       - name: Goimports
-        working-directory: pkg
+        working-directory: server-monitor/pkg
         run: test -z "$(goimports -l .)"
 
       - name: Test
-        working-directory: pkg
+        working-directory: server-monitor/pkg
         run: go test ./...
 
       - name: Vet
-        working-directory: pkg
+        working-directory: server-monitor/pkg
         run: go vet ./...
 
   frontend:
@@ -141,14 +141,14 @@ jobs:
         with:
           node-version: "20"
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: server-monitor/frontend/package-lock.json
 
       - name: Install dependencies
-        working-directory: frontend
+        working-directory: server-monitor/frontend
         run: npm ci
 
       - name: Build
-        working-directory: frontend
+        working-directory: server-monitor/frontend
         run: npm run build
 
   prometheus:
@@ -161,8 +161,8 @@ jobs:
         run: |
           docker run --rm \
             --entrypoint promtool \
-            -v "${{ github.workspace }}/docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
-            -v "${{ github.workspace }}/docker/alerts.yml:/etc/prometheus/rules/alerts.yml:ro" \
+            -v "${{ github.workspace }}/server-monitor/docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
+            -v "${{ github.workspace }}/server-monitor/docker/alerts.yml:/etc/prometheus/rules/alerts.yml:ro" \
             prom/prometheus:v2.51.0 \
             check config /etc/prometheus/prometheus.yml
 
@@ -170,7 +170,7 @@ jobs:
         run: |
           docker run --rm \
             --entrypoint promtool \
-            -v "${{ github.workspace }}/docker/alerts.yml:/etc/prometheus/alerts.yml:ro" \
+            -v "${{ github.workspace }}/server-monitor/docker/alerts.yml:/etc/prometheus/alerts.yml:ro" \
             prom/prometheus:v2.51.0 \
             check rules /etc/prometheus/alerts.yml
 
@@ -178,7 +178,7 @@ jobs:
         run: |
           docker run --rm \
             --entrypoint promtool \
-            -v "${{ github.workspace }}/docker/copilot-ai-quality-rules.yml:/etc/prometheus/rules/copilot-ai-quality-rules.yml:ro" \
+            -v "${{ github.workspace }}/server-monitor/docker/copilot-ai-quality-rules.yml:/etc/prometheus/rules/copilot-ai-quality-rules.yml:ro" \
             prom/prometheus:v2.51.0 \
             check rules /etc/prometheus/rules/copilot-ai-quality-rules.yml
 
@@ -193,7 +193,7 @@ jobs:
           version: v3.14.4
 
       - name: Lint chart
-        run: helm lint charts/server-monitor
+        run: helm lint server-monitor/charts/server-monitor
 
   docker-build:
     name: docker build checks
@@ -214,24 +214,24 @@ jobs:
       - name: Build probe image
         uses: docker/build-push-action@v5
         with:
-          context: .
-          file: ./server-probe/Dockerfile
+          context: ./server-monitor
+          file: ./server-monitor/server-probe/Dockerfile
           push: false
           tags: server-probe:ci
 
       - name: Build web image
         uses: docker/build-push-action@v5
         with:
-          context: .
-          file: ./server-web/Dockerfile
+          context: ./server-monitor
+          file: ./server-monitor/server-web/Dockerfile
           push: false
           tags: server-web:ci
 
       - name: Build alert-service image
         uses: docker/build-push-action@v5
         with:
-          context: .
-          file: ./alert-service/Dockerfile
+          context: ./server-monitor
+          file: ./server-monitor/alert-service/Dockerfile
           push: false
           tags: alert-service:ci
 
@@ -255,8 +255,8 @@ jobs:
       - name: Build and push probe
         uses: docker/build-push-action@v5
         with:
-          context: .
-          file: ./server-probe/Dockerfile
+          context: ./server-monitor
+          file: ./server-monitor/server-probe/Dockerfile
           push: true
           tags: |
             05allan1213/server-probe:latest
@@ -265,8 +265,8 @@ jobs:
       - name: Build and push web
         uses: docker/build-push-action@v5
         with:
-          context: .
-          file: ./server-web/Dockerfile
+          context: ./server-monitor
+          file: ./server-monitor/server-web/Dockerfile
           push: true
           tags: |
             05allan1213/server-web:latest
@@ -275,8 +275,8 @@ jobs:
       - name: Build and push alert-service
         uses: docker/build-push-action@v5
         with:
-          context: .
-          file: ./alert-service/Dockerfile
+          context: ./server-monitor
+          file: ./server-monitor/alert-service/Dockerfile
           push: true
           tags: |
             05allan1213/alert-service:latest
