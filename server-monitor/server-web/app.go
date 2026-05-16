@@ -530,6 +530,7 @@ func initCopilot(ctx context.Context, cfg config.Config, infra infrastructure, m
 		ContextManager:       copilotContextMgr,
 		ToolDefs:             toolDefinitions(toolExecutor),
 		ToolsClassifyEnabled: cfg.CopilotToolsClassifyEnabled,
+		LLMClassifyThreshold: cfg.CopilotLLMClassifyThreshold,
 		MultiIntentEnabled:   cfg.CopilotMultiIntentEnabled,
 		MultiIntentMax:       cfg.CopilotMultiIntentMax,
 	}))

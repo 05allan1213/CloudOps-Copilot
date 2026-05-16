@@ -1,8 +1,11 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -69,10 +72,39 @@ func (h *Handler) Chat(c *gin.Context) {
 		return
 	}
 
+	if wantsEventStream(c) {
+		writeChatStream(c, result)
+		return
+	}
+
 	c.JSON(http.StatusOK, response{
 		Status: "success",
 		Data:   result,
 	})
+}
+
+func wantsEventStream(c *gin.Context) bool {
+	return strings.Contains(c.GetHeader("Accept"), "text/event-stream")
+}
+
+func writeChatStream(c *gin.Context, result copilot.ChatResponse) {
+	c.Header("Content-Type", "text/event-stream; charset=utf-8")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+	c.Status(http.StatusOK)
+	writeSSEEvent(c.Writer, "response", response{Status: "success", Data: result})
+	writeSSEEvent(c.Writer, "done", gin.H{})
+	c.Writer.Flush()
+}
+
+func writeSSEEvent(w gin.ResponseWriter, event string, value interface{}) {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		payload = []byte(`{"status":"error","error":"stream encoding failed"}`)
+	}
+	_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, payload)
+	w.Flush()
 }
 
 func (h *Handler) ListSessions(c *gin.Context) {

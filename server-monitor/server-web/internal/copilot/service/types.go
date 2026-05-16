@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"server-web/internal/copilot/session"
+	copilotsuggestion "server-web/internal/copilot/suggestion"
 )
 
 type SummaryInput struct {
@@ -16,7 +17,7 @@ type SummaryInput struct {
 
 type SummaryResult struct {
 	Reply       string
-	Suggestions []string
+	Suggestions []Suggestion
 }
 
 type Summarizer interface {
@@ -27,6 +28,8 @@ type ChatHistoryItem struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
 }
+
+type Suggestion = copilotsuggestion.Suggestion
 
 type ContextManager interface {
 	LoadHistory(ctx context.Context, sessionID string) ([]ChatHistoryItem, error)

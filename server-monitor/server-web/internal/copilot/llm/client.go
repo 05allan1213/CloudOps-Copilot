@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -57,6 +58,7 @@ type chatRequest struct {
 	ToolChoice  interface{}      `json:"tool_choice,omitempty"`
 	Temperature float64          `json:"temperature"`
 	MaxTokens   int              `json:"max_tokens,omitempty"`
+	Stream      bool             `json:"stream,omitempty"`
 }
 
 type ChatMessage struct {
@@ -68,6 +70,14 @@ type ChatMessage struct {
 
 type chatResponse struct {
 	Choices []struct {
+		Message ChatMessage `json:"message"`
+	} `json:"choices"`
+	Usage *ChatUsage `json:"usage,omitempty"`
+}
+
+type chatStreamChunk struct {
+	Choices []struct {
+		Delta   ChatMessage `json:"delta"`
 		Message ChatMessage `json:"message"`
 	} `json:"choices"`
 	Usage *ChatUsage `json:"usage,omitempty"`
@@ -372,6 +382,27 @@ func (c *Client) Chat(ctx context.Context, messages []ChatMessage) (string, *Cha
 	return "", lastUsage, lastErr
 }
 
+func (c *Client) ChatStream(ctx context.Context, messages []ChatMessage, onDelta func(string) error) (string, *ChatUsage, error) {
+	if c == nil || c.apiKey == "" || c.apiURL == "" || c.model == "" {
+		if c != nil && c.observer != nil {
+			c.observer.ObserveLLMRequest(c.model, "error", 0, 0, 0)
+		}
+		return "", nil, ErrDisabled
+	}
+
+	start := time.Now()
+	content, usage, err := c.doChatStreamRequest(ctx, messages, onDelta)
+	if c.observer != nil {
+		inputTokens, outputTokens := tokenCountsFromUsage(usage)
+		result := "success"
+		if err != nil {
+			result = "error"
+		}
+		c.observer.ObserveLLMRequest(c.model, result, time.Since(start).Seconds(), inputTokens, outputTokens)
+	}
+	return content, usage, err
+}
+
 func tokenCountsFromUsage(usage *ChatUsage) (int, int) {
 	if usage == nil {
 		return 0, 0
@@ -454,6 +485,88 @@ func (c *Client) doChatRequest(ctx context.Context, chatReq chatRequest) (ChatMe
 		return ChatMessage{}, nil, ErrInvalidResponse
 	}
 	return decoded.Choices[0].Message, decoded.Usage, nil
+}
+
+func (c *Client) doChatStreamRequest(ctx context.Context, messages []ChatMessage, onDelta func(string) error) (string, *ChatUsage, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
+	body, err := json.Marshal(chatRequest{
+		Model:       c.model,
+		Messages:    messages,
+		Temperature: 0.3,
+		MaxTokens:   c.maxTokens,
+		Stream:      true,
+	})
+	if err != nil {
+		return "", nil, fmt.Errorf("marshal llm stream request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.apiURL, bytes.NewReader(body))
+	if err != nil {
+		return "", nil, fmt.Errorf("create llm stream request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", nil, fmt.Errorf("call llm stream: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return "", nil, fmt.Errorf("llm stream returned status %d%s", resp.StatusCode, responseBodyDetail(resp.Body))
+	}
+
+	var builder strings.Builder
+	var usage *ChatUsage
+	scanner := bufio.NewScanner(resp.Body)
+	maxScanToken := int(c.maxResponseBytes)
+	if maxScanToken < 64*1024 {
+		maxScanToken = 64 * 1024
+	}
+	scanner.Buffer(make([]byte, 0, 64*1024), maxScanToken)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, ":") {
+			continue
+		}
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "[DONE]" {
+			break
+		}
+
+		var chunk chatStreamChunk
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			return builder.String(), usage, fmt.Errorf("decode llm stream chunk: %w", err)
+		}
+		if chunk.Usage != nil {
+			usage = chunk.Usage
+		}
+		for _, choice := range chunk.Choices {
+			delta := choice.Delta.Content
+			if delta == "" {
+				delta = choice.Message.Content
+			}
+			if delta == "" {
+				continue
+			}
+			builder.WriteString(delta)
+			if onDelta != nil {
+				if err := onDelta(delta); err != nil {
+					return builder.String(), usage, fmt.Errorf("handle llm stream delta: %w", err)
+				}
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return builder.String(), usage, fmt.Errorf("read llm stream: %w", err)
+	}
+	return builder.String(), usage, nil
 }
 
 func responseBodyDetail(body io.Reader) string {

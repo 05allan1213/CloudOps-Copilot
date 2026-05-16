@@ -1,13 +1,14 @@
 # Server Monitor 项目架构重构与代码整改方案
 
-> 版本：v2.4  
-> 日期：2026-05-15  
-> 范围：server-monitor 全项目（server-web、alert-service、server-probe、pkg）  
-> v2.0 变更：合并目录结构重构方案（参考 honey_server internal 分层架构），新增 §15-§19  
-> v2.1 变更：修复 §15-§19 中 P0 编译冲突——目录聚合 ≠ package 合并，service/infra 改为子包模式，Kafka/Redis 与 §3 对齐进 pkg，copilot 保留原子包、eval 不合并  
-> v2.2 变更：修正真实 package 名（rediscache/promclient）、补充 diagnosisAccessAdapter 导出构造函数、修正文件数量、补齐 webhook 现状  
-> v2.3 变更：修正 diagnosisAccessAdapter 示例代码（返回具体类型避免 import cycle）、copilot 子包数 7→11  
+> 版本：v2.5
+> 日期：2026-05-16
+> 范围：server-monitor 全项目（server-web、alert-service、server-probe、pkg）
+> v2.0 变更：合并目录结构重构方案（参考 honey_server internal 分层架构），新增 §15-§19
+> v2.1 变更：修复 §15-§19 中 P0 编译冲突——目录聚合 ≠ package 合并，service/infra 改为子包模式，Kafka/Redis 与 §3 对齐进 pkg，copilot 保留原子包、eval 不合并
+> v2.2 变更：修正真实 package 名（rediscache/promclient）、补充 diagnosisAccessAdapter 导出构造函数、修正文件数量、补齐 webhook 现状
+> v2.3 变更：修正 diagnosisAccessAdapter 示例代码（返回具体类型避免 import cycle）、copilot 子包数 7→11
 > v2.4 变更：新增 §20 构建部署与 CI 镜像影响分析
+> v2.5 变更：补齐 Copilot AI 升级后的 `context/summary/suggestion` 子包、结构化建议与 SSE 响应影响
 
 ---
 
@@ -61,7 +62,7 @@ server-monitor/
 │   ├── alert/                    # 告警服务（Webhook + Redis + Kafka）
 │   ├── auth/                     # 认证服务（JWT + bcrypt）
 │   ├── cache/                    # 缓存服务（主机列表 + 仪表盘概览）
-│   ├── copilot/                  # AI Copilot 模块（11 个子包，65 个文件）
+│   ├── copilot/                  # AI Copilot 模块（14 个子包，约 76 个非测试 Go 文件）
 │   ├── database/                 # MySQL 客户端 + GORM 迁移
 │   ├── host/                     # 主机服务（Prometheus 查询 + 缓存）
 │   ├── kafka/                    # Kafka 生产者与消费者
@@ -1126,6 +1127,14 @@ server-web/
 │       ├── session/                 # package session（原 copilot/session/）
 │       │   └── store.go
 │       │
+│       ├── context/                 # 多轮上下文管理
+│       │   └── manager.go
+│       ├── summary/                 # LLM 工具结果摘要
+│       │   ├── prompt.go
+│       │   └── summarizer.go
+│       ├── suggestion/              # 结构化建议构造与归一化
+│       │   └── suggestion.go
+│       │
 │       ├── nlu/                     # 自然语言理解
 │       │   ├── nlu.go
 │       │   └── eval/                # package eval（nlu 评估，保持独立）
@@ -1322,6 +1331,9 @@ server-web/
 | `copilot/service/service.go` | `internal/copilot/service/service.go` | 保持子包（service.go 依赖 session 子包并定义别名） |
 | `copilot/handler/handler.go` | `internal/copilot/handler/handler.go` | 保持子包 |
 | `copilot/session/store.go` | `internal/copilot/session/store.go` | 保持子包 |
+| （AI 升级新增） | `internal/copilot/context/*` | 多轮上下文管理，仍在 copilot 内聚边界内 |
+| （AI 升级新增） | `internal/copilot/summary/*` | LLM 工具结果摘要生成 |
+| （AI 升级新增） | `internal/copilot/suggestion/*` | 结构化建议构造与归一化 |
 | `copilot/nlu/nlu.go` | `internal/copilot/nlu/nlu.go` | 保持子包 |
 | `copilot/nlu/eval/*` | `internal/copilot/nlu/eval/*` | 保持 nlu 下的 eval 子包，不合并 |
 | `copilot/llm/client.go` | `internal/copilot/llm/client.go` | 保持子包 |
@@ -1499,8 +1511,8 @@ cd server-monitor/pkg && go test ./...
 | 移入 `internal/infra/pubsub/` | 2 个文件 |
 | 移入 `internal/infra/websocket/` | 1 个文件 |
 | 移入 `internal/infra/webhook/` | 1 个文件 |
-| 移入 `internal/copilot/` | ~65 个文件 |
-| **合计** | **~107 个文件移动** |
+| 移入 `internal/copilot/` | ~76 个非测试 Go 文件 |
+| **合计** | **~118 个文件移动/新增** |
 
 > **注：** Kafka 的 4 个文件（consumer.go、producer.go、topics.go、consumer_test.go）按 §3 提取到 `pkg/kafka/`，不在此处统计。
 
@@ -1527,6 +1539,8 @@ cd server-monitor/pkg && go test ./...
 ### 20.2 CI (`.github/workflows/ci.yaml`)
 
 **大部分 CI 步骤不受影响：** `goimports`、`go test ./...`、`go vet ./...` 都在 `working-directory: server-web` 下递归执行，`internal/` 子目录会被自动包含。
+
+Copilot AI 升级新增的 `internal/copilot/context/`、`internal/copilot/summary/`、`internal/copilot/suggestion/` 仍位于 `server-web` module 内；结构化建议和 SSE 响应只影响 `server-web` 编译、测试与前端构建，不需要新增独立 CI job。
 
 **需要修改的步骤：**
 

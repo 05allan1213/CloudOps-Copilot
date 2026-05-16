@@ -5,13 +5,14 @@ import {
   deleteCopilotSession,
   listCopilotMessages,
   listCopilotSessions,
-  sendCopilotMessage,
+  streamCopilotMessage,
 } from "../api/copilot";
 import SessionList from "../components/copilot/SessionList.vue";
 import ChatPanel from "../components/copilot/ChatPanel.vue";
 import type {
   CopilotChatResponse,
   CopilotMessage,
+  CopilotSuggestion,
   CopilotSession,
   CopilotToolCall,
 } from "../types";
@@ -20,13 +21,12 @@ type LocalMessage = CopilotMessage & {
   intent?: string;
   confidence?: number;
   tool_calls?: CopilotToolCall[];
-  suggestions?: string[];
+  suggestions?: CopilotSuggestion[];
 };
 
 const sessions = ref<CopilotSession[]>([]);
 const messages = ref<LocalMessage[]>([]);
 const activeSessionId = ref("");
-const draft = ref("");
 const loadingSessions = ref(false);
 const loadingMessages = ref(false);
 const sending = ref(false);
@@ -100,7 +100,7 @@ async function submitMessage(content: string) {
   });
 
   try {
-    const response = await sendCopilotMessage({
+    const response = await streamCopilotMessage({
       message: content,
       session_id: sessionId || undefined,
     });
@@ -122,9 +122,9 @@ async function submitMessage(content: string) {
   }
 }
 
-function applySuggestion(value: string) {
-  draft.value = value;
-  submitMessage(value);
+function applySuggestion(suggestion: CopilotSuggestion) {
+  const content = (suggestion.action || suggestion.text).trim();
+  submitMessage(content);
 }
 
 function toAssistantMessage(response: CopilotChatResponse): LocalMessage {

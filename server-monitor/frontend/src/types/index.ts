@@ -440,7 +440,14 @@ export interface CopilotChatResponse {
   intent: string;
   confidence: number;
   tool_calls: CopilotToolCall[];
-  suggestions: string[];
+  suggestions: CopilotSuggestion[];
+}
+
+export interface CopilotSuggestion {
+  text: string;
+  action?: string;
+  intent?: string;
+  params?: Record<string, string>;
 }
 
 export interface CopilotSession {

@@ -131,30 +131,79 @@ func parseSummaryResult(content string) (service.SummaryResult, error) {
 	}
 
 	var payload struct {
-		Reply       string   `json:"reply"`
-		Suggestions []string `json:"suggestions"`
+		Reply       string          `json:"reply"`
+		Suggestions json.RawMessage `json:"suggestions"`
 	}
 	if err := json.Unmarshal([]byte(content), &payload); err == nil {
 		payload.Reply = strings.TrimSpace(payload.Reply)
 		if payload.Reply == "" {
 			return service.SummaryResult{}, ErrFallback
 		}
+		suggestions, err := parseSuggestions(payload.Suggestions)
+		if err != nil {
+			return service.SummaryResult{}, err
+		}
 		return service.SummaryResult{
 			Reply:       payload.Reply,
-			Suggestions: filterSuggestions(payload.Suggestions),
+			Suggestions: suggestions,
 		}, nil
 	}
 
 	return service.SummaryResult{Reply: content}, nil
 }
 
-func filterSuggestions(values []string) []string {
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value != "" {
-			result = append(result, value)
+func parseSuggestions(raw json.RawMessage) ([]service.Suggestion, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+
+	var structured []service.Suggestion
+	if err := json.Unmarshal(raw, &structured); err == nil {
+		return filterSuggestions(structured), nil
+	}
+
+	var texts []string
+	if err := json.Unmarshal(raw, &texts); err != nil {
+		return nil, fmt.Errorf("decode summary suggestions: %w", err)
+	}
+	suggestions := make([]service.Suggestion, 0, len(texts))
+	for _, text := range texts {
+		text = strings.TrimSpace(text)
+		if text != "" {
+			suggestions = append(suggestions, service.Suggestion{Text: text, Action: text})
 		}
+	}
+	return suggestions, nil
+}
+
+func filterSuggestions(values []service.Suggestion) []service.Suggestion {
+	result := make([]service.Suggestion, 0, len(values))
+	for _, value := range values {
+		text := strings.TrimSpace(value.Text)
+		if text == "" {
+			continue
+		}
+		action := strings.TrimSpace(value.Action)
+		if action == "" {
+			action = text
+		}
+		params := make(map[string]string, len(value.Params))
+		for key, paramValue := range value.Params {
+			key = strings.TrimSpace(key)
+			paramValue = strings.TrimSpace(paramValue)
+			if key != "" && paramValue != "" {
+				params[key] = paramValue
+			}
+		}
+		if len(params) == 0 {
+			params = nil
+		}
+		result = append(result, service.Suggestion{
+			Text:   text,
+			Action: action,
+			Intent: strings.TrimSpace(value.Intent),
+			Params: params,
+		})
 	}
 	return result
 }

@@ -6,9 +6,10 @@ import (
 	"strings"
 
 	"server-web/internal/copilot/nlu"
+	copilotsuggestion "server-web/internal/copilot/suggestion"
 )
 
-func (s *Service) buildReplyWithSummary(ctx context.Context, message string, result nlu.Result, toolReply string, toolCalls []ToolCall, history []ChatHistoryItem) (string, []string) {
+func (s *Service) buildReplyWithSummary(ctx context.Context, message string, result nlu.Result, toolReply string, toolCalls []ToolCall, history []ChatHistoryItem) (string, []Suggestion) {
 	fallbackReply := buildReply(result, toolReply, toolCalls)
 	fallbackSuggestions := buildSuggestions(result)
 	if s.summarizer == nil || !s.summaryEnabled {
@@ -34,7 +35,7 @@ func (s *Service) buildReplyWithSummary(ctx context.Context, message string, res
 	return summaryOrFallback(summaryResult, fallbackReply, fallbackSuggestions)
 }
 
-func (s *Service) chatWithLLM(ctx context.Context, message string, result nlu.Result, toolCalls []ToolCall, history []ChatHistoryItem, fallbackReply string, fallbackSuggestions []string) (string, []string) {
+func (s *Service) chatWithLLM(ctx context.Context, message string, result nlu.Result, toolCalls []ToolCall, history []ChatHistoryItem, fallbackReply string, fallbackSuggestions []Suggestion) (string, []Suggestion) {
 	summaryResult, err := s.summarizer.Summarize(ctx, SummaryInput{
 		UserMessage: message,
 		ToolCalls:   toolCalls,
@@ -47,12 +48,12 @@ func (s *Service) chatWithLLM(ctx context.Context, message string, result nlu.Re
 	return summaryOrFallback(summaryResult, fallbackReply, fallbackSuggestions)
 }
 
-func summaryOrFallback(result SummaryResult, fallbackReply string, fallbackSuggestions []string) (string, []string) {
+func summaryOrFallback(result SummaryResult, fallbackReply string, fallbackSuggestions []Suggestion) (string, []Suggestion) {
 	reply := strings.TrimSpace(result.Reply)
 	if reply == "" {
 		reply = fallbackReply
 	}
-	suggestions := filterEmptyStrings(result.Suggestions)
+	suggestions := copilotsuggestion.Normalize(result.Suggestions)
 	if len(suggestions) == 0 {
 		suggestions = fallbackSuggestions
 	}
@@ -66,17 +67,6 @@ func hasSuccessfulToolCall(toolCalls []ToolCall) bool {
 		}
 	}
 	return false
-}
-
-func filterEmptyStrings(values []string) []string {
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value != "" {
-			result = append(result, value)
-		}
-	}
-	return result
 }
 
 func buildReply(result nlu.Result, toolReply string, toolCalls []ToolCall) string {
@@ -108,23 +98,17 @@ func buildReply(result nlu.Result, toolReply string, toolCalls []ToolCall) strin
 	}
 }
 
-func buildSuggestions(result nlu.Result) []string {
-	switch result.Intent {
-	case nlu.IntentAlertQuery:
-		return []string{"查看当前活跃告警", "查看严重级别告警"}
-	case nlu.IntentAlertEventQuery:
-		return []string{"查看最新告警事件", "查看最近已恢复告警"}
-	case nlu.IntentAlertHistoryQuery:
-		return []string{"查看最近一周CPU告警历史", "查看警告级别告警历史"}
-	case nlu.IntentHostQuery:
-		return []string{"查看当前主机列表", "查看离线主机"}
-	case nlu.IntentMetricQuery:
-		return []string{"查看 node-1 最近1小时CPU", "查看最近24小时内存趋势"}
-	case nlu.IntentDiagnosisRequest:
-		return []string{"显示最近 5 条告警历史", "显示当前 firing 告警"}
-	case nlu.IntentGeneralChat:
-		return []string{"当前有哪些活跃告警？", "哪些主机离线了？", "查看 node-1 的CPU趋势"}
-	default:
-		return []string{"当前有哪些活跃告警？", "哪些主机离线了？", "查看 node-1 的CPU趋势"}
+func buildSuggestions(result nlu.Result) []Suggestion {
+	return copilotsuggestion.Build(result)
+}
+
+func filterEmptyStrings(values []string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			result = append(result, value)
+		}
 	}
+	return result
 }

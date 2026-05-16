@@ -2,7 +2,7 @@
 import { RouterLink } from "vue-router";
 
 import ToolCallDisplay from "./ToolCallDisplay.vue";
-import type { CopilotToolCall } from "../../types";
+import type { CopilotSuggestion, CopilotToolCall } from "../../types";
 
 type LocalMessage = {
   role: string;
@@ -11,7 +11,7 @@ type LocalMessage = {
   intent?: string;
   confidence?: number;
   tool_calls?: CopilotToolCall[];
-  suggestions?: string[];
+  suggestions?: CopilotSuggestion[];
 };
 
 defineProps<{
@@ -19,7 +19,7 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{
-  applySuggestion: [value: string];
+  applySuggestion: [suggestion: CopilotSuggestion];
 }>();
 
 function formatTime(value: string): string {
@@ -81,12 +81,12 @@ function diagnosisReportId(message: LocalMessage): number | null {
       <div v-if="message.suggestions?.length" class="suggestion-row">
         <el-button
           v-for="suggestion in message.suggestions"
-          :key="suggestion"
+          :key="suggestion.action || suggestion.text"
           size="small"
           round
           @click="emit('applySuggestion', suggestion)"
         >
-          {{ suggestion }}
+          {{ suggestion.text }}
         </el-button>
       </div>
     </div>

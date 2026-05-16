@@ -14,9 +14,13 @@ func defaultClassifier(classifier *nlu.Classifier) *nlu.Classifier {
 }
 
 func (s *Service) classifyWithFallback(ctx context.Context, message string, parsed nlu.Result) nlu.Result {
-	if s.llm == nil || parsed.Confidence >= 0.6 {
+	threshold := s.llmClassifyThreshold
+	if threshold <= 0 || threshold > 1 {
+		threshold = DefaultLLMClassifyThreshold
+	}
+	if s.llm == nil || parsed.Confidence >= threshold {
 		if parsed.Source == "" {
-			if parsed.Confidence >= 0.6 {
+			if parsed.Confidence >= threshold {
 				parsed.Source = "rule"
 			} else {
 				parsed.Source = "rule-low"

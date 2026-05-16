@@ -3,7 +3,7 @@ import { computed, nextTick, ref, watch } from "vue";
 import { Refresh } from "@element-plus/icons-vue";
 
 import MessageBubble from "./MessageBubble.vue";
-import type { CopilotSession, CopilotToolCall } from "../../types";
+import type { CopilotSession, CopilotSuggestion, CopilotToolCall } from "../../types";
 
 type LocalMessage = {
   role: string;
@@ -12,7 +12,7 @@ type LocalMessage = {
   intent?: string;
   confidence?: number;
   tool_calls?: CopilotToolCall[];
-  suggestions?: string[];
+  suggestions?: CopilotSuggestion[];
 };
 
 const props = defineProps<{
@@ -26,7 +26,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   send: [content: string];
   refresh: [];
-  applySuggestion: [value: string];
+  applySuggestion: [suggestion: CopilotSuggestion];
 }>();
 
 const draft = ref("");

@@ -125,6 +125,10 @@ type Config struct {
 	CopilotMultiIntentEnabled   bool `env:"COPILOT_MULTI_INTENT_ENABLED" envDefault:"false"`
 	CopilotMultiIntentMax       int  `env:"COPILOT_MULTI_INTENT_MAX" envDefault:"3"`
 
+	// CopilotLLMClassifyThreshold 规则分类置信度低于该值时走 LLM 分类主路径
+	// 默认值：0.9
+	CopilotLLMClassifyThreshold float64
+
 	// CopilotSummaryEnabled 是否启用 Copilot 工具结果 LLM 摘要
 	// 默认值：true
 	CopilotSummaryEnabled bool
@@ -472,6 +476,7 @@ func Load() Config {
 		CopilotToolsClassifyEnabled:  configutil.Bool("COPILOT_TOOLS_CLASSIFY_ENABLED", false),
 		CopilotMultiIntentEnabled:    configutil.Bool("COPILOT_MULTI_INTENT_ENABLED", false),
 		CopilotMultiIntentMax:        configutil.PositiveInt("COPILOT_MULTI_INTENT_MAX", 3),
+		CopilotLLMClassifyThreshold:  configutil.FloatRange("COPILOT_LLM_CLASSIFY_THRESHOLD", 0.9, 0, 1),
 		CopilotSummaryEnabled:        configutil.Bool("COPILOT_SUMMARY_ENABLED", true),
 		CopilotSummaryTimeout:        configutil.DurationSeconds("COPILOT_SUMMARY_TIMEOUT_SECONDS", 8),
 		CopilotSummaryMaxPromptBytes: configutil.PositiveInt("COPILOT_SUMMARY_MAX_PROMPT_BYTES", 16384),

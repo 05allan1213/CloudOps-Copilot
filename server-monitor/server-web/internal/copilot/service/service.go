@@ -16,8 +16,9 @@ import (
 )
 
 const (
-	DefaultMaxMessageLength = 2000
-	IntentUnknown           = "unknown"
+	DefaultMaxMessageLength     = 2000
+	DefaultLLMClassifyThreshold = 0.9
+	IntentUnknown               = "unknown"
 )
 
 var (
@@ -42,6 +43,7 @@ type Config struct {
 	ContextManager       ContextManager
 	ToolDefs             []llm.ToolDefinition
 	ToolsClassifyEnabled bool
+	LLMClassifyThreshold float64
 	MultiIntentEnabled   bool
 	MultiIntentMax       int
 }
@@ -77,6 +79,7 @@ type Service struct {
 	contextManager       ContextManager
 	toolDefs             []llm.ToolDefinition
 	toolsClassifyEnabled bool
+	llmClassifyThreshold float64
 	multiIntentEnabled   bool
 	multiIntentMax       int
 }
@@ -114,7 +117,7 @@ type ChatResponse struct {
 	Intent       string         `json:"intent"`
 	Confidence   float64        `json:"confidence"`
 	ToolCalls    []ToolCall     `json:"tool_calls"`
-	Suggestions  []string       `json:"suggestions"`
+	Suggestions  []Suggestion   `json:"suggestions"`
 	MultiIntents []IntentResult `json:"multi_intents,omitempty"`
 }
 
@@ -133,6 +136,10 @@ func NewService(cfg Config) *Service {
 	}
 	toolDefs := cfg.ToolDefs
 	toolsClassifyEnabled := cfg.ToolsClassifyEnabled
+	llmClassifyThreshold := cfg.LLMClassifyThreshold
+	if llmClassifyThreshold <= 0 || llmClassifyThreshold > 1 {
+		llmClassifyThreshold = DefaultLLMClassifyThreshold
+	}
 	multiIntentEnabled := cfg.MultiIntentEnabled
 	multiIntentMax := cfg.MultiIntentMax
 	if multiIntentMax <= 0 {
@@ -152,6 +159,7 @@ func NewService(cfg Config) *Service {
 		contextManager:       cfg.ContextManager,
 		toolDefs:             toolDefs,
 		toolsClassifyEnabled: toolsClassifyEnabled,
+		llmClassifyThreshold: llmClassifyThreshold,
 		multiIntentEnabled:   multiIntentEnabled,
 		multiIntentMax:       multiIntentMax,
 	}
