@@ -3,7 +3,7 @@
 > 版本：v1.2  
 > 日期：2026-05-15  
 > 基准方案：design.md v2.4  
-> 状态：执行中（步骤 19 已验收）
+> 状态：执行完成（步骤 20 已验收）
 > 
 > v1.2 变更：基准方案文件名更正为 design.md、方案 B 去掉 .gitignore 建议、步骤 17 mkdir 命令 cwd 统一
 > v1.1 变更：修订 9 项评审反馈——internal 目录创建补全、命令 cwd 明确、commit 策略改为建议提交点、验收标准改为待勾选、sarama 依赖推迟到步骤 5、miniredis 依赖风险补充、Makefile test 包含 pkg + .PHONY/help 同步、步骤 20 注释先于验证、文档文件处理方案
@@ -1588,20 +1588,44 @@ cd server-monitor/server-probe && go vet ./...
 
 **验收标准**：
 
-- [ ] `make build` 通过
-- [ ] `make test` 通过
-- [ ] `make docker` 通过
-- [ ] `pkg/go test ./...` 通过
-- [ ] `go vet ./...` 各服务无警告
-- [ ] server-web/main.go < 80 行
-- [ ] router.go < 150 行
-- [ ] alert-service/main.go < 60 行
-- [ ] server-probe/main.go < 60 行
-- [ ] Channel 等待超时：0 处无保护
-- [ ] 重复代码：0 处残留
-- [ ] internal/ 封装：所有业务代码在 internal/ 下
-- [ ] 关键注释已补充
-- [ ] CI 配置已更新
+- [x] `make build` 通过
+- [x] `make test` 通过
+- [x] `make docker` 通过
+- [x] `pkg/go test ./...` 通过
+- [x] `go vet ./...` 各服务无警告
+- [x] server-web/main.go < 80 行
+- [x] router.go < 150 行
+- [x] alert-service/main.go < 60 行
+- [x] server-probe/main.go < 60 行
+- [x] Channel 等待超时：0 处无保护
+- [x] 重复代码：0 处残留
+- [x] internal/ 封装：所有业务代码在 internal/ 下
+- [x] 关键注释已补充
+- [x] CI 配置已更新
+
+**执行记录（2026-05-16）**：
+
+- 已补充 `server-web/app.go` 的依赖分层注释：`infrastructure`、`services`、`app`
+- 已补充 `server-web/main.go` 的关闭流程注释，说明 `runApp` 与 `shutdownApp` 的四阶段有界关闭边界
+- 已检查计划列出的其余注释项：`pkg/kafka/consumer.go`、`pkg/kafka/producer.go`、`pkg/redis/client.go`、`pkg/configutil/validate.go`、`alert-service/app.go`、`server-probe/app.go` 已有对应注释，无需重复补充
+- 已执行格式化：`cd server-monitor && goimports -w server-web/ alert-service/ server-probe/ pkg/`
+- 验证：`cd server-monitor && GOCACHE=/tmp/cloudops-gocache make build` 通过
+- 验证：`cd server-monitor && make test` 在允许本地 TCP socket 的环境中通过；沙箱内同命令因 `pkg/redis` 的 miniredis 监听 `127.0.0.1:0` 失败，错误为 `socket: operation not permitted`
+- 验证：`cd server-monitor && make docker` 在允许 Docker buildx 写 `~/.docker/buildx/activity` 的环境中通过；沙箱内同命令因该路径只读失败
+- 验证：`cd server-monitor/pkg && go test -v ./...` 在允许本地 TCP socket 的环境中通过
+- 验证：`cd server-monitor/server-web && GOCACHE=/tmp/cloudops-gocache go vet ./...` 通过
+- 验证：`cd server-monitor/alert-service && GOCACHE=/tmp/cloudops-gocache go vet ./...` 通过
+- 验证：`cd server-monitor/server-probe && GOCACHE=/tmp/cloudops-gocache go vet ./...` 通过
+- 验证：`cd server-monitor/pkg && GOCACHE=/tmp/cloudops-gocache go vet ./...` 通过
+- 量化指标：`wc -l server-web/main.go server-web/internal/router/router.go alert-service/main.go server-probe/main.go` 输出分别为 44、126、31、32，均满足阈值
+- Channel 等待检查：`rg -n "<-app\\." server-web` 无输出
+- 重复代码检查：`ls server-web/kafka/ alert-service/kafka/ 2>&1` 输出均为 `No such file or directory`
+- 校验函数重复检查：`rg -n "func validateHostPort" server-web alert-service server-probe` 无输出
+- internal 封装检查：`find server-web/internal -mindepth 1 -maxdepth 1 -type d -printf '%f\\n' | sort` 输出 `config`、`copilot`、`handler`、`infra`、`middleware`、`model`、`router`、`service`
+- 旧 import / CI 路径检查：`rg -n '"server-web/(alert|auth|cache|host|redis|pubsub|api|config|copilot|database|prometheus|websocket|webhook|model)(/|"|$)' server-monitor` 无输出；`rg -n 'go test ./copilot/(nlu|runbook)/eval' server-monitor/.github/workflows/ci.yaml` 无输出
+- tracing dashboard 检查：`rg -n 'alert-service\\.consume|alert-service/kafka' server-monitor` 无输出，现有 dashboard 未按旧 tracer/span 名称过滤，无需同步修改
+- 验收后已执行 `cd server-monitor && make clean` 清理 `make build` 生成的本地二进制构建产物
+- 补充检查：`git diff --check` 通过
 
 **已知行为差异（无需修复，步骤 20 验收时同步更新 tracing dashboard）**：
 

@@ -47,6 +47,7 @@ import (
 	"server-monitor/pkg/tracer"
 )
 
+// infrastructure groups process-level clients and hubs that are shared across services.
 type infrastructure struct {
 	shutdownTracer   func(context.Context) error
 	prometheusClient *promclient.Client
@@ -57,6 +58,7 @@ type infrastructure struct {
 	alertHub         *pubsub.Hub
 }
 
+// services groups business services and handlers assembled from infrastructure.
 type services struct {
 	authService    *authpkg.Service
 	alertService   *appalert.Service
@@ -66,6 +68,7 @@ type services struct {
 	copilotDeps    *api.CopilotDeps
 }
 
+// app wires configuration, dependencies, and runtime lifecycle state.
 type app struct {
 	cfg               config.Config
 	shutdownTracer    func(context.Context) error

@@ -33,6 +33,9 @@ func main() {
 		os.Exit(1)
 	}
 
+	// runApp blocks until an exit condition, then shutdownApp performs the
+	// bounded four-phase shutdown for HTTP traffic, consumers, external clients,
+	// and in-process hubs.
 	exitCode := runApp(app)
 	shutdownApp(app)
 	if exitCode != 0 {
