@@ -207,7 +207,7 @@ func (h *RootCauseHypothesis) UnmarshalJSON(data []byte) error {
 		} else {
 			var single string
 			if err := json.Unmarshal(raw.Evidence, &single); err != nil {
-				return fmt.Errorf("evidence must be string or string array")
+				return fmt.Errorf("evidence 必须为字符串或字符串数组")
 			}
 			if strings.TrimSpace(single) != "" {
 				h.Evidence = []string{single}
@@ -226,7 +226,7 @@ func (h *RootCauseHypothesis) UnmarshalJSON(data []byte) error {
 	value := strings.TrimSpace(string(raw.Confidence))
 	parsed, err := strconv.ParseFloat(value, 64)
 	if err != nil {
-		return fmt.Errorf("confidence must be string or number")
+		return fmt.Errorf("confidence 必须为字符串或数字")
 	}
 	h.Confidence = strconv.FormatFloat(parsed, 'f', -1, 64)
 	return nil

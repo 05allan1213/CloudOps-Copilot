@@ -28,7 +28,7 @@ func NewHandler(service *Service) *Handler {
 func (h *Handler) Trigger(c *gin.Context) {
 	var req Request
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, apiResponse{Status: "error", Error: "invalid diagnosis request"})
+		c.JSON(http.StatusBadRequest, apiResponse{Status: "error", Error: "无效的诊断请求"})
 		return
 	}
 	result, err := h.service.Trigger(c.Request.Context(), currentUser(c), req)
@@ -55,7 +55,7 @@ func (h *Handler) List(c *gin.Context) {
 func (h *Handler) Get(c *gin.Context) {
 	id, err := strconv.ParseUint(strings.TrimSpace(c.Param("id")), 10, 64)
 	if err != nil || id == 0 {
-		c.JSON(http.StatusBadRequest, apiResponse{Status: "error", Error: "invalid diagnosis id"})
+		c.JSON(http.StatusBadRequest, apiResponse{Status: "error", Error: "无效的诊断 ID"})
 		return
 	}
 	result, err := h.service.Get(c.Request.Context(), currentUser(c), id)
@@ -74,12 +74,12 @@ func parseListFilter(c *gin.Context) (ListFilter, bool) {
 	var err error
 	filter.Page, err = parseIntQuery(c.Query("page"), defaultPage)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, apiResponse{Status: "error", Error: "invalid page"})
+		c.JSON(http.StatusBadRequest, apiResponse{Status: "error", Error: "无效的页码"})
 		return ListFilter{}, false
 	}
 	filter.PageSize, err = parseIntQuery(c.Query("page_size"), defaultPageSize)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, apiResponse{Status: "error", Error: "invalid page_size"})
+		c.JSON(http.StatusBadRequest, apiResponse{Status: "error", Error: "无效的每页数量"})
 		return ListFilter{}, false
 	}
 	normalized, err := NormalizeListFilter(filter)
@@ -126,20 +126,20 @@ func writeError(c *gin.Context, err error) {
 	case errors.Is(err, ErrInvalidRequest):
 		c.JSON(http.StatusBadRequest, apiResponse{Status: "error", Error: err.Error()})
 	case errors.Is(err, ErrNotFound):
-		c.JSON(http.StatusNotFound, apiResponse{Status: "error", Error: "diagnosis target not found"})
+		c.JSON(http.StatusNotFound, apiResponse{Status: "error", Error: "未找到诊断目标"})
 	case errors.As(err, &conflict):
 		c.JSON(http.StatusConflict, apiResponse{
 			Status: "error",
-			Error:  "diagnosis target is ambiguous",
+			Error:  "诊断目标不唯一",
 			Data: gin.H{
 				"candidates": conflict.Candidates,
 			},
 		})
 	case errors.Is(err, ErrForbidden):
-		c.JSON(http.StatusForbidden, apiResponse{Status: "error", Error: "diagnosis report forbidden"})
+		c.JSON(http.StatusForbidden, apiResponse{Status: "error", Error: "无权访问诊断报告"})
 	case errors.Is(err, ErrUnavailable):
-		c.JSON(http.StatusServiceUnavailable, apiResponse{Status: "error", Error: "diagnosis service unavailable"})
+		c.JSON(http.StatusServiceUnavailable, apiResponse{Status: "error", Error: "诊断服务不可用"})
 	default:
-		c.JSON(http.StatusInternalServerError, apiResponse{Status: "error", Error: "diagnosis failed"})
+		c.JSON(http.StatusInternalServerError, apiResponse{Status: "error", Error: "诊断失败"})
 	}
 }

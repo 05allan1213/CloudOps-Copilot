@@ -108,7 +108,7 @@ func (s *RedisTaskStore) setState(ctx context.Context, fingerprint string, repor
 
 func marshalTaskState(state TaskState) ([]byte, error) {
 	if strings.TrimSpace(state.Fingerprint) == "" {
-		return nil, fmt.Errorf("%w: fingerprint is required", ErrInvalidRequest)
+		return nil, fmt.Errorf("%w: fingerprint 不能为空", ErrInvalidRequest)
 	}
 	return json.Marshal(state)
 }

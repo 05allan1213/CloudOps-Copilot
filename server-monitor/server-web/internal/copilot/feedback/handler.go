@@ -59,56 +59,56 @@ func (h *Handler) Submit(c *gin.Context) {
 	idStr := c.Param("id")
 	diagnosisID, err := strconv.ParseUint(idStr, 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid diagnosis id"})
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "无效的诊断 ID"})
 		return
 	}
 
 	user := currentUserFromGin(c)
 	if user.ID == 0 {
-		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": "unauthorized"})
+		c.JSON(http.StatusUnauthorized, gin.H{"status": "error", "error": "未授权"})
 		return
 	}
 
 	var req FeedbackRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid request body"})
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "无效的请求体"})
 		return
 	}
 
 	if !validRatings[req.Rating] {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "rating must be 'useful' or 'not_useful'"})
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "评分必须为 'useful' 或 'not_useful'"})
 		return
 	}
 
 	req.Comment = strings.TrimSpace(req.Comment)
 
 	if utf8.RuneCountInString(req.Comment) > h.commentMaxLength {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": fmt.Sprintf("comment must be at most %d characters", h.commentMaxLength)})
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": fmt.Sprintf("评论最多 %d 个字符", h.commentMaxLength)})
 		return
 	}
 
 	report, err := h.reportAccess.GetAccessibleReport(c.Request.Context(), diagnosisID, user.ID, user.Role)
 	if err != nil {
 		if errors.Is(err, diagnosis.ErrForbidden) {
-			c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "forbidden"})
+			c.JSON(http.StatusForbidden, gin.H{"status": "error", "error": "无权访问"})
 			return
 		}
 		if errors.Is(err, diagnosis.ErrNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "diagnosis report not found"})
+			c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "诊断报告未找到"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "internal error"})
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "内部错误"})
 		return
 	}
 
 	if report.Status != diagnosis.StatusCompleted {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": fmt.Sprintf("diagnosis report status is %s, not completed", report.Status)})
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": fmt.Sprintf("诊断报告状态为 %s，未完成", report.Status)})
 		return
 	}
 
 	resp, err := h.feedbackService.Submit(c.Request.Context(), diagnosisID, user.ID, req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "failed to submit feedback"})
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "提交反馈失败"})
 		return
 	}
 

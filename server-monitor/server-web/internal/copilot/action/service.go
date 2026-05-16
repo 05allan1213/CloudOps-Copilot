@@ -96,7 +96,7 @@ func (s *Service) CreateFromDiagnosis(ctx context.Context, reportID uint64, req 
 	for _, recommendation := range recommendations {
 		if len(selected) > 0 {
 			if _, ok := selected[recommendation.Type]; !ok {
-				result.Skipped = append(result.Skipped, SkippedAction{ActionType: recommendation.Type, Reason: "not selected"})
+				result.Skipped = append(result.Skipped, SkippedAction{ActionType: recommendation.Type, Reason: "未选择"})
 				continue
 			}
 		}
@@ -190,7 +190,7 @@ func (s *Service) Reject(ctx context.Context, id uint64, req RejectRequest, acto
 	}
 	req.Reason = strings.TrimSpace(req.Reason)
 	if req.Reason == "" || len(req.Reason) > 500 {
-		return ActionResponse{}, fmt.Errorf("%w: reason must be 1-500 characters", ErrInvalidAction)
+		return ActionResponse{}, fmt.Errorf("%w: 拒绝原因长度须为 1-500 字符", ErrInvalidAction)
 	}
 	saved, err := s.repo.TransitionAction(ctx, id, EventReject, func(action *model.PendingAction) error {
 		if err := s.policy.ValidateReject(*action, actor); err != nil {
@@ -313,7 +313,7 @@ func (s *Service) ExpirePendingActions(ctx context.Context) (int, error) {
 	expired := 0
 	for _, action := range actions {
 		_, transitionErr := s.repo.TransitionAction(ctx, action.ID, EventReject, func(a *model.PendingAction) error {
-			a.ErrorMessage = fmt.Sprintf("action expired after %s pending TTL", s.pendingTTL)
+			a.ErrorMessage = fmt.Sprintf("动作在 %s 待审批超时后已过期", s.pendingTTL)
 			return nil
 		})
 		if transitionErr != nil {
@@ -360,7 +360,7 @@ func (s *Service) executeK8s(ctx context.Context, action model.PendingAction) (A
 		}
 		return s.executor.ScaleDeployment(ctx, action.Namespace, action.TargetName, int32(replicas))
 	default:
-		return ActionResult{}, fmt.Errorf("%w: unsupported action type", ErrInvalidAction)
+		return ActionResult{}, fmt.Errorf("%w: 不支持的动作类型", ErrInvalidAction)
 	}
 }
 
@@ -431,7 +431,7 @@ func parseRecommendations(raw string) ([]rawRecommendation, error) {
 	}
 	var recommendations []rawRecommendation
 	if err := json.Unmarshal([]byte(trimmed), &recommendations); err != nil {
-		return nil, fmt.Errorf("%w: recommended_actions_json is invalid", ErrInvalidAction)
+		return nil, fmt.Errorf("%w: recommended_actions_json 格式无效", ErrInvalidAction)
 	}
 	return recommendations, nil
 }
@@ -448,13 +448,13 @@ type rawRecommendation struct {
 
 func (r rawRecommendation) toCreateInput(report model.DiagnosisReport) (CreateActionInput, string) {
 	if !r.RequiresApproval {
-		return CreateActionInput{}, "read-only action does not require approval"
+		return CreateActionInput{}, "只读动作无需审批"
 	}
 	if r.Risk == RiskLevelHigh {
-		return CreateActionInput{}, "high risk action is not allowed"
+		return CreateActionInput{}, "高风险动作不允许执行"
 	}
 	if r.Risk != RiskLevelMedium {
-		return CreateActionInput{}, "only medium risk actions require approval"
+		return CreateActionInput{}, "仅中等风险动作需要审批"
 	}
 	namespace := strings.TrimSpace(r.Namespace)
 	if namespace == "" {

@@ -530,7 +530,7 @@ func (e *Executor) runHostList(ctx context.Context, entities map[string]string) 
 	if err != nil {
 		return []copilot.ToolCall{call}, "", nil
 	}
-	return []copilot.ToolCall{call}, fmt.Sprintf("Found %d hosts.", len(hosts)), nil
+	return []copilot.ToolCall{call}, fmt.Sprintf("找到 %d 台主机。", len(hosts)), nil
 }
 
 func (e *Executor) hostGroupInstances(ctx context.Context, groupID uint64) (map[string]struct{}, error) {
@@ -600,7 +600,7 @@ func (e *Executor) runHostMetrics(ctx context.Context, entities map[string]strin
 	if err != nil {
 		return []copilot.ToolCall{call}, "", nil
 	}
-	return []copilot.ToolCall{call}, fmt.Sprintf("Loaded %s metrics for %s.", metrics.Range, metrics.Instance), nil
+	return []copilot.ToolCall{call}, fmt.Sprintf("已加载 %s 的 %s 指标数据。", metrics.Instance, metrics.Range), nil
 }
 
 func (e *Executor) runAlertListActive(ctx context.Context, entities map[string]string) ([]copilot.ToolCall, string, error) {
@@ -615,7 +615,7 @@ func (e *Executor) runAlertListActive(ctx context.Context, entities map[string]s
 	if err != nil {
 		return []copilot.ToolCall{call}, "", nil
 	}
-	return []copilot.ToolCall{call}, fmt.Sprintf("Found %d active alerts.", len(alerts)), nil
+	return []copilot.ToolCall{call}, fmt.Sprintf("找到 %d 条活跃告警。", len(alerts)), nil
 }
 
 func (e *Executor) runAlertEvents(ctx context.Context, entities map[string]string) ([]copilot.ToolCall, string, error) {
@@ -635,7 +635,7 @@ func (e *Executor) runAlertEvents(ctx context.Context, entities map[string]strin
 	if err != nil {
 		return []copilot.ToolCall{call}, "", nil
 	}
-	return []copilot.ToolCall{call}, fmt.Sprintf("Found %d recent alert events.", len(events)), nil
+	return []copilot.ToolCall{call}, fmt.Sprintf("找到 %d 条最近告警事件。", len(events)), nil
 }
 
 func parseAlertEventsCount(value string) int64 {
@@ -696,7 +696,7 @@ func (e *Executor) runAlertHistory(ctx context.Context, entities map[string]stri
 	if err != nil {
 		return []copilot.ToolCall{call}, "", nil
 	}
-	return []copilot.ToolCall{call}, fmt.Sprintf("Found %d alert history records.", total), nil
+	return []copilot.ToolCall{call}, fmt.Sprintf("找到 %d 条告警历史记录。", total), nil
 }
 
 func (e *Executor) runAlertRuleList(ctx context.Context, entities map[string]string) ([]copilot.ToolCall, string, error) {
@@ -731,7 +731,7 @@ func (e *Executor) runAlertRuleList(ctx context.Context, entities map[string]str
 	if err != nil {
 		return []copilot.ToolCall{call}, "", nil
 	}
-	return []copilot.ToolCall{call}, fmt.Sprintf("Found %d alert rules.", total), nil
+	return []copilot.ToolCall{call}, fmt.Sprintf("找到 %d 条告警规则。", total), nil
 }
 
 func parseAlertHistoryQueryOptions(entities map[string]string) alertHistoryQueryOptions {
@@ -810,7 +810,7 @@ func (e *Executor) runPromQueryRange(ctx context.Context, entities map[string]st
 	if call.Status == StatusError {
 		return []copilot.ToolCall{call}, "", nil
 	}
-	return []copilot.ToolCall{call}, "Prometheus range query completed.", nil
+	return []copilot.ToolCall{call}, "Prometheus 范围查询完成。", nil
 }
 
 func buildCall(name string, result interface{}, err error) copilot.ToolCall {

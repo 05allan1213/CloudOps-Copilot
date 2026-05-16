@@ -23,7 +23,7 @@ func (r *Repository) Create(ctx context.Context, report *model.DiagnosisReport) 
 		return ErrUnavailable
 	}
 	if report == nil {
-		return fmt.Errorf("%w: report is required", ErrInvalidRequest)
+		return fmt.Errorf("%w: 报告不能为空", ErrInvalidRequest)
 	}
 	return r.db.WithContext(ctx).Create(report).Error
 }
@@ -33,10 +33,10 @@ func (r *Repository) UpdateStatus(ctx context.Context, id uint64, status string,
 		return ErrUnavailable
 	}
 	if id == 0 {
-		return fmt.Errorf("%w: id is required", ErrInvalidRequest)
+		return fmt.Errorf("%w: ID 不能为空", ErrInvalidRequest)
 	}
 	if !validReportStatus(status) {
-		return fmt.Errorf("%w: invalid status", ErrInvalidRequest)
+		return fmt.Errorf("%w: 无效的状态", ErrInvalidRequest)
 	}
 	updates := make(map[string]interface{}, len(fields)+1)
 	for key, value := range fields {
@@ -51,7 +51,7 @@ func (r *Repository) GetByID(ctx context.Context, id uint64, user User) (model.D
 		return model.DiagnosisReport{}, ErrUnavailable
 	}
 	if id == 0 {
-		return model.DiagnosisReport{}, fmt.Errorf("%w: id is required", ErrInvalidRequest)
+		return model.DiagnosisReport{}, fmt.Errorf("%w: ID 不能为空", ErrInvalidRequest)
 	}
 	var report model.DiagnosisReport
 	err := r.db.WithContext(ctx).First(&report, id).Error

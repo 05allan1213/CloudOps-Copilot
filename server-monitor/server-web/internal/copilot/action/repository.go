@@ -123,7 +123,7 @@ func (r *Repository) TransitionAction(ctx context.Context, id uint64, event stri
 		}
 		nextStatus, ok := CanTransition(action.Status, event)
 		if !ok {
-			return fmt.Errorf("%w: cannot %s action from status %s", ErrInvalidAction, event, action.Status)
+			return fmt.Errorf("%w: 无法从状态 %s %s 动作", ErrInvalidAction, action.Status, event)
 		}
 		if mutate != nil {
 			if err := mutate(&action); err != nil {
@@ -248,7 +248,7 @@ func normalizeListFilter(filter ListFilter) ListFilter {
 func parseUintID(raw string) (uint64, error) {
 	id, err := strconv.ParseUint(raw, 10, 64)
 	if err != nil || id == 0 {
-		return 0, fmt.Errorf("%w: invalid id", ErrInvalidAction)
+		return 0, fmt.Errorf("%w: 无效的 ID", ErrInvalidAction)
 	}
 	return id, nil
 }

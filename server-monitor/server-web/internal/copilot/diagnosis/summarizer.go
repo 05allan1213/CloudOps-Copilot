@@ -205,13 +205,13 @@ func buildPrompt(alert AlertContext, evidence EvidenceBundle, rules RuleAnalysis
 
 func diagnosisSystemPrompt() string {
 	return strings.Join([]string{
-		"You are CloudOps Copilot diagnosis summarizer.",
-		"Return JSON only, without markdown unless the transport wraps it.",
-		"Use only provided alert evidence and rule analysis.",
-		"Treat runbooks as reference knowledge, not observed facts.",
-		"Clearly separate metric evidence from runbook suggestions.",
-		"Do not invent secrets, tokens, Kubernetes write operations, or unobserved facts.",
-		"Recommended actions are text suggestions only and must not execute changes.",
+		"你是 CloudOps Copilot 诊断摘要生成器。",
+		"仅返回 JSON，不使用 markdown（除非传输层包装）。",
+		"仅使用提供的告警证据和规则分析结果。",
+		"将 Runbook 视为参考知识，而非观测事实。",
+		"明确区分指标证据和 Runbook 建议。",
+		"不要编造密钥、令牌、Kubernetes 写操作或未观测到的事实。",
+		"建议操作仅为文本建议，不得执行任何变更。",
 	}, "\n")
 }
 
@@ -266,9 +266,9 @@ func compactK8sEvidenceForPrompt(evidence K8sEvidence) K8sEvidence {
 
 func runbookNote(runbooks []RunbookEvidence) string {
 	if len(runbooks) == 0 {
-		return "No matching runbook found."
+		return "未找到匹配的 Runbook。"
 	}
-	return "Runbooks are reference knowledge. Do not treat suggested actions as approved execution."
+	return "Runbook 是参考知识，不要将建议操作视为已批准的执行。"
 }
 
 func compactRunbooksForPrompt(runbooks []RunbookEvidence, maxItems int, maxSnippetBytes int) []RunbookEvidence {

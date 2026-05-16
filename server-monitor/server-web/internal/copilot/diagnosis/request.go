@@ -20,21 +20,21 @@ func NormalizeRequest(req Request) (Request, error) {
 		req.TriggerType = TriggerManual
 	}
 	if !isAllowedTriggerType(req.TriggerType) {
-		return Request{}, fmt.Errorf("%w: invalid trigger_type", ErrInvalidRequest)
+		return Request{}, fmt.Errorf("%w: 无效的 trigger_type", ErrInvalidRequest)
 	}
 	if req.Fingerprint == "" && req.AlertHistoryID == 0 && (req.AlertName == "" || req.Instance == "") {
-		return Request{}, fmt.Errorf("%w: fingerprint, alert_history_id, or alert_name with instance is required", ErrInvalidRequest)
+		return Request{}, fmt.Errorf("%w: 需要 fingerprint、alert_history_id，或 alert_name + instance", ErrInvalidRequest)
 	}
 	return req, nil
 }
 
 func NormalizeListFilter(filter ListFilter) (ListFilter, error) {
 	if filter.Status != "" && !isAllowedStatus(filter.Status) {
-		return ListFilter{}, fmt.Errorf("%w: invalid status", ErrInvalidRequest)
+		return ListFilter{}, fmt.Errorf("%w: 无效的状态", ErrInvalidRequest)
 	}
 	filter.TriggerType = strings.TrimSpace(filter.TriggerType)
 	if filter.TriggerType != "" && !isAllowedTriggerType(filter.TriggerType) {
-		return ListFilter{}, fmt.Errorf("%w: invalid trigger_type", ErrInvalidRequest)
+		return ListFilter{}, fmt.Errorf("%w: 无效的 trigger_type", ErrInvalidRequest)
 	}
 	if filter.Page <= 0 {
 		filter.Page = defaultPage

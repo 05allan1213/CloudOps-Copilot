@@ -103,13 +103,13 @@ func NewHandler(service *Service) *Handler {
 func (h *Handler) CreateFromDiagnosis(c *gin.Context) {
 	id, err := parseUintID(c.Param("id"))
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "invalid diagnosis id")
+		writeError(c, http.StatusBadRequest, "无效的诊断 ID")
 		return
 	}
 	var req CreateFromDiagnosisRequest
 	if c.Request.Body != nil {
 		if err := c.ShouldBindJSON(&req); err != nil {
-			writeError(c, http.StatusBadRequest, "invalid request body")
+			writeError(c, http.StatusBadRequest, "无效的请求体")
 			return
 		}
 	}
@@ -173,7 +173,7 @@ func (h *Handler) ListActions(c *gin.Context) {
 func (h *Handler) GetAction(c *gin.Context) {
 	id, err := parseUintID(c.Param("id"))
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "invalid action id")
+		writeError(c, http.StatusBadRequest, "无效的动作 ID")
 		return
 	}
 	action, err := h.service.GetAction(c.Request.Context(), id)
@@ -202,13 +202,13 @@ func (h *Handler) GetAction(c *gin.Context) {
 func (h *Handler) Approve(c *gin.Context) {
 	id, err := parseUintID(c.Param("id"))
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "invalid action id")
+		writeError(c, http.StatusBadRequest, "无效的动作 ID")
 		return
 	}
 	var req ApproveRequest
 	if c.Request.Body != nil {
 		if err := c.ShouldBindJSON(&req); err != nil {
-			writeError(c, http.StatusBadRequest, "invalid request body")
+			writeError(c, http.StatusBadRequest, "无效的请求体")
 			return
 		}
 	}
@@ -238,12 +238,12 @@ func (h *Handler) Approve(c *gin.Context) {
 func (h *Handler) Reject(c *gin.Context) {
 	id, err := parseUintID(c.Param("id"))
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "invalid action id")
+		writeError(c, http.StatusBadRequest, "无效的动作 ID")
 		return
 	}
 	var req RejectRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "invalid request body")
+		writeError(c, http.StatusBadRequest, "无效的请求体")
 		return
 	}
 	action, err := h.service.Reject(c.Request.Context(), id, req, actorFromGin(c))
@@ -272,21 +272,21 @@ func (h *Handler) Reject(c *gin.Context) {
 func (h *Handler) Execute(c *gin.Context) {
 	id, err := parseUintID(c.Param("id"))
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "invalid action id")
+		writeError(c, http.StatusBadRequest, "无效的动作 ID")
 		return
 	}
 	var req ExecuteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		writeError(c, http.StatusBadRequest, "invalid request body")
+		writeError(c, http.StatusBadRequest, "无效的请求体")
 		return
 	}
 	if !req.Confirm {
-		writeError(c, http.StatusBadRequest, "confirm must be true")
+		writeError(c, http.StatusBadRequest, "confirm 必须为 true")
 		return
 	}
 	action, err := h.service.Execute(c.Request.Context(), id, actorFromGin(c))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "action execution failed; see audit log for details", "data": action})
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "动作执行失败，详情请查看审计日志", "data": action})
 		return
 	}
 	writeSuccess(c, action)
@@ -332,7 +332,7 @@ func (h *Handler) ListAuditLogs(c *gin.Context) {
 func (h *Handler) GetAuditLog(c *gin.Context) {
 	id, err := parseUintID(c.Param("id"))
 	if err != nil {
-		writeError(c, http.StatusBadRequest, "invalid audit log id")
+		writeError(c, http.StatusBadRequest, "无效的审计日志 ID")
 		return
 	}
 	log, err := h.service.GetAuditLog(c.Request.Context(), id)
@@ -411,15 +411,15 @@ func firstNonEmpty(values ...string) string {
 func writeServiceError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, ErrForbidden):
-		writeError(c, http.StatusForbidden, "insufficient permissions")
+		writeError(c, http.StatusForbidden, "权限不足")
 	case errors.Is(err, ErrNotFound):
-		writeError(c, http.StatusNotFound, "not found")
+		writeError(c, http.StatusNotFound, "未找到")
 	case errors.Is(err, ErrInvalidAction):
 		writeError(c, http.StatusBadRequest, err.Error())
 	case errors.Is(err, ErrUnavailable):
-		writeError(c, http.StatusServiceUnavailable, "action service unavailable")
+		writeError(c, http.StatusServiceUnavailable, "动作服务不可用")
 	default:
-		writeError(c, http.StatusInternalServerError, "internal server error")
+		writeError(c, http.StatusInternalServerError, "内部服务器错误")
 	}
 }
 

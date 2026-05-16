@@ -105,7 +105,7 @@ func (e *ClientK8sExecutor) RestartDeployment(ctx context.Context, namespace, na
 		ReadyReplicas: &readyReplicas,
 		OldAnnotation: oldAnnotation,
 		NewAnnotation: restartedAt,
-		Message:       fmt.Sprintf("deployment restart requested at %s", restartedAt),
+		Message:       fmt.Sprintf("Deployment 重启请求于 %s", restartedAt),
 	}, nil
 }
 
@@ -142,7 +142,7 @@ func (e *ClientK8sExecutor) ScaleDeployment(ctx context.Context, namespace, name
 		OldReplicas:   &oldReplicas,
 		NewReplicas:   &replicasValue,
 		ReadyReplicas: &readyReplicas,
-		Message:       fmt.Sprintf("deployment scaled from %d to %d replicas", oldReplicas, replicas),
+		Message:       fmt.Sprintf("Deployment 副本数从 %d 扩缩至 %d", oldReplicas, replicas),
 	}, nil
 }
 
@@ -173,11 +173,11 @@ func (e *ClientK8sExecutor) withRequestTimeout(ctx context.Context) (context.Con
 func classifyK8sError(err error) error {
 	switch {
 	case apierrors.IsNotFound(err):
-		return errors.New("k8s resource not found")
+		return errors.New("K8s 资源未找到")
 	case apierrors.IsForbidden(err), apierrors.IsUnauthorized(err):
-		return errors.New("k8s permission denied")
+		return errors.New("K8s 权限不足")
 	case apierrors.IsConflict(err):
-		return errors.New("k8s resource conflict")
+		return errors.New("K8s 资源冲突")
 	default:
 		return err
 	}

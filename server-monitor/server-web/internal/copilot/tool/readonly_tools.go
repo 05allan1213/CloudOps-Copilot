@@ -156,7 +156,7 @@ func (t promQueryRangeTool) Run(ctx context.Context, args json.RawMessage) (Tool
 	if err != nil {
 		return ToolResult{}, err
 	}
-	return toolResultFromCall(call, "Prometheus range query completed."), nil
+	return toolResultFromCall(call, "Prometheus 范围查询完成。"), nil
 }
 
 func (t promQueryRangeTool) HealthCheck(ctx context.Context) bool {

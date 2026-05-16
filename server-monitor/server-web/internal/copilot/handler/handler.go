@@ -58,7 +58,7 @@ func (h *Handler) Chat(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, response{
 			Status: "error",
-			Error:  "invalid copilot chat request",
+			Error:  "无效的 Copilot 聊天请求",
 		})
 		return
 	}
@@ -176,6 +176,6 @@ func writeServiceError(c *gin.Context, err error) {
 	case errors.Is(err, tool.ErrToolUnavailable):
 		c.JSON(http.StatusServiceUnavailable, response{Status: "error", Error: err.Error()})
 	default:
-		c.JSON(http.StatusInternalServerError, response{Status: "error", Error: "copilot service unavailable"})
+		c.JSON(http.StatusInternalServerError, response{Status: "error", Error: "Copilot 服务不可用"})
 	}
 }

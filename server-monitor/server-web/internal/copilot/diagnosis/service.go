@@ -121,7 +121,7 @@ func (s *Service) Trigger(ctx context.Context, user User, req Request) (ReportRe
 	reportFields, err := completedFields(alert, evidence, rules, summary, meta)
 	if err != nil {
 		_ = s.repo.UpdateStatus(ctx, report.ID, StatusFailed, map[string]interface{}{
-			"summary": "serialize diagnosis report failed",
+			"summary": "序列化诊断报告失败",
 		})
 		return ReportResponse{}, err
 	}
@@ -216,10 +216,10 @@ func publicError(err error) string {
 	case errors.Is(err, ErrInvalidRequest):
 		return err.Error()
 	case errors.Is(err, ErrNotFound):
-		return "diagnosis target not found"
+		return "未找到诊断目标"
 	case errors.Is(err, ErrConflict):
-		return "diagnosis target is ambiguous"
+		return "诊断目标不唯一"
 	default:
-		return "diagnosis failed"
+		return "诊断失败"
 	}
 }

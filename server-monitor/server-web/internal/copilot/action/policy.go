@@ -54,10 +54,10 @@ func (p *Policy) ValidateCreate(input CreateActionInput) (NormalizedAction, erro
 		input.Params = json.RawMessage(`{}`)
 	}
 	if containsSensitiveKey(input.Params) {
-		return NormalizedAction{}, fmt.Errorf("%w: sensitive action params are not allowed", ErrInvalidAction)
+		return NormalizedAction{}, fmt.Errorf("%w: 不允许敏感动作参数", ErrInvalidAction)
 	}
 	if input.TargetKind != TargetKindK8sDeployment {
-		return NormalizedAction{}, fmt.Errorf("%w: unsupported target kind", ErrInvalidAction)
+		return NormalizedAction{}, fmt.Errorf("%w: 不支持的目标类型", ErrInvalidAction)
 	}
 	if err := validateK8sName("namespace", input.Namespace, 128); err != nil {
 		return NormalizedAction{}, err
@@ -66,7 +66,7 @@ func (p *Policy) ValidateCreate(input CreateActionInput) (NormalizedAction, erro
 		return NormalizedAction{}, err
 	}
 	if input.RiskLevel != "" && input.RiskLevel != RiskLevelMedium {
-		return NormalizedAction{}, fmt.Errorf("%w: only medium risk actions can be pending", ErrInvalidAction)
+		return NormalizedAction{}, fmt.Errorf("%w: 仅中等风险动作可以待审批", ErrInvalidAction)
 	}
 
 	params, err := decodeObject(input.Params)
@@ -86,11 +86,11 @@ func (p *Policy) ValidateCreate(input CreateActionInput) (NormalizedAction, erro
 			return NormalizedAction{}, err
 		}
 		if replicas < 1 || replicas > p.maxReplicas {
-			return NormalizedAction{}, fmt.Errorf("%w: replicas must be in range 1-%d", ErrInvalidAction, p.maxReplicas)
+			return NormalizedAction{}, fmt.Errorf("%w: 副本数须在 1-%d 范围内", ErrInvalidAction, p.maxReplicas)
 		}
 		normalizedParams["replicas"] = replicas
 	default:
-		return NormalizedAction{}, fmt.Errorf("%w: action type is not allowed", ErrInvalidAction)
+		return NormalizedAction{}, fmt.Errorf("%w: 不允许的动作类型", ErrInvalidAction)
 	}
 
 	paramsJSON := mustMarshal(normalizedParams)
@@ -113,7 +113,7 @@ func (p *Policy) ValidateApprove(action model.PendingAction, actor Actor) error 
 		return ErrForbidden
 	}
 	if _, ok := CanTransition(action.Status, EventApprove); !ok {
-		return fmt.Errorf("%w: cannot approve action from status %s", ErrInvalidAction, action.Status)
+		return fmt.Errorf("%w: 无法从状态 %s 审批动作", ErrInvalidAction, action.Status)
 	}
 	return nil
 }
@@ -123,7 +123,7 @@ func (p *Policy) ValidateReject(action model.PendingAction, actor Actor) error {
 		return ErrForbidden
 	}
 	if _, ok := CanTransition(action.Status, EventReject); !ok {
-		return fmt.Errorf("%w: cannot reject action from status %s", ErrInvalidAction, action.Status)
+		return fmt.Errorf("%w: 无法从状态 %s 拒绝动作", ErrInvalidAction, action.Status)
 	}
 	return nil
 }
@@ -133,7 +133,7 @@ func (p *Policy) ValidateExecute(action model.PendingAction, actor Actor) error 
 		return ErrForbidden
 	}
 	if _, ok := CanTransition(action.Status, EventExecute); !ok {
-		return fmt.Errorf("%w: cannot execute action from status %s", ErrInvalidAction, action.Status)
+		return fmt.Errorf("%w: 无法从状态 %s 执行动作", ErrInvalidAction, action.Status)
 	}
 	_, err := p.ValidateCreate(CreateActionInput{
 		DiagnosisReportID: action.DiagnosisReportID,
@@ -180,10 +180,10 @@ func CanTransition(from, event string) (string, bool) {
 func decodeObject(raw json.RawMessage) (map[string]interface{}, error) {
 	var object map[string]interface{}
 	if err := json.Unmarshal(raw, &object); err != nil {
-		return nil, fmt.Errorf("%w: params_json must be a json object", ErrInvalidAction)
+		return nil, fmt.Errorf("%w: params_json 必须为 JSON 对象", ErrInvalidAction)
 	}
 	if object == nil {
-		return nil, fmt.Errorf("%w: params_json must be a json object", ErrInvalidAction)
+		return nil, fmt.Errorf("%w: params_json 必须为 JSON 对象", ErrInvalidAction)
 	}
 	return object, nil
 }
@@ -191,31 +191,31 @@ func decodeObject(raw json.RawMessage) (map[string]interface{}, error) {
 func intParam(params map[string]interface{}, key string) (int, error) {
 	value, ok := params[key]
 	if !ok {
-		return 0, fmt.Errorf("%w: %s is required", ErrInvalidAction, key)
+		return 0, fmt.Errorf("%w: %s 不能为空", ErrInvalidAction, key)
 	}
 	switch typed := value.(type) {
 	case float64:
 		asInt := int(typed)
 		if typed != float64(asInt) {
-			return 0, fmt.Errorf("%w: %s must be an integer", ErrInvalidAction, key)
+			return 0, fmt.Errorf("%w: %s 必须为整数", ErrInvalidAction, key)
 		}
 		return asInt, nil
 	case int:
 		return typed, nil
 	default:
-		return 0, fmt.Errorf("%w: %s must be an integer", ErrInvalidAction, key)
+		return 0, fmt.Errorf("%w: %s 必须为整数", ErrInvalidAction, key)
 	}
 }
 
 func validateK8sName(field, value string, maxLen int) error {
 	if value == "" {
-		return fmt.Errorf("%w: %s is required", ErrInvalidAction, field)
+		return fmt.Errorf("%w: %s 不能为空", ErrInvalidAction, field)
 	}
 	if len(value) > maxLen {
-		return fmt.Errorf("%w: %s is too long", ErrInvalidAction, field)
+		return fmt.Errorf("%w: %s 过长", ErrInvalidAction, field)
 	}
 	if !k8sNamePattern.MatchString(value) {
-		return fmt.Errorf("%w: %s contains invalid characters", ErrInvalidAction, field)
+		return fmt.Errorf("%w: %s 包含无效字符", ErrInvalidAction, field)
 	}
 	return nil
 }

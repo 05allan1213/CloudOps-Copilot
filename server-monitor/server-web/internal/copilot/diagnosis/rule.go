@@ -95,7 +95,7 @@ func (defaultRuleAnalyzer) Analyze(ctx context.Context, alert AlertContext, evid
 	if evidence.K8s.Enabled {
 		if deployment := firstDeployment(evidence.K8s); deployment != nil {
 			passed := deployment.ReadyReplicas < deployment.Replicas
-			add("k8s_deployment_not_ready", passed, fmt.Sprintf("Deployment ready=%d desired=%d updated=%d", deployment.ReadyReplicas, deployment.Replicas, deployment.UpdatedReplicas), "k8s.deployments")
+			add("k8s_deployment_not_ready", passed, fmt.Sprintf("Deployment 就绪=%d 期望=%d 已更新=%d", deployment.ReadyReplicas, deployment.Replicas, deployment.UpdatedReplicas), "k8s.deployments")
 			if passed {
 				nextSteps = append(nextSteps, "检查 Deployment rollout、Pod 状态和 Warning Events")
 			}
@@ -137,9 +137,9 @@ func findMetric(metrics []MetricEvidence, keyword string) *MetricEvidence {
 
 func metricDetail(label string, metric *MetricEvidence, threshold string) string {
 	if metric == nil {
-		return fmt.Sprintf("%s evidence missing; threshold: %s", label, threshold)
+		return fmt.Sprintf("%s 指标缺失；阈值：%s", label, threshold)
 	}
-	return fmt.Sprintf("%s avg=%.2f max=%.2f last=%.2f window=%s", label, metric.Avg, metric.Max, metric.Last, metric.Window)
+	return fmt.Sprintf("%s 平均=%.2f 最大=%.2f 最新=%.2f 窗口=%s", label, metric.Avg, metric.Max, metric.Last, metric.Window)
 }
 
 func repeatedHistory(history []HistoryEvidence, alert AlertContext) int {

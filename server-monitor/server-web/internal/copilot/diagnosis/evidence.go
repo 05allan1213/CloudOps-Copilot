@@ -93,7 +93,7 @@ func (c *EvidenceCollector) Collect(ctx context.Context, alert AlertContext) Evi
 		CollectedAt:  collectedAt,
 	}
 	if c == nil || c.runner == nil {
-		bundle.CollectionErrors = append(bundle.CollectionErrors, CollectionError{Source: "tool_registry", Error: "tool registry unavailable"})
+		bundle.CollectionErrors = append(bundle.CollectionErrors, CollectionError{Source: "tool_registry", Error: "工具注册表不可用"})
 		return bundle
 	}
 
@@ -526,7 +526,7 @@ func (c *EvidenceCollector) collectHistory(ctx context.Context, alert AlertConte
 
 func (c *EvidenceCollector) collectMetrics(ctx context.Context, alert AlertContext) ([]MetricEvidence, error) {
 	if strings.TrimSpace(alert.Instance) == "" {
-		return nil, fmt.Errorf("instance is required")
+		return nil, fmt.Errorf("instance 参数必填")
 	}
 	args, _ := json.Marshal(map[string]interface{}{"instance": alert.Instance, "window": "15m"})
 	result, err := c.runner.ExecuteTool(ctx, ToolHostMetrics, args)
@@ -703,7 +703,7 @@ func trend(values []float64) string {
 
 func toolErrorString(result ToolResult) string {
 	if result.Error == "" {
-		return "tool execution failed"
+		return "工具执行失败"
 	}
 	return result.Error
 }
