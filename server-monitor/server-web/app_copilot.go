@@ -78,6 +78,7 @@ func initCopilot(ctx context.Context, cfg config.Config, infra infrastructure, m
 	runbookRetriever := copilotrunbook.NewRetriever(runbookDocs, copilotrunbook.RetrieverOptions{
 		DefaultLimit: cfg.RunbookSearchTopN,
 		MaxLimit:     5,
+		BM25Weight:   cfg.RunbookBM25Weight,
 		BM25K1:       cfg.RunbookBM25K1,
 		BM25B:        cfg.RunbookBM25B,
 		Observer:     metrics,

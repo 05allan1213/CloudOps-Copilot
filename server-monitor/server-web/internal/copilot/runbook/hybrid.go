@@ -10,7 +10,23 @@ type RankItem struct {
 	MatchedMetrics  []string
 }
 
+type weightedRanking struct {
+	weight float64
+	items  []RankItem
+}
+
 func RRF(rankings [][]RankItem, k int) []RankItem {
+	weighted := make([]weightedRanking, 0, len(rankings))
+	for _, ranking := range rankings {
+		weighted = append(weighted, weightedRanking{
+			weight: 1,
+			items:  ranking,
+		})
+	}
+	return rrfWeighted(weighted, k)
+}
+
+func rrfWeighted(rankings []weightedRanking, k int) []RankItem {
 	if k <= 0 {
 		k = 60
 	}
@@ -25,8 +41,12 @@ func RRF(rankings [][]RankItem, k int) []RankItem {
 	m := make(map[int]*accum)
 
 	for _, ranking := range rankings {
-		sorted := make([]RankItem, len(ranking))
-		copy(sorted, ranking)
+		if ranking.weight <= 0 || len(ranking.items) == 0 {
+			continue
+		}
+
+		sorted := make([]RankItem, len(ranking.items))
+		copy(sorted, ranking.items)
 		sort.SliceStable(sorted, func(i, j int) bool {
 			return sorted[i].Score > sorted[j].Score
 		})
@@ -41,7 +61,7 @@ func RRF(rankings [][]RankItem, k int) []RankItem {
 				}
 				m[item.DocIdx] = a
 			}
-			a.rrfScore += 1.0 / float64(k+rank+1)
+			a.rrfScore += ranking.weight / float64(k+rank+1)
 		}
 	}
 

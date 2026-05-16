@@ -22,6 +22,8 @@ type Retriever struct {
 	defaultLimit int
 	maxLimit     int
 	bm25         *BM25Engine
+	bm25Weight   float64
+	vectorWeight float64
 	vectorStore  *MemoryVectorStore
 	embedder     EmbeddingClient
 	rrfK         int
@@ -55,12 +57,15 @@ func NewRetriever(docs []Document, options RetrieverOptions) *Retriever {
 	if rrfK <= 0 {
 		rrfK = 60
 	}
+	bm25Weight := clampWeight(options.BM25Weight)
 
 	return &Retriever{
 		docs:         cloneDocuments(docs),
 		defaultLimit: defaultLimit,
 		maxLimit:     maxLimit,
 		bm25:         bm25,
+		bm25Weight:   bm25Weight,
+		vectorWeight: 1 - bm25Weight,
 		vectorStore:  options.VectorStore,
 		embedder:     options.Embedder,
 		rrfK:         rrfK,
@@ -98,7 +103,11 @@ func (r *Retriever) Search(ctx context.Context, req SearchRequest) ([]SearchResu
 	bm25Ranking := r.bm25Search(queryTokens)
 	vectorRanking := r.vectorSearch(ctx, alertName, keywords, metrics)
 
-	rrfResults := RRF([][]RankItem{structRanking, bm25Ranking, vectorRanking}, r.rrfK)
+	rrfResults := rrfWeighted([]weightedRanking{
+		{weight: 1, items: structRanking},
+		{weight: r.bm25Weight, items: bm25Ranking},
+		{weight: r.vectorWeight, items: vectorRanking},
+	}, r.rrfK)
 
 	if len(rrfResults) == 0 {
 		if r.observer != nil {
@@ -232,6 +241,17 @@ func (r *Retriever) vectorSearch(ctx context.Context, alertName string, keywords
 		items = append(items, RankItem{DocIdx: idx, Score: score})
 	}
 	return items
+}
+
+func clampWeight(value float64) float64 {
+	switch {
+	case value < 0:
+		return 0
+	case value > 1:
+		return 1
+	default:
+		return value
+	}
 }
 
 func (r *Retriever) HealthCheck(ctx context.Context) bool {

@@ -100,6 +100,9 @@ services:
       context: .
       dockerfile: server-probe/Dockerfile
     restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
     ports:
       - "127.0.0.1:8082:9090"
     environment:
@@ -253,6 +256,9 @@ services:
       context: .
       dockerfile: alert-service/Dockerfile
     restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
     ports:
       - "127.0.0.1:8081:8081"
     environment:
@@ -445,6 +451,9 @@ services:
       context: .
       dockerfile: server-web/Dockerfile
     restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
     ports:
       - "127.0.0.1:8080:8080"
     environment:
