@@ -3,7 +3,7 @@
 > 版本：v1.2  
 > 日期：2026-05-15  
 > 基准方案：design.md v2.4  
-> 状态：执行中（步骤 15 已验收）
+> 状态：执行中（步骤 16 已验收）
 > 
 > v1.2 变更：基准方案文件名更正为 design.md、方案 B 去掉 .gitignore 建议、步骤 17 mkdir 命令 cwd 统一
 > v1.1 变更：修订 9 项评审反馈——internal 目录创建补全、命令 cwd 明确、commit 策略改为建议提交点、验收标准改为待勾选、sarama 依赖推迟到步骤 5、miniredis 依赖风险补充、Makefile test 包含 pkg + .PHONY/help 同步、步骤 20 注释先于验证、文档文件处理方案
@@ -1143,10 +1143,22 @@ cd server-monitor/server-probe && go test ./...
 
 **验收标准**：
 
-- [ ] app.go 包含 initApp/runApp/shutdownApp
-- [ ] main.go < 60 行
-- [ ] `go build ./...` 通过
-- [ ] `go test ./...` 通过
+- [x] app.go 包含 initApp/runApp/shutdownApp
+- [x] main.go < 60 行
+- [x] `go build ./...` 通过
+- [x] `go test ./...` 通过
+
+**执行记录（2026-05-16）**：
+
+- 已新增 `server-probe/app.go`，封装 `initApp`、`runApp`、`shutdownApp`、collector loop、HTTP mux 与 middleware
+- 已从 `server-probe/main.go` 迁移初始化逻辑到 `app.go`，并拆为 `initInfrastructure`（Tracer、Host 路径）和 `initServices`（Collectors、Prometheus Registry、HTTP Server）
+- 已为 `app`、`initInfrastructure`、`initServices` 添加依赖分层注释
+- `server-probe/main.go` 已精简为三段式入口，当前 `wc -l main.go` 输出 `32 main.go`
+- 关闭流程使用 `shutdown.Graceful` 管理 HTTP Server 与 Tracer；collector loop 通过 `app.cancel()` 触发退出，无无超时 Channel 等待
+- 验证：`cd server-monitor/server-probe && GOCACHE=/tmp/cloudops-gocache go build ./...` 通过
+- 验证：`cd server-monitor/server-probe && GOCACHE=/tmp/cloudops-gocache go test ./...` 通过（无测试文件）
+- 补充检查：`cd server-monitor/server-probe && GOCACHE=/tmp/cloudops-gocache go vet ./...` 通过
+- 补充检查：`git diff --check` 通过
 
 ---
 
@@ -1537,6 +1549,10 @@ cd server-monitor/server-probe && go vet ./...
 - [ ] internal/ 封装：所有业务代码在 internal/ 下
 - [ ] 关键注释已补充
 - [ ] CI 配置已更新
+
+**已知行为差异（无需修复，步骤 20 验收时同步更新 tracing dashboard）**：
+
+- **Tracer/Span 名称变更**：`pkg/kafka/consumer.go` 中 tracer 从 `"alert-service/kafka"` 变更为 `"server-monitor/pkg/kafka"`，span 从 `"alert-service.consume"` 变更为 `"kafka.consume"`。这是共享包重构的预期变更：tracer name 应标识库/组件而非服务，服务身份由 resource attributes 承载。如有 Jaeger/Grafana dashboard 按旧 tracer/span 名称过滤，需在步骤 20 验收时同步更新过滤规则。
 
 ---
 
