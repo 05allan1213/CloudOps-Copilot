@@ -125,6 +125,18 @@ type Config struct {
 	CopilotMultiIntentEnabled   bool `env:"COPILOT_MULTI_INTENT_ENABLED" envDefault:"false"`
 	CopilotMultiIntentMax       int  `env:"COPILOT_MULTI_INTENT_MAX" envDefault:"3"`
 
+	// CopilotSummaryEnabled 是否启用 Copilot 工具结果 LLM 摘要
+	// 默认值：true
+	CopilotSummaryEnabled bool
+
+	// CopilotSummaryTimeout Copilot 摘要单次 LLM 调用超时时间
+	// 默认值：8s
+	CopilotSummaryTimeout time.Duration
+
+	// CopilotSummaryMaxPromptBytes Copilot 摘要 prompt 最大字节数
+	// 默认值：16384
+	CopilotSummaryMaxPromptBytes int
+
 	// RunbookDir Runbook Markdown 目录，为空时禁用 Runbook 检索
 	// 默认值：../runbooks
 	RunbookDir string
@@ -456,6 +468,9 @@ func Load() Config {
 		CopilotToolsClassifyEnabled:  configutil.Bool("COPILOT_TOOLS_CLASSIFY_ENABLED", false),
 		CopilotMultiIntentEnabled:    configutil.Bool("COPILOT_MULTI_INTENT_ENABLED", false),
 		CopilotMultiIntentMax:        configutil.PositiveInt("COPILOT_MULTI_INTENT_MAX", 3),
+		CopilotSummaryEnabled:        configutil.Bool("COPILOT_SUMMARY_ENABLED", true),
+		CopilotSummaryTimeout:        configutil.DurationSeconds("COPILOT_SUMMARY_TIMEOUT_SECONDS", 8),
+		CopilotSummaryMaxPromptBytes: configutil.PositiveInt("COPILOT_SUMMARY_MAX_PROMPT_BYTES", 16384),
 		RunbookDir:                   configutil.String("RUNBOOK_DIR", "../runbooks"),
 		RunbookMaxFiles:              configutil.PositiveInt("RUNBOOK_MAX_FILES", 100),
 		RunbookMaxFileBytes:          int64(configutil.PositiveInt("RUNBOOK_MAX_FILE_BYTES", 65536)),
@@ -686,6 +701,12 @@ func (c *Config) Validate() error {
 	}
 	if c.CopilotToolDefaultTimeout <= 0 {
 		return fmt.Errorf("COPILOT_TOOL_DEFAULT_TIMEOUT_SECONDS must be positive, got %v", c.CopilotToolDefaultTimeout)
+	}
+	if c.CopilotSummaryTimeout <= 0 {
+		return fmt.Errorf("COPILOT_SUMMARY_TIMEOUT_SECONDS must be positive, got %v", c.CopilotSummaryTimeout)
+	}
+	if c.CopilotSummaryMaxPromptBytes <= 0 {
+		return fmt.Errorf("COPILOT_SUMMARY_MAX_PROMPT_BYTES must be positive, got %d", c.CopilotSummaryMaxPromptBytes)
 	}
 	if c.CopilotMultiIntentMax < 1 {
 		c.CopilotMultiIntentMax = 3

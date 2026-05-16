@@ -28,6 +28,7 @@ import (
 	copilotrunbook "server-web/internal/copilot/runbook"
 	copilotservice "server-web/internal/copilot/service"
 	copilotsession "server-web/internal/copilot/session"
+	copilotsummary "server-web/internal/copilot/summary"
 	copilottool "server-web/internal/copilot/tool"
 	handlers "server-web/internal/handler"
 	"server-web/internal/infra/database"
@@ -501,6 +502,14 @@ func initCopilot(ctx context.Context, cfg config.Config, infra infrastructure, m
 	diagnosisRepo := copilotdiagnosis.NewRepository(db)
 	feedbackRepo := copilotfeedback.NewMySQLRepository(db)
 	diagnosisService := initDiagnosisService(cfg, alertService, llmClient, toolExecutor, diagnosisRepo, feedbackRepo, db, metrics)
+	var copilotSummarizer *copilotsummary.Summarizer
+	if llmClient != nil {
+		copilotSummarizer = copilotsummary.NewSummarizer(copilotsummary.Options{
+			LLM:       llmClient,
+			Timeout:   cfg.CopilotSummaryTimeout,
+			MaxPrompt: cfg.CopilotSummaryMaxPromptBytes,
+		})
+	}
 	copilotHandler := copilothandler.NewHandler(copilotservice.NewService(copilotservice.Config{
 		MaxMessageLength:     cfg.CopilotMaxMessageLength,
 		SessionTTL:           cfg.CopilotSessionTTL,
@@ -510,6 +519,8 @@ func initCopilot(ctx context.Context, cfg config.Config, infra infrastructure, m
 		LLM:                  llmClient,
 		Tools:                tools,
 		Diagnosis:            diagnosisService,
+		Summarizer:           copilotSummarizer,
+		SummaryEnabled:       cfg.CopilotSummaryEnabled,
 		ToolDefs:             toolDefinitions(toolExecutor),
 		ToolsClassifyEnabled: cfg.CopilotToolsClassifyEnabled,
 		MultiIntentEnabled:   cfg.CopilotMultiIntentEnabled,

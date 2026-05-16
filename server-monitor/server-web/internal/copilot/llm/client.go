@@ -52,14 +52,14 @@ type Options struct {
 
 type chatRequest struct {
 	Model       string           `json:"model"`
-	Messages    []chatMessage    `json:"messages"`
+	Messages    []ChatMessage    `json:"messages"`
 	Tools       []ToolDefinition `json:"tools,omitempty"`
 	ToolChoice  interface{}      `json:"tool_choice,omitempty"`
 	Temperature float64          `json:"temperature"`
 	MaxTokens   int              `json:"max_tokens,omitempty"`
 }
 
-type chatMessage struct {
+type ChatMessage struct {
 	Role       string           `json:"role"`
 	Content    string           `json:"content,omitempty"`
 	ToolCalls  []toolCallResult `json:"tool_calls,omitempty"`
@@ -68,12 +68,12 @@ type chatMessage struct {
 
 type chatResponse struct {
 	Choices []struct {
-		Message chatMessage `json:"message"`
+		Message ChatMessage `json:"message"`
 	} `json:"choices"`
-	Usage *chatUsage `json:"usage,omitempty"`
+	Usage *ChatUsage `json:"usage,omitempty"`
 }
 
-type chatUsage struct {
+type ChatUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
@@ -280,7 +280,7 @@ func (c *Client) Generate(ctx context.Context, systemPrompt, userPrompt string) 
 
 	start := time.Now()
 	var lastErr error
-	var lastUsage *chatUsage
+	var lastUsage *ChatUsage
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
 			backoff := initialRetryBackoff * time.Duration(1<<(attempt-1))
@@ -321,7 +321,58 @@ func (c *Client) Generate(ctx context.Context, systemPrompt, userPrompt string) 
 	return "", lastErr
 }
 
-func tokenCountsFromUsage(usage *chatUsage) (int, int) {
+func (c *Client) Chat(ctx context.Context, messages []ChatMessage) (string, *ChatUsage, error) {
+	if c == nil || c.apiKey == "" || c.apiURL == "" || c.model == "" {
+		if c != nil && c.observer != nil {
+			c.observer.ObserveLLMRequest(c.model, "error", 0, 0, 0)
+		}
+		return "", nil, ErrDisabled
+	}
+
+	start := time.Now()
+	var lastErr error
+	var lastUsage *ChatUsage
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			backoff := initialRetryBackoff * time.Duration(1<<(attempt-1))
+			timer := time.NewTimer(backoff)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				if c.observer != nil {
+					c.observer.ObserveLLMRequest(c.model, "error", time.Since(start).Seconds(), 0, 0)
+				}
+				return "", nil, ctx.Err()
+			case <-timer.C:
+			}
+		}
+
+		content, usage, err := c.doRequestMessages(ctx, messages, 0.3)
+		if err == nil {
+			if c.observer != nil {
+				inputTokens, outputTokens := tokenCountsFromUsage(usage)
+				c.observer.ObserveLLMRequest(c.model, "success", time.Since(start).Seconds(), inputTokens, outputTokens)
+			}
+			return content, usage, nil
+		}
+		lastErr = err
+		lastUsage = usage
+		if !isRetryableError(err) {
+			if c.observer != nil {
+				inputTokens, outputTokens := tokenCountsFromUsage(lastUsage)
+				c.observer.ObserveLLMRequest(c.model, "error", time.Since(start).Seconds(), inputTokens, outputTokens)
+			}
+			return "", usage, err
+		}
+	}
+	if c.observer != nil {
+		inputTokens, outputTokens := tokenCountsFromUsage(lastUsage)
+		c.observer.ObserveLLMRequest(c.model, "error", time.Since(start).Seconds(), inputTokens, outputTokens)
+	}
+	return "", lastUsage, lastErr
+}
+
+func tokenCountsFromUsage(usage *ChatUsage) (int, int) {
 	if usage == nil {
 		return 0, 0
 	}
@@ -335,57 +386,30 @@ func isRetryableError(err error) bool {
 	return true
 }
 
-func (c *Client) doRequest(ctx context.Context, systemPrompt, userPrompt string) (string, *chatUsage, error) {
-	ctx, cancel := context.WithTimeout(ctx, c.timeout)
-	defer cancel()
+func (c *Client) doRequest(ctx context.Context, systemPrompt, userPrompt string) (string, *ChatUsage, error) {
+	return c.doRequestMessages(ctx, []ChatMessage{
+		{Role: "system", Content: strings.TrimSpace(systemPrompt)},
+		{Role: "user", Content: strings.TrimSpace(userPrompt)},
+	}, 0)
+}
 
-	body, err := json.Marshal(chatRequest{
-		Model: c.model,
-		Messages: []chatMessage{
-			{Role: "system", Content: strings.TrimSpace(systemPrompt)},
-			{Role: "user", Content: strings.TrimSpace(userPrompt)},
-		},
-		Temperature: 0,
+func (c *Client) doRequestMessages(ctx context.Context, messages []ChatMessage, temperature float64) (string, *ChatUsage, error) {
+	message, usage, err := c.doChatRequest(ctx, chatRequest{
+		Model:       c.model,
+		Messages:    messages,
+		Temperature: temperature,
 		MaxTokens:   c.maxTokens,
 	})
 	if err != nil {
-		return "", nil, fmt.Errorf("marshal llm request: %w", err)
+		return "", usage, err
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.apiURL, bytes.NewReader(body))
-	if err != nil {
-		return "", nil, fmt.Errorf("create llm request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", nil, fmt.Errorf("call llm: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return "", nil, fmt.Errorf("llm returned status %d%s", resp.StatusCode, responseBodyDetail(resp.Body))
-	}
-
-	var decoded chatResponse
-	limited := io.LimitReader(resp.Body, c.maxResponseBytes)
-	if err := json.NewDecoder(limited).Decode(&decoded); err != nil {
-		return "", nil, fmt.Errorf("decode llm response: %w", err)
-	}
-	if len(decoded.Choices) == 0 {
-		return "", nil, ErrInvalidResponse
-	}
-	return decoded.Choices[0].Message.Content, decoded.Usage, nil
+	return message.Content, usage, nil
 }
 
-func (c *Client) doRequestWithTools(ctx context.Context, sysPrompt, userPrompt string, tools []ToolDefinition) (chatMessage, *chatUsage, error) {
-	ctx, cancel := context.WithTimeout(ctx, c.timeout)
-	defer cancel()
-
-	body, err := json.Marshal(chatRequest{
+func (c *Client) doRequestWithTools(ctx context.Context, sysPrompt, userPrompt string, tools []ToolDefinition) (ChatMessage, *ChatUsage, error) {
+	return c.doChatRequest(ctx, chatRequest{
 		Model: c.model,
-		Messages: []chatMessage{
+		Messages: []ChatMessage{
 			{Role: "system", Content: strings.TrimSpace(sysPrompt)},
 			{Role: "user", Content: strings.TrimSpace(userPrompt)},
 		},
@@ -394,33 +418,40 @@ func (c *Client) doRequestWithTools(ctx context.Context, sysPrompt, userPrompt s
 		Temperature: 0,
 		MaxTokens:   c.maxTokens,
 	})
+}
+
+func (c *Client) doChatRequest(ctx context.Context, chatReq chatRequest) (ChatMessage, *ChatUsage, error) {
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
+
+	body, err := json.Marshal(chatReq)
 	if err != nil {
-		return chatMessage{}, nil, fmt.Errorf("marshal llm request: %w", err)
+		return ChatMessage{}, nil, fmt.Errorf("marshal llm request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.apiURL, bytes.NewReader(body))
 	if err != nil {
-		return chatMessage{}, nil, fmt.Errorf("create llm request: %w", err)
+		return ChatMessage{}, nil, fmt.Errorf("create llm request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return chatMessage{}, nil, fmt.Errorf("call llm: %w", err)
+		return ChatMessage{}, nil, fmt.Errorf("call llm: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return chatMessage{}, nil, fmt.Errorf("llm returned status %d%s", resp.StatusCode, responseBodyDetail(resp.Body))
+		return ChatMessage{}, nil, fmt.Errorf("llm returned status %d%s", resp.StatusCode, responseBodyDetail(resp.Body))
 	}
 
 	var decoded chatResponse
 	limited := io.LimitReader(resp.Body, c.maxResponseBytes)
 	if err := json.NewDecoder(limited).Decode(&decoded); err != nil {
-		return chatMessage{}, nil, fmt.Errorf("decode llm response: %w", err)
+		return ChatMessage{}, nil, fmt.Errorf("decode llm response: %w", err)
 	}
 	if len(decoded.Choices) == 0 {
-		return chatMessage{}, nil, ErrInvalidResponse
+		return ChatMessage{}, nil, ErrInvalidResponse
 	}
 	return decoded.Choices[0].Message, decoded.Usage, nil
 }
@@ -566,28 +597,4 @@ var toolNameToIntent = map[string]string{
 
 func openAIToolNameToRegistryName(name string) string {
 	return strings.ReplaceAll(name, "_", ".")
-}
-
-func systemPrompt() string {
-	return strings.Join([]string{
-		"你是 CloudOps Copilot 意图分类器，负责分类用户的中文消息。",
-		"仅返回 JSON，不使用 markdown。",
-		"允许的意图: alert_query, alert_event_query, alert_history_query, alert_rule_list_query, diagnosis_request, host_query, metric_query, general_chat, unknown。",
-		"允许的实体: instance, severity, status, window, query, count, alert_name, fingerprint, alert_history_id, page, page_size, search, sort, risk, group_id, namespace, metric_type, resource_type, resource_name。",
-		"query 仅用于显式的 PromQL 或 query_range 请求。",
-		"禁止返回命令或写操作。",
-		"允许的响应格式:",
-		`  单意图: {"intent":"...","confidence":0.8,"entities":{...}}`,
-		`  多意图: {"intents":[{"intent":"...","confidence":0.8,"entities":{...}}, ...]}`,
-		`示例: {"intent":"host_query","confidence":0.7,"entities":{"status":"down"}}`,
-	}, "\n")
-}
-
-func toolsSystemPrompt() string {
-	return strings.Join([]string{
-		"你是 CloudOps Copilot 意图分类器，负责分类用户的中文消息。",
-		"选择合适的工具来处理用户请求。",
-		"如果没有匹配的工具，请用中文回复有用的消息。",
-		"禁止返回命令或写操作。",
-	}, "\n")
 }
