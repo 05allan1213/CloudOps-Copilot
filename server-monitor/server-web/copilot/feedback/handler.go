@@ -13,7 +13,7 @@ import (
 
 	"server-web/api/middleware"
 	"server-web/copilot/diagnosis"
-	"server-web/model"
+	"server-web/internal/model"
 )
 
 type ReportAccessChecker interface {

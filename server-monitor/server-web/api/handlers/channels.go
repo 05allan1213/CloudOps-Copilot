@@ -14,7 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"server-web/model"
+	"server-web/internal/model"
 )
 
 const (

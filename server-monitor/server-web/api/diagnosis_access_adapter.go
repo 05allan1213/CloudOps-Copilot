@@ -5,7 +5,7 @@ import (
 
 	"server-web/copilot/diagnosis"
 	"server-web/copilot/feedback"
-	"server-web/model"
+	"server-web/internal/model"
 )
 
 type diagnosisAccessAdapter struct {

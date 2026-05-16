@@ -11,7 +11,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	"server-web/model"
+	"server-web/internal/model"
 )
 
 var (

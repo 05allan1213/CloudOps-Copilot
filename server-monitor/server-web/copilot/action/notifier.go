@@ -7,8 +7,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"server-web/model"
-	ws "server-web/websocket"
+	ws "server-web/internal/infra/websocket"
+	"server-web/internal/model"
 )
 
 type StatusNotifier interface {

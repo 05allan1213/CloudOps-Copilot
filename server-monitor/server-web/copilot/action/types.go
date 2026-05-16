@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"server-web/model"
+	"server-web/internal/model"
 )
 
 const (

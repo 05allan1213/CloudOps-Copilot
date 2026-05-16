@@ -3,7 +3,7 @@ package feedback
 import (
 	"context"
 
-	"server-web/model"
+	"server-web/internal/model"
 )
 
 type MetricsObserver interface {

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"server-web/model"
+	"server-web/internal/model"
 )
 
 type FeedbackQueryRepository interface {

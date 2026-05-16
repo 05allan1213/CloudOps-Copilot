@@ -16,9 +16,9 @@ import (
 	authpkg "server-web/auth"
 	appcache "server-web/cache"
 	apphost "server-web/host"
-	promclient "server-web/prometheus"
-	"server-web/webhook"
-	ws "server-web/websocket"
+	promclient "server-web/internal/infra/prometheus"
+	"server-web/internal/infra/webhook"
+	ws "server-web/internal/infra/websocket"
 
 	eventbus "server-monitor/pkg/kafka"
 )

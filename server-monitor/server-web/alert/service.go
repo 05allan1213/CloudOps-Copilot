@@ -16,9 +16,9 @@ import (
 	eventbus "server-monitor/pkg/kafka"
 	"server-monitor/pkg/logger"
 
-	"server-web/model"
+	"server-web/internal/infra/webhook"
+	"server-web/internal/model"
 	rediscache "server-web/redis"
-	"server-web/webhook"
 )
 
 const DefaultEventsLimit int64 = 8

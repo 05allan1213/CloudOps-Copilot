@@ -7,7 +7,7 @@ import (
 
 	"go.uber.org/zap"
 
-	promclient "server-web/prometheus"
+	promclient "server-web/internal/infra/prometheus"
 	rediscache "server-web/redis"
 )
 

@@ -13,8 +13,8 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 
 	k8sreader "server-web/copilot/k8s"
-	"server-web/model"
-	promclient "server-web/prometheus"
+	promclient "server-web/internal/infra/prometheus"
+	"server-web/internal/model"
 )
 
 const (

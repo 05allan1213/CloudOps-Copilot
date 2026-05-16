@@ -8,7 +8,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"server-web/model"
+	"server-web/internal/model"
 )
 
 var (

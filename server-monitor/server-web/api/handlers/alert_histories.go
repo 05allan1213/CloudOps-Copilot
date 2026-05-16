@@ -11,8 +11,8 @@ import (
 	"gorm.io/gorm"
 
 	appalert "server-web/alert"
-	"server-web/model"
-	"server-web/webhook"
+	"server-web/internal/infra/webhook"
+	"server-web/internal/model"
 )
 
 const (

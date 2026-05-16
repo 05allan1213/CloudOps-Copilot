@@ -9,8 +9,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"server-web/model"
-	promclient "server-web/prometheus"
+	promclient "server-web/internal/infra/prometheus"
+	"server-web/internal/model"
 )
 
 type hostGroupRequest struct {

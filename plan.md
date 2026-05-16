@@ -3,7 +3,7 @@
 > 版本：v1.2  
 > 日期：2026-05-15  
 > 基准方案：design.md v2.4  
-> 状态：执行中（步骤 16 已验收）
+> 状态：执行中（步骤 17 已验收）
 > 
 > v1.2 变更：基准方案文件名更正为 design.md、方案 B 去掉 .gitignore 建议、步骤 17 mkdir 命令 cwd 统一
 > v1.1 变更：修订 9 项评审反馈——internal 目录创建补全、命令 cwd 明确、commit 策略改为建议提交点、验收标准改为待勾选、sarama 依赖推迟到步骤 5、miniredis 依赖风险补充、Makefile test 包含 pkg + .PHONY/help 同步、步骤 20 注释先于验证、文档文件处理方案
@@ -1222,10 +1222,28 @@ go build ./internal/infra/webhook/
 
 **验收标准**：
 
-- [ ] 5 个底层模块已移入 internal/
-- [ ] 各模块 package 名不变
-- [ ] 各模块 `go build` 通过
-- [ ] 使用 `git mv` 保持历史连续性
+- [x] 5 个底层模块已移入 internal/
+- [x] 各模块 package 名不变
+- [x] 各模块 `go build` 通过
+- [x] 使用 `git mv` 保持历史连续性
+
+**执行记录（2026-05-16）**：
+
+- 已创建 `server-web/internal/` 目标目录结构，包括步骤 17 的 `internal/model`、`internal/infra/{database,prometheus,websocket,webhook}`，以及步骤 18 需要的 `internal/service`、`internal/copilot` 等目录
+- 已使用 `git mv` 将 `model/`、`database/`、`prometheus/`、`websocket/`、`webhook/` 下的 Go 文件移入 `internal/` 对应目录，保留历史连续性
+- 已将相关 import 从 `server-web/{model,database,prometheus,websocket,webhook}` 更新为 `server-web/internal/...`
+- package 声明保持不变：`model`、`database`、`promclient`、`websocket`、`webhook`
+- 检查：`rg -n '"server-web/(model|database|prometheus|websocket|webhook)"' server-monitor/server-web` 无旧路径残留
+- 检查：`find model database prometheus websocket webhook -maxdepth 1 -type f` 无输出，旧目录无残留 Go 文件
+- 验证：`cd server-monitor/server-web && GOCACHE=/tmp/cloudops-gocache go build ./internal/model/` 通过
+- 验证：`cd server-monitor/server-web && GOCACHE=/tmp/cloudops-gocache go build ./internal/infra/database/` 通过
+- 验证：`cd server-monitor/server-web && GOCACHE=/tmp/cloudops-gocache go build ./internal/infra/prometheus/` 通过
+- 验证：`cd server-monitor/server-web && GOCACHE=/tmp/cloudops-gocache go build ./internal/infra/websocket/` 通过
+- 验证：`cd server-monitor/server-web && GOCACHE=/tmp/cloudops-gocache go build ./internal/infra/webhook/` 通过
+- 补充验证：`cd server-monitor/server-web && GOCACHE=/tmp/cloudops-gocache go build ./...` 通过
+- 补充验证：`cd server-monitor/server-web && go test ./...` 在允许本地 TCP socket 的环境中通过；沙箱内同命令因 miniredis 监听 `127.0.0.1:0` 失败，错误为 `socket: operation not permitted`
+- 补充检查：`cd server-monitor/server-web && GOCACHE=/tmp/cloudops-gocache go vet ./internal/model/ ./internal/infra/database/ ./internal/infra/prometheus/ ./internal/infra/websocket/ ./internal/infra/webhook/` 通过
+- 补充检查：`git diff --check` 通过
 
 ---
 

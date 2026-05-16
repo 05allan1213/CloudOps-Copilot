@@ -18,9 +18,9 @@ import (
 	"server-web/copilot/runbook"
 	copilot "server-web/copilot/service"
 	apphost "server-web/host"
-	"server-web/model"
-	promclient "server-web/prometheus"
-	"server-web/webhook"
+	promclient "server-web/internal/infra/prometheus"
+	"server-web/internal/infra/webhook"
+	"server-web/internal/model"
 )
 
 const (

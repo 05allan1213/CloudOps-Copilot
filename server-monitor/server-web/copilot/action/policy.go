@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"strings"
 
-	"server-web/model"
+	"server-web/internal/model"
 )
 
 var (

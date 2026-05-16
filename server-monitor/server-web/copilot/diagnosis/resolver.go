@@ -10,8 +10,8 @@ import (
 
 	"gorm.io/gorm"
 
-	"server-web/model"
-	"server-web/webhook"
+	"server-web/internal/infra/webhook"
+	"server-web/internal/model"
 )
 
 type ActiveAlertProvider interface {

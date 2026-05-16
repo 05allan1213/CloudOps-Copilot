@@ -9,7 +9,7 @@ import (
 	"time"
 
 	appcache "server-web/cache"
-	promclient "server-web/prometheus"
+	promclient "server-web/internal/infra/prometheus"
 )
 
 type PrometheusClient interface {

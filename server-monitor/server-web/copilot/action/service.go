@@ -10,7 +10,7 @@ import (
 
 	"go.uber.org/zap"
 
-	"server-web/model"
+	"server-web/internal/model"
 )
 
 type ServiceConfig struct {
