@@ -1,4 +1,4 @@
-// Package kafka provides shared Kafka event types and producer helpers.
+// Package kafka provides shared Kafka event types, producers, and consumers.
 package kafka
 
 import (
