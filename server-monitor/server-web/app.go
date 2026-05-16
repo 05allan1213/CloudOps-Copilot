@@ -19,6 +19,7 @@ import (
 
 	"server-web/internal/config"
 	copilotaction "server-web/internal/copilot/action"
+	copilotcontext "server-web/internal/copilot/context"
 	copilotdiagnosis "server-web/internal/copilot/diagnosis"
 	copilotfeedback "server-web/internal/copilot/feedback"
 	copilothandler "server-web/internal/copilot/handler"
@@ -502,6 +503,11 @@ func initCopilot(ctx context.Context, cfg config.Config, infra infrastructure, m
 	diagnosisRepo := copilotdiagnosis.NewRepository(db)
 	feedbackRepo := copilotfeedback.NewMySQLRepository(db)
 	diagnosisService := initDiagnosisService(cfg, alertService, llmClient, toolExecutor, diagnosisRepo, feedbackRepo, db, metrics)
+	copilotStore := copilotsession.NewRedisStore(infra.redisClient)
+	copilotContextMgr := copilotcontext.NewManager(copilotcontext.Options{
+		Store:     copilotStore,
+		MaxRounds: cfg.CopilotChatHistoryMaxRounds,
+	})
 	var copilotSummarizer *copilotsummary.Summarizer
 	if llmClient != nil {
 		copilotSummarizer = copilotsummary.NewSummarizer(copilotsummary.Options{
@@ -514,13 +520,14 @@ func initCopilot(ctx context.Context, cfg config.Config, infra infrastructure, m
 		MaxMessageLength:     cfg.CopilotMaxMessageLength,
 		SessionTTL:           cfg.CopilotSessionTTL,
 		MaxSessionMessages:   cfg.CopilotMaxSessionMessages,
-		Store:                copilotsession.NewRedisStore(infra.redisClient),
+		Store:                copilotStore,
 		Classifier:           copilotnlu.NewClassifier(copilotnlu.WithNLUObserver(metrics)),
 		LLM:                  llmClient,
 		Tools:                tools,
 		Diagnosis:            diagnosisService,
 		Summarizer:           copilotSummarizer,
 		SummaryEnabled:       cfg.CopilotSummaryEnabled,
+		ContextManager:       copilotContextMgr,
 		ToolDefs:             toolDefinitions(toolExecutor),
 		ToolsClassifyEnabled: cfg.CopilotToolsClassifyEnabled,
 		MultiIntentEnabled:   cfg.CopilotMultiIntentEnabled,

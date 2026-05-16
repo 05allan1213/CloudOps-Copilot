@@ -39,6 +39,7 @@ type Config struct {
 	Diagnosis            DiagnosisService
 	Summarizer           Summarizer
 	SummaryEnabled       bool
+	ContextManager       ContextManager
 	ToolDefs             []llm.ToolDefinition
 	ToolsClassifyEnabled bool
 	MultiIntentEnabled   bool
@@ -73,6 +74,7 @@ type Service struct {
 	diagnosis            DiagnosisService
 	summarizer           Summarizer
 	summaryEnabled       bool
+	contextManager       ContextManager
 	toolDefs             []llm.ToolDefinition
 	toolsClassifyEnabled bool
 	multiIntentEnabled   bool
@@ -147,6 +149,7 @@ func NewService(cfg Config) *Service {
 		diagnosis:            cfg.Diagnosis,
 		summarizer:           cfg.Summarizer,
 		summaryEnabled:       cfg.SummaryEnabled,
+		contextManager:       cfg.ContextManager,
 		toolDefs:             toolDefs,
 		toolsClassifyEnabled: toolsClassifyEnabled,
 		multiIntentEnabled:   multiIntentEnabled,
@@ -195,12 +198,15 @@ func (s *Service) Chat(ctx context.Context, user User, req ChatRequest) (ChatRes
 	}
 	parsed = s.classifyWithFallback(ctx, message, parsed)
 	parsed = nlu.TrimIntents(parsed, s.multiIntentMax)
+	history, contextEntities := s.loadSessionContext(ctx, sessionID)
+	parsed = applyContextEntities(parsed, contextEntities)
 	ctx = WithUser(ctx, user)
 	toolCalls, toolReply, multiIntentResults, err := s.executeIntents(ctx, user, parsed)
 	if err != nil {
 		return ChatResponse{}, err
 	}
-	reply, suggestions := s.buildReplyWithSummary(ctx, message, parsed, toolReply, toolCalls)
+	reply, suggestions := s.buildReplyWithSummary(ctx, message, parsed, toolReply, toolCalls, history)
+	s.saveSessionContext(ctx, sessionID, contextEntities, s.extractContextEntities(toolCalls, parsed.Intent))
 
 	if err := s.store.AppendMessages(ctx, meta, []session.Message{
 		{

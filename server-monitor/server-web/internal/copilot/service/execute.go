@@ -84,6 +84,14 @@ func (s *Service) executeDiagnosis(ctx context.Context, user User, result nlu.Re
 			req.AlertHistoryID = id
 		}
 	}
+	if !hasDiagnosisTarget(req) {
+		inferredReq, toolCalls, reply, ok := s.inferDiagnosisTarget(ctx)
+		if !ok {
+			return toolCalls, reply, nil
+		}
+		req = inferredReq
+		req.TriggerType = diagnosis.TriggerChat
+	}
 	report, err := s.diagnosis.Trigger(ctx, diagnosis.User{
 		ID:       user.ID,
 		Username: user.Username,
@@ -98,6 +106,63 @@ func (s *Service) executeDiagnosis(ctx context.Context, user User, result nlu.Re
 	}
 	reply := fmt.Sprintf("诊断报告已生成：#%d，状态 %s，置信度 %.0f%%。摘要：%s", report.ID, report.Status, report.Confidence*100, report.Summary)
 	return []ToolCall{{Name: "diagnosis.trigger", Status: "success", Result: report}}, reply, nil
+}
+
+func hasDiagnosisTarget(req diagnosis.Request) bool {
+	return strings.TrimSpace(req.Fingerprint) != "" ||
+		req.AlertHistoryID != 0 ||
+		(strings.TrimSpace(req.AlertName) != "" && strings.TrimSpace(req.Instance) != "")
+}
+
+func (s *Service) inferDiagnosisTarget(ctx context.Context) (diagnosis.Request, []ToolCall, string, bool) {
+	if s.tools == nil {
+		err := fmt.Errorf("%w: 需要 fingerprint、alert_history_id，或 alert_name + instance", diagnosis.ErrInvalidRequest)
+		return diagnosis.Request{}, []ToolCall{{Name: "diagnosis.trigger", Status: "error", Error: err.Error()}}, buildDiagnosisErrorReply(err), false
+	}
+
+	toolCalls, _, err := s.tools.Execute(ctx, nlu.Result{
+		Intent:   nlu.IntentAlertQuery,
+		Entities: map[string]string{"status": "firing"},
+	})
+	if err != nil {
+		return diagnosis.Request{}, []ToolCall{{Name: "alert.list_active", Status: "error", Error: err.Error()}}, "", false
+	}
+	candidates := diagnosisCandidatesFromToolCalls(toolCalls)
+	switch len(candidates) {
+	case 0:
+		if reply := firstToolErrorReply(toolCalls); reply != "" {
+			return diagnosis.Request{}, toolCalls, reply, false
+		}
+		return diagnosis.Request{}, toolCalls, "当前没有 firing 告警可供自动诊断。请提供 fingerprint、alert_history_id，或先查询告警历史后再诊断。", false
+	case 1:
+		return requestFromDiagnosisCandidate(candidates[0]), nil, "", true
+	default:
+		return diagnosis.Request{}, []ToolCall{{
+			Name:   "diagnosis.trigger",
+			Status: "error",
+			Error:  diagnosis.ErrConflict.Error(),
+			Result: candidates,
+		}}, buildDiagnosisCandidatesReply(candidates), false
+	}
+}
+
+func firstToolErrorReply(toolCalls []ToolCall) string {
+	for _, call := range toolCalls {
+		if call.Status == "error" && call.Error != "" {
+			return buildReply(nlu.Result{Intent: nlu.IntentAlertQuery}, "", toolCalls)
+		}
+	}
+	return ""
+}
+
+func requestFromDiagnosisCandidate(candidate diagnosis.DiagnosisCandidate) diagnosis.Request {
+	return diagnosis.Request{
+		Fingerprint:    candidate.Fingerprint,
+		AlertHistoryID: candidate.AlertHistoryID,
+		AlertName:      candidate.AlertName,
+		Instance:       candidate.Instance,
+		TriggerType:    diagnosis.TriggerChat,
+	}
 }
 
 func buildDiagnosisCandidatesReply(candidates []diagnosis.DiagnosisCandidate) string {
@@ -142,37 +207,187 @@ func (s *Service) extractContextEntities(toolCalls []ToolCall, intent string) ma
 
 	switch intent {
 	case nlu.IntentAlertQuery, nlu.IntentAlertEventQuery, nlu.IntentAlertHistoryQuery:
-		if len(toolCalls) == 1 && toolCalls[0].Status == "success" {
-			if result, ok := toolCalls[0].Result.(map[string]interface{}); ok {
-				if items, ok := result["items"].([]interface{}); ok && len(items) == 1 {
-					if item, ok := items[0].(map[string]interface{}); ok {
-						if alertName, ok := item["alert_name"].(string); ok && alertName != "" {
-							entities["alert_name"] = alertName
-						}
-						if fingerprint, ok := item["fingerprint"].(string); ok && fingerprint != "" {
-							entities["fingerprint"] = fingerprint
-						}
-						if severity, ok := item["severity"].(string); ok && severity != "" {
-							entities["severity"] = severity
-						}
-					}
+		items := alertEntityItemsFromToolCalls(toolCalls)
+		if len(items) == 1 {
+			mergeEntityFields(entities, alertFieldsFromItem(items[0]))
+		} else if len(items) > 1 {
+			for i := len(items) - 1; i >= 0; i-- {
+				fields := alertFieldsFromItem(items[i])
+				if fields["status"] == "firing" {
+					mergeEntityFields(entities, fields)
+					break
 				}
 			}
 		}
 	case nlu.IntentHostQuery:
 		if len(toolCalls) == 1 && toolCalls[0].Status == "success" {
-			if result, ok := toolCalls[0].Result.(map[string]interface{}); ok {
-				if hosts, ok := result["hosts"].([]interface{}); ok && len(hosts) == 1 {
-					if host, ok := hosts[0].(map[string]interface{}); ok {
-						if instance, ok := host["instance"].(string); ok && instance != "" {
-							entities["instance"] = instance
-						}
-					}
+			hosts := hostItemsFromToolCall(toolCalls[0])
+			if len(hosts) == 1 {
+				if instance, ok := hosts[0]["instance"].(string); ok && instance != "" {
+					entities["instance"] = instance
 				}
 			}
 		}
 	}
 	return entities
+}
+
+func hostItemsFromToolCall(call ToolCall) []map[string]interface{} {
+	switch result := call.Result.(type) {
+	case []interface{}:
+		return mapsFromSlice(result)
+	case []map[string]interface{}:
+		return result
+	case map[string]interface{}:
+		if hosts, ok := result["hosts"].([]interface{}); ok {
+			return mapsFromSlice(hosts)
+		}
+		return []map[string]interface{}{result}
+	default:
+		return nil
+	}
+}
+
+func diagnosisCandidatesFromToolCalls(toolCalls []ToolCall) []diagnosis.DiagnosisCandidate {
+	items := alertEntityItemsFromToolCalls(toolCalls)
+	candidates := make([]diagnosis.DiagnosisCandidate, 0, len(items))
+	for _, item := range items {
+		fields := alertFieldsFromItem(item)
+		if fields["fingerprint"] == "" && (fields["alert_name"] == "" || fields["instance"] == "") {
+			continue
+		}
+		candidates = append(candidates, diagnosis.DiagnosisCandidate{
+			AlertHistoryID: parseUintField(fields["alert_history_id"]),
+			Fingerprint:    fields["fingerprint"],
+			AlertName:      fields["alert_name"],
+			Instance:       fields["instance"],
+			Severity:       fields["severity"],
+			Status:         fields["status"],
+			Source:         "alert.list_active",
+		})
+	}
+	return candidates
+}
+
+func alertEntityItemsFromToolCalls(toolCalls []ToolCall) []map[string]interface{} {
+	var items []map[string]interface{}
+	for _, call := range toolCalls {
+		if call.Status != "success" {
+			continue
+		}
+		items = append(items, alertEntityItems(call.Result)...)
+	}
+	return items
+}
+
+func alertEntityItems(result interface{}) []map[string]interface{} {
+	switch value := result.(type) {
+	case []interface{}:
+		return mapsFromSlice(value)
+	case []map[string]interface{}:
+		return value
+	case map[string]interface{}:
+		if rawItems, ok := value["items"]; ok {
+			return alertEntityItems(rawItems)
+		}
+		return []map[string]interface{}{value}
+	default:
+		return nil
+	}
+}
+
+func mapsFromSlice(values []interface{}) []map[string]interface{} {
+	items := make([]map[string]interface{}, 0, len(values))
+	for _, value := range values {
+		if item, ok := value.(map[string]interface{}); ok {
+			items = append(items, item)
+		}
+	}
+	return items
+}
+
+func alertFieldsFromItem(item map[string]interface{}) map[string]string {
+	labels := stringMapFromAny(item["labels"])
+	fields := map[string]string{
+		"alert_history_id": stringFromAny(firstNonNil(item["alert_history_id"], item["id"])),
+		"fingerprint":      stringFromAny(item["fingerprint"]),
+		"alert_name":       firstNonEmpty(stringFromAny(item["alert_name"]), labels["alertname"]),
+		"instance":         firstNonEmpty(stringFromAny(item["instance"]), labels["instance"]),
+		"severity":         firstNonEmpty(stringFromAny(item["severity"]), labels["severity"]),
+		"status":           stringFromAny(item["status"]),
+	}
+	return fields
+}
+
+func mergeEntityFields(dst map[string]string, fields map[string]string) {
+	for key, value := range fields {
+		if value != "" {
+			dst[key] = value
+		}
+	}
+}
+
+func stringMapFromAny(value interface{}) map[string]string {
+	result := map[string]string{}
+	switch typed := value.(type) {
+	case map[string]string:
+		for key, item := range typed {
+			result[key] = strings.TrimSpace(item)
+		}
+	case map[string]interface{}:
+		for key, item := range typed {
+			if text := stringFromAny(item); text != "" {
+				result[key] = text
+			}
+		}
+	}
+	return result
+}
+
+func firstNonNil(values ...interface{}) interface{} {
+	for _, value := range values {
+		if value != nil {
+			return value
+		}
+	}
+	return nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func stringFromAny(value interface{}) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case fmt.Stringer:
+		return strings.TrimSpace(typed.String())
+	case float64:
+		return strconv.FormatUint(uint64(typed), 10)
+	case float32:
+		return strconv.FormatUint(uint64(typed), 10)
+	case int:
+		return strconv.Itoa(typed)
+	case int64:
+		return strconv.FormatInt(typed, 10)
+	case uint64:
+		return strconv.FormatUint(typed, 10)
+	case nil:
+		return ""
+	default:
+		return strings.TrimSpace(fmt.Sprintf("%v", typed))
+	}
+}
+
+func parseUintField(value string) uint64 {
+	parsed, _ := strconv.ParseUint(strings.TrimSpace(value), 10, 64)
+	return parsed
 }
 
 func mergeEntities(base, override map[string]string) map[string]string {

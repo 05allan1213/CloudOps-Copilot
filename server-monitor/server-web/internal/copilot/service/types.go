@@ -11,6 +11,7 @@ type SummaryInput struct {
 	UserMessage string
 	ToolCalls   []ToolCall
 	Intent      string
+	History     []ChatHistoryItem
 }
 
 type SummaryResult struct {
@@ -20,6 +21,17 @@ type SummaryResult struct {
 
 type Summarizer interface {
 	Summarize(ctx context.Context, input SummaryInput) (SummaryResult, error)
+}
+
+type ChatHistoryItem struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type ContextManager interface {
+	LoadHistory(ctx context.Context, sessionID string) ([]ChatHistoryItem, error)
+	LoadEntities(ctx context.Context, sessionID string) (map[string]string, error)
+	SaveEntities(ctx context.Context, sessionID string, entities map[string]string, ttl time.Duration) error
 }
 
 type ToolCall struct {

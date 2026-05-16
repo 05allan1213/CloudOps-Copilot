@@ -39,6 +39,8 @@ type Store interface {
 	ListSessions(ctx context.Context, userID uint64) ([]Summary, error)
 	ListMessages(ctx context.Context, sessionID string) ([]Message, error)
 	DeleteSession(ctx context.Context, userID uint64, sessionID string) error
+	GetContext(ctx context.Context, sessionID string) (SessionContext, error)
+	SetContext(ctx context.Context, sessionID string, ctxData SessionContext, ttl time.Duration) error
 }
 
 type Meta struct {
@@ -59,6 +61,11 @@ type Message struct {
 	Role      string `json:"role"`
 	Content   string `json:"content"`
 	CreatedAt string `json:"created_at"`
+}
+
+type SessionContext struct {
+	LastIntent   string            `json:"last_intent"`
+	LastEntities map[string]string `json:"last_entities"`
 }
 
 type RedisStore struct {
@@ -186,11 +193,61 @@ func (s *RedisStore) DeleteSession(ctx context.Context, userID uint64, sessionID
 		return ErrUnavailable
 	}
 
-	if err := s.client.Del(ctx, messagesKey(sessionID), metaKey(sessionID)); err != nil {
+	if err := s.client.Del(ctx, messagesKey(sessionID), metaKey(sessionID), contextKey(sessionID)); err != nil {
 		return fmt.Errorf("delete copilot session: %w", err)
 	}
 	if err := s.client.SRem(ctx, userSessionsKey(userID), sessionID); err != nil {
 		return fmt.Errorf("remove copilot session index: %w", err)
+	}
+	return nil
+}
+
+func (s *RedisStore) GetContext(ctx context.Context, sessionID string) (SessionContext, error) {
+	if !s.enabled() {
+		return SessionContext{}, ErrUnavailable
+	}
+
+	fields, err := s.client.HGetAll(ctx, contextKey(sessionID))
+	if err != nil {
+		return SessionContext{}, fmt.Errorf("get copilot session context: %w", err)
+	}
+	if len(fields) == 0 {
+		return SessionContext{}, nil
+	}
+
+	result := SessionContext{LastIntent: fields["last_intent"]}
+	if raw := fields["last_entities"]; raw != "" {
+		var entities map[string]string
+		if err := json.Unmarshal([]byte(raw), &entities); err == nil {
+			result.LastEntities = entities
+		}
+	}
+	return result, nil
+}
+
+func (s *RedisStore) SetContext(ctx context.Context, sessionID string, ctxData SessionContext, ttl time.Duration) error {
+	if !s.enabled() {
+		return ErrUnavailable
+	}
+	if ttl <= 0 {
+		ttl = DefaultTTL
+	}
+
+	entitiesJSON, err := json.Marshal(ctxData.LastEntities)
+	if err != nil {
+		return fmt.Errorf("marshal copilot session context entities: %w", err)
+	}
+	fields := map[string][]byte{
+		"last_intent":   []byte(ctxData.LastIntent),
+		"last_entities": entitiesJSON,
+	}
+	for field, value := range fields {
+		if err := s.client.HSet(ctx, contextKey(sessionID), field, value); err != nil {
+			return fmt.Errorf("set copilot session context: %w", err)
+		}
+	}
+	if err := s.client.Expire(ctx, contextKey(sessionID), ttl); err != nil {
+		return fmt.Errorf("refresh copilot session context ttl: %w", err)
 	}
 	return nil
 }
@@ -216,7 +273,7 @@ func (s *RedisStore) writeMeta(ctx context.Context, meta Meta) error {
 }
 
 func (s *RedisStore) refreshTTL(ctx context.Context, userID uint64, sessionID string, ttl time.Duration) error {
-	for _, key := range []string{messagesKey(sessionID), metaKey(sessionID), userSessionsKey(userID)} {
+	for _, key := range []string{messagesKey(sessionID), metaKey(sessionID), contextKey(sessionID), userSessionsKey(userID)} {
 		if err := s.client.Expire(ctx, key, ttl); err != nil {
 			return fmt.Errorf("refresh copilot session ttl: %w", err)
 		}
@@ -252,6 +309,10 @@ func messagesKey(sessionID string) string {
 
 func metaKey(sessionID string) string {
 	return KeyPrefix + ":" + sessionID + ":meta"
+}
+
+func contextKey(sessionID string) string {
+	return KeyPrefix + ":" + sessionID + ":ctx"
 }
 
 func userSessionsKey(userID uint64) string {

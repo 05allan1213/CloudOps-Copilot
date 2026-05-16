@@ -137,6 +137,10 @@ type Config struct {
 	// 默认值：16384
 	CopilotSummaryMaxPromptBytes int
 
+	// CopilotChatHistoryMaxRounds Copilot 传给 LLM 的历史对话轮数
+	// 默认值：10
+	CopilotChatHistoryMaxRounds int
+
 	// RunbookDir Runbook Markdown 目录，为空时禁用 Runbook 检索
 	// 默认值：../runbooks
 	RunbookDir string
@@ -471,6 +475,7 @@ func Load() Config {
 		CopilotSummaryEnabled:        configutil.Bool("COPILOT_SUMMARY_ENABLED", true),
 		CopilotSummaryTimeout:        configutil.DurationSeconds("COPILOT_SUMMARY_TIMEOUT_SECONDS", 8),
 		CopilotSummaryMaxPromptBytes: configutil.PositiveInt("COPILOT_SUMMARY_MAX_PROMPT_BYTES", 16384),
+		CopilotChatHistoryMaxRounds:  configutil.PositiveInt("COPILOT_CHAT_HISTORY_MAX_ROUNDS", 10),
 		RunbookDir:                   configutil.String("RUNBOOK_DIR", "../runbooks"),
 		RunbookMaxFiles:              configutil.PositiveInt("RUNBOOK_MAX_FILES", 100),
 		RunbookMaxFileBytes:          int64(configutil.PositiveInt("RUNBOOK_MAX_FILE_BYTES", 65536)),
@@ -707,6 +712,9 @@ func (c *Config) Validate() error {
 	}
 	if c.CopilotSummaryMaxPromptBytes <= 0 {
 		return fmt.Errorf("COPILOT_SUMMARY_MAX_PROMPT_BYTES must be positive, got %d", c.CopilotSummaryMaxPromptBytes)
+	}
+	if c.CopilotChatHistoryMaxRounds <= 0 {
+		return fmt.Errorf("COPILOT_CHAT_HISTORY_MAX_ROUNDS must be positive, got %d", c.CopilotChatHistoryMaxRounds)
 	}
 	if c.CopilotMultiIntentMax < 1 {
 		c.CopilotMultiIntentMax = 3

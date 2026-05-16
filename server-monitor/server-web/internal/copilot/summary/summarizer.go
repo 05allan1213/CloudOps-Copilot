@@ -69,10 +69,7 @@ func (s *Summarizer) Summarize(ctx context.Context, input service.SummaryInput) 
 	callCtx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 
-	content, _, err := s.llm.Chat(callCtx, []llm.ChatMessage{
-		{Role: "system", Content: summarySystemPrompt()},
-		{Role: "user", Content: userPrompt},
-	})
+	content, _, err := s.llm.Chat(callCtx, buildMessages(input.History, userPrompt))
 	if err != nil {
 		return service.SummaryResult{}, fmt.Errorf("%w: %v", ErrFallback, err)
 	}
@@ -81,6 +78,21 @@ func (s *Summarizer) Summarize(ctx context.Context, input service.SummaryInput) 
 		return service.SummaryResult{}, err
 	}
 	return result, nil
+}
+
+func buildMessages(history []service.ChatHistoryItem, userPrompt string) []llm.ChatMessage {
+	messages := make([]llm.ChatMessage, 0, len(history)+2)
+	messages = append(messages, llm.ChatMessage{Role: "system", Content: summarySystemPrompt()})
+	for _, item := range history {
+		role := strings.TrimSpace(item.Role)
+		content := strings.TrimSpace(item.Content)
+		if content == "" || (role != "user" && role != "assistant") {
+			continue
+		}
+		messages = append(messages, llm.ChatMessage{Role: role, Content: content})
+	}
+	messages = append(messages, llm.ChatMessage{Role: "user", Content: userPrompt})
+	return messages
 }
 
 func buildUserPrompt(input service.SummaryInput, maxPrompt int) (string, error) {

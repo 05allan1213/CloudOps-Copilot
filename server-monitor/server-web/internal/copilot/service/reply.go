@@ -8,7 +8,7 @@ import (
 	"server-web/internal/copilot/nlu"
 )
 
-func (s *Service) buildReplyWithSummary(ctx context.Context, message string, result nlu.Result, toolReply string, toolCalls []ToolCall) (string, []string) {
+func (s *Service) buildReplyWithSummary(ctx context.Context, message string, result nlu.Result, toolReply string, toolCalls []ToolCall, history []ChatHistoryItem) (string, []string) {
 	fallbackReply := buildReply(result, toolReply, toolCalls)
 	fallbackSuggestions := buildSuggestions(result)
 	if s.summarizer == nil || !s.summaryEnabled {
@@ -17,7 +17,7 @@ func (s *Service) buildReplyWithSummary(ctx context.Context, message string, res
 
 	if !hasSuccessfulToolCall(toolCalls) {
 		if result.Intent == nlu.IntentGeneralChat || result.Intent == nlu.IntentUnknown || result.Intent == IntentUnknown {
-			return s.chatWithLLM(ctx, message, result, toolCalls, fallbackReply, fallbackSuggestions)
+			return s.chatWithLLM(ctx, message, result, toolCalls, history, fallbackReply, fallbackSuggestions)
 		}
 		return fallbackReply, fallbackSuggestions
 	}
@@ -26,6 +26,7 @@ func (s *Service) buildReplyWithSummary(ctx context.Context, message string, res
 		UserMessage: message,
 		ToolCalls:   toolCalls,
 		Intent:      result.Intent,
+		History:     history,
 	})
 	if err != nil {
 		return fallbackReply, fallbackSuggestions
@@ -33,11 +34,12 @@ func (s *Service) buildReplyWithSummary(ctx context.Context, message string, res
 	return summaryOrFallback(summaryResult, fallbackReply, fallbackSuggestions)
 }
 
-func (s *Service) chatWithLLM(ctx context.Context, message string, result nlu.Result, toolCalls []ToolCall, fallbackReply string, fallbackSuggestions []string) (string, []string) {
+func (s *Service) chatWithLLM(ctx context.Context, message string, result nlu.Result, toolCalls []ToolCall, history []ChatHistoryItem, fallbackReply string, fallbackSuggestions []string) (string, []string) {
 	summaryResult, err := s.summarizer.Summarize(ctx, SummaryInput{
 		UserMessage: message,
 		ToolCalls:   toolCalls,
 		Intent:      result.Intent,
+		History:     history,
 	})
 	if err != nil {
 		return fallbackReply, fallbackSuggestions

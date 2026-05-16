@@ -141,6 +141,8 @@ func (c *Classifier) Classify(message string) Result {
 	switch {
 	case hasDiagnosis && hasAlert:
 		result = Result{Intent: IntentDiagnosisRequest, Confidence: 0.9, Entities: entities}
+	case hasDiagnosis:
+		result = Result{Intent: IntentDiagnosisRequest, Confidence: 0.82, Entities: entities}
 	case hasAlertRule:
 		result = Result{Intent: IntentAlertRuleListQuery, Confidence: 0.89, Entities: entities}
 	case hasAlert && hasHistory:
