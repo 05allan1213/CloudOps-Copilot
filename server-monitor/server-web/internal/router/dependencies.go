@@ -1,11 +1,11 @@
-package api
+package router
 
 import (
 	copilotaction "server-web/internal/copilot/action"
 	copilotdiagnosis "server-web/internal/copilot/diagnosis"
 	copilotfeedback "server-web/internal/copilot/feedback"
 	copilothandler "server-web/internal/copilot/handler"
-	handlers "server-web/internal/handler"
+	"server-web/internal/handler"
 	rediscache "server-web/internal/infra/redis"
 	"server-web/internal/middleware"
 
@@ -27,7 +27,7 @@ type CopilotDeps struct {
 type Dependencies struct {
 	Metrics     *middleware.Metrics
 	CacheClient *rediscache.Client
-	Handler     *handlers.Handler
-	AuthService handlers.AuthService
+	Handler     *handler.Handler
+	AuthService handler.AuthService
 	Copilot     *CopilotDeps
 }

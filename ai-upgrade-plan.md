@@ -153,7 +153,7 @@ design.md §16.1 原则 6 规定 **Copilot 保持内聚**。AI 升级新增的�
 
 ---
 
-## 4. 迭代 A：LLM 工具结果摘要 + 动态文本建议
+## 4. 迭代 A：LLM 工具结果摘要 + 动态文本建议 ✅ 已完成
 
 > 目标：工具执行后经过 LLM 生成自然语言摘要，失败时降级到模板。不改 API 格式，不改分类主路径，不做 SSE。
 
@@ -447,7 +447,7 @@ COPILOT_SUMMARY_MAX_PROMPT_BYTES: ${COPILOT_SUMMARY_MAX_PROMPT_BYTES:-16384}
 
 ---
 
-## 5. 迭代 B：多轮上下文 + 智能诊断入口
+## 5. 迭代 B：多轮上下文 + 智能诊断入口 ✅ 已完成
 
 > 目标：LLM 调用时携带对话历史，支持指代消解；诊断入口自动推断目标。
 > 前提：先设计 session 上下文存储接口。
@@ -714,7 +714,7 @@ copilotservice.NewService(copilotservice.Config{
 
 ---
 
-## 6. 迭代 C：LLM 分类主路径 + 结构化建议 + 流式响应
+## 6. 迭代 C：LLM 分类主路径 + 结构化建议 + 流式响应 ✅ 已完成
 
 > 目标：LLM 提升为意图分类主路径，建议改为结构化对象，支持 SSE 流式响应。
 > 此迭代涉及 API 格式变更和前端适配，需单独评估。
@@ -859,3 +859,14 @@ AI 升级完成后，需更新 design.md 以下章节：
 | §17.2 文件移动映射 | 补充 10 个新文件的迁移映射 |
 | §19.3 文件移动统计 | copilot 文件数从 ~65 更新为 ~75 |
 | §20.2 CI 影响 | 无额外影响（新子包在 `copilot/` 下，`go test ./...` 自动包含） |
+
+---
+
+## 实现偏差说明
+
+以下记录实际实现与原计划的偏差：
+
+1. **迭代 C 功能提前实现**：结构化建议（`[]Suggestion` 替代 `[]string`）和 SSE 流式响应在迭代 A/B 阶段已提前实现，未严格遵循迭代 A 的 API 兼容约束（`Suggestions` 保持 `[]string`）。
+2. **service.go 拆分**：实际拆分为 6 个文件（service.go、classify.go、execute.go、reply.go、types.go、context.go），比计划的 4 个文件多了 context.go 和 types.go。
+3. **LLM 分类阈值**：迭代 C 的阈值调整（0.6→0.9）已提前实施。
+4. **execute.go 行数**：实际 456 行，远超计划的 ~120 行，因为包含了迭代 B 新增的 `inferDiagnosisTarget`、`hostItemsFromToolCall`、`severityRank` 等函数。

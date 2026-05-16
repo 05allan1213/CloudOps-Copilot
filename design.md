@@ -41,6 +41,8 @@
 
 ### 1.1 当前项目结构
 
+> **注意：** 以下为重构前的项目结构，重构已完成。重构后的目标结构见 §16.2。
+
 ```
 server-monitor/
 ├── pkg/                          # 共享公共包（独立 Go module: server-monitor/pkg）
@@ -113,17 +115,17 @@ server-probe                (module server-probe)
 
 ### 1.3 核心问题诊断
 
-| 编号 | 问题类别 | 具体描述 | 影响范围 | 严重度 |
-|------|---------|---------|---------|--------|
-| P1 | **代码重复** | Kafka Consumer 在 server-web 和 alert-service 中几乎完全重复（含 retry backoff、skipped error 处理等） | 2 个服务 | 高 |
-| P2 | **代码重复** | AlertEvent 类型在两个服务中重复定义（server-web 在 `producer.go` 中，alert-service 在 `event.go` 中） | 2 个服务 | 高 |
-| P3 | **代码重复** | Kafka Topics 常量在两个服务中重复 | 2 个服务 | 高 |
-| P4 | **代码重复** | Redis Client 基础结构（NewClient、Enabled、Close、Ping、Options）在两个服务中重复 | 2 个服务 | 中 |
-| P5 | **代码重复** | `validateHostPort` 函数在三个服务的 config 中重复 | 3 个服务 | 中 |
-| P6 | **巨型文件** | `api/router.go` 约 507 行，同时承担路由注册和服务组装两个职责 | server-web | 高 |
-| P7 | **巨型 main** | `server-web/main.go` 454 行，initApp 是单体初始化函数 | server-web | 中 |
-| P8 | **依赖注入缺失** | 大量具体类型直接传递，无接口抽象，难以测试和替换 | 全局 | 高 |
-| P9 | **关闭阻塞风险** | `subscriberDone`、`diagnosisDone`、`alertHubConsumers` 三个 channel 等待无超时保护，可能无限阻塞 | server-web | 高 |
+| 编号 | 问题类别 | 具体描述 | 影响范围 | 严重度 | 状态 |
+|------|---------|---------|---------|--------|------|
+| P1 | **代码重复** | Kafka Consumer 在 server-web 和 alert-service 中几乎完全重复（含 retry backoff、skipped error 处理等） | 2 个服务 | 高 | |
+| P2 | **代码重复** | AlertEvent 类型在两个服务中重复定义（server-web 在 `producer.go` 中，alert-service 在 `event.go` 中） | 2 个服务 | 高 | |
+| P3 | **代码重复** | Kafka Topics 常量在两个服务中重复 | 2 个服务 | 高 | |
+| P4 | **代码重复** | Redis Client 基础结构（NewClient、Enabled、Close、Ping、Options）在两个服务中重复 | 2 个服务 | 中 | |
+| P5 | **代码重复** | `validateHostPort` 函数在三个服务的 config 中重复 | 3 个服务 | 中 | |
+| P6 | **巨型文件** | `api/router.go` 约 507 行，同时承担路由注册和服务组装两个职责 | server-web | 高 | ✅ 已解决（路由拆分到 internal/router/） |
+| P7 | **巨型 main** | `server-web/main.go` 454 行，initApp 是单体初始化函数 | server-web | 中 | ✅ 已解决（拆分到 app.go + app_copilot.go，main.go 当前 44 行） |
+| P8 | **依赖注入缺失** | 大量具体类型直接传递，无接口抽象，难以测试和替换 | 全局 | 高 | |
+| P9 | **关闭阻塞风险** | `subscriberDone`、`diagnosisDone`、`alertHubConsumers` 三个 channel 等待无超时保护，可能无限阻塞 | server-web | 高 | ✅ 已解决（waitWithTimeout 超时保护） |
 
 ### 1.4 重复代码统计
 
@@ -139,6 +141,8 @@ server-probe                (module server-probe)
 **注意：** `server-web/kafka/` 目录下**不存在** `event.go` 文件。`AlertEvent` 类型定义在 `server-web/kafka/producer.go` 的第 14-24 行。而 `alert-service/kafka/` 下有独立的 `event.go` 文件。
 
 ### 1.5 当前依赖关系图
+
+> **注意：** 以下为重构前的依赖关系，重构已完成。
 
 ```
                     ┌─────────────────────┐
@@ -453,28 +457,28 @@ func initInfrastructure(ctx context.Context, cfg config.Config) (*infrastructure
 
 // services 业务服务层依赖，依赖基础设施层。
 type services struct {
-    authService  *authpkg.Service
-    alertService *alert.Service
-    copilotDeps  *api.CopilotDeps
+    authService    *authpkg.Service
+    alertService   *alert.Service
+    handler        *handler.Handler
+    metrics        *middleware.Metrics
+    copilotRuntime *router.CopilotRuntime
+    copilotDeps    *router.CopilotDeps
 }
 
 // initServices 初始化业务服务层。
-func initServices(cfg config.Config, infra *infrastructure) (*services, error) { ... }
+func initServices(ctx context.Context, cfg config.Config, infra *infrastructure) (*services, error) { ... }
 ```
 
-#### api/router.go — 仅路由注册
+#### internal/router/dependencies.go — 路由层依赖
 
 ```go
 // Dependencies 路由层所需的全部依赖，由 app.go 组装后传入。
 type Dependencies struct {
-    PrometheusClient *promclient.Client
-    RedisClient      *rediscache.Client
-    MySQLClient      *database.MySQL
-    AuthService      AuthService
-    WebSocketHub     *ws.Hub
-    KafkaProducer    *kafka.Producer
-    AlertService     *alert.Service
-    CopilotDeps      *CopilotDeps
+    Metrics     *middleware.Metrics
+    CacheClient *rediscache.Client
+    Handler     *handler.Handler
+    AuthService handler.AuthService
+    Copilot     *CopilotDeps
 }
 
 // NewRouter 创建 Gin 路由引擎，注册所有 API 路由和中间件。
@@ -1024,7 +1028,7 @@ honey_server/
 | **Handler 和 Service 混合** | `alert/`、`auth/`、`cache/`、`host/` 作为顶级包平铺，缺少统一的服务层入口 | Service 层职责不清 |
 | **基础设施散落各处** | `kafka/`、`redis/`、`prometheus/`、`database/`、`pubsub/`、`websocket/` 作为顶级包平铺 | 缺乏"基础设施"的聚合概念 |
 | **API 层过重** | `api/router.go` 同时承担路由注册和服务组装；`api/diagnosis_access_adapter.go` 是适配器却放在 api 下 | 单一职责违反 |
-| **Copilot 子模块过大** | 65 个文件分散在 11 个子包中，部分子包内部结构不清晰（如 diagnosis 有 14 个文件） | 可维护性下降 |
+| **Copilot 子模块过大** | 约 76 个文件分散在 14 个子包中，部分子包内部结构不清晰（如 diagnosis 有 14 个文件） | 可维护性下降 |
 
 ---
 
@@ -1121,7 +1125,12 @@ server-web/
 │   │
 │   └── copilot/                     # Copilot AI 模块（保持内部子包结构）
 │       ├── service/                 # package service（原 copilot/service/）
-│       │   └── service.go
+│       │   ├── service.go           # 核心服务逻辑（Chat、ChatStream、chatCore）
+│       │   ├── classify.go          # LLM 分类阈值与降级
+│       │   ├── execute.go           # 工具执行与诊断入口
+│       │   ├── reply.go             # 回复构建（含流式）
+│       │   ├── types.go             # 类型定义与接口
+│       │   └── context.go           # 会话上下文加载/保存
 │       ├── handler/                 # package handler（原 copilot/handler/）
 │       │   └── handler.go
 │       ├── session/                 # package session（原 copilot/session/）
@@ -1144,7 +1153,8 @@ server-web/
 │       │       └── multi_evaluator.go
 │       │
 │       ├── llm/                     # LLM 客户端
-│       │   └── client.go
+│       │   ├── client.go
+│       │   └── prompt.go
 │       │
 │       ├── tool/                    # 工具系统
 │       │   ├── contract.go
@@ -1194,6 +1204,7 @@ server-web/
 │       │   ├── context.go
 │       │   ├── json.go
 │       │   ├── repository.go
+│       │   ├── access_adapter.go
 │       │   └── types.go
 │       │
 │       ├── action/                  # 动作审批
@@ -1328,7 +1339,12 @@ server-web/
 
 | 原路径 | 目标路径 | 说明 |
 |--------|---------|------|
-| `copilot/service/service.go` | `internal/copilot/service/service.go` | 保持子包（service.go 依赖 session 子包并定义别名） |
+| `copilot/service/service.go` | `internal/copilot/service/service.go` | 核心服务逻辑 |
+| `copilot/service/classify.go` | `internal/copilot/service/classify.go` | LLM 分类阈值与降级（AI 升级新增） |
+| `copilot/service/execute.go` | `internal/copilot/service/execute.go` | 工具执行与诊断入口（AI 升级新增） |
+| `copilot/service/reply.go` | `internal/copilot/service/reply.go` | 回复构建含流式（AI 升级新增） |
+| `copilot/service/types.go` | `internal/copilot/service/types.go` | 类型定义与接口（AI 升级新增） |
+| `copilot/service/context.go` | `internal/copilot/service/context.go` | 会话上下文（AI 升级新增） |
 | `copilot/handler/handler.go` | `internal/copilot/handler/handler.go` | 保持子包 |
 | `copilot/session/store.go` | `internal/copilot/session/store.go` | 保持子包 |
 | （AI 升级新增） | `internal/copilot/context/*` | 多轮上下文管理，仍在 copilot 内聚边界内 |
@@ -1392,6 +1408,8 @@ server-web/
 "server-monitor/pkg/kafka"              // package kafka（按 §3）
 "server-monitor/pkg/redis"              // package redis（按 §3，与 internal/infra/redis 的 rediscache 区分）
 ```
+
+> **状态：** 以上 import 路径变更已全部完成。
 
 > **关键优势：** 由于 service/infra 采用子包模式且 package 名不变，大部分业务代码的**包内引用**（如 `alert.NewService`、`database.NewMySQL`）无需修改。只需更新 import 路径的前缀部分（`server-web/alert` → `server-web/internal/service/alert`）。
 >
@@ -1633,6 +1651,8 @@ pkg:
 ### 20.4 docker-compose.yml
 
 **不受影响。** docker-compose 引用的是 Dockerfile 路径和环境变量，不涉及源码目录结构。服务镜像构建由 Dockerfile 完成，Dockerfile 本身无需修改。
+
+> **注意：** Kafka 已切换为 KRaft 模式（controller-qualified mode），不再依赖外部 ZooKeeper 集群，docker-compose 中无需 ZooKeeper 服务。
 
 ### 20.5 Helm Charts
 

@@ -1,15 +1,15 @@
-package api
+package router
 
 import (
 	"github.com/gin-gonic/gin"
 
 	"server-web/internal/config"
 	copilotaction "server-web/internal/copilot/action"
-	handlers "server-web/internal/handler"
+	"server-web/internal/handler"
 	"server-web/internal/middleware"
 )
 
-func registerActionRoutes(router *gin.Engine, cfg config.Config, authService handlers.AuthService, handler *copilotaction.Handler) {
+func registerActionRoutes(router *gin.Engine, cfg config.Config, authService handler.AuthService, handler *copilotaction.Handler) {
 	actionAdmin := router.Group("/api/v1")
 	if cfg.AuthEnabled {
 		actionAdmin.Use(middleware.Auth(authService), middleware.VerifyTokenVersion(authService), middleware.RequireRole("admin"))
