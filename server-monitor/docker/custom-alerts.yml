@@ -1,11 +1,11 @@
 groups:
   - name: custom_alerts
     rules:
-      - alert: "codex-test-high-cpu-20260512104555"
-        expr: "server_monitor_cpu_usage_percent > 80"
-        for: "5m"
+      - alert: "TestHighCPU"
+        expr: "sm_cpu_usage_percent > 80"
+        for: "2m"
         labels:
-          severity: "critical"
+          severity: "warning"
         annotations:
-          summary: "Test high CPU updated"
+          summary: ""
           description: ""

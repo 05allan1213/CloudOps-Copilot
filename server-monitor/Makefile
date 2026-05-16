@@ -26,21 +26,23 @@ build-alert-service:
 
 run-probe:
 	@echo "启动 server-probe..."
-	cd server-probe && go run main.go
+	cd server-probe && go run .
 
 run-web:
 	@echo "启动 server-web..."
-	cd server-web && go run main.go
+	cd server-web && go run .
 
 # ============================================
 # 开发模式（无需构建 Docker 镜像）
 # ============================================
 
 dev-deps:
-	@echo "启动依赖服务（Redis、Prometheus、AlertManager、Grafana、server-probe）..."
-	docker compose up -d redis prometheus alertmanager grafana server-probe
+	@echo "启动依赖服务（Redis、MySQL、Kafka、Prometheus、AlertManager、Grafana、server-probe）..."
+	docker compose up -d redis mysql kafka kafka-init prometheus alertmanager grafana server-probe
 	@echo "依赖服务已启动"
 	@echo "  Redis:        localhost:6379"
+	@echo "  MySQL:        localhost:3306"
+	@echo "  Kafka:        localhost:9092"
 	@echo "  Prometheus:   http://localhost:9090"
 	@echo "  AlertManager: http://localhost:9093"
 	@echo "  Grafana:      http://localhost:3000"
@@ -49,9 +51,9 @@ dev-deps:
 
 dev-web:
 	@echo "本地启动 server-web..."
-	@echo "环境变量: PROMETHEUS_URL=http://localhost:9090 REDIS_ADDR=localhost:6379 REDIS_PASSWORD=server-monitor-local-redis"
+	@echo "环境变量: PROMETHEUS_URL=http://localhost:9090 REDIS_ADDR=localhost:6379 REDIS_PASSWORD=server-monitor-local-redis JWT_SECRET=server-monitor-local-dev-jwt-secret-change-me ADMIN_PASSWORD=server-monitor-local-admin MYSQL_HOST=localhost KAFKA_BROKERS=localhost:9092"
 	@echo "访问地址: http://localhost:8080/healthz 和 http://localhost:8080/readyz"
-	cd server-web && PROMETHEUS_URL=http://localhost:9090 REDIS_ADDR=localhost:6379 REDIS_PASSWORD=server-monitor-local-redis GIN_MODE=debug go run main.go
+	cd server-web && PROMETHEUS_URL=http://localhost:9090 REDIS_ADDR=localhost:6379 REDIS_PASSWORD=server-monitor-local-redis JWT_SECRET=server-monitor-local-dev-jwt-secret-change-me ADMIN_PASSWORD=server-monitor-local-admin MYSQL_HOST=localhost MYSQL_PORT=3306 MYSQL_DATABASE=server_monitor MYSQL_USER=server_monitor MYSQL_PASSWORD=server-monitor-local-mysql KAFKA_BROKERS=localhost:9092 GIN_MODE=debug go run .
 
 dev-frontend:
 	@echo "本地启动前端开发服务器..."
@@ -159,7 +161,7 @@ help:
 	@echo "  make build-alert-service 构建 alert-service"
 	@echo ""
 	@echo "开发模式（推荐开发阶段使用，无需构建镜像）:"
-	@echo "  make dev-deps       启动依赖服务（Redis/Prometheus/AlertManager/Grafana/Probe）"
+	@echo "  make dev-deps       启动依赖服务（Redis/MySQL/Kafka/Prometheus/AlertManager/Grafana/Probe）"
 	@echo "  make dev-web        本地运行 server-web（需先启动 dev-deps）"
 	@echo "  make dev-frontend   本地运行前端开发服务器（需先启动 dev-web）"
 	@echo "  make dev-stop       停止开发依赖服务"
@@ -171,7 +173,7 @@ help:
 	@echo "  make docker-logs    查看服务日志"
 	@echo "  make docker-clean   停止并清理所有数据"
 	@echo ""
-	@echo "本地运行:"
+	@echo "本地运行（需自行准备环境变量，推荐使用 dev-web 代替）:"
 	@echo "  make run-probe      运行 server-probe"
 	@echo "  make run-web        运行 server-web"
 	@echo ""
