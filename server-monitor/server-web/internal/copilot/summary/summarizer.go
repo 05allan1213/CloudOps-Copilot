@@ -11,6 +11,7 @@ import (
 
 	"server-web/internal/copilot/llm"
 	"server-web/internal/copilot/nlu"
+	copilotsuggestion "server-web/internal/copilot/suggestion"
 	"server-web/internal/copilot/service"
 )
 
@@ -25,6 +26,11 @@ var ErrFallback = errors.New("summary fallback")
 
 type LLMChatClient interface {
 	Chat(ctx context.Context, messages []llm.ChatMessage) (string, *llm.ChatUsage, error)
+}
+
+type LLMStreamChatClient interface {
+	LLMChatClient
+	ChatStream(ctx context.Context, messages []llm.ChatMessage, onDelta func(string) error) (string, *llm.ChatUsage, error)
 }
 
 var _ LLMChatClient = (*llm.Client)(nil)
@@ -70,6 +76,34 @@ func (s *Summarizer) Summarize(ctx context.Context, input service.SummaryInput) 
 	defer cancel()
 
 	content, _, err := s.llm.Chat(callCtx, buildMessages(input.History, userPrompt))
+	if err != nil {
+		return service.SummaryResult{}, fmt.Errorf("%w: %v", ErrFallback, err)
+	}
+	result, err := parseSummaryResult(content)
+	if err != nil {
+		return service.SummaryResult{}, err
+	}
+	return result, nil
+}
+
+func (s *Summarizer) SummarizeStream(ctx context.Context, input service.SummaryInput, onDelta func(string) error) (service.SummaryResult, error) {
+	if s == nil || s.llm == nil {
+		return service.SummaryResult{}, ErrFallback
+	}
+
+	streamClient, ok := s.llm.(LLMStreamChatClient)
+	if !ok {
+		return s.Summarize(ctx, input)
+	}
+
+	userPrompt, err := buildUserPrompt(input, s.maxPrompt)
+	if err != nil {
+		return service.SummaryResult{}, err
+	}
+	callCtx, cancel := context.WithTimeout(ctx, s.timeout)
+	defer cancel()
+
+	content, _, err := streamClient.ChatStream(callCtx, buildMessages(input.History, userPrompt), onDelta)
 	if err != nil {
 		return service.SummaryResult{}, fmt.Errorf("%w: %v", ErrFallback, err)
 	}
@@ -201,7 +235,7 @@ func filterSuggestions(values []service.Suggestion) []service.Suggestion {
 		result = append(result, service.Suggestion{
 			Text:   text,
 			Action: action,
-			Intent: strings.TrimSpace(value.Intent),
+			Intent: copilotsuggestion.NormalizeIntent(value.Intent),
 			Params: params,
 		})
 	}

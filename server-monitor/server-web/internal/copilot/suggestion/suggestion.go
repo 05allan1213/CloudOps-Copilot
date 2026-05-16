@@ -73,6 +73,43 @@ func New(text, intent string, params map[string]string) Suggestion {
 	}
 }
 
+func NormalizeIntent(intent string) string {
+	intent = strings.TrimSpace(intent)
+	switch strings.ToLower(intent) {
+	case "alert_query", "alert_list_active", "view_alerts", "check_alerts", "show_alerts":
+		return nlu.IntentAlertQuery
+	case "alert_event_query", "alert_events", "view_alert_events", "check_alert_events":
+		return nlu.IntentAlertEventQuery
+	case "alert_history_query", "alert_history", "view_alert_history", "check_alert_history":
+		return nlu.IntentAlertHistoryQuery
+	case "host_query", "host_list", "view_hosts", "check_hosts", "show_hosts":
+		return nlu.IntentHostQuery
+	case "metric_query", "host_metrics", "view_metrics", "check_metrics", "show_metrics":
+		return nlu.IntentMetricQuery
+	case "diagnosis_request", "diagnose", "run_diagnosis", "trigger_diagnosis":
+		return nlu.IntentDiagnosisRequest
+	case "general_chat", "chat", "greeting":
+		return nlu.IntentGeneralChat
+	default:
+		if strings.Contains(strings.ToLower(intent), "alert") {
+			return nlu.IntentAlertQuery
+		}
+		if strings.Contains(strings.ToLower(intent), "host") {
+			return nlu.IntentHostQuery
+		}
+		if strings.Contains(strings.ToLower(intent), "metric") || strings.Contains(strings.ToLower(intent), "cpu") || strings.Contains(strings.ToLower(intent), "memory") {
+			return nlu.IntentMetricQuery
+		}
+		if strings.Contains(strings.ToLower(intent), "diagnos") {
+			return nlu.IntentDiagnosisRequest
+		}
+		if strings.Contains(strings.ToLower(intent), "log") {
+			return nlu.IntentMetricQuery
+		}
+		return ""
+	}
+}
+
 func Normalize(values []Suggestion) []Suggestion {
 	result := make([]Suggestion, 0, len(values))
 	for _, value := range values {
@@ -98,7 +135,7 @@ func Normalize(values []Suggestion) []Suggestion {
 		result = append(result, Suggestion{
 			Text:   text,
 			Action: action,
-			Intent: strings.TrimSpace(value.Intent),
+			Intent: NormalizeIntent(value.Intent),
 			Params: params,
 		})
 	}

@@ -133,6 +133,26 @@ func (s *Service) inferDiagnosisTarget(ctx context.Context) (diagnosis.Request, 
 		if reply := firstToolErrorReply(toolCalls); reply != "" {
 			return diagnosis.Request{}, toolCalls, reply, false
 		}
+		eventCalls, _, eventErr := s.tools.Execute(ctx, nlu.Result{
+			Intent:   nlu.IntentAlertEventQuery,
+			Entities: map[string]string{"status": "firing"},
+		})
+		if eventErr == nil {
+			eventCandidates := diagnosisCandidatesFromToolCalls(eventCalls)
+			switch len(eventCandidates) {
+			case 1:
+				return requestFromDiagnosisCandidate(eventCandidates[0]), nil, "", true
+			case 0:
+				return diagnosis.Request{}, toolCalls, "当前没有 firing 告警可供自动诊断。请提供 fingerprint、alert_history_id，或先查询告警历史后再诊断。", false
+			default:
+				return diagnosis.Request{}, []ToolCall{{
+					Name:   "diagnosis.trigger",
+					Status: "error",
+					Error:  diagnosis.ErrConflict.Error(),
+					Result: eventCandidates,
+				}}, buildDiagnosisCandidatesReply(eventCandidates), false
+			}
+		}
 		return diagnosis.Request{}, toolCalls, "当前没有 firing 告警可供自动诊断。请提供 fingerprint、alert_history_id，或先查询告警历史后再诊断。", false
 	case 1:
 		return requestFromDiagnosisCandidate(candidates[0]), nil, "", true
@@ -211,12 +231,21 @@ func (s *Service) extractContextEntities(toolCalls []ToolCall, intent string) ma
 		if len(items) == 1 {
 			mergeEntityFields(entities, alertFieldsFromItem(items[0]))
 		} else if len(items) > 1 {
-			for i := len(items) - 1; i >= 0; i-- {
-				fields := alertFieldsFromItem(items[i])
-				if fields["status"] == "firing" {
-					mergeEntityFields(entities, fields)
-					break
+			bestIdx := -1
+			bestSeverity := 0
+			for i, item := range items {
+				fields := alertFieldsFromItem(item)
+				if fields["status"] != "firing" {
+					continue
 				}
+				severity := severityRank(fields["severity"])
+				if severity > bestSeverity {
+					bestSeverity = severity
+					bestIdx = i
+				}
+			}
+			if bestIdx >= 0 {
+				mergeEntityFields(entities, alertFieldsFromItem(items[bestIdx]))
 			}
 		}
 	case nlu.IntentHostQuery:
@@ -324,6 +353,19 @@ func mergeEntityFields(dst map[string]string, fields map[string]string) {
 		if value != "" {
 			dst[key] = value
 		}
+	}
+}
+
+func severityRank(severity string) int {
+	switch strings.ToLower(strings.TrimSpace(severity)) {
+	case "critical":
+		return 3
+	case "warning":
+		return 2
+	case "info":
+		return 1
+	default:
+		return 0
 	}
 }
 

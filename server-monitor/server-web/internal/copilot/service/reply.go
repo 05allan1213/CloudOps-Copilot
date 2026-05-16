@@ -35,6 +35,38 @@ func (s *Service) buildReplyWithSummary(ctx context.Context, message string, res
 	return summaryOrFallback(summaryResult, fallbackReply, fallbackSuggestions)
 }
 
+func (s *Service) buildReplyWithSummaryStream(ctx context.Context, message string, result nlu.Result, toolReply string, toolCalls []ToolCall, history []ChatHistoryItem, onDelta func(string) error) (string, []Suggestion) {
+	fallbackReply := buildReply(result, toolReply, toolCalls)
+	fallbackSuggestions := buildSuggestions(result)
+	if s.summarizer == nil || !s.summaryEnabled {
+		return fallbackReply, fallbackSuggestions
+	}
+
+	streamSummarizer, ok := s.summarizer.(SummarizerStream)
+	if !ok {
+		return s.buildReplyWithSummary(ctx, message, result, toolReply, toolCalls, history)
+	}
+
+	needLLM := hasSuccessfulToolCall(toolCalls) ||
+		result.Intent == nlu.IntentGeneralChat ||
+		result.Intent == nlu.IntentUnknown ||
+		result.Intent == IntentUnknown
+	if !needLLM {
+		return fallbackReply, fallbackSuggestions
+	}
+
+	summaryResult, err := streamSummarizer.SummarizeStream(ctx, SummaryInput{
+		UserMessage: message,
+		ToolCalls:   toolCalls,
+		Intent:      result.Intent,
+		History:     history,
+	}, onDelta)
+	if err != nil {
+		return fallbackReply, fallbackSuggestions
+	}
+	return summaryOrFallback(summaryResult, fallbackReply, fallbackSuggestions)
+}
+
 func (s *Service) chatWithLLM(ctx context.Context, message string, result nlu.Result, toolCalls []ToolCall, history []ChatHistoryItem, fallbackReply string, fallbackSuggestions []Suggestion) (string, []Suggestion) {
 	summaryResult, err := s.summarizer.Summarize(ctx, SummaryInput{
 		UserMessage: message,

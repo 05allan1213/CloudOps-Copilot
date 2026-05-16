@@ -99,16 +99,33 @@ async function submitMessage(content: string) {
     created_at: new Date().toISOString(),
   });
 
+  const streamMsg: LocalMessage = {
+    role: "assistant",
+    content: "",
+    created_at: new Date().toISOString(),
+    intent: "",
+    confidence: 0,
+    tool_calls: [],
+    suggestions: [],
+  };
+  messages.value.push(streamMsg);
+  const msgIndex = messages.value.length - 1;
+
   try {
-    const response = await streamCopilotMessage({
-      message: content,
-      session_id: sessionId || undefined,
-    });
+    const response = await streamCopilotMessage(
+      { message: content, session_id: sessionId || undefined },
+      (delta) => {
+        messages.value[msgIndex] = {
+          ...messages.value[msgIndex],
+          content: messages.value[msgIndex].content + delta,
+        };
+      },
+    );
     activeSessionId.value = response.session_id;
-    messages.value.push(toAssistantMessage(response));
+    messages.value[msgIndex] = toAssistantMessage(response);
     await refreshSessions();
   } catch (err) {
-    messages.value.push({
+    messages.value[msgIndex] = {
       role: "assistant",
       content: normalizeError(err),
       created_at: new Date().toISOString(),
@@ -116,7 +133,7 @@ async function submitMessage(content: string) {
       confidence: 0,
       tool_calls: [],
       suggestions: [],
-    });
+    };
   } finally {
     sending.value = false;
   }

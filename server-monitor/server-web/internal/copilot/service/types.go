@@ -24,6 +24,11 @@ type Summarizer interface {
 	Summarize(ctx context.Context, input SummaryInput) (SummaryResult, error)
 }
 
+type SummarizerStream interface {
+	Summarizer
+	SummarizeStream(ctx context.Context, input SummaryInput, onDelta func(string) error) (SummaryResult, error)
+}
+
 type ChatHistoryItem struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`

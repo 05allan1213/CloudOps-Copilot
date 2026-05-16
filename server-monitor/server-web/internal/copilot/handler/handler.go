@@ -66,14 +66,14 @@ func (h *Handler) Chat(c *gin.Context) {
 		return
 	}
 
-	result, err := h.service.Chat(c.Request.Context(), currentUser(c), req)
-	if err != nil {
-		writeServiceError(c, err)
+	if wantsEventStream(c) {
+		h.handleChatStream(c, req)
 		return
 	}
 
-	if wantsEventStream(c) {
-		writeChatStream(c, result)
+	result, err := h.service.Chat(c.Request.Context(), currentUser(c), req)
+	if err != nil {
+		writeServiceError(c, err)
 		return
 	}
 
@@ -83,19 +83,34 @@ func (h *Handler) Chat(c *gin.Context) {
 	})
 }
 
-func wantsEventStream(c *gin.Context) bool {
-	return strings.Contains(c.GetHeader("Accept"), "text/event-stream")
-}
-
-func writeChatStream(c *gin.Context, result copilot.ChatResponse) {
+func (h *Handler) handleChatStream(c *gin.Context, req copilot.ChatRequest) {
 	c.Header("Content-Type", "text/event-stream; charset=utf-8")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 	c.Status(http.StatusOK)
+
+	onDelta := func(delta string) error {
+		writeSSEEvent(c.Writer, "reply_delta", gin.H{"delta": delta})
+		c.Writer.Flush()
+		return nil
+	}
+
+	result, err := h.service.ChatStream(c.Request.Context(), currentUser(c), req, onDelta)
+	if err != nil {
+		writeSSEEvent(c.Writer, "error", response{Status: "error", Error: "Copilot 服务不可用"})
+		writeSSEEvent(c.Writer, "done", gin.H{})
+		c.Writer.Flush()
+		return
+	}
+
 	writeSSEEvent(c.Writer, "response", response{Status: "success", Data: result})
 	writeSSEEvent(c.Writer, "done", gin.H{})
 	c.Writer.Flush()
+}
+
+func wantsEventStream(c *gin.Context) bool {
+	return strings.Contains(c.GetHeader("Accept"), "text/event-stream")
 }
 
 func writeSSEEvent(w gin.ResponseWriter, event string, value interface{}) {

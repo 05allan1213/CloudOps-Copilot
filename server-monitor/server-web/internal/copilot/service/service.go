@@ -166,6 +166,14 @@ func NewService(cfg Config) *Service {
 }
 
 func (s *Service) Chat(ctx context.Context, user User, req ChatRequest) (ChatResponse, error) {
+	return s.chatCore(ctx, user, req, nil)
+}
+
+func (s *Service) ChatStream(ctx context.Context, user User, req ChatRequest, onDelta func(string) error) (ChatResponse, error) {
+	return s.chatCore(ctx, user, req, onDelta)
+}
+
+func (s *Service) chatCore(ctx context.Context, user User, req ChatRequest, onDelta func(string) error) (ChatResponse, error) {
 	message := strings.TrimSpace(req.Message)
 	if message == "" {
 		return ChatResponse{}, ErrMessageRequired
@@ -213,7 +221,14 @@ func (s *Service) Chat(ctx context.Context, user User, req ChatRequest) (ChatRes
 	if err != nil {
 		return ChatResponse{}, err
 	}
-	reply, suggestions := s.buildReplyWithSummary(ctx, message, parsed, toolReply, toolCalls, history)
+
+	var reply string
+	var suggestions []Suggestion
+	if onDelta != nil {
+		reply, suggestions = s.buildReplyWithSummaryStream(ctx, message, parsed, toolReply, toolCalls, history, onDelta)
+	} else {
+		reply, suggestions = s.buildReplyWithSummary(ctx, message, parsed, toolReply, toolCalls, history)
+	}
 	s.saveSessionContext(ctx, sessionID, contextEntities, s.extractContextEntities(toolCalls, parsed.Intent))
 
 	if err := s.store.AppendMessages(ctx, meta, []session.Message{

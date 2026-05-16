@@ -21,6 +21,7 @@ export async function sendCopilotMessage(
 
 export async function streamCopilotMessage(
   body: CopilotChatRequest,
+  onDelta?: (delta: string) => void,
 ): Promise<CopilotChatResponse> {
   const headers: Record<string, string> = {
     Accept: "text/event-stream",
@@ -56,12 +57,29 @@ export async function streamCopilotMessage(
       const block = buffer.slice(0, separatorIndex);
       buffer = buffer.slice(separatorIndex + 2);
       const event = parseSSEBlock(block);
-      if (event.name === "response" && event.data) {
+      if (event.name === "reply_delta" && event.data && onDelta) {
+        try {
+          const parsed = JSON.parse(event.data) as { delta?: string };
+          if (parsed.delta) {
+            onDelta(parsed.delta);
+          }
+        } catch {
+          // ignore malformed delta
+        }
+      } else if (event.name === "response" && event.data) {
         const payload = JSON.parse(event.data) as ApiResponse<CopilotChatResponse>;
         if (payload.status !== "success" || !payload.data) {
           throw new Error(payload.error ?? "Stream response failed");
         }
         result = payload.data;
+      } else if (event.name === "error" && event.data) {
+        try {
+          const payload = JSON.parse(event.data) as ApiResponse<unknown>;
+          throw new Error(payload.error ?? "Stream response failed");
+        } catch (err) {
+          if (err instanceof Error) throw err;
+          throw new Error("Stream response failed");
+        }
       }
       separatorIndex = buffer.indexOf("\n\n");
     }
