@@ -11,8 +11,8 @@ import (
 
 	"server-web/internal/copilot/llm"
 	"server-web/internal/copilot/nlu"
-	copilotsuggestion "server-web/internal/copilot/suggestion"
 	"server-web/internal/copilot/service"
+	copilotsuggestion "server-web/internal/copilot/suggestion"
 )
 
 var _ service.Summarizer = (*Summarizer)(nil)
