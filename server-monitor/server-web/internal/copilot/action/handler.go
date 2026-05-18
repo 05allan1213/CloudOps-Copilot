@@ -85,6 +85,33 @@ func NewHandler(service *Service) *Handler {
 	return &Handler{service: service}
 }
 
+// CreateAction godoc
+// @Summary      直接创建待审批动作
+// @Description  由 admin 直接创建 pending K8s 动作，不会执行真实动作；仍需 approve 后 execute。
+// @Tags         actions
+// @Accept       json
+// @Produce      json
+// @Security     BearerAuth
+// @Param        body  body  CreateActionRequestDoc  true  "动作创建请求"
+// @Success      200  {object}  actionResponseEnvelope
+// @Failure      400  {object}  map[string]interface{}
+// @Failure      403  {object}  map[string]interface{}
+// @Failure      500  {object}  map[string]interface{}
+// @Router       /actions [post]
+func (h *Handler) CreateAction(c *gin.Context) {
+	var req CreateActionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		writeError(c, http.StatusBadRequest, "无效的请求体")
+		return
+	}
+	action, err := h.service.CreateAction(c.Request.Context(), req, actorFromGin(c))
+	if err != nil {
+		writeServiceError(c, err)
+		return
+	}
+	writeSuccess(c, action)
+}
+
 // CreateFromDiagnosis godoc
 // @Summary      从诊断报告生成待审批动作
 // @Description  根据诊断报告 recommended_actions 创建 PendingAction，只有 admin 可调用，不会执行真实动作

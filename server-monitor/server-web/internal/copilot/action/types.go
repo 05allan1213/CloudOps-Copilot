@@ -69,6 +69,26 @@ type CreateFromDiagnosisRequest struct {
 	SelectedActionTypes []string `json:"selected_action_types"`
 }
 
+type CreateActionRequest struct {
+	DiagnosisReportID uint64          `json:"diagnosis_report_id,omitempty"`
+	ActionType        string          `json:"action_type"`
+	TargetKind        string          `json:"target_kind,omitempty"`
+	TargetName        string          `json:"target_name"`
+	Namespace         string          `json:"namespace"`
+	RiskLevel         string          `json:"risk_level,omitempty"`
+	Params            json.RawMessage `json:"params,omitempty"`
+}
+
+type CreateActionRequestDoc struct {
+	DiagnosisReportID uint64                 `json:"diagnosis_report_id,omitempty"`
+	ActionType        string                 `json:"action_type"`
+	TargetKind        string                 `json:"target_kind,omitempty"`
+	TargetName        string                 `json:"target_name"`
+	Namespace         string                 `json:"namespace"`
+	RiskLevel         string                 `json:"risk_level,omitempty"`
+	Params            map[string]interface{} `json:"params,omitempty"`
+}
+
 type CreateFromDiagnosisResult struct {
 	Created []ActionResponse `json:"created"`
 	Skipped []SkippedAction  `json:"skipped"`

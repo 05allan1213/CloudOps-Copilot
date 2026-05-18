@@ -185,12 +185,21 @@ func contextFromAlert(alert webhook.AlertRecord, collectedAt time.Time) AlertCon
 		value := alert.EndsAt.UTC()
 		endsAt = &value
 	}
+	targetKind := labels["target_kind"]
+	targetName := labels["target_name"]
+	if targetKind == "" {
+		targetKind = "host"
+		targetName = instance
+	}
+	if targetName == "" {
+		targetName = instance
+	}
 	return AlertContext{
 		Fingerprint: alert.Fingerprint,
 		AlertName:   alertName,
 		Instance:    instance,
-		TargetKind:  "host",
-		TargetName:  instance,
+		TargetKind:  targetKind,
+		TargetName:  targetName,
 		Namespace:   namespace,
 		Severity:    severity,
 		Status:      alert.Status,
@@ -231,13 +240,22 @@ func contextFromHistory(history model.AlertHistory, collectedAt time.Time) Alert
 		value := history.ResolvedAt.UTC()
 		endsAt = &value
 	}
+	targetKind := labels["target_kind"]
+	targetName := labels["target_name"]
+	if targetKind == "" {
+		targetKind = "host"
+		targetName = history.Instance
+	}
+	if targetName == "" {
+		targetName = history.Instance
+	}
 	return AlertContext{
 		AlertHistoryID: history.ID,
 		Fingerprint:    history.Fingerprint,
 		AlertName:      history.AlertName,
 		Instance:       history.Instance,
-		TargetKind:     "host",
-		TargetName:     history.Instance,
+		TargetKind:     targetKind,
+		TargetName:     targetName,
 		Namespace:      labels["namespace"],
 		Severity:       history.Severity,
 		Status:         history.Status,

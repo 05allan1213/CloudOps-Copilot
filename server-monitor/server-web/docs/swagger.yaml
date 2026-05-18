@@ -26,6 +26,24 @@ definitions:
       comment:
         type: string
     type: object
+  action.CreateActionRequestDoc:
+    properties:
+      action_type:
+        type: string
+      diagnosis_report_id:
+        type: integer
+      namespace:
+        type: string
+      params:
+        additionalProperties: true
+        type: object
+      risk_level:
+        type: string
+      target_kind:
+        type: string
+      target_name:
+        type: string
+    type: object
   action.CreateFromDiagnosisRequest:
     properties:
       selected_action_types:
@@ -138,12 +156,11 @@ definitions:
       trace_id:
         type: string
     type: object
-  handler.response:
+  handler.loginRequest:
     properties:
-      data: {}
-      error:
+      password:
         type: string
-      status:
+      username:
         type: string
     type: object
   handler.toolParamDoc:
@@ -196,14 +213,15 @@ definitions:
       status:
         type: string
     type: object
-  handlers.loginRequest:
+  server-web_internal_copilot_handler.response:
     properties:
-      password:
+      data: {}
+      error:
         type: string
-      username:
+      status:
         type: string
     type: object
-  handlers.response:
+  server-web_internal_handler.response:
     properties:
       data: {}
       error:
@@ -309,6 +327,44 @@ paths:
       security:
       - BearerAuth: []
       summary: 获取动作列表
+      tags:
+      - actions
+    post:
+      consumes:
+      - application/json
+      description: 由 admin 直接创建 pending K8s 动作，不会执行真实动作；仍需 approve 后 execute。
+      parameters:
+      - description: 动作创建请求
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/action.CreateActionRequestDoc'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/action.actionResponseEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: 直接创建待审批动作
       tags:
       - actions
   /actions/{id}:
@@ -542,15 +598,15 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/handlers.response'
+            $ref: '#/definitions/server-web_internal_handler.response'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/handlers.response'
+            $ref: '#/definitions/server-web_internal_handler.response'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/handlers.response'
+            $ref: '#/definitions/server-web_internal_handler.response'
       security:
       - BearerAuth: []
       summary: 获取活跃告警列表
@@ -586,15 +642,15 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/handlers.response'
+            $ref: '#/definitions/server-web_internal_handler.response'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/handlers.response'
+            $ref: '#/definitions/server-web_internal_handler.response'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/handlers.response'
+            $ref: '#/definitions/server-web_internal_handler.response'
       security:
       - BearerAuth: []
       summary: 获取告警事件列表
@@ -699,26 +755,26 @@ paths:
         name: body
         required: true
         schema:
-          $ref: '#/definitions/handlers.loginRequest'
+          $ref: '#/definitions/handler.loginRequest'
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/handlers.response'
+            $ref: '#/definitions/server-web_internal_handler.response'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/handlers.response'
+            $ref: '#/definitions/server-web_internal_handler.response'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/handlers.response'
+            $ref: '#/definitions/server-web_internal_handler.response'
         "503":
           description: Service Unavailable
           schema:
-            $ref: '#/definitions/handlers.response'
+            $ref: '#/definitions/server-web_internal_handler.response'
       summary: 用户登录
       tags:
       - auth
@@ -731,15 +787,15 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/handlers.response'
+            $ref: '#/definitions/server-web_internal_handler.response'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/handlers.response'
+            $ref: '#/definitions/server-web_internal_handler.response'
         "503":
           description: Service Unavailable
           schema:
-            $ref: '#/definitions/handlers.response'
+            $ref: '#/definitions/server-web_internal_handler.response'
       security:
       - BearerAuth: []
       summary: 获取当前用户信息
@@ -758,11 +814,11 @@ paths:
         "403":
           description: Forbidden
           schema:
-            $ref: '#/definitions/handler.response'
+            $ref: '#/definitions/server-web_internal_copilot_handler.response'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/handler.response'
+            $ref: '#/definitions/server-web_internal_copilot_handler.response'
       security:
       - BearerAuth: []
       summary: 获取 Copilot 工具 Schema
@@ -831,15 +887,15 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/handlers.response'
+            $ref: '#/definitions/server-web_internal_handler.response'
         "401":
           description: Unauthorized
           schema:
-            $ref: '#/definitions/handlers.response'
+            $ref: '#/definitions/server-web_internal_handler.response'
         "500":
           description: Internal Server Error
           schema:
-            $ref: '#/definitions/handlers.response'
+            $ref: '#/definitions/server-web_internal_handler.response'
       security:
       - BearerAuth: []
       summary: 获取主机列表
@@ -863,15 +919,15 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/handlers.response'
+            $ref: '#/definitions/server-web_internal_handler.response'
         "400":
           description: Bad Request
           schema:
-            $ref: '#/definitions/handlers.response'
+            $ref: '#/definitions/server-web_internal_handler.response'
         "503":
           description: Service Unavailable
           schema:
-            $ref: '#/definitions/handlers.response'
+            $ref: '#/definitions/server-web_internal_handler.response'
       summary: Alertmanager Webhook 接收
       tags:
       - webhook

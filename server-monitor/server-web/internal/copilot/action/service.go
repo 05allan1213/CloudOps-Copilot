@@ -67,6 +67,55 @@ func NewService(cfg ServiceConfig) *Service {
 	}
 }
 
+func (s *Service) CreateAction(ctx context.Context, req CreateActionRequest, actor Actor) (ActionResponse, error) {
+	if err := s.requireReady(); err != nil {
+		return ActionResponse{}, err
+	}
+	if actor.Role != "admin" {
+		if auditErr := s.audit(ctx, actor, "action.create_pending", "pending_action", "", mustMarshal(req), model.AuditResultDenied, "insufficient permissions"); auditErr != nil {
+			return ActionResponse{}, auditErr
+		}
+		s.observeAction("create_pending", model.AuditResultDenied)
+		return ActionResponse{}, ErrForbidden
+	}
+
+	input := CreateActionInput{
+		DiagnosisReportID: req.DiagnosisReportID,
+		ActionType:        req.ActionType,
+		TargetKind:        req.TargetKind,
+		TargetName:        req.TargetName,
+		Namespace:         req.Namespace,
+		RiskLevel:         req.RiskLevel,
+		RequestedBy:       actorName(actor),
+		Params:            req.Params,
+	}
+	normalized, err := s.policy.ValidateCreate(input)
+	if err != nil {
+		if auditErr := s.audit(ctx, actor, "action.create_pending", "pending_action", "", mustMarshal(req), model.AuditResultDenied, err.Error()); auditErr != nil {
+			return ActionResponse{}, auditErr
+		}
+		s.observeAction("create_pending", model.AuditResultDenied)
+		return ActionResponse{}, err
+	}
+	existing, ok, err := s.repo.FindPendingByDedupeKey(ctx, normalized.DedupeKey)
+	if err != nil {
+		return ActionResponse{}, err
+	}
+	if ok {
+		return toActionResponse(existing), nil
+	}
+	created, err := s.repo.CreatePending(ctx, normalized)
+	if err != nil {
+		return ActionResponse{}, err
+	}
+	if err := s.audit(ctx, actor, "action.create_pending", "pending_action", strconv.FormatUint(created.ID, 10), auditRequestFromAction(created), model.AuditResultSuccess, ""); err != nil {
+		return ActionResponse{}, err
+	}
+	s.observeAction("create_pending", model.AuditResultSuccess)
+	s.notifyPending(ctx, created)
+	return toActionResponse(created), nil
+}
+
 func (s *Service) CreateFromDiagnosis(ctx context.Context, reportID uint64, req CreateFromDiagnosisRequest, actor Actor) (CreateFromDiagnosisResult, error) {
 	if err := s.requireReady(); err != nil {
 		return CreateFromDiagnosisResult{}, err

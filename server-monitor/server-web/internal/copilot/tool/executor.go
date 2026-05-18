@@ -185,7 +185,13 @@ func newExecutor(options Options, registry Registry) (*Executor, error) {
 
 func (e *Executor) Execute(ctx context.Context, result nlu.Result) ([]copilot.ToolCall, string, error) {
 	if result.SelectedTool != "" {
-		toolName := openAIToolNameToRegistryName(result.SelectedTool)
+		toolName := result.SelectedTool
+		if !e.registryHas(toolName) {
+			converted := openAIToolNameToRegistryName(toolName)
+			if e.registryHas(converted) {
+				toolName = converted
+			}
+		}
 		args := e.typedEntitiesToToolArgs(toolName, result.Entities)
 		return e.executeTool(ctx, toolName, args)
 	}
@@ -194,6 +200,11 @@ func (e *Executor) Execute(ctx context.Context, result nlu.Result) ([]copilot.To
 		return []copilot.ToolCall{}, "", nil
 	}
 	return e.executeTool(ctx, name, args)
+}
+
+func (e *Executor) registryHas(name string) bool {
+	_, err := e.registry.Get(name)
+	return err == nil
 }
 
 func (e *Executor) typedEntitiesToToolArgs(toolName string, entities map[string]string) json.RawMessage {
@@ -254,11 +265,7 @@ func coerceParam(value string, paramType ParamType) interface{} {
 }
 
 func openAIToolNameToRegistryName(name string) string {
-	parts := strings.SplitN(name, "_", 2)
-	if len(parts) == 2 {
-		return parts[0] + "." + parts[1]
-	}
-	return name
+	return strings.ReplaceAll(name, "_", ".")
 }
 
 func (e *Executor) ExecuteTool(ctx context.Context, name string, args json.RawMessage) (ToolResult, error) {

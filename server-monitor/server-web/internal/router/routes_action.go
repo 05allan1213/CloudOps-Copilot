@@ -15,6 +15,7 @@ func registerActionRoutes(router *gin.Engine, cfg config.Config, authService han
 		actionAdmin.Use(middleware.Auth(authService), middleware.VerifyTokenVersion(authService), middleware.RequireRole("admin"))
 	}
 	actionAdmin.POST("/diagnosis/:id/actions", handler.CreateFromDiagnosis)
+	actionAdmin.POST("/actions", handler.CreateAction)
 	actionAdmin.GET("/actions/pending", handler.ListPending)
 	actionAdmin.GET("/actions", handler.ListActions)
 	actionAdmin.GET("/actions/:id", handler.GetAction)

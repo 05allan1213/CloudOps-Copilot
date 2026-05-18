@@ -18,6 +18,15 @@ const (
 	IntentUnknown            = "unknown"
 )
 
+const (
+	ToolK8sGetPods        = "k8s.get_pods"
+	ToolK8sGetDeployments = "k8s.get_deployments"
+	ToolK8sGetServices    = "k8s.get_services"
+	ToolK8sGetNodes       = "k8s.get_nodes"
+	ToolK8sGetEvents      = "k8s.get_events"
+	ToolK8sGetLogs        = "k8s.get_logs"
+)
+
 type Result struct {
 	Intent       string
 	Confidence   float64
@@ -96,6 +105,15 @@ var (
 		regexp.MustCompile(`(?i)\bgroup\s*[:=]\s*(\d{1,20})\b`),
 		regexp.MustCompile(`(?i)主机组\s*(\d{1,20})`),
 	}
+	k8sNamespacePatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\bnamespace\s*[:=]?\s*([a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)\b`),
+		regexp.MustCompile(`(?i)([a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)\s*(?:namespace|命名空间)`),
+		regexp.MustCompile(`(?i)(?:namespace|命名空间)\s*([a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)`),
+	}
+	k8sPodNamePatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\bpod\s+([a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)\b`),
+		regexp.MustCompile(`(?i)pod\s*([a-z0-9](?:[a-z0-9.-]*[a-z0-9])?)\s*的日志`),
+	}
 )
 
 var multiIntentConnectors = []string{
@@ -136,6 +154,10 @@ func (c *Classifier) Classify(message string) Result {
 	hasMetric := containsAny(normalized, "cpu", "内存", "memory", "磁盘", "disk", "负载", "load", "网络", "network", "metric", "metrics", "趋势", "trend", "promql", "query_range", "指标")
 	hasHostListOption := containsAny(normalized, "search", "q=", "group", "group_id", "sort", "risk", "high cpu", "high memory", "高cpu", "高内存", "cpu_desc", "memory_desc")
 	hasGeneral := containsAny(normalized, "能做什么", "help", "帮助", "what can you do", "解释", "explain", "你好", "hello", "hi")
+	if result, ok := classifyK8sQuery(normalized, entities); ok {
+		c.observeResult(result, start)
+		return result
+	}
 
 	var result Result
 	switch {
@@ -210,6 +232,12 @@ func extractEntities(original, normalized string) map[string]string {
 	if groupID := extractFirstPattern(original, groupIDPatterns); groupID != "" {
 		entities["group_id"] = groupID
 	}
+	if namespace := extractK8sNamespace(original); namespace != "" {
+		entities["namespace"] = namespace
+	}
+	if podName := extractK8sPodName(original); podName != "" {
+		entities["pod_name"] = podName
+	}
 	if enabled := extractEnabled(normalized); enabled != "" {
 		entities["enabled"] = enabled
 	}
@@ -225,13 +253,63 @@ func extractEntities(original, normalized string) map[string]string {
 	if window := extractWindow(original, normalized, entities["query"] != ""); window != "" {
 		entities["window"] = window
 	}
-	if instance := extractInstance(original, entities["alert_name"], entities["fingerprint"], entities["alert_history_id"], entities["page"], entities["page_size"], entities["count"], entities["group_id"], entities["search"]); instance != "" {
+	if instance := extractInstance(original, entities["alert_name"], entities["fingerprint"], entities["alert_history_id"], entities["page"], entities["page_size"], entities["count"], entities["group_id"], entities["search"], entities["namespace"], entities["pod_name"]); instance != "" {
 		entities["instance"] = instance
 	}
 	if metricKw := extractMetricKeywords(normalized); len(metricKw) > 0 {
 		entities["metric_keywords"] = strings.Join(metricKw, ",")
 	}
 	return entities
+}
+
+func classifyK8sQuery(normalized string, entities map[string]string) (Result, bool) {
+	if !hasK8sContext(normalized) {
+		return Result{}, false
+	}
+	selectedTool := ""
+	switch {
+	case containsAny(normalized, "日志", "log", "logs"):
+		selectedTool = ToolK8sGetLogs
+	case containsAny(normalized, "event", "events") || (containsAny(normalized, "事件") && containsAny(normalized, "k8s", "kubernetes", "pod", "deployment", "service", "namespace", "命名空间")):
+		selectedTool = ToolK8sGetEvents
+	case containsAny(normalized, "deployment", "deployments", "deploy"):
+		selectedTool = ToolK8sGetDeployments
+	case containsAny(normalized, "service", "services", "svc"):
+		selectedTool = ToolK8sGetServices
+	case containsAny(normalized, "pod", "pods"):
+		selectedTool = ToolK8sGetPods
+	case containsAny(normalized, "node", "nodes", "节点"):
+		selectedTool = ToolK8sGetNodes
+	default:
+		return Result{}, false
+	}
+	return Result{
+		Intent:       IntentMetricQuery,
+		Confidence:   0.93,
+		Entities:     entities,
+		SelectedTool: selectedTool,
+	}, true
+}
+
+func hasK8sContext(normalized string) bool {
+	if containsAny(normalized, "k8s", "kubernetes", "namespace", "命名空间", "pod", "pods", "deployment", "deployments", "svc", "container", "容器") {
+		return true
+	}
+	if containsAny(normalized, "service", "services") && containsAny(normalized, "集群", "cluster") {
+		return true
+	}
+	if containsAny(normalized, "node", "nodes", "节点") && containsAny(normalized, "k8s", "kubernetes", "集群", "cluster") {
+		return true
+	}
+	return false
+}
+
+func extractK8sNamespace(original string) string {
+	return strings.TrimSpace(extractFirstPattern(original, k8sNamespacePatterns))
+}
+
+func extractK8sPodName(original string) string {
+	return strings.TrimSpace(extractFirstPattern(original, k8sPodNamePatterns))
 }
 
 var metricKeywordDefs = map[string]string{
@@ -433,7 +511,7 @@ func containsAny(value string, keywords ...string) bool {
 func isCommonKeyword(value string) bool {
 	switch strings.ToLower(value) {
 	case "list", "show", "get", "current", "latest", "recent", "last",
-		"cpu", "memory", "disk", "load", "network", "metric", "metrics", "alert", "alerts", "rule", "rules", "host", "hosts", "node", "nodes", "event", "events", "history", "records", "query", "trend", "info", "warning", "critical", "firing", "resolved", "enabled", "disabled", "promql", "alert_name", "alertname", "page", "page_size", "count", "search", "sort", "risk", "group", "group_id", "high_cpu", "high_memory", "cpu_desc", "memory_desc":
+		"cpu", "memory", "disk", "load", "network", "metric", "metrics", "alert", "alerts", "rule", "rules", "host", "hosts", "node", "nodes", "event", "events", "history", "records", "query", "trend", "info", "warning", "critical", "firing", "resolved", "enabled", "disabled", "promql", "alert_name", "alertname", "page", "page_size", "count", "search", "sort", "risk", "group", "group_id", "high_cpu", "high_memory", "cpu_desc", "memory_desc", "k8s", "kubernetes":
 		return true
 	case "fingerprint":
 		return true
