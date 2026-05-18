@@ -70,10 +70,18 @@ onBeforeUnmount(() => {
     <div class="sidebar-content">
       <div class="sidebar-header">
         <div v-if="!collapsed" class="sidebar-brand">
-          <div class="sidebar-logo"></div>
+          <div class="sidebar-logo">
+            <svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.85)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M6.5 19.5a4 4 0 0 1-.5-7.97 7 7 0 0 1 13.36 1.2A3.5 3.5 0 0 1 18.5 19.5H6.5z"/>
+            </svg>
+          </div>
           <span class="sidebar-title">CloudOps</span>
         </div>
-        <div v-else class="sidebar-logo-collapsed"></div>
+        <div v-else class="sidebar-logo-collapsed">
+          <svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.85)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6.5 19.5a4 4 0 0 1-.5-7.97 7 7 0 0 1 13.36 1.2A3.5 3.5 0 0 1 18.5 19.5H6.5z"/>
+          </svg>
+        </div>
         <button
           class="sidebar-collapse-btn"
           :aria-label="collapsed ? '展开侧边栏' : '折叠侧边栏'"
@@ -139,6 +147,15 @@ onBeforeUnmount(() => {
   border-radius: 6px;
   background: linear-gradient(135deg, var(--cloudops-accent), #6366f1);
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px;
+}
+
+.sidebar-logo svg {
+  width: 100%;
+  height: 100%;
 }
 
 .sidebar-title {
@@ -155,6 +172,15 @@ onBeforeUnmount(() => {
   border-radius: 6px;
   background: linear-gradient(135deg, var(--cloudops-accent), #6366f1);
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px;
+}
+
+.sidebar-logo-collapsed svg {
+  width: 100%;
+  height: 100%;
 }
 
 .sidebar-collapse-btn {

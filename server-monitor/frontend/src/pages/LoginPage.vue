@@ -49,10 +49,15 @@ async function onSubmit() {
   <main class="login-page">
     <el-card class="login-card" shadow="always">
       <div class="login-brand">
-        <div class="login-logo"></div>
+        <div class="login-logo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.85)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6.5 19.5a4 4 0 0 1-.5-7.97 7 7 0 0 1 13.36 1.2A3.5 3.5 0 0 1 18.5 19.5H6.5z"/>
+          </svg>
+        </div>
         <div>
           <h1>服务监控大屏</h1>
           <p>使用后台账号登录后继续查看主机指标与告警。</p>
+          <p class="login-hint">默认账号: admin / server-monitor-local-admin</p>
         </div>
       </div>
 
@@ -141,15 +146,15 @@ async function onSubmit() {
   border-radius: var(--cloudops-radius-md);
   background: linear-gradient(135deg, var(--el-color-primary), var(--el-color-info));
   box-shadow: 0 0 16px rgba(59, 130, 246, 0.3);
-  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 9px;
 }
 
-.login-logo::after {
-  content: "";
-  position: absolute;
-  inset: 8px;
-  border: 2px solid rgba(255, 255, 255, 0.4);
-  border-radius: 4px;
+.login-logo svg {
+  width: 100%;
+  height: 100%;
 }
 
 .login-brand h1 {
@@ -163,6 +168,12 @@ async function onSubmit() {
   font-size: 13px;
   line-height: 1.6;
   margin-top: 5px;
+}
+
+.login-hint {
+  color: var(--el-color-info);
+  font-size: 12px;
+  margin-top: 2px;
 }
 
 .login-alert {
