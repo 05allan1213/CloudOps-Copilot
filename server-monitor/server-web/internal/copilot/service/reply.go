@@ -86,6 +86,7 @@ func summaryOrFallback(result SummaryResult, fallbackReply string, fallbackSugge
 	if reply == "" {
 		reply = fallbackReply
 	} else {
+		reply = normalizeLineBreaks(reply)
 		reply = ensureLineBreakBeforeQuestion(reply)
 	}
 	suggestions := copilotsuggestion.Normalize(result.Suggestions)
@@ -93,6 +94,12 @@ func summaryOrFallback(result SummaryResult, fallbackReply string, fallbackSugge
 		suggestions = fallbackSuggestions
 	}
 	return reply, suggestions
+}
+
+func normalizeLineBreaks(reply string) string {
+	reply = strings.ReplaceAll(reply, `\n`, "\n")
+	reply = strings.ReplaceAll(reply, `\r`, "\r")
+	return reply
 }
 
 func ensureLineBreakBeforeQuestion(reply string) string {

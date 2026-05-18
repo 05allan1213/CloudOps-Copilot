@@ -189,7 +189,8 @@ func (c *Client) ClassifyWithTools(ctx context.Context, message string, tools []
 
 	if len(content.ToolCalls) > 0 {
 		tc := content.ToolCalls[0]
-		intent, ok := toolNameToIntent[tc.Function.Name]
+		normalized := normalizeToolName(tc.Function.Name)
+		intent, ok := toolNameToIntent[normalized]
 		if !ok {
 			return nlu.Result{}, fmt.Errorf("%w: unsupported tool %q", ErrInvalidResponse, tc.Function.Name)
 		}
@@ -201,7 +202,7 @@ func (c *Client) ClassifyWithTools(ctx context.Context, message string, tools []
 			Intent:       intent,
 			Confidence:   0.8,
 			Entities:     entities,
-			SelectedTool: tc.Function.Name,
+			SelectedTool: normalized,
 		}, nil
 	}
 
@@ -237,7 +238,8 @@ func (c *Client) ClassifyWithToolsMulti(ctx context.Context, message string, too
 		var primarySelectedTool string
 
 		for _, tc := range content.ToolCalls {
-			intent, ok := toolNameToIntent[tc.Function.Name]
+			normalized := normalizeToolName(tc.Function.Name)
+			intent, ok := toolNameToIntent[normalized]
 			if !ok {
 				continue
 			}
@@ -249,14 +251,14 @@ func (c *Client) ClassifyWithToolsMulti(ctx context.Context, message string, too
 				Intent:       intent,
 				Confidence:   0.8,
 				Entities:     entities,
-				SelectedTool: tc.Function.Name,
+				SelectedTool: normalized,
 			}
 			intents = append(intents, is)
 			if primaryIntent == "" {
 				primaryIntent = intent
 				primaryConfidence = 0.8
 				primaryEntities = entities
-				primarySelectedTool = tc.Function.Name
+				primarySelectedTool = normalized
 			}
 		}
 
@@ -710,4 +712,8 @@ var toolNameToIntent = map[string]string{
 
 func openAIToolNameToRegistryName(name string) string {
 	return strings.ReplaceAll(name, "_", ".")
+}
+
+func normalizeToolName(name string) string {
+	return strings.ReplaceAll(name, ".", "_")
 }

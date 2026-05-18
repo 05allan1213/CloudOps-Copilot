@@ -254,7 +254,11 @@ func coerceParam(value string, paramType ParamType) interface{} {
 }
 
 func openAIToolNameToRegistryName(name string) string {
-	return strings.ReplaceAll(name, "_", ".")
+	parts := strings.SplitN(name, "_", 2)
+	if len(parts) == 2 {
+		return parts[0] + "." + parts[1]
+	}
+	return name
 }
 
 func (e *Executor) ExecuteTool(ctx context.Context, name string, args json.RawMessage) (ToolResult, error) {
