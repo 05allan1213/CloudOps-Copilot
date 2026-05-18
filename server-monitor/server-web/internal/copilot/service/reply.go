@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"server-web/internal/copilot/nlu"
 	copilotsuggestion "server-web/internal/copilot/suggestion"
@@ -84,12 +85,37 @@ func summaryOrFallback(result SummaryResult, fallbackReply string, fallbackSugge
 	reply := strings.TrimSpace(result.Reply)
 	if reply == "" {
 		reply = fallbackReply
+	} else {
+		reply = ensureLineBreakBeforeQuestion(reply)
 	}
 	suggestions := copilotsuggestion.Normalize(result.Suggestions)
 	if len(suggestions) == 0 {
 		suggestions = fallbackSuggestions
 	}
 	return reply, suggestions
+}
+
+func ensureLineBreakBeforeQuestion(reply string) string {
+	if !strings.HasSuffix(reply, "？") && !strings.HasSuffix(reply, "?") {
+		return reply
+	}
+	lastEndByte := -1
+	lastEndRuneLen := 0
+	for i, ch := range reply {
+		if ch == '。' || ch == '！' || ch == '.' || ch == '!' {
+			lastEndByte = i
+			lastEndRuneLen = utf8.RuneLen(ch)
+		}
+	}
+	if lastEndByte < 0 {
+		return reply
+	}
+	splitAt := lastEndByte + lastEndRuneLen
+	after := reply[splitAt:]
+	if strings.HasPrefix(after, "\n") {
+		return reply
+	}
+	return reply[:splitAt] + "\n" + after
 }
 
 func hasSuccessfulToolCall(toolCalls []ToolCall) bool {
@@ -124,9 +150,9 @@ func buildReply(result nlu.Result, toolReply string, toolCalls []ToolCall) strin
 	case nlu.IntentDiagnosisRequest:
 		return "请提供 fingerprint、alert_history_id，或 alert_name + instance 以生成单条告警诊断。"
 	case nlu.IntentGeneralChat:
-		return "我是 CloudOps 智能助手，可以帮你查询主机、指标、活跃告警、告警事件和告警历史。"
+		return "我是 CloudOps 智能助手，可以帮你查询主机、指标、活跃告警、告警事件和告警历史。\n有什么想了解的吗？"
 	default:
-		return "暂时无法识别您的意图，请说明您想查询主机、指标、活跃告警、告警事件还是告警历史。"
+		return "暂时无法识别您的意图。\n请说明您想查询主机、指标、活跃告警、告警事件还是告警历史。"
 	}
 }
 
