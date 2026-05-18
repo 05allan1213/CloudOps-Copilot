@@ -28,6 +28,7 @@ type Dependencies struct {
 	Metrics     *middleware.Metrics
 	CacheClient *rediscache.Client
 	Handler     *handler.Handler
+	K8sHandler  *handler.K8sHandler
 	AuthService handler.AuthService
 	Copilot     *CopilotDeps
 }

@@ -69,6 +69,8 @@ type Handler struct {
 	cacheTimeout   time.Duration
 	ruleSync       AlertRuleSyncConfig
 	websocketHub   *ws.Hub
+	k8sAPIEnabled   bool
+	k8sNodesEnabled bool
 }
 
 type response struct {
@@ -101,6 +103,8 @@ type Config struct {
 	MySQLClient    mysqlClient
 	DB             *gorm.DB
 	AuthService    AuthService
+	K8sAPIEnabled   bool
+	K8sNodesEnabled bool
 }
 
 func NewHandler(promClient *promclient.Client, cacheClient cacheClient, cfg Config, websocketHub *ws.Hub) (*Handler, error) {
@@ -348,6 +352,8 @@ func (h *Handler) DashboardOverview(c *gin.Context) {
 	activeAlerts, degraded := h.cacheService.CountActiveAlerts(ctx)
 	overview.ActiveAlerts = activeAlerts
 	overview.AlertDegraded = degraded
+	overview.K8sAPIEnabled = h.k8sAPIEnabled
+	overview.K8sNodesEnabled = h.k8sNodesEnabled
 	overview.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
 
 	cacheCtx, cacheCancel := context.WithTimeout(context.Background(), h.cacheTimeout)

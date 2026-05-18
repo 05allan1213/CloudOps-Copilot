@@ -15,7 +15,7 @@ const (
 	MaxLimit     = 200
 )
 
-var errNodesNotEnabled = errors.New("nodes query is not enabled")
+var ErrNodesNotEnabled = errors.New("nodes query is not enabled")
 
 var validNodeStatuses = map[string]struct{}{
 	"ready":    {},
@@ -458,7 +458,7 @@ func (s *Service) Overview(ctx context.Context) (*ClusterOverview, error) {
 
 func (s *Service) ListNodes(ctx context.Context, opts NodeListOptions) (*NodeListResult, error) {
 	if !s.nodesEnabled {
-		return nil, errNodesNotEnabled
+		return nil, ErrNodesNotEnabled
 	}
 	ctx, cancel := s.withTimeout(ctx)
 	defer cancel()
@@ -494,7 +494,7 @@ func (s *Service) ListNodes(ctx context.Context, opts NodeListOptions) (*NodeLis
 
 func (s *Service) GetNodeDetail(ctx context.Context, name string) (*NodeDetail, error) {
 	if !s.nodesEnabled {
-		return nil, errNodesNotEnabled
+		return nil, ErrNodesNotEnabled
 	}
 	ctx, cancel := s.withTimeout(ctx)
 	defer cancel()

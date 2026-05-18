@@ -49,6 +49,7 @@ type services struct {
 	metrics        *middleware.Metrics
 	copilotRuntime *router.CopilotRuntime
 	copilotDeps    *router.CopilotDeps
+	k8sHandler     *handler.K8sHandler
 }
 
 type app struct {
@@ -94,6 +95,7 @@ func initApp(ctx context.Context) (*app, error) {
 		Metrics:     svc.metrics,
 		CacheClient: infra.redisClient,
 		Handler:     svc.handler,
+		K8sHandler:  svc.k8sHandler,
 		AuthService: svc.authService,
 		Copilot:     svc.copilotDeps,
 	})
@@ -383,12 +385,19 @@ func initServices(ctx context.Context, cfg config.Config, infra infrastructure) 
 		MySQLClient:   infra.mysqlClient,
 		DB:            db,
 		AuthService:   authService,
+		K8sAPIEnabled:   cfg.K8SEnabled && cfg.K8SAPIEnabled,
+		K8sNodesEnabled: cfg.K8SEnabled && cfg.K8SAPIEnabled && cfg.K8SNodesEnabled,
 	}, infra.websocketHub)
 	if err != nil {
 		return services{}, err
 	}
 
-	copilotRuntime, copilotDeps, err := initCopilot(ctx, cfg, infra, metrics, alertService, db)
+	k8sReader, k8sClient, _, k8sHandler, err := initK8sRuntime(cfg, infra)
+	if err != nil {
+		return services{}, err
+	}
+
+	copilotRuntime, copilotDeps, err := initCopilot(ctx, cfg, infra, metrics, alertService, db, k8sReader, k8sClient)
 	if err != nil {
 		return services{}, err
 	}
@@ -399,6 +408,7 @@ func initServices(ctx context.Context, cfg config.Config, infra infrastructure) 
 		metrics:        metrics,
 		copilotRuntime: copilotRuntime,
 		copilotDeps:    copilotDeps,
+		k8sHandler:     k8sHandler,
 	}, nil
 }
 

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -36,7 +35,7 @@ import (
 	eventbus "server-monitor/pkg/kafka"
 )
 
-func initCopilot(ctx context.Context, cfg config.Config, infra infrastructure, metrics *middleware.Metrics, alertService *appalert.Service, db *gorm.DB) (*router.CopilotRuntime, *router.CopilotDeps, error) {
+func initCopilot(ctx context.Context, cfg config.Config, infra infrastructure, metrics *middleware.Metrics, alertService *appalert.Service, db *gorm.DB, k8sReader copilotk8s.Reader, k8sClient kubernetes.Interface) (*router.CopilotRuntime, *router.CopilotDeps, error) {
 	if !cfg.CopilotEnabled {
 		return nil, nil, nil
 	}
@@ -49,15 +48,6 @@ func initCopilot(ctx context.Context, cfg config.Config, infra infrastructure, m
 		RequestTimeout: cfg.CopilotToolDefaultTimeout,
 		CacheTimeout:   cfg.CacheWriteTimeout,
 	})
-	k8sCfg := k8sConfigFromApp(cfg)
-	k8sClient, err := copilotk8s.NewClient(k8sCfg)
-	if err != nil {
-		return nil, nil, err
-	}
-	var k8sReader copilotk8s.Reader
-	if cfg.K8SEnabled {
-		k8sReader = copilotk8s.NewServiceWithClient(k8sClient, k8sCfg)
-	}
 	runbookDocs, err := copilotrunbook.LoadDir(context.Background(), cfg.RunbookDir, copilotrunbook.LoadOptions{
 		MaxFiles:     cfg.RunbookMaxFiles,
 		MaxFileBytes: cfg.RunbookMaxFileBytes,
@@ -359,23 +349,4 @@ type buildIndexLogger struct{}
 
 func (l *buildIndexLogger) ObserveBuildIndexBatchError(batchStart, batchEnd int, err error) {
 	zap.L().Warn("runbook embedding batch failed", zap.Int("batch_start", batchStart), zap.Int("batch_end", batchEnd), zap.Error(err))
-}
-
-func k8sConfigFromApp(cfg config.Config) copilotk8s.Config {
-	return copilotk8s.Config{
-		Enabled:           cfg.K8SEnabled,
-		WriteEnabled:      cfg.K8SWriteEnabled,
-		InCluster:         cfg.K8SInCluster,
-		Kubeconfig:        cfg.K8SKubeconfig,
-		AllowedNamespaces: cfg.K8SAllowedNamespaces,
-		DefaultNamespace:  cfg.K8SDefaultNamespace,
-		RequestTimeout:    cfg.K8SRequestTimeout,
-		LogTailLines:      cfg.K8SLogTailLines,
-		LogMaxBytes:       cfg.K8SLogMaxBytes,
-		EventLimit:        cfg.K8SEventLimit,
-	}
-}
-
-func errK8sClientRequired() error {
-	return errors.New("k8s client is required when k8s write execution is enabled")
 }

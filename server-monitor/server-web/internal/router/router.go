@@ -30,6 +30,7 @@ func NewRouter(cfg config.Config, deps Dependencies) (*gin.Engine, error) {
 	registerCoreRoutes(router, cfg, deps)
 	registerAdminRoutes(router, cfg, deps)
 	registerCopilotRoutes(router, cfg, deps)
+	registerK8sRoutes(router, cfg, deps)
 	if err := registerStaticRoutes(router, cfg.StaticDir); err != nil {
 		return nil, err
 	}

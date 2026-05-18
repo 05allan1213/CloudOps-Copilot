@@ -37,7 +37,9 @@ type DashboardOverview struct {
 	AvgCPU        float64 `json:"avg_cpu"`
 	AvgMemory     float64 `json:"avg_memory"`
 	GeneratedAt   string  `json:"generated_at"`
-	AlertDegraded bool    `json:"alert_degraded,omitempty"`
+	AlertDegraded   bool    `json:"alert_degraded,omitempty"`
+	K8sAPIEnabled   bool    `json:"k8s_api_enabled"`
+	K8sNodesEnabled bool    `json:"k8s_nodes_enabled"`
 }
 
 func NewService(client Client, options Options) *Service {

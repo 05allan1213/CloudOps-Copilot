@@ -38,7 +38,7 @@ func (s *Service) NodeHostAssociation(ctx context.Context, nodeNames []string) (
 
 func (s *Service) FindNodeByInstance(ctx context.Context, instance string) (*copilotk8s.NodeSummary, error) {
 	if !s.nodesEnabled {
-		return nil, errNodesNotEnabled
+		return nil, ErrNodesNotEnabled
 	}
 	ctx, cancel := s.withTimeout(ctx)
 	defer cancel()
