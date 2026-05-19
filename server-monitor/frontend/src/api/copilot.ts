@@ -49,6 +49,7 @@ export async function streamCopilotMessage(
   let buffer = "";
   let result: CopilotChatResponse | null = null;
 
+  // eslint-disable-next-line no-constant-condition
   while (true) {
     const { value, done } = await reader.read();
     buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });

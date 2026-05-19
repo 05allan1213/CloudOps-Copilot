@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { RouterView, useRoute, useRouter } from "vue-router";
+import { RouterView, useRoute } from "vue-router";
 
 import { useAlertsWebSocket } from "./composables/useAlertsWebSocket";
 import { useAuthStore } from "./stores/auth";
@@ -10,12 +10,11 @@ import AppLayout from "./components/layout/AppLayout.vue";
 const monitor = useMonitorStore();
 const auth = useAuthStore();
 const route = useRoute();
-const router = useRouter();
 const isFullscreen = ref(false);
 const fullscreenError = ref("");
 const liveDataStarted = ref(false);
 
-const { connectionState, connect, disconnect } = useAlertsWebSocket(
+const { connect, disconnect } = useAlertsWebSocket(
   monitor.applyIncomingAlert,
   monitor.applyIncomingHosts,
   monitor.applyIncomingDiagnosisUpdate,

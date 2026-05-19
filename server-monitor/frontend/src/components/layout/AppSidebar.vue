@@ -2,10 +2,8 @@
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 
-import { useAuthStore } from "../../stores/auth";
 import SidebarMenu from "./SidebarMenu.vue";
 
-const auth = useAuthStore();
 const route = useRoute();
 const collapsed = ref(false);
 const isMobile = ref(false);
@@ -69,17 +67,37 @@ onBeforeUnmount(() => {
     />
     <div class="sidebar-content">
       <div class="sidebar-header">
-        <div v-if="!collapsed" class="sidebar-brand">
+        <div
+          v-if="!collapsed"
+          class="sidebar-brand"
+        >
           <div class="sidebar-logo">
-            <svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.85)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M6.5 19.5a4 4 0 0 1-.5-7.97 7 7 0 0 1 13.36 1.2A3.5 3.5 0 0 1 18.5 19.5H6.5z"/>
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="rgba(255,255,255,0.85)"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M6.5 19.5a4 4 0 0 1-.5-7.97 7 7 0 0 1 13.36 1.2A3.5 3.5 0 0 1 18.5 19.5H6.5z" />
             </svg>
           </div>
           <span class="sidebar-title">CloudOps</span>
         </div>
-        <div v-else class="sidebar-logo-collapsed">
-          <svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.85)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M6.5 19.5a4 4 0 0 1-.5-7.97 7 7 0 0 1 13.36 1.2A3.5 3.5 0 0 1 18.5 19.5H6.5z"/>
+        <div
+          v-else
+          class="sidebar-logo-collapsed"
+        >
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="rgba(255,255,255,0.85)"
+            stroke-width="1.8"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M6.5 19.5a4 4 0 0 1-.5-7.97 7 7 0 0 1 13.36 1.2A3.5 3.5 0 0 1 18.5 19.5H6.5z" />
           </svg>
         </div>
         <button
@@ -89,9 +107,20 @@ onBeforeUnmount(() => {
           @click="toggleCollapse"
         >
           <el-icon :size="16">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline v-if="collapsed" points="9 18 15 12 9 6" />
-              <polyline v-else points="15 18 9 12 15 6" />
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
+              <polyline
+                v-if="collapsed"
+                points="9 18 15 12 9 6"
+              />
+              <polyline
+                v-else
+                points="15 18 9 12 15 6"
+              />
             </svg>
           </el-icon>
         </button>

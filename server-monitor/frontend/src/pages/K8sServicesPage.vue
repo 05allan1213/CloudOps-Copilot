@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { Search } from "@element-plus/icons-vue";
 
 import PageHeader from "../components/common/PageHeader.vue";
@@ -71,7 +71,10 @@ onMounted(loadServices);
   <section class="k8s-services-page">
     <PageHeader title="Services" />
 
-    <FilterPanel @search="applyFilters" @reset="resetFilters">
+    <FilterPanel
+      @search="applyFilters"
+      @reset="resetFilters"
+    >
       <el-form-item label="命名空间">
         <el-select
           v-model="selectedNamespace"
@@ -81,11 +84,22 @@ onMounted(loadServices);
         />
       </el-form-item>
       <el-form-item label="类型">
-        <el-radio-group v-model="selectedType" size="small">
-          <el-radio-button value="all">全部</el-radio-button>
-          <el-radio-button value="ClusterIP">ClusterIP</el-radio-button>
-          <el-radio-button value="NodePort">NodePort</el-radio-button>
-          <el-radio-button value="LoadBalancer">LoadBalancer</el-radio-button>
+        <el-radio-group
+          v-model="selectedType"
+          size="small"
+        >
+          <el-radio-button value="all">
+            全部
+          </el-radio-button>
+          <el-radio-button value="ClusterIP">
+            ClusterIP
+          </el-radio-button>
+          <el-radio-button value="NodePort">
+            NodePort
+          </el-radio-button>
+          <el-radio-button value="LoadBalancer">
+            LoadBalancer
+          </el-radio-button>
         </el-radio-group>
       </el-form-item>
       <el-form-item label="搜索">
@@ -100,22 +114,44 @@ onMounted(loadServices);
       </el-form-item>
     </FilterPanel>
 
-    <el-card shadow="never" class="panel">
+    <el-card
+      shadow="never"
+      class="panel"
+    >
       <template #header>
         <div class="panel-header">
           <div class="panel-title">
-            <el-icon :size="18" color="var(--el-color-primary)"><Search /></el-icon>
+            <el-icon
+              :size="18"
+              color="var(--el-color-primary)"
+            >
+              <Search />
+            </el-icon>
             <span class="panel-title-text">Service 列表</span>
           </div>
           <div class="panel-actions">
-            <el-tag size="small" type="info">共 {{ total }} 条</el-tag>
+            <el-tag
+              size="small"
+              type="info"
+            >
+              共 {{ total }} 条
+            </el-tag>
           </div>
         </div>
       </template>
 
-      <StateWrapper :state="stateKey" :error-text="error" empty-text="暂无 Service 数据">
+      <StateWrapper
+        :state="stateKey"
+        :error-text="error"
+        empty-text="暂无 Service 数据"
+      >
         <template #retry>
-          <el-button type="primary" @click="loadServices">重试</el-button>
+          <el-button
+            type="primary"
+            @click="loadServices"
+          >
+            重试
+          </el-button>
         </template>
 
         <ServiceTable :services="services" />

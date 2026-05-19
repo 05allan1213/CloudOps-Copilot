@@ -79,9 +79,9 @@ async function loadDetail() {
     if (id === requestId) {
       detail.value = data;
     }
-  } catch (e: any) {
+  } catch (e: unknown) {
     if (id === requestId && !controller.signal.aborted) {
-      error.value = e.message || "加载失败";
+      error.value = e instanceof Error ? e.message : "加载失败";
     }
   } finally {
     if (id === requestId) {
@@ -155,48 +155,119 @@ onUnmounted(() => {
     empty-text="暂无节点数据"
   >
     <template #retry>
-      <el-button type="primary" @click="loadDetail">重试</el-button>
+      <el-button
+        type="primary"
+        @click="loadDetail"
+      >
+        重试
+      </el-button>
     </template>
 
-    <el-row :gutter="12" class="metric-grid">
-      <el-col :xs="12" :sm="8" :md="4">
-        <el-card shadow="never" class="metric-card">
+    <el-row
+      :gutter="12"
+      class="metric-grid"
+    >
+      <el-col
+        :xs="12"
+        :sm="8"
+        :md="4"
+      >
+        <el-card
+          shadow="never"
+          class="metric-card"
+        >
           <el-statistic title="状态">
             <template #default>
-              <el-tag :type="isReady ? 'success' : 'danger'" size="small">
+              <el-tag
+                :type="isReady ? 'success' : 'danger'"
+                size="small"
+              >
                 {{ isReady ? "Ready" : "NotReady" }}
               </el-tag>
             </template>
           </el-statistic>
         </el-card>
       </el-col>
-      <el-col :xs="12" :sm="8" :md="4">
-        <el-card shadow="never" class="metric-card">
-          <el-statistic title="角色" :value="roles" />
+      <el-col
+        :xs="12"
+        :sm="8"
+        :md="4"
+      >
+        <el-card
+          shadow="never"
+          class="metric-card"
+        >
+          <el-statistic
+            title="角色"
+            :value="roles"
+          />
         </el-card>
       </el-col>
-      <el-col :xs="12" :sm="8" :md="4">
-        <el-card shadow="never" class="metric-card">
-          <el-statistic title="Kubelet 版本" :value="kubeletVersion" />
+      <el-col
+        :xs="12"
+        :sm="8"
+        :md="4"
+      >
+        <el-card
+          shadow="never"
+          class="metric-card"
+        >
+          <el-statistic
+            title="Kubelet 版本"
+            :value="kubeletVersion"
+          />
         </el-card>
       </el-col>
-      <el-col :xs="12" :sm="8" :md="4">
-        <el-card shadow="never" class="metric-card">
-          <el-statistic title="CPU 容量" :value="cpuCapacity" />
+      <el-col
+        :xs="12"
+        :sm="8"
+        :md="4"
+      >
+        <el-card
+          shadow="never"
+          class="metric-card"
+        >
+          <el-statistic
+            title="CPU 容量"
+            :value="cpuCapacity"
+          />
         </el-card>
       </el-col>
-      <el-col :xs="12" :sm="8" :md="4">
-        <el-card shadow="never" class="metric-card">
-          <el-statistic title="内存容量" :value="memoryCapacity" />
+      <el-col
+        :xs="12"
+        :sm="8"
+        :md="4"
+      >
+        <el-card
+          shadow="never"
+          class="metric-card"
+        >
+          <el-statistic
+            title="内存容量"
+            :value="memoryCapacity"
+          />
         </el-card>
       </el-col>
     </el-row>
 
-    <el-card v-if="diagnosisError" shadow="never" class="diagnosis-error-card">
-      <el-alert :title="diagnosisError" type="error" show-icon :closable="false" />
+    <el-card
+      v-if="diagnosisError"
+      shadow="never"
+      class="diagnosis-error-card"
+    >
+      <el-alert
+        :title="diagnosisError"
+        type="error"
+        show-icon
+        :closable="false"
+      />
     </el-card>
 
-    <el-card v-if="diagnosisReport" shadow="never" class="diagnosis-result-card">
+    <el-card
+      v-if="diagnosisReport"
+      shadow="never"
+      class="diagnosis-result-card"
+    >
       <template #header>
         <div class="diagnosis-result-header">
           <span class="section-title">诊断结果</span>
@@ -208,7 +279,10 @@ onUnmounted(() => {
           </el-tag>
         </div>
       </template>
-      <el-descriptions :column="1" border>
+      <el-descriptions
+        :column="1"
+        border
+      >
         <el-descriptions-item label="摘要">
           {{ diagnosisReport.summary || "-" }}
         </el-descriptions-item>
@@ -235,11 +309,17 @@ onUnmounted(() => {
       style="margin-bottom: 16px"
     />
 
-    <el-card shadow="never" style="margin-bottom: 16px">
+    <el-card
+      shadow="never"
+      style="margin-bottom: 16px"
+    >
       <template #header>
         <span class="section-title">运行中的 Pod</span>
       </template>
-      <StateWrapper :state="podsState" empty-text="该节点暂无运行中的 Pod">
+      <StateWrapper
+        :state="podsState"
+        empty-text="该节点暂无运行中的 Pod"
+      >
         <PodTable :pods="pods" />
       </StateWrapper>
     </el-card>
@@ -248,7 +328,10 @@ onUnmounted(() => {
       <template #header>
         <span class="section-title">相关事件</span>
       </template>
-      <StateWrapper :state="eventsState" empty-text="暂无相关事件">
+      <StateWrapper
+        :state="eventsState"
+        empty-text="暂无相关事件"
+      >
         <EventTable :events="events" />
       </StateWrapper>
     </el-card>

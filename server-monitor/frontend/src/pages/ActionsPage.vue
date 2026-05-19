@@ -28,7 +28,7 @@ const filters = reactive({
   action_type: "",
 });
 
-const { page, pageSize, total, totalPages, goToPage, resetPage } = usePagination(50);
+const { page, pageSize, total, goToPage, resetPage } = usePagination(50);
 
 const stateKey = computed(() => {
   if (loading.value) return "loading" as const;
@@ -164,76 +164,183 @@ onMounted(loadActions);
 
 <template>
   <section class="actions-page">
-    <PageHeader title="动作审批" subtitle="诊断建议生成的待审批动作，写操作默认需要 admin 审批。">
+    <PageHeader
+      title="动作审批"
+      subtitle="诊断建议生成的待审批动作，写操作默认需要 admin 审批。"
+    >
       <template #default>
-        <el-button :icon="Refresh" :loading="loading" @click="loadActions">刷新</el-button>
+        <el-button
+          :icon="Refresh"
+          :loading="loading"
+          @click="loadActions"
+        >
+          刷新
+        </el-button>
       </template>
     </PageHeader>
 
-    <FilterPanel @search="applyFilters" @reset="resetFilters">
+    <FilterPanel
+      @search="applyFilters"
+      @reset="resetFilters"
+    >
       <el-form-item label="状态">
-        <el-select v-model="filters.status" placeholder="全部状态" clearable style="width: 140px">
-          <el-option label="pending" value="pending" />
-          <el-option label="approved" value="approved" />
-          <el-option label="rejected" value="rejected" />
-          <el-option label="executed" value="executed" />
-          <el-option label="failed" value="failed" />
+        <el-select
+          v-model="filters.status"
+          placeholder="全部状态"
+          clearable
+          style="width: 140px"
+        >
+          <el-option
+            label="pending"
+            value="pending"
+          />
+          <el-option
+            label="approved"
+            value="approved"
+          />
+          <el-option
+            label="rejected"
+            value="rejected"
+          />
+          <el-option
+            label="executed"
+            value="executed"
+          />
+          <el-option
+            label="failed"
+            value="failed"
+          />
         </el-select>
       </el-form-item>
       <el-form-item label="风险级别">
-        <el-select v-model="filters.risk_level" placeholder="全部风险" clearable style="width: 140px">
-          <el-option label="low" value="low" />
-          <el-option label="medium" value="medium" />
-          <el-option label="high" value="high" />
+        <el-select
+          v-model="filters.risk_level"
+          placeholder="全部风险"
+          clearable
+          style="width: 140px"
+        >
+          <el-option
+            label="low"
+            value="low"
+          />
+          <el-option
+            label="medium"
+            value="medium"
+          />
+          <el-option
+            label="high"
+            value="high"
+          />
         </el-select>
       </el-form-item>
       <el-form-item label="动作类型">
-        <el-input v-model.trim="filters.action_type" placeholder="action_type" clearable style="width: 160px" />
+        <el-input
+          v-model.trim="filters.action_type"
+          placeholder="action_type"
+          clearable
+          style="width: 160px"
+        />
       </el-form-item>
     </FilterPanel>
 
-    <StateWrapper :state="stateKey" :error-text="error" empty-text="暂无动作">
+    <StateWrapper
+      :state="stateKey"
+      :error-text="error"
+      empty-text="暂无动作"
+    >
       <template #retry>
-        <el-button type="primary" @click="loadActions">重试</el-button>
+        <el-button
+          type="primary"
+          @click="loadActions"
+        >
+          重试
+        </el-button>
       </template>
 
-      <el-table :data="actions" stripe style="width: 100%">
-        <el-table-column label="ID" width="100">
+      <el-table
+        :data="actions"
+        stripe
+        style="width: 100%"
+      >
+        <el-table-column
+          label="ID"
+          width="100"
+        >
           <template #default="{ row }">
-            <RouterLink class="detail-link" :to="`/actions/${row.id}`">#{{ row.id }}</RouterLink>
+            <RouterLink
+              class="detail-link"
+              :to="`/actions/${row.id}`"
+            >
+              #{{ row.id }}
+            </RouterLink>
           </template>
         </el-table-column>
-        <el-table-column label="动作类型" min-width="140" show-overflow-tooltip>
+        <el-table-column
+          label="动作类型"
+          min-width="140"
+          show-overflow-tooltip
+        >
           <template #default="{ row }">
             <span class="mono-text">{{ row.action_type }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="目标" min-width="140" show-overflow-tooltip>
+        <el-table-column
+          label="目标"
+          min-width="140"
+          show-overflow-tooltip
+        >
           <template #default="{ row }">
             {{ targetOf(row) }}
           </template>
         </el-table-column>
-        <el-table-column label="风险级别" width="100" align="center">
+        <el-table-column
+          label="风险级别"
+          width="100"
+          align="center"
+        >
           <template #default="{ row }">
-            <el-tag :type="riskTagType(row.risk_level)" size="small" effect="dark">
+            <el-tag
+              :type="riskTagType(row.risk_level)"
+              size="small"
+              effect="dark"
+            >
               {{ row.risk_level }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="100" align="center">
+        <el-table-column
+          label="状态"
+          width="100"
+          align="center"
+        >
           <template #default="{ row }">
-            <el-tag :type="statusTagType(row.status)" size="small">
+            <el-tag
+              :type="statusTagType(row.status)"
+              size="small"
+            >
               {{ row.status }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="来源" width="100" prop="requested_by" show-overflow-tooltip />
-        <el-table-column label="创建时间" width="170">
+        <el-table-column
+          label="来源"
+          width="100"
+          prop="requested_by"
+          show-overflow-tooltip
+        />
+        <el-table-column
+          label="创建时间"
+          width="170"
+        >
           <template #default="{ row }">
             {{ formatTime(row.created_at) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200" align="center">
+        <el-table-column
+          label="操作"
+          width="200"
+          align="center"
+        >
           <template #default="{ row }">
             <el-button
               v-if="row.status === 'pending'"
@@ -281,7 +388,11 @@ onMounted(loadActions);
       </div>
     </StateWrapper>
 
-    <el-dialog v-model="approveDialogVisible" title="审批通过" width="460px">
+    <el-dialog
+      v-model="approveDialogVisible"
+      title="审批通过"
+      width="460px"
+    >
       <el-form label-position="top">
         <el-form-item label="审批备注">
           <el-input
@@ -293,14 +404,28 @@ onMounted(loadActions);
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="approveDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="confirmApprove">确认批准</el-button>
+        <el-button @click="approveDialogVisible = false">
+          取消
+        </el-button>
+        <el-button
+          type="primary"
+          @click="confirmApprove"
+        >
+          确认批准
+        </el-button>
       </template>
     </el-dialog>
 
-    <el-dialog v-model="rejectDialogVisible" title="拒绝动作" width="460px">
+    <el-dialog
+      v-model="rejectDialogVisible"
+      title="拒绝动作"
+      width="460px"
+    >
       <el-form label-position="top">
-        <el-form-item label="拒绝原因" required>
+        <el-form-item
+          label="拒绝原因"
+          required
+        >
           <el-input
             v-model="rejectReason"
             type="textarea"
@@ -310,8 +435,15 @@ onMounted(loadActions);
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="rejectDialogVisible = false">取消</el-button>
-        <el-button type="danger" @click="confirmReject">确认拒绝</el-button>
+        <el-button @click="rejectDialogVisible = false">
+          取消
+        </el-button>
+        <el-button
+          type="danger"
+          @click="confirmReject"
+        >
+          确认拒绝
+        </el-button>
       </template>
     </el-dialog>
   </section>
@@ -330,14 +462,4 @@ onMounted(loadActions);
   text-decoration: none;
 }
 
-.mono-text {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 13px;
-}
-
-.pagination-wrap {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 16px;
-}
 </style>

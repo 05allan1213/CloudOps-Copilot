@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { useRouter } from "vue-router";
 import { Search } from "@element-plus/icons-vue";
 
 import { useAlertsWebSocket } from "../../composables/useAlertsWebSocket";
@@ -16,7 +16,6 @@ defineProps<{
 
 const auth = useAuthStore();
 const monitor = useMonitorStore();
-const route = useRoute();
 const router = useRouter();
 const { isDark, toggleTheme } = useTheme();
 const { clusters, currentCluster, setCluster } = useK8sCluster();
@@ -42,6 +41,8 @@ const connectionLabel = computed(() => {
       return "连接中";
     case "disconnected":
       return "离线";
+    default:
+      return "";
   }
 });
 
@@ -53,6 +54,8 @@ const connectionType = computed(() => {
       return "warning";
     case "disconnected":
       return "danger";
+    default:
+      return "";
   }
 });
 
@@ -97,8 +100,6 @@ function handleSearchKeydown(e: KeyboardEvent) {
   }
 }
 
-import { watch } from "vue";
-
 watch(
   shouldUseLiveData,
   (enabled) => {
@@ -128,9 +129,14 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <el-header class="app-header" height="56px">
+  <el-header
+    class="app-header"
+    height="56px"
+  >
     <div class="header-left">
-      <h2 class="header-page-title">{{ pageTitle }}</h2>
+      <h2 class="header-page-title">
+        {{ pageTitle }}
+      </h2>
       <span class="header-update-ago">{{ monitor.updateAgo }}</span>
     </div>
     <div class="header-right">
@@ -163,7 +169,10 @@ onBeforeUnmount(() => {
         round
         class="ws-tag"
       >
-        <span class="ws-dot" :class="'ws-' + connectionState"></span>
+        <span
+          class="ws-dot"
+          :class="'ws-' + connectionState"
+        />
         {{ connectionLabel }}
       </el-tag>
       <span class="header-clock">{{ beijingTime }}</span>
@@ -177,9 +186,19 @@ onBeforeUnmount(() => {
       />
       <div class="header-user">
         <span class="header-username">{{ auth.user?.username }}</span>
-        <el-tag size="small" effect="plain" round>{{ auth.user?.role }}</el-tag>
+        <el-tag
+          size="small"
+          effect="plain"
+          round
+        >
+          {{ auth.user?.role }}
+        </el-tag>
       </div>
-      <el-button size="small" text @click="logout">
+      <el-button
+        size="small"
+        text
+        @click="logout"
+      >
         退出
       </el-button>
     </div>

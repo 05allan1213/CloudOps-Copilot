@@ -34,7 +34,7 @@ const filters = reactive<AlertHistoryQuery>({
   page_size: 20,
 });
 
-const { page, pageSize, total, totalPages, goToPage, resetPage } = usePagination(20);
+const { page, pageSize, total, goToPage, resetPage } = usePagination(20);
 
 const stateKey = computed(() => {
   if (loading.value) return "loading" as const;
@@ -125,76 +125,175 @@ onMounted(() => {
 
 <template>
   <section class="history-page">
-    <PageHeader title="告警历史" subtitle="查询 MySQL 中归档的告警记录。" />
+    <PageHeader
+      title="告警历史"
+      subtitle="查询 MySQL 中归档的告警记录。"
+    />
 
-    <FilterPanel @search="applyFilters" @reset="resetFilters">
+    <FilterPanel
+      @search="applyFilters"
+      @reset="resetFilters"
+    >
       <el-form-item label="状态">
-        <el-select v-model="filters.status" placeholder="全部" clearable style="width: 140px">
-          <el-option label="firing" value="firing" />
-          <el-option label="resolved" value="resolved" />
+        <el-select
+          v-model="filters.status"
+          placeholder="全部"
+          clearable
+          style="width: 140px"
+        >
+          <el-option
+            label="firing"
+            value="firing"
+          />
+          <el-option
+            label="resolved"
+            value="resolved"
+          />
         </el-select>
       </el-form-item>
       <el-form-item label="级别">
-        <el-select v-model="filters.severity" placeholder="全部" clearable style="width: 140px">
-          <el-option label="critical" value="critical" />
-          <el-option label="warning" value="warning" />
-          <el-option label="info" value="info" />
+        <el-select
+          v-model="filters.severity"
+          placeholder="全部"
+          clearable
+          style="width: 140px"
+        >
+          <el-option
+            label="critical"
+            value="critical"
+          />
+          <el-option
+            label="warning"
+            value="warning"
+          />
+          <el-option
+            label="info"
+            value="info"
+          />
         </el-select>
       </el-form-item>
       <el-form-item label="分组">
-        <el-select v-model.number="filters.group" placeholder="全部分组" clearable style="width: 160px">
-          <el-option v-for="group in groups" :key="group.id" :label="group.name" :value="group.id" />
+        <el-select
+          v-model.number="filters.group"
+          placeholder="全部分组"
+          clearable
+          style="width: 160px"
+        >
+          <el-option
+            v-for="group in groups"
+            :key="group.id"
+            :label="group.name"
+            :value="group.id"
+          />
         </el-select>
       </el-form-item>
       <el-form-item label="告警名">
-        <el-input v-model.trim="filters.alert_name" placeholder="告警名" clearable style="width: 160px" />
+        <el-input
+          v-model.trim="filters.alert_name"
+          placeholder="告警名"
+          clearable
+          style="width: 160px"
+        />
       </el-form-item>
       <el-form-item label="实例">
-        <el-input v-model.trim="filters.instance" placeholder="实例" clearable style="width: 160px" />
+        <el-input
+          v-model.trim="filters.instance"
+          placeholder="实例"
+          clearable
+          style="width: 160px"
+        />
       </el-form-item>
     </FilterPanel>
 
-    <StateWrapper :state="stateKey" :error-text="error" empty-text="暂无告警历史">
+    <StateWrapper
+      :state="stateKey"
+      :error-text="error"
+      empty-text="暂无告警历史"
+    >
       <template #retry>
-        <el-button type="primary" @click="loadHistories">重试</el-button>
+        <el-button
+          type="primary"
+          @click="loadHistories"
+        >
+          重试
+        </el-button>
       </template>
 
-      <el-table :data="histories.items" stripe style="width: 100%">
-        <el-table-column label="告警名" min-width="160" prop="alert_name" show-overflow-tooltip>
+      <el-table
+        :data="histories.items"
+        stripe
+        style="width: 100%"
+      >
+        <el-table-column
+          label="告警名"
+          min-width="160"
+          prop="alert_name"
+          show-overflow-tooltip
+        >
           <template #default="{ row }">
             {{ row.alert_name || "-" }}
           </template>
         </el-table-column>
-        <el-table-column label="实例" min-width="140" show-overflow-tooltip>
+        <el-table-column
+          label="实例"
+          min-width="140"
+          show-overflow-tooltip
+        >
           <template #default="{ row }">
             <span class="mono-text">{{ row.instance || "-" }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="级别" width="90" align="center">
+        <el-table-column
+          label="级别"
+          width="90"
+          align="center"
+        >
           <template #default="{ row }">
-            <el-tag :type="severityTagType(row.severity)" size="small" effect="dark">
+            <el-tag
+              :type="severityTagType(row.severity)"
+              size="small"
+              effect="dark"
+            >
               {{ severityLabel(row.severity) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="100" align="center">
+        <el-table-column
+          label="状态"
+          width="100"
+          align="center"
+        >
           <template #default="{ row }">
-            <el-tag :type="statusTagType(row.status)" size="small">
+            <el-tag
+              :type="statusTagType(row.status)"
+              size="small"
+            >
               {{ row.status }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="触发时间" width="170">
+        <el-table-column
+          label="触发时间"
+          width="170"
+        >
           <template #default="{ row }">
             {{ formatTime(row.fired_at) }}
           </template>
         </el-table-column>
-        <el-table-column label="摘要" min-width="200" show-overflow-tooltip>
+        <el-table-column
+          label="摘要"
+          min-width="200"
+          show-overflow-tooltip
+        >
           <template #default="{ row }">
             {{ row.summary || "-" }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="100" align="center">
+        <el-table-column
+          label="操作"
+          width="100"
+          align="center"
+        >
           <template #default="{ row }">
             <el-button
               type="primary"

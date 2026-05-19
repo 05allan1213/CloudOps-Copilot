@@ -2,11 +2,9 @@
 import { computed } from "vue";
 import { useRoute } from "vue-router";
 
-import { useAuthStore } from "../../stores/auth";
 import AppSidebar from "./AppSidebar.vue";
 import AppHeader from "./AppHeader.vue";
 
-const auth = useAuthStore();
 const route = useRoute();
 
 const pageTitle = computed(() => {

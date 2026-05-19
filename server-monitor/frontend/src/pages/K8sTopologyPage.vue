@@ -13,7 +13,7 @@ import type { K8sTopologyNode, K8sTopologyEdge } from "../types";
 echarts.use([GraphChart, TooltipComponent, LegendComponent, CanvasRenderer]);
 
 const router = useRouter();
-const { isDark, getEChartsTheme } = useTheme();
+const { isDark } = useTheme();
 
 const namespace = ref("");
 const loading = ref(false);
@@ -59,9 +59,10 @@ function renderChart() {
 
   if (!chart) {
     chart = echarts.init(chartEl.value);
-    chart.on("click", (params: any) => {
-      if (params.data?.detailPath) {
-        router.push(params.data.detailPath);
+    chart.on("click", (params: { data?: unknown }) => {
+      const data = params.data as { detailPath?: string } | undefined;
+      if (data?.detailPath) {
+        router.push(data.detailPath);
       }
     });
   }
@@ -104,26 +105,24 @@ function renderChart() {
       lineStyle: {
         color: style.color,
         width: style.width,
-        type: style.type as any,
+        type: style.type as "solid" | "dashed" | "dotted",
         curveness: 0.2,
       },
     };
   });
 
-  const theme = getEChartsTheme(isDark.value);
-
   chart.setOption({
     tooltip: {
       trigger: "item",
-      formatter: (params: any) => {
+      formatter: (params: { dataType?: string; data?: { id?: string }; dataIndex?: number }) => {
         if (params.dataType === "node") {
-          const n = topologyNodes.value.find((n) => n.id === params.data.id);
+          const n = topologyNodes.value.find((n) => n.id === params.data?.id);
           if (n) {
             return `<b>${n.kind}</b>: ${n.name}<br/>${n.namespace ? "Namespace: " + n.namespace + "<br/>" : ""}Status: ${n.status || "-"}`;
           }
         }
         if (params.dataType === "edge") {
-          const e = topologyEdges.value[params.dataIndex];
+          const e = topologyEdges.value[params.dataIndex ?? 0];
           if (e) return `${e.source} → ${e.target}<br/>Type: ${e.type}`;
         }
         return "";
@@ -191,25 +190,73 @@ onBeforeUnmount(() => {
         clearable
         style="width: 200px"
       >
-        <el-option label="全部命名空间" value="" />
-        <el-option label="default" value="default" />
-        <el-option label="kube-system" value="kube-system" />
-        <el-option label="kube-public" value="kube-public" />
+        <el-option
+          label="全部命名空间"
+          value=""
+        />
+        <el-option
+          label="default"
+          value="default"
+        />
+        <el-option
+          label="kube-system"
+          value="kube-system"
+        />
+        <el-option
+          label="kube-public"
+          value="kube-public"
+        />
       </el-select>
-      <el-button @click="loadTopology" :loading="loading" type="primary" plain>
+      <el-button
+        :loading="loading"
+        type="primary"
+        plain
+        @click="loadTopology"
+      >
         刷新
       </el-button>
     </div>
 
-    <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" style="margin-bottom: 16px" />
+    <el-alert
+      v-if="error"
+      :title="error"
+      type="error"
+      show-icon
+      :closable="false"
+      style="margin-bottom: 16px"
+    />
 
-    <div v-loading="loading" class="chart-container" ref="chartEl"></div>
+    <div
+      ref="chartEl"
+      v-loading="loading"
+      class="chart-container"
+    />
 
     <div class="legend-hint">
-      <el-tag size="small" type="success">Node</el-tag>
-      <el-tag size="small" type="primary">Deployment</el-tag>
-      <el-tag size="small" type="warning">Pod</el-tag>
-      <el-tag size="small" type="danger">Service</el-tag>
+      <el-tag
+        size="small"
+        type="success"
+      >
+        Node
+      </el-tag>
+      <el-tag
+        size="small"
+        type="primary"
+      >
+        Deployment
+      </el-tag>
+      <el-tag
+        size="small"
+        type="warning"
+      >
+        Pod
+      </el-tag>
+      <el-tag
+        size="small"
+        type="danger"
+      >
+        Service
+      </el-tag>
       <span class="edge-hint">— scheduled &nbsp;&nbsp;— owns &nbsp;&nbsp;┈ selects</span>
     </div>
   </section>

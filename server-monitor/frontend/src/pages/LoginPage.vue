@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ElMessage, type FormInstance, type FormRules } from "element-plus";
+import { type FormInstance, type FormRules } from "element-plus";
 import { Key, User } from "@element-plus/icons-vue";
 
 import { useAuthStore } from "../stores/auth";
@@ -47,17 +47,29 @@ async function onSubmit() {
 
 <template>
   <main class="login-page">
-    <el-card class="login-card" shadow="always">
+    <el-card
+      class="login-card"
+      shadow="always"
+    >
       <div class="login-brand">
         <div class="login-logo">
-          <svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.85)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M6.5 19.5a4 4 0 0 1-.5-7.97 7 7 0 0 1 13.36 1.2A3.5 3.5 0 0 1 18.5 19.5H6.5z"/>
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="rgba(255,255,255,0.85)"
+            stroke-width="1.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M6.5 19.5a4 4 0 0 1-.5-7.97 7 7 0 0 1 13.36 1.2A3.5 3.5 0 0 1 18.5 19.5H6.5z" />
           </svg>
         </div>
         <div>
           <h1>服务监控大屏</h1>
           <p>使用后台账号登录后继续查看主机指标与告警。</p>
-          <p class="login-hint">默认账号: admin / server-monitor-local-admin</p>
+          <p class="login-hint">
+            默认账号: admin / server-monitor-local-admin
+          </p>
         </div>
       </div>
 
@@ -78,7 +90,10 @@ async function onSubmit() {
         :disabled="auth.loading"
         @submit.prevent="onSubmit"
       >
-        <el-form-item label="用户名" prop="username">
+        <el-form-item
+          label="用户名"
+          prop="username"
+        >
           <el-input
             v-model="form.username"
             autocomplete="username"
@@ -88,7 +103,10 @@ async function onSubmit() {
           />
         </el-form-item>
 
-        <el-form-item label="密码" prop="password">
+        <el-form-item
+          label="密码"
+          prop="password"
+        >
           <el-input
             v-model="form.password"
             type="password"

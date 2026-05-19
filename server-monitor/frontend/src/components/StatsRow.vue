@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Monitor, Cpu, Memo, WarningFilled, Bell, TrendCharts, CircleCloseFilled, Warning, InfoFilled } from "@element-plus/icons-vue";
+import { Monitor, Cpu, Memo, WarningFilled, Bell, CircleCloseFilled, Warning, InfoFilled } from "@element-plus/icons-vue";
 
 defineProps<{
   hostCount: number;
@@ -17,12 +17,29 @@ defineProps<{
 
 <template>
   <div class="stats-row">
-    <el-row :gutter="16" class="stats-section">
-      <el-col :xs="12" :sm="6">
-        <el-card shadow="hover" class="stat-card">
+    <el-row
+      :gutter="16"
+      class="stats-section"
+    >
+      <el-col
+        :xs="12"
+        :sm="6"
+      >
+        <el-card
+          shadow="hover"
+          class="stat-card"
+        >
           <div class="stat-inner">
-            <el-icon class="stat-icon stat-icon--primary" :size="28"><Monitor /></el-icon>
-            <el-statistic :value="hostCount" class="stat-value">
+            <el-icon
+              class="stat-icon stat-icon--primary"
+              :size="28"
+            >
+              <Monitor />
+            </el-icon>
+            <el-statistic
+              :value="hostCount"
+              class="stat-value"
+            >
               <template #title>
                 <span class="stat-label">{{ hostCountLabel }}</span>
               </template>
@@ -30,11 +47,25 @@ defineProps<{
           </div>
         </el-card>
       </el-col>
-      <el-col :xs="12" :sm="6">
-        <el-card shadow="hover" class="stat-card">
+      <el-col
+        :xs="12"
+        :sm="6"
+      >
+        <el-card
+          shadow="hover"
+          class="stat-card"
+        >
           <div class="stat-inner">
-            <el-icon class="stat-icon stat-icon--warning" :size="28"><Cpu /></el-icon>
-            <el-statistic :value="highCpuHostCount" class="stat-value stat-value--warning">
+            <el-icon
+              class="stat-icon stat-icon--warning"
+              :size="28"
+            >
+              <Cpu />
+            </el-icon>
+            <el-statistic
+              :value="highCpuHostCount"
+              class="stat-value stat-value--warning"
+            >
               <template #title>
                 <span class="stat-label">高 CPU</span>
               </template>
@@ -42,11 +73,25 @@ defineProps<{
           </div>
         </el-card>
       </el-col>
-      <el-col :xs="12" :sm="6">
-        <el-card shadow="hover" class="stat-card">
+      <el-col
+        :xs="12"
+        :sm="6"
+      >
+        <el-card
+          shadow="hover"
+          class="stat-card"
+        >
           <div class="stat-inner">
-            <el-icon class="stat-icon stat-icon--info" :size="28"><Memo /></el-icon>
-            <el-statistic :value="highMemoryHostCount" class="stat-value stat-value--info">
+            <el-icon
+              class="stat-icon stat-icon--info"
+              :size="28"
+            >
+              <Memo />
+            </el-icon>
+            <el-statistic
+              :value="highMemoryHostCount"
+              class="stat-value stat-value--info"
+            >
               <template #title>
                 <span class="stat-label">高内存</span>
               </template>
@@ -54,11 +99,25 @@ defineProps<{
           </div>
         </el-card>
       </el-col>
-      <el-col :xs="12" :sm="6">
-        <el-card shadow="hover" class="stat-card">
+      <el-col
+        :xs="12"
+        :sm="6"
+      >
+        <el-card
+          shadow="hover"
+          class="stat-card"
+        >
           <div class="stat-inner">
-            <el-icon class="stat-icon stat-icon--danger" :size="28"><WarningFilled /></el-icon>
-            <el-statistic :value="bothRiskHostCount" class="stat-value stat-value--danger">
+            <el-icon
+              class="stat-icon stat-icon--danger"
+              :size="28"
+            >
+              <WarningFilled />
+            </el-icon>
+            <el-statistic
+              :value="bothRiskHostCount"
+              class="stat-value stat-value--danger"
+            >
               <template #title>
                 <span class="stat-label">双高风险</span>
               </template>
@@ -68,12 +127,29 @@ defineProps<{
       </el-col>
     </el-row>
 
-    <el-row :gutter="16" class="stats-section">
-      <el-col :xs="12" :sm="6">
-        <el-card shadow="hover" class="stat-card">
+    <el-row
+      :gutter="16"
+      class="stats-section"
+    >
+      <el-col
+        :xs="12"
+        :sm="6"
+      >
+        <el-card
+          shadow="hover"
+          class="stat-card"
+        >
           <div class="stat-inner">
-            <el-icon class="stat-icon stat-icon--primary" :size="28"><Bell /></el-icon>
-            <el-statistic :value="activeAlertCount" class="stat-value">
+            <el-icon
+              class="stat-icon stat-icon--primary"
+              :size="28"
+            >
+              <Bell />
+            </el-icon>
+            <el-statistic
+              :value="activeAlertCount"
+              class="stat-value"
+            >
               <template #title>
                 <span class="stat-label">活跃告警</span>
               </template>
@@ -81,11 +157,25 @@ defineProps<{
           </div>
         </el-card>
       </el-col>
-      <el-col :xs="12" :sm="6">
-        <el-card shadow="hover" class="stat-card">
+      <el-col
+        :xs="12"
+        :sm="6"
+      >
+        <el-card
+          shadow="hover"
+          class="stat-card"
+        >
           <div class="stat-inner">
-            <el-icon class="stat-icon stat-icon--danger" :size="28"><CircleCloseFilled /></el-icon>
-            <el-statistic :value="criticalCount" class="stat-value stat-value--danger">
+            <el-icon
+              class="stat-icon stat-icon--danger"
+              :size="28"
+            >
+              <CircleCloseFilled />
+            </el-icon>
+            <el-statistic
+              :value="criticalCount"
+              class="stat-value stat-value--danger"
+            >
               <template #title>
                 <span class="stat-label">严重</span>
               </template>
@@ -93,11 +183,25 @@ defineProps<{
           </div>
         </el-card>
       </el-col>
-      <el-col :xs="12" :sm="6">
-        <el-card shadow="hover" class="stat-card">
+      <el-col
+        :xs="12"
+        :sm="6"
+      >
+        <el-card
+          shadow="hover"
+          class="stat-card"
+        >
           <div class="stat-inner">
-            <el-icon class="stat-icon stat-icon--warning" :size="28"><Warning /></el-icon>
-            <el-statistic :value="warningCount" class="stat-value stat-value--warning">
+            <el-icon
+              class="stat-icon stat-icon--warning"
+              :size="28"
+            >
+              <Warning />
+            </el-icon>
+            <el-statistic
+              :value="warningCount"
+              class="stat-value stat-value--warning"
+            >
               <template #title>
                 <span class="stat-label">警告</span>
               </template>
@@ -105,11 +209,25 @@ defineProps<{
           </div>
         </el-card>
       </el-col>
-      <el-col :xs="12" :sm="6">
-        <el-card shadow="hover" class="stat-card">
+      <el-col
+        :xs="12"
+        :sm="6"
+      >
+        <el-card
+          shadow="hover"
+          class="stat-card"
+        >
           <div class="stat-inner">
-            <el-icon class="stat-icon stat-icon--info" :size="28"><InfoFilled /></el-icon>
-            <el-statistic :value="infoCount" class="stat-value stat-value--info">
+            <el-icon
+              class="stat-icon stat-icon--info"
+              :size="28"
+            >
+              <InfoFilled />
+            </el-icon>
+            <el-statistic
+              :value="infoCount"
+              class="stat-value stat-value--info"
+            >
               <template #title>
                 <span class="stat-label">提示</span>
               </template>
@@ -146,36 +264,6 @@ defineProps<{
   display: flex;
   align-items: center;
   gap: 14px;
-}
-
-.stat-icon {
-  width: 48px;
-  height: 48px;
-  border-radius: var(--cloudops-radius-md);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.stat-icon--primary {
-  background: rgba(59, 130, 246, 0.1);
-  color: var(--el-color-primary);
-}
-
-.stat-icon--warning {
-  background: rgba(245, 158, 11, 0.1);
-  color: var(--el-color-warning);
-}
-
-.stat-icon--danger {
-  background: rgba(239, 68, 68, 0.1);
-  color: var(--el-color-danger);
-}
-
-.stat-icon--info {
-  background: rgba(6, 182, 212, 0.1);
-  color: var(--el-color-info);
 }
 
 .stat-value :deep(.el-statistic__number) {

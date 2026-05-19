@@ -41,10 +41,6 @@ const runbooks = computed(() => {
   return report.value?.evidence?.runbooks ?? [];
 });
 
-function formatPercent(value?: number) {
-  return `${Math.round((value ?? 0) * 100)}%`;
-}
-
 function formatJSON(value: unknown) {
   return JSON.stringify(value ?? {}, null, 2);
 }
@@ -98,17 +94,35 @@ onMounted(loadReport);
 
 <template>
   <section class="detail-page">
-    <StateWrapper :state="stateKey" :error-text="error" empty-text="诊断报告不存在">
+    <StateWrapper
+      :state="stateKey"
+      :error-text="error"
+      empty-text="诊断报告不存在"
+    >
       <template #retry>
-        <el-button type="primary" @click="loadReport">重试</el-button>
+        <el-button
+          type="primary"
+          @click="loadReport"
+        >
+          重试
+        </el-button>
       </template>
 
       <template v-if="report">
         <el-card shadow="never">
-          <el-descriptions :column="3" border>
-            <el-descriptions-item label="ID">#{{ report.id }}</el-descriptions-item>
-            <el-descriptions-item label="告警名">{{ report.alert_name || "-" }}</el-descriptions-item>
-            <el-descriptions-item label="目标">{{ report.target_name || "-" }}</el-descriptions-item>
+          <el-descriptions
+            :column="3"
+            border
+          >
+            <el-descriptions-item label="ID">
+              #{{ report.id }}
+            </el-descriptions-item>
+            <el-descriptions-item label="告警名">
+              {{ report.alert_name || "-" }}
+            </el-descriptions-item>
+            <el-descriptions-item label="目标">
+              {{ report.target_name || "-" }}
+            </el-descriptions-item>
             <el-descriptions-item label="状态">
               <el-tag
                 :type="report.status === 'completed' ? 'success' : report.status === 'failed' ? 'danger' : 'info'"
@@ -125,7 +139,9 @@ onMounted(loadReport);
                 style="width: 160px"
               />
             </el-descriptions-item>
-            <el-descriptions-item label="创建时间">{{ formatTime(report.created_at) }}</el-descriptions-item>
+            <el-descriptions-item label="创建时间">
+              {{ formatTime(report.created_at) }}
+            </el-descriptions-item>
           </el-descriptions>
         </el-card>
 
@@ -135,7 +151,10 @@ onMounted(loadReport);
           :existing-feedback="report.my_feedback"
         />
 
-        <DiagnosisSummary :summary="report.summary" :root-cause="report.root_cause" />
+        <DiagnosisSummary
+          :summary="report.summary"
+          :root-cause="report.root_cause"
+        />
 
         <div class="grid-panels">
           <el-card shadow="never">
@@ -153,10 +172,25 @@ onMounted(loadReport);
                 </el-button>
               </div>
             </template>
-            <div v-if="actionMessage" class="action-message">{{ actionMessage }}</div>
-            <el-empty v-if="actions.length === 0" description="暂无建议" :image-size="32" />
-            <ul v-else class="action-list">
-              <li v-for="action in actions" :key="`${action.type}-${action.description}`">
+            <div
+              v-if="actionMessage"
+              class="action-message"
+            >
+              {{ actionMessage }}
+            </div>
+            <el-empty
+              v-if="actions.length === 0"
+              description="暂无建议"
+              :image-size="32"
+            />
+            <ul
+              v-else
+              class="action-list"
+            >
+              <li
+                v-for="action in actions"
+                :key="`${action.type}-${action.description}`"
+              >
                 <strong>{{ action.description }}</strong>
                 <span>{{ action.type }} · {{ action.risk }} · {{ action.requires_approval ? "需审批" : "只读建议" }}</span>
               </li>
@@ -168,7 +202,10 @@ onMounted(loadReport);
 
         <RuleAnalysis :rule-results="ruleResults" />
 
-        <K8sEvidence v-if="k8sEvidence" :k8s-evidence="k8sEvidence" />
+        <K8sEvidence
+          v-if="k8sEvidence"
+          :k8s-evidence="k8sEvidence"
+        />
 
         <RunbookHits :runbooks="runbooks" />
 
@@ -178,16 +215,24 @@ onMounted(loadReport);
           show-icon
           :closable="false"
         >
-          <template #title>采集降级</template>
+          <template #title>
+            采集降级
+          </template>
           <ul class="error-list">
-            <li v-for="item in collectionErrors" :key="`${item.source}-${item.error}`">
+            <li
+              v-for="item in collectionErrors"
+              :key="`${item.source}-${item.error}`"
+            >
               {{ item.source }}：{{ item.error }}
             </li>
           </ul>
         </el-alert>
 
         <el-collapse>
-          <el-collapse-item name="evidence-json" title="证据快照 JSON">
+          <el-collapse-item
+            name="evidence-json"
+            title="证据快照 JSON"
+          >
             <pre class="json-content">{{ formatJSON(report.evidence) }}</pre>
           </el-collapse-item>
         </el-collapse>
@@ -201,11 +246,6 @@ onMounted(loadReport);
   display: flex;
   flex-direction: column;
   gap: 16px;
-}
-
-.card-title {
-  font-size: 14px;
-  font-weight: 600;
 }
 
 .grid-panels {

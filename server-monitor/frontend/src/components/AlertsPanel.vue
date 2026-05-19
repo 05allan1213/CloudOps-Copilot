@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { RouterLink } from "vue-router";
-import { Refresh } from "@element-plus/icons-vue";
+import { Refresh, Warning, CircleCheckFilled } from "@element-plus/icons-vue";
 
 import type { AlertRecord } from "../types";
 import { formatTime } from "../utils/format";
@@ -62,11 +62,19 @@ function diagnosisLabel(status?: string): string {
 </script>
 
 <template>
-  <el-card shadow="never" class="alerts-panel">
+  <el-card
+    shadow="never"
+    class="alerts-panel"
+  >
     <template #header>
       <div class="panel-header">
         <div class="panel-title">
-          <el-icon :size="18" color="var(--el-color-warning)"><Warning /></el-icon>
+          <el-icon
+            :size="18"
+            color="var(--el-color-warning)"
+          >
+            <Warning />
+          </el-icon>
           <span class="panel-title-text">告警列表</span>
         </div>
         <div class="panel-actions">
@@ -75,10 +83,18 @@ function diagnosisLabel(status?: string): string {
             size="small"
             @change="emit('severityChange', $event as SeverityFilter)"
           >
-            <el-radio-button value="all">全部</el-radio-button>
-            <el-radio-button value="critical">严重</el-radio-button>
-            <el-radio-button value="warning">警告</el-radio-button>
-            <el-radio-button value="info">提示</el-radio-button>
+            <el-radio-button value="all">
+              全部
+            </el-radio-button>
+            <el-radio-button value="critical">
+              严重
+            </el-radio-button>
+            <el-radio-button value="warning">
+              警告
+            </el-radio-button>
+            <el-radio-button value="info">
+              提示
+            </el-radio-button>
           </el-radio-group>
           <el-button
             :icon="Refresh"
@@ -107,7 +123,12 @@ function diagnosisLabel(status?: string): string {
       image-size="48"
     >
       <template #image>
-        <el-icon :size="48" color="var(--el-color-success)"><CircleCheckFilled /></el-icon>
+        <el-icon
+          :size="48"
+          color="var(--el-color-success)"
+        >
+          <CircleCheckFilled />
+        </el-icon>
       </template>
     </el-empty>
 
@@ -118,29 +139,54 @@ function diagnosisLabel(status?: string): string {
       style="width: 100%"
       row-key="fingerprint"
     >
-      <el-table-column label="级别" width="90" align="center">
+      <el-table-column
+        label="级别"
+        width="90"
+        align="center"
+      >
         <template #default="{ row }">
-          <el-tag :type="severityTagType(row.labels.severity)" size="small" effect="dark">
+          <el-tag
+            :type="severityTagType(row.labels.severity)"
+            size="small"
+            effect="dark"
+          >
             {{ severityLabel(row.labels.severity) }}
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="告警名称" min-width="160" prop="labels.alertname" show-overflow-tooltip>
+      <el-table-column
+        label="告警名称"
+        min-width="160"
+        prop="labels.alertname"
+        show-overflow-tooltip
+      >
         <template #default="{ row }">
           {{ row.labels.alertname || "未知告警" }}
         </template>
       </el-table-column>
-      <el-table-column label="实例" min-width="140" show-overflow-tooltip>
+      <el-table-column
+        label="实例"
+        min-width="140"
+        show-overflow-tooltip
+      >
         <template #default="{ row }">
           <span class="mono-text">{{ row.labels.instance || "" }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="摘要" min-width="200" show-overflow-tooltip>
+      <el-table-column
+        label="摘要"
+        min-width="200"
+        show-overflow-tooltip
+      >
         <template #default="{ row }">
           {{ row.annotations.summary || row.annotations.description || "" }}
         </template>
       </el-table-column>
-      <el-table-column label="诊断状态" width="130" align="center">
+      <el-table-column
+        label="诊断状态"
+        width="130"
+        align="center"
+      >
         <template #default="{ row }">
           <el-tag
             v-if="row.diagnosisStatus"
@@ -149,15 +195,25 @@ function diagnosisLabel(status?: string): string {
           >
             {{ diagnosisLabel(row.diagnosisStatus) }}
           </el-tag>
-          <span v-else class="text-muted">-</span>
+          <span
+            v-else
+            class="text-muted"
+          >-</span>
         </template>
       </el-table-column>
-      <el-table-column label="触发时间" width="170">
+      <el-table-column
+        label="触发时间"
+        width="170"
+      >
         <template #default="{ row }">
           {{ formatTime(row.startsAt) }}
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="180" align="center">
+      <el-table-column
+        label="操作"
+        width="180"
+        align="center"
+      >
         <template #default="{ row }">
           <el-button
             v-if="row.diagnosisReportId"
@@ -165,7 +221,10 @@ function diagnosisLabel(status?: string): string {
             link
             size="small"
           >
-            <RouterLink :to="`/diagnosis/${row.diagnosisReportId}`" class="link-text">
+            <RouterLink
+              :to="`/diagnosis/${row.diagnosisReportId}`"
+              class="link-text"
+            >
               查看诊断
             </RouterLink>
           </el-button>
@@ -188,37 +247,6 @@ function diagnosisLabel(status?: string): string {
   padding: 16px 20px;
 }
 
-.panel-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 12px;
-}
-
-.panel-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.panel-title-text {
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.panel-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.mono-text {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 13px;
-}
-
 .text-muted {
   color: var(--el-text-color-placeholder);
   font-size: 13px;
@@ -229,10 +257,4 @@ function diagnosisLabel(status?: string): string {
   text-decoration: none;
 }
 
-@media (max-width: 768px) {
-  .panel-header {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-}
 </style>
