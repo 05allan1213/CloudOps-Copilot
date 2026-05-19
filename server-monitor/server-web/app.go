@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm"
 
 	"server-web/internal/config"
+	copilotk8s "server-web/internal/copilot/k8s"
 	"server-web/internal/handler"
 	"server-web/internal/infra/database"
 	promclient "server-web/internal/infra/prometheus"
@@ -26,6 +27,7 @@ import (
 	"server-web/internal/router"
 	appalert "server-web/internal/service/alert"
 	authpkg "server-web/internal/service/auth"
+	appcache "server-web/internal/service/cache"
 
 	eventbus "server-monitor/pkg/kafka"
 	"server-monitor/pkg/shutdown"
@@ -50,6 +52,7 @@ type services struct {
 	copilotRuntime *router.CopilotRuntime
 	copilotDeps    *router.CopilotDeps
 	k8sHandler     *handler.K8sHandler
+	k8sReader      copilotk8s.Reader
 }
 
 type app struct {
@@ -63,6 +66,7 @@ type app struct {
 	copilotRuntime    *router.CopilotRuntime
 	alertHub          *pubsub.Hub
 	websocketHub      *ws.Hub
+	k8sReader         copilotk8s.Reader
 	server            *http.Server
 	ctx               context.Context
 	cancel            context.CancelFunc
@@ -120,6 +124,7 @@ func initApp(ctx context.Context) (*app, error) {
 		copilotRuntime:    svc.copilotRuntime,
 		alertHub:          infra.alertHub,
 		websocketHub:      infra.websocketHub,
+		k8sReader:         svc.k8sReader,
 		server: &http.Server{
 			Addr:              cfg.ListenAddr,
 			Handler:           router,
@@ -206,6 +211,10 @@ func startBackgroundTasks(app *app) {
 		}()
 		broadcastHosts(app.ctx, app.prometheusClient, app.websocketHub, app.cfg.RequestTimeout, app.cfg.HostsBroadcastInterval)
 	}()
+
+	if app.k8sReader != nil && app.cfg.K8SAPIEnabled {
+		startK8sEventWatcher(app.ctx, app.k8sReader, app.websocketHub, app.cfg.K8sEventWatchInterval)
+	}
 
 	if app.diagnosisConsumer != nil {
 		done := make(chan struct{})
@@ -380,19 +389,24 @@ func initServices(ctx context.Context, cfg config.Config, infra infrastructure) 
 			cfg.PrometheusReloadURL,
 			cfg.AlertRuleSyncTimeout,
 		),
-		AlertService:  alertService,
-		AlertProducer: infra.kafkaProducer,
-		MySQLClient:   infra.mysqlClient,
-		DB:            db,
-		AuthService:   authService,
+		AlertService:    alertService,
+		AlertProducer:   infra.kafkaProducer,
+		MySQLClient:     infra.mysqlClient,
+		DB:              db,
+		AuthService:     authService,
 		K8sAPIEnabled:   cfg.K8SEnabled && cfg.K8SAPIEnabled,
 		K8sNodesEnabled: cfg.K8SEnabled && cfg.K8SAPIEnabled && cfg.K8SNodesEnabled,
+		CopilotEnabled:  cfg.CopilotEnabled,
 	}, infra.websocketHub)
 	if err != nil {
 		return services{}, err
 	}
 
-	k8sReader, k8sClient, _, k8sHandler, err := initK8sRuntime(cfg, infra)
+	k8sCacheService := appcache.NewService(infra.redisClient, appcache.Options{
+		HostsTTL:     cfg.HostsCacheTTL,
+		DashboardTTL: cfg.DashboardOverviewTTL,
+	})
+	k8sReader, k8sClient, _, k8sHandler, err := initK8sRuntime(cfg, infra, k8sCacheService)
 	if err != nil {
 		return services{}, err
 	}
@@ -409,6 +423,7 @@ func initServices(ctx context.Context, cfg config.Config, infra infrastructure) 
 		copilotRuntime: copilotRuntime,
 		copilotDeps:    copilotDeps,
 		k8sHandler:     k8sHandler,
+		k8sReader:      k8sReader,
 	}, nil
 }
 

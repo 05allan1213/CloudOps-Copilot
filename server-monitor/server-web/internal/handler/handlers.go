@@ -56,21 +56,22 @@ type alertProducer interface {
 }
 
 type Handler struct {
-	promClient     *promclient.Client
-	db             *gorm.DB
-	cacheClient    cacheClient
-	cacheService   *appcache.Service
-	alertService   *appalert.Service
-	hostService    *apphost.Service
-	mysqlClient    mysqlClient
-	authService    AuthService
-	readyTimeout   time.Duration
-	requestTimeout time.Duration
-	cacheTimeout   time.Duration
-	ruleSync       AlertRuleSyncConfig
-	websocketHub   *ws.Hub
+	promClient      *promclient.Client
+	db              *gorm.DB
+	cacheClient     cacheClient
+	cacheService    *appcache.Service
+	alertService    *appalert.Service
+	hostService     *apphost.Service
+	mysqlClient     mysqlClient
+	authService     AuthService
+	readyTimeout    time.Duration
+	requestTimeout  time.Duration
+	cacheTimeout    time.Duration
+	ruleSync        AlertRuleSyncConfig
+	websocketHub    *ws.Hub
 	k8sAPIEnabled   bool
 	k8sNodesEnabled bool
+	copilotEnabled  bool
 }
 
 type response struct {
@@ -91,20 +92,21 @@ var validAlertEventSeverities = map[string]struct{}{
 }
 
 type Config struct {
-	ReadyTimeout   time.Duration
-	RequestTimeout time.Duration
-	HostsTTL       time.Duration
-	DashboardTTL   time.Duration
-	DedupeTTL      time.Duration
-	CacheTimeout   time.Duration
-	RuleSync       AlertRuleSyncConfig
-	AlertService   *appalert.Service
-	AlertProducer  alertProducer
-	MySQLClient    mysqlClient
-	DB             *gorm.DB
-	AuthService    AuthService
+	ReadyTimeout    time.Duration
+	RequestTimeout  time.Duration
+	HostsTTL        time.Duration
+	DashboardTTL    time.Duration
+	DedupeTTL       time.Duration
+	CacheTimeout    time.Duration
+	RuleSync        AlertRuleSyncConfig
+	AlertService    *appalert.Service
+	AlertProducer   alertProducer
+	MySQLClient     mysqlClient
+	DB              *gorm.DB
+	AuthService     AuthService
 	K8sAPIEnabled   bool
 	K8sNodesEnabled bool
+	CopilotEnabled  bool
 }
 
 func NewHandler(promClient *promclient.Client, cacheClient cacheClient, cfg Config, websocketHub *ws.Hub) (*Handler, error) {
@@ -133,13 +135,16 @@ func NewHandler(promClient *promclient.Client, cacheClient cacheClient, cfg Conf
 			RequestTimeout: cfg.RequestTimeout,
 			CacheTimeout:   cfg.CacheTimeout,
 		}),
-		mysqlClient:    cfg.MySQLClient,
-		authService:    cfg.AuthService,
-		readyTimeout:   cfg.ReadyTimeout,
-		requestTimeout: cfg.RequestTimeout,
-		cacheTimeout:   cfg.CacheTimeout,
-		ruleSync:       cfg.RuleSync,
-		websocketHub:   websocketHub,
+		mysqlClient:     cfg.MySQLClient,
+		authService:     cfg.AuthService,
+		readyTimeout:    cfg.ReadyTimeout,
+		requestTimeout:  cfg.RequestTimeout,
+		cacheTimeout:    cfg.CacheTimeout,
+		ruleSync:        cfg.RuleSync,
+		websocketHub:    websocketHub,
+		k8sAPIEnabled:   cfg.K8sAPIEnabled,
+		k8sNodesEnabled: cfg.K8sNodesEnabled,
+		copilotEnabled:  cfg.CopilotEnabled,
 	}, nil
 }
 
@@ -354,6 +359,7 @@ func (h *Handler) DashboardOverview(c *gin.Context) {
 	overview.AlertDegraded = degraded
 	overview.K8sAPIEnabled = h.k8sAPIEnabled
 	overview.K8sNodesEnabled = h.k8sNodesEnabled
+	overview.CopilotEnabled = h.copilotEnabled
 	overview.GeneratedAt = time.Now().UTC().Format(time.RFC3339)
 
 	cacheCtx, cacheCancel := context.WithTimeout(context.Background(), h.cacheTimeout)

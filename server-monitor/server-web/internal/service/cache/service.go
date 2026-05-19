@@ -30,16 +30,17 @@ type Options struct {
 }
 
 type DashboardOverview struct {
-	TotalHosts    int     `json:"total_hosts"`
-	HealthyHosts  int     `json:"healthy_hosts"`
-	DownHosts     int     `json:"down_hosts"`
-	ActiveAlerts  int     `json:"active_alerts"`
-	AvgCPU        float64 `json:"avg_cpu"`
-	AvgMemory     float64 `json:"avg_memory"`
-	GeneratedAt   string  `json:"generated_at"`
+	TotalHosts      int     `json:"total_hosts"`
+	HealthyHosts    int     `json:"healthy_hosts"`
+	DownHosts       int     `json:"down_hosts"`
+	ActiveAlerts    int     `json:"active_alerts"`
+	AvgCPU          float64 `json:"avg_cpu"`
+	AvgMemory       float64 `json:"avg_memory"`
+	GeneratedAt     string  `json:"generated_at"`
 	AlertDegraded   bool    `json:"alert_degraded,omitempty"`
 	K8sAPIEnabled   bool    `json:"k8s_api_enabled"`
 	K8sNodesEnabled bool    `json:"k8s_nodes_enabled"`
+	CopilotEnabled  bool    `json:"copilot_enabled"`
 }
 
 func NewService(client Client, options Options) *Service {
@@ -52,6 +53,20 @@ func NewService(client Client, options Options) *Service {
 
 func (s *Service) Enabled() bool {
 	return s != nil && s.client != nil && s.client.Enabled()
+}
+
+func (s *Service) Get(ctx context.Context, key string) ([]byte, bool) {
+	if !s.Enabled() {
+		return nil, false
+	}
+	return s.client.Get(ctx, key)
+}
+
+func (s *Service) Set(ctx context.Context, key string, value []byte, ttl time.Duration) error {
+	if !s.Enabled() {
+		return nil
+	}
+	return s.client.Set(ctx, key, value, ttl)
 }
 
 func (s *Service) GetHosts(ctx context.Context) ([]promclient.Host, bool) {
