@@ -99,6 +99,8 @@ type Config struct {
 	DedupeTTL       time.Duration
 	CacheTimeout    time.Duration
 	RuleSync        AlertRuleSyncConfig
+	CacheService    *appcache.Service
+	HostService     *apphost.Service
 	AlertService    *appalert.Service
 	AlertProducer   alertProducer
 	MySQLClient     mysqlClient
@@ -113,10 +115,13 @@ func NewHandler(promClient *promclient.Client, cacheClient cacheClient, cfg Conf
 	if promClient == nil {
 		return nil, errors.New("prometheus client is required")
 	}
-	cacheService := appcache.NewService(cacheClient, appcache.Options{
-		HostsTTL:     cfg.HostsTTL,
-		DashboardTTL: cfg.DashboardTTL,
-	})
+	cacheService := cfg.CacheService
+	if cacheService == nil {
+		cacheService = appcache.NewService(cacheClient, appcache.Options{
+			HostsTTL:     cfg.HostsTTL,
+			DashboardTTL: cfg.DashboardTTL,
+		})
+	}
 	alertService := cfg.AlertService
 	if alertService == nil {
 		alertService = appalert.NewService(cacheClient, appalert.Options{
@@ -125,16 +130,20 @@ func NewHandler(promClient *promclient.Client, cacheClient cacheClient, cfg Conf
 			Producer:  cfg.AlertProducer,
 		})
 	}
-	return &Handler{
-		promClient:   promClient,
-		db:           cfg.DB,
-		cacheClient:  cacheClient,
-		cacheService: cacheService,
-		alertService: alertService,
-		hostService: apphost.NewService(promClient, cacheService, apphost.Options{
+	hostService := cfg.HostService
+	if hostService == nil {
+		hostService = apphost.NewService(promClient, cacheService, apphost.Options{
 			RequestTimeout: cfg.RequestTimeout,
 			CacheTimeout:   cfg.CacheTimeout,
-		}),
+		})
+	}
+	return &Handler{
+		promClient:      promClient,
+		db:              cfg.DB,
+		cacheClient:     cacheClient,
+		cacheService:    cacheService,
+		alertService:    alertService,
+		hostService:     hostService,
 		mysqlClient:     cfg.MySQLClient,
 		authService:     cfg.AuthService,
 		readyTimeout:    cfg.ReadyTimeout,

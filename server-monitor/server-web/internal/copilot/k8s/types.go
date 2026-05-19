@@ -2,7 +2,14 @@ package k8s
 
 import (
 	"time"
+
+	"k8s.io/client-go/kubernetes"
 )
+
+type Deps struct {
+	Reader Reader
+	Client kubernetes.Interface
+}
 
 const (
 	DefaultNamespace = "default"

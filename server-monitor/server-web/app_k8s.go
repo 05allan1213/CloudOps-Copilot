@@ -11,10 +11,10 @@ import (
 
 	"server-web/internal/config"
 	copilotk8s "server-web/internal/copilot/k8s"
+	"server-web/internal/di"
 	"server-web/internal/handler"
 	promclient "server-web/internal/infra/prometheus"
 	ws "server-web/internal/infra/websocket"
-	cachesvc "server-web/internal/service/cache"
 	k8ssvc "server-web/internal/service/k8s"
 )
 
@@ -38,7 +38,7 @@ func (a *promClientAdapter) GetHosts(ctx context.Context) ([]k8ssvc.HostInfo, er
 	return result, nil
 }
 
-func initK8sRuntime(cfg config.Config, infra infrastructure, cacheSvc *cachesvc.Service) (copilotk8s.Reader, kubernetes.Interface, *k8ssvc.Service, *handler.K8sHandler, error) {
+func initK8sRuntime(cfg config.Config, container *di.Container) (copilotk8s.Reader, kubernetes.Interface, *k8ssvc.Service, *handler.K8sHandler, error) {
 	if !cfg.K8SEnabled {
 		return nil, nil, nil, nil, nil
 	}
@@ -53,11 +53,11 @@ func initK8sRuntime(cfg config.Config, infra infrastructure, cacheSvc *cachesvc.
 	if !cfg.K8SAPIEnabled {
 		return k8sReader, k8sClient, nil, nil, nil
 	}
-	promAdapter := &promClientAdapter{client: infra.prometheusClient}
+	promAdapter := &promClientAdapter{client: container.PromClient}
 	svc := k8ssvc.NewService(k8sReader, promAdapter, k8ssvc.Options{
 		RequestTimeout: cfg.K8SRequestTimeout,
 		NodesEnabled:   cfg.K8SNodesEnabled,
-		CacheService:   cacheSvc,
+		CacheService:   container.Cache(),
 		CacheTTL:       cfg.K8sCacheTTL,
 		ListCacheTTL:   cfg.K8sListCacheTTL,
 		ClusterName:    "default",
@@ -87,7 +87,7 @@ func initK8sRuntime(cfg config.Config, infra infrastructure, cacheSvc *cachesvc.
 			ccSvc := k8ssvc.NewService(ccReader, promAdapter, k8ssvc.Options{
 				RequestTimeout: cc.RequestTimeout,
 				NodesEnabled:   cfg.K8SNodesEnabled,
-				CacheService:   cacheSvc,
+				CacheService:   container.Cache(),
 				CacheTTL:       cfg.K8sCacheTTL,
 				ListCacheTTL:   cfg.K8sListCacheTTL,
 				ClusterName:    cc.Name,

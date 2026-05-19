@@ -24,30 +24,21 @@ import (
 	copilotsession "server-web/internal/copilot/session"
 	copilotsummary "server-web/internal/copilot/summary"
 	copilottool "server-web/internal/copilot/tool"
+	"server-web/internal/di"
 	rediscache "server-web/internal/infra/redis"
 	ws "server-web/internal/infra/websocket"
 	"server-web/internal/middleware"
 	"server-web/internal/router"
 	appalert "server-web/internal/service/alert"
-	appcache "server-web/internal/service/cache"
-	apphost "server-web/internal/service/host"
 
 	eventbus "server-monitor/pkg/kafka"
 )
 
-func initCopilot(ctx context.Context, cfg config.Config, infra infrastructure, metrics *middleware.Metrics, alertService *appalert.Service, db *gorm.DB, k8sReader copilotk8s.Reader, k8sClient kubernetes.Interface) (*router.CopilotRuntime, *router.CopilotDeps, error) {
+func initCopilot(ctx context.Context, cfg config.Config, container *di.Container, k8sDeps copilotk8s.Deps) (*router.CopilotRuntime, *router.CopilotDeps, error) {
 	if !cfg.CopilotEnabled {
 		return nil, nil, nil
 	}
 
-	copilotCacheService := appcache.NewService(infra.redisClient, appcache.Options{
-		HostsTTL:     cfg.HostsCacheTTL,
-		DashboardTTL: cfg.DashboardOverviewTTL,
-	})
-	copilotHostService := apphost.NewService(infra.prometheusClient, copilotCacheService, apphost.Options{
-		RequestTimeout: cfg.CopilotToolDefaultTimeout,
-		CacheTimeout:   cfg.CacheWriteTimeout,
-	})
 	runbookDocs, err := copilotrunbook.LoadDir(context.Background(), cfg.RunbookDir, copilotrunbook.LoadOptions{
 		MaxFiles:     cfg.RunbookMaxFiles,
 		MaxFileBytes: cfg.RunbookMaxFileBytes,
@@ -62,7 +53,7 @@ func initCopilot(ctx context.Context, cfg config.Config, infra infrastructure, m
 		Model:     cfg.LLMModel,
 		Timeout:   cfg.LLMTimeout,
 		MaxTokens: cfg.LLMMaxTokens,
-		Observer:  metrics,
+		Observer:  container.Metrics,
 	})
 	runbookEmbedder, runbookVectorStore := initRunbookEmbedding(ctx, cfg, runbookDocs)
 	runbookRetriever := copilotrunbook.NewRetriever(runbookDocs, copilotrunbook.RetrieverOptions{
@@ -71,7 +62,7 @@ func initCopilot(ctx context.Context, cfg config.Config, infra infrastructure, m
 		BM25Weight:   cfg.RunbookBM25Weight,
 		BM25K1:       cfg.RunbookBM25K1,
 		BM25B:        cfg.RunbookBM25B,
-		Observer:     metrics,
+		Observer:     container.Metrics,
 		Embedder:     runbookEmbedder,
 		VectorStore:  runbookVectorStore,
 		RRFK:         cfg.RunbookRRFK,
@@ -82,14 +73,14 @@ func initCopilot(ctx context.Context, cfg config.Config, infra infrastructure, m
 	var toolExecutor *copilottool.Executor
 	if cfg.CopilotToolRegistryEnabled {
 		toolExecutor, err = copilottool.NewExecutor(copilottool.Options{
-			HostService:     copilotHostService,
-			AlertService:    alertService,
-			PromClient:      infra.prometheusClient,
+			HostService:     container.Host(),
+			AlertService:    container.AlertService,
+			PromClient:      container.PromClient,
 			RunbookSearcher: runbookRetriever,
-			K8sReader:       k8sReader,
+			K8sReader:       k8sDeps.Reader,
 			K8sNodesEnabled: cfg.K8SNodesEnabled,
-			DB:              db,
-			Observer:        metrics,
+			DB:              container.DB,
+			Observer:        container.Metrics,
 			Timeout:         cfg.CopilotToolDefaultTimeout,
 			LogArgs:         cfg.CopilotToolLogArgs,
 		})
@@ -101,10 +92,10 @@ func initCopilot(ctx context.Context, cfg config.Config, infra infrastructure, m
 		tools = copilottool.NewDisabledExecutor()
 	}
 
-	diagnosisRepo := copilotdiagnosis.NewRepository(db)
-	feedbackRepo := copilotfeedback.NewMySQLRepository(db)
-	diagnosisService := initDiagnosisService(cfg, alertService, llmClient, toolExecutor, diagnosisRepo, feedbackRepo, db, metrics)
-	copilotStore := copilotsession.NewRedisStore(infra.redisClient)
+	diagnosisRepo := copilotdiagnosis.NewRepository(container.DB)
+	feedbackRepo := copilotfeedback.NewMySQLRepository(container.DB)
+	diagnosisService := initDiagnosisService(cfg, container.AlertService, llmClient, toolExecutor, diagnosisRepo, feedbackRepo, container.DB, container.Metrics)
+	copilotStore := copilotsession.NewRedisStore(container.RedisClient)
 	copilotContextMgr := copilotcontext.NewManager(copilotcontext.Options{
 		Store:     copilotStore,
 		MaxRounds: cfg.CopilotChatHistoryMaxRounds,
@@ -122,7 +113,7 @@ func initCopilot(ctx context.Context, cfg config.Config, infra infrastructure, m
 		SessionTTL:           cfg.CopilotSessionTTL,
 		MaxSessionMessages:   cfg.CopilotMaxSessionMessages,
 		Store:                copilotStore,
-		Classifier:           copilotnlu.NewClassifier(copilotnlu.WithNLUObserver(metrics)),
+		Classifier:           copilotnlu.NewClassifier(copilotnlu.WithNLUObserver(container.Metrics)),
 		LLM:                  llmClient,
 		Tools:                tools,
 		Diagnosis:            diagnosisService,
@@ -139,16 +130,16 @@ func initCopilot(ctx context.Context, cfg config.Config, infra infrastructure, m
 	deps := &router.CopilotDeps{
 		Handler:          copilotHandler,
 		DiagnosisHandler: copilotdiagnosis.NewHandler(diagnosisService),
-		FeedbackHandler:  copilotfeedback.NewHandler(copilotfeedback.NewService(feedbackRepo, metrics), copilotdiagnosis.NewReportAccessChecker(diagnosisRepo), cfg.FeedbackCommentMaxLength),
+		FeedbackHandler:  copilotfeedback.NewHandler(copilotfeedback.NewService(feedbackRepo, container.Metrics), copilotdiagnosis.NewReportAccessChecker(diagnosisRepo), cfg.FeedbackCommentMaxLength),
 	}
 	if cfg.ActionApprovalEnabled {
-		actionHandler, err := initActionHandler(cfg, infra, metrics, db, k8sClient)
+		actionHandler, err := initActionHandler(cfg, container, k8sDeps.Client)
 		if err != nil {
 			return nil, nil, err
 		}
 		deps.ActionHandler = actionHandler
 	}
-	return &router.CopilotRuntime{DiagnosisService: diagnosisService, KafkaObserver: metrics}, deps, nil
+	return &router.CopilotRuntime{DiagnosisService: diagnosisService, KafkaObserver: container.Metrics}, deps, nil
 }
 
 func initRunbookEmbedding(ctx context.Context, cfg config.Config, docs []copilotrunbook.Document) (*copilotrunbook.Embedder, *copilotrunbook.MemoryVectorStore) {
@@ -186,9 +177,9 @@ func initDiagnosisService(cfg config.Config, alertService *appalert.Service, llm
 		}),
 		Collector: copilotdiagnosis.NewEvidenceCollector(copilotdiagnosis.EvidenceOptions{
 			Runner:        runner,
-			Timeout:       45 * time.Second,
-			RunbookLimit:  cfg.RunbookSearchTopN,
-			RerankEnabled: cfg.RerankerEnabled,
+			Timeout:        45 * time.Second,
+			RunbookLimit:   cfg.RunbookSearchTopN,
+			RerankEnabled:  cfg.RerankerEnabled,
 		}),
 		Summarizer: copilotdiagnosis.NewLLMSummarizerWithOptions(llmClient, copilotdiagnosis.LLMSummarizerOptions{
 			Timeout:  cfg.DiagnosisLLMTimeout,
@@ -198,7 +189,7 @@ func initDiagnosisService(cfg config.Config, alertService *appalert.Service, llm
 	})
 }
 
-func initActionHandler(cfg config.Config, infra infrastructure, metrics *middleware.Metrics, db *gorm.DB, k8sClient kubernetes.Interface) (*copilotaction.Handler, error) {
+func initActionHandler(cfg config.Config, container *di.Container, k8sClient kubernetes.Interface) (*copilotaction.Handler, error) {
 	actionExecutionEnabled := cfg.ActionExecutionEnabled && cfg.K8SWriteEnabled
 	actionExecutor := copilotaction.K8sExecutor(copilotaction.DisabledK8sExecutor{})
 	if actionExecutionEnabled {
@@ -214,12 +205,12 @@ func initActionHandler(cfg config.Config, infra infrastructure, metrics *middlew
 		zap.L().Warn("ACTION_EXECUTION_ENABLED=true but K8S_WRITE_ENABLED=false; forcing k8s action execution disabled")
 	}
 	actionService := copilotaction.NewService(copilotaction.ServiceConfig{
-		Repository:             copilotaction.NewRepository(db),
+		Repository:             copilotaction.NewRepository(container.DB),
 		Policy:                 copilotaction.NewPolicy(copilotaction.PolicyConfig{MaxReplicas: cfg.ActionMaxReplicas}),
 		Executor:               actionExecutor,
-		Notifier:               copilotaction.NewWebSocketNotifier(infra.websocketHub),
-		OperationEvents:        operationEventProducer{producer: infra.kafkaProducer},
-		Observer:               metrics,
+		Notifier:               copilotaction.NewWebSocketNotifier(container.WSHub),
+		OperationEvents:        operationEventProducer{producer: container.KafkaProducer},
+		Observer:               container.Metrics,
 		OperationEventsEnabled: cfg.ActionOperationEventsEnabled,
 		StatusPushEnabled:      cfg.ActionStatusPushEnabled,
 		ActionExecutionEnabled: actionExecutionEnabled,

@@ -7,65 +7,29 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
-	"gorm.io/gorm"
 
 	"server-web/internal/config"
 	copilotk8s "server-web/internal/copilot/k8s"
-	"server-web/internal/handler"
-	"server-web/internal/infra/database"
+	"server-web/internal/di"
 	promclient "server-web/internal/infra/prometheus"
 	"server-web/internal/infra/pubsub"
 	rediscache "server-web/internal/infra/redis"
 	ws "server-web/internal/infra/websocket"
-	"server-web/internal/middleware"
 	"server-web/internal/router"
-	appalert "server-web/internal/service/alert"
-	authpkg "server-web/internal/service/auth"
-	appcache "server-web/internal/service/cache"
 
 	eventbus "server-monitor/pkg/kafka"
 	"server-monitor/pkg/shutdown"
-	"server-monitor/pkg/tracer"
 )
-
-type infrastructure struct {
-	shutdownTracer   func(context.Context) error
-	prometheusClient *promclient.Client
-	redisClient      *rediscache.Client
-	mysqlClient      *database.MySQL
-	kafkaProducer    *eventbus.Producer
-	websocketHub     *ws.Hub
-	alertHub         *pubsub.Hub
-}
-
-type services struct {
-	authService    *authpkg.Service
-	alertService   *appalert.Service
-	handler        *handler.Handler
-	metrics        *middleware.Metrics
-	copilotRuntime *router.CopilotRuntime
-	copilotDeps    *router.CopilotDeps
-	k8sHandler     *handler.K8sHandler
-	k8sReader      copilotk8s.Reader
-}
 
 type app struct {
 	cfg               config.Config
-	shutdownTracer    func(context.Context) error
-	prometheusClient  *promclient.Client
-	redisClient       *rediscache.Client
-	mysqlClient       *database.MySQL
-	kafkaProducer     *eventbus.Producer
+	infra             *di.Infra
 	diagnosisConsumer *eventbus.Consumer
 	copilotRuntime    *router.CopilotRuntime
-	alertHub          *pubsub.Hub
-	websocketHub      *ws.Hub
 	k8sReader         copilotk8s.Reader
 	server            *http.Server
 	ctx               context.Context
@@ -80,34 +44,50 @@ type wsMessage struct {
 	Data interface{} `json:"data"`
 }
 
-func initApp(ctx context.Context) (*app, error) {
+func initConfig() (config.Config, error) {
 	cfg := config.Load()
 	if err := cfg.Validate(); err != nil {
-		return nil, fmt.Errorf("invalid config: %w", err)
+		return config.Config{}, fmt.Errorf("invalid config: %w", err)
+	}
+	return cfg, nil
+}
+
+func initApp(ctx context.Context) (*app, error) {
+	cfg, err := initConfig()
+	if err != nil {
+		return nil, err
 	}
 
 	infra, err := initInfrastructure(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
-	svc, err := initServices(ctx, cfg, infra)
+
+	container, err := initContainer(&cfg, infra)
 	if err != nil {
 		return nil, err
 	}
 
-	router, err := router.NewRouter(cfg, router.Dependencies{
-		Metrics:     svc.metrics,
-		CacheClient: infra.redisClient,
-		Handler:     svc.handler,
-		K8sHandler:  svc.k8sHandler,
-		AuthService: svc.authService,
-		Copilot:     svc.copilotDeps,
-	})
+	k8sReader, k8sClient, _, k8sHandler, err := initK8sRuntime(cfg, container)
+	if err != nil {
+		return nil, err
+	}
+	container.K8sHandler = k8sHandler
+
+	k8sDeps := copilotk8s.Deps{Reader: k8sReader, Client: k8sClient}
+	copilotRuntime, copilotDeps, err := initCopilot(ctx, cfg, container, k8sDeps)
+	if err != nil {
+		return nil, err
+	}
+
+	deps := container.Dependencies()
+	deps.Copilot = copilotDeps
+	router, err := router.NewRouter(cfg, deps)
 	if err != nil {
 		return nil, fmt.Errorf("create router: %w", err)
 	}
 
-	diagnosisConsumer, err := initDiagnosisConsumer(cfg, infra.redisClient, svc.copilotRuntime, infra.websocketHub)
+	diagnosisConsumer, err := initDiagnosisConsumer(cfg, infra.RedisClient, copilotRuntime, infra.WSHub)
 	if err != nil {
 		return nil, err
 	}
@@ -115,16 +95,10 @@ func initApp(ctx context.Context) (*app, error) {
 	appCtx, cancel := context.WithCancel(ctx)
 	return &app{
 		cfg:               cfg,
-		shutdownTracer:    infra.shutdownTracer,
-		prometheusClient:  infra.prometheusClient,
-		redisClient:       infra.redisClient,
-		mysqlClient:       infra.mysqlClient,
-		kafkaProducer:     infra.kafkaProducer,
+		infra:             infra,
 		diagnosisConsumer: diagnosisConsumer,
-		copilotRuntime:    svc.copilotRuntime,
-		alertHub:          infra.alertHub,
-		websocketHub:      infra.websocketHub,
-		k8sReader:         svc.k8sReader,
+		copilotRuntime:    copilotRuntime,
+		k8sReader:         k8sReader,
 		server: &http.Server{
 			Addr:              cfg.ListenAddr,
 			Handler:           router,
@@ -168,11 +142,11 @@ func runApp(app *app) int {
 }
 
 func startBackgroundTasks(app *app) {
-	go app.websocketHub.Run(app.ctx)
+	go app.infra.WSHub.Run(app.ctx)
 
-	if app.redisClient.Enabled() {
+	if app.infra.RedisClient.Enabled() {
 		pingCtx, pingCancel := context.WithTimeout(context.Background(), app.cfg.RedisStartupTimeout)
-		if err := app.redisClient.Ping(pingCtx); err != nil {
+		if err := app.infra.RedisClient.Ping(pingCtx); err != nil {
 			zap.L().Error("redis ping failed at startup",
 				zap.String("addr", app.cfg.RedisAddr),
 				zap.Error(err),
@@ -180,7 +154,7 @@ func startBackgroundTasks(app *app) {
 		}
 		pingCancel()
 
-		subscriber := pubsub.NewSubscriber(app.redisClient, app.alertHub, rediscache.AlertChannel)
+		subscriber := pubsub.NewSubscriber(app.infra.RedisClient, app.infra.AlertHub, rediscache.AlertChannel)
 		done := make(chan struct{})
 		app.subscriberDone = done
 		go func() {
@@ -193,8 +167,8 @@ func startBackgroundTasks(app *app) {
 	app.alertHubConsumers = alertHubConsumers
 	go func() {
 		defer close(alertHubConsumers)
-		for message := range app.alertHub.Messages() {
-			if err := app.websocketHub.BroadcastBlocking(app.ctx, message); err != nil {
+		for message := range app.infra.AlertHub.Messages() {
+			if err := app.infra.WSHub.BroadcastBlocking(app.ctx, message); err != nil {
 				if app.ctx.Err() != nil {
 					return
 				}
@@ -209,11 +183,11 @@ func startBackgroundTasks(app *app) {
 				zap.L().Error("broadcastHosts goroutine recovered from panic", zap.Any("panic", r))
 			}
 		}()
-		broadcastHosts(app.ctx, app.prometheusClient, app.websocketHub, app.cfg.RequestTimeout, app.cfg.HostsBroadcastInterval)
+		broadcastHosts(app.ctx, app.infra.PromClient, app.infra.WSHub, app.cfg.RequestTimeout, app.cfg.HostsBroadcastInterval)
 	}()
 
 	if app.k8sReader != nil && app.cfg.K8SAPIEnabled {
-		startK8sEventWatcher(app.ctx, app.k8sReader, app.websocketHub, app.cfg.K8sEventWatchInterval)
+		startK8sEventWatcher(app.ctx, app.k8sReader, app.infra.WSHub, app.cfg.K8sEventWatchInterval)
 	}
 
 	if app.diagnosisConsumer != nil {
@@ -246,7 +220,7 @@ func shutdownApp(app *app) {
 
 	shutdown.Graceful(app.cfg.ShutdownTimeout, []shutdown.Phase{
 		{Name: "http-server", Fn: func(ctx context.Context) error { return app.server.Shutdown(ctx) }},
-		{Name: "tracer", Fn: app.shutdownTracer},
+		{Name: "tracer", Fn: app.infra.ShutdownTracer},
 	})
 
 	app.cancel()
@@ -259,22 +233,26 @@ func shutdownApp(app *app) {
 	waitWithTimeout(app.diagnosisDone, app.cfg.ShutdownTimeout, "diagnosis-consumer")
 
 	shutdown.Graceful(app.cfg.ShutdownTimeout, []shutdown.Phase{
-		{Name: "redis", Fn: func(ctx context.Context) error { return app.redisClient.Close() }},
+		{Name: "redis", Fn: func(ctx context.Context) error { return app.infra.RedisClient.Close() }},
 		{Name: "mysql", Fn: func(ctx context.Context) error {
-			if app.mysqlClient != nil {
-				return app.mysqlClient.Close()
+			if app.infra.DB != nil {
+				sqlDB, err := app.infra.DB.DB()
+				if err != nil {
+					return err
+				}
+				return sqlDB.Close()
 			}
 			return nil
 		}},
 		{Name: "kafka-producer", Fn: func(ctx context.Context) error {
-			if app.kafkaProducer != nil {
-				return app.kafkaProducer.Close()
+			if app.infra.KafkaProducer != nil {
+				return app.infra.KafkaProducer.Close()
 			}
 			return nil
 		}},
 	})
 
-	app.alertHub.Close()
+	app.infra.AlertHub.Close()
 	waitWithTimeout(app.alertHubConsumers, app.cfg.ShutdownTimeout, "alert-hub-consumers")
 
 	zap.L().Info("server-web stopped")
@@ -321,195 +299,4 @@ func broadcastHosts(ctx context.Context, promClient *promclient.Client, hub *ws.
 			hub.Broadcast(payload)
 		}
 	}
-}
-
-func initInfrastructure(ctx context.Context, cfg config.Config) (infrastructure, error) {
-	shutdownTracer := initTracer(ctx, cfg)
-	gin.SetMode(cfg.GinMode)
-	redisClient := rediscache.NewClient(rediscache.Options{
-		Addr:            cfg.RedisAddr,
-		Password:        cfg.RedisPassword,
-		DB:              cfg.RedisDB,
-		DialTimeout:     cfg.RedisDialTimeout,
-		ReadTimeout:     cfg.RedisReadTimeout,
-		WriteTimeout:    cfg.RedisWriteTimeout,
-		ConnMaxLifetime: cfg.RedisConnMaxLifetime,
-		ConnMaxIdleTime: cfg.RedisConnMaxIdleTime,
-	})
-	mysqlClient, err := initMySQL(cfg)
-	if err != nil {
-		return infrastructure{}, err
-	}
-	if mysqlClient != nil {
-		zap.L().Info("mysql initialized",
-			zap.String("host", cfg.MySQLHost),
-			zap.String("port", cfg.MySQLPort),
-			zap.String("database", cfg.MySQLDatabase),
-		)
-	}
-	return infrastructure{
-		shutdownTracer:   shutdownTracer,
-		prometheusClient: promclient.NewClient(cfg.PrometheusURL, cfg.RequestTimeout),
-		redisClient:      redisClient,
-		mysqlClient:      mysqlClient,
-		kafkaProducer:    initKafkaProducer(cfg),
-		websocketHub:     ws.NewHub(cfg.WSMaxConnections, cfg.CORSOrigins),
-		alertHub:         pubsub.NewHub(64),
-	}, nil
-}
-
-func initServices(ctx context.Context, cfg config.Config, infra infrastructure) (services, error) {
-	authService, err := initAuthService(cfg, infra.mysqlClient)
-	if err != nil {
-		return services{}, err
-	}
-	metrics := middleware.NewMetrics()
-	infra.websocketHub.SetConnectionObserver(metrics.SetWebSocketConnections)
-	if infra.kafkaProducer != nil {
-		infra.kafkaProducer.SetObserver(metrics)
-	}
-
-	db := dbFromMySQL(infra.mysqlClient)
-	alertService := appalert.NewService(infra.redisClient, appalert.Options{
-		DedupeTTL: cfg.AlertEventDedupeTTL,
-		DB:        db,
-		Producer:  infra.kafkaProducer,
-	})
-	h, err := handler.NewHandler(infra.prometheusClient, infra.redisClient, handler.Config{
-		ReadyTimeout:   cfg.ReadyTimeout,
-		RequestTimeout: cfg.RequestTimeout,
-		HostsTTL:       cfg.HostsCacheTTL,
-		DashboardTTL:   cfg.DashboardOverviewTTL,
-		DedupeTTL:      cfg.AlertEventDedupeTTL,
-		CacheTimeout:   cfg.CacheWriteTimeout,
-		RuleSync: handler.NewAlertRuleSyncConfig(
-			cfg.AlertRuleSyncEnabled,
-			cfg.AlertRulesFilePath,
-			cfg.PromtoolPath,
-			cfg.PrometheusReloadURL,
-			cfg.AlertRuleSyncTimeout,
-		),
-		AlertService:    alertService,
-		AlertProducer:   infra.kafkaProducer,
-		MySQLClient:     infra.mysqlClient,
-		DB:              db,
-		AuthService:     authService,
-		K8sAPIEnabled:   cfg.K8SEnabled && cfg.K8SAPIEnabled,
-		K8sNodesEnabled: cfg.K8SEnabled && cfg.K8SAPIEnabled && cfg.K8SNodesEnabled,
-		CopilotEnabled:  cfg.CopilotEnabled,
-	}, infra.websocketHub)
-	if err != nil {
-		return services{}, err
-	}
-
-	k8sCacheService := appcache.NewService(infra.redisClient, appcache.Options{
-		HostsTTL:     cfg.HostsCacheTTL,
-		DashboardTTL: cfg.DashboardOverviewTTL,
-	})
-	k8sReader, k8sClient, _, k8sHandler, err := initK8sRuntime(cfg, infra, k8sCacheService)
-	if err != nil {
-		return services{}, err
-	}
-
-	copilotRuntime, copilotDeps, err := initCopilot(ctx, cfg, infra, metrics, alertService, db, k8sReader, k8sClient)
-	if err != nil {
-		return services{}, err
-	}
-	return services{
-		authService:    authService,
-		alertService:   alertService,
-		handler:        h,
-		metrics:        metrics,
-		copilotRuntime: copilotRuntime,
-		copilotDeps:    copilotDeps,
-		k8sHandler:     k8sHandler,
-		k8sReader:      k8sReader,
-	}, nil
-}
-
-func initTracer(ctx context.Context, cfg config.Config) func(context.Context) error {
-	shutdownTracer, err := tracer.Init(ctx, tracer.Config{
-		ServiceName:  "server-web",
-		OTLPEndpoint: cfg.TraceOTLPEndpoint,
-		SampleRate:   cfg.TraceSampleRate,
-	})
-	if err != nil {
-		zap.L().Warn("tracer init failed; tracing disabled",
-			zap.String("endpoint", cfg.TraceOTLPEndpoint),
-			zap.Error(err),
-		)
-		return func(context.Context) error { return nil }
-	}
-	if cfg.TraceOTLPEndpoint != "" {
-		zap.L().Info("tracer initialized",
-			zap.String("endpoint", cfg.TraceOTLPEndpoint),
-			zap.Float64("sample_rate", cfg.TraceSampleRate),
-		)
-	}
-	return shutdownTracer
-}
-
-func initMySQL(cfg config.Config) (*database.MySQL, error) {
-	mysqlInitCtx, mysqlInitCancel := context.WithTimeout(context.Background(), cfg.MySQLStartupTimeout)
-	mysqlClient, err := database.OpenMySQL(mysqlInitCtx, database.MySQLConfig{
-		Host:        cfg.MySQLHost,
-		Port:        cfg.MySQLPort,
-		User:        cfg.MySQLUser,
-		Password:    cfg.MySQLPassword,
-		Database:    cfg.MySQLDatabase,
-		PingTimeout: cfg.MySQLPingTimeout,
-	})
-	mysqlInitCancel()
-	if err != nil {
-		return nil, fmt.Errorf("mysql init failed: %w", err)
-	}
-	if mysqlClient != nil {
-		if err := database.Migrate(mysqlClient.DB()); err != nil {
-			return nil, fmt.Errorf("mysql migration failed: %w", err)
-		}
-	}
-	return mysqlClient, nil
-}
-
-func initAuthService(cfg config.Config, mysqlClient *database.MySQL) (*authpkg.Service, error) {
-	var authService *authpkg.Service
-	if mysqlClient != nil && len(strings.TrimSpace(cfg.JWTSecret)) >= 32 {
-		var err error
-		authService, err = authpkg.NewService(mysqlClient.DB(), cfg.JWTSecret, time.Duration(cfg.JWTExpireHours)*time.Hour)
-		if err != nil {
-			return nil, fmt.Errorf("auth service init failed: %w", err)
-		}
-		created, err := authService.EnsureInitialAdmin(context.Background(), cfg.AdminPassword)
-		if err != nil {
-			return nil, fmt.Errorf("initial admin setup failed: %w", err)
-		}
-		if created {
-			zap.L().Info("initial admin user created", zap.String("username", "admin"))
-		}
-	}
-	return authService, nil
-}
-
-func initKafkaProducer(cfg config.Config) *eventbus.Producer {
-	var kafkaProducer *eventbus.Producer
-	if len(cfg.KafkaBrokers) > 0 {
-		producer, err := eventbus.NewProducer(cfg.KafkaBrokers)
-		if err != nil {
-			zap.L().Warn("kafka producer init failed; kafka events disabled",
-				zap.Strings("brokers", cfg.KafkaBrokers),
-				zap.Error(err),
-			)
-		} else {
-			kafkaProducer = producer
-			zap.L().Info("kafka producer initialized", zap.Strings("brokers", cfg.KafkaBrokers))
-		}
-	}
-	return kafkaProducer
-}
-
-func dbFromMySQL(mysqlClient *database.MySQL) *gorm.DB {
-	if mysqlClient == nil {
-		return nil
-	}
-	return mysqlClient.DB()
 }
