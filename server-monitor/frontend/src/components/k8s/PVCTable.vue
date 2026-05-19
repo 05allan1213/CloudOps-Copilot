@@ -32,27 +32,73 @@ function pvcStatusType(status: string): "" | "success" | "warning" | "danger" | 
 </script>
 
 <template>
-  <el-table :data="pvcs" stripe highlight-current-row style="width: 100%">
-    <el-table-column prop="namespace" label="命名空间" min-width="120" show-overflow-tooltip />
-    <el-table-column prop="name" label="名称" min-width="180" show-overflow-tooltip />
-    <el-table-column prop="storage_class" label="StorageClass" min-width="130" show-overflow-tooltip />
-    <el-table-column prop="volume_name" label="Bound PV" min-width="180" show-overflow-tooltip />
-    <el-table-column label="Access Modes" min-width="140" show-overflow-tooltip>
+  <el-table
+    :data="pvcs"
+    stripe
+    highlight-current-row
+    style="width: 100%"
+  >
+    <el-table-column
+      prop="namespace"
+      label="命名空间"
+      min-width="120"
+      show-overflow-tooltip
+    />
+    <el-table-column
+      prop="name"
+      label="名称"
+      min-width="180"
+      show-overflow-tooltip
+    />
+    <el-table-column
+      prop="storage_class"
+      label="StorageClass"
+      min-width="130"
+      show-overflow-tooltip
+    />
+    <el-table-column
+      prop="volume_name"
+      label="Bound PV"
+      min-width="180"
+      show-overflow-tooltip
+    />
+    <el-table-column
+      label="Access Modes"
+      min-width="140"
+      show-overflow-tooltip
+    >
       <template #default="{ row }">
         {{ row.access_modes?.join(", ") || "-" }}
       </template>
     </el-table-column>
-    <el-table-column label="状态" width="110" align="center">
+    <el-table-column
+      label="状态"
+      width="110"
+      align="center"
+    >
       <template #default="{ row }">
-        <el-tag size="small" :type="pvcStatusType(row.status)">{{ row.status }}</el-tag>
+        <el-tag
+          size="small"
+          :type="pvcStatusType(row.status)"
+        >
+          {{ row.status }}
+        </el-tag>
       </template>
     </el-table-column>
-    <el-table-column label="Age" width="100" align="center">
+    <el-table-column
+      label="Age"
+      width="100"
+      align="center"
+    >
       <template #default="{ row }">
         {{ row.age || "-" }}
       </template>
     </el-table-column>
-    <el-table-column label="操作" width="80" align="center">
+    <el-table-column
+      label="操作"
+      width="80"
+      align="center"
+    >
       <template #default="{ row }">
         <el-button
           type="primary"

@@ -20,10 +20,27 @@ function formatAge(ns: number): string {
 </script>
 
 <template>
-  <el-table :data="items" v-loading="loading" stripe style="width: 100%">
-    <el-table-column prop="namespace" label="Namespace" width="160" />
-    <el-table-column prop="name" label="Name" min-width="200" />
-    <el-table-column label="Ready" width="100" align="center">
+  <el-table
+    v-loading="loading"
+    :data="items"
+    stripe
+    style="width: 100%"
+  >
+    <el-table-column
+      prop="namespace"
+      label="Namespace"
+      width="160"
+    />
+    <el-table-column
+      prop="name"
+      label="Name"
+      min-width="200"
+    />
+    <el-table-column
+      label="Ready"
+      width="100"
+      align="center"
+    >
       <template #default="{ row }">
         <el-tag
           :type="row.replicas_ready === row.replicas_desired ? 'success' : 'warning'"
@@ -33,17 +50,38 @@ function formatAge(ns: number): string {
         </el-tag>
       </template>
     </el-table-column>
-    <el-table-column prop="service_name" label="Service Name" min-width="180" show-overflow-tooltip>
+    <el-table-column
+      prop="service_name"
+      label="Service Name"
+      min-width="180"
+      show-overflow-tooltip
+    >
       <template #default="{ row }">
         {{ row.service_name || "-" }}
       </template>
     </el-table-column>
-    <el-table-column label="Age" width="80" align="center">
-      <template #default="{ row }">{{ formatAge(row.age) }}</template>
-    </el-table-column>
-    <el-table-column label="Actions" width="80" fixed="right" align="center">
+    <el-table-column
+      label="Age"
+      width="80"
+      align="center"
+    >
       <template #default="{ row }">
-        <el-button link type="primary" size="small" @click="emit('view-yaml', row)">
+        {{ formatAge(row.age) }}
+      </template>
+    </el-table-column>
+    <el-table-column
+      label="Actions"
+      width="80"
+      fixed="right"
+      align="center"
+    >
+      <template #default="{ row }">
+        <el-button
+          link
+          type="primary"
+          size="small"
+          @click="emit('view-yaml', row)"
+        >
           YAML
         </el-button>
       </template>

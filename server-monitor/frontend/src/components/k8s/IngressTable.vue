@@ -35,31 +35,83 @@ function formatHosts(hosts: string[]): string {
 </script>
 
 <template>
-  <el-table :data="ingresses" stripe highlight-current-row style="width: 100%">
-    <el-table-column prop="namespace" label="命名空间" min-width="120" show-overflow-tooltip />
-    <el-table-column prop="name" label="名称" min-width="180" show-overflow-tooltip />
-    <el-table-column label="Hosts" min-width="160" show-overflow-tooltip>
+  <el-table
+    :data="ingresses"
+    stripe
+    highlight-current-row
+    style="width: 100%"
+  >
+    <el-table-column
+      prop="namespace"
+      label="命名空间"
+      min-width="120"
+      show-overflow-tooltip
+    />
+    <el-table-column
+      prop="name"
+      label="名称"
+      min-width="180"
+      show-overflow-tooltip
+    />
+    <el-table-column
+      label="Hosts"
+      min-width="160"
+      show-overflow-tooltip
+    >
       <template #default="{ row }">
         {{ formatHosts(row.hosts) }}
       </template>
     </el-table-column>
-    <el-table-column label="Paths" width="100" align="center">
+    <el-table-column
+      label="Paths"
+      width="100"
+      align="center"
+    >
       <template #default="{ row }">
-        <el-tag size="small" type="info">{{ row.paths?.length ?? 0 }}</el-tag>
+        <el-tag
+          size="small"
+          type="info"
+        >
+          {{ row.paths?.length ?? 0 }}
+        </el-tag>
       </template>
     </el-table-column>
-    <el-table-column label="TLS" width="100" align="center">
+    <el-table-column
+      label="TLS"
+      width="100"
+      align="center"
+    >
       <template #default="{ row }">
-        <el-tag v-if="row.tls?.length" size="small" type="success">Yes</el-tag>
-        <el-tag v-else size="small" type="info">No</el-tag>
+        <el-tag
+          v-if="row.tls?.length"
+          size="small"
+          type="success"
+        >
+          Yes
+        </el-tag>
+        <el-tag
+          v-else
+          size="small"
+          type="info"
+        >
+          No
+        </el-tag>
       </template>
     </el-table-column>
-    <el-table-column label="Age" width="100" align="center">
+    <el-table-column
+      label="Age"
+      width="100"
+      align="center"
+    >
       <template #default="{ row }">
         {{ formatAge(row.age) }}
       </template>
     </el-table-column>
-    <el-table-column label="操作" width="80" align="center">
+    <el-table-column
+      label="操作"
+      width="80"
+      align="center"
+    >
       <template #default="{ row }">
         <el-button
           type="primary"

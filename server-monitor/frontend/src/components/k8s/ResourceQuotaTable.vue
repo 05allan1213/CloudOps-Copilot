@@ -36,12 +36,34 @@ function progressStatus(pct: number): "" | "success" | "warning" | "exception" {
 </script>
 
 <template>
-  <el-table :data="quotas" stripe highlight-current-row style="width: 100%">
-    <el-table-column prop="namespace" label="命名空间" min-width="120" show-overflow-tooltip />
-    <el-table-column prop="name" label="名称" min-width="180" show-overflow-tooltip />
-    <el-table-column label="资源使用" min-width="300">
+  <el-table
+    :data="quotas"
+    stripe
+    highlight-current-row
+    style="width: 100%"
+  >
+    <el-table-column
+      prop="namespace"
+      label="命名空间"
+      min-width="120"
+      show-overflow-tooltip
+    />
+    <el-table-column
+      prop="name"
+      label="名称"
+      min-width="180"
+      show-overflow-tooltip
+    />
+    <el-table-column
+      label="资源使用"
+      min-width="300"
+    >
       <template #default="{ row }">
-        <div v-for="key in Object.keys(row.hard)" :key="key" class="quota-row">
+        <div
+          v-for="key in Object.keys(row.hard)"
+          :key="key"
+          class="quota-row"
+        >
           <span class="quota-key">{{ key }}</span>
           <el-progress
             :percentage="getPercentage(row.used?.[key]?.value ?? '0', row.hard[key]?.value ?? '0')"
@@ -53,7 +75,11 @@ function progressStatus(pct: number): "" | "success" | "warning" | "exception" {
         </div>
       </template>
     </el-table-column>
-    <el-table-column label="Age" width="100" align="center">
+    <el-table-column
+      label="Age"
+      width="100"
+      align="center"
+    >
       <template #default="{ row }">
         {{ formatAge(row.age) }}
       </template>

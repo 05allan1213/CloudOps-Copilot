@@ -48,21 +48,53 @@ const sortedHpas = computed(() => {
 </script>
 
 <template>
-  <el-table :data="sortedHpas" stripe highlight-current-row style="width: 100%">
-    <el-table-column prop="namespace" label="命名空间" min-width="120" show-overflow-tooltip />
-    <el-table-column prop="name" label="名称" min-width="180" show-overflow-tooltip />
-    <el-table-column prop="reference" label="Reference" min-width="180" show-overflow-tooltip />
-    <el-table-column label="Min" width="80" align="center">
+  <el-table
+    :data="sortedHpas"
+    stripe
+    highlight-current-row
+    style="width: 100%"
+  >
+    <el-table-column
+      prop="namespace"
+      label="命名空间"
+      min-width="120"
+      show-overflow-tooltip
+    />
+    <el-table-column
+      prop="name"
+      label="名称"
+      min-width="180"
+      show-overflow-tooltip
+    />
+    <el-table-column
+      prop="reference"
+      label="Reference"
+      min-width="180"
+      show-overflow-tooltip
+    />
+    <el-table-column
+      label="Min"
+      width="80"
+      align="center"
+    >
       <template #default="{ row }">
         {{ row.min_replicas }}
       </template>
     </el-table-column>
-    <el-table-column label="Max" width="80" align="center">
+    <el-table-column
+      label="Max"
+      width="80"
+      align="center"
+    >
       <template #default="{ row }">
         {{ row.max_replicas }}
       </template>
     </el-table-column>
-    <el-table-column label="Current" width="100" align="center">
+    <el-table-column
+      label="Current"
+      width="100"
+      align="center"
+    >
       <template #default="{ row }">
         <el-tag
           v-if="replicasTagType(row)"
@@ -74,17 +106,30 @@ const sortedHpas = computed(() => {
         <span v-else>{{ row.current_replicas }}</span>
       </template>
     </el-table-column>
-    <el-table-column prop="target_utilization" label="Target" min-width="140" show-overflow-tooltip>
+    <el-table-column
+      prop="target_utilization"
+      label="Target"
+      min-width="140"
+      show-overflow-tooltip
+    >
       <template #default="{ row }">
         {{ row.target_utilization || "-" }}
       </template>
     </el-table-column>
-    <el-table-column label="Age" width="100" align="center">
+    <el-table-column
+      label="Age"
+      width="100"
+      align="center"
+    >
       <template #default="{ row }">
         {{ formatAge(row.age) }}
       </template>
     </el-table-column>
-    <el-table-column label="操作" width="80" align="center">
+    <el-table-column
+      label="操作"
+      width="80"
+      align="center"
+    >
       <template #default="{ row }">
         <el-button
           type="primary"

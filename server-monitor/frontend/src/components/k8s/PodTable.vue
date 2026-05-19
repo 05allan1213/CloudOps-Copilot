@@ -28,28 +28,77 @@ function viewYaml(namespace: string, name: string) {
 </script>
 
 <template>
-  <el-table :data="pods" stripe highlight-current-row style="width: 100%">
-    <el-table-column prop="namespace" label="命名空间" min-width="120" show-overflow-tooltip />
-    <el-table-column prop="name" label="名称" min-width="180" show-overflow-tooltip />
-    <el-table-column label="阶段" width="100" align="center">
+  <el-table
+    :data="pods"
+    stripe
+    highlight-current-row
+    style="width: 100%"
+  >
+    <el-table-column
+      prop="namespace"
+      label="命名空间"
+      min-width="120"
+      show-overflow-tooltip
+    />
+    <el-table-column
+      prop="name"
+      label="名称"
+      min-width="180"
+      show-overflow-tooltip
+    />
+    <el-table-column
+      label="阶段"
+      width="100"
+      align="center"
+    >
       <template #default="{ row }">
-        <K8sStatusBadge :status="row.phase" type="pod" />
+        <K8sStatusBadge
+          :status="row.phase"
+          type="pod"
+        />
       </template>
     </el-table-column>
-    <el-table-column label="Ready" width="80" align="center">
+    <el-table-column
+      label="Ready"
+      width="80"
+      align="center"
+    >
       <template #default="{ row }">
         {{ row.ready_containers }}/{{ row.total_containers }}
       </template>
     </el-table-column>
-    <el-table-column prop="restart_count" label="重启" width="70" align="center" />
-    <el-table-column prop="node_name" label="Node" min-width="140" show-overflow-tooltip />
-    <el-table-column prop="pod_ip" label="Pod IP" min-width="120" show-overflow-tooltip />
-    <el-table-column label="Owner" min-width="140" show-overflow-tooltip>
+    <el-table-column
+      prop="restart_count"
+      label="重启"
+      width="70"
+      align="center"
+    />
+    <el-table-column
+      prop="node_name"
+      label="Node"
+      min-width="140"
+      show-overflow-tooltip
+    />
+    <el-table-column
+      prop="pod_ip"
+      label="Pod IP"
+      min-width="120"
+      show-overflow-tooltip
+    />
+    <el-table-column
+      label="Owner"
+      min-width="140"
+      show-overflow-tooltip
+    >
       <template #default="{ row }">
         {{ row.owner_kind ? `${row.owner_kind}/${row.owner_name}` : "-" }}
       </template>
     </el-table-column>
-    <el-table-column label="操作" width="120" align="center">
+    <el-table-column
+      label="操作"
+      width="120"
+      align="center"
+    >
       <template #default="{ row }">
         <el-button
           type="primary"
