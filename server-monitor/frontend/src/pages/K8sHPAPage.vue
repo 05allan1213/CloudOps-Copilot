@@ -68,7 +68,10 @@ onMounted(loadHPAs);
   <section class="k8s-hpa-page">
     <PageHeader title="HPA" />
 
-    <FilterPanel @search="applyFilters" @reset="resetFilters">
+    <FilterPanel
+      @search="applyFilters"
+      @reset="resetFilters"
+    >
       <el-form-item label="命名空间">
         <el-select
           v-model="selectedNamespace"
@@ -89,22 +92,44 @@ onMounted(loadHPAs);
       </el-form-item>
     </FilterPanel>
 
-    <el-card shadow="never" class="panel">
+    <el-card
+      shadow="never"
+      class="panel"
+    >
       <template #header>
         <div class="panel-header">
           <div class="panel-title">
-            <el-icon :size="18" color="var(--el-color-primary)"><Search /></el-icon>
+            <el-icon
+              :size="18"
+              color="var(--el-color-primary)"
+            >
+              <Search />
+            </el-icon>
             <span class="panel-title-text">HorizontalPodAutoscaler 列表</span>
           </div>
           <div class="panel-actions">
-            <el-tag size="small" type="info">共 {{ total }} 条</el-tag>
+            <el-tag
+              size="small"
+              type="info"
+            >
+              共 {{ total }} 条
+            </el-tag>
           </div>
         </div>
       </template>
 
-      <StateWrapper :state="stateKey" :error-text="error" empty-text="暂无 HPA 数据">
+      <StateWrapper
+        :state="stateKey"
+        :error-text="error"
+        empty-text="暂无 HPA 数据"
+      >
         <template #retry>
-          <el-button type="primary" @click="loadHPAs">重试</el-button>
+          <el-button
+            type="primary"
+            @click="loadHPAs"
+          >
+            重试
+          </el-button>
         </template>
 
         <HPATable :hpas="hpas" />

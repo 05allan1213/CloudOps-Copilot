@@ -22,14 +22,22 @@ const errorText = computed(() =>
 </script>
 
 <template>
-  <PageHeader title="总览" subtitle="刚刚更新" />
+  <PageHeader
+    title="总览"
+    subtitle="刚刚更新"
+  />
 
   <StateWrapper
     :state="pageState"
     :error-text="errorText"
   >
     <template #retry>
-      <el-button type="primary" @click="monitor.refreshAll()">重试</el-button>
+      <el-button
+        type="primary"
+        @click="monitor.refreshAll()"
+      >
+        重试
+      </el-button>
     </template>
 
     <StatsRow
@@ -45,14 +53,27 @@ const errorText = computed(() =>
       :info-count="monitor.infoCount"
     />
 
-    <el-card shadow="never" class="chart-panel">
+    <el-card
+      shadow="never"
+      class="chart-panel"
+    >
       <template #header>
         <div class="chart-panel-header">
           <div class="chart-panel-title">
-            <el-icon :size="18" color="var(--el-color-info)"><TrendCharts /></el-icon>
+            <el-icon
+              :size="18"
+              color="var(--el-color-info)"
+            >
+              <TrendCharts />
+            </el-icon>
             <span>资源分布</span>
           </div>
-          <el-tag size="small" type="info">ECharts</el-tag>
+          <el-tag
+            size="small"
+            type="info"
+          >
+            ECharts
+          </el-tag>
         </div>
       </template>
       <HostResourceChart :hosts="monitor.hosts" />

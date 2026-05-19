@@ -39,13 +39,27 @@ function statusLabel(status: AlertEvent["status"]): string {
 </script>
 
 <template>
-  <el-card shadow="never" class="events-panel">
+  <el-card
+    shadow="never"
+    class="events-panel"
+  >
     <template #header>
       <div class="panel-header">
         <div class="panel-title">
-          <el-icon :size="18" color="#818cf8"><TrendCharts /></el-icon>
+          <el-icon
+            :size="18"
+            color="#818cf8"
+          >
+            <TrendCharts />
+          </el-icon>
           <span class="panel-title-text">最近事件</span>
-          <el-tag size="small" effect="plain" class="event-badge">Webhook 历史流</el-tag>
+          <el-tag
+            size="small"
+            effect="plain"
+            class="event-badge"
+          >
+            Webhook 历史流
+          </el-tag>
         </div>
         <div class="panel-actions">
           <el-radio-group
@@ -53,19 +67,33 @@ function statusLabel(status: AlertEvent["status"]): string {
             size="small"
             @change="emit('statusChange', $event as EventStatusFilter)"
           >
-            <el-radio-button value="all">全部状态</el-radio-button>
-            <el-radio-button value="firing">触发</el-radio-button>
-            <el-radio-button value="resolved">恢复</el-radio-button>
+            <el-radio-button value="all">
+              全部状态
+            </el-radio-button>
+            <el-radio-button value="firing">
+              触发
+            </el-radio-button>
+            <el-radio-button value="resolved">
+              恢复
+            </el-radio-button>
           </el-radio-group>
           <el-radio-group
             :model-value="selectedSeverity"
             size="small"
             @change="emit('severityChange', $event as SeverityFilter)"
           >
-            <el-radio-button value="all">全部级别</el-radio-button>
-            <el-radio-button value="critical">严重</el-radio-button>
-            <el-radio-button value="warning">警告</el-radio-button>
-            <el-radio-button value="info">提示</el-radio-button>
+            <el-radio-button value="all">
+              全部级别
+            </el-radio-button>
+            <el-radio-button value="critical">
+              严重
+            </el-radio-button>
+            <el-radio-button value="warning">
+              警告
+            </el-radio-button>
+            <el-radio-button value="info">
+              提示
+            </el-radio-button>
           </el-radio-group>
         </div>
       </div>
@@ -92,36 +120,66 @@ function statusLabel(status: AlertEvent["status"]): string {
       style="width: 100%"
       :row-key="(row: AlertEvent) => `${row.fingerprint}-${row.receivedAt}-${row.status}`"
     >
-      <el-table-column label="级别" width="90" align="center">
+      <el-table-column
+        label="级别"
+        width="90"
+        align="center"
+      >
         <template #default="{ row }">
-          <el-tag :type="severityTagType(row.labels.severity)" size="small" effect="dark">
+          <el-tag
+            :type="severityTagType(row.labels.severity)"
+            size="small"
+            effect="dark"
+          >
             {{ severityLabel(row.labels.severity) }}
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="状态" width="90" align="center">
+      <el-table-column
+        label="状态"
+        width="90"
+        align="center"
+      >
         <template #default="{ row }">
-          <el-tag :type="statusTagType(row.status)" size="small">
+          <el-tag
+            :type="statusTagType(row.status)"
+            size="small"
+          >
             {{ statusLabel(row.status) }}
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="告警名称" min-width="160" show-overflow-tooltip>
+      <el-table-column
+        label="告警名称"
+        min-width="160"
+        show-overflow-tooltip
+      >
         <template #default="{ row }">
           {{ row.labels.alertname || "未知事件" }}
         </template>
       </el-table-column>
-      <el-table-column label="实例" min-width="140" show-overflow-tooltip>
+      <el-table-column
+        label="实例"
+        min-width="140"
+        show-overflow-tooltip
+      >
         <template #default="{ row }">
           <span class="mono-text">{{ row.labels.instance || "" }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="摘要" min-width="200" show-overflow-tooltip>
+      <el-table-column
+        label="摘要"
+        min-width="200"
+        show-overflow-tooltip
+      >
         <template #default="{ row }">
           {{ row.annotations.summary || row.annotations.description || "" }}
         </template>
       </el-table-column>
-      <el-table-column label="接收时间" width="170">
+      <el-table-column
+        label="接收时间"
+        width="170"
+      >
         <template #default="{ row }">
           {{ formatTime(row.receivedAt) }}
         </template>

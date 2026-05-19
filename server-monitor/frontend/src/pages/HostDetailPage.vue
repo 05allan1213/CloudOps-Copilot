@@ -336,7 +336,10 @@ function roundMetric(value: number): number {
         }}
       </p>
     </div>
-    <el-radio-group v-model="selectedRange" size="small">
+    <el-radio-group
+      v-model="selectedRange"
+      size="small"
+    >
       <el-radio-button
         v-for="option in rangeOptions"
         :key="option.value"
@@ -347,24 +350,42 @@ function roundMetric(value: number): number {
     </el-radio-group>
   </div>
 
-  <el-row :gutter="12" class="metric-grid">
+  <el-row
+    :gutter="12"
+    class="metric-grid"
+  >
     <el-col
       v-for="card in metricCards"
       :key="card.label"
       :xs="12"
       :sm="6"
     >
-      <el-card shadow="never" class="metric-card">
-        <el-statistic :title="card.label" :value="card.value" />
+      <el-card
+        shadow="never"
+        class="metric-card"
+      >
+        <el-statistic
+          :title="card.label"
+          :value="card.value"
+        />
       </el-card>
     </el-col>
   </el-row>
 
-  <el-card v-if="monitor.k8sNodesEnabled && k8sNode" shadow="never" class="k8s-node-card">
+  <el-card
+    v-if="monitor.k8sNodesEnabled && k8sNode"
+    shadow="never"
+    class="k8s-node-card"
+  >
     <template #header>
       <div class="k8s-node-header">
         <span class="k8s-node-title">K8s Node</span>
-        <el-button type="primary" link size="small" @click="router.push(`/k8s/nodes/${encodeURIComponent(k8sNode!.name)}`)">
+        <el-button
+          type="primary"
+          link
+          size="small"
+          @click="router.push(`/k8s/nodes/${encodeURIComponent(k8sNode!.name)}`)"
+        >
           查看详情
         </el-button>
       </div>
@@ -376,23 +397,38 @@ function roundMetric(value: number): number {
       </div>
       <div class="k8s-node-item">
         <span class="k8s-node-label">状态</span>
-        <el-tag :type="k8sNode.ready ? 'success' : 'danger'" size="small">
+        <el-tag
+          :type="k8sNode.ready ? 'success' : 'danger'"
+          size="small"
+        >
           {{ k8sNode.ready ? "Ready" : "NotReady" }}
         </el-tag>
       </div>
-      <div v-if="k8sNode.roles?.length" class="k8s-node-item">
+      <div
+        v-if="k8sNode.roles?.length"
+        class="k8s-node-item"
+      >
         <span class="k8s-node-label">角色</span>
         <span class="k8s-node-value">{{ k8sNode.roles.join(", ") }}</span>
       </div>
-      <div v-if="k8sNode.kubelet_version" class="k8s-node-item">
+      <div
+        v-if="k8sNode.kubelet_version"
+        class="k8s-node-item"
+      >
         <span class="k8s-node-label">Kubelet</span>
         <span class="k8s-node-value">{{ k8sNode.kubelet_version }}</span>
       </div>
-      <div v-if="k8sNode.capacity?.cpu" class="k8s-node-item">
+      <div
+        v-if="k8sNode.capacity?.cpu"
+        class="k8s-node-item"
+      >
         <span class="k8s-node-label">CPU 容量</span>
         <span class="k8s-node-value">{{ k8sNode.capacity.cpu }}</span>
       </div>
-      <div v-if="k8sNode.capacity?.memory" class="k8s-node-item">
+      <div
+        v-if="k8sNode.capacity?.memory"
+        class="k8s-node-item"
+      >
         <span class="k8s-node-label">内存容量</span>
         <span class="k8s-node-value">{{ k8sNode.capacity.memory }}</span>
       </div>
@@ -405,17 +441,33 @@ function roundMetric(value: number): number {
     :error-text="error"
   >
     <template #retry>
-      <el-button type="primary" @click="loadMetrics()">重试</el-button>
+      <el-button
+        type="primary"
+        @click="loadMetrics()"
+      >
+        重试
+      </el-button>
     </template>
 
-    <el-card shadow="never" class="chart-panel">
+    <el-card
+      shadow="never"
+      class="chart-panel"
+    >
       <template #header>
         <div class="chart-panel-header">
           <span class="chart-panel-title">资源趋势</span>
-          <el-tag size="small" type="info">{{ selectedRange }}</el-tag>
+          <el-tag
+            size="small"
+            type="info"
+          >
+            {{ selectedRange }}
+          </el-tag>
         </div>
       </template>
-      <div ref="chartEl" class="chart-canvas"></div>
+      <div
+        ref="chartEl"
+        class="chart-canvas"
+      />
     </el-card>
   </StateWrapper>
 </template>

@@ -70,15 +70,32 @@ function toolTagType(status: string): "success" | "danger" | "" {
         <template #title>
           <div class="tool-title">
             <span class="tool-name">{{ tool.name }}</span>
-            <el-tag :type="toolTagType(tool.status)" size="small">{{ tool.status }}</el-tag>
+            <el-tag
+              :type="toolTagType(tool.status)"
+              size="small"
+            >
+              {{ tool.status }}
+            </el-tag>
           </div>
         </template>
 
-        <pre v-if="tool.error" class="tool-error">{{ tool.error }}</pre>
+        <pre
+          v-if="tool.error"
+          class="tool-error"
+        >{{ tool.error }}</pre>
 
-        <div v-else-if="isK8sTool(tool)" class="k8s-result">
-          <div v-if="k8sLogLines(tool.result).length" class="k8s-log-lines">
-            <code v-for="(line, lineIndex) in k8sLogLines(tool.result)" :key="lineIndex">{{ line }}</code>
+        <div
+          v-else-if="isK8sTool(tool)"
+          class="k8s-result"
+        >
+          <div
+            v-if="k8sLogLines(tool.result).length"
+            class="k8s-log-lines"
+          >
+            <code
+              v-for="(line, lineIndex) in k8sLogLines(tool.result)"
+              :key="lineIndex"
+            >{{ line }}</code>
           </div>
           <el-table
             v-else-if="k8sRecords(tool.result).length && k8sColumns(tool.name).length"
@@ -100,10 +117,17 @@ function toolTagType(status: string): "success" | "danger" | "" {
               </template>
             </el-table-column>
           </el-table>
-          <el-empty v-else description="暂无 K8s 结果" :image-size="32" />
+          <el-empty
+            v-else
+            description="暂无 K8s 结果"
+            :image-size="32"
+          />
         </div>
 
-        <pre v-else class="tool-json">{{ toolResultPreview(tool.result) }}</pre>
+        <pre
+          v-else
+          class="tool-json"
+        >{{ toolResultPreview(tool.result) }}</pre>
       </el-collapse-item>
     </el-collapse>
   </div>

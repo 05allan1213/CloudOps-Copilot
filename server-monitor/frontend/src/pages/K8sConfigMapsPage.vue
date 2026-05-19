@@ -75,7 +75,10 @@ onMounted(loadConfigMaps);
   <section class="k8s-configmaps-page">
     <PageHeader title="ConfigMaps" />
 
-    <FilterPanel @search="applyFilters" @reset="resetFilters">
+    <FilterPanel
+      @search="applyFilters"
+      @reset="resetFilters"
+    >
       <el-form-item label="命名空间">
         <el-select
           v-model="selectedNamespace"
@@ -96,25 +99,50 @@ onMounted(loadConfigMaps);
       </el-form-item>
     </FilterPanel>
 
-    <el-card shadow="never" class="panel">
+    <el-card
+      shadow="never"
+      class="panel"
+    >
       <template #header>
         <div class="panel-header">
           <div class="panel-title">
-            <el-icon :size="18" color="var(--el-color-primary)"><Search /></el-icon>
+            <el-icon
+              :size="18"
+              color="var(--el-color-primary)"
+            >
+              <Search />
+            </el-icon>
             <span class="panel-title-text">ConfigMap 列表</span>
           </div>
           <div class="panel-actions">
-            <el-tag size="small" type="info">共 {{ total }} 条</el-tag>
+            <el-tag
+              size="small"
+              type="info"
+            >
+              共 {{ total }} 条
+            </el-tag>
           </div>
         </div>
       </template>
 
-      <StateWrapper :state="stateKey" :error-text="error" empty-text="暂无 ConfigMap 数据">
+      <StateWrapper
+        :state="stateKey"
+        :error-text="error"
+        empty-text="暂无 ConfigMap 数据"
+      >
         <template #retry>
-          <el-button type="primary" @click="loadConfigMaps">重试</el-button>
+          <el-button
+            type="primary"
+            @click="loadConfigMaps"
+          >
+            重试
+          </el-button>
         </template>
 
-        <ConfigMapTable :configmaps="configmaps" @view="viewDetail" />
+        <ConfigMapTable
+          :configmaps="configmaps"
+          @view="viewDetail"
+        />
 
         <div class="pagination-wrap">
           <el-pagination
@@ -136,17 +164,36 @@ onMounted(loadConfigMaps);
       destroy-on-close
     >
       <template v-if="selectedConfigMap">
-        <el-descriptions :column="2" border size="small" class="cm-descriptions">
-          <el-descriptions-item label="命名空间">{{ selectedConfigMap.namespace }}</el-descriptions-item>
-          <el-descriptions-item label="名称">{{ selectedConfigMap.name }}</el-descriptions-item>
+        <el-descriptions
+          :column="2"
+          border
+          size="small"
+          class="cm-descriptions"
+        >
+          <el-descriptions-item label="命名空间">
+            {{ selectedConfigMap.namespace }}
+          </el-descriptions-item>
+          <el-descriptions-item label="名称">
+            {{ selectedConfigMap.name }}
+          </el-descriptions-item>
         </el-descriptions>
         <div class="cm-data-section">
-          <h4 class="cm-data-title">Data</h4>
-          <div v-for="key in selectedConfigMap.data_keys" :key="key" class="cm-data-row">
+          <h4 class="cm-data-title">
+            Data
+          </h4>
+          <div
+            v-for="key in selectedConfigMap.data_keys"
+            :key="key"
+            class="cm-data-row"
+          >
             <span class="cm-data-key">{{ key }}</span>
             <pre class="cm-data-value">{{ selectedConfigMap.data[key] }}</pre>
           </div>
-          <el-empty v-if="!selectedConfigMap.data_keys?.length" description="无数据" :image-size="60" />
+          <el-empty
+            v-if="!selectedConfigMap.data_keys?.length"
+            description="无数据"
+            :image-size="60"
+          />
         </div>
       </template>
     </el-dialog>

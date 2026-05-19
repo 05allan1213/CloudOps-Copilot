@@ -138,24 +138,56 @@ onMounted(loadAction);
 
 <template>
   <section class="action-detail-page">
-    <PageHeader :title="`#${actionID} 动作详情`" subtitle="查看和管理审批动作">
-      <el-button text :icon="ArrowLeft" @click="router.push('/actions')">返回动作列表</el-button>
+    <PageHeader
+      :title="`#${actionID} 动作详情`"
+      subtitle="查看和管理审批动作"
+    >
+      <el-button
+        text
+        :icon="ArrowLeft"
+        @click="router.push('/actions')"
+      >
+        返回动作列表
+      </el-button>
     </PageHeader>
 
-    <StateWrapper :state="stateKey" :error-text="error" empty-text="动作不存在">
+    <StateWrapper
+      :state="stateKey"
+      :error-text="error"
+      empty-text="动作不存在"
+    >
       <template #retry>
-        <el-button type="primary" @click="loadAction">重试</el-button>
+        <el-button
+          type="primary"
+          @click="loadAction"
+        >
+          重试
+        </el-button>
       </template>
 
       <template v-if="action">
-        <el-card shadow="never" class="action-header-card">
+        <el-card
+          shadow="never"
+          class="action-header-card"
+        >
           <div class="action-header">
             <div class="action-header-info">
               <h3>{{ action.action_type }}</h3>
               <div class="action-meta">
                 <span>{{ action.namespace }}/{{ action.target_name }}</span>
-                <el-tag :type="statusTagType(action.status)" size="small">{{ action.status }}</el-tag>
-                <el-tag :type="riskTagType(action.risk_level)" size="small" effect="plain">{{ action.risk_level }}</el-tag>
+                <el-tag
+                  :type="statusTagType(action.status)"
+                  size="small"
+                >
+                  {{ action.status }}
+                </el-tag>
+                <el-tag
+                  :type="riskTagType(action.risk_level)"
+                  size="small"
+                  effect="plain"
+                >
+                  {{ action.risk_level }}
+                </el-tag>
               </div>
             </div>
             <div class="action-buttons">
@@ -188,15 +220,34 @@ onMounted(loadAction);
         </el-card>
 
         <el-card shadow="never">
-          <el-descriptions :column="3" border>
+          <el-descriptions
+            :column="3"
+            border
+          >
             <el-descriptions-item label="风险级别">
-              <el-tag :type="riskTagType(action.risk_level)" size="small" effect="plain">{{ action.risk_level }}</el-tag>
+              <el-tag
+                :type="riskTagType(action.risk_level)"
+                size="small"
+                effect="plain"
+              >
+                {{ action.risk_level }}
+              </el-tag>
             </el-descriptions-item>
-            <el-descriptions-item label="来源">{{ action.requested_by }}</el-descriptions-item>
-            <el-descriptions-item label="关联诊断">#{{ action.diagnosis_report_id || "-" }}</el-descriptions-item>
-            <el-descriptions-item label="创建时间">{{ formatTime(action.created_at) }}</el-descriptions-item>
-            <el-descriptions-item label="审批人">{{ action.approved_by || "-" }}</el-descriptions-item>
-            <el-descriptions-item label="执行人">{{ action.executed_by || "-" }}</el-descriptions-item>
+            <el-descriptions-item label="来源">
+              {{ action.requested_by }}
+            </el-descriptions-item>
+            <el-descriptions-item label="关联诊断">
+              #{{ action.diagnosis_report_id || "-" }}
+            </el-descriptions-item>
+            <el-descriptions-item label="创建时间">
+              {{ formatTime(action.created_at) }}
+            </el-descriptions-item>
+            <el-descriptions-item label="审批人">
+              {{ action.approved_by || "-" }}
+            </el-descriptions-item>
+            <el-descriptions-item label="执行人">
+              {{ action.executed_by || "-" }}
+            </el-descriptions-item>
           </el-descriptions>
         </el-card>
 
@@ -216,7 +267,11 @@ onMounted(loadAction);
             <span class="card-title">执行结果</span>
           </template>
           <template v-if="resultSummary.length">
-            <el-descriptions :column="3" border style="margin-bottom: 16px">
+            <el-descriptions
+              :column="3"
+              border
+              style="margin-bottom: 16px"
+            >
               <el-descriptions-item
                 v-for="[label, value] in resultSummary"
                 :key="label"
@@ -258,8 +313,16 @@ onMounted(loadAction);
             </el-form-item>
           </el-form>
           <template #footer>
-            <el-button @click="approveDialogVisible = false">取消</el-button>
-            <el-button type="success" :loading="acting" @click="handleApprove">确认批准</el-button>
+            <el-button @click="approveDialogVisible = false">
+              取消
+            </el-button>
+            <el-button
+              type="success"
+              :loading="acting"
+              @click="handleApprove"
+            >
+              确认批准
+            </el-button>
           </template>
         </el-dialog>
 
@@ -270,7 +333,10 @@ onMounted(loadAction);
           :close-on-click-modal="false"
         >
           <el-form label-position="top">
-            <el-form-item label="拒绝原因" required>
+            <el-form-item
+              label="拒绝原因"
+              required
+            >
               <el-input
                 v-model="rejectReason"
                 type="textarea"
@@ -280,8 +346,16 @@ onMounted(loadAction);
             </el-form-item>
           </el-form>
           <template #footer>
-            <el-button @click="rejectDialogVisible = false">取消</el-button>
-            <el-button type="danger" :loading="acting" @click="handleReject">确认拒绝</el-button>
+            <el-button @click="rejectDialogVisible = false">
+              取消
+            </el-button>
+            <el-button
+              type="danger"
+              :loading="acting"
+              @click="handleReject"
+            >
+              确认拒绝
+            </el-button>
           </template>
         </el-dialog>
       </template>

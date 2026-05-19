@@ -117,72 +117,165 @@ onMounted(loadReports);
 
 <template>
   <section class="diagnosis-page">
-    <PageHeader title="诊断报告" subtitle="查看手动或 Copilot 触发的告警诊断结果。" />
+    <PageHeader
+      title="诊断报告"
+      subtitle="查看手动或 Copilot 触发的告警诊断结果。"
+    />
 
-    <FilterPanel @search="applyFilters" @reset="resetFilters">
+    <FilterPanel
+      @search="applyFilters"
+      @reset="resetFilters"
+    >
       <el-form-item label="状态">
-        <el-select v-model="filters.status" placeholder="全部" clearable style="width: 140px">
-          <el-option label="pending" value="pending" />
-          <el-option label="running" value="running" />
-          <el-option label="completed" value="completed" />
-          <el-option label="failed" value="failed" />
+        <el-select
+          v-model="filters.status"
+          placeholder="全部"
+          clearable
+          style="width: 140px"
+        >
+          <el-option
+            label="pending"
+            value="pending"
+          />
+          <el-option
+            label="running"
+            value="running"
+          />
+          <el-option
+            label="completed"
+            value="completed"
+          />
+          <el-option
+            label="failed"
+            value="failed"
+          />
         </el-select>
       </el-form-item>
       <el-form-item label="来源">
-        <el-select v-model="filters.trigger_type" placeholder="全部" clearable style="width: 140px">
-          <el-option label="手动" value="manual" />
-          <el-option label="对话" value="chat" />
-          <el-option label="自动" value="auto" />
+        <el-select
+          v-model="filters.trigger_type"
+          placeholder="全部"
+          clearable
+          style="width: 140px"
+        >
+          <el-option
+            label="手动"
+            value="manual"
+          />
+          <el-option
+            label="对话"
+            value="chat"
+          />
+          <el-option
+            label="自动"
+            value="auto"
+          />
         </el-select>
       </el-form-item>
     </FilterPanel>
 
-    <StateWrapper :state="stateKey" :error-text="error" empty-text="暂无诊断报告">
+    <StateWrapper
+      :state="stateKey"
+      :error-text="error"
+      empty-text="暂无诊断报告"
+    >
       <template #retry>
-        <el-button type="primary" @click="loadReports">重试</el-button>
+        <el-button
+          type="primary"
+          @click="loadReports"
+        >
+          重试
+        </el-button>
       </template>
 
-      <el-table :data="reports.items" stripe style="width: 100%">
-        <el-table-column label="ID" width="100">
+      <el-table
+        :data="reports.items"
+        stripe
+        style="width: 100%"
+      >
+        <el-table-column
+          label="ID"
+          width="100"
+        >
           <template #default="{ row }">
-            <RouterLink class="detail-link" :to="`/diagnosis/${row.id}`">#{{ row.id }}</RouterLink>
+            <RouterLink
+              class="detail-link"
+              :to="`/diagnosis/${row.id}`"
+            >
+              #{{ row.id }}
+            </RouterLink>
           </template>
         </el-table-column>
-        <el-table-column label="告警名" min-width="140" prop="alert_name" show-overflow-tooltip>
+        <el-table-column
+          label="告警名"
+          min-width="140"
+          prop="alert_name"
+          show-overflow-tooltip
+        >
           <template #default="{ row }">
             {{ row.alert_name || "-" }}
           </template>
         </el-table-column>
-        <el-table-column label="目标" min-width="120" show-overflow-tooltip>
+        <el-table-column
+          label="目标"
+          min-width="120"
+          show-overflow-tooltip
+        >
           <template #default="{ row }">
             <span class="mono-text">{{ row.target_name || "-" }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="100" align="center">
+        <el-table-column
+          label="状态"
+          width="100"
+          align="center"
+        >
           <template #default="{ row }">
-            <el-tag :type="statusTagType(row.status)" size="small">
+            <el-tag
+              :type="statusTagType(row.status)"
+              size="small"
+            >
               {{ statusLabel(row.status) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="来源" width="90" align="center">
+        <el-table-column
+          label="来源"
+          width="90"
+          align="center"
+        >
           <template #default="{ row }">
-            <el-tag :type="triggerTagType(row.trigger_type)" size="small" effect="plain">
+            <el-tag
+              :type="triggerTagType(row.trigger_type)"
+              size="small"
+              effect="plain"
+            >
               {{ triggerLabel(row.trigger_type) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="置信度" width="90" align="center">
+        <el-table-column
+          label="置信度"
+          width="90"
+          align="center"
+        >
           <template #default="{ row }">
             {{ formatPercent(row.confidence) }}
           </template>
         </el-table-column>
-        <el-table-column label="摘要" min-width="200" show-overflow-tooltip>
+        <el-table-column
+          label="摘要"
+          min-width="200"
+          show-overflow-tooltip
+        >
           <template #default="{ row }">
             {{ row.summary || "-" }}
           </template>
         </el-table-column>
-        <el-table-column label="创建时间" width="170">
+        <el-table-column
+          label="创建时间"
+          width="170"
+        >
           <template #default="{ row }">
             {{ formatTime(row.created_at) }}
           </template>

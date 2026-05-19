@@ -31,7 +31,10 @@ function diagnosisReportId(message: CopilotLocalMessage): number | null {
 </script>
 
 <template>
-  <div class="message-row" :class="message.role === 'user' ? 'from-user' : 'from-assistant'">
+  <div
+    class="message-row"
+    :class="message.role === 'user' ? 'from-user' : 'from-assistant'"
+  >
     <div class="message-bubble">
       <div class="message-meta">
         <span>{{ message.role === "user" ? "你" : "Copilot" }}</span>
@@ -40,12 +43,18 @@ function diagnosisReportId(message: CopilotLocalMessage): number | null {
 
       <p>{{ message.content }}</p>
 
-      <div v-if="message.intent" class="intent-row">
+      <div
+        v-if="message.intent"
+        class="intent-row"
+      >
         <span>{{ message.intent }}</span>
         <span>{{ formatConfidence(message.confidence) }}</span>
       </div>
 
-      <ToolCallDisplay v-if="message.tool_calls?.length" :tool-calls="message.tool_calls" />
+      <ToolCallDisplay
+        v-if="message.tool_calls?.length"
+        :tool-calls="message.tool_calls"
+      />
 
       <el-button
         v-if="diagnosisReportId(message)"
@@ -54,12 +63,18 @@ function diagnosisReportId(message: CopilotLocalMessage): number | null {
         size="small"
         class="diagnosis-link"
       >
-        <RouterLink :to="`/diagnosis/${diagnosisReportId(message)}`" class="link-text">
+        <RouterLink
+          :to="`/diagnosis/${diagnosisReportId(message)}`"
+          class="link-text"
+        >
           查看诊断报告 #{{ diagnosisReportId(message) }}
         </RouterLink>
       </el-button>
 
-      <div v-if="message.suggestions?.length" class="suggestion-row">
+      <div
+        v-if="message.suggestions?.length"
+        class="suggestion-row"
+      >
         <el-button
           v-for="suggestion in message.suggestions"
           :key="suggestion.action || suggestion.text"

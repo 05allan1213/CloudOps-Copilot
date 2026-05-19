@@ -41,7 +41,10 @@ function formatScore(value?: number): string {
           </div>
         </template>
 
-        <div v-if="runbookMatches(runbook).length" class="tag-row">
+        <div
+          v-if="runbookMatches(runbook).length"
+          class="tag-row"
+        >
           <el-tag
             v-for="match in runbookMatches(runbook)"
             :key="match"

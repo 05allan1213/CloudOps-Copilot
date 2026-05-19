@@ -47,7 +47,10 @@ async function submitFeedback() {
 </script>
 
 <template>
-  <el-card shadow="never" class="feedback-card">
+  <el-card
+    shadow="never"
+    class="feedback-card"
+  >
     <div class="feedback-content">
       <span class="feedback-label">这份诊断报告对您有帮助吗？</span>
       <el-rate
@@ -55,7 +58,10 @@ async function submitFeedback() {
         :disabled="submitted"
         @change="handleRateChange"
       />
-      <div v-if="!submitted && ratingValue > 0" class="comment-area">
+      <div
+        v-if="!submitted && ratingValue > 0"
+        class="comment-area"
+      >
         <el-input
           v-model="feedbackComment"
           type="textarea"
@@ -73,7 +79,13 @@ async function submitFeedback() {
           提交反馈
         </el-button>
       </div>
-      <el-tag v-if="submitted" type="success" size="small">已提交反馈</el-tag>
+      <el-tag
+        v-if="submitted"
+        type="success"
+        size="small"
+      >
+        已提交反馈
+      </el-tag>
     </div>
   </el-card>
 </template>

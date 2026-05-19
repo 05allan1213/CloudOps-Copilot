@@ -37,7 +37,10 @@ onMounted(loadHostGroups);
     style="margin-bottom: 16px"
   />
 
-  <FilterPanel @search="monitor.applyHostSearch" @reset="monitor.resetHostFilters">
+  <FilterPanel
+    @search="monitor.applyHostSearch"
+    @reset="monitor.resetHostFilters"
+  >
     <el-form-item label="主机分组">
       <el-select
         :model-value="monitor.selectedHostGroup"
@@ -46,7 +49,10 @@ onMounted(loadHostGroups);
         style="width: 200px"
         @change="onGroupChange"
       >
-        <el-option :value="0" label="全部分组" />
+        <el-option
+          :value="0"
+          label="全部分组"
+        />
         <el-option
           v-for="group in hostGroups"
           :key="group.id"

@@ -28,7 +28,10 @@ async function diagnoseActiveAlert(alert: AlertRecord) {
 
 <template>
   <el-tabs v-model="activeTab">
-    <el-tab-pane label="当前告警" name="current">
+    <el-tab-pane
+      label="当前告警"
+      name="current"
+    >
       <AlertsPanel
         :alerts="monitor.alerts"
         :selected-severity="monitor.selectedSeverity"
@@ -48,7 +51,10 @@ async function diagnoseActiveAlert(alert: AlertRecord) {
         @severity-change="monitor.setEventSeverityFilter"
       />
     </el-tab-pane>
-    <el-tab-pane label="历史" name="history">
+    <el-tab-pane
+      label="历史"
+      name="history"
+    >
       <AlertHistoriesPage />
     </el-tab-pane>
   </el-tabs>

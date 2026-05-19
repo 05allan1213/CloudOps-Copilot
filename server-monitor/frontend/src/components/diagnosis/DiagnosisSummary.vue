@@ -7,7 +7,10 @@ defineProps<{
 
 <template>
   <el-card shadow="never">
-    <el-descriptions :column="1" border>
+    <el-descriptions
+      :column="1"
+      border
+    >
       <el-descriptions-item label="摘要">
         {{ summary || "-" }}
       </el-descriptions-item>

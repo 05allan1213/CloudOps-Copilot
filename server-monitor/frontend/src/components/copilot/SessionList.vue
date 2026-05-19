@@ -38,7 +38,12 @@ async function handleConfirmDelete(sessionId: string) {
         <h2>Copilot</h2>
         <span>{{ loadingSessions ? "同步中" : `${sessions.length} 个会话` }}</span>
       </div>
-      <el-button :icon="Plus" size="small" circle @click="emit('new')" />
+      <el-button
+        :icon="Plus"
+        size="small"
+        circle
+        @click="emit('new')"
+      />
     </div>
 
     <div class="session-list">
@@ -52,10 +57,17 @@ async function handleConfirmDelete(sessionId: string) {
         <span class="session-title">{{ session.title || session.id }}</span>
         <small>{{ formatTimeShort(session.updated_at) }}</small>
       </div>
-      <el-empty v-if="!loadingSessions && sessions.length === 0" description="暂无会话" :image-size="48" />
+      <el-empty
+        v-if="!loadingSessions && sessions.length === 0"
+        description="暂无会话"
+        :image-size="48"
+      />
     </div>
 
-    <div v-if="activeSessionId" class="session-footer">
+    <div
+      v-if="activeSessionId"
+      class="session-footer"
+    >
       <el-button
         :icon="Delete"
         type="danger"

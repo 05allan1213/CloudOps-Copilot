@@ -17,11 +17,18 @@ function formatServicePorts(ports?: Array<{ port: number; target_port?: string }
       <span class="card-title">K8s 证据</span>
     </template>
 
-    <div v-if="!k8sEvidence?.enabled" class="empty-hint">当前诊断未采集 K8s 证据。</div>
+    <div
+      v-if="!k8sEvidence?.enabled"
+      class="empty-hint"
+    >
+      当前诊断未采集 K8s 证据。
+    </div>
 
     <template v-else>
       <div class="k8s-head">
-        <el-tag size="small">{{ k8sEvidence.namespace || "-" }}</el-tag>
+        <el-tag size="small">
+          {{ k8sEvidence.namespace || "-" }}
+        </el-tag>
         <strong>{{ k8sEvidence.target_kind || "-" }} / {{ k8sEvidence.target_name || "-" }}</strong>
         <small>{{ formatTime(k8sEvidence.collected_at) }}</small>
       </div>
@@ -32,15 +39,41 @@ function formatServicePorts(ports?: Array<{ port: number; target_port?: string }
           :name="'deployments'"
           :title="`Deployments (${k8sEvidence.deployments.length})`"
         >
-          <el-table :data="k8sEvidence.deployments" stripe size="small" style="width: 100%">
-            <el-table-column label="Deployment" min-width="160">
-              <template #default="{ row }">{{ row.namespace }}/{{ row.name }}</template>
+          <el-table
+            :data="k8sEvidence.deployments"
+            stripe
+            size="small"
+            style="width: 100%"
+          >
+            <el-table-column
+              label="Deployment"
+              min-width="160"
+            >
+              <template #default="{ row }">
+                {{ row.namespace }}/{{ row.name }}
+              </template>
             </el-table-column>
-            <el-table-column label="ready" width="90" align="center">
-              <template #default="{ row }">{{ row.ready_replicas }}/{{ row.replicas }}</template>
+            <el-table-column
+              label="ready"
+              width="90"
+              align="center"
+            >
+              <template #default="{ row }">
+                {{ row.ready_replicas }}/{{ row.replicas }}
+              </template>
             </el-table-column>
-            <el-table-column prop="updated_replicas" label="updated" width="80" align="center" />
-            <el-table-column prop="available_replicas" label="available" width="90" align="center" />
+            <el-table-column
+              prop="updated_replicas"
+              label="updated"
+              width="80"
+              align="center"
+            />
+            <el-table-column
+              prop="available_replicas"
+              label="available"
+              width="90"
+              align="center"
+            />
           </el-table>
         </el-collapse-item>
 
@@ -49,15 +82,41 @@ function formatServicePorts(ports?: Array<{ port: number; target_port?: string }
           :name="'pods'"
           :title="`Pods (${k8sEvidence.pods.length})`"
         >
-          <el-table :data="k8sEvidence.pods" stripe size="small" style="width: 100%">
-            <el-table-column label="Pod" min-width="160">
-              <template #default="{ row }">{{ row.namespace }}/{{ row.name }}</template>
+          <el-table
+            :data="k8sEvidence.pods"
+            stripe
+            size="small"
+            style="width: 100%"
+          >
+            <el-table-column
+              label="Pod"
+              min-width="160"
+            >
+              <template #default="{ row }">
+                {{ row.namespace }}/{{ row.name }}
+              </template>
             </el-table-column>
-            <el-table-column prop="phase" label="phase" width="90" align="center" />
-            <el-table-column label="ready" width="80" align="center">
-              <template #default="{ row }">{{ row.ready_containers }}/{{ row.total_containers }}</template>
+            <el-table-column
+              prop="phase"
+              label="phase"
+              width="90"
+              align="center"
+            />
+            <el-table-column
+              label="ready"
+              width="80"
+              align="center"
+            >
+              <template #default="{ row }">
+                {{ row.ready_containers }}/{{ row.total_containers }}
+              </template>
             </el-table-column>
-            <el-table-column prop="restart_count" label="restarts" width="90" align="center" />
+            <el-table-column
+              prop="restart_count"
+              label="restarts"
+              width="90"
+              align="center"
+            />
           </el-table>
         </el-collapse-item>
 
@@ -66,14 +125,37 @@ function formatServicePorts(ports?: Array<{ port: number; target_port?: string }
           :name="'services'"
           :title="`Services (${k8sEvidence.services.length})`"
         >
-          <el-table :data="k8sEvidence.services" stripe size="small" style="width: 100%">
-            <el-table-column label="Service" min-width="160">
-              <template #default="{ row }">{{ row.namespace }}/{{ row.name }}</template>
+          <el-table
+            :data="k8sEvidence.services"
+            stripe
+            size="small"
+            style="width: 100%"
+          >
+            <el-table-column
+              label="Service"
+              min-width="160"
+            >
+              <template #default="{ row }">
+                {{ row.namespace }}/{{ row.name }}
+              </template>
             </el-table-column>
-            <el-table-column prop="type" label="type" width="90" />
-            <el-table-column prop="cluster_ip" label="cluster IP" width="120" />
-            <el-table-column label="ports" min-width="120">
-              <template #default="{ row }">{{ formatServicePorts(row.ports) }}</template>
+            <el-table-column
+              prop="type"
+              label="type"
+              width="90"
+            />
+            <el-table-column
+              prop="cluster_ip"
+              label="cluster IP"
+              width="120"
+            />
+            <el-table-column
+              label="ports"
+              min-width="120"
+            >
+              <template #default="{ row }">
+                {{ formatServicePorts(row.ports) }}
+              </template>
             </el-table-column>
           </el-table>
         </el-collapse-item>
@@ -83,16 +165,43 @@ function formatServicePorts(ports?: Array<{ port: number; target_port?: string }
           :name="'nodes'"
           :title="`Nodes (${k8sEvidence.nodes.length})`"
         >
-          <el-table :data="k8sEvidence.nodes" stripe size="small" style="width: 100%">
-            <el-table-column prop="name" label="Node" min-width="120" />
-            <el-table-column label="ready" width="80" align="center">
+          <el-table
+            :data="k8sEvidence.nodes"
+            stripe
+            size="small"
+            style="width: 100%"
+          >
+            <el-table-column
+              prop="name"
+              label="Node"
+              min-width="120"
+            />
+            <el-table-column
+              label="ready"
+              width="80"
+              align="center"
+            >
               <template #default="{ row }">
-                <el-tag :type="row.ready ? 'success' : 'danger'" size="small">{{ row.ready ? "true" : "false" }}</el-tag>
+                <el-tag
+                  :type="row.ready ? 'success' : 'danger'"
+                  size="small"
+                >
+                  {{ row.ready ? "true" : "false" }}
+                </el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="kubelet_version" label="kubelet" width="120" />
-            <el-table-column label="capacity" min-width="120">
-              <template #default="{ row }">{{ row.capacity?.cpu || "-" }} / {{ row.capacity?.memory || "-" }}</template>
+            <el-table-column
+              prop="kubelet_version"
+              label="kubelet"
+              width="120"
+            />
+            <el-table-column
+              label="capacity"
+              min-width="120"
+            >
+              <template #default="{ row }">
+                {{ row.capacity?.cpu || "-" }} / {{ row.capacity?.memory || "-" }}
+              </template>
             </el-table-column>
           </el-table>
         </el-collapse-item>
@@ -102,10 +211,28 @@ function formatServicePorts(ports?: Array<{ port: number; target_port?: string }
           :name="'events'"
           :title="`Events (${k8sEvidence.events.length})`"
         >
-          <el-table :data="k8sEvidence.events" stripe size="small" style="width: 100%">
-            <el-table-column prop="type" label="type" width="80" />
-            <el-table-column prop="reason" label="reason" width="120" />
-            <el-table-column prop="message" label="message" min-width="200" show-overflow-tooltip />
+          <el-table
+            :data="k8sEvidence.events"
+            stripe
+            size="small"
+            style="width: 100%"
+          >
+            <el-table-column
+              prop="type"
+              label="type"
+              width="80"
+            />
+            <el-table-column
+              prop="reason"
+              label="reason"
+              width="120"
+            />
+            <el-table-column
+              prop="message"
+              label="message"
+              min-width="200"
+              show-overflow-tooltip
+            />
           </el-table>
         </el-collapse-item>
 

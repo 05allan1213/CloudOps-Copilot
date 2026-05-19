@@ -192,7 +192,10 @@ function handleSelect(index: string) {
     :active-text-color="'var(--cloudops-accent)'"
     @select="handleSelect"
   >
-    <template v-for="item in visibleItems" :key="item.index">
+    <template
+      v-for="item in visibleItems"
+      :key="item.index"
+    >
       <el-sub-menu
         v-if="item.children && item.children.length > 0"
         :index="item.index"
@@ -211,14 +214,21 @@ function handleSelect(index: string) {
           <el-icon v-if="child.icon && iconMap[child.icon]">
             <component :is="iconMap[child.icon]" />
           </el-icon>
-          <template #title>{{ child.title }}</template>
+          <template #title>
+            {{ child.title }}
+          </template>
         </el-menu-item>
       </el-sub-menu>
-      <el-menu-item v-else :index="item.index">
+      <el-menu-item
+        v-else
+        :index="item.index"
+      >
         <el-icon v-if="item.icon && iconMap[item.icon]">
           <component :is="iconMap[item.icon]" />
         </el-icon>
-        <template #title>{{ item.title }}</template>
+        <template #title>
+          {{ item.title }}
+        </template>
       </el-menu-item>
     </template>
   </el-menu>

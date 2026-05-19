@@ -107,8 +107,17 @@ function formatPercent(value: number | undefined): string {
 
 <template>
   <section class="status-page">
-    <PageHeader title="系统状态" subtitle="服务健康、依赖就绪与监控概览">
-      <el-button :icon="Refresh" :loading="loading" @click="loadStatus">刷新</el-button>
+    <PageHeader
+      title="系统状态"
+      subtitle="服务健康、依赖就绪与监控概览"
+    >
+      <el-button
+        :icon="Refresh"
+        :loading="loading"
+        @click="loadStatus"
+      >
+        刷新
+      </el-button>
     </PageHeader>
 
     <el-alert
@@ -120,47 +129,98 @@ function formatPercent(value: number | undefined): string {
       style="margin-bottom: 16px"
     />
 
-    <StateWrapper :state="stateKey" empty-text="暂无状态数据">
+    <StateWrapper
+      :state="stateKey"
+      empty-text="暂无状态数据"
+    >
       <template #retry>
-        <el-button type="primary" @click="loadStatus">重试</el-button>
+        <el-button
+          type="primary"
+          @click="loadStatus"
+        >
+          重试
+        </el-button>
       </template>
 
-      <el-row :gutter="16" class="status-row">
-        <el-col :xs="12" :sm="6">
-          <el-card shadow="hover" class="status-card">
+      <el-row
+        :gutter="16"
+        class="status-row"
+      >
+        <el-col
+          :xs="12"
+          :sm="6"
+        >
+          <el-card
+            shadow="hover"
+            class="status-card"
+          >
             <div class="status-card-inner">
               <span class="status-label">健康检查</span>
-              <el-tag :type="serviceHealthy ? 'success' : 'danger'" size="large" effect="dark">
+              <el-tag
+                :type="serviceHealthy ? 'success' : 'danger'"
+                size="large"
+                effect="dark"
+              >
                 {{ serviceHealthy ? "正常" : "异常" }}
               </el-tag>
             </div>
           </el-card>
         </el-col>
-        <el-col :xs="12" :sm="6">
-          <el-card shadow="hover" class="status-card">
+        <el-col
+          :xs="12"
+          :sm="6"
+        >
+          <el-card
+            shadow="hover"
+            class="status-card"
+          >
             <div class="status-card-inner">
               <span class="status-label">就绪检查</span>
-              <el-tag :type="serviceReady ? 'success' : 'danger'" size="large" effect="dark">
+              <el-tag
+                :type="serviceReady ? 'success' : 'danger'"
+                size="large"
+                effect="dark"
+              >
                 {{ serviceReady ? "正常" : "异常" }}
               </el-tag>
             </div>
           </el-card>
         </el-col>
-        <el-col :xs="12" :sm="6">
-          <el-card shadow="hover" class="status-card">
+        <el-col
+          :xs="12"
+          :sm="6"
+        >
+          <el-card
+            shadow="hover"
+            class="status-card"
+          >
             <div class="status-card-inner">
               <span class="status-label">Prometheus</span>
-              <el-tag :type="depTagType(dependencies.prometheus)" size="large" effect="dark">
+              <el-tag
+                :type="depTagType(dependencies.prometheus)"
+                size="large"
+                effect="dark"
+              >
                 {{ depLabel(dependencies.prometheus) }}
               </el-tag>
             </div>
           </el-card>
         </el-col>
-        <el-col :xs="12" :sm="6">
-          <el-card shadow="hover" class="status-card">
+        <el-col
+          :xs="12"
+          :sm="6"
+        >
+          <el-card
+            shadow="hover"
+            class="status-card"
+          >
             <div class="status-card-inner">
               <span class="status-label">Redis</span>
-              <el-tag :type="depTagType(dependencies.redis)" size="large" effect="dark">
+              <el-tag
+                :type="depTagType(dependencies.redis)"
+                size="large"
+                effect="dark"
+              >
                 {{ depLabel(dependencies.redis) }}
               </el-tag>
             </div>
@@ -168,33 +228,82 @@ function formatPercent(value: number | undefined): string {
         </el-col>
       </el-row>
 
-      <el-card shadow="never" class="overview-card">
+      <el-card
+        shadow="never"
+        class="overview-card"
+      >
         <template #header>
           <div class="overview-header">
             <span class="overview-title">监控概览</span>
-            <el-tag size="small" type="info" effect="plain">
+            <el-tag
+              size="small"
+              type="info"
+              effect="plain"
+            >
               {{ loading ? "更新中" : formatTime(overview?.generated_at) }}
             </el-tag>
           </div>
         </template>
         <el-row :gutter="16">
-          <el-col :xs="12" :sm="8" :md="4">
-            <el-statistic title="主机总数" :value="overview?.total_hosts ?? '--'" />
+          <el-col
+            :xs="12"
+            :sm="8"
+            :md="4"
+          >
+            <el-statistic
+              title="主机总数"
+              :value="overview?.total_hosts ?? '--'"
+            />
           </el-col>
-          <el-col :xs="12" :sm="8" :md="4">
-            <el-statistic title="健康主机" :value="overview?.healthy_hosts ?? '--'" />
+          <el-col
+            :xs="12"
+            :sm="8"
+            :md="4"
+          >
+            <el-statistic
+              title="健康主机"
+              :value="overview?.healthy_hosts ?? '--'"
+            />
           </el-col>
-          <el-col :xs="12" :sm="8" :md="4">
-            <el-statistic title="离线主机" :value="overview?.down_hosts ?? '--'" />
+          <el-col
+            :xs="12"
+            :sm="8"
+            :md="4"
+          >
+            <el-statistic
+              title="离线主机"
+              :value="overview?.down_hosts ?? '--'"
+            />
           </el-col>
-          <el-col :xs="12" :sm="8" :md="4">
-            <el-statistic title="活跃告警" :value="overview?.active_alerts ?? '--'" />
+          <el-col
+            :xs="12"
+            :sm="8"
+            :md="4"
+          >
+            <el-statistic
+              title="活跃告警"
+              :value="overview?.active_alerts ?? '--'"
+            />
           </el-col>
-          <el-col :xs="12" :sm="8" :md="4">
-            <el-statistic title="平均 CPU" :value="formatPercent(overview?.avg_cpu)" />
+          <el-col
+            :xs="12"
+            :sm="8"
+            :md="4"
+          >
+            <el-statistic
+              title="平均 CPU"
+              :value="formatPercent(overview?.avg_cpu)"
+            />
           </el-col>
-          <el-col :xs="12" :sm="8" :md="4">
-            <el-statistic title="平均内存" :value="formatPercent(overview?.avg_memory)" />
+          <el-col
+            :xs="12"
+            :sm="8"
+            :md="4"
+          >
+            <el-statistic
+              title="平均内存"
+              :value="formatPercent(overview?.avg_memory)"
+            />
           </el-col>
         </el-row>
       </el-card>

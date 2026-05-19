@@ -28,7 +28,10 @@ const settingsItems = [
 
 <template>
   <section class="settings-page">
-    <PageHeader title="设置" subtitle="管理系统的业务配置" />
+    <PageHeader
+      title="设置"
+      subtitle="管理系统的业务配置"
+    />
 
     <el-row :gutter="16">
       <el-col
@@ -38,11 +41,19 @@ const settingsItems = [
         :sm="12"
         :md="8"
       >
-        <RouterLink :to="item.to" class="settings-card-link">
-          <el-card shadow="hover" class="settings-card">
+        <RouterLink
+          :to="item.to"
+          class="settings-card-link"
+        >
+          <el-card
+            shadow="hover"
+            class="settings-card"
+          >
             <div class="settings-card-body">
               <div class="settings-card-icon">
-                <el-icon :size="24"><component :is="item.icon" /></el-icon>
+                <el-icon :size="24">
+                  <component :is="item.icon" />
+                </el-icon>
               </div>
               <div class="settings-card-text">
                 <span class="settings-card-title">{{ item.title }}</span>

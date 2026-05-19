@@ -180,8 +180,15 @@ function formatTooltip(params: TooltipItem | TooltipItem[]): string {
 
 <template>
   <div class="host-resource-chart">
-    <el-empty v-if="!hasData" description="暂无主机指标" />
-    <div ref="chartEl" class="chart-canvas" :class="{ hidden: !hasData }"></div>
+    <el-empty
+      v-if="!hasData"
+      description="暂无主机指标"
+    />
+    <div
+      ref="chartEl"
+      class="chart-canvas"
+      :class="{ hidden: !hasData }"
+    />
   </div>
 </template>
 

@@ -88,7 +88,10 @@ onMounted(loadData);
   <section class="k8s-quotas-page">
     <PageHeader title="Quotas" />
 
-    <FilterPanel @search="applyFilters" @reset="resetFilters">
+    <FilterPanel
+      @search="applyFilters"
+      @reset="resetFilters"
+    >
       <el-form-item label="命名空间">
         <el-select
           v-model="selectedNamespace"
@@ -109,27 +112,60 @@ onMounted(loadData);
       </el-form-item>
     </FilterPanel>
 
-    <el-card shadow="never" class="panel">
+    <el-card
+      shadow="never"
+      class="panel"
+    >
       <template #header>
         <div class="panel-header">
           <div class="panel-title">
-            <el-icon :size="18" color="var(--el-color-primary)"><Search /></el-icon>
+            <el-icon
+              :size="18"
+              color="var(--el-color-primary)"
+            >
+              <Search />
+            </el-icon>
             <span class="panel-title-text">资源配额</span>
           </div>
-          <el-tabs v-model="activeTab" class="header-tabs" @tab-change="handleTabChange">
-            <el-tab-pane label="ResourceQuota" name="quota" />
-            <el-tab-pane label="LimitRange" name="limitrange" />
+          <el-tabs
+            v-model="activeTab"
+            class="header-tabs"
+            @tab-change="handleTabChange"
+          >
+            <el-tab-pane
+              label="ResourceQuota"
+              name="quota"
+            />
+            <el-tab-pane
+              label="LimitRange"
+              name="limitrange"
+            />
           </el-tabs>
         </div>
       </template>
 
-      <StateWrapper :state="stateKey" :error-text="error" empty-text="暂无配额数据">
+      <StateWrapper
+        :state="stateKey"
+        :error-text="error"
+        empty-text="暂无配额数据"
+      >
         <template #retry>
-          <el-button type="primary" @click="loadData">重试</el-button>
+          <el-button
+            type="primary"
+            @click="loadData"
+          >
+            重试
+          </el-button>
         </template>
 
-        <ResourceQuotaTable v-if="activeTab === 'quota'" :quotas="quotas" />
-        <LimitRangeTable v-else :limitranges="limitranges" />
+        <ResourceQuotaTable
+          v-if="activeTab === 'quota'"
+          :quotas="quotas"
+        />
+        <LimitRangeTable
+          v-else
+          :limitranges="limitranges"
+        />
 
         <div class="pagination-wrap">
           <el-pagination

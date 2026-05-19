@@ -61,7 +61,12 @@ watch(
         <h2>{{ activeSession?.title || "新会话" }}</h2>
         <p>{{ activeSession ? activeSession.id : "发送第一条消息后创建" }}</p>
       </div>
-      <el-button :icon="Refresh" :loading="loadingMessages" size="small" @click="emit('refresh')">
+      <el-button
+        :icon="Refresh"
+        :loading="loadingMessages"
+        size="small"
+        @click="emit('refresh')"
+      >
         刷新
       </el-button>
     </header>
@@ -75,8 +80,15 @@ watch(
       class="chat-alert"
     />
 
-    <section ref="messagesEl" class="message-list">
-      <el-skeleton v-if="loadingMessages" :rows="5" animated />
+    <section
+      ref="messagesEl"
+      class="message-list"
+    >
+      <el-skeleton
+        v-if="loadingMessages"
+        :rows="5"
+        animated
+      />
 
       <el-empty
         v-else-if="messages.length === 0"
@@ -106,8 +118,16 @@ watch(
         @keydown="handleDraftKeydown"
       />
       <div class="composer-actions">
-        <span :class="{ over: messageLength > 2000 }" class="char-count">{{ messageLength }}/2000</span>
-        <el-button type="primary" :disabled="!canSend" :loading="sending" @click="handleSubmit">
+        <span
+          :class="{ over: messageLength > 2000 }"
+          class="char-count"
+        >{{ messageLength }}/2000</span>
+        <el-button
+          type="primary"
+          :disabled="!canSend"
+          :loading="sending"
+          @click="handleSubmit"
+        >
           {{ sending ? "发送中" : "发送" }}
         </el-button>
       </div>

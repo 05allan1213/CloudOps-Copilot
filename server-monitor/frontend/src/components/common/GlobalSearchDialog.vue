@@ -161,16 +161,36 @@ function handleClose() {
         autofocus
       />
     </div>
-    <div v-if="searching" class="search-loading">
-      <el-icon class="is-loading" :size="16"><Search /></el-icon>
+    <div
+      v-if="searching"
+      class="search-loading"
+    >
+      <el-icon
+        class="is-loading"
+        :size="16"
+      >
+        <Search />
+      </el-icon>
       <span>搜索中...</span>
     </div>
-    <div v-else-if="results.length === 0 && query.trim()" class="search-empty">
+    <div
+      v-else-if="results.length === 0 && query.trim()"
+      class="search-empty"
+    >
       <span>未找到匹配结果</span>
     </div>
-    <div v-else class="search-results">
-      <div v-for="group in results" :key="group.type" class="search-group">
-        <div class="search-group-label">{{ group.label }}</div>
+    <div
+      v-else
+      class="search-results"
+    >
+      <div
+        v-for="group in results"
+        :key="group.type"
+        class="search-group"
+      >
+        <div class="search-group-label">
+          {{ group.label }}
+        </div>
         <div
           v-for="item in group.items"
           :key="item.label + item.path"
@@ -178,7 +198,10 @@ function handleClose() {
           @click="navigateTo(item)"
         >
           <span class="search-item-label">{{ item.label }}</span>
-          <span v-if="item.detail" class="search-item-detail">{{ item.detail }}</span>
+          <span
+            v-if="item.detail"
+            class="search-item-detail"
+          >{{ item.detail }}</span>
         </div>
       </div>
     </div>

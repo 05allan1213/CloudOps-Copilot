@@ -25,5 +25,10 @@ function tagType(status: string, type?: string): "" | "success" | "warning" | "d
 </script>
 
 <template>
-  <el-tag :type="tagType(status, type)" size="small">{{ status }}</el-tag>
+  <el-tag
+    :type="tagType(status, type)"
+    size="small"
+  >
+    {{ status }}
+  </el-tag>
 </template>

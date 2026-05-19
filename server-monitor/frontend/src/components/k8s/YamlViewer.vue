@@ -56,7 +56,10 @@ function handleClose() {
     destroy-on-close
     @close="handleClose"
   >
-    <div v-loading="loading" class="yaml-viewer">
+    <div
+      v-loading="loading"
+      class="yaml-viewer"
+    >
       <el-alert
         v-if="error"
         :title="error"
@@ -75,7 +78,9 @@ function handleClose() {
       />
     </div>
     <template #footer>
-      <el-button @click="handleClose">Close</el-button>
+      <el-button @click="handleClose">
+        Close
+      </el-button>
     </template>
   </el-dialog>
 </template>

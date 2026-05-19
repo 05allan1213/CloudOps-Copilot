@@ -94,8 +94,14 @@ onMounted(loadData);
   <section class="k8s-storage-page">
     <PageHeader title="Storage" />
 
-    <FilterPanel @search="applyFilters" @reset="resetFilters">
-      <el-form-item v-if="activeTab === 'pvc'" label="命名空间">
+    <FilterPanel
+      @search="applyFilters"
+      @reset="resetFilters"
+    >
+      <el-form-item
+        v-if="activeTab === 'pvc'"
+        label="命名空间"
+      >
         <el-select
           v-model="selectedNamespace"
           placeholder="全部命名空间"
@@ -110,13 +116,41 @@ onMounted(loadData);
           clearable
           style="width: 160px"
         >
-          <el-option v-if="activeTab === 'pv'" label="Bound" value="Bound" />
-          <el-option v-if="activeTab === 'pv'" label="Available" value="Available" />
-          <el-option v-if="activeTab === 'pv'" label="Released" value="Released" />
-          <el-option v-if="activeTab === 'pv'" label="Failed" value="Failed" />
-          <el-option v-if="activeTab === 'pvc'" label="Bound" value="Bound" />
-          <el-option v-if="activeTab === 'pvc'" label="Pending" value="Pending" />
-          <el-option v-if="activeTab === 'pvc'" label="Lost" value="Lost" />
+          <el-option
+            v-if="activeTab === 'pv'"
+            label="Bound"
+            value="Bound"
+          />
+          <el-option
+            v-if="activeTab === 'pv'"
+            label="Available"
+            value="Available"
+          />
+          <el-option
+            v-if="activeTab === 'pv'"
+            label="Released"
+            value="Released"
+          />
+          <el-option
+            v-if="activeTab === 'pv'"
+            label="Failed"
+            value="Failed"
+          />
+          <el-option
+            v-if="activeTab === 'pvc'"
+            label="Bound"
+            value="Bound"
+          />
+          <el-option
+            v-if="activeTab === 'pvc'"
+            label="Pending"
+            value="Pending"
+          />
+          <el-option
+            v-if="activeTab === 'pvc'"
+            label="Lost"
+            value="Lost"
+          />
         </el-select>
       </el-form-item>
       <el-form-item label="搜索">
@@ -131,27 +165,60 @@ onMounted(loadData);
       </el-form-item>
     </FilterPanel>
 
-    <el-card shadow="never" class="panel">
+    <el-card
+      shadow="never"
+      class="panel"
+    >
       <template #header>
         <div class="panel-header">
           <div class="panel-title">
-            <el-icon :size="18" color="var(--el-color-primary)"><Search /></el-icon>
+            <el-icon
+              :size="18"
+              color="var(--el-color-primary)"
+            >
+              <Search />
+            </el-icon>
             <span class="panel-title-text">存储资源</span>
           </div>
-          <el-tabs v-model="activeTab" class="header-tabs" @tab-change="handleTabChange">
-            <el-tab-pane label="PersistentVolumes" name="pv" />
-            <el-tab-pane label="PersistentVolumeClaims" name="pvc" />
+          <el-tabs
+            v-model="activeTab"
+            class="header-tabs"
+            @tab-change="handleTabChange"
+          >
+            <el-tab-pane
+              label="PersistentVolumes"
+              name="pv"
+            />
+            <el-tab-pane
+              label="PersistentVolumeClaims"
+              name="pvc"
+            />
           </el-tabs>
         </div>
       </template>
 
-      <StateWrapper :state="stateKey" :error-text="error" empty-text="暂无存储数据">
+      <StateWrapper
+        :state="stateKey"
+        :error-text="error"
+        empty-text="暂无存储数据"
+      >
         <template #retry>
-          <el-button type="primary" @click="loadData">重试</el-button>
+          <el-button
+            type="primary"
+            @click="loadData"
+          >
+            重试
+          </el-button>
         </template>
 
-        <PVTable v-if="activeTab === 'pv'" :pvs="pvs" />
-        <PVCTable v-else :pvcs="pvcs" />
+        <PVTable
+          v-if="activeTab === 'pv'"
+          :pvs="pvs"
+        />
+        <PVCTable
+          v-else
+          :pvcs="pvcs"
+        />
 
         <div class="pagination-wrap">
           <el-pagination

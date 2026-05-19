@@ -11,7 +11,11 @@ defineProps<{
     <template #header>
       <span class="card-title">规则分析</span>
     </template>
-    <el-empty v-if="ruleResults.length === 0" description="暂无规则分析" :image-size="32" />
+    <el-empty
+      v-if="ruleResults.length === 0"
+      description="暂无规则分析"
+      :image-size="32"
+    />
     <el-timeline v-else>
       <el-timeline-item
         v-for="rule in ruleResults"
@@ -22,7 +26,10 @@ defineProps<{
         <div class="rule-item">
           <div class="rule-head">
             <strong>{{ rule.rule }}</strong>
-            <el-tag :type="rule.passed ? 'success' : 'info'" size="small">
+            <el-tag
+              :type="rule.passed ? 'success' : 'info'"
+              size="small"
+            >
               {{ rule.passed ? "命中" : "未命中" }}
             </el-tag>
           </div>

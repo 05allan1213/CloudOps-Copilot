@@ -10,9 +10,18 @@ function goHome() {
 
 <template>
   <div class="not-found-page">
-    <el-result icon="warning" title="404" sub-title="页面未找到">
+    <el-result
+      icon="warning"
+      title="404"
+      sub-title="页面未找到"
+    >
       <template #extra>
-        <el-button type="primary" @click="goHome">返回首页</el-button>
+        <el-button
+          type="primary"
+          @click="goHome"
+        >
+          返回首页
+        </el-button>
       </template>
     </el-result>
   </div>
