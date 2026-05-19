@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
@@ -306,6 +307,15 @@ type Config struct {
 	// 默认值：50
 	K8SEventLimit int
 
+	K8sCacheTTL     time.Duration
+	K8sListCacheTTL time.Duration
+
+	// K8sEventWatchInterval K8s Event WebSocket 推送轮询间隔
+	// 默认值：5s
+	K8sEventWatchInterval time.Duration
+
+	K8SClusters []K8SClusterConfig
+
 	// CopilotSessionTTL Copilot Redis 会话 TTL
 	// 默认值：7200s（2 小时）
 	CopilotSessionTTL time.Duration
@@ -423,6 +433,15 @@ type Config struct {
 	WSMaxConnections int
 }
 
+type K8SClusterConfig struct {
+	Name              string
+	Kubeconfig        string
+	InCluster         bool
+	AllowedNamespaces []string
+	DefaultNamespace  string
+	RequestTimeout    time.Duration
+}
+
 type RateLimitConfig struct {
 	// Enabled 是否启用限流
 	// 默认值：false
@@ -535,6 +554,10 @@ func Load() Config {
 		K8SLogTailLines:              configutil.PositiveInt("K8S_LOG_TAIL_LINES", 100),
 		K8SLogMaxBytes:               configutil.PositiveInt("K8S_LOG_MAX_BYTES", 32768),
 		K8SEventLimit:                configutil.PositiveInt("K8S_EVENT_LIMIT", 50),
+		K8sCacheTTL:                  configutil.DurationSeconds("K8S_CACHE_TTL_SECONDS", 30),
+		K8sListCacheTTL:              configutil.DurationSeconds("K8S_LIST_CACHE_TTL_SECONDS", 15),
+		K8sEventWatchInterval:        configutil.DurationSeconds("K8S_EVENT_WATCH_INTERVAL_SECONDS", 5),
+		K8SClusters:                  parseK8SClusters(configutil.String("K8S_CLUSTERS", "")),
 		CopilotSessionTTL:            configutil.DurationSeconds("COPILOT_SESSION_TTL_SECONDS", 7200),
 		CopilotMaxMessageLength:      configutil.PositiveInt("COPILOT_MAX_MESSAGE_LENGTH", 2000),
 		CopilotMaxSessionMessages:    configutil.PositiveInt("COPILOT_MAX_SESSION_MESSAGES", 50),
@@ -708,6 +731,12 @@ func (c *Config) Validate() error {
 	if c.K8SEventLimit < 1 || c.K8SEventLimit > 200 {
 		return fmt.Errorf("K8S_EVENT_LIMIT must be in range 1-200, got %d", c.K8SEventLimit)
 	}
+	if c.K8sCacheTTL < 5*time.Second || c.K8sCacheTTL > 300*time.Second {
+		return fmt.Errorf("K8S_CACHE_TTL_SECONDS must be in range 5-300, got %v", c.K8sCacheTTL)
+	}
+	if c.K8sListCacheTTL < 5*time.Second || c.K8sListCacheTTL > 300*time.Second {
+		return fmt.Errorf("K8S_LIST_CACHE_TTL_SECONDS must be in range 5-300, got %v", c.K8sListCacheTTL)
+	}
 	if c.CopilotSessionTTL <= 0 {
 		return fmt.Errorf("COPILOT_SESSION_TTL_SECONDS must be positive, got %v", c.CopilotSessionTTL)
 	}
@@ -795,4 +824,15 @@ func defaultList(values, defaults []string) []string {
 		return values
 	}
 	return defaults
+}
+
+func parseK8SClusters(raw string) []K8SClusterConfig {
+	if raw == "" {
+		return nil
+	}
+	var clusters []K8SClusterConfig
+	if err := json.Unmarshal([]byte(raw), &clusters); err != nil {
+		return nil
+	}
+	return clusters
 }

@@ -8,7 +8,8 @@ import (
 
 var (
 	bearerTokenPattern = regexp.MustCompile(`(?i)bearer\s+[A-Za-z0-9._~+/=-]+`)
-	keyValueSecret     = regexp.MustCompile(`(?i)(password|token|secret|authorization|api[_-]?key)\s*=\s*[^ \n\r\t]+`)
+	keyValueSecret     = regexp.MustCompile(`(?i)(password|passwd|pwd|token|secret|authorization|api[_-]?key|kubeconfig|license)\s*=\s*[^ \n\r\t]+`)
+	yamlValueSecret    = regexp.MustCompile(`(?im)^[ \t]*(password|passwd|pwd|token|secret|api[_-]?key|kubeconfig|license):\s+.+$`)
 	privateKeyPattern  = regexp.MustCompile(`(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----`)
 )
 
@@ -16,6 +17,13 @@ func SanitizeText(value string, maxBytes int) (string, bool) {
 	sanitized := privateKeyPattern.ReplaceAllString(value, "[REDACTED_PRIVATE_KEY]")
 	sanitized = bearerTokenPattern.ReplaceAllString(sanitized, "Bearer [REDACTED]")
 	sanitized = keyValueSecret.ReplaceAllString(sanitized, "$1=[REDACTED]")
+	sanitized = yamlValueSecret.ReplaceAllStringFunc(sanitized, func(match string) string {
+		idx := strings.Index(match, ":")
+		if idx < 0 {
+			return match
+		}
+		return match[:idx+1] + " [REDACTED]"
+	})
 	if maxBytes <= 0 || len(sanitized) <= maxBytes {
 		return sanitized, false
 	}

@@ -46,18 +46,19 @@ type LogQuery struct {
 }
 
 type PodSummary struct {
-	Namespace       string    `json:"namespace"`
-	Name            string    `json:"name"`
-	Phase           string    `json:"phase"`
-	ReadyContainers int       `json:"ready_containers"`
-	TotalContainers int       `json:"total_containers"`
-	RestartCount    int32     `json:"restart_count"`
-	NodeName        string    `json:"node_name,omitempty"`
-	PodIP           string    `json:"pod_ip,omitempty"`
-	OwnerKind       string    `json:"owner_kind,omitempty"`
-	OwnerName       string    `json:"owner_name,omitempty"`
-	StartTime       time.Time `json:"start_time,omitempty"`
-	CollectedAt     time.Time `json:"collected_at"`
+	Namespace       string            `json:"namespace"`
+	Name            string            `json:"name"`
+	Phase           string            `json:"phase"`
+	ReadyContainers int               `json:"ready_containers"`
+	TotalContainers int               `json:"total_containers"`
+	RestartCount    int32             `json:"restart_count"`
+	NodeName        string            `json:"node_name,omitempty"`
+	PodIP           string            `json:"pod_ip,omitempty"`
+	OwnerKind       string            `json:"owner_kind,omitempty"`
+	OwnerName       string            `json:"owner_name,omitempty"`
+	Labels          map[string]string `json:"labels,omitempty"`
+	StartTime       time.Time         `json:"start_time,omitempty"`
+	CollectedAt     time.Time         `json:"collected_at"`
 }
 
 type DeploymentSummary struct {
@@ -97,6 +98,28 @@ type ServicePort struct {
 	TargetPort string `json:"target_port,omitempty"`
 }
 
+type IngressSummary struct {
+	Namespace   string        `json:"namespace"`
+	Name        string        `json:"name"`
+	Hosts       []string      `json:"hosts"`
+	Paths       []IngressPath `json:"paths"`
+	TLS         []IngressTLS  `json:"tls"`
+	Age         time.Duration `json:"age"`
+	CollectedAt time.Time     `json:"collected_at"`
+}
+
+type IngressPath struct {
+	Host     string `json:"host"`
+	Path     string `json:"path"`
+	PathType string `json:"path_type"`
+	Backend  string `json:"backend"`
+}
+
+type IngressTLS struct {
+	Hosts      []string `json:"hosts"`
+	SecretName string   `json:"secret_name"`
+}
+
 type NodeSummary struct {
 	Name           string          `json:"name"`
 	Ready          bool            `json:"ready"`
@@ -117,6 +140,15 @@ type NodeCondition struct {
 	Status  string `json:"status"`
 	Reason  string `json:"reason,omitempty"`
 	Message string `json:"message,omitempty"`
+}
+
+type ConfigMapSummary struct {
+	Namespace   string            `json:"namespace"`
+	Name        string            `json:"name"`
+	DataKeys    []string          `json:"data_keys"`
+	Data        map[string]string `json:"data"`
+	Age         time.Duration     `json:"age"`
+	CollectedAt time.Time         `json:"collected_at"`
 }
 
 type EventSummary struct {
@@ -141,7 +173,121 @@ type LogSnippet struct {
 	CollectedAt time.Time `json:"collected_at"`
 }
 
+type PVSummary struct {
+	Name         string    `json:"name"`
+	Capacity     string    `json:"capacity"`
+	AccessModes  []string  `json:"access_modes"`
+	Status       string    `json:"status"`
+	ClaimRef     string    `json:"claim_ref,omitempty"`
+	StorageClass string    `json:"storage_class,omitempty"`
+	Age          string    `json:"age"`
+	CollectedAt  time.Time `json:"collected_at"`
+}
+
+type PVCSummary struct {
+	Namespace    string    `json:"namespace"`
+	Name         string    `json:"name"`
+	StorageClass string    `json:"storage_class,omitempty"`
+	VolumeName   string    `json:"volume_name,omitempty"`
+	AccessModes  []string  `json:"access_modes"`
+	Status       string    `json:"status"`
+	Age          string    `json:"age"`
+	CollectedAt  time.Time `json:"collected_at"`
+}
+
+type ResourceQuotaSummary struct {
+	Namespace   string                      `json:"namespace"`
+	Name        string                      `json:"name"`
+	Hard        map[string]ResourceQuantity `json:"hard"`
+	Used        map[string]ResourceQuantity `json:"used"`
+	Age         time.Duration               `json:"age"`
+	CollectedAt time.Time                   `json:"collected_at"`
+}
+
+type ResourceQuantity struct {
+	Value string `json:"value"`
+}
+
+type LimitRangeSummary struct {
+	Namespace   string           `json:"namespace"`
+	Name        string           `json:"name"`
+	Limits      []LimitRangeItem `json:"limits"`
+	Age         time.Duration    `json:"age"`
+	CollectedAt time.Time        `json:"collected_at"`
+}
+
+type LimitRangeItem struct {
+	Type    string `json:"type"`
+	Min     string `json:"min,omitempty"`
+	Max     string `json:"max,omitempty"`
+	Default string `json:"default,omitempty"`
+}
+
+type HPASummary struct {
+	Namespace         string        `json:"namespace"`
+	Name              string        `json:"name"`
+	Reference         string        `json:"reference"`
+	MinReplicas       int32         `json:"min_replicas"`
+	MaxReplicas       int32         `json:"max_replicas"`
+	CurrentReplicas   int32         `json:"current_replicas"`
+	TargetUtilization string        `json:"target_utilization"`
+	Age               time.Duration `json:"age"`
+	CollectedAt       time.Time     `json:"collected_at"`
+}
+
+type DaemonSetSummary struct {
+	Namespace    string        `json:"namespace"`
+	Name         string        `json:"name"`
+	Desired      int32         `json:"desired"`
+	Current      int32         `json:"current"`
+	Ready        int32         `json:"ready"`
+	Updated      int32         `json:"updated"`
+	NodeSelector string        `json:"node_selector"`
+	Age          time.Duration `json:"age"`
+	CollectedAt  time.Time     `json:"collected_at"`
+}
+
+type StatefulSetSummary struct {
+	Namespace       string        `json:"namespace"`
+	Name            string        `json:"name"`
+	ReplicasReady   int32         `json:"replicas_ready"`
+	ReplicasDesired int32         `json:"replicas_desired"`
+	ServiceName     string        `json:"service_name"`
+	Age             time.Duration `json:"age"`
+	CollectedAt     time.Time     `json:"collected_at"`
+}
+
+type JobSummary struct {
+	Namespace   string        `json:"namespace"`
+	Name        string        `json:"name"`
+	Completions string        `json:"completions"`
+	Duration    string        `json:"duration"`
+	Status      string        `json:"status"`
+	Age         time.Duration `json:"age"`
+	CollectedAt time.Time     `json:"collected_at"`
+}
+
 type EvidenceError struct {
 	Source string `json:"source"`
 	Error  string `json:"error"`
+}
+
+type TopologyNode struct {
+	ID         string `json:"id"`
+	Kind       string `json:"kind"`
+	Name       string `json:"name"`
+	Namespace  string `json:"namespace,omitempty"`
+	Status     string `json:"status,omitempty"`
+	DetailPath string `json:"detail_path,omitempty"`
+}
+
+type TopologyEdge struct {
+	Source string `json:"source"`
+	Target string `json:"target"`
+	Type   string `json:"type"`
+}
+
+type TopologyData struct {
+	Nodes []TopologyNode `json:"nodes"`
+	Edges []TopologyEdge `json:"edges"`
 }
