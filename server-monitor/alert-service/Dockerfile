@@ -17,9 +17,9 @@ RUN CGO_ENABLED=0 go build -o /app/alert-service .
 # ============================================
 # 第二阶段：运行
 # ============================================
-FROM alpine:3.19
+FROM alpine:3.21
 
-RUN apk add --no-cache tzdata \
+RUN apk add --no-cache tzdata wget \
 	&& addgroup -S app \
 	&& adduser -S -G app app
 
@@ -30,5 +30,8 @@ COPY --from=builder /app/alert-service .
 USER app
 
 EXPOSE 8081
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8081/healthz || exit 1
 
 CMD ["/app/alert-service"]

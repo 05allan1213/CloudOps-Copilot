@@ -30,9 +30,9 @@ RUN CGO_ENABLED=0 go build -o /app/web .
 # ============================================
 # 第三阶段：运行
 # ============================================
-FROM alpine:3.19
+FROM alpine:3.21
 
-RUN apk add --no-cache tzdata
+RUN apk add --no-cache tzdata wget
 
 WORKDIR /app
 
@@ -44,6 +44,12 @@ COPY runbooks ./runbooks
 ENV STATIC_DIR=/app/static
 ENV RUNBOOK_DIR=/app/runbooks
 
+RUN addgroup -S app && adduser -S -G app app
+USER app
+
 EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8080/healthz || exit 1
 
 CMD ["/app/web"]

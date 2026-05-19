@@ -1,42 +1,98 @@
-.PHONY: all build build-probe build-web build-alert-service run run-probe run-web docker docker-up docker-down docker-logs clean test test-pkg test-k8s test-frontend help dev-deps dev-web dev-k8s dev-frontend dev-stop
-
-all: build
+.PHONY: build build-server-probe build-server-web build-alert-service build-frontend \
+        test test-server-probe test-server-web test-alert-service test-pkg test-k8s test-frontend \
+        lint lint-server-probe lint-server-web lint-alert-service lint-pkg \
+        helm-lint \
+        dev-server-probe dev-server-web dev-alert-service dev-frontend dev-deps dev-k8s dev-stop \
+        ci-check \
+        docker docker-up docker-down docker-logs docker-clean \
+        clean fmt tidy help
 
 # ============================================
 # 构建相关
 # ============================================
 
-build: build-probe build-web build-alert-service
+build: build-server-probe build-server-web build-alert-service build-frontend ## 构建所有服务
 
-build-probe:
+build-server-probe: ## 构建 server-probe
 	@echo "构建 server-probe..."
 	cd server-probe && go build -o probe .
 
-build-web:
+build-server-web: ## 构建 server-web
 	@echo "构建 server-web..."
 	cd server-web && go build -o web .
 
-build-alert-service:
+build-alert-service: ## 构建 alert-service
 	@echo "构建 alert-service..."
 	cd alert-service && go build -o alert-service .
 
-# ============================================
-# 本地运行
-# ============================================
-
-run-probe:
-	@echo "启动 server-probe..."
-	cd server-probe && go run .
-
-run-web:
-	@echo "启动 server-web..."
-	cd server-web && go run .
+build-frontend: ## 构建前端
+	@echo "构建前端..."
+	cd frontend && npm run build
 
 # ============================================
-# 开发模式（无需构建 Docker 镜像）
+# 测试相关
 # ============================================
 
-dev-deps:
+test: test-server-probe test-server-web test-alert-service test-pkg ## 运行所有 Go 测试
+
+test-server-probe: ## 运行 server-probe 测试
+	@echo "运行 server-probe 测试..."
+	cd server-probe && go test -v ./...
+
+test-server-web: ## 运行 server-web 测试
+	@echo "运行 server-web 测试..."
+	cd server-web && go test -v ./...
+
+test-alert-service: ## 运行 alert-service 测试
+	@echo "运行 alert-service 测试..."
+	cd alert-service && go test -v ./...
+
+test-pkg: ## 运行 pkg 测试
+	@echo "运行 pkg 测试..."
+	cd pkg && go test -v ./...
+
+test-k8s: ## 运行 K8s 相关测试
+	@echo "运行 K8s 相关测试..."
+	cd server-web && go test -v ./internal/copilot/k8s/ ./internal/service/k8s/ ./internal/handler/ -run TestK8s
+
+test-frontend: ## 运行前端 ESLint 和类型检查
+	@echo "运行前端 ESLint 和类型检查..."
+	cd frontend && npx eslint . --ext .ts,.vue && npx vue-tsc --noEmit
+
+# ============================================
+# 静态检查
+# ============================================
+
+lint: lint-server-probe lint-server-web lint-alert-service lint-pkg ## 运行所有静态检查
+
+lint-server-probe: ## golangci-lint 检查 server-probe
+	@which golangci-lint > /dev/null || (echo "请先安装 golangci-lint" && exit 1)
+	golangci-lint run ./server-probe/...
+
+lint-server-web: ## golangci-lint 检查 server-web
+	@which golangci-lint > /dev/null || (echo "请先安装 golangci-lint" && exit 1)
+	golangci-lint run ./server-web/...
+
+lint-alert-service: ## golangci-lint 检查 alert-service
+	@which golangci-lint > /dev/null || (echo "请先安装 golangci-lint" && exit 1)
+	golangci-lint run ./alert-service/...
+
+lint-pkg: ## golangci-lint 检查 pkg
+	@which golangci-lint > /dev/null || (echo "请先安装 golangci-lint" && exit 1)
+	golangci-lint run ./pkg/...
+
+# ============================================
+# Helm 检查
+# ============================================
+
+helm-lint: ## Helm Chart 语法检查
+	helm lint charts/server-monitor
+
+# ============================================
+# 开发模式
+# ============================================
+
+dev-deps: ## 启动依赖服务
 	@echo "启动依赖服务（Redis、MySQL、Kafka、Prometheus、AlertManager、Grafana、server-probe）..."
 	docker compose up -d redis mysql kafka kafka-init prometheus alertmanager grafana server-probe
 	@echo "依赖服务已启动"
@@ -49,34 +105,48 @@ dev-deps:
 	@echo "  server-probe: http://localhost:8082"
 	@echo "提示: Prometheus 首次抓取和规则加载通常需要 15-30 秒"
 
-dev-web:
+dev-server-probe: ## 本地运行 server-probe
+	@echo "启动 server-probe..."
+	cd server-probe && go run .
+
+dev-server-web: ## 本地运行 server-web
 	@echo "本地启动 server-web..."
 	@echo "环境变量: PROMETHEUS_URL=http://localhost:9090 REDIS_ADDR=localhost:6379 REDIS_PASSWORD=server-monitor-local-redis JWT_SECRET=server-monitor-local-dev-jwt-secret-change-me ADMIN_PASSWORD=server-monitor-local-admin MYSQL_HOST=localhost KAFKA_BROKERS=localhost:9092 K8S_ENABLED=true"
 	@echo "访问地址: http://localhost:8080/healthz 和 http://localhost:8080/readyz"
 	cd server-web && PROMETHEUS_URL=http://localhost:9090 REDIS_ADDR=localhost:6379 REDIS_PASSWORD=server-monitor-local-redis JWT_SECRET=server-monitor-local-dev-jwt-secret-change-me ADMIN_PASSWORD=server-monitor-local-admin MYSQL_HOST=localhost MYSQL_PORT=3306 MYSQL_DATABASE=server_monitor MYSQL_USER=server_monitor MYSQL_PASSWORD=server-monitor-local-mysql KAFKA_BROKERS=localhost:9092 K8S_ENABLED=true GIN_MODE=debug go run .
 
-dev-k8s: ## 启动 server-web（启用 K8s 集成 + API + Node 查询）
-	K8S_ENABLED=true K8S_NODES_ENABLED=true K8S_API_ENABLED=true K8S_KUBECONFIG=$(HOME)/.kube/config $(MAKE) dev-web
+dev-alert-service: ## 本地运行 alert-service
+	@echo "启动 alert-service..."
+	cd alert-service && go run .
 
-dev-frontend:
+dev-frontend: ## 本地运行前端开发服务器
 	@echo "本地启动前端开发服务器..."
 	@echo "Vite 代理已配置: /api -> localhost:8080, /ws -> ws://localhost:8080"
 	@echo "访问地址: http://localhost:5173"
 	cd frontend && npm run dev
 
-dev-stop:
+dev-k8s: ## 启动 server-web（启用 K8s 集成）
+	K8S_ENABLED=true K8S_NODES_ENABLED=true K8S_API_ENABLED=true K8S_KUBECONFIG=$(HOME)/.kube/config $(MAKE) dev-server-web
+
+dev-stop: ## 停止开发依赖服务
 	@echo "停止开发依赖服务..."
 	docker compose down
+
+# ============================================
+# CI 检查
+# ============================================
+
+ci-check: lint test helm-lint ## 一键 CI 检查
 
 # ============================================
 # Docker 相关
 # ============================================
 
-docker:
+docker: ## 构建 Docker 镜像
 	@echo "构建 Docker 镜像..."
 	docker compose build
 
-docker-up:
+docker-up: ## 启动 Docker Compose
 	@echo "启动 Docker Compose..."
 	docker compose up -d
 	@echo "服务已启动"
@@ -88,59 +158,23 @@ docker-up:
 	@echo "  Kibana:       http://localhost:5601"
 	@echo "提示: 首次启动后等待 15-30 秒，再访问 /readyz 或前端页面"
 
-docker-down:
+docker-down: ## 停止 Docker Compose
 	@echo "停止 Docker Compose..."
 	docker compose down
 
-docker-logs:
+docker-logs: ## 查看 Docker Compose 日志
 	docker compose logs -f
 
-docker-clean:
+docker-clean: ## 清理 Docker 资源
 	@echo "清理 Docker 资源..."
 	docker compose down -v
 	@echo "清理完成"
 
 # ============================================
-# 测试与检查
+# 其他
 # ============================================
 
-test:
-	@echo "运行测试..."
-	cd pkg && go test -v ./...
-	cd server-probe && go test -v ./...
-	cd server-web && go test -v ./...
-	cd alert-service && go test -v ./...
-
-test-pkg:
-	@echo "运行 pkg 测试..."
-	cd pkg && go test -v ./...
-
-test-k8s:
-	@echo "运行 K8s 相关测试..."
-	cd server-web && go test -v ./internal/copilot/k8s/ ./internal/service/k8s/ ./internal/handler/ -run TestK8s
-
-test-frontend:
-	@echo "运行前端类型检查..."
-	cd frontend && npx vue-tsc --noEmit
-
-fmt:
-	@echo "格式化代码..."
-	cd server-probe && go fmt ./...
-	cd server-web && go fmt ./...
-	cd alert-service && go fmt ./...
-
-lint:
-	@echo "静态检查..."
-	@which golangci-lint > /dev/null || (echo "请先安装 golangci-lint" && exit 1)
-	cd server-probe && golangci-lint run
-	cd server-web && golangci-lint run
-	cd alert-service && golangci-lint run
-
-# ============================================
-# 清理
-# ============================================
-
-clean:
+clean: ## 清理构建产物
 	@echo "清理构建产物..."
 	rm -f server-probe/probe
 	rm -f server-web/web
@@ -148,56 +182,19 @@ clean:
 	rm -f main
 	@echo "清理完成"
 
-# ============================================
-# 依赖管理
-# ============================================
+fmt: ## 格式化代码
+	@echo "格式化代码..."
+	cd server-probe && go fmt ./...
+	cd server-web && go fmt ./...
+	cd alert-service && go fmt ./...
 
-tidy:
+tidy: ## 整理依赖
 	@echo "整理依赖..."
 	cd server-probe && go mod tidy
 	cd server-web && go mod tidy
 	cd alert-service && go mod tidy
 
-# ============================================
-# 帮助
-# ============================================
-
-help:
+help: ## 显示帮助信息
 	@echo "Server Monitor - Makefile 命令说明"
 	@echo ""
-	@echo "构建命令:"
-	@echo "  make build          构建所有服务"
-	@echo "  make build-probe    构建 server-probe"
-	@echo "  make build-web      构建 server-web"
-	@echo "  make build-alert-service 构建 alert-service"
-	@echo ""
-	@echo "开发模式（推荐开发阶段使用，无需构建镜像）:"
-	@echo "  make dev-deps       启动依赖服务（Redis/MySQL/Kafka/Prometheus/AlertManager/Grafana/Probe）"
-	@echo "  make dev-web        本地运行 server-web（需先启动 dev-deps）"
-	@echo "  make dev-k8s        本地运行 server-web（启用 K8s 集成 + API + Node 查询）"
-	@echo "  make dev-frontend   本地运行前端开发服务器（需先启动 dev-web）"
-	@echo "  make dev-stop       停止开发依赖服务"
-	@echo ""
-	@echo "Docker 命令（生产/完整部署）:"
-	@echo "  make docker         构建 Docker 镜像"
-	@echo "  make docker-up      启动所有服务"
-	@echo "  make docker-down    停止所有服务"
-	@echo "  make docker-logs    查看服务日志"
-	@echo "  make docker-clean   停止并清理所有数据"
-	@echo ""
-	@echo "本地运行（需自行准备环境变量，推荐使用 dev-web 代替）:"
-	@echo "  make run-probe      运行 server-probe"
-	@echo "  make run-web        运行 server-web"
-	@echo ""
-	@echo "测试与检查:"
-	@echo "  make test           运行所有测试（含 pkg）"
-	@echo "  make test-pkg       仅运行 pkg 测试"
-	@echo "  make test-k8s       运行 K8s 相关测试"
-	@echo "  make test-frontend  运行前端类型检查"
-	@echo "  make fmt            格式化代码"
-	@echo "  make lint           静态检查（需安装 golangci-lint）"
-	@echo ""
-	@echo "其他:"
-	@echo "  make tidy           整理依赖"
-	@echo "  make clean          清理构建产物"
-	@echo "  make help           显示此帮助信息"
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-25s\033[0m %s\n", $$1, $$2}'

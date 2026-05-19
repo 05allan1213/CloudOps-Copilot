@@ -27,6 +27,12 @@ jobs:
         working-directory: server-monitor/server-probe
         run: test -z "$(goimports -l .)"
 
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: server-monitor/server-probe
+          args: --timeout=5m
+
       - name: Test
         working-directory: server-monitor/server-probe
         run: go test ./...
@@ -52,6 +58,12 @@ jobs:
       - name: Goimports
         working-directory: server-monitor/server-web
         run: test -z "$(goimports -l .)"
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: server-monitor/server-web
+          args: --timeout=5m
 
       - name: Test
         working-directory: server-monitor/server-web
@@ -97,6 +109,12 @@ jobs:
         working-directory: server-monitor/alert-service
         run: test -z "$(goimports -l .)"
 
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: server-monitor/alert-service
+          args: --timeout=5m
+
       - name: Test
         working-directory: server-monitor/alert-service
         run: go test ./...
@@ -123,6 +141,12 @@ jobs:
         working-directory: server-monitor/pkg
         run: test -z "$(goimports -l .)"
 
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: server-monitor/pkg
+          args: --timeout=5m
+
       - name: Test
         working-directory: server-monitor/pkg
         run: go test ./...
@@ -146,6 +170,10 @@ jobs:
       - name: Install dependencies
         working-directory: server-monitor/frontend
         run: npm ci
+
+      - name: Run ESLint
+        working-directory: server-monitor/frontend
+        run: npx eslint . --ext .ts,.vue
 
       - name: Build
         working-directory: server-monitor/frontend

@@ -27,14 +27,20 @@ RUN CGO_ENABLED=0 go build -o /app/probe .
 # 第二阶段：运行（Runtime Stage）
 # ============================================
 # 使用 Alpine 最小化镜像，减小镜像体积
-FROM alpine:3.19
+FROM alpine:3.21
 
-RUN apk add --no-cache tzdata
+RUN apk add --no-cache tzdata wget
 
 WORKDIR /app
 
 COPY --from=builder /app/probe .
 
+RUN addgroup -S app && adduser -S -G app app
+USER app
+
 EXPOSE 9090
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:9090/healthz || exit 1
 
 CMD ["/app/probe"]
