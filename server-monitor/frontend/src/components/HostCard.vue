@@ -16,15 +16,15 @@ const detailPath = computed(
 );
 
 function cpuColor(value: number): string {
-  if (value >= 80) return "#ef4444";
-  if (value > 60) return "#f59e0b";
-  return "#22c55e";
+  if (value >= 80) return "var(--el-color-danger)";
+  if (value > 60) return "var(--el-color-warning)";
+  return "var(--el-color-success)";
 }
 
 function memoryColor(value: number): string {
-  if (value >= 85) return "#ef4444";
-  if (value > 70) return "#f59e0b";
-  return "#22c55e";
+  if (value >= 85) return "var(--el-color-danger)";
+  if (value > 70) return "var(--el-color-warning)";
+  return "var(--el-color-success)";
 }
 
 function isHighCPU(host: Host): boolean {
@@ -75,13 +75,23 @@ function riskLabel(host: Host): string {
   >
     <div class="host-header">
       <span class="host-name">{{ host.instance }}</span>
-      <el-tag :type="host.status === 'up' ? 'success' : 'danger'" size="small">
+      <el-tag
+        :type="host.status === 'up' ? 'success' : 'danger'"
+        size="small"
+      >
         {{ host.status === "up" ? "在线" : "离线" }}
       </el-tag>
     </div>
 
-    <div v-if="hostRiskVariant(host) !== 'normal'" class="host-risk">
-      <el-tag :type="riskTagType(host)" size="small" effect="dark">
+    <div
+      v-if="hostRiskVariant(host) !== 'normal'"
+      class="host-risk"
+    >
+      <el-tag
+        :type="riskTagType(host)"
+        size="small"
+        effect="dark"
+      >
         {{ riskLabel(host) }}
       </el-tag>
     </div>
@@ -109,7 +119,12 @@ function riskLabel(host: Host): string {
 
     <div class="host-footer">
       <span class="host-time">最后采集: {{ formatTime(host.lastScrape) }}</span>
-      <el-button type="primary" link size="small" @click="router.push(detailPath)">
+      <el-button
+        type="primary"
+        link
+        size="small"
+        @click="router.push(detailPath)"
+      >
         详情
       </el-button>
     </div>

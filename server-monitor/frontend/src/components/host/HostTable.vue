@@ -11,15 +11,15 @@ defineProps<{
 const router = useRouter();
 
 function cpuColor(value: number): string {
-  if (value >= 80) return "#ef4444";
-  if (value > 60) return "#f59e0b";
-  return "#22c55e";
+  if (value >= 80) return "var(--el-color-danger)";
+  if (value > 60) return "var(--el-color-warning)";
+  return "var(--el-color-success)";
 }
 
 function memoryColor(value: number): string {
-  if (value >= 85) return "#ef4444";
-  if (value > 70) return "#f59e0b";
-  return "#22c55e";
+  if (value >= 85) return "var(--el-color-danger)";
+  if (value > 70) return "var(--el-color-warning)";
+  return "var(--el-color-success)";
 }
 
 function handleRowClick(row: Host) {
@@ -35,15 +35,30 @@ function handleRowClick(row: Host) {
     style="width: 100%"
     @row-click="handleRowClick"
   >
-    <el-table-column prop="instance" label="实例名" min-width="180" show-overflow-tooltip />
-    <el-table-column label="状态" width="100" align="center">
+    <el-table-column
+      prop="instance"
+      label="实例名"
+      min-width="180"
+      show-overflow-tooltip
+    />
+    <el-table-column
+      label="状态"
+      width="100"
+      align="center"
+    >
       <template #default="{ row }">
-        <el-tag :type="row.status === 'up' ? 'success' : 'danger'" size="small">
+        <el-tag
+          :type="row.status === 'up' ? 'success' : 'danger'"
+          size="small"
+        >
           {{ row.status === "up" ? "在线" : "离线" }}
         </el-tag>
       </template>
     </el-table-column>
-    <el-table-column label="CPU" width="200">
+    <el-table-column
+      label="CPU"
+      width="200"
+    >
       <template #default="{ row }">
         <el-progress
           :percentage="Number(row.cpu.toFixed(1))"
@@ -53,7 +68,10 @@ function handleRowClick(row: Host) {
         />
       </template>
     </el-table-column>
-    <el-table-column label="内存" width="200">
+    <el-table-column
+      label="内存"
+      width="200"
+    >
       <template #default="{ row }">
         <el-progress
           :percentage="Number(row.memory.toFixed(1))"
@@ -63,12 +81,19 @@ function handleRowClick(row: Host) {
         />
       </template>
     </el-table-column>
-    <el-table-column label="最后采集" width="180">
+    <el-table-column
+      label="最后采集"
+      width="180"
+    >
       <template #default="{ row }">
         {{ formatTime(row.lastScrape) }}
       </template>
     </el-table-column>
-    <el-table-column label="操作" width="100" align="center">
+    <el-table-column
+      label="操作"
+      width="100"
+      align="center"
+    >
       <template #default="{ row }">
         <el-button
           type="primary"

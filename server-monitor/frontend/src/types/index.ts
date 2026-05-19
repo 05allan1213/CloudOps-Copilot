@@ -33,7 +33,7 @@ export interface Host {
 export interface AuthUser {
   id: number;
   username: string;
-  role: "admin" | "viewer" | string;
+  role: "admin" | "viewer";
 }
 
 export interface LoginResponse {
@@ -64,7 +64,7 @@ export interface AlertRule {
   name: string;
   expr: string;
   duration: string;
-  severity: "critical" | "warning" | "info" | string;
+  severity: "critical" | "warning" | "info";
   summary: string;
   description: string;
   enabled: boolean;
@@ -89,7 +89,7 @@ export interface AlertRuleSyncResult {
 export interface NotificationChannel {
   id: number;
   name: string;
-  type: "webhook" | string;
+  type: "webhook";
   url: string;
   enabled: boolean;
   created_at: string;
@@ -108,8 +108,8 @@ export interface AlertHistory {
   fingerprint: string;
   alert_name: string;
   instance: string;
-  severity: "critical" | "warning" | "info" | string;
-  status: "firing" | "resolved" | string;
+  severity: "critical" | "warning" | "info";
+  status: "firing" | "resolved";
   summary: string;
   labels_json: string;
   fired_at: string;
@@ -143,7 +143,7 @@ export interface HostMetricsResponse {
 
 export interface CopilotToolCall {
   name: string;
-  status: "success" | "error" | string;
+  status: "success" | "error";
   error?: string;
   result?: unknown;
 }
@@ -155,15 +155,15 @@ export interface DiagnosisRequest {
   instance?: string;
   target_kind?: string;
   target_name?: string;
-  trigger_type?: "manual" | "chat" | "auto" | string;
+  trigger_type?: "manual" | "chat" | "auto";
 }
 
 export interface DiagnosisUpdate {
   fingerprint: string;
   alert_name: string;
   instance: string;
-  status: "pending" | "running" | "completed" | "failed" | "skipped" | string;
-  trigger_type: "auto" | string;
+  status: "pending" | "running" | "completed" | "failed" | "skipped";
+  trigger_type: "auto";
   report_id?: number;
   summary?: string;
   error?: string;
@@ -439,10 +439,9 @@ export type ActionStatus =
   | "executing"
   | "executed"
   | "failed"
-  | "cancelled"
-  | string;
+  | "cancelled";
 
-export type RiskLevel = "low" | "medium" | "high" | string;
+export type RiskLevel = "low" | "medium" | "high";
 
 export interface PendingAction {
   id: number;
@@ -498,7 +497,7 @@ export interface AuditLog {
   resource_type: string;
   resource_id: string;
   request?: Record<string, unknown>;
-  result: "success" | "failure" | "denied" | "timeout" | string;
+  result: "success" | "failure" | "denied" | "timeout";
   error_message?: string;
   trace_id?: string;
   created_at: string;
@@ -542,8 +541,8 @@ export interface DiagnosisReport {
   target_kind: string;
   target_name: string;
   namespace: string;
-  severity: "critical" | "warning" | "info" | string;
-  status: "pending" | "running" | "completed" | "failed" | string;
+  severity: "critical" | "warning" | "info";
+  status: "pending" | "running" | "completed" | "failed";
   summary: string;
   root_cause: string;
   evidence?: DiagnosisEvidence;
@@ -605,7 +604,7 @@ export interface CopilotSession {
 }
 
 export interface CopilotMessage {
-  role: "user" | "assistant" | string;
+  role: "user" | "assistant";
   content: string;
   created_at: string;
 }
