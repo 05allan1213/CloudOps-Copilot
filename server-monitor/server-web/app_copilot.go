@@ -177,9 +177,9 @@ func initDiagnosisService(cfg config.Config, alertService *appalert.Service, llm
 		}),
 		Collector: copilotdiagnosis.NewEvidenceCollector(copilotdiagnosis.EvidenceOptions{
 			Runner:        runner,
-			Timeout:        45 * time.Second,
-			RunbookLimit:   cfg.RunbookSearchTopN,
-			RerankEnabled:  cfg.RerankerEnabled,
+			Timeout:       45 * time.Second,
+			RunbookLimit:  cfg.RunbookSearchTopN,
+			RerankEnabled: cfg.RerankerEnabled,
 		}),
 		Summarizer: copilotdiagnosis.NewLLMSummarizerWithOptions(llmClient, copilotdiagnosis.LLMSummarizerOptions{
 			Timeout:  cfg.DiagnosisLLMTimeout,

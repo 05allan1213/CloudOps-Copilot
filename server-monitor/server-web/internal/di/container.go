@@ -8,8 +8,8 @@ import (
 
 	"server-web/internal/handler"
 	promclient "server-web/internal/infra/prometheus"
-	rediscache "server-web/internal/infra/redis"
 	"server-web/internal/infra/pubsub"
+	rediscache "server-web/internal/infra/redis"
 	ws "server-web/internal/infra/websocket"
 	"server-web/internal/middleware"
 	"server-web/internal/router"
