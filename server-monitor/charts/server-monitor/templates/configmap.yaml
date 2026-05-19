@@ -48,6 +48,7 @@ data:
   K8S_ENABLED: {{ .Values.k8sIntegration.enabled | quote }}
   K8S_WRITE_ENABLED: {{ .Values.k8sIntegration.writeEnabled | quote }}
   K8S_NODES_ENABLED: {{ .Values.k8sIntegration.nodesEnabled | quote }}
+  K8S_API_ENABLED: {{ .Values.k8sIntegration.apiEnabled | quote }}
   K8S_IN_CLUSTER: {{ .Values.k8sIntegration.inCluster | quote }}
   K8S_KUBECONFIG: {{ .Values.k8sIntegration.kubeconfig | quote }}
   K8S_ALLOWED_NAMESPACES: {{ join "," .Values.k8sIntegration.allowedNamespaces | quote }}
@@ -56,6 +57,10 @@ data:
   K8S_LOG_TAIL_LINES: {{ .Values.k8sIntegration.logTailLines | quote }}
   K8S_LOG_MAX_BYTES: {{ .Values.k8sIntegration.logMaxBytes | quote }}
   K8S_EVENT_LIMIT: {{ .Values.k8sIntegration.eventLimit | quote }}
+  K8S_CACHE_TTL_SECONDS: {{ .Values.k8sIntegration.cacheTTlSeconds | quote }}
+  K8S_LIST_CACHE_TTL_SECONDS: {{ .Values.k8sIntegration.listCacheTTLSeconds | quote }}
+  K8S_EVENT_WATCH_INTERVAL_SECONDS: {{ .Values.k8sIntegration.eventWatchIntervalSeconds | quote }}
+  K8S_CLUSTERS: {{ .Values.k8sIntegration.clusters | quote }}
   COPILOT_SESSION_TTL_SECONDS: {{ .Values.config.copilotSessionTTLSeconds | quote }}
   COPILOT_MAX_MESSAGE_LENGTH: {{ .Values.config.copilotMaxMessageLength | quote }}
   COPILOT_MAX_SESSION_MESSAGES: {{ .Values.config.copilotMaxSessionMessages | quote }}

@@ -79,6 +79,7 @@ k8sIntegration:
   enabled: false
   writeEnabled: false
   nodesEnabled: false
+  apiEnabled: false
   inCluster: true
   kubeconfig: ""
   allowedNamespaces:
@@ -88,6 +89,10 @@ k8sIntegration:
   logTailLines: "100"
   logMaxBytes: "32768"
   eventLimit: "50"
+  cacheTTlSeconds: "30"
+  listCacheTTLSeconds: "15"
+  eventWatchIntervalSeconds: "5"
+  clusters: ""
   rbac:
     create: true
     bindWriteRole: false

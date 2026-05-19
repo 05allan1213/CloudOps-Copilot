@@ -1,17 +1,8 @@
 {
-    "schemes": [
-        "http",
-        "https"
-    ],
     "swagger": "2.0",
     "info": {
-        "description": "服务器监控平台 API，提供主机监控、告警管理、规则配置等功能。",
-        "title": "Server Monitor API",
-        "contact": {},
-        "version": "1.0"
+        "contact": {}
     },
-    "host": "localhost:8080",
-    "basePath": "/api/v1",
     "paths": {
         "/actions": {
             "get": {
@@ -960,6 +951,1251 @@
                 }
             }
         },
+        "/k8s/overview": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "获取 K8s 集群概览，包含 Node/Pod/Deployment/Event 统计。需要 K8S_ENABLED=true 且 K8S_API_ENABLED=true",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "k8s"
+                ],
+                "summary": "K8s 集群概览",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable (K8s not enabled)",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    }
+                }
+            }
+        },
+        "/k8s/nodes": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "获取 K8s Node 列表。需要 K8S_ENABLED=true、K8S_API_ENABLED=true、K8S_NODES_ENABLED=true",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "k8s"
+                ],
+                "summary": "获取 Node 列表（需要 K8S_NODES_ENABLED=true）",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "状态过滤 (ready/notready)",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "角色过滤 (control-plane/worker)",
+                        "name": "role",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "搜索关键词",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "命名空间过滤",
+                        "name": "namespace",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "每页数量",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "页码",
+                        "name": "page",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable (Nodes not enabled)",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    }
+                }
+            }
+        },
+        "/k8s/nodes/by-instance/{instance}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "通过 Prometheus instance 标签查找 K8s Node。需要 K8S_NODES_ENABLED=true",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "k8s"
+                ],
+                "summary": "通过 instance 查找 Node",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Prometheus instance 标签值",
+                        "name": "instance",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    }
+                }
+            }
+        },
+        "/k8s/nodes/{name}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "获取 K8s Node 详情，包含运行中 Pod 和相关 Event。需要 K8S_NODES_ENABLED=true",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "k8s"
+                ],
+                "summary": "获取 Node 详情",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Node 名称",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    }
+                }
+            }
+        },
+        "/k8s/pods": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "获取 K8s Pod 列表",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "k8s"
+                ],
+                "summary": "获取 Pod 列表",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "命名空间过滤",
+                        "name": "namespace",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Phase 过滤 (Running/Pending/Failed/Succeeded)",
+                        "name": "phase",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "搜索关键词",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "每页数量",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "页码",
+                        "name": "page",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    }
+                }
+            }
+        },
+        "/k8s/deployments": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "获取 K8s Deployment 列表",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "k8s"
+                ],
+                "summary": "获取 Deployment 列表",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "命名空间过滤",
+                        "name": "namespace",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "搜索关键词",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "每页数量",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "页码",
+                        "name": "page",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    }
+                }
+            }
+        },
+        "/k8s/services": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "获取 K8s Service 列表",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "k8s"
+                ],
+                "summary": "获取 Service 列表",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "命名空间过滤",
+                        "name": "namespace",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "类型过滤 (ClusterIP/NodePort/LoadBalancer)",
+                        "name": "type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "搜索关键词",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "每页数量",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "页码",
+                        "name": "page",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    }
+                }
+            }
+        },
+        "/k8s/ingresses": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "获取 K8s Ingress 列表",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "k8s"
+                ],
+                "summary": "获取 Ingress 列表",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "命名空间过滤",
+                        "name": "namespace",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "搜索关键词",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "每页数量",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "页码",
+                        "name": "page",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    }
+                }
+            }
+        },
+        "/k8s/events": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "获取 K8s Event 列表",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "k8s"
+                ],
+                "summary": "获取 Event 列表",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "类型过滤 (Normal/Warning)",
+                        "name": "type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "命名空间过滤",
+                        "name": "namespace",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "搜索关键词",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "每页数量",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "页码",
+                        "name": "page",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    }
+                }
+            }
+        },
+        "/k8s/configmaps": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "获取 K8s ConfigMap 列表",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "k8s"
+                ],
+                "summary": "获取 ConfigMap 列表",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "命名空间过滤",
+                        "name": "namespace",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "搜索关键词",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "每页数量",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "页码",
+                        "name": "page",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    }
+                }
+            }
+        },
+        "/k8s/persistent-volumes": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "获取 K8s PersistentVolume 列表",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "k8s"
+                ],
+                "summary": "获取 PV 列表",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "状态过滤",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "搜索关键词",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "每页数量",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "页码",
+                        "name": "page",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    }
+                }
+            }
+        },
+        "/k8s/persistent-volume-claims": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "获取 K8s PersistentVolumeClaim 列表",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "k8s"
+                ],
+                "summary": "获取 PVC 列表",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "命名空间过滤",
+                        "name": "namespace",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "状态过滤",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "搜索关键词",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "每页数量",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "页码",
+                        "name": "page",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    }
+                }
+            }
+        },
+        "/k8s/resource-quotas": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "获取 K8s ResourceQuota 列表",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "k8s"
+                ],
+                "summary": "获取 ResourceQuota 列表",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "命名空间过滤",
+                        "name": "namespace",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "搜索关键词",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "每页数量",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "页码",
+                        "name": "page",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    }
+                }
+            }
+        },
+        "/k8s/limit-ranges": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "获取 K8s LimitRange 列表",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "k8s"
+                ],
+                "summary": "获取 LimitRange 列表",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "命名空间过滤",
+                        "name": "namespace",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "搜索关键词",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "每页数量",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "页码",
+                        "name": "page",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    }
+                }
+            }
+        },
+        "/k8s/hpas": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "获取 K8s HorizontalPodAutoscaler 列表",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "k8s"
+                ],
+                "summary": "获取 HPA 列表",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "命名空间过滤",
+                        "name": "namespace",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "搜索关键词",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "每页数量",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "页码",
+                        "name": "page",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    }
+                }
+            }
+        },
+        "/k8s/daemonsets": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "获取 K8s DaemonSet 列表",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "k8s"
+                ],
+                "summary": "获取 DaemonSet 列表",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "命名空间过滤",
+                        "name": "namespace",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "搜索关键词",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "每页数量",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "页码",
+                        "name": "page",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    }
+                }
+            }
+        },
+        "/k8s/statefulsets": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "获取 K8s StatefulSet 列表",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "k8s"
+                ],
+                "summary": "获取 StatefulSet 列表",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "命名空间过滤",
+                        "name": "namespace",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "搜索关键词",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "每页数量",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "页码",
+                        "name": "page",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    }
+                }
+            }
+        },
+        "/k8s/jobs": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "获取 K8s Job 列表",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "k8s"
+                ],
+                "summary": "获取 Job 列表",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "命名空间过滤",
+                        "name": "namespace",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "状态过滤 (Running/Completed/Failed)",
+                        "name": "status",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "搜索关键词",
+                        "name": "search",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "每页数量",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "页码",
+                        "name": "page",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    }
+                }
+            }
+        },
+        "/k8s/topology": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "获取 K8s 资源拓扑数据（Node→Deployment→Service→Pod 关系图）",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "k8s"
+                ],
+                "summary": "获取 K8s 资源拓扑图数据",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "命名空间过滤",
+                        "name": "namespace",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    }
+                }
+            }
+        },
+        "/k8s/clusters": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "获取可用的 K8s 集群列表（多集群支持）",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "k8s"
+                ],
+                "summary": "获取集群列表",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    }
+                }
+            }
+        },
+        "/k8s/pods/{namespace}/{name}/logs": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "获取 K8s Pod 日志",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "k8s"
+                ],
+                "summary": "获取 Pod 日志",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "命名空间",
+                        "name": "namespace",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Pod 名称",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "容器名称",
+                        "name": "container",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "尾部行数",
+                        "name": "tail_lines",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    }
+                }
+            }
+        },
+        "/k8s/resources/{kind}/{namespace}/{name}/yaml": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "获取 K8s 资源 YAML（只读，敏感数据已脱敏）",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "k8s"
+                ],
+                "summary": "获取资源 YAML",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "资源类型 (pod/deployment/service/configmap/daemonset/statefulset/job 等)",
+                        "name": "kind",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "命名空间",
+                        "name": "namespace",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "资源名称",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/server-web_internal_handler.response"
+                        }
+                    }
+                }
+            }
+        },
         "/webhook/alertmanager": {
             "post": {
                 "description": "接收 Alertmanager 发送的告警通知，转发到 Kafka 和 WebSocket",
@@ -1426,13 +2662,6 @@
                     "type": "string"
                 }
             }
-        }
-    },
-    "securityDefinitions": {
-        "BearerAuth": {
-            "type": "apiKey",
-            "name": "Authorization",
-            "in": "header"
         }
     }
 }

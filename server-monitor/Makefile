@@ -1,4 +1,4 @@
-.PHONY: all build build-probe build-web build-alert-service run run-probe run-web docker docker-up docker-down docker-logs clean test test-pkg help dev-deps dev-web dev-frontend dev-stop
+.PHONY: all build build-probe build-web build-alert-service run run-probe run-web docker docker-up docker-down docker-logs clean test test-pkg test-k8s test-frontend help dev-deps dev-web dev-k8s dev-frontend dev-stop
 
 all: build
 
@@ -51,9 +51,12 @@ dev-deps:
 
 dev-web:
 	@echo "本地启动 server-web..."
-	@echo "环境变量: PROMETHEUS_URL=http://localhost:9090 REDIS_ADDR=localhost:6379 REDIS_PASSWORD=server-monitor-local-redis JWT_SECRET=server-monitor-local-dev-jwt-secret-change-me ADMIN_PASSWORD=server-monitor-local-admin MYSQL_HOST=localhost KAFKA_BROKERS=localhost:9092"
+	@echo "环境变量: PROMETHEUS_URL=http://localhost:9090 REDIS_ADDR=localhost:6379 REDIS_PASSWORD=server-monitor-local-redis JWT_SECRET=server-monitor-local-dev-jwt-secret-change-me ADMIN_PASSWORD=server-monitor-local-admin MYSQL_HOST=localhost KAFKA_BROKERS=localhost:9092 K8S_ENABLED=true"
 	@echo "访问地址: http://localhost:8080/healthz 和 http://localhost:8080/readyz"
-	cd server-web && PROMETHEUS_URL=http://localhost:9090 REDIS_ADDR=localhost:6379 REDIS_PASSWORD=server-monitor-local-redis JWT_SECRET=server-monitor-local-dev-jwt-secret-change-me ADMIN_PASSWORD=server-monitor-local-admin MYSQL_HOST=localhost MYSQL_PORT=3306 MYSQL_DATABASE=server_monitor MYSQL_USER=server_monitor MYSQL_PASSWORD=server-monitor-local-mysql KAFKA_BROKERS=localhost:9092 GIN_MODE=debug go run .
+	cd server-web && PROMETHEUS_URL=http://localhost:9090 REDIS_ADDR=localhost:6379 REDIS_PASSWORD=server-monitor-local-redis JWT_SECRET=server-monitor-local-dev-jwt-secret-change-me ADMIN_PASSWORD=server-monitor-local-admin MYSQL_HOST=localhost MYSQL_PORT=3306 MYSQL_DATABASE=server_monitor MYSQL_USER=server_monitor MYSQL_PASSWORD=server-monitor-local-mysql KAFKA_BROKERS=localhost:9092 K8S_ENABLED=true GIN_MODE=debug go run .
+
+dev-k8s: ## 启动 server-web（启用 K8s 集成 + API + Node 查询）
+	K8S_ENABLED=true K8S_NODES_ENABLED=true K8S_API_ENABLED=true K8S_KUBECONFIG=$(HOME)/.kube/config $(MAKE) dev-web
 
 dev-frontend:
 	@echo "本地启动前端开发服务器..."
@@ -112,6 +115,14 @@ test-pkg:
 	@echo "运行 pkg 测试..."
 	cd pkg && go test -v ./...
 
+test-k8s:
+	@echo "运行 K8s 相关测试..."
+	cd server-web && go test -v ./internal/copilot/k8s/ ./internal/service/k8s/ ./internal/handler/ -run TestK8s
+
+test-frontend:
+	@echo "运行前端类型检查..."
+	cd frontend && npx vue-tsc --noEmit
+
 fmt:
 	@echo "格式化代码..."
 	cd server-probe && go fmt ./...
@@ -163,6 +174,7 @@ help:
 	@echo "开发模式（推荐开发阶段使用，无需构建镜像）:"
 	@echo "  make dev-deps       启动依赖服务（Redis/MySQL/Kafka/Prometheus/AlertManager/Grafana/Probe）"
 	@echo "  make dev-web        本地运行 server-web（需先启动 dev-deps）"
+	@echo "  make dev-k8s        本地运行 server-web（启用 K8s 集成 + API + Node 查询）"
 	@echo "  make dev-frontend   本地运行前端开发服务器（需先启动 dev-web）"
 	@echo "  make dev-stop       停止开发依赖服务"
 	@echo ""
@@ -180,6 +192,8 @@ help:
 	@echo "测试与检查:"
 	@echo "  make test           运行所有测试（含 pkg）"
 	@echo "  make test-pkg       仅运行 pkg 测试"
+	@echo "  make test-k8s       运行 K8s 相关测试"
+	@echo "  make test-frontend  运行前端类型检查"
 	@echo "  make fmt            格式化代码"
 	@echo "  make lint           静态检查（需安装 golangci-lint）"
 	@echo ""
