@@ -12,10 +12,11 @@ import { useRouter } from "vue-router";
 import { ArrowLeft } from "@element-plus/icons-vue";
 
 import { fetchHostMetrics } from "../api/hosts";
+import { fetchK8sNodeByInstance } from "../api/k8s";
 import { useTheme } from "../composables/useTheme";
 import StateWrapper from "../components/common/StateWrapper.vue";
 import { useMonitorStore } from "../stores/monitor";
-import type { HostMetricsResponse, RangeSeries } from "../types";
+import type { HostMetricsResponse, RangeSeries, K8sNodeSummary } from "../types";
 
 echarts.use([LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
 
@@ -33,6 +34,8 @@ const selectedRange = ref<RangeOption>("1h");
 const metrics = ref<HostMetricsResponse | null>(null);
 const loading = ref(true);
 const error = ref("");
+const k8sNode = ref<K8sNodeSummary | null>(null);
+const k8sLoading = ref(false);
 const chartEl = ref<HTMLDivElement | null>(null);
 let chart: echarts.ECharts | null = null;
 let resizeObserver: ResizeObserver | null = null;
@@ -71,12 +74,14 @@ const metricCards = computed(() => [
 onMounted(() => {
   initChart();
   loadMetrics();
+  loadK8sNode();
 });
 
 onBeforeUnmount(() => {
   resizeObserver?.disconnect();
   chart?.dispose();
   chart = null;
+  k8sAbortController?.abort();
 });
 
 watch(selectedRange, () => {
@@ -129,6 +134,34 @@ async function loadMetrics() {
 }
 
 let resizeDebounceTimer: number | null = null;
+
+let k8sAbortController: AbortController | null = null;
+
+async function loadK8sNode() {
+  if (!monitor.k8sNodesEnabled) return;
+  if (k8sAbortController) {
+    k8sAbortController.abort();
+  }
+  const controller = new AbortController();
+  k8sAbortController = controller;
+
+  k8sLoading.value = true;
+  try {
+    k8sNode.value = await fetchK8sNodeByInstance(
+      instanceName.value,
+      controller.signal,
+    );
+  } catch {
+    if (!controller.signal.aborted) {
+      k8sNode.value = null;
+    }
+  } finally {
+    if (k8sAbortController === controller) {
+      k8sLoading.value = false;
+      k8sAbortController = null;
+    }
+  }
+}
 
 function initChart() {
   if (!chartEl.value) {
@@ -327,6 +360,45 @@ function roundMetric(value: number): number {
     </el-col>
   </el-row>
 
+  <el-card v-if="monitor.k8sNodesEnabled && k8sNode" shadow="never" class="k8s-node-card">
+    <template #header>
+      <div class="k8s-node-header">
+        <span class="k8s-node-title">K8s Node</span>
+        <el-button type="primary" link size="small" @click="router.push(`/k8s/nodes/${encodeURIComponent(k8sNode!.name)}`)">
+          查看详情
+        </el-button>
+      </div>
+    </template>
+    <div class="k8s-node-info">
+      <div class="k8s-node-item">
+        <span class="k8s-node-label">名称</span>
+        <span class="k8s-node-value">{{ k8sNode.name }}</span>
+      </div>
+      <div class="k8s-node-item">
+        <span class="k8s-node-label">状态</span>
+        <el-tag :type="k8sNode.ready ? 'success' : 'danger'" size="small">
+          {{ k8sNode.ready ? "Ready" : "NotReady" }}
+        </el-tag>
+      </div>
+      <div v-if="k8sNode.roles?.length" class="k8s-node-item">
+        <span class="k8s-node-label">角色</span>
+        <span class="k8s-node-value">{{ k8sNode.roles.join(", ") }}</span>
+      </div>
+      <div v-if="k8sNode.kubelet_version" class="k8s-node-item">
+        <span class="k8s-node-label">Kubelet</span>
+        <span class="k8s-node-value">{{ k8sNode.kubelet_version }}</span>
+      </div>
+      <div v-if="k8sNode.capacity?.cpu" class="k8s-node-item">
+        <span class="k8s-node-label">CPU 容量</span>
+        <span class="k8s-node-value">{{ k8sNode.capacity.cpu }}</span>
+      </div>
+      <div v-if="k8sNode.capacity?.memory" class="k8s-node-item">
+        <span class="k8s-node-label">内存容量</span>
+        <span class="k8s-node-value">{{ k8sNode.capacity.memory }}</span>
+      </div>
+    </div>
+  </el-card>
+
   <StateWrapper
     :state="pageState === 'default' && !hasPercentSeries ? 'empty' : pageState"
     empty-text="暂无趋势数据"
@@ -405,5 +477,44 @@ function roundMetric(value: number): number {
   .detail-header {
     flex-direction: column;
   }
+}
+
+.k8s-node-card {
+  margin-top: 16px;
+}
+
+.k8s-node-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.k8s-node-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--cloudops-text-primary);
+}
+
+.k8s-node-info {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.k8s-node-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.k8s-node-label {
+  font-size: 13px;
+  color: var(--cloudops-text-secondary);
+  min-width: 70px;
+}
+
+.k8s-node-value {
+  font-size: 13px;
+  color: var(--cloudops-text-primary);
 }
 </style>

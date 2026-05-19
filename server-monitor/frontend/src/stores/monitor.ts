@@ -3,7 +3,7 @@ import { defineStore } from "pinia";
 import { ElNotification } from "element-plus";
 
 import { fetchActiveAlerts, fetchAlertEvents } from "../api/alerts";
-import { fetchHosts } from "../api/hosts";
+import { fetchHosts, fetchDashboardOverview } from "../api/hosts";
 import type { ActionUpdate, AlertEvent, AlertRecord, DiagnosisUpdate, Host } from "../types";
 import { severityClass } from "../utils/format";
 
@@ -34,6 +34,8 @@ export const useMonitorStore = defineStore("monitor", () => {
   const selectedEventSeverity = ref<SeverityFilter>("all");
   const lastUpdateTime = ref(Date.now());
   const updateAgo = ref("");
+  const k8sApiEnabled = ref(false);
+  const k8sNodesEnabled = ref(false);
 
   const alertEventsLimit = 8;
 
@@ -225,6 +227,17 @@ export const useMonitorStore = defineStore("monitor", () => {
     }
   }
 
+  async function checkK8sStatus() {
+    try {
+      const overview = await fetchDashboardOverview();
+      k8sApiEnabled.value = overview.k8s_api_enabled ?? false;
+      k8sNodesEnabled.value = overview.k8s_nodes_enabled ?? false;
+    } catch {
+      k8sApiEnabled.value = false;
+      k8sNodesEnabled.value = false;
+    }
+  }
+
   let refreshInProgress = false;
 
   async function refreshAll() {
@@ -234,7 +247,7 @@ export const useMonitorStore = defineStore("monitor", () => {
     refreshInProgress = true;
     refreshing.value = true;
     try {
-      await Promise.all([loadAlerts(), loadAlertEvents(), loadHosts()]);
+      await Promise.all([loadAlerts(), loadAlertEvents(), loadHosts(), checkK8sStatus()]);
       lastUpdateTime.value = Date.now();
     } finally {
       if (loading.value) {
@@ -464,6 +477,8 @@ export const useMonitorStore = defineStore("monitor", () => {
     selectedEventSeverity,
     lastUpdateTime,
     updateAgo,
+    k8sApiEnabled,
+    k8sNodesEnabled,
     criticalCount,
     warningCount,
     infoCount,
@@ -489,6 +504,7 @@ export const useMonitorStore = defineStore("monitor", () => {
     loadAlerts,
     loadAlertEvents,
     loadHosts,
+    checkK8sStatus,
     refreshAll,
     applyIncomingAlert,
     applyIncomingHosts,

@@ -1,15 +1,18 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, markRaw } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import {
   AlarmClock,
   Bell,
+  Box,
   ChatDotRound,
   CircleCheck,
   Clock,
+  Connection,
   Document,
   FirstAidKit,
+  Grid,
   Message,
   Monitor,
   Operation,
@@ -18,6 +21,7 @@ import {
 } from "@element-plus/icons-vue";
 
 import { useAuthStore } from "../../stores/auth";
+import { useMonitorStore } from "../../stores/monitor";
 
 defineProps<{
   collapsed: boolean;
@@ -26,20 +30,24 @@ defineProps<{
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
+const monitor = useMonitorStore();
 
 const iconMap: Record<string, typeof Monitor> = {
-  Monitor,
-  CircleCheck,
-  Bell,
-  Clock,
-  ChatDotRound,
-  FirstAidKit,
-  Operation,
-  Document,
-  Setting,
-  AlarmClock,
-  Message,
-  User,
+  Monitor: markRaw(Monitor),
+  CircleCheck: markRaw(CircleCheck),
+  Bell: markRaw(Bell),
+  Clock: markRaw(Clock),
+  ChatDotRound: markRaw(ChatDotRound),
+  FirstAidKit: markRaw(FirstAidKit),
+  Operation: markRaw(Operation),
+  Document: markRaw(Document),
+  Setting: markRaw(Setting),
+  AlarmClock: markRaw(AlarmClock),
+  Message: markRaw(Message),
+  User: markRaw(User),
+  Grid: markRaw(Grid),
+  Box: markRaw(Box),
+  Connection: markRaw(Connection),
 };
 
 interface MenuItem {
@@ -48,6 +56,7 @@ interface MenuItem {
   icon?: string;
   group: string;
   admin?: boolean;
+  nodesRequired?: boolean;
   children?: MenuItem[];
 }
 
@@ -55,6 +64,19 @@ const menuItems: MenuItem[] = [
   { index: "/", title: "总览", icon: "Monitor", group: "monitor" },
   { index: "/hosts", title: "主机", icon: "Monitor", group: "monitor" },
   { index: "/status", title: "状态", icon: "CircleCheck", group: "monitor" },
+  {
+    index: "k8s-group",
+    title: "K8s",
+    icon: "Grid",
+    group: "k8s",
+    children: [
+      { index: "/k8s", title: "集群概览", icon: "Grid", group: "k8s" },
+      { index: "/k8s/nodes", title: "Nodes", icon: "Monitor", group: "k8s", nodesRequired: true },
+      { index: "/k8s/workloads", title: "Workloads", icon: "Box", group: "k8s" },
+      { index: "/k8s/services", title: "Services", icon: "Connection", group: "k8s" },
+      { index: "/k8s/events", title: "Events", icon: "Bell", group: "k8s" },
+    ],
+  },
   {
     index: "alert-group",
     title: "告警",
@@ -92,13 +114,27 @@ const menuItems: MenuItem[] = [
 ];
 
 const visibleItems = computed(() =>
-  menuItems.filter((item) => !item.admin || auth.isAdmin),
+  menuItems
+    .filter((item) => !item.admin || auth.isAdmin)
+    .filter((item) => item.group !== "k8s" || monitor.k8sApiEnabled)
+    .map((item) => {
+      if (!item.children) return item;
+      return {
+        ...item,
+        children: item.children.filter((child) => {
+          if (child.group === "k8s" && !monitor.k8sApiEnabled) return false;
+          if (child.nodesRequired && !monitor.k8sNodesEnabled) return false;
+          return true;
+        }),
+      };
+    }),
 );
 
 const activeMenu = computed(() => {
   const path = route.path;
 
   if (path.startsWith("/hosts/")) return "/hosts";
+  if (path.startsWith("/k8s/nodes/")) return "/k8s/nodes";
   if (path.startsWith("/diagnosis/")) return "/diagnosis";
   if (path.startsWith("/actions/")) return "/actions";
   if (path.startsWith("/settings/")) return path;
@@ -111,6 +147,9 @@ const defaultOpeneds = computed(() => {
   const path = route.path;
   if (path.startsWith("/alerts") || path.startsWith("/alert-histories")) {
     groups.push("alert-group");
+  }
+  if (path.startsWith("/k8s")) {
+    groups.push("k8s-group");
   }
   if (path.startsWith("/copilot") || path.startsWith("/diagnosis")) {
     groups.push("ai-group");

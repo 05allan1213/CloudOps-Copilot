@@ -478,6 +478,8 @@ export interface DashboardOverview {
   avg_memory: number;
   generated_at: string;
   alert_degraded?: boolean;
+  k8s_api_enabled?: boolean;
+  k8s_nodes_enabled?: boolean;
 }
 
 export interface DependencyStatus {

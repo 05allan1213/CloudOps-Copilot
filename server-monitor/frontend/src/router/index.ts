@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from "vue-router";
 
 import { useAuthStore } from "../stores/auth";
+import { useMonitorStore } from "../stores/monitor";
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -111,6 +112,43 @@ export const router = createRouter({
       meta: { admin: true, title: "用户管理", icon: "User", group: "settings" },
     },
     {
+      path: "/k8s",
+      name: "K8sOverview",
+      component: () => import("../pages/K8sOverviewPage.vue"),
+      meta: { title: "集群概览", icon: "Grid", group: "k8s" },
+    },
+    {
+      path: "/k8s/nodes",
+      name: "K8sNodes",
+      component: () => import("../pages/K8sNodesPage.vue"),
+      meta: { title: "Nodes", icon: "Monitor", group: "k8s", nodesRequired: true },
+    },
+    {
+      path: "/k8s/nodes/:name",
+      name: "K8sNodeDetail",
+      component: () => import("../pages/K8sNodeDetailPage.vue"),
+      props: true,
+      meta: { title: "Node 详情", icon: "Monitor", group: "k8s", hidden: true, nodesRequired: true },
+    },
+    {
+      path: "/k8s/workloads",
+      name: "K8sWorkloads",
+      component: () => import("../pages/K8sWorkloadsPage.vue"),
+      meta: { title: "Workloads", icon: "Box", group: "k8s" },
+    },
+    {
+      path: "/k8s/services",
+      name: "K8sServices",
+      component: () => import("../pages/K8sServicesPage.vue"),
+      meta: { title: "Services", icon: "Connection", group: "k8s" },
+    },
+    {
+      path: "/k8s/events",
+      name: "K8sEvents",
+      component: () => import("../pages/K8sEventsPage.vue"),
+      meta: { title: "Events", icon: "Bell", group: "k8s" },
+    },
+    {
       path: "/:pathMatch(.*)*",
       name: "not-found",
       component: () => import("../pages/NotFoundPage.vue"),
@@ -150,6 +188,13 @@ router.beforeEach(async (to) => {
 
   if (to.meta.admin && !auth.isAdmin) {
     return { path: "/" };
+  }
+
+  if (to.meta.nodesRequired) {
+    const { k8sNodesEnabled } = useMonitorStore();
+    if (!k8sNodesEnabled) {
+      return { path: "/k8s" };
+    }
   }
 
   return true;
