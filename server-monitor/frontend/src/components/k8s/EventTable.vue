@@ -1,11 +1,26 @@
 <script setup lang="ts">
+import { ref } from "vue";
+
 import type { K8sEventSummary } from "../../types";
 
 import K8sStatusBadge from "./K8sStatusBadge.vue";
+import YamlViewer from "./YamlViewer.vue";
 
 defineProps<{
   events: K8sEventSummary[];
 }>();
+
+const yamlVisible = ref(false);
+const yamlKind = ref("event");
+const yamlNamespace = ref("");
+const yamlName = ref("");
+
+function viewYaml(namespace: string, name: string) {
+  yamlKind.value = "event";
+  yamlNamespace.value = namespace;
+  yamlName.value = name;
+  yamlVisible.value = true;
+}
 </script>
 
 <template>
@@ -26,5 +41,23 @@ defineProps<{
         {{ row.last_seen ? new Date(row.last_seen).toLocaleString() : "-" }}
       </template>
     </el-table-column>
+    <el-table-column label="操作" width="80" align="center">
+      <template #default="{ row }">
+        <el-button
+          type="primary"
+          link
+          size="small"
+          @click="viewYaml(row.namespace, row.name)"
+        >
+          YAML
+        </el-button>
+      </template>
+    </el-table-column>
   </el-table>
+  <YamlViewer
+    v-model:visible="yamlVisible"
+    :kind="yamlKind"
+    :namespace="yamlNamespace"
+    :name="yamlName"
+  />
 </template>

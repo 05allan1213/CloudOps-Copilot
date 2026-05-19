@@ -8,16 +8,24 @@ import NodeHostAssociation from "../components/k8s/NodeHostAssociation.vue";
 import PodTable from "../components/k8s/PodTable.vue";
 import EventTable from "../components/k8s/EventTable.vue";
 import { fetchK8sNodeDetail } from "../api/k8s";
+import { createDiagnosis } from "../api/diagnosis";
+import { useMonitorStore } from "../stores/monitor";
 import type { K8sNodeDetail } from "../types/k8s";
+import type { DiagnosisReport } from "../types";
 
 const props = defineProps<{
   name: string;
 }>();
 
 const router = useRouter();
+const monitor = useMonitorStore();
 const detail = ref<K8sNodeDetail | null>(null);
 const loading = ref(true);
 const error = ref("");
+
+const diagnosisLoading = ref(false);
+const diagnosisError = ref("");
+const diagnosisReport = ref<DiagnosisReport | null>(null);
 
 const nodeInfo = computed(() => detail.value?.node ?? null);
 const isReady = computed(() => nodeInfo.value?.ready ?? false);
@@ -83,6 +91,24 @@ async function loadDetail() {
   }
 }
 
+async function runDiagnosis() {
+  diagnosisLoading.value = true;
+  diagnosisError.value = "";
+  diagnosisReport.value = null;
+  try {
+    const report = await createDiagnosis({
+      target_kind: "Node",
+      target_name: props.name,
+      trigger_type: "manual",
+    });
+    diagnosisReport.value = report;
+  } catch (err) {
+    diagnosisError.value = err instanceof Error ? err.message : "诊断失败";
+  } finally {
+    diagnosisLoading.value = false;
+  }
+}
+
 onMounted(loadDetail);
 
 onUnmounted(() => {
@@ -113,6 +139,14 @@ onUnmounted(() => {
         </el-tag>
       </p>
     </div>
+    <el-button
+      v-if="monitor.copilotEnabled"
+      type="primary"
+      :loading="diagnosisLoading"
+      @click="runDiagnosis"
+    >
+      诊断
+    </el-button>
   </div>
 
   <StateWrapper
@@ -157,6 +191,43 @@ onUnmounted(() => {
         </el-card>
       </el-col>
     </el-row>
+
+    <el-card v-if="diagnosisError" shadow="never" class="diagnosis-error-card">
+      <el-alert :title="diagnosisError" type="error" show-icon :closable="false" />
+    </el-card>
+
+    <el-card v-if="diagnosisReport" shadow="never" class="diagnosis-result-card">
+      <template #header>
+        <div class="diagnosis-result-header">
+          <span class="section-title">诊断结果</span>
+          <el-tag
+            :type="diagnosisReport.status === 'completed' ? 'success' : diagnosisReport.status === 'failed' ? 'danger' : 'info'"
+            size="small"
+          >
+            {{ diagnosisReport.status }}
+          </el-tag>
+        </div>
+      </template>
+      <el-descriptions :column="1" border>
+        <el-descriptions-item label="摘要">
+          {{ diagnosisReport.summary || "-" }}
+        </el-descriptions-item>
+        <el-descriptions-item label="根因假设">
+          {{ diagnosisReport.root_cause || "-" }}
+        </el-descriptions-item>
+        <el-descriptions-item label="置信度">
+          {{ Math.round((diagnosisReport.confidence ?? 0) * 100) }}%
+        </el-descriptions-item>
+      </el-descriptions>
+      <div class="diagnosis-result-actions">
+        <router-link
+          :to="`/diagnosis/${diagnosisReport.id}`"
+          class="diagnosis-detail-link"
+        >
+          查看完整诊断报告
+        </router-link>
+      </div>
+    </el-card>
 
     <NodeHostAssociation
       :association="hostAssociation"
@@ -220,6 +291,34 @@ onUnmounted(() => {
 .section-title {
   font-size: 15px;
   font-weight: 600;
+}
+
+.diagnosis-error-card {
+  margin-bottom: 16px;
+}
+
+.diagnosis-result-card {
+  margin-bottom: 16px;
+}
+
+.diagnosis-result-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.diagnosis-result-actions {
+  margin-top: 12px;
+}
+
+.diagnosis-detail-link {
+  color: var(--el-color-primary);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.diagnosis-detail-link:hover {
+  text-decoration: underline;
 }
 
 @media (max-width: 768px) {

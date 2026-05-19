@@ -1,9 +1,25 @@
 <script setup lang="ts">
+import { ref } from "vue";
+
 import type { K8sServiceSummary } from "../../types";
+
+import YamlViewer from "./YamlViewer.vue";
 
 defineProps<{
   services: K8sServiceSummary[];
 }>();
+
+const yamlVisible = ref(false);
+const yamlKind = ref("service");
+const yamlNamespace = ref("");
+const yamlName = ref("");
+
+function viewYaml(namespace: string, name: string) {
+  yamlKind.value = "service";
+  yamlNamespace.value = namespace;
+  yamlName.value = name;
+  yamlVisible.value = true;
+}
 
 function formatPorts(ports?: Array<{ name?: string; protocol: string; port: number; target_port?: string }>): string {
   if (!ports || ports.length === 0) return "-";
@@ -31,5 +47,23 @@ function formatPorts(ports?: Array<{ name?: string; protocol: string; port: numb
         {{ row.selector ? Object.entries(row.selector).map(([k, v]) => `${k}=${v}`).join(", ") : "-" }}
       </template>
     </el-table-column>
+    <el-table-column label="操作" width="80" align="center">
+      <template #default="{ row }">
+        <el-button
+          type="primary"
+          link
+          size="small"
+          @click="viewYaml(row.namespace, row.name)"
+        >
+          YAML
+        </el-button>
+      </template>
+    </el-table-column>
   </el-table>
+  <YamlViewer
+    v-model:visible="yamlVisible"
+    :kind="yamlKind"
+    :namespace="yamlNamespace"
+    :name="yamlName"
+  />
 </template>

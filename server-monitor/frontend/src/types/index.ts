@@ -153,6 +153,8 @@ export interface DiagnosisRequest {
   alert_history_id?: number;
   alert_name?: string;
   instance?: string;
+  target_kind?: string;
+  target_name?: string;
   trigger_type?: "manual" | "chat" | "auto" | string;
 }
 
@@ -190,6 +192,7 @@ export interface K8sPodSummary {
   pod_ip?: string;
   owner_kind?: string;
   owner_name?: string;
+  labels?: Record<string, string>;
   start_time?: string;
   collected_at?: string;
 }
@@ -213,6 +216,28 @@ export interface K8sServiceSummary {
   type: string;
   cluster_ip?: string;
   ports?: Array<{ name?: string; protocol: string; port: number; target_port?: string }>;
+  collected_at?: string;
+}
+
+export interface K8sIngressPath {
+  host: string;
+  path: string;
+  path_type: string;
+  backend: string;
+}
+
+export interface K8sIngressTLS {
+  hosts: string[];
+  secret_name: string;
+}
+
+export interface K8sIngressSummary {
+  namespace: string;
+  name: string;
+  hosts: string[];
+  paths: K8sIngressPath[];
+  tls: K8sIngressTLS[];
+  age: number;
   collected_at?: string;
 }
 
@@ -245,6 +270,129 @@ export interface K8sLogSnippet {
   lines: string[];
   truncated: boolean;
   collected_at?: string;
+}
+
+export interface K8sConfigMapSummary {
+  namespace: string;
+  name: string;
+  data_keys: string[];
+  data: Record<string, string>;
+  age: number;
+  collected_at?: string;
+}
+
+export interface K8sPVSummary {
+  name: string;
+  capacity: string;
+  access_modes: string[];
+  status: string;
+  claim_ref?: string;
+  storage_class?: string;
+  age: string;
+  collected_at?: string;
+}
+
+export interface K8sPVCSummary {
+  namespace: string;
+  name: string;
+  storage_class?: string;
+  volume_name?: string;
+  access_modes: string[];
+  status: string;
+  age: string;
+  collected_at?: string;
+}
+
+export interface K8sResourceQuantity {
+  value: string;
+}
+
+export interface K8sResourceQuotaSummary {
+  namespace: string;
+  name: string;
+  hard: Record<string, K8sResourceQuantity>;
+  used: Record<string, K8sResourceQuantity>;
+  age: number;
+  collected_at?: string;
+}
+
+export interface K8sLimitRangeItem {
+  type: string;
+  min?: string;
+  max?: string;
+  default?: string;
+}
+
+export interface K8sLimitRangeSummary {
+  namespace: string;
+  name: string;
+  limits: K8sLimitRangeItem[];
+  age: number;
+  collected_at?: string;
+}
+
+export interface K8sHPASummary {
+  namespace: string;
+  name: string;
+  reference: string;
+  min_replicas: number;
+  max_replicas: number;
+  current_replicas: number;
+  target_utilization: string;
+  age: number;
+  collected_at?: string;
+}
+
+export interface K8sDaemonSetSummary {
+  namespace: string;
+  name: string;
+  desired: number;
+  current: number;
+  ready: number;
+  updated: number;
+  node_selector: string;
+  age: number;
+  collected_at?: string;
+}
+
+export interface K8sStatefulSetSummary {
+  namespace: string;
+  name: string;
+  replicas_ready: number;
+  replicas_desired: number;
+  service_name: string;
+  age: number;
+  collected_at?: string;
+}
+
+export interface K8sJobSummary {
+  namespace: string;
+  name: string;
+  completions: string;
+  duration: string;
+  status: string;
+  age: number;
+  collected_at?: string;
+}
+
+export interface K8sTopologyNode {
+  id: string;
+  kind: string;
+  name: string;
+  namespace?: string;
+  status?: string;
+  detail_path?: string;
+}
+
+export interface K8sTopologyEdge {
+  source: string;
+  target: string;
+  type: string;
+}
+
+export interface K8sTopologyData {
+  nodes: K8sTopologyNode[];
+  edges: K8sTopologyEdge[];
 }
 
 export interface K8sEvidence {
@@ -480,6 +628,7 @@ export interface DashboardOverview {
   alert_degraded?: boolean;
   k8s_api_enabled?: boolean;
   k8s_nodes_enabled?: boolean;
+  copilot_enabled?: boolean;
 }
 
 export interface DependencyStatus {

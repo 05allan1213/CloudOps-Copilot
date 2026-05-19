@@ -1,7 +1,10 @@
 <script setup lang="ts">
+import { ref } from "vue";
+
 import type { K8sPodSummary } from "../../types";
 
 import K8sStatusBadge from "./K8sStatusBadge.vue";
+import YamlViewer from "./YamlViewer.vue";
 
 defineProps<{
   pods: K8sPodSummary[];
@@ -10,6 +13,18 @@ defineProps<{
 const emit = defineEmits<{
   viewLogs: [namespace: string, name: string];
 }>();
+
+const yamlVisible = ref(false);
+const yamlKind = ref("pod");
+const yamlNamespace = ref("");
+const yamlName = ref("");
+
+function viewYaml(namespace: string, name: string) {
+  yamlKind.value = "pod";
+  yamlNamespace.value = namespace;
+  yamlName.value = name;
+  yamlVisible.value = true;
+}
 </script>
 
 <template>
@@ -34,7 +49,7 @@ const emit = defineEmits<{
         {{ row.owner_kind ? `${row.owner_kind}/${row.owner_name}` : "-" }}
       </template>
     </el-table-column>
-    <el-table-column label="操作" width="80" align="center">
+    <el-table-column label="操作" width="120" align="center">
       <template #default="{ row }">
         <el-button
           type="primary"
@@ -44,7 +59,21 @@ const emit = defineEmits<{
         >
           日志
         </el-button>
+        <el-button
+          type="primary"
+          link
+          size="small"
+          @click="viewYaml(row.namespace, row.name)"
+        >
+          YAML
+        </el-button>
       </template>
     </el-table-column>
   </el-table>
+  <YamlViewer
+    v-model:visible="yamlVisible"
+    :kind="yamlKind"
+    :namespace="yamlNamespace"
+    :name="yamlName"
+  />
 </template>

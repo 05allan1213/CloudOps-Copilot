@@ -1,15 +1,29 @@
 <script setup lang="ts">
+import { ref } from "vue";
 import { useRouter } from "vue-router";
 
 import type { K8sNodeWithHost } from "../../types/k8s";
 
 import K8sStatusBadge from "./K8sStatusBadge.vue";
+import YamlViewer from "./YamlViewer.vue";
 
 defineProps<{
   nodes: K8sNodeWithHost[];
 }>();
 
 const router = useRouter();
+
+const yamlVisible = ref(false);
+const yamlKind = ref("node");
+const yamlNamespace = ref("default");
+const yamlName = ref("");
+
+function viewYaml(name: string) {
+  yamlKind.value = "node";
+  yamlNamespace.value = "default";
+  yamlName.value = name;
+  yamlVisible.value = true;
+}
 
 function handleRowClick(row: K8sNodeWithHost) {
   router.push(`/k8s/nodes/${encodeURIComponent(row.node.name)}`);
@@ -52,7 +66,7 @@ function handleRowClick(row: K8sNodeWithHost) {
         <el-tag v-else type="info" size="small">未关联</el-tag>
       </template>
     </el-table-column>
-    <el-table-column label="操作" width="80" align="center">
+    <el-table-column label="操作" width="120" align="center">
       <template #default="{ row }">
         <el-button
           type="primary"
@@ -62,7 +76,21 @@ function handleRowClick(row: K8sNodeWithHost) {
         >
           详情
         </el-button>
+        <el-button
+          type="primary"
+          link
+          size="small"
+          @click.stop="viewYaml(row.node.name)"
+        >
+          YAML
+        </el-button>
       </template>
     </el-table-column>
   </el-table>
+  <YamlViewer
+    v-model:visible="yamlVisible"
+    :kind="yamlKind"
+    :namespace="yamlNamespace"
+    :name="yamlName"
+  />
 </template>

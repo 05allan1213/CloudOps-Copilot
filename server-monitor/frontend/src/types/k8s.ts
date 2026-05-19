@@ -3,7 +3,18 @@ import type {
   K8sPodSummary,
   K8sDeploymentSummary,
   K8sServiceSummary,
+  K8sIngressSummary,
   K8sEventSummary,
+  K8sPVSummary,
+  K8sPVCSummary,
+  K8sResourceQuotaSummary,
+  K8sLimitRangeSummary,
+  K8sConfigMapSummary,
+  K8sHPASummary,
+  K8sDaemonSetSummary,
+  K8sStatefulSetSummary,
+  K8sJobSummary,
+  K8sTopologyData,
 } from "./index";
 
 /** Node readiness statistics */
@@ -108,9 +119,28 @@ export interface K8sServiceListResult {
   total: number;
 }
 
+/** Paginated ingress list result */
+export interface K8sIngressListResult {
+  items: K8sIngressSummary[];
+  total: number;
+}
+
+/** Query parameters for listing Ingresses */
+export interface K8sIngressQuery {
+  namespace?: string;
+  search?: string;
+  limit?: number;
+}
+
 /** Paginated event list result */
 export interface K8sEventListResult {
   items: K8sEventSummary[];
+  total: number;
+}
+
+/** Paginated configmap list result */
+export interface K8sConfigMapListResult {
+  items: K8sConfigMapSummary[];
   total: number;
 }
 
@@ -152,3 +182,119 @@ export interface K8sEventQuery {
   search?: string;
   limit?: number;
 }
+
+/** Query parameters for listing configmaps */
+export interface K8sConfigMapQuery {
+  namespace?: string;
+  search?: string;
+  limit?: number;
+}
+
+/** Paginated PV list result */
+export interface K8sPVListResult {
+  items: K8sPVSummary[];
+  total: number;
+}
+
+/** Paginated PVC list result */
+export interface K8sPVCListResult {
+  items: K8sPVCSummary[];
+  total: number;
+}
+
+/** Paginated ResourceQuota list result */
+export interface K8sResourceQuotaListResult {
+  items: K8sResourceQuotaSummary[];
+  total: number;
+}
+
+/** Paginated LimitRange list result */
+export interface K8sLimitRangeListResult {
+  items: K8sLimitRangeSummary[];
+  total: number;
+}
+
+/** Query parameters for listing PVs */
+export interface K8sPVQuery {
+  status?: string;
+  search?: string;
+  limit?: number;
+}
+
+/** Query parameters for listing PVCs */
+export interface K8sPVCQuery {
+  namespace?: string;
+  status?: string;
+  search?: string;
+  limit?: number;
+}
+
+/** Query parameters for listing ResourceQuotas */
+export interface K8sResourceQuotaQuery {
+  namespace?: string;
+  search?: string;
+  limit?: number;
+}
+
+/** Query parameters for listing LimitRanges */
+export interface K8sLimitRangeQuery {
+  namespace?: string;
+  search?: string;
+  limit?: number;
+}
+
+/** Paginated HPA list result */
+export interface K8sHPAListResult {
+  items: K8sHPASummary[];
+  total: number;
+}
+
+/** Query parameters for listing HPAs */
+export interface K8sHPAQuery {
+  namespace?: string;
+  search?: string;
+  limit?: number;
+}
+
+/** Paginated DaemonSet list result */
+export interface K8sDaemonSetListResult {
+  items: K8sDaemonSetSummary[];
+  total: number;
+}
+
+/** Query parameters for listing DaemonSets */
+export interface K8sDaemonSetQuery {
+  namespace?: string;
+  search?: string;
+  limit?: number;
+}
+
+/** Paginated StatefulSet list result */
+export interface K8sStatefulSetListResult {
+  items: K8sStatefulSetSummary[];
+  total: number;
+}
+
+/** Query parameters for listing StatefulSets */
+export interface K8sStatefulSetQuery {
+  namespace?: string;
+  search?: string;
+  limit?: number;
+}
+
+/** Paginated Job list result */
+export interface K8sJobListResult {
+  items: K8sJobSummary[];
+  total: number;
+}
+
+/** Query parameters for listing Jobs */
+export interface K8sJobQuery {
+  namespace?: string;
+  status?: string;
+  search?: string;
+  limit?: number;
+}
+
+/** Re-export topology types */
+export type { K8sTopologyData };

@@ -149,6 +149,42 @@ export const router = createRouter({
       meta: { title: "Events", icon: "Bell", group: "k8s" },
     },
     {
+      path: "/k8s/configmaps",
+      name: "K8sConfigMaps",
+      component: () => import("../pages/K8sConfigMapsPage.vue"),
+      meta: { title: "ConfigMaps", icon: "Document", group: "k8s" },
+    },
+    {
+      path: "/k8s/ingresses",
+      name: "K8sIngresses",
+      component: () => import("../pages/K8sIngressesPage.vue"),
+      meta: { title: "Ingress", icon: "Guide", group: "k8s" },
+    },
+    {
+      path: "/k8s/storage",
+      name: "K8sStorage",
+      component: () => import("../pages/K8sStoragePage.vue"),
+      meta: { title: "Storage", icon: "Coin", group: "k8s" },
+    },
+    {
+      path: "/k8s/quotas",
+      name: "K8sQuotas",
+      component: () => import("../pages/K8sQuotasPage.vue"),
+      meta: { title: "Quotas", icon: "DataLine", group: "k8s" },
+    },
+    {
+      path: "/k8s/hpas",
+      name: "K8sHPAs",
+      component: () => import("../pages/K8sHPAPage.vue"),
+      meta: { title: "HPA", icon: "Odometer", group: "k8s" },
+    },
+    {
+      path: "/k8s/topology",
+      name: "K8sTopology",
+      component: () => import("../pages/K8sTopologyPage.vue"),
+      meta: { title: "拓扑图", icon: "Share", group: "k8s" },
+    },
+    {
       path: "/:pathMatch(.*)*",
       name: "not-found",
       component: () => import("../pages/NotFoundPage.vue"),

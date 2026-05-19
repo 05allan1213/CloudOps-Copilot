@@ -8,6 +8,7 @@ import StateWrapper from "../components/common/StateWrapper.vue";
 import EventTable from "../components/k8s/EventTable.vue";
 import { fetchK8sEvents } from "../api/k8s";
 import { usePagination } from "../composables/usePagination";
+import { useK8sEventsWebSocket } from "../composables/useK8sEventsWebSocket";
 import type { K8sEventSummary } from "../types";
 
 const events = ref<K8sEventSummary[]>([]);
@@ -19,6 +20,11 @@ const selectedNamespace = ref("");
 const searchInput = ref("");
 
 const { page, pageSize, total, goToPage, resetPage } = usePagination(20);
+
+const { connectionState, connect: connectWs } = useK8sEventsWebSocket((event: K8sEventSummary) => {
+  events.value.unshift(event);
+  total.value += 1;
+});
 
 const stateKey = computed(() => {
   if (loading.value) return "loading" as const;
@@ -64,7 +70,10 @@ function handlePageChange(newPage: number) {
   loadEvents();
 }
 
-onMounted(loadEvents);
+onMounted(() => {
+  loadEvents();
+  connectWs();
+});
 </script>
 
 <template>
@@ -107,6 +116,9 @@ onMounted(loadEvents);
             <span class="panel-title-text">Event 列表</span>
           </div>
           <div class="panel-actions">
+            <el-tag v-if="connectionState === 'connected'" size="small" type="success">实时</el-tag>
+            <el-tag v-else-if="connectionState === 'connecting'" size="small" type="warning">连接中</el-tag>
+            <el-tag v-else size="small" type="info">离线</el-tag>
             <el-tag size="small" type="info">共 {{ total }} 条</el-tag>
           </div>
         </div>

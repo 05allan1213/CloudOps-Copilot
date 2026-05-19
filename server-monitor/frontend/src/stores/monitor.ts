@@ -36,6 +36,7 @@ export const useMonitorStore = defineStore("monitor", () => {
   const updateAgo = ref("");
   const k8sApiEnabled = ref(false);
   const k8sNodesEnabled = ref(false);
+  const copilotEnabled = ref(false);
 
   const alertEventsLimit = 8;
 
@@ -232,9 +233,11 @@ export const useMonitorStore = defineStore("monitor", () => {
       const overview = await fetchDashboardOverview();
       k8sApiEnabled.value = overview.k8s_api_enabled ?? false;
       k8sNodesEnabled.value = overview.k8s_nodes_enabled ?? false;
+      copilotEnabled.value = overview.copilot_enabled ?? false;
     } catch {
       k8sApiEnabled.value = false;
       k8sNodesEnabled.value = false;
+      copilotEnabled.value = false;
     }
   }
 
@@ -479,6 +482,7 @@ export const useMonitorStore = defineStore("monitor", () => {
     updateAgo,
     k8sApiEnabled,
     k8sNodesEnabled,
+    copilotEnabled,
     criticalCount,
     warningCount,
     infoCount,
