@@ -15,32 +15,25 @@ import (
 
 	"alert-service/alert"
 	"alert-service/config"
-	"alert-service/health"
 	servicemetrics "alert-service/metrics"
 	redisstore "alert-service/redis"
 
+	"server-monitor/pkg/health"
 	"server-monitor/pkg/httpmiddleware"
 	"server-monitor/pkg/kafka"
 	"server-monitor/pkg/shutdown"
 	"server-monitor/pkg/tracer"
 )
 
-const (
-	redisDialTimeout  = 3 * time.Second
-	redisReadTimeout  = 2 * time.Second
-	redisWriteTimeout = 2 * time.Second
-	readinessTimeout  = time.Second
-	shutdownPhases    = 3
-)
-
+// infrastructure holds process-level clients that must be released on shutdown.
 type infrastructure struct {
 	shutdownTracer func(context.Context) error
 	redisClient    *redisstore.Client
 }
 
+// services holds business services and entrypoints assembled from infrastructure.
 type services struct {
 	consumer       *kafka.Consumer
-	healthHandler  *health.Handler
 	serviceMetrics *servicemetrics.Metrics
 	server         *http.Server
 }
@@ -51,7 +44,6 @@ type app struct {
 	shutdownTracer func(context.Context) error
 	redisClient    *redisstore.Client
 	consumer       *kafka.Consumer
-	healthHandler  *health.Handler
 	serviceMetrics *servicemetrics.Metrics
 	server         *http.Server
 	ctx            context.Context
@@ -77,7 +69,6 @@ func initApp(ctx context.Context) (*app, error) {
 		shutdownTracer: infra.shutdownTracer,
 		redisClient:    infra.redisClient,
 		consumer:       svc.consumer,
-		healthHandler:  svc.healthHandler,
 		serviceMetrics: svc.serviceMetrics,
 		server:         svc.server,
 		ctx:            appCtx,
@@ -94,9 +85,9 @@ func initInfrastructure(ctx context.Context, cfg config.Config) infrastructure {
 		redisClient: redisstore.NewClient(redisstore.Options{
 			Addr:         cfg.RedisAddr,
 			Password:     cfg.RedisPassword,
-			DialTimeout:  redisDialTimeout,
-			ReadTimeout:  redisReadTimeout,
-			WriteTimeout: redisWriteTimeout,
+			DialTimeout:  cfg.RedisDialTimeout,
+			ReadTimeout:  cfg.RedisReadTimeout,
+			WriteTimeout: cfg.RedisWriteTimeout,
 		}),
 	}
 }
@@ -115,14 +106,12 @@ func initServices(cfg config.Config, infra infrastructure) (services, error) {
 	}
 	consumer.SetObserver(serviceMetrics)
 
-	healthHandler := health.NewHandler(infra.redisClient, readinessTimeout)
 	return services{
 		consumer:       consumer,
-		healthHandler:  healthHandler,
 		serviceMetrics: serviceMetrics,
 		server: &http.Server{
 			Addr:              cfg.ListenAddr,
-			Handler:           loggingMiddleware(recoveryMiddleware(newMux(healthHandler, serviceMetrics))),
+			Handler:           loggingMiddleware(recoveryMiddleware(newMux(serviceMetrics))),
 			ReadHeaderTimeout: cfg.HTTPReadHeaderTimeout,
 			ReadTimeout:       cfg.HTTPReadTimeout,
 			WriteTimeout:      cfg.HTTPWriteTimeout,
@@ -153,10 +142,11 @@ func initTracer(ctx context.Context, cfg config.Config) func(context.Context) er
 	return shutdownTracer
 }
 
-func newMux(healthHandler *health.Handler, serviceMetrics *servicemetrics.Metrics) *http.ServeMux {
+func newMux(serviceMetrics *servicemetrics.Metrics) *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", healthHandler.Healthz)
-	mux.HandleFunc("/readyz", healthHandler.Readyz)
+	healthHandler := health.NewHandler()
+	mux.Handle("/healthz", healthHandler)
+	mux.Handle("/readyz", healthHandler)
 	mux.Handle("/metrics", serviceMetrics.HTTPHandler())
 	return mux
 }
@@ -194,12 +184,10 @@ func startConsumer(app *app) {
 		runConsumerLoop(app.ctx, app.consumerDone, app.consumerErr, func() error {
 			return app.consumer.Consume(app.ctx,
 				func() {
-					app.healthHandler.SetKafkaReady(true)
 					app.serviceMetrics.SetKafkaReady(true)
 					zap.L().Info("kafka consumer ready", zap.Strings("brokers", app.cfg.KafkaBrokers), zap.String("group_id", app.cfg.KafkaGroupID))
 				},
 				func() {
-					app.healthHandler.SetKafkaReady(false)
 					app.serviceMetrics.SetKafkaReady(false)
 				},
 			)
@@ -210,10 +198,9 @@ func startConsumer(app *app) {
 func shutdownApp(app *app) {
 	zap.L().Info("alert-service shutting down")
 	app.cancel()
-	app.healthHandler.SetKafkaReady(false)
 	app.serviceMetrics.SetKafkaReady(false)
 
-	perPhase := phaseTimeout(app.cfg.ShutdownTimeout, shutdownPhases)
+	perPhase := phaseTimeout(app.cfg.ShutdownTimeout, app.cfg.ShutdownPhaseCount)
 
 	if err := app.consumer.Close(); err != nil {
 		zap.L().Warn("kafka consumer close failed", zap.Error(err))

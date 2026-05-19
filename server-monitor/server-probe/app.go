@@ -19,6 +19,7 @@ import (
 	"server-probe/collector"
 	"server-probe/config"
 
+	"server-monitor/pkg/health"
 	"server-monitor/pkg/httpmiddleware"
 	"server-monitor/pkg/shutdown"
 	"server-monitor/pkg/tracer"
@@ -134,20 +135,9 @@ func newMux(cfg config.Config, registry *prometheus.Registry) *http.ServeMux {
 		MaxRequestsInFlight: cfg.PromHTTPMaxRequestsInFlight,
 		Timeout:             cfg.PromHTTPTimeout,
 	}))
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if _, err := w.Write([]byte(`{"healthy":true}`)); err != nil {
-			zap.L().Error("healthz response write failed", zap.Error(err))
-		}
-	})
-	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		if _, err := w.Write([]byte(`{"ready":true}`)); err != nil {
-			zap.L().Error("readyz response write failed", zap.Error(err))
-		}
-	})
+	healthHandler := health.NewHandler()
+	mux.Handle("/healthz", healthHandler)
+	mux.Handle("/readyz", healthHandler)
 	return mux
 }
 

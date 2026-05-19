@@ -49,6 +49,26 @@ type Config struct {
 	// 敏感：是
 	RedisPassword string
 
+	// RedisDialTimeout Redis 连接超时时间
+	// 默认值：3s
+	RedisDialTimeout time.Duration
+
+	// RedisReadTimeout Redis 读取超时时间
+	// 默认值：2s
+	RedisReadTimeout time.Duration
+
+	// RedisWriteTimeout Redis 写入超时时间
+	// 默认值：2s
+	RedisWriteTimeout time.Duration
+
+	// ReadinessTimeout 就绪检查超时时间
+	// 默认值：1s
+	ReadinessTimeout time.Duration
+
+	// ShutdownPhaseCount 优雅关闭阶段数量，用于计算每阶段超时
+	// 默认值：3
+	ShutdownPhaseCount int
+
 	// TraceOTLPEndpoint OpenTelemetry OTLP gRPC 导出端点，格式为 host:port
 	// 默认值：jaeger:4317
 	TraceOTLPEndpoint string
@@ -70,6 +90,11 @@ func Load() Config {
 		KafkaGroupID:          configutil.NonEmptyString("KAFKA_GROUP_ID", "alert-service"),
 		RedisAddr:             configutil.NonEmptyString("REDIS_ADDR", "redis:6379"),
 		RedisPassword:         configutil.String("REDIS_PASSWORD", ""),
+		RedisDialTimeout:      configutil.DurationSeconds("REDIS_DIAL_TIMEOUT_SECONDS", 3),
+		RedisReadTimeout:      configutil.DurationSeconds("REDIS_READ_TIMEOUT_SECONDS", 2),
+		RedisWriteTimeout:     configutil.DurationSeconds("REDIS_WRITE_TIMEOUT_SECONDS", 2),
+		ReadinessTimeout:      configutil.DurationSeconds("READINESS_TIMEOUT_SECONDS", 1),
+		ShutdownPhaseCount:    configutil.PositiveInt("SHUTDOWN_PHASE_COUNT", 3),
 		TraceOTLPEndpoint:     configutil.NonEmptyString("TRACE_OTLP_ENDPOINT", "jaeger:4317"),
 		TraceSampleRate:       configutil.FloatRange("TRACE_SAMPLE_RATE", 1.0, 0, 1),
 	}
