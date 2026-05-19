@@ -1,10 +1,8 @@
-package main
+package startup
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"time"
 
 	"go.uber.org/zap"
 	"k8s.io/client-go/kubernetes"
@@ -14,7 +12,6 @@ import (
 	"server-web/internal/di"
 	"server-web/internal/handler"
 	promclient "server-web/internal/infra/prometheus"
-	ws "server-web/internal/infra/websocket"
 	k8ssvc "server-web/internal/service/k8s"
 )
 
@@ -38,7 +35,7 @@ func (a *promClientAdapter) GetHosts(ctx context.Context) ([]k8ssvc.HostInfo, er
 	return result, nil
 }
 
-func initK8sRuntime(cfg config.Config, container *di.Container) (copilotk8s.Reader, kubernetes.Interface, *k8ssvc.Service, *handler.K8sHandler, error) {
+func InitK8sRuntime(cfg config.Config, container *di.Container) (copilotk8s.Reader, kubernetes.Interface, *k8ssvc.Service, *handler.K8sHandler, error) {
 	if !cfg.K8SEnabled {
 		return nil, nil, nil, nil, nil
 	}
@@ -98,44 +95,6 @@ func initK8sRuntime(cfg config.Config, container *di.Container) (copilotk8s.Read
 
 	k8sHandler := handler.NewK8sHandler(svc, cfg.K8SNodesEnabled, cfg.K8SRequestTimeout, extraClusters)
 	return k8sReader, k8sClient, svc, k8sHandler, nil
-}
-
-func startK8sEventWatcher(ctx context.Context, k8sReader copilotk8s.Reader, hub *ws.Hub, interval time.Duration) {
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				zap.L().Error("k8s event watcher recovered from panic", zap.Any("error", r))
-			}
-		}()
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		var lastEventTime time.Time
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				events, err := k8sReader.ListEvents(ctx, copilotk8s.EventQuery{Limit: 10})
-				if err != nil {
-					zap.L().Warn("k8s event watcher list events failed", zap.Error(err))
-					continue
-				}
-				for i := len(events) - 1; i >= 0; i-- {
-					e := events[i]
-					if !lastEventTime.IsZero() && e.LastSeen.After(lastEventTime) {
-						msg, _ := json.Marshal(map[string]interface{}{
-							"type": "k8s_event",
-							"data": e,
-						})
-						hub.Broadcast(msg)
-					}
-				}
-				if len(events) > 0 {
-					lastEventTime = events[0].LastSeen
-				}
-			}
-		}
-	}()
 }
 
 func k8sConfigFromApp(cfg config.Config) copilotk8s.Config {

@@ -1,4 +1,4 @@
-package main
+package startup
 
 import (
 	"context"
@@ -20,7 +20,7 @@ import (
 	"server-monitor/pkg/tracer"
 )
 
-func initInfrastructure(ctx context.Context, cfg config.Config) (*di.Infra, error) {
+func InitInfra(ctx context.Context, cfg config.Config) (*di.Infra, error) {
 	shutdownTracer := initTracer(ctx, cfg)
 	gin.SetMode(cfg.GinMode)
 	redisClient := rediscache.NewClient(rediscache.Options{

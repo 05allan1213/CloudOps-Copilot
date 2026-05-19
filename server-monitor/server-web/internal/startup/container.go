@@ -1,4 +1,4 @@
-package main
+package startup
 
 import (
 	"context"
@@ -16,7 +16,7 @@ import (
 	authpkg "server-web/internal/service/auth"
 )
 
-func initContainer(cfg *config.Config, infra *di.Infra) (*di.Container, error) {
+func InitContainer(cfg *config.Config, infra *di.Infra) (*di.Container, error) {
 	container := di.NewContainer(di.Config{
 		HostsTTL:       cfg.HostsCacheTTL,
 		DashboardTTL:   cfg.DashboardOverviewTTL,

@@ -20,6 +20,7 @@ import (
 	rediscache "server-web/internal/infra/redis"
 	ws "server-web/internal/infra/websocket"
 	"server-web/internal/router"
+	"server-web/internal/startup"
 
 	eventbus "server-monitor/pkg/kafka"
 	"server-monitor/pkg/shutdown"
@@ -58,24 +59,24 @@ func initApp(ctx context.Context) (*app, error) {
 		return nil, err
 	}
 
-	infra, err := initInfrastructure(ctx, cfg)
+	infra, err := startup.InitInfra(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	container, err := initContainer(&cfg, infra)
+	container, err := startup.InitContainer(&cfg, infra)
 	if err != nil {
 		return nil, err
 	}
 
-	k8sReader, k8sClient, _, k8sHandler, err := initK8sRuntime(cfg, container)
+	k8sReader, k8sClient, _, k8sHandler, err := startup.InitK8sRuntime(cfg, container)
 	if err != nil {
 		return nil, err
 	}
 	container.K8sHandler = k8sHandler
 
 	k8sDeps := copilotk8s.Deps{Reader: k8sReader, Client: k8sClient}
-	copilotRuntime, copilotDeps, err := initCopilot(ctx, cfg, container, k8sDeps)
+	copilotRuntime, copilotDeps, err := startup.InitCopilot(ctx, cfg, container, k8sDeps)
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +88,7 @@ func initApp(ctx context.Context) (*app, error) {
 		return nil, fmt.Errorf("create router: %w", err)
 	}
 
-	diagnosisConsumer, err := initDiagnosisConsumer(cfg, infra.RedisClient, copilotRuntime, infra.WSHub)
+	diagnosisConsumer, err := startup.InitDiagnosisConsumer(cfg, infra.RedisClient, copilotRuntime, infra.WSHub)
 	if err != nil {
 		return nil, err
 	}
@@ -299,4 +300,42 @@ func broadcastHosts(ctx context.Context, promClient *promclient.Client, hub *ws.
 			hub.Broadcast(payload)
 		}
 	}
+}
+
+func startK8sEventWatcher(ctx context.Context, k8sReader copilotk8s.Reader, hub *ws.Hub, interval time.Duration) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				zap.L().Error("k8s event watcher recovered from panic", zap.Any("error", r))
+			}
+		}()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		var lastEventTime time.Time
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				events, err := k8sReader.ListEvents(ctx, copilotk8s.EventQuery{Limit: 10})
+				if err != nil {
+					zap.L().Warn("k8s event watcher list events failed", zap.Error(err))
+					continue
+				}
+				for i := len(events) - 1; i >= 0; i-- {
+					e := events[i]
+					if !lastEventTime.IsZero() && e.LastSeen.After(lastEventTime) {
+						msg, _ := json.Marshal(map[string]interface{}{
+							"type": "k8s_event",
+							"data": e,
+						})
+						hub.Broadcast(msg)
+					}
+				}
+				if len(events) > 0 {
+					lastEventTime = events[0].LastSeen
+				}
+			}
+		}
+	}()
 }

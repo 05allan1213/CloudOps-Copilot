@@ -1,4 +1,4 @@
-package main
+package startup
 
 import (
 	"context"
@@ -34,7 +34,7 @@ import (
 	eventbus "server-monitor/pkg/kafka"
 )
 
-func initCopilot(ctx context.Context, cfg config.Config, container *di.Container, k8sDeps copilotk8s.Deps) (*router.CopilotRuntime, *router.CopilotDeps, error) {
+func InitCopilot(ctx context.Context, cfg config.Config, container *di.Container, k8sDeps copilotk8s.Deps) (*router.CopilotRuntime, *router.CopilotDeps, error) {
 	if !cfg.CopilotEnabled {
 		return nil, nil, nil
 	}
@@ -226,7 +226,7 @@ func toolDefinitions(toolExecutor *copilottool.Executor) []copilotllm.ToolDefini
 	return copilottool.ConvertToOpenAITools(toolExecutor.Registry().List())
 }
 
-func initDiagnosisConsumer(cfg config.Config, redisClient *rediscache.Client, runtime *router.CopilotRuntime, hub *ws.Hub) (*eventbus.Consumer, error) {
+func InitDiagnosisConsumer(cfg config.Config, redisClient *rediscache.Client, runtime *router.CopilotRuntime, hub *ws.Hub) (*eventbus.Consumer, error) {
 	if !cfg.DiagnosisEnabled {
 		zap.L().Info("diagnosis worker disabled")
 		return nil, nil
