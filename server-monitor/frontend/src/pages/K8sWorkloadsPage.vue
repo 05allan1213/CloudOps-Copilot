@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from "vue";
+import { ref, reactive, computed, onMounted, watch } from "vue";
 import { Search } from "@element-plus/icons-vue";
 
 import PageHeader from "../components/common/PageHeader.vue";
@@ -25,274 +25,88 @@ import type {
   K8sStatefulSetSummary,
   K8sJobSummary,
 } from "../types";
+import { useK8sResourceList } from "../composables/useK8sResourceList";
 
 const activeTab = ref("deployments");
 
-const deployments = ref<K8sDeploymentSummary[]>([]);
-const deploymentsTotal = ref(0);
-const deploymentsLoading = ref(false);
-const deploymentsError = ref("");
-const deploymentNamespace = ref("");
-const deploymentSearch = ref("");
-const deploymentPage = ref(1);
-const deploymentPageSize = 20;
+const dep = reactive(
+  useK8sResourceList<K8sDeploymentSummary>({
+    fetchFn: (params) => fetchK8sDeployments(params),
+    pageSize: 20,
+  }),
+);
 
-const pods = ref<K8sPodSummary[]>([]);
-const podsTotal = ref(0);
-const podsLoading = ref(false);
-const podsError = ref("");
-const podNamespace = ref("");
 const podPhase = ref("");
-const podSearch = ref("");
-const podPage = ref(1);
-const podPageSize = 20;
+const pod = reactive(
+  useK8sResourceList<K8sPodSummary>({
+    fetchFn: (params) =>
+      fetchK8sPods({ ...params, phase: podPhase.value || undefined }),
+    pageSize: 20,
+  }),
+);
 
-const daemonSets = ref<K8sDaemonSetSummary[]>([]);
-const daemonSetsTotal = ref(0);
-const daemonSetsLoading = ref(false);
-const daemonSetsError = ref("");
-const daemonSetNamespace = ref("");
-const daemonSetSearch = ref("");
-const daemonSetPage = ref(1);
-const daemonSetPageSize = 20;
+const ds = reactive(
+  useK8sResourceList<K8sDaemonSetSummary>({
+    fetchFn: (params) => fetchK8sDaemonSets(params),
+    pageSize: 20,
+  }),
+);
 
-const statefulSets = ref<K8sStatefulSetSummary[]>([]);
-const statefulSetsTotal = ref(0);
-const statefulSetsLoading = ref(false);
-const statefulSetsError = ref("");
-const statefulSetNamespace = ref("");
-const statefulSetSearch = ref("");
-const statefulSetPage = ref(1);
-const statefulSetPageSize = 20;
+const sts = reactive(
+  useK8sResourceList<K8sStatefulSetSummary>({
+    fetchFn: (params) => fetchK8sStatefulSets(params),
+    pageSize: 20,
+  }),
+);
 
-const jobs = ref<K8sJobSummary[]>([]);
-const jobsTotal = ref(0);
-const jobsLoading = ref(false);
-const jobsError = ref("");
-const jobNamespace = ref("");
 const jobStatus = ref("");
-const jobSearch = ref("");
-const jobPage = ref(1);
-const jobPageSize = 20;
+const job = reactive(
+  useK8sResourceList<K8sJobSummary>({
+    fetchFn: (params) =>
+      fetchK8sJobs({ ...params, status: jobStatus.value || undefined }),
+    pageSize: 20,
+  }),
+);
 
 const yamlVisible = ref(false);
 const yamlKind = ref("");
 const yamlNamespace = ref("");
 const yamlName = ref("");
 
-const deploymentsState = computed<"loading" | "error" | "empty" | "default">(() => {
-  if (deploymentsLoading.value) return "loading";
-  if (deploymentsError.value) return "error";
-  if (deployments.value.length === 0) return "empty";
+const depState = computed<"loading" | "error" | "empty" | "default">(() => {
+  if (dep.loading) return "loading";
+  if (dep.error) return "error";
+  if (dep.items.length === 0) return "empty";
   return "default";
 });
 
-const podsState = computed<"loading" | "error" | "empty" | "default">(() => {
-  if (podsLoading.value) return "loading";
-  if (podsError.value) return "error";
-  if (pods.value.length === 0) return "empty";
+const podState = computed<"loading" | "error" | "empty" | "default">(() => {
+  if (pod.loading) return "loading";
+  if (pod.error) return "error";
+  if (pod.items.length === 0) return "empty";
   return "default";
 });
 
-const daemonSetsState = computed<"loading" | "error" | "empty" | "default">(() => {
-  if (daemonSetsLoading.value) return "loading";
-  if (daemonSetsError.value) return "error";
-  if (daemonSets.value.length === 0) return "empty";
+const dsState = computed<"loading" | "error" | "empty" | "default">(() => {
+  if (ds.loading) return "loading";
+  if (ds.error) return "error";
+  if (ds.items.length === 0) return "empty";
   return "default";
 });
 
-const statefulSetsState = computed<"loading" | "error" | "empty" | "default">(() => {
-  if (statefulSetsLoading.value) return "loading";
-  if (statefulSetsError.value) return "error";
-  if (statefulSets.value.length === 0) return "empty";
+const stsState = computed<"loading" | "error" | "empty" | "default">(() => {
+  if (sts.loading) return "loading";
+  if (sts.error) return "error";
+  if (sts.items.length === 0) return "empty";
   return "default";
 });
 
-const jobsState = computed<"loading" | "error" | "empty" | "default">(() => {
-  if (jobsLoading.value) return "loading";
-  if (jobsError.value) return "error";
-  if (jobs.value.length === 0) return "empty";
+const jobState = computed<"loading" | "error" | "empty" | "default">(() => {
+  if (job.loading) return "loading";
+  if (job.error) return "error";
+  if (job.items.length === 0) return "empty";
   return "default";
 });
-
-async function loadDeployments() {
-  deploymentsLoading.value = true;
-  deploymentsError.value = "";
-  try {
-    const result = await fetchK8sDeployments({
-      namespace: deploymentNamespace.value || undefined,
-      search: deploymentSearch.value || undefined,
-      limit: deploymentPageSize,
-    });
-    deployments.value = result.items;
-    deploymentsTotal.value = result.total;
-  } catch (err) {
-    deploymentsError.value = err instanceof Error ? err.message : "加载 Deployments 失败";
-  } finally {
-    deploymentsLoading.value = false;
-  }
-}
-
-async function loadPods() {
-  podsLoading.value = true;
-  podsError.value = "";
-  try {
-    const result = await fetchK8sPods({
-      namespace: podNamespace.value || undefined,
-      phase: podPhase.value || undefined,
-      search: podSearch.value || undefined,
-      limit: podPageSize,
-    });
-    pods.value = result.items;
-    podsTotal.value = result.total;
-  } catch (err) {
-    podsError.value = err instanceof Error ? err.message : "加载 Pods 失败";
-  } finally {
-    podsLoading.value = false;
-  }
-}
-
-async function loadDaemonSets() {
-  daemonSetsLoading.value = true;
-  daemonSetsError.value = "";
-  try {
-    const result = await fetchK8sDaemonSets({
-      namespace: daemonSetNamespace.value || undefined,
-      search: daemonSetSearch.value || undefined,
-      limit: daemonSetPageSize,
-    });
-    daemonSets.value = result.items;
-    daemonSetsTotal.value = result.total;
-  } catch (err) {
-    daemonSetsError.value = err instanceof Error ? err.message : "加载 DaemonSets 失败";
-  } finally {
-    daemonSetsLoading.value = false;
-  }
-}
-
-async function loadStatefulSets() {
-  statefulSetsLoading.value = true;
-  statefulSetsError.value = "";
-  try {
-    const result = await fetchK8sStatefulSets({
-      namespace: statefulSetNamespace.value || undefined,
-      search: statefulSetSearch.value || undefined,
-      limit: statefulSetPageSize,
-    });
-    statefulSets.value = result.items;
-    statefulSetsTotal.value = result.total;
-  } catch (err) {
-    statefulSetsError.value = err instanceof Error ? err.message : "加载 StatefulSets 失败";
-  } finally {
-    statefulSetsLoading.value = false;
-  }
-}
-
-async function loadJobs() {
-  jobsLoading.value = true;
-  jobsError.value = "";
-  try {
-    const result = await fetchK8sJobs({
-      namespace: jobNamespace.value || undefined,
-      status: jobStatus.value || undefined,
-      search: jobSearch.value || undefined,
-      limit: jobPageSize,
-    });
-    jobs.value = result.items;
-    jobsTotal.value = result.total;
-  } catch (err) {
-    jobsError.value = err instanceof Error ? err.message : "加载 Jobs 失败";
-  } finally {
-    jobsLoading.value = false;
-  }
-}
-
-function applyDeploymentFilters() {
-  deploymentPage.value = 1;
-  loadDeployments();
-}
-
-function resetDeploymentFilters() {
-  deploymentNamespace.value = "";
-  deploymentSearch.value = "";
-  deploymentPage.value = 1;
-  loadDeployments();
-}
-
-function applyPodFilters() {
-  podPage.value = 1;
-  loadPods();
-}
-
-function resetPodFilters() {
-  podNamespace.value = "";
-  podPhase.value = "";
-  podSearch.value = "";
-  podPage.value = 1;
-  loadPods();
-}
-
-function applyDaemonSetFilters() {
-  daemonSetPage.value = 1;
-  loadDaemonSets();
-}
-
-function resetDaemonSetFilters() {
-  daemonSetNamespace.value = "";
-  daemonSetSearch.value = "";
-  daemonSetPage.value = 1;
-  loadDaemonSets();
-}
-
-function applyStatefulSetFilters() {
-  statefulSetPage.value = 1;
-  loadStatefulSets();
-}
-
-function resetStatefulSetFilters() {
-  statefulSetNamespace.value = "";
-  statefulSetSearch.value = "";
-  statefulSetPage.value = 1;
-  loadStatefulSets();
-}
-
-function applyJobFilters() {
-  jobPage.value = 1;
-  loadJobs();
-}
-
-function resetJobFilters() {
-  jobNamespace.value = "";
-  jobStatus.value = "";
-  jobSearch.value = "";
-  jobPage.value = 1;
-  loadJobs();
-}
-
-function handleDeploymentPageChange(page: number) {
-  deploymentPage.value = page;
-  loadDeployments();
-}
-
-function handlePodPageChange(page: number) {
-  podPage.value = page;
-  loadPods();
-}
-
-function handleDaemonSetPageChange(page: number) {
-  daemonSetPage.value = page;
-  loadDaemonSets();
-}
-
-function handleStatefulSetPageChange(page: number) {
-  statefulSetPage.value = page;
-  loadStatefulSets();
-}
-
-function handleJobPageChange(page: number) {
-  jobPage.value = page;
-  loadJobs();
-}
 
 function viewYaml(kind: string, namespace: string, name: string) {
   yamlKind.value = kind;
@@ -301,17 +115,20 @@ function viewYaml(kind: string, namespace: string, name: string) {
   yamlVisible.value = true;
 }
 
+watch(podPhase, () => pod.applyFilters());
+watch(jobStatus, () => job.applyFilters());
+
 onMounted(() => {
-  loadDeployments();
-  loadPods();
+  dep.loadResources();
+  pod.loadResources();
 });
 
 watch(activeTab, () => {
-  if (activeTab.value === "deployments" && deployments.value.length === 0) loadDeployments();
-  if (activeTab.value === "pods" && pods.value.length === 0) loadPods();
-  if (activeTab.value === "daemonsets" && daemonSets.value.length === 0) loadDaemonSets();
-  if (activeTab.value === "statefulsets" && statefulSets.value.length === 0) loadStatefulSets();
-  if (activeTab.value === "jobs" && jobs.value.length === 0) loadJobs();
+  if (activeTab.value === "deployments" && dep.items.length === 0) dep.loadResources();
+  if (activeTab.value === "pods" && pod.items.length === 0) pod.loadResources();
+  if (activeTab.value === "daemonsets" && ds.items.length === 0) ds.loadResources();
+  if (activeTab.value === "statefulsets" && sts.items.length === 0) sts.loadResources();
+  if (activeTab.value === "jobs" && job.items.length === 0) job.loadResources();
 });
 </script>
 
@@ -320,23 +137,38 @@ watch(activeTab, () => {
     <PageHeader title="Workloads" />
 
     <el-tabs v-model="activeTab">
-      <el-tab-pane label="Deployments" name="deployments">
-        <FilterPanel @search="applyDeploymentFilters" @reset="resetDeploymentFilters">
+      <el-tab-pane
+        label="Deployments"
+        name="deployments"
+      >
+        <FilterPanel
+          @search="dep.applyFilters"
+          @reset="dep.resetFilters"
+        >
           <el-form-item label="命名空间">
             <el-select
-              v-model="deploymentNamespace"
+              v-model="dep.namespace"
               placeholder="全部"
               clearable
               style="width: 160px"
             >
-              <el-option label="default" value="default" />
-              <el-option label="kube-system" value="kube-system" />
-              <el-option label="kube-public" value="kube-public" />
+              <el-option
+                label="default"
+                value="default"
+              />
+              <el-option
+                label="kube-system"
+                value="kube-system"
+              />
+              <el-option
+                label="kube-public"
+                value="kube-public"
+              />
             </el-select>
           </el-form-item>
           <el-form-item label="搜索">
             <el-input
-              v-model.trim="deploymentSearch"
+              v-model.trim="dep.searchText"
               placeholder="搜索 Deployment"
               :prefix-icon="Search"
               clearable
@@ -346,54 +178,88 @@ watch(activeTab, () => {
         </FilterPanel>
 
         <StateWrapper
-          :state="deploymentsState"
-          :error-text="deploymentsError"
+          :state="depState"
+          :error-text="dep.error"
           empty-text="暂无 Deployment"
         >
           <template #retry>
-            <el-button type="primary" @click="loadDeployments">重试</el-button>
+            <el-button
+              type="primary"
+              @click="dep.loadResources"
+            >
+              重试
+            </el-button>
           </template>
 
-          <DeploymentTable :deployments="deployments" @view-yaml="(d: K8sDeploymentSummary) => viewYaml('deployment', d.namespace, d.name)" />
+          <DeploymentTable
+            :deployments="dep.items"
+            @view-yaml="(d: K8sDeploymentSummary) => viewYaml('deployment', d.namespace, d.name)"
+          />
 
           <div class="pagination-wrap">
             <el-pagination
-              v-model:current-page="deploymentPage"
-              :page-size="deploymentPageSize"
-              :total="deploymentsTotal"
+              v-model:current-page="dep.page"
+              :page-size="dep.pageSize"
+              :total="dep.total"
               layout="total, prev, pager, next"
               background
-              @current-change="handleDeploymentPageChange"
+              @current-change="dep.handlePageChange"
             />
           </div>
         </StateWrapper>
       </el-tab-pane>
 
-      <el-tab-pane label="Pods" name="pods">
-        <FilterPanel @search="applyPodFilters" @reset="resetPodFilters">
+      <el-tab-pane
+        label="Pods"
+        name="pods"
+      >
+        <FilterPanel
+          @search="pod.applyFilters"
+          @reset="pod.resetFilters"
+        >
           <el-form-item label="命名空间">
             <el-select
-              v-model="podNamespace"
+              v-model="pod.namespace"
               placeholder="全部"
               clearable
               style="width: 160px"
             >
-              <el-option label="default" value="default" />
-              <el-option label="kube-system" value="kube-system" />
-              <el-option label="kube-public" value="kube-public" />
+              <el-option
+                label="default"
+                value="default"
+              />
+              <el-option
+                label="kube-system"
+                value="kube-system"
+              />
+              <el-option
+                label="kube-public"
+                value="kube-public"
+              />
             </el-select>
           </el-form-item>
           <el-form-item label="状态">
-            <el-radio-group v-model="podPhase" size="small">
-              <el-radio-button value="">全部</el-radio-button>
-              <el-radio-button value="Running">Running</el-radio-button>
-              <el-radio-button value="Pending">Pending</el-radio-button>
-              <el-radio-button value="Failed">Failed</el-radio-button>
+            <el-radio-group
+              v-model="podPhase"
+              size="small"
+            >
+              <el-radio-button value="">
+                全部
+              </el-radio-button>
+              <el-radio-button value="Running">
+                Running
+              </el-radio-button>
+              <el-radio-button value="Pending">
+                Pending
+              </el-radio-button>
+              <el-radio-button value="Failed">
+                Failed
+              </el-radio-button>
             </el-radio-group>
           </el-form-item>
           <el-form-item label="搜索">
             <el-input
-              v-model.trim="podSearch"
+              v-model.trim="pod.searchText"
               placeholder="搜索 Pod"
               :prefix-icon="Search"
               clearable
@@ -403,46 +269,69 @@ watch(activeTab, () => {
         </FilterPanel>
 
         <StateWrapper
-          :state="podsState"
-          :error-text="podsError"
+          :state="podState"
+          :error-text="pod.error"
           empty-text="暂无 Pod"
         >
           <template #retry>
-            <el-button type="primary" @click="loadPods">重试</el-button>
+            <el-button
+              type="primary"
+              @click="pod.loadResources"
+            >
+              重试
+            </el-button>
           </template>
 
-          <PodTable :pods="pods" @view-yaml="(p: K8sPodSummary) => viewYaml('pod', p.namespace, p.name)" />
+          <PodTable
+            :pods="pod.items"
+            @view-yaml="(p: K8sPodSummary) => viewYaml('pod', p.namespace, p.name)"
+          />
 
           <div class="pagination-wrap">
             <el-pagination
-              v-model:current-page="podPage"
-              :page-size="podPageSize"
-              :total="podsTotal"
+              v-model:current-page="pod.page"
+              :page-size="pod.pageSize"
+              :total="pod.total"
               layout="total, prev, pager, next"
               background
-              @current-change="handlePodPageChange"
+              @current-change="pod.handlePageChange"
             />
           </div>
         </StateWrapper>
       </el-tab-pane>
 
-      <el-tab-pane label="DaemonSets" name="daemonsets">
-        <FilterPanel @search="applyDaemonSetFilters" @reset="resetDaemonSetFilters">
+      <el-tab-pane
+        label="DaemonSets"
+        name="daemonsets"
+      >
+        <FilterPanel
+          @search="ds.applyFilters"
+          @reset="ds.resetFilters"
+        >
           <el-form-item label="命名空间">
             <el-select
-              v-model="daemonSetNamespace"
+              v-model="ds.namespace"
               placeholder="全部"
               clearable
               style="width: 160px"
             >
-              <el-option label="default" value="default" />
-              <el-option label="kube-system" value="kube-system" />
-              <el-option label="kube-public" value="kube-public" />
+              <el-option
+                label="default"
+                value="default"
+              />
+              <el-option
+                label="kube-system"
+                value="kube-system"
+              />
+              <el-option
+                label="kube-public"
+                value="kube-public"
+              />
             </el-select>
           </el-form-item>
           <el-form-item label="搜索">
             <el-input
-              v-model.trim="daemonSetSearch"
+              v-model.trim="ds.searchText"
               placeholder="搜索 DaemonSet"
               :prefix-icon="Search"
               clearable
@@ -452,46 +341,69 @@ watch(activeTab, () => {
         </FilterPanel>
 
         <StateWrapper
-          :state="daemonSetsState"
-          :error-text="daemonSetsError"
+          :state="dsState"
+          :error-text="ds.error"
           empty-text="暂无 DaemonSet"
         >
           <template #retry>
-            <el-button type="primary" @click="loadDaemonSets">重试</el-button>
+            <el-button
+              type="primary"
+              @click="ds.loadResources"
+            >
+              重试
+            </el-button>
           </template>
 
-          <DaemonSetTable :items="daemonSets" @view-yaml="(ds: K8sDaemonSetSummary) => viewYaml('daemonset', ds.namespace, ds.name)" />
+          <DaemonSetTable
+            :items="ds.items"
+            @view-yaml="(d: K8sDaemonSetSummary) => viewYaml('daemonset', d.namespace, d.name)"
+          />
 
           <div class="pagination-wrap">
             <el-pagination
-              v-model:current-page="daemonSetPage"
-              :page-size="daemonSetPageSize"
-              :total="daemonSetsTotal"
+              v-model:current-page="ds.page"
+              :page-size="ds.pageSize"
+              :total="ds.total"
               layout="total, prev, pager, next"
               background
-              @current-change="handleDaemonSetPageChange"
+              @current-change="ds.handlePageChange"
             />
           </div>
         </StateWrapper>
       </el-tab-pane>
 
-      <el-tab-pane label="StatefulSets" name="statefulsets">
-        <FilterPanel @search="applyStatefulSetFilters" @reset="resetStatefulSetFilters">
+      <el-tab-pane
+        label="StatefulSets"
+        name="statefulsets"
+      >
+        <FilterPanel
+          @search="sts.applyFilters"
+          @reset="sts.resetFilters"
+        >
           <el-form-item label="命名空间">
             <el-select
-              v-model="statefulSetNamespace"
+              v-model="sts.namespace"
               placeholder="全部"
               clearable
               style="width: 160px"
             >
-              <el-option label="default" value="default" />
-              <el-option label="kube-system" value="kube-system" />
-              <el-option label="kube-public" value="kube-public" />
+              <el-option
+                label="default"
+                value="default"
+              />
+              <el-option
+                label="kube-system"
+                value="kube-system"
+              />
+              <el-option
+                label="kube-public"
+                value="kube-public"
+              />
             </el-select>
           </el-form-item>
           <el-form-item label="搜索">
             <el-input
-              v-model.trim="statefulSetSearch"
+              v-model.trim="sts.searchText"
               placeholder="搜索 StatefulSet"
               :prefix-icon="Search"
               clearable
@@ -501,54 +413,88 @@ watch(activeTab, () => {
         </FilterPanel>
 
         <StateWrapper
-          :state="statefulSetsState"
-          :error-text="statefulSetsError"
+          :state="stsState"
+          :error-text="sts.error"
           empty-text="暂无 StatefulSet"
         >
           <template #retry>
-            <el-button type="primary" @click="loadStatefulSets">重试</el-button>
+            <el-button
+              type="primary"
+              @click="sts.loadResources"
+            >
+              重试
+            </el-button>
           </template>
 
-          <StatefulSetTable :items="statefulSets" @view-yaml="(sts: K8sStatefulSetSummary) => viewYaml('statefulset', sts.namespace, sts.name)" />
+          <StatefulSetTable
+            :items="sts.items"
+            @view-yaml="(s: K8sStatefulSetSummary) => viewYaml('statefulset', s.namespace, s.name)"
+          />
 
           <div class="pagination-wrap">
             <el-pagination
-              v-model:current-page="statefulSetPage"
-              :page-size="statefulSetPageSize"
-              :total="statefulSetsTotal"
+              v-model:current-page="sts.page"
+              :page-size="sts.pageSize"
+              :total="sts.total"
               layout="total, prev, pager, next"
               background
-              @current-change="handleStatefulSetPageChange"
+              @current-change="sts.handlePageChange"
             />
           </div>
         </StateWrapper>
       </el-tab-pane>
 
-      <el-tab-pane label="Jobs" name="jobs">
-        <FilterPanel @search="applyJobFilters" @reset="resetJobFilters">
+      <el-tab-pane
+        label="Jobs"
+        name="jobs"
+      >
+        <FilterPanel
+          @search="job.applyFilters"
+          @reset="job.resetFilters"
+        >
           <el-form-item label="命名空间">
             <el-select
-              v-model="jobNamespace"
+              v-model="job.namespace"
               placeholder="全部"
               clearable
               style="width: 160px"
             >
-              <el-option label="default" value="default" />
-              <el-option label="kube-system" value="kube-system" />
-              <el-option label="kube-public" value="kube-public" />
+              <el-option
+                label="default"
+                value="default"
+              />
+              <el-option
+                label="kube-system"
+                value="kube-system"
+              />
+              <el-option
+                label="kube-public"
+                value="kube-public"
+              />
             </el-select>
           </el-form-item>
           <el-form-item label="状态">
-            <el-radio-group v-model="jobStatus" size="small">
-              <el-radio-button value="">全部</el-radio-button>
-              <el-radio-button value="Running">Running</el-radio-button>
-              <el-radio-button value="Completed">Completed</el-radio-button>
-              <el-radio-button value="Failed">Failed</el-radio-button>
+            <el-radio-group
+              v-model="jobStatus"
+              size="small"
+            >
+              <el-radio-button value="">
+                全部
+              </el-radio-button>
+              <el-radio-button value="Running">
+                Running
+              </el-radio-button>
+              <el-radio-button value="Completed">
+                Completed
+              </el-radio-button>
+              <el-radio-button value="Failed">
+                Failed
+              </el-radio-button>
             </el-radio-group>
           </el-form-item>
           <el-form-item label="搜索">
             <el-input
-              v-model.trim="jobSearch"
+              v-model.trim="job.searchText"
               placeholder="搜索 Job"
               :prefix-icon="Search"
               clearable
@@ -558,24 +504,32 @@ watch(activeTab, () => {
         </FilterPanel>
 
         <StateWrapper
-          :state="jobsState"
-          :error-text="jobsError"
+          :state="jobState"
+          :error-text="job.error"
           empty-text="暂无 Job"
         >
           <template #retry>
-            <el-button type="primary" @click="loadJobs">重试</el-button>
+            <el-button
+              type="primary"
+              @click="job.loadResources"
+            >
+              重试
+            </el-button>
           </template>
 
-          <JobTable :items="jobs" @view-yaml="(j: K8sJobSummary) => viewYaml('job', j.namespace, j.name)" />
+          <JobTable
+            :items="job.items"
+            @view-yaml="(j: K8sJobSummary) => viewYaml('job', j.namespace, j.name)"
+          />
 
           <div class="pagination-wrap">
             <el-pagination
-              v-model:current-page="jobPage"
-              :page-size="jobPageSize"
-              :total="jobsTotal"
+              v-model:current-page="job.page"
+              :page-size="job.pageSize"
+              :total="job.total"
               layout="total, prev, pager, next"
               background
-              @current-change="handleJobPageChange"
+              @current-change="job.handlePageChange"
             />
           </div>
         </StateWrapper>
@@ -598,9 +552,4 @@ watch(activeTab, () => {
   gap: 16px;
 }
 
-.pagination-wrap {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 16px;
-}
 </style>

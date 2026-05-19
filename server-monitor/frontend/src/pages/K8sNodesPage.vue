@@ -75,12 +75,24 @@ onMounted(loadNodes);
 </script>
 
 <template>
-  <FilterPanel @search="handleSearch" @reset="handleReset">
+  <FilterPanel
+    @search="handleSearch"
+    @reset="handleReset"
+  >
     <el-form-item label="状态">
-      <el-radio-group v-model="statusFilter" size="small">
-        <el-radio-button value="">全部</el-radio-button>
-        <el-radio-button value="Ready">Ready</el-radio-button>
-        <el-radio-button value="NotReady">NotReady</el-radio-button>
+      <el-radio-group
+        v-model="statusFilter"
+        size="small"
+      >
+        <el-radio-button value="">
+          全部
+        </el-radio-button>
+        <el-radio-button value="Ready">
+          Ready
+        </el-radio-button>
+        <el-radio-button value="NotReady">
+          NotReady
+        </el-radio-button>
       </el-radio-group>
     </el-form-item>
     <el-form-item label="角色">
@@ -90,8 +102,14 @@ onMounted(loadNodes);
         clearable
         style="width: 200px"
       >
-        <el-option value="control-plane" label="control-plane" />
-        <el-option value="worker" label="worker" />
+        <el-option
+          value="control-plane"
+          label="control-plane"
+        />
+        <el-option
+          value="worker"
+          label="worker"
+        />
       </el-select>
     </el-form-item>
     <el-form-item label="搜索">
@@ -106,27 +124,51 @@ onMounted(loadNodes);
     </el-form-item>
   </FilterPanel>
 
-  <StateWrapper :state="pageState" :error-text="errorText">
+  <StateWrapper
+    :state="pageState"
+    :error-text="errorText"
+  >
     <template #retry>
-      <el-button type="primary" @click="loadNodes">重试</el-button>
+      <el-button
+        type="primary"
+        @click="loadNodes"
+      >
+        重试
+      </el-button>
     </template>
 
-    <el-card shadow="never" class="panel">
+    <el-card
+      shadow="never"
+      class="panel"
+    >
       <template #header>
         <div class="panel-header">
           <div class="panel-title">
-            <el-icon :size="18" color="var(--el-color-primary)"><Search /></el-icon>
+            <el-icon
+              :size="18"
+              color="var(--el-color-primary)"
+            >
+              <Search />
+            </el-icon>
             <span class="panel-title-text">节点列表</span>
           </div>
           <div class="panel-actions">
-            <el-tag size="small" type="info">共 {{ total }} 个节点</el-tag>
+            <el-tag
+              size="small"
+              type="info"
+            >
+              共 {{ total }} 个节点
+            </el-tag>
           </div>
         </div>
       </template>
 
       <NodeTable :nodes="nodes" />
 
-      <div v-if="total > pageSize" class="pagination-wrapper">
+      <div
+        v-if="total > pageSize"
+        class="pagination-wrapper"
+      >
         <el-pagination
           layout="total, prev, pager, next"
           :total="total"
@@ -144,46 +186,10 @@ onMounted(loadNodes);
   padding: 16px 20px;
 }
 
-.panel-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 12px;
-}
-
-.panel-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.panel-title-text {
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.panel-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
 .pagination-wrapper {
   display: flex;
   justify-content: flex-end;
   margin-top: 16px;
 }
 
-@media (max-width: 768px) {
-  .panel-header {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .panel-actions {
-    width: 100%;
-  }
-}
 </style>

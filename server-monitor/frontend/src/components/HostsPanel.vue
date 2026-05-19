@@ -36,11 +36,19 @@ const viewMode = defineModel<ViewMode>("viewMode", { default: "card" });
 </script>
 
 <template>
-  <el-card shadow="never" class="hosts-panel">
+  <el-card
+    shadow="never"
+    class="hosts-panel"
+  >
     <template #header>
       <div class="panel-header">
         <div class="panel-title">
-          <el-icon :size="18" color="var(--el-color-primary)"><Search /></el-icon>
+          <el-icon
+            :size="18"
+            color="var(--el-color-primary)"
+          >
+            <Search />
+          </el-icon>
           <span class="panel-title-text">主机指标</span>
         </div>
         <div class="panel-actions">
@@ -59,9 +67,15 @@ const viewMode = defineModel<ViewMode>("viewMode", { default: "card" });
             size="small"
             @change="emit('statusChange', $event as HostStatus)"
           >
-            <el-radio-button value="all">全部</el-radio-button>
-            <el-radio-button value="up">在线</el-radio-button>
-            <el-radio-button value="down">离线</el-radio-button>
+            <el-radio-button value="all">
+              全部
+            </el-radio-button>
+            <el-radio-button value="up">
+              在线
+            </el-radio-button>
+            <el-radio-button value="down">
+              离线
+            </el-radio-button>
           </el-radio-group>
 
           <el-radio-group
@@ -69,9 +83,15 @@ const viewMode = defineModel<ViewMode>("viewMode", { default: "card" });
             size="small"
             @change="emit('sortChange', $event as HostSort)"
           >
-            <el-radio-button value="instance">名称</el-radio-button>
-            <el-radio-button value="cpu_desc">CPU</el-radio-button>
-            <el-radio-button value="memory_desc">内存</el-radio-button>
+            <el-radio-button value="instance">
+              名称
+            </el-radio-button>
+            <el-radio-button value="cpu_desc">
+              CPU
+            </el-radio-button>
+            <el-radio-button value="memory_desc">
+              内存
+            </el-radio-button>
           </el-radio-group>
 
           <el-radio-group
@@ -79,17 +99,27 @@ const viewMode = defineModel<ViewMode>("viewMode", { default: "card" });
             size="small"
             @change="emit('riskChange', $event as HostRisk)"
           >
-            <el-radio-button value="all">全风险</el-radio-button>
-            <el-radio-button value="high_cpu">高 CPU</el-radio-button>
-            <el-radio-button value="high_memory">高内存</el-radio-button>
+            <el-radio-button value="all">
+              全风险
+            </el-radio-button>
+            <el-radio-button value="high_cpu">
+              高 CPU
+            </el-radio-button>
+            <el-radio-button value="high_memory">
+              高内存
+            </el-radio-button>
           </el-radio-group>
 
           <el-radio-group
             v-model="viewMode"
             size="small"
           >
-            <el-radio-button value="card">卡片</el-radio-button>
-            <el-radio-button value="table">表格</el-radio-button>
+            <el-radio-button value="card">
+              卡片
+            </el-radio-button>
+            <el-radio-button value="table">
+              表格
+            </el-radio-button>
           </el-radio-group>
 
           <el-button
@@ -100,15 +130,31 @@ const viewMode = defineModel<ViewMode>("viewMode", { default: "card" });
             重置
           </el-button>
 
-          <el-tag size="small" type="info">WebSocket 实时推送</el-tag>
+          <el-tag
+            size="small"
+            type="info"
+          >
+            WebSocket 实时推送
+          </el-tag>
         </div>
       </div>
     </template>
 
     <div class="host-summary">
       <span class="host-summary-label">当前条件</span>
-      <el-tag size="small" type="primary">{{ hostViewSummary }}</el-tag>
-      <el-tag v-if="!hasActiveHostFilters" size="small" type="info">默认视图</el-tag>
+      <el-tag
+        size="small"
+        type="primary"
+      >
+        {{ hostViewSummary }}
+      </el-tag>
+      <el-tag
+        v-if="!hasActiveHostFilters"
+        size="small"
+        type="info"
+      >
+        默认视图
+      </el-tag>
       <el-tag
         v-for="item in hostFilterSummary"
         :key="item"
@@ -118,7 +164,11 @@ const viewMode = defineModel<ViewMode>("viewMode", { default: "card" });
       </el-tag>
     </div>
 
-    <el-skeleton v-if="loading" :rows="5" animated />
+    <el-skeleton
+      v-if="loading"
+      :rows="5"
+      animated
+    />
 
     <el-empty
       v-else-if="hosts.length === 0"
@@ -132,14 +182,20 @@ const viewMode = defineModel<ViewMode>("viewMode", { default: "card" });
     />
 
     <template v-else>
-      <div v-if="viewMode === 'card'" class="hosts-grid">
+      <div
+        v-if="viewMode === 'card'"
+        class="hosts-grid"
+      >
         <HostCard
           v-for="host in hosts"
           :key="host.instance"
           :host="host"
         />
       </div>
-      <HostTable v-else :hosts="hosts" />
+      <HostTable
+        v-else
+        :hosts="hosts"
+      />
     </template>
   </el-card>
 </template>
@@ -147,32 +203,6 @@ const viewMode = defineModel<ViewMode>("viewMode", { default: "card" });
 <style scoped>
 .hosts-panel :deep(.el-card__body) {
   padding: 16px 20px;
-}
-
-.panel-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 12px;
-}
-
-.panel-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.panel-title-text {
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.panel-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
 }
 
 .host-summary {
@@ -196,15 +226,6 @@ const viewMode = defineModel<ViewMode>("viewMode", { default: "card" });
 }
 
 @media (max-width: 768px) {
-  .panel-header {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .panel-actions {
-    width: 100%;
-  }
-
   .hosts-grid {
     grid-template-columns: 1fr;
   }

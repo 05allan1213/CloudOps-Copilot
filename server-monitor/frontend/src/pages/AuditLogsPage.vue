@@ -104,15 +104,32 @@ onMounted(loadLogs);
 
 <template>
   <section class="audit-page">
-    <PageHeader title="审计日志" subtitle="动作创建、审批、拒绝、执行和权限拒绝的可追溯记录。">
+    <PageHeader
+      title="审计日志"
+      subtitle="动作创建、审批、拒绝、执行和权限拒绝的可追溯记录。"
+    >
       <template #default>
-        <el-button :icon="Refresh" :loading="loading" @click="loadLogs">刷新</el-button>
+        <el-button
+          :icon="Refresh"
+          :loading="loading"
+          @click="loadLogs"
+        >
+          刷新
+        </el-button>
       </template>
     </PageHeader>
 
-    <FilterPanel @search="applyFilters" @reset="resetFilters">
+    <FilterPanel
+      @search="applyFilters"
+      @reset="resetFilters"
+    >
       <el-form-item label="动作">
-        <el-select v-model="filters.action" placeholder="全部动作" clearable style="width: 180px">
+        <el-select
+          v-model="filters.action"
+          placeholder="全部动作"
+          clearable
+          style="width: 180px"
+        >
           <el-option
             v-for="option in actionOptions"
             :key="option.value"
@@ -122,65 +139,140 @@ onMounted(loadLogs);
         </el-select>
       </el-form-item>
       <el-form-item label="结果">
-        <el-select v-model="filters.result" placeholder="全部结果" clearable style="width: 140px">
-          <el-option label="success" value="success" />
-          <el-option label="failure" value="failure" />
-          <el-option label="denied" value="denied" />
-          <el-option label="timeout" value="timeout" />
+        <el-select
+          v-model="filters.result"
+          placeholder="全部结果"
+          clearable
+          style="width: 140px"
+        >
+          <el-option
+            label="success"
+            value="success"
+          />
+          <el-option
+            label="failure"
+            value="failure"
+          />
+          <el-option
+            label="denied"
+            value="denied"
+          />
+          <el-option
+            label="timeout"
+            value="timeout"
+          />
         </el-select>
       </el-form-item>
       <el-form-item label="操作者">
-        <el-input v-model.trim="filters.actor" placeholder="actor" clearable style="width: 160px" />
+        <el-input
+          v-model.trim="filters.actor"
+          placeholder="actor"
+          clearable
+          style="width: 160px"
+        />
       </el-form-item>
     </FilterPanel>
 
-    <StateWrapper :state="stateKey" :error-text="error" empty-text="暂无审计日志">
+    <StateWrapper
+      :state="stateKey"
+      :error-text="error"
+      empty-text="暂无审计日志"
+    >
       <template #retry>
-        <el-button type="primary" @click="loadLogs">重试</el-button>
+        <el-button
+          type="primary"
+          @click="loadLogs"
+        >
+          重试
+        </el-button>
       </template>
 
-      <el-table :data="logs" stripe style="width: 100%">
-        <el-table-column label="时间" width="170">
+      <el-table
+        :data="logs"
+        stripe
+        style="width: 100%"
+      >
+        <el-table-column
+          label="时间"
+          width="170"
+        >
           <template #default="{ row }">
             {{ formatTime(row.created_at) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作者" min-width="120" show-overflow-tooltip>
+        <el-table-column
+          label="操作者"
+          min-width="120"
+          show-overflow-tooltip
+        >
           <template #default="{ row }">
             {{ row.actor }} · {{ row.actor_role }}
           </template>
         </el-table-column>
-        <el-table-column label="动作" min-width="160" show-overflow-tooltip>
+        <el-table-column
+          label="动作"
+          min-width="160"
+          show-overflow-tooltip
+        >
           <template #default="{ row }">
             <span class="mono-text">{{ row.action }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="动作类型" min-width="120" show-overflow-tooltip>
+        <el-table-column
+          label="动作类型"
+          min-width="120"
+          show-overflow-tooltip
+        >
           <template #default="{ row }">
             <span class="mono-text">{{ requestActionType(row) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="资源" min-width="140" show-overflow-tooltip>
+        <el-table-column
+          label="资源"
+          min-width="140"
+          show-overflow-tooltip
+        >
           <template #default="{ row }">
             {{ row.resource_type }} #{{ row.resource_id }}
           </template>
         </el-table-column>
-        <el-table-column label="结果" width="100" align="center">
+        <el-table-column
+          label="结果"
+          width="100"
+          align="center"
+        >
           <template #default="{ row }">
-            <el-tag :type="resultTagType(row.result)" size="small">
+            <el-tag
+              :type="resultTagType(row.result)"
+              size="small"
+            >
               {{ row.result }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="trace_id" min-width="120" show-overflow-tooltip>
+        <el-table-column
+          label="trace_id"
+          min-width="120"
+          show-overflow-tooltip
+        >
           <template #default="{ row }">
             <span class="mono-text">{{ row.trace_id || "-" }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="错误" min-width="140" show-overflow-tooltip>
+        <el-table-column
+          label="错误"
+          min-width="140"
+          show-overflow-tooltip
+        >
           <template #default="{ row }">
-            <span v-if="row.error_message" class="error-text">{{ row.error_message }}</span>
-            <span v-else class="text-muted">-</span>
+            <span
+              v-if="row.error_message"
+              class="error-text"
+            >{{ row.error_message }}</span>
+            <span
+              v-else
+              class="text-muted"
+            >-</span>
           </template>
         </el-table-column>
       </el-table>
@@ -206,11 +298,6 @@ onMounted(loadLogs);
   gap: 16px;
 }
 
-.mono-text {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 13px;
-}
-
 .error-text {
   color: var(--el-color-danger);
   font-size: 13px;
@@ -221,9 +308,4 @@ onMounted(loadLogs);
   font-size: 13px;
 }
 
-.pagination-wrap {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 16px;
-}
 </style>

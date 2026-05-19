@@ -50,11 +50,22 @@ onMounted(loadOverview);
 </script>
 
 <template>
-  <PageHeader title="K8s 集群" :subtitle="subtitle" />
+  <PageHeader
+    title="K8s 集群"
+    :subtitle="subtitle"
+  />
 
-  <StateWrapper :state="pageState" :error-text="errorText">
+  <StateWrapper
+    :state="pageState"
+    :error-text="errorText"
+  >
     <template #retry>
-      <el-button type="primary" @click="loadOverview">重试</el-button>
+      <el-button
+        type="primary"
+        @click="loadOverview"
+      >
+        重试
+      </el-button>
     </template>
 
     <el-alert
@@ -67,12 +78,30 @@ onMounted(loadOverview);
     />
 
     <div class="stats-row">
-      <el-row v-if="overview?.nodes_available" :gutter="16" class="stats-section">
-        <el-col :xs="12" :sm="8">
-          <el-card shadow="hover" class="stat-card">
+      <el-row
+        v-if="overview?.nodes_available"
+        :gutter="16"
+        class="stats-section"
+      >
+        <el-col
+          :xs="12"
+          :sm="8"
+        >
+          <el-card
+            shadow="hover"
+            class="stat-card"
+          >
             <div class="stat-inner">
-              <el-icon class="stat-icon stat-icon--primary" :size="28"><Monitor /></el-icon>
-              <el-statistic :value="overview.nodes.total" class="stat-value">
+              <el-icon
+                class="stat-icon stat-icon--primary"
+                :size="28"
+              >
+                <Monitor />
+              </el-icon>
+              <el-statistic
+                :value="overview.nodes.total"
+                class="stat-value"
+              >
                 <template #title>
                   <span class="stat-label">Node 总数</span>
                 </template>
@@ -80,11 +109,25 @@ onMounted(loadOverview);
             </div>
           </el-card>
         </el-col>
-        <el-col :xs="12" :sm="8">
-          <el-card shadow="hover" class="stat-card">
+        <el-col
+          :xs="12"
+          :sm="8"
+        >
+          <el-card
+            shadow="hover"
+            class="stat-card"
+          >
             <div class="stat-inner">
-              <el-icon class="stat-icon stat-icon--success" :size="28"><CircleCheck /></el-icon>
-              <el-statistic :value="overview.nodes.ready" class="stat-value stat-value--success">
+              <el-icon
+                class="stat-icon stat-icon--success"
+                :size="28"
+              >
+                <CircleCheck />
+              </el-icon>
+              <el-statistic
+                :value="overview.nodes.ready"
+                class="stat-value stat-value--success"
+              >
                 <template #title>
                   <span class="stat-label">Ready</span>
                 </template>
@@ -92,11 +135,25 @@ onMounted(loadOverview);
             </div>
           </el-card>
         </el-col>
-        <el-col :xs="12" :sm="8">
-          <el-card shadow="hover" class="stat-card">
+        <el-col
+          :xs="12"
+          :sm="8"
+        >
+          <el-card
+            shadow="hover"
+            class="stat-card"
+          >
             <div class="stat-inner">
-              <el-icon class="stat-icon stat-icon--danger" :size="28"><CircleClose /></el-icon>
-              <el-statistic :value="overview.nodes.not_ready" class="stat-value stat-value--danger">
+              <el-icon
+                class="stat-icon stat-icon--danger"
+                :size="28"
+              >
+                <CircleClose />
+              </el-icon>
+              <el-statistic
+                :value="overview.nodes.not_ready"
+                class="stat-value stat-value--danger"
+              >
                 <template #title>
                   <span class="stat-label">NotReady</span>
                 </template>
@@ -106,12 +163,29 @@ onMounted(loadOverview);
         </el-col>
       </el-row>
 
-      <el-row :gutter="16" class="stats-section">
-        <el-col :xs="12" :sm="6">
-          <el-card shadow="hover" class="stat-card">
+      <el-row
+        :gutter="16"
+        class="stats-section"
+      >
+        <el-col
+          :xs="12"
+          :sm="6"
+        >
+          <el-card
+            shadow="hover"
+            class="stat-card"
+          >
             <div class="stat-inner">
-              <el-icon class="stat-icon stat-icon--primary" :size="28"><Box /></el-icon>
-              <el-statistic :value="overview?.pods.total ?? 0" class="stat-value">
+              <el-icon
+                class="stat-icon stat-icon--primary"
+                :size="28"
+              >
+                <Box />
+              </el-icon>
+              <el-statistic
+                :value="overview?.pods.total ?? 0"
+                class="stat-value"
+              >
                 <template #title>
                   <span class="stat-label">Pod 总数</span>
                 </template>
@@ -119,11 +193,25 @@ onMounted(loadOverview);
             </div>
           </el-card>
         </el-col>
-        <el-col :xs="12" :sm="6">
-          <el-card shadow="hover" class="stat-card">
+        <el-col
+          :xs="12"
+          :sm="6"
+        >
+          <el-card
+            shadow="hover"
+            class="stat-card"
+          >
             <div class="stat-inner">
-              <el-icon class="stat-icon stat-icon--success" :size="28"><Select /></el-icon>
-              <el-statistic :value="overview?.pods.running ?? 0" class="stat-value stat-value--success">
+              <el-icon
+                class="stat-icon stat-icon--success"
+                :size="28"
+              >
+                <Select />
+              </el-icon>
+              <el-statistic
+                :value="overview?.pods.running ?? 0"
+                class="stat-value stat-value--success"
+              >
                 <template #title>
                   <span class="stat-label">Running</span>
                 </template>
@@ -131,11 +219,25 @@ onMounted(loadOverview);
             </div>
           </el-card>
         </el-col>
-        <el-col :xs="12" :sm="6">
-          <el-card shadow="hover" class="stat-card">
+        <el-col
+          :xs="12"
+          :sm="6"
+        >
+          <el-card
+            shadow="hover"
+            class="stat-card"
+          >
             <div class="stat-inner">
-              <el-icon class="stat-icon stat-icon--warning" :size="28"><Warning /></el-icon>
-              <el-statistic :value="overview?.pods.pending ?? 0" class="stat-value stat-value--warning">
+              <el-icon
+                class="stat-icon stat-icon--warning"
+                :size="28"
+              >
+                <Warning />
+              </el-icon>
+              <el-statistic
+                :value="overview?.pods.pending ?? 0"
+                class="stat-value stat-value--warning"
+              >
                 <template #title>
                   <span class="stat-label">Pending</span>
                 </template>
@@ -143,11 +245,25 @@ onMounted(loadOverview);
             </div>
           </el-card>
         </el-col>
-        <el-col :xs="12" :sm="6">
-          <el-card shadow="hover" class="stat-card">
+        <el-col
+          :xs="12"
+          :sm="6"
+        >
+          <el-card
+            shadow="hover"
+            class="stat-card"
+          >
             <div class="stat-inner">
-              <el-icon class="stat-icon stat-icon--danger" :size="28"><CircleCloseFilled /></el-icon>
-              <el-statistic :value="overview?.pods.failed ?? 0" class="stat-value stat-value--danger">
+              <el-icon
+                class="stat-icon stat-icon--danger"
+                :size="28"
+              >
+                <CircleCloseFilled />
+              </el-icon>
+              <el-statistic
+                :value="overview?.pods.failed ?? 0"
+                class="stat-value stat-value--danger"
+              >
                 <template #title>
                   <span class="stat-label">Failed</span>
                 </template>
@@ -157,12 +273,29 @@ onMounted(loadOverview);
         </el-col>
       </el-row>
 
-      <el-row :gutter="16" class="stats-section">
-        <el-col :xs="12" :sm="8">
-          <el-card shadow="hover" class="stat-card">
+      <el-row
+        :gutter="16"
+        class="stats-section"
+      >
+        <el-col
+          :xs="12"
+          :sm="8"
+        >
+          <el-card
+            shadow="hover"
+            class="stat-card"
+          >
             <div class="stat-inner">
-              <el-icon class="stat-icon stat-icon--primary" :size="28"><Grid /></el-icon>
-              <el-statistic :value="overview?.deployments.total ?? 0" class="stat-value">
+              <el-icon
+                class="stat-icon stat-icon--primary"
+                :size="28"
+              >
+                <Grid />
+              </el-icon>
+              <el-statistic
+                :value="overview?.deployments.total ?? 0"
+                class="stat-value"
+              >
                 <template #title>
                   <span class="stat-label">Deployment 总数</span>
                 </template>
@@ -170,11 +303,25 @@ onMounted(loadOverview);
             </div>
           </el-card>
         </el-col>
-        <el-col :xs="12" :sm="8">
-          <el-card shadow="hover" class="stat-card">
+        <el-col
+          :xs="12"
+          :sm="8"
+        >
+          <el-card
+            shadow="hover"
+            class="stat-card"
+          >
             <div class="stat-inner">
-              <el-icon class="stat-icon stat-icon--success" :size="28"><Select /></el-icon>
-              <el-statistic :value="overview?.deployments.available ?? 0" class="stat-value stat-value--success">
+              <el-icon
+                class="stat-icon stat-icon--success"
+                :size="28"
+              >
+                <Select />
+              </el-icon>
+              <el-statistic
+                :value="overview?.deployments.available ?? 0"
+                class="stat-value stat-value--success"
+              >
                 <template #title>
                   <span class="stat-label">Available</span>
                 </template>
@@ -182,11 +329,25 @@ onMounted(loadOverview);
             </div>
           </el-card>
         </el-col>
-        <el-col :xs="12" :sm="8">
-          <el-card shadow="hover" class="stat-card">
+        <el-col
+          :xs="12"
+          :sm="8"
+        >
+          <el-card
+            shadow="hover"
+            class="stat-card"
+          >
             <div class="stat-inner">
-              <el-icon class="stat-icon stat-icon--warning" :size="28"><WarningFilled /></el-icon>
-              <el-statistic :value="overview?.deployments.unavailable ?? 0" class="stat-value stat-value--warning">
+              <el-icon
+                class="stat-icon stat-icon--warning"
+                :size="28"
+              >
+                <WarningFilled />
+              </el-icon>
+              <el-statistic
+                :value="overview?.deployments.unavailable ?? 0"
+                class="stat-value stat-value--warning"
+              >
                 <template #title>
                   <span class="stat-label">Unavailable</span>
                 </template>
@@ -205,19 +366,46 @@ onMounted(loadOverview);
       <template #header>
         <div class="section-header">
           <div class="section-title">
-            <el-icon :size="18" color="var(--el-color-info)"><InfoFilled /></el-icon>
+            <el-icon
+              :size="18"
+              color="var(--el-color-info)"
+            >
+              <InfoFilled />
+            </el-icon>
             <span>主机覆盖</span>
           </div>
         </div>
       </template>
-      <el-descriptions :column="3" border>
-        <el-descriptions-item label="Node 总数">{{ overview.host_coverage.total_nodes }}</el-descriptions-item>
+      <el-descriptions
+        :column="3"
+        border
+      >
+        <el-descriptions-item label="Node 总数">
+          {{ overview.host_coverage.total_nodes }}
+        </el-descriptions-item>
         <el-descriptions-item label="已覆盖">
-          <el-tag type="success" size="small">{{ overview.host_coverage.covered_nodes }}</el-tag>
+          <el-tag
+            type="success"
+            size="small"
+          >
+            {{ overview.host_coverage.covered_nodes }}
+          </el-tag>
         </el-descriptions-item>
         <el-descriptions-item label="未覆盖">
-          <el-tag v-if="overview.host_coverage.uncovered_nodes > 0" type="danger" size="small">{{ overview.host_coverage.uncovered_nodes }}</el-tag>
-          <el-tag v-else type="success" size="small">{{ overview.host_coverage.uncovered_nodes }}</el-tag>
+          <el-tag
+            v-if="overview.host_coverage.uncovered_nodes > 0"
+            type="danger"
+            size="small"
+          >
+            {{ overview.host_coverage.uncovered_nodes }}
+          </el-tag>
+          <el-tag
+            v-else
+            type="success"
+            size="small"
+          >
+            {{ overview.host_coverage.uncovered_nodes }}
+          </el-tag>
         </el-descriptions-item>
       </el-descriptions>
     </el-card>
@@ -226,7 +414,12 @@ onMounted(loadOverview);
       <template #header>
         <div class="section-header">
           <div class="section-title">
-            <el-icon :size="18" color="var(--el-color-info)"><InfoFilled /></el-icon>
+            <el-icon
+              :size="18"
+              color="var(--el-color-info)"
+            >
+              <InfoFilled />
+            </el-icon>
             <span>最近事件</span>
           </div>
         </div>
@@ -261,41 +454,6 @@ onMounted(loadOverview);
   display: flex;
   align-items: center;
   gap: 14px;
-}
-
-.stat-icon {
-  width: 48px;
-  height: 48px;
-  border-radius: var(--cloudops-radius-md);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.stat-icon--primary {
-  background: rgba(59, 130, 246, 0.1);
-  color: var(--el-color-primary);
-}
-
-.stat-icon--success {
-  background: rgba(34, 197, 94, 0.1);
-  color: var(--el-color-success);
-}
-
-.stat-icon--warning {
-  background: rgba(245, 158, 11, 0.1);
-  color: var(--el-color-warning);
-}
-
-.stat-icon--danger {
-  background: rgba(239, 68, 68, 0.1);
-  color: var(--el-color-danger);
-}
-
-.stat-icon--info {
-  background: rgba(6, 182, 212, 0.1);
-  color: var(--el-color-info);
 }
 
 .stat-value :deep(.el-statistic__number) {
