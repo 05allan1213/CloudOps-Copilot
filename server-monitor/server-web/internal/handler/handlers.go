@@ -572,6 +572,12 @@ func (h *Handler) AlertsWebSocket(c *gin.Context) {
 	}
 
 	if err := h.websocketHub.ServeWS(c.Writer, c.Request); err != nil {
+		if !c.Writer.Written() {
+			c.JSON(http.StatusBadGateway, response{
+				Status: "error",
+				Error:  "websocket upgrade failed",
+			})
+		}
 		zap.L().Warn("websocket upgrade failed", zap.Error(err))
 	}
 }

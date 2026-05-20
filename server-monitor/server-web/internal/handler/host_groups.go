@@ -57,7 +57,7 @@ func (h *Handler) ListHostGroups(c *gin.Context) {
 
 	result := make([]hostGroupResponse, 0, len(groups))
 	for _, group := range groups {
-		result = append(result, buildHostGroupResponse(group, false))
+		result = append(result, buildHostGroupResponse(group, true))
 	}
 	c.JSON(http.StatusOK, response{Status: "success", Data: result})
 }

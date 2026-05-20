@@ -27,6 +27,7 @@ type alertHistoryQuery struct {
 	AlertName string
 	Instance  string
 	GroupID   uint64
+	GroupName string
 	Start     *time.Time
 	End       *time.Time
 	Page      int
@@ -113,6 +114,26 @@ func (h *Handler) buildAlertHistoryQuery(c *gin.Context, db *gorm.DB, query aler
 		} else {
 			stmt = stmt.Where("instance IN ?", instances)
 		}
+	} else if query.GroupName != "" {
+		var group model.HostGroup
+		err := db.WithContext(c.Request.Context()).Where("name = ?", query.GroupName).First(&group).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, response{Status: "error", Error: "host group not found"})
+			return nil, false
+		}
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, response{Status: "error", Error: "query host group failed"})
+			return nil, false
+		}
+		instances, ok := h.alertHistoryGroupInstances(c, db, group.ID)
+		if !ok {
+			return nil, false
+		}
+		if len(instances) == 0 {
+			stmt = stmt.Where("1 = 0")
+		} else {
+			stmt = stmt.Where("instance IN ?", instances)
+		}
 	}
 	return stmt, true
 }
@@ -159,11 +180,15 @@ func parseAlertHistoryQuery(c *gin.Context) (alertHistoryQuery, bool) {
 	query.AlertName = strings.TrimSpace(c.Query("alert_name"))
 	query.Instance = strings.TrimSpace(c.Query("instance"))
 
-	groupID, ok := parseOptionalUintQuery(c, "group")
-	if !ok {
-		return alertHistoryQuery{}, false
+	groupRaw := strings.TrimSpace(c.Query("group"))
+	if groupRaw != "" {
+		groupID, err := strconv.ParseUint(groupRaw, 10, 64)
+		if err == nil && groupID > 0 {
+			query.GroupID = groupID
+		} else {
+			query.GroupName = groupRaw
+		}
 	}
-	query.GroupID = groupID
 
 	start, ok := parseOptionalTimeQuery(c, "start")
 	if !ok {

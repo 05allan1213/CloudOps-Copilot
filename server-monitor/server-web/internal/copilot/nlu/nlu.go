@@ -427,6 +427,8 @@ func extractWindow(original, normalized string, hasPromQL bool) string {
 	switch {
 	case strings.Contains(normalized, "最近一周"), strings.Contains(normalized, "last week"):
 		return "7d"
+	case strings.Contains(normalized, "昨天"), strings.Contains(normalized, "yesterday"):
+		return "24h"
 	case strings.Contains(normalized, "今天"), strings.Contains(normalized, "today"):
 		return "24h"
 	default:
