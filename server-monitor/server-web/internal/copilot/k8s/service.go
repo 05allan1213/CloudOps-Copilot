@@ -58,10 +58,11 @@ type Reader interface {
 }
 
 type Service struct {
-	client            kubernetes.Interface
-	enabled           bool
-	allowedNamespaces map[string]struct{}
-	defaultNamespace  string
+	client              kubernetes.Interface
+	enabled             bool
+	allowedNamespaces   map[string]struct{}
+	allowAllNamespaces  bool
+	defaultNamespace    string
 	requestTimeout    time.Duration
 	logTailLines      int
 	logMaxBytes       int
@@ -74,7 +75,7 @@ func NewServiceWithClient(client kubernetes.Interface, cfg Config) *Service {
 	if defaultNamespace == "" {
 		defaultNamespace = DefaultNamespace
 	}
-	allowed := normalizeAllowedNamespaces(cfg.AllowedNamespaces, defaultNamespace)
+	allowed, allowAll := normalizeAllowedNamespaces(cfg.AllowedNamespaces, defaultNamespace)
 	requestTimeout := cfg.RequestTimeout
 	if requestTimeout <= 0 {
 		requestTimeout = 10 * time.Second
@@ -92,10 +93,11 @@ func NewServiceWithClient(client kubernetes.Interface, cfg Config) *Service {
 		eventLimit = 50
 	}
 	return &Service{
-		client:            client,
-		enabled:           cfg.Enabled,
-		allowedNamespaces: allowed,
-		defaultNamespace:  defaultNamespace,
+		client:              client,
+		enabled:             cfg.Enabled,
+		allowedNamespaces:   allowed,
+		allowAllNamespaces:  allowAll,
+		defaultNamespace:    defaultNamespace,
 		requestTimeout:    requestTimeout,
 		logTailLines:      logTailLines,
 		logMaxBytes:       logMaxBytes,
@@ -735,8 +737,10 @@ func (s *Service) normalizeNamespace(namespace string) (string, error) {
 	if err := ValidateName("namespace", value); err != nil {
 		return "", err
 	}
-	if _, ok := s.allowedNamespaces[value]; !ok {
-		return "", fmt.Errorf("%w: %s", ErrNamespaceNotAllowed, value)
+	if !s.allowAllNamespaces {
+		if _, ok := s.allowedNamespaces[value]; !ok {
+			return "", fmt.Errorf("%w: %s", ErrNamespaceNotAllowed, value)
+		}
 	}
 	return value, nil
 }
@@ -761,10 +765,13 @@ func ValidateName(field, value string) error {
 	return nil
 }
 
-func normalizeAllowedNamespaces(values []string, fallback string) map[string]struct{} {
+func normalizeAllowedNamespaces(values []string, fallback string) (map[string]struct{}, bool) {
 	allowed := make(map[string]struct{}, len(values)+1)
 	for _, value := range values {
 		value = strings.TrimSpace(value)
+		if value == "*" {
+			return nil, true
+		}
 		if value != "" {
 			allowed[value] = struct{}{}
 		}
@@ -772,7 +779,7 @@ func normalizeAllowedNamespaces(values []string, fallback string) map[string]str
 	if len(allowed) == 0 {
 		allowed[fallback] = struct{}{}
 	}
-	return allowed
+	return allowed, false
 }
 
 func podSummary(pod corev1.Pod, collectedAt time.Time) PodSummary {

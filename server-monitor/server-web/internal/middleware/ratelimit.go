@@ -60,6 +60,7 @@ func RateLimit(store rateLimitStore, cfg config.RateLimitConfig) gin.HandlerFunc
 		c.Header("X-RateLimit-Window-Seconds", fmt.Sprintf("%.0f", cfg.Window.Seconds()))
 
 		if !allowed {
+			c.Header("Retry-After", fmt.Sprintf("%.0f", cfg.Window.Seconds()))
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
 				"status": "error",
 				"error":  "rate limit exceeded",

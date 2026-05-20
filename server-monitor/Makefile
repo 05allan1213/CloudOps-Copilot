@@ -5,6 +5,7 @@
         dev-server-probe dev-server-web dev-alert-service dev-frontend dev-deps dev-k8s dev-stop \
         ci-check \
         docker docker-up docker-down docker-logs docker-clean \
+        k8s-setup k8s-teardown \
         clean fmt tidy help
 
 # ============================================
@@ -165,10 +166,27 @@ docker-down: ## 停止 Docker Compose
 docker-logs: ## 查看 Docker Compose 日志
 	docker compose logs -f
 
-docker-clean: ## 清理 Docker 资源
+docker-clean: ## 停止并清理所有数据
 	@echo "清理 Docker 资源..."
 	docker compose down -v
 	@echo "清理完成"
+
+# ============================================
+# K8s 集成环境
+# ============================================
+
+k8s-setup: ## 创建 kind 集群并配置 K8s 集成环境
+	@echo "配置 K8s 集成环境..."
+	bash docker/setup-k8s.sh
+	@echo ""
+	@echo "K8s 环境已就绪，启动服务："
+	@echo "  make docker-up        # 首次启动"
+	@echo "  docker compose up -d server-web  # 仅重启 server-web"
+
+k8s-teardown: ## 删除 kind 集群
+	@echo "删除 kind 集群..."
+	kind delete cluster --name cloudops-test 2>/dev/null || true
+	@echo "kind 集群已删除"
 
 # ============================================
 # 其他

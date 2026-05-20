@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -86,6 +87,10 @@ type Config struct {
 	// AlertmanagerWebhookMaxBodyBytes Alertmanager Webhook 请求体最大字节数
 	// 默认值：1048576（1MB）
 	AlertmanagerWebhookMaxBodyBytes int64
+
+	// GlobalMaxBodyBytes 全局 API 请求体最大字节数
+	// 默认值：2097152（2MB）
+	GlobalMaxBodyBytes int64
 
 	// CacheWriteTimeout 缓存写入操作超时时间
 	// 默认值：3s
@@ -482,6 +487,7 @@ func Load() Config {
 		DashboardOverviewTTL:            configutil.DurationSeconds("DASHBOARD_OVERVIEW_TTL_SECONDS", 10),
 		AlertEventDedupeTTL:             configutil.DurationSeconds("ALERT_EVENT_DEDUPE_TTL_SECONDS", 86400),
 		AlertmanagerWebhookMaxBodyBytes: int64(configutil.PositiveInt("ALERTMANAGER_WEBHOOK_MAX_BODY_BYTES", 1048576)),
+		GlobalMaxBodyBytes:              int64(configutil.PositiveInt("GLOBAL_MAX_BODY_BYTES", 2097152)),
 		CacheWriteTimeout:               configutil.DurationSeconds("CACHE_WRITE_TIMEOUT_SECONDS", 3),
 		GinMode:                         configutil.String("GIN_MODE", "debug"),
 		TrustedProxies:                  configutil.List("TRUSTED_PROXIES"),
@@ -716,7 +722,7 @@ func (c *Config) Validate() error {
 		}
 		allowed[namespace] = struct{}{}
 	}
-	if _, ok := allowed[c.K8SDefaultNamespace]; !ok {
+	if _, ok := allowed[c.K8SDefaultNamespace]; !ok && !slices.Contains(c.K8SAllowedNamespaces, "*") {
 		return fmt.Errorf("K8S_DEFAULT_NAMESPACE must be included in K8S_ALLOWED_NAMESPACES")
 	}
 	if c.K8SRequestTimeout < time.Second || c.K8SRequestTimeout > 60*time.Second {
@@ -804,6 +810,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("RATE_LIMIT_WINDOW_SECONDS must be positive when rate limit is enabled, got %v", c.RateLimit.Window)
 		}
 	}
+	if c.GlobalMaxBodyBytes < 65536 || c.GlobalMaxBodyBytes > 16777216 {
+		return fmt.Errorf("GLOBAL_MAX_BODY_BYTES must be in range 65536-16777216, got %d", c.GlobalMaxBodyBytes)
+	}
 	return nil
 }
 
@@ -812,6 +821,9 @@ var k8sNamespacePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
 func checkK8SNamespace(name, namespace string) error {
 	if strings.TrimSpace(namespace) == "" {
 		return fmt.Errorf("%s is required", name)
+	}
+	if namespace == "*" {
+		return nil
 	}
 	if len(namespace) > 63 || !k8sNamespacePattern.MatchString(namespace) {
 		return fmt.Errorf("%s contains invalid namespace %q", name, namespace)

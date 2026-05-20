@@ -319,6 +319,32 @@ func (h *Handler) HostMetrics(c *gin.Context) {
 		return
 	}
 
+	startRaw := strings.TrimSpace(c.Query("start"))
+	endRaw := strings.TrimSpace(c.Query("end"))
+	if startRaw != "" || endRaw != "" {
+		if startRaw == "" || endRaw == "" {
+			c.JSON(http.StatusBadRequest, response{
+				Status: "error",
+				Error:  "invalid range",
+			})
+			return
+		}
+		if _, err := time.Parse(time.RFC3339, startRaw); err != nil {
+			c.JSON(http.StatusBadRequest, response{
+				Status: "error",
+				Error:  "invalid range",
+			})
+			return
+		}
+		if _, err := time.Parse(time.RFC3339, endRaw); err != nil {
+			c.JSON(http.StatusBadRequest, response{
+				Status: "error",
+				Error:  "invalid range",
+			})
+			return
+		}
+	}
+
 	metrics, ok, err := h.hostService.Metrics(c.Request.Context(), instance, c.Query("range"), c.Query("mountpoint"), time.Now().UTC())
 	if !ok {
 		c.JSON(http.StatusBadRequest, response{

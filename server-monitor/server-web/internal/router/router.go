@@ -1,6 +1,9 @@
 package router
 
 import (
+	"net/http"
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
@@ -14,6 +17,8 @@ import (
 
 func NewRouter(cfg config.Config, deps Dependencies) (*gin.Engine, error) {
 	router := gin.New()
+
+	globalBodyLimit := limitRequestBody(cfg.GlobalMaxBodyBytes)
 	router.Use(
 		middleware.CORS(cfg.CORSOrigins),
 		otelgin.Middleware("server-web"),
@@ -21,6 +26,13 @@ func NewRouter(cfg config.Config, deps Dependencies) (*gin.Engine, error) {
 		middleware.Recovery(),
 		deps.Metrics.Handler(),
 		middleware.RateLimit(deps.CacheClient, cfg.RateLimit),
+		func(c *gin.Context) {
+			if strings.HasPrefix(c.Request.URL.Path, "/api/") && c.Request.Method != http.MethodGet {
+				globalBodyLimit(c)
+			} else {
+				c.Next()
+			}
+		},
 	)
 
 	if err := router.SetTrustedProxies(cfg.TrustedProxies); err != nil {

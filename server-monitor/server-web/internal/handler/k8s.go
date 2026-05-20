@@ -131,10 +131,7 @@ func (h *K8sHandler) Overview(c *gin.Context) {
 
 	result, err := h.serviceForCluster(c).Overview(ctx)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, response{
-			Status: "error",
-			Error:  err.Error(),
-		})
+		handleK8sError(c, err)
 		return
 	}
 
@@ -167,10 +164,7 @@ func (h *K8sHandler) ListNodes(c *gin.Context) {
 			})
 			return
 		}
-		c.JSON(http.StatusBadGateway, response{
-			Status: "error",
-			Error:  err.Error(),
-		})
+		handleK8sError(c, err)
 		return
 	}
 
@@ -206,10 +200,7 @@ func (h *K8sHandler) GetNodeDetail(c *gin.Context) {
 			})
 			return
 		}
-		c.JSON(http.StatusBadGateway, response{
-			Status: "error",
-			Error:  err.Error(),
-		})
+		handleK8sError(c, err)
 		return
 	}
 	if result == nil {
@@ -245,10 +236,7 @@ func (h *K8sHandler) GetNodeByInstance(c *gin.Context) {
 			})
 			return
 		}
-		c.JSON(http.StatusBadGateway, response{
-			Status: "error",
-			Error:  err.Error(),
-		})
+		handleK8sError(c, err)
 		return
 	}
 	if result == nil {
@@ -281,10 +269,7 @@ func (h *K8sHandler) ListPods(c *gin.Context) {
 		Limit:     limit,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, response{
-			Status: "error",
-			Error:  err.Error(),
-		})
+		handleK8sError(c, err)
 		return
 	}
 
@@ -309,10 +294,7 @@ func (h *K8sHandler) ListDeployments(c *gin.Context) {
 		Limit:     limit,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, response{
-			Status: "error",
-			Error:  err.Error(),
-		})
+		handleK8sError(c, err)
 		return
 	}
 
@@ -338,10 +320,7 @@ func (h *K8sHandler) ListServices(c *gin.Context) {
 		Limit:     limit,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, response{
-			Status: "error",
-			Error:  err.Error(),
-		})
+		handleK8sError(c, err)
 		return
 	}
 
@@ -366,10 +345,7 @@ func (h *K8sHandler) ListIngresses(c *gin.Context) {
 		Limit:     limit,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, response{
-			Status: "error",
-			Error:  err.Error(),
-		})
+		handleK8sError(c, err)
 		return
 	}
 
@@ -395,10 +371,7 @@ func (h *K8sHandler) ListEvents(c *gin.Context) {
 		Limit:     limit,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, response{
-			Status: "error",
-			Error:  err.Error(),
-		})
+		handleK8sError(c, err)
 		return
 	}
 
@@ -423,10 +396,7 @@ func (h *K8sHandler) ListConfigMaps(c *gin.Context) {
 		Limit:     limit,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, response{
-			Status: "error",
-			Error:  err.Error(),
-		})
+		handleK8sError(c, err)
 		return
 	}
 
@@ -451,10 +421,7 @@ func (h *K8sHandler) ListResourceQuotas(c *gin.Context) {
 		Limit:     limit,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, response{
-			Status: "error",
-			Error:  err.Error(),
-		})
+		handleK8sError(c, err)
 		return
 	}
 
@@ -479,10 +446,7 @@ func (h *K8sHandler) ListLimitRanges(c *gin.Context) {
 		Limit:     limit,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, response{
-			Status: "error",
-			Error:  err.Error(),
-		})
+		handleK8sError(c, err)
 		return
 	}
 
@@ -507,10 +471,7 @@ func (h *K8sHandler) ListPVs(c *gin.Context) {
 		Limit:  limit,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, response{
-			Status: "error",
-			Error:  err.Error(),
-		})
+		handleK8sError(c, err)
 		return
 	}
 
@@ -536,10 +497,7 @@ func (h *K8sHandler) ListPVCs(c *gin.Context) {
 		Limit:     limit,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, response{
-			Status: "error",
-			Error:  err.Error(),
-		})
+		handleK8sError(c, err)
 		return
 	}
 
@@ -564,10 +522,7 @@ func (h *K8sHandler) ListHPAs(c *gin.Context) {
 		Limit:     limit,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, response{
-			Status: "error",
-			Error:  err.Error(),
-		})
+		handleK8sError(c, err)
 		return
 	}
 
@@ -592,10 +547,7 @@ func (h *K8sHandler) ListDaemonSets(c *gin.Context) {
 		Limit:     limit,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, response{
-			Status: "error",
-			Error:  err.Error(),
-		})
+		handleK8sError(c, err)
 		return
 	}
 
@@ -620,10 +572,7 @@ func (h *K8sHandler) ListStatefulSets(c *gin.Context) {
 		Limit:     limit,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, response{
-			Status: "error",
-			Error:  err.Error(),
-		})
+		handleK8sError(c, err)
 		return
 	}
 
@@ -649,10 +598,7 @@ func (h *K8sHandler) ListJobs(c *gin.Context) {
 		Limit:     limit,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, response{
-			Status: "error",
-			Error:  err.Error(),
-		})
+		handleK8sError(c, err)
 		return
 	}
 
@@ -673,10 +619,7 @@ func (h *K8sHandler) Topology(c *gin.Context) {
 	namespace := strings.TrimSpace(c.Query("namespace"))
 	result, err := h.serviceForCluster(c).Topology(ctx, namespace)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, response{
-			Status: "error",
-			Error:  err.Error(),
-		})
+		handleK8sError(c, err)
 		return
 	}
 
@@ -718,10 +661,7 @@ func (h *K8sHandler) GetPodLogs(c *gin.Context) {
 		TailLines: tailLines,
 	})
 	if err != nil {
-		c.JSON(http.StatusBadGateway, response{
-			Status: "error",
-			Error:  err.Error(),
-		})
+		handleK8sError(c, err)
 		return
 	}
 
@@ -753,10 +693,7 @@ func (h *K8sHandler) GetResourceYAML(c *gin.Context) {
 
 	result, err := h.serviceForCluster(c).GetResourceYAML(ctx, kind, namespace, name)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, response{
-			Status: "error",
-			Error:  err.Error(),
-		})
+		handleK8sError(c, err)
 		return
 	}
 
@@ -778,6 +715,41 @@ func parseLimit(raw string) int {
 		return 200
 	}
 	return n
+}
+
+func handleK8sError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, copilotk8s.ErrNamespaceNotAllowed):
+		c.JSON(http.StatusForbidden, response{
+			Status: "error",
+			Error:  err.Error(),
+		})
+	case errors.Is(err, k8ssvc.ErrNodesNotEnabled):
+		c.JSON(http.StatusServiceUnavailable, response{
+			Status: "error",
+			Error:  err.Error(),
+		})
+	default:
+		errStr := err.Error()
+		if strings.Contains(errStr, "not found") || strings.Contains(errStr, "resource not found") {
+			c.JSON(http.StatusNotFound, response{
+				Status: "error",
+				Error:  errStr,
+			})
+			return
+		}
+		if strings.Contains(errStr, "permission denied") || strings.Contains(errStr, "forbidden") {
+			c.JSON(http.StatusForbidden, response{
+				Status: "error",
+				Error:  errStr,
+			})
+			return
+		}
+		c.JSON(http.StatusBadGateway, response{
+			Status: "error",
+			Error:  errStr,
+		})
+	}
 }
 
 func parsePage(c *gin.Context) int {

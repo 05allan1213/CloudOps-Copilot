@@ -553,8 +553,10 @@ services:
     volumes:
       - ./docker/custom-alerts.yml:/etc/server-monitor/rules/custom-alerts.yml
       - ./runbooks:/app/runbooks:ro
-      # Enable local K8s access by setting K8S_KUBECONFIG=/app/kubeconfig and mounting your kubeconfig here.
-      # - ${HOME}/.kube/config:/app/kubeconfig:ro
+      - ./docker/kubeconfig:/app/kubeconfig:ro
+    networks:
+      - default
+      - kind
     depends_on:
       jaeger:
         condition: service_started
@@ -588,3 +590,7 @@ volumes:
   elasticsearch-data:
   victoriametrics-data:
   kafka-data:
+
+networks:
+  kind:
+    external: true
