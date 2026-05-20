@@ -45,14 +45,18 @@ const stateKey = computed(() => {
 
 function severityLabel(value: string) {
   switch (value) {
-    case "critical":
-      return "严重";
-    case "warning":
-      return "警告";
-    case "info":
-      return "提示";
-    default:
-      return value || "-";
+    case "critical": return "严重";
+    case "warning": return "警告";
+    case "info": return "提示";
+    default: return value || "-";
+  }
+}
+
+function statusLabel(value: string) {
+  switch (value) {
+    case "firing": return "触发";
+    case "resolved": return "恢复";
+    default: return value || "-";
   }
 }
 
@@ -142,11 +146,11 @@ onMounted(() => {
           style="width: 140px"
         >
           <el-option
-            label="firing"
+            label="触发"
             value="firing"
           />
           <el-option
-            label="resolved"
+            label="恢复"
             value="resolved"
           />
         </el-select>
@@ -159,15 +163,15 @@ onMounted(() => {
           style="width: 140px"
         >
           <el-option
-            label="critical"
+            label="严重"
             value="critical"
           />
           <el-option
-            label="warning"
+            label="警告"
             value="warning"
           />
           <el-option
-            label="info"
+            label="提示"
             value="info"
           />
         </el-select>
@@ -268,7 +272,7 @@ onMounted(() => {
               :type="statusTagType(row.status)"
               size="small"
             >
-              {{ row.status }}
+              {{ statusLabel(row.status) }}
             </el-tag>
           </template>
         </el-table-column>

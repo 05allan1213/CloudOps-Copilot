@@ -54,7 +54,7 @@ function formatHosts(hosts: string[]): string {
       show-overflow-tooltip
     />
     <el-table-column
-      label="Hosts"
+      label="域名"
       min-width="160"
       show-overflow-tooltip
     >
@@ -63,7 +63,7 @@ function formatHosts(hosts: string[]): string {
       </template>
     </el-table-column>
     <el-table-column
-      label="Paths"
+      label="路径数"
       width="100"
       align="center"
     >
@@ -87,19 +87,19 @@ function formatHosts(hosts: string[]): string {
           size="small"
           type="success"
         >
-          Yes
+          已启用
         </el-tag>
         <el-tag
           v-else
           size="small"
           type="info"
         >
-          No
+          未启用
         </el-tag>
       </template>
     </el-table-column>
     <el-table-column
-      label="Age"
+      label="存活"
       width="100"
       align="center"
     >

@@ -24,21 +24,24 @@ function formatAge(ns: number): string {
     v-loading="loading"
     :data="items"
     stripe
+    highlight-current-row
     style="width: 100%"
   >
     <el-table-column
       prop="namespace"
-      label="Namespace"
-      width="160"
+      label="命名空间"
+      min-width="120"
+      show-overflow-tooltip
     />
     <el-table-column
       prop="name"
-      label="Name"
-      min-width="200"
+      label="名称"
+      min-width="180"
+      show-overflow-tooltip
     />
     <el-table-column
-      label="Desired"
-      width="90"
+      label="期望"
+      width="80"
       align="center"
     >
       <template #default="{ row }">
@@ -46,8 +49,8 @@ function formatAge(ns: number): string {
       </template>
     </el-table-column>
     <el-table-column
-      label="Current"
-      width="90"
+      label="当前"
+      width="80"
       align="center"
     >
       <template #default="{ row }">
@@ -55,8 +58,8 @@ function formatAge(ns: number): string {
       </template>
     </el-table-column>
     <el-table-column
-      label="Ready"
-      width="90"
+      label="就绪"
+      width="100"
       align="center"
     >
       <template #default="{ row }">
@@ -69,8 +72,8 @@ function formatAge(ns: number): string {
       </template>
     </el-table-column>
     <el-table-column
-      label="Updated"
-      width="90"
+      label="已更新"
+      width="80"
       align="center"
     >
       <template #default="{ row }">
@@ -79,7 +82,7 @@ function formatAge(ns: number): string {
     </el-table-column>
     <el-table-column
       prop="node_selector"
-      label="Node Selector"
+      label="节点选择器"
       min-width="160"
       show-overflow-tooltip
     >
@@ -88,7 +91,7 @@ function formatAge(ns: number): string {
       </template>
     </el-table-column>
     <el-table-column
-      label="Age"
+      label="存活"
       width="80"
       align="center"
     >
@@ -97,7 +100,7 @@ function formatAge(ns: number): string {
       </template>
     </el-table-column>
     <el-table-column
-      label="Actions"
+      label="操作"
       width="80"
       fixed="right"
       align="center"

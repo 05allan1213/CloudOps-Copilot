@@ -47,6 +47,26 @@ function targetOf(action: PendingAction) {
   return `${action.namespace || "-"}/${action.target_name || "-"}`;
 }
 
+function riskLabel(level: string): string {
+  switch (level) {
+    case "low": return "低";
+    case "medium": return "中";
+    case "high": return "高";
+    default: return level;
+  }
+}
+
+function statusLabel(status: string): string {
+  switch (status) {
+    case "pending": return "待审批";
+    case "approved": return "已审批";
+    case "rejected": return "已拒绝";
+    case "executed": return "已执行";
+    case "failed": return "失败";
+    default: return status;
+  }
+}
+
 async function loadActions() {
   loading.value = true;
   error.value = "";
@@ -191,23 +211,23 @@ onMounted(loadActions);
           style="width: 140px"
         >
           <el-option
-            label="pending"
+            label="待审批"
             value="pending"
           />
           <el-option
-            label="approved"
+            label="已审批"
             value="approved"
           />
           <el-option
-            label="rejected"
+            label="已拒绝"
             value="rejected"
           />
           <el-option
-            label="executed"
+            label="已执行"
             value="executed"
           />
           <el-option
-            label="failed"
+            label="失败"
             value="failed"
           />
         </el-select>
@@ -220,15 +240,15 @@ onMounted(loadActions);
           style="width: 140px"
         >
           <el-option
-            label="low"
+            label="低"
             value="low"
           />
           <el-option
-            label="medium"
+            label="中"
             value="medium"
           />
           <el-option
-            label="high"
+            label="高"
             value="high"
           />
         </el-select>
@@ -304,7 +324,7 @@ onMounted(loadActions);
               size="small"
               effect="dark"
             >
-              {{ row.risk_level }}
+              {{ riskLabel(row.risk_level) }}
             </el-tag>
           </template>
         </el-table-column>
@@ -318,7 +338,7 @@ onMounted(loadActions);
               :type="statusTagType(row.status)"
               size="small"
             >
-              {{ row.status }}
+              {{ statusLabel(row.status) }}
             </el-tag>
           </template>
         </el-table-column>

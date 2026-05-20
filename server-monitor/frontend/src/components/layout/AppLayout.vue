@@ -13,6 +13,8 @@ const pageTitle = computed(() => {
   }
   return "";
 });
+
+const isFullBleed = computed(() => route.meta.fullBleed === true);
 </script>
 
 <template>
@@ -20,7 +22,10 @@ const pageTitle = computed(() => {
     <AppSidebar />
     <el-container class="app-main-container">
       <AppHeader :page-title="pageTitle" />
-      <el-main class="app-main">
+      <el-main
+        class="app-main"
+        :class="{ 'app-main--full-bleed': isFullBleed }"
+      >
         <RouterView />
       </el-main>
     </el-container>
@@ -43,5 +48,10 @@ const pageTitle = computed(() => {
   padding: 20px;
   overflow-y: auto;
   background: var(--cloudops-bg-primary);
+}
+
+.app-main--full-bleed {
+  padding: 0;
+  overflow: hidden;
 }
 </style>

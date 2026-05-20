@@ -78,7 +78,7 @@ onMounted(() => {
 
 <template>
   <section class="k8s-events-page">
-    <PageHeader title="Events" />
+    <PageHeader title="事件" />
 
     <FilterPanel
       @search="applyFilters"
@@ -133,7 +133,7 @@ onMounted(() => {
             >
               <Search />
             </el-icon>
-            <span class="panel-title-text">Event 列表</span>
+            <span class="panel-title-text">事件列表</span>
           </div>
           <div class="panel-actions">
             <el-tag

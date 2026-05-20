@@ -63,11 +63,14 @@ function viewYaml(namespace: string, name: string) {
       align="center"
     />
     <el-table-column
-      prop="strategy"
       label="策略"
-      width="90"
+      width="120"
       align="center"
-    />
+    >
+      <template #default="{ row }">
+        {{ row.strategy === 'RollingUpdate' ? '滚动更新' : row.strategy === 'Recreate' ? '重建' : row.strategy || '-' }}
+      </template>
+    </el-table-column>
     <el-table-column
       label="状态"
       width="80"

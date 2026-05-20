@@ -3,6 +3,7 @@ import { ref } from "vue";
 
 import type { K8sPVSummary } from "../../types";
 
+import K8sStatusBadge from "./K8sStatusBadge.vue";
 import YamlViewer from "./YamlViewer.vue";
 
 defineProps<{
@@ -19,16 +20,6 @@ function viewYaml(name: string) {
   yamlNamespace.value = "default";
   yamlName.value = name;
   yamlVisible.value = true;
-}
-
-function pvStatusType(status: string): "" | "success" | "warning" | "danger" | "info" {
-  switch (status) {
-    case "Bound": return "success";
-    case "Available": return "";
-    case "Released": return "warning";
-    case "Failed": return "danger";
-    default: return "info";
-  }
 }
 </script>
 
@@ -52,7 +43,7 @@ function pvStatusType(status: string): "" | "success" | "warning" | "danger" | "
       align="center"
     />
     <el-table-column
-      label="Access Modes"
+      label="访问模式"
       min-width="140"
       show-overflow-tooltip
     >
@@ -66,28 +57,26 @@ function pvStatusType(status: string): "" | "success" | "warning" | "danger" | "
       align="center"
     >
       <template #default="{ row }">
-        <el-tag
-          size="small"
-          :type="pvStatusType(row.status)"
-        >
-          {{ row.status }}
-        </el-tag>
+        <K8sStatusBadge
+          :status="row.status"
+          type="pv"
+        />
       </template>
     </el-table-column>
     <el-table-column
       prop="claim_ref"
-      label="Claim"
+      label="绑定声明"
       min-width="180"
       show-overflow-tooltip
     />
     <el-table-column
       prop="storage_class"
-      label="StorageClass"
+      label="存储类"
       min-width="130"
       show-overflow-tooltip
     />
     <el-table-column
-      label="Age"
+      label="存活"
       width="100"
       align="center"
     >

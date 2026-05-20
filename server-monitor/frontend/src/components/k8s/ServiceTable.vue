@@ -59,7 +59,7 @@ function formatPorts(ports?: Array<{ name?: string; protocol: string; port: numb
     </el-table-column>
     <el-table-column
       prop="cluster_ip"
-      label="ClusterIP"
+      label="集群 IP"
       min-width="130"
       show-overflow-tooltip
     />
@@ -73,7 +73,7 @@ function formatPorts(ports?: Array<{ name?: string; protocol: string; port: numb
       </template>
     </el-table-column>
     <el-table-column
-      label="Selector"
+      label="选择器"
       min-width="160"
       show-overflow-tooltip
     >

@@ -57,7 +57,7 @@ watch(
 <template>
   <div class="chat-panel">
     <header class="chat-header">
-      <div>
+      <div class="chat-header-info">
         <h2>{{ activeSession?.title || "新会话" }}</h2>
         <p>{{ activeSession ? activeSession.id : "发送第一条消息后创建" }}</p>
       </div>
@@ -107,29 +107,31 @@ watch(
     </section>
 
     <footer class="composer">
-      <el-input
-        v-model="draft"
-        type="textarea"
-        maxlength="2000"
-        :rows="3"
-        placeholder="输入运维查询"
-        :disabled="sending"
-        resize="vertical"
-        @keydown="handleDraftKeydown"
-      />
-      <div class="composer-actions">
-        <span
-          :class="{ over: messageLength > 2000 }"
-          class="char-count"
-        >{{ messageLength }}/2000</span>
-        <el-button
-          type="primary"
-          :disabled="!canSend"
-          :loading="sending"
-          @click="handleSubmit"
-        >
-          {{ sending ? "发送中" : "发送" }}
-        </el-button>
+      <div class="composer-inner">
+        <el-input
+          v-model="draft"
+          type="textarea"
+          maxlength="2000"
+          :rows="3"
+          placeholder="输入运维查询"
+          :disabled="sending"
+          resize="none"
+          @keydown="handleDraftKeydown"
+        />
+        <div class="composer-actions">
+          <span
+            :class="{ over: messageLength > 2000 }"
+            class="char-count"
+          >{{ messageLength }}/2000</span>
+          <el-button
+            type="primary"
+            :disabled="!canSend"
+            :loading="sending"
+            @click="handleSubmit"
+          >
+            {{ sending ? "发送中" : "发送" }}
+          </el-button>
+        </div>
       </div>
     </footer>
   </div>
@@ -137,44 +139,55 @@ watch(
 
 <style scoped>
 .chat-panel {
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
-  min-height: 520px;
-  border: 1px solid var(--cloudops-border-color);
-  border-radius: var(--cloudops-radius-md);
-  background: var(--cloudops-bg-card);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: #faf9f7;
 }
 
 .chat-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 16px;
+  padding: 14px 20px;
   border-bottom: 1px solid var(--cloudops-border-color);
+  flex-shrink: 0;
+  background: #faf9f7;
 }
 
-.chat-header h2 {
+.chat-header-info h2 {
   margin: 0;
   font-size: 15px;
   font-weight: 600;
 }
 
-.chat-header p {
-  margin: 4px 0 0;
+.chat-header-info p {
+  margin: 2px 0 0;
   color: var(--el-text-color-placeholder);
   font-size: 12px;
   overflow-wrap: anywhere;
 }
 
 .message-list {
-  overflow: auto;
-  padding: 16px;
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 20px;
+  min-height: 0;
 }
 
 .composer {
+  flex-shrink: 0;
   border-top: 1px solid var(--cloudops-border-color);
-  padding: 16px;
+  padding: 16px 20px;
+  background: #faf9f7;
+}
+
+.composer-inner {
+  max-width: 768px;
+  margin: 0 auto;
 }
 
 .composer-actions {
@@ -194,12 +207,14 @@ watch(
 }
 
 .chat-alert {
-  margin: 12px 16px 0;
+  margin: 12px 20px 0;
+  flex-shrink: 0;
 }
 
 @media (max-width: 860px) {
   .chat-panel {
-    min-height: auto;
+    height: auto;
+    min-height: 400px;
   }
 }
 </style>

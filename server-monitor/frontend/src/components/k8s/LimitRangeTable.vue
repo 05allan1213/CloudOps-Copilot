@@ -64,7 +64,7 @@ function formatAge(age: number): string {
       </template>
     </el-table-column>
     <el-table-column
-      label="Age"
+      label="存活"
       width="100"
       align="center"
     >

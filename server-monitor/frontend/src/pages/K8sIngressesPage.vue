@@ -66,7 +66,7 @@ onMounted(loadIngresses);
 
 <template>
   <section class="k8s-ingresses-page">
-    <PageHeader title="Ingress" />
+    <PageHeader title="入口路由" />
 
     <FilterPanel
       @search="applyFilters"
@@ -105,7 +105,7 @@ onMounted(loadIngresses);
             >
               <Search />
             </el-icon>
-            <span class="panel-title-text">Ingress 列表</span>
+            <span class="panel-title-text">入口路由列表</span>
           </div>
           <div class="panel-actions">
             <el-tag

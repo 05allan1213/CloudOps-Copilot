@@ -134,7 +134,7 @@ watch(activeTab, () => {
 
 <template>
   <section class="workloads-page">
-    <PageHeader title="Workloads" />
+    <PageHeader title="工作负载" />
 
     <el-tabs v-model="activeTab">
       <el-tab-pane
@@ -247,13 +247,13 @@ watch(activeTab, () => {
                 全部
               </el-radio-button>
               <el-radio-button value="Running">
-                Running
+                运行中
               </el-radio-button>
               <el-radio-button value="Pending">
-                Pending
+                等待中
               </el-radio-button>
               <el-radio-button value="Failed">
-                Failed
+                失败
               </el-radio-button>
             </el-radio-group>
           </el-form-item>
@@ -482,13 +482,13 @@ watch(activeTab, () => {
                 全部
               </el-radio-button>
               <el-radio-button value="Running">
-                Running
+                运行中
               </el-radio-button>
               <el-radio-button value="Completed">
-                Completed
+                已完成
               </el-radio-button>
               <el-radio-button value="Failed">
-                Failed
+                失败
               </el-radio-button>
             </el-radio-group>
           </el-form-item>

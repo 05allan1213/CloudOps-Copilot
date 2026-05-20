@@ -48,7 +48,7 @@ function viewYaml(namespace: string, name: string) {
     />
     <el-table-column
       label="阶段"
-      width="100"
+      width="110"
       align="center"
     >
       <template #default="{ row }">
@@ -59,7 +59,7 @@ function viewYaml(namespace: string, name: string) {
       </template>
     </el-table-column>
     <el-table-column
-      label="Ready"
+      label="就绪"
       width="80"
       align="center"
     >
@@ -75,7 +75,7 @@ function viewYaml(namespace: string, name: string) {
     />
     <el-table-column
       prop="node_name"
-      label="Node"
+      label="节点"
       min-width="140"
       show-overflow-tooltip
     />
@@ -86,7 +86,7 @@ function viewYaml(namespace: string, name: string) {
       show-overflow-tooltip
     />
     <el-table-column
-      label="Owner"
+      label="归属"
       min-width="140"
       show-overflow-tooltip
     >

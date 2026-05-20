@@ -69,7 +69,7 @@ onMounted(loadServices);
 
 <template>
   <section class="k8s-services-page">
-    <PageHeader title="Services" />
+    <PageHeader title="服务" />
 
     <FilterPanel
       @search="applyFilters"
@@ -127,7 +127,7 @@ onMounted(loadServices);
             >
               <Search />
             </el-icon>
-            <span class="panel-title-text">Service 列表</span>
+            <span class="panel-title-text">服务列表</span>
           </div>
           <div class="panel-actions">
             <el-tag

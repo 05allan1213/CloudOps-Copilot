@@ -41,6 +41,15 @@ const stateKey = computed(() => {
   return "default";
 });
 
+function severityLabel(severity: string): string {
+  switch (severity) {
+    case "critical": return "严重";
+    case "warning": return "警告";
+    case "info": return "提示";
+    default: return severity;
+  }
+}
+
 const formRules: FormRules = {
   name: [{ required: true, message: "请输入规则名称", trigger: "blur" }],
   expr: [{ required: true, message: "请输入 PromQL 表达式", trigger: "blur" }],
@@ -210,15 +219,15 @@ onMounted(loadRules);
                 style="width: 100%"
               >
                 <el-option
-                  label="critical"
+                  label="严重"
                   value="critical"
                 />
                 <el-option
-                  label="warning"
+                  label="警告"
                   value="warning"
                 />
                 <el-option
-                  label="info"
+                  label="提示"
                   value="info"
                 />
               </el-select>
@@ -338,7 +347,7 @@ onMounted(loadRules);
                 size="small"
                 effect="plain"
               >
-                {{ row.severity }}
+                {{ severityLabel(row.severity) }}
               </el-tag>
             </template>
           </el-table-column>

@@ -134,19 +134,19 @@ onMounted(loadReports);
           style="width: 140px"
         >
           <el-option
-            label="pending"
+            label="等待中"
             value="pending"
           />
           <el-option
-            label="running"
+            label="诊断中"
             value="running"
           />
           <el-option
-            label="completed"
+            label="已完成"
             value="completed"
           />
           <el-option
-            label="failed"
+            label="失败"
             value="failed"
           />
         </el-select>

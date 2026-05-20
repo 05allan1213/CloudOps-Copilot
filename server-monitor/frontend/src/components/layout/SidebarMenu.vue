@@ -21,6 +21,7 @@ import {
   Odometer,
   Operation,
   Setting,
+  Share,
   User,
 } from "@element-plus/icons-vue";
 
@@ -56,6 +57,7 @@ const iconMap: Record<string, typeof Monitor> = {
   DataLine: markRaw(DataLine),
   Guide: markRaw(Guide),
   Odometer: markRaw(Odometer),
+  Share: markRaw(Share),
 };
 
 interface MenuItem {
@@ -79,16 +81,16 @@ const menuItems: MenuItem[] = [
     group: "k8s",
     children: [
       { index: "/k8s", title: "集群概览", icon: "Grid", group: "k8s" },
-      { index: "/k8s/nodes", title: "Nodes", icon: "Monitor", group: "k8s", nodesRequired: true },
-      { index: "/k8s/workloads", title: "Workloads", icon: "Box", group: "k8s" },
-      { index: "/k8s/services", title: "Services", icon: "Connection", group: "k8s" },
-      { index: "/k8s/configmaps", title: "ConfigMaps", icon: "Document", group: "k8s" },
-      { index: "/k8s/ingresses", title: "Ingress", icon: "Guide", group: "k8s" },
-      { index: "/k8s/storage", title: "Storage", icon: "Coin", group: "k8s" },
-      { index: "/k8s/quotas", title: "Quotas", icon: "DataLine", group: "k8s" },
-      { index: "/k8s/hpas", title: "HPA", icon: "Odometer", group: "k8s" },
+      { index: "/k8s/nodes", title: "节点", icon: "Monitor", group: "k8s", nodesRequired: true },
+      { index: "/k8s/workloads", title: "工作负载", icon: "Box", group: "k8s" },
+      { index: "/k8s/services", title: "服务", icon: "Connection", group: "k8s" },
+      { index: "/k8s/configmaps", title: "配置项", icon: "Document", group: "k8s" },
+      { index: "/k8s/ingresses", title: "入口路由", icon: "Guide", group: "k8s" },
+      { index: "/k8s/storage", title: "存储", icon: "Coin", group: "k8s" },
+      { index: "/k8s/quotas", title: "配额", icon: "DataLine", group: "k8s" },
+      { index: "/k8s/hpas", title: "弹性伸缩", icon: "Odometer", group: "k8s" },
       { index: "/k8s/topology", title: "拓扑图", icon: "Share", group: "k8s" },
-      { index: "/k8s/events", title: "Events", icon: "Bell", group: "k8s" },
+      { index: "/k8s/events", title: "事件", icon: "Bell", group: "k8s" },
     ],
   },
   {

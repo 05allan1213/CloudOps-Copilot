@@ -92,7 +92,7 @@ onMounted(loadData);
 
 <template>
   <section class="k8s-storage-page">
-    <PageHeader title="Storage" />
+    <PageHeader title="存储" />
 
     <FilterPanel
       @search="applyFilters"

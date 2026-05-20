@@ -135,7 +135,7 @@ onUnmounted(() => {
           :type="isReady ? 'success' : 'danger'"
           size="small"
         >
-          {{ isReady ? "Ready" : "NotReady" }}
+          {{ isReady ? "就绪" : "未就绪" }}
         </el-tag>
       </p>
     </div>
@@ -182,7 +182,7 @@ onUnmounted(() => {
                 :type="isReady ? 'success' : 'danger'"
                 size="small"
               >
-                {{ isReady ? "Ready" : "NotReady" }}
+                {{ isReady ? "就绪" : "未就绪" }}
               </el-tag>
             </template>
           </el-statistic>

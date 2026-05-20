@@ -68,12 +68,12 @@ const sortedHpas = computed(() => {
     />
     <el-table-column
       prop="reference"
-      label="Reference"
+      label="引用"
       min-width="180"
       show-overflow-tooltip
     />
     <el-table-column
-      label="Min"
+      label="最小"
       width="80"
       align="center"
     >
@@ -82,7 +82,7 @@ const sortedHpas = computed(() => {
       </template>
     </el-table-column>
     <el-table-column
-      label="Max"
+      label="最大"
       width="80"
       align="center"
     >
@@ -91,7 +91,7 @@ const sortedHpas = computed(() => {
       </template>
     </el-table-column>
     <el-table-column
-      label="Current"
+      label="当前"
       width="100"
       align="center"
     >
@@ -108,7 +108,7 @@ const sortedHpas = computed(() => {
     </el-table-column>
     <el-table-column
       prop="target_utilization"
-      label="Target"
+      label="目标利用率"
       min-width="140"
       show-overflow-tooltip
     >
@@ -117,7 +117,7 @@ const sortedHpas = computed(() => {
       </template>
     </el-table-column>
     <el-table-column
-      label="Age"
+      label="存活"
       width="100"
       align="center"
     >

@@ -48,16 +48,21 @@ function requestActionType(log: AuditLog): string {
 
 function resultTagType(result: string): "success" | "danger" | "warning" | "info" | "" {
   switch (result) {
-    case "success":
-      return "success";
-    case "failure":
-      return "danger";
-    case "denied":
-      return "warning";
-    case "timeout":
-      return "info";
-    default:
-      return "";
+    case "success": return "success";
+    case "failure": return "danger";
+    case "denied": return "warning";
+    case "timeout": return "info";
+    default: return "";
+  }
+}
+
+function resultLabel(result: string): string {
+  switch (result) {
+    case "success": return "成功";
+    case "failure": return "失败";
+    case "denied": return "拒绝";
+    case "timeout": return "超时";
+    default: return result;
   }
 }
 
@@ -146,19 +151,19 @@ onMounted(loadLogs);
           style="width: 140px"
         >
           <el-option
-            label="success"
+            label="成功"
             value="success"
           />
           <el-option
-            label="failure"
+            label="失败"
             value="failure"
           />
           <el-option
-            label="denied"
+            label="拒绝"
             value="denied"
           />
           <el-option
-            label="timeout"
+            label="超时"
             value="timeout"
           />
         </el-select>
@@ -246,7 +251,7 @@ onMounted(loadLogs);
               :type="resultTagType(row.result)"
               size="small"
             >
-              {{ row.result }}
+              {{ resultLabel(row.result) }}
             </el-tag>
           </template>
         </el-table-column>

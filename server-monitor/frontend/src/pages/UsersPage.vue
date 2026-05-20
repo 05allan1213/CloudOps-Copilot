@@ -108,6 +108,14 @@ function roleTagType(role: string) {
   return role === "admin" ? "danger" : "info";
 }
 
+function roleLabel(role: string): string {
+  switch (role) {
+    case "admin": return "管理员";
+    case "viewer": return "普通用户";
+    default: return role;
+  }
+}
+
 onMounted(loadUsers);
 </script>
 
@@ -170,11 +178,11 @@ onMounted(loadUsers);
             style="width: 100%"
           >
             <el-option
-              label="viewer"
+              label="普通用户"
               value="viewer"
             />
             <el-option
-              label="admin"
+              label="管理员"
               value="admin"
             />
           </el-select>
@@ -234,7 +242,7 @@ onMounted(loadUsers);
                 size="small"
                 effect="plain"
               >
-                {{ row.role }}
+                {{ roleLabel(row.role) }}
               </el-tag>
             </template>
           </el-table-column>

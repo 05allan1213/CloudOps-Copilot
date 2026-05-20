@@ -24,20 +24,23 @@ function formatAge(ns: number): string {
     v-loading="loading"
     :data="items"
     stripe
+    highlight-current-row
     style="width: 100%"
   >
     <el-table-column
       prop="namespace"
-      label="Namespace"
-      width="160"
+      label="命名空间"
+      min-width="120"
+      show-overflow-tooltip
     />
     <el-table-column
       prop="name"
-      label="Name"
-      min-width="200"
+      label="名称"
+      min-width="180"
+      show-overflow-tooltip
     />
     <el-table-column
-      label="Ready"
+      label="就绪"
       width="100"
       align="center"
     >
@@ -52,7 +55,7 @@ function formatAge(ns: number): string {
     </el-table-column>
     <el-table-column
       prop="service_name"
-      label="Service Name"
+      label="服务名"
       min-width="180"
       show-overflow-tooltip
     >
@@ -61,7 +64,7 @@ function formatAge(ns: number): string {
       </template>
     </el-table-column>
     <el-table-column
-      label="Age"
+      label="存活"
       width="80"
       align="center"
     >
@@ -70,7 +73,7 @@ function formatAge(ns: number): string {
       </template>
     </el-table-column>
     <el-table-column
-      label="Actions"
+      label="操作"
       width="80"
       fixed="right"
       align="center"

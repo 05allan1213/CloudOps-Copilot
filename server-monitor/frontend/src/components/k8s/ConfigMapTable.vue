@@ -53,7 +53,7 @@ function formatAge(age: number): string {
       show-overflow-tooltip
     />
     <el-table-column
-      label="Data Keys"
+      label="数据键"
       width="120"
       align="center"
     >
@@ -67,12 +67,12 @@ function formatAge(age: number): string {
       </template>
     </el-table-column>
     <el-table-column
-      label="Age"
-      width="100"
+      label="存活"
+      width="120"
       align="center"
     >
       <template #default="{ row }">
-        {{ formatAge(row.age) }}
+        <span style="white-space: nowrap;">{{ formatAge(row.age) }}</span>
       </template>
     </el-table-column>
     <el-table-column

@@ -45,6 +45,16 @@ function formatJSON(value: unknown) {
   return JSON.stringify(value ?? {}, null, 2);
 }
 
+function statusLabel(status: string) {
+  switch (status) {
+    case "pending": return "等待中";
+    case "running": return "诊断中";
+    case "completed": return "已完成";
+    case "failed": return "失败";
+    default: return status || "-";
+  }
+}
+
 async function loadReport() {
   const id = Number(route.params.id);
   if (!Number.isFinite(id) || id <= 0) {
@@ -128,7 +138,7 @@ onMounted(loadReport);
                 :type="report.status === 'completed' ? 'success' : report.status === 'failed' ? 'danger' : 'info'"
                 size="small"
               >
-                {{ report.status }}
+                {{ statusLabel(report.status) }}
               </el-tag>
             </el-descriptions-item>
             <el-descriptions-item label="置信度">

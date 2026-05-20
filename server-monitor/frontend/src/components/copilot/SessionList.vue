@@ -85,19 +85,20 @@ async function handleConfirmDelete(sessionId: string) {
 .session-panel {
   display: flex;
   flex-direction: column;
-  min-height: 520px;
-  border: 1px solid var(--cloudops-border-color);
-  border-radius: var(--cloudops-radius-md);
-  background: var(--cloudops-bg-card);
+  height: 100%;
+  overflow: hidden;
+  border-right: 1px solid var(--cloudops-border-color);
+  background: #faf9f7;
 }
 
 .session-panel-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 16px;
+  padding: 14px 16px;
   border-bottom: 1px solid var(--cloudops-border-color);
+  flex-shrink: 0;
 }
 
 .session-panel-header h2 {
@@ -108,15 +109,17 @@ async function handleConfirmDelete(sessionId: string) {
 
 .session-panel-header span {
   display: block;
-  margin-top: 4px;
+  margin-top: 2px;
   color: var(--el-text-color-placeholder);
   font-size: 12px;
 }
 
 .session-list {
   flex: 1;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 8px;
+  min-height: 0;
 }
 
 .session-item {
@@ -153,11 +156,13 @@ async function handleConfirmDelete(sessionId: string) {
 .session-footer {
   padding: 8px 12px;
   border-top: 1px solid var(--cloudops-border-color);
+  flex-shrink: 0;
 }
 
 @media (max-width: 860px) {
   .session-panel {
-    min-height: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--cloudops-border-color);
   }
   .session-list {
     max-height: 220px;

@@ -53,7 +53,7 @@ export const router = createRouter({
       path: "/copilot",
       name: "copilot",
       component: () => import("../pages/CopilotPage.vue"),
-      meta: { title: "Copilot", icon: "ChatDotRound", group: "ai" },
+      meta: { title: "Copilot", icon: "ChatDotRound", group: "ai", fullBleed: true },
     },
     {
       path: "/diagnosis",

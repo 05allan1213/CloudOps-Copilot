@@ -50,7 +50,7 @@ function viewYaml(namespace: string, name: string) {
     />
     <el-table-column
       prop="involved_kind"
-      label="Kind"
+      label="资源类型"
       width="100"
       show-overflow-tooltip
     />

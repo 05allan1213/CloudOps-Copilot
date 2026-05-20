@@ -260,6 +260,44 @@ make docker-up
 - Docker Compose 默认绑定 `127.0.0.1`，生产环境必须修改绑定地址和默认密码
 - 生产环境必须通过环境变量覆盖 `JWT_SECRET`、`ADMIN_PASSWORD`、`REDIS_PASSWORD` 等敏感配置
 
+#### 启用 K8s 集成
+
+Docker Compose 部署支持通过 kind（Kubernetes in Docker）接入 K8s 集群，启用后可使用 Copilot K8s 工具和 K8s 资源查询 API。
+
+```bash
+# 1. 创建 kind 集群、部署测试应用、生成 kubeconfig
+make k8s-setup
+
+# 2. 启动服务（server-web 会自动连接 kind 网络）
+make docker-up
+```
+
+`make k8s-setup` 会自动完成以下操作：
+
+1. 检查 docker / kind / kubectl 依赖
+2. 创建 kind 集群 `cloudops-test`（如已存在则跳过）
+3. 创建 `default` 和 `cloudops-test` namespace
+4. 在 `default` namespace 部署 nginx（2 副本）
+5. 生成 `docker/kubeconfig`（使用 kind 网络内部 DNS，IP 变化后无需手动更新）
+6. 验证 kind Docker 网络存在
+
+K8s 相关配置已预置在 `.env` 和 `docker-compose.yml` 中：
+
+| 配置项 | 值 | 说明 |
+|--------|-----|------|
+| `K8S_ENABLED` | `true` | 启用 K8s 只读工具 |
+| `K8S_API_ENABLED` | `true` | 启用 K8s REST API |
+| `K8S_NODES_ENABLED` | `true` | 启用 K8s 节点查询 |
+| `K8S_KUBECONFIG` | `/app/kubeconfig` | 容器内 kubeconfig 路径 |
+| `K8S_ALLOWED_NAMESPACES` | `default,cloudops-test` | 允许访问的 namespace（支持 `*` 通配符） |
+| `COPILOT_ENABLED` | `true` | 启用 Copilot（K8s 工具依赖） |
+
+删除 kind 集群：
+
+```bash
+make k8s-teardown
+```
+
 ### 方式二：开发模式
 
 无需构建 Docker 镜像，改代码后秒级生效：
@@ -328,6 +366,8 @@ kubectl port-forward svc/server-web 8080:8080 -n server-monitor
 | `docker/grafana/provisioning/` | Grafana 数据源和大盘自动加载 |
 | `docker/grafana/dashboards/` | Grafana 预置大盘（监控总览、AI 质量、Kafka 链路追踪） |
 | `docker/elasticsearch/` | Elasticsearch ILM 策略和索引模板 |
+| `docker/kubeconfig` | K8s kubeconfig 文件（由 `make k8s-setup` 自动生成） |
+| `docker/setup-k8s.sh` | K8s 集成环境自动化脚本（kind 集群 + nginx + kubeconfig） |
 | `k8s/configmap.yaml` | Kubernetes ConfigMap（非敏感配置） |
 | `k8s/secret.yaml` | Kubernetes Secret（敏感配置） |
 | `charts/server-monitor/values.yaml` | Helm Chart 默认值 |
@@ -659,6 +699,8 @@ server-monitor/
 | `make docker-down` | 停止所有服务 |
 | `make docker-logs` | 查看服务日志 |
 | `make docker-clean` | 停止并清理所有数据 |
+| `make k8s-setup` | 创建 kind 集群并配置 K8s 集成环境 |
+| `make k8s-teardown` | 删除 kind 集群 |
 | `make test` | 运行所有 Go 测试 |
 | `make test-pkg` | 仅运行 pkg 测试 |
 | `make fmt` | 格式化 Go 代码 |

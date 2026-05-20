@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { K8sJobSummary } from "../../types";
+import K8sStatusBadge from "./K8sStatusBadge.vue";
 
 defineProps<{
   items: K8sJobSummary[];
@@ -17,13 +18,6 @@ function formatAge(ns: number): string {
   if (s < 86400) return `${Math.floor(s / 3600)}h`;
   return `${Math.floor(s / 86400)}d`;
 }
-
-const statusTagType: Record<string, string> = {
-  Completed: "success",
-  Failed: "danger",
-  Running: "primary",
-  Suspended: "warning",
-};
 </script>
 
 <template>
@@ -31,21 +25,24 @@ const statusTagType: Record<string, string> = {
     v-loading="loading"
     :data="items"
     stripe
+    highlight-current-row
     style="width: 100%"
   >
     <el-table-column
       prop="namespace"
-      label="Namespace"
-      width="160"
+      label="命名空间"
+      min-width="120"
+      show-overflow-tooltip
     />
     <el-table-column
       prop="name"
-      label="Name"
-      min-width="200"
+      label="名称"
+      min-width="180"
+      show-overflow-tooltip
     />
     <el-table-column
-      label="Completions"
-      width="120"
+      label="完成数"
+      width="100"
       align="center"
     >
       <template #default="{ row }">
@@ -53,8 +50,8 @@ const statusTagType: Record<string, string> = {
       </template>
     </el-table-column>
     <el-table-column
-      label="Duration"
-      width="120"
+      label="耗时"
+      width="100"
       align="center"
     >
       <template #default="{ row }">
@@ -62,21 +59,19 @@ const statusTagType: Record<string, string> = {
       </template>
     </el-table-column>
     <el-table-column
-      label="Status"
+      label="状态"
       width="110"
       align="center"
     >
       <template #default="{ row }">
-        <el-tag
-          :type="(statusTagType[row.status] || 'info') as any"
-          size="small"
-        >
-          {{ row.status }}
-        </el-tag>
+        <K8sStatusBadge
+          :status="row.status"
+          type="job"
+        />
       </template>
     </el-table-column>
     <el-table-column
-      label="Age"
+      label="存活"
       width="80"
       align="center"
     >
@@ -85,7 +80,7 @@ const statusTagType: Record<string, string> = {
       </template>
     </el-table-column>
     <el-table-column
-      label="Actions"
+      label="操作"
       width="80"
       fixed="right"
       align="center"

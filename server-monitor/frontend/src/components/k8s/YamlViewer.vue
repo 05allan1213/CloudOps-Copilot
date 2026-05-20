@@ -74,12 +74,12 @@ function handleClose() {
       >{{ yamlContent }}</pre>
       <el-empty
         v-if="!loading && !error && !yamlContent"
-        description="No YAML content"
+        description="无 YAML 内容"
       />
     </div>
     <template #footer>
       <el-button @click="handleClose">
-        Close
+        关闭
       </el-button>
     </template>
   </el-dialog>

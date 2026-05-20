@@ -2,13 +2,7 @@
 import { ref, computed, onMounted } from "vue";
 import {
   Monitor,
-  CircleCheck,
-  CircleClose,
   Box,
-  Select,
-  Warning,
-  CircleCloseFilled,
-  WarningFilled,
   Grid,
   InfoFilled,
 } from "@element-plus/icons-vue";
@@ -32,6 +26,24 @@ const pageState = computed<"loading" | "error" | "default">(() => {
 const subtitle = computed(() => {
   if (!overview.value?.collected_at) return "";
   return `采集于 ${new Date(overview.value.collected_at).toLocaleString()}`;
+});
+
+const nodeHealthRatio = computed(() => {
+  if (!overview.value?.nodes_available) return 0;
+  if (overview.value.nodes.total === 0) return 1;
+  return overview.value.nodes.ready / overview.value.nodes.total;
+});
+
+const podHealthRatio = computed(() => {
+  if (!overview.value) return 0;
+  if (overview.value.pods.total === 0) return 1;
+  return overview.value.pods.running / overview.value.pods.total;
+});
+
+const deploymentHealthRatio = computed(() => {
+  if (!overview.value) return 0;
+  if (overview.value.deployments.total === 0) return 1;
+  return overview.value.deployments.available / overview.value.deployments.total;
 });
 
 async function loadOverview() {
@@ -77,291 +89,142 @@ onMounted(loadOverview);
       style="margin-bottom: 16px"
     />
 
-    <div class="stats-row">
-      <el-row
+    <div class="overview-grid">
+      <div
         v-if="overview?.nodes_available"
-        :gutter="16"
-        class="stats-section"
+        class="health-section"
       >
-        <el-col
-          :xs="12"
-          :sm="8"
-        >
-          <el-card
-            shadow="hover"
-            class="stat-card"
+        <div class="health-header">
+          <div class="health-title-group">
+            <el-icon
+              class="health-icon"
+              :size="20"
+            >
+              <Monitor />
+            </el-icon>
+            <span class="health-title">节点</span>
+          </div>
+          <el-tag
+            :type="nodeHealthRatio >= 1 ? 'success' : nodeHealthRatio >= 0.5 ? 'warning' : 'danger'"
+            size="small"
+            round
           >
-            <div class="stat-inner">
-              <el-icon
-                class="stat-icon stat-icon--primary"
-                :size="28"
-              >
-                <Monitor />
-              </el-icon>
-              <el-statistic
-                :value="overview.nodes.total"
-                class="stat-value"
-              >
-                <template #title>
-                  <span class="stat-label">Node 总数</span>
-                </template>
-              </el-statistic>
-            </div>
-          </el-card>
-        </el-col>
-        <el-col
-          :xs="12"
-          :sm="8"
-        >
-          <el-card
-            shadow="hover"
-            class="stat-card"
-          >
-            <div class="stat-inner">
-              <el-icon
-                class="stat-icon stat-icon--success"
-                :size="28"
-              >
-                <CircleCheck />
-              </el-icon>
-              <el-statistic
-                :value="overview.nodes.ready"
-                class="stat-value stat-value--success"
-              >
-                <template #title>
-                  <span class="stat-label">Ready</span>
-                </template>
-              </el-statistic>
-            </div>
-          </el-card>
-        </el-col>
-        <el-col
-          :xs="12"
-          :sm="8"
-        >
-          <el-card
-            shadow="hover"
-            class="stat-card"
-          >
-            <div class="stat-inner">
-              <el-icon
-                class="stat-icon stat-icon--danger"
-                :size="28"
-              >
-                <CircleClose />
-              </el-icon>
-              <el-statistic
-                :value="overview.nodes.not_ready"
-                class="stat-value stat-value--danger"
-              >
-                <template #title>
-                  <span class="stat-label">NotReady</span>
-                </template>
-              </el-statistic>
-            </div>
-          </el-card>
-        </el-col>
-      </el-row>
+            {{ overview.nodes.ready }}/{{ overview.nodes.total }}
+          </el-tag>
+        </div>
+        <div class="health-bar">
+          <div
+            class="health-bar-fill health-bar--success"
+            :style="{ width: `${nodeHealthRatio * 100}%` }"
+          />
+        </div>
+        <div class="health-stats">
+          <div class="health-stat">
+            <span class="health-stat-value">{{ overview.nodes.total }}</span>
+            <span class="health-stat-label">总数</span>
+          </div>
+          <div class="health-stat">
+            <span class="health-stat-value text-success">{{ overview.nodes.ready }}</span>
+            <span class="health-stat-label">就绪</span>
+          </div>
+          <div class="health-stat">
+            <span class="health-stat-value text-danger">{{ overview.nodes.not_ready }}</span>
+            <span class="health-stat-label">未就绪</span>
+          </div>
+        </div>
+      </div>
 
-      <el-row
-        :gutter="16"
-        class="stats-section"
-      >
-        <el-col
-          :xs="12"
-          :sm="6"
-        >
-          <el-card
-            shadow="hover"
-            class="stat-card"
+      <div class="health-section">
+        <div class="health-header">
+          <div class="health-title-group">
+            <el-icon
+              class="health-icon"
+              :size="20"
+            >
+              <Box />
+            </el-icon>
+            <span class="health-title">Pod</span>
+          </div>
+          <el-tag
+            :type="podHealthRatio >= 1 ? 'success' : podHealthRatio >= 0.8 ? 'warning' : 'danger'"
+            size="small"
+            round
           >
-            <div class="stat-inner">
-              <el-icon
-                class="stat-icon stat-icon--primary"
-                :size="28"
-              >
-                <Box />
-              </el-icon>
-              <el-statistic
-                :value="overview?.pods.total ?? 0"
-                class="stat-value"
-              >
-                <template #title>
-                  <span class="stat-label">Pod 总数</span>
-                </template>
-              </el-statistic>
-            </div>
-          </el-card>
-        </el-col>
-        <el-col
-          :xs="12"
-          :sm="6"
-        >
-          <el-card
-            shadow="hover"
-            class="stat-card"
-          >
-            <div class="stat-inner">
-              <el-icon
-                class="stat-icon stat-icon--success"
-                :size="28"
-              >
-                <Select />
-              </el-icon>
-              <el-statistic
-                :value="overview?.pods.running ?? 0"
-                class="stat-value stat-value--success"
-              >
-                <template #title>
-                  <span class="stat-label">Running</span>
-                </template>
-              </el-statistic>
-            </div>
-          </el-card>
-        </el-col>
-        <el-col
-          :xs="12"
-          :sm="6"
-        >
-          <el-card
-            shadow="hover"
-            class="stat-card"
-          >
-            <div class="stat-inner">
-              <el-icon
-                class="stat-icon stat-icon--warning"
-                :size="28"
-              >
-                <Warning />
-              </el-icon>
-              <el-statistic
-                :value="overview?.pods.pending ?? 0"
-                class="stat-value stat-value--warning"
-              >
-                <template #title>
-                  <span class="stat-label">Pending</span>
-                </template>
-              </el-statistic>
-            </div>
-          </el-card>
-        </el-col>
-        <el-col
-          :xs="12"
-          :sm="6"
-        >
-          <el-card
-            shadow="hover"
-            class="stat-card"
-          >
-            <div class="stat-inner">
-              <el-icon
-                class="stat-icon stat-icon--danger"
-                :size="28"
-              >
-                <CircleCloseFilled />
-              </el-icon>
-              <el-statistic
-                :value="overview?.pods.failed ?? 0"
-                class="stat-value stat-value--danger"
-              >
-                <template #title>
-                  <span class="stat-label">Failed</span>
-                </template>
-              </el-statistic>
-            </div>
-          </el-card>
-        </el-col>
-      </el-row>
+            {{ overview?.pods.running ?? 0 }}/{{ overview?.pods.total ?? 0 }}
+          </el-tag>
+        </div>
+        <div class="health-bar">
+          <div
+            class="health-bar-fill health-bar--success"
+            :style="{ width: `${podHealthRatio * 100}%` }"
+          />
+        </div>
+        <div class="health-stats">
+          <div class="health-stat">
+            <span class="health-stat-value">{{ overview?.pods.total ?? 0 }}</span>
+            <span class="health-stat-label">总数</span>
+          </div>
+          <div class="health-stat">
+            <span class="health-stat-value text-success">{{ overview?.pods.running ?? 0 }}</span>
+            <span class="health-stat-label">运行中</span>
+          </div>
+          <div class="health-stat">
+            <span class="health-stat-value text-warning">{{ overview?.pods.pending ?? 0 }}</span>
+            <span class="health-stat-label">等待中</span>
+          </div>
+          <div class="health-stat">
+            <span class="health-stat-value text-danger">{{ overview?.pods.failed ?? 0 }}</span>
+            <span class="health-stat-label">失败</span>
+          </div>
+        </div>
+      </div>
 
-      <el-row
-        :gutter="16"
-        class="stats-section"
-      >
-        <el-col
-          :xs="12"
-          :sm="8"
-        >
-          <el-card
-            shadow="hover"
-            class="stat-card"
+      <div class="health-section">
+        <div class="health-header">
+          <div class="health-title-group">
+            <el-icon
+              class="health-icon"
+              :size="20"
+            >
+              <Grid />
+            </el-icon>
+            <span class="health-title">Deployment</span>
+          </div>
+          <el-tag
+            :type="deploymentHealthRatio >= 1 ? 'success' : deploymentHealthRatio >= 0.8 ? 'warning' : 'danger'"
+            size="small"
+            round
           >
-            <div class="stat-inner">
-              <el-icon
-                class="stat-icon stat-icon--primary"
-                :size="28"
-              >
-                <Grid />
-              </el-icon>
-              <el-statistic
-                :value="overview?.deployments.total ?? 0"
-                class="stat-value"
-              >
-                <template #title>
-                  <span class="stat-label">Deployment 总数</span>
-                </template>
-              </el-statistic>
-            </div>
-          </el-card>
-        </el-col>
-        <el-col
-          :xs="12"
-          :sm="8"
-        >
-          <el-card
-            shadow="hover"
-            class="stat-card"
-          >
-            <div class="stat-inner">
-              <el-icon
-                class="stat-icon stat-icon--success"
-                :size="28"
-              >
-                <Select />
-              </el-icon>
-              <el-statistic
-                :value="overview?.deployments.available ?? 0"
-                class="stat-value stat-value--success"
-              >
-                <template #title>
-                  <span class="stat-label">Available</span>
-                </template>
-              </el-statistic>
-            </div>
-          </el-card>
-        </el-col>
-        <el-col
-          :xs="12"
-          :sm="8"
-        >
-          <el-card
-            shadow="hover"
-            class="stat-card"
-          >
-            <div class="stat-inner">
-              <el-icon
-                class="stat-icon stat-icon--warning"
-                :size="28"
-              >
-                <WarningFilled />
-              </el-icon>
-              <el-statistic
-                :value="overview?.deployments.unavailable ?? 0"
-                class="stat-value stat-value--warning"
-              >
-                <template #title>
-                  <span class="stat-label">Unavailable</span>
-                </template>
-              </el-statistic>
-            </div>
-          </el-card>
-        </el-col>
-      </el-row>
+            {{ overview?.deployments.available ?? 0 }}/{{ overview?.deployments.total ?? 0 }}
+          </el-tag>
+        </div>
+        <div class="health-bar">
+          <div
+            class="health-bar-fill health-bar--success"
+            :style="{ width: `${deploymentHealthRatio * 100}%` }"
+          />
+        </div>
+        <div class="health-stats">
+          <div class="health-stat">
+            <span class="health-stat-value">{{ overview?.deployments.total ?? 0 }}</span>
+            <span class="health-stat-label">总数</span>
+          </div>
+          <div class="health-stat">
+            <span class="health-stat-value text-success">{{ overview?.deployments.available ?? 0 }}</span>
+            <span class="health-stat-label">可用</span>
+          </div>
+          <div class="health-stat">
+            <span class="health-stat-value text-warning">{{ overview?.deployments.unavailable ?? 0 }}</span>
+            <span class="health-stat-label">不可用</span>
+          </div>
+        </div>
+      </div>
     </div>
 
     <el-card
       v-if="overview?.nodes_available"
       shadow="never"
-      style="margin-bottom: 24px"
+      class="info-card"
     >
       <template #header>
         <div class="section-header">
@@ -380,7 +243,7 @@ onMounted(loadOverview);
         :column="3"
         border
       >
-        <el-descriptions-item label="Node 总数">
+        <el-descriptions-item label="节点总数">
           {{ overview.host_coverage.total_nodes }}
         </el-descriptions-item>
         <el-descriptions-item label="已覆盖">
@@ -404,13 +267,16 @@ onMounted(loadOverview);
             type="success"
             size="small"
           >
-            {{ overview.host_coverage.uncovered_nodes }}
+            0
           </el-tag>
         </el-descriptions-item>
       </el-descriptions>
     </el-card>
 
-    <el-card shadow="never">
+    <el-card
+      shadow="never"
+      class="info-card"
+    >
       <template #header>
         <div class="section-header">
           <div class="section-title">
@@ -430,59 +296,105 @@ onMounted(loadOverview);
 </template>
 
 <style scoped>
-.stats-row {
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
   margin-bottom: 24px;
 }
 
-.stats-section {
-  margin-bottom: 12px;
-}
-
-.stats-section:last-child {
-  margin-bottom: 0;
-}
-
-.stat-card {
-  height: 100%;
-}
-
-.stat-card :deep(.el-card__body) {
+.health-section {
+  background: var(--cloudops-bg-card);
+  border: 1px solid var(--cloudops-border-color);
+  border-radius: var(--cloudops-radius-md);
   padding: 20px;
+  transition: border-color 0.2s;
 }
 
-.stat-inner {
+.health-section:hover {
+  border-color: var(--cloudops-border-hover);
+}
+
+.health-header {
   display: flex;
   align-items: center;
-  gap: 14px;
+  justify-content: space-between;
+  margin-bottom: 14px;
 }
 
-.stat-value :deep(.el-statistic__number) {
-  font-size: 24px;
-  font-weight: 700;
+.health-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.stat-value--success :deep(.el-statistic__number) {
-  color: var(--el-color-success);
+.health-icon {
+  color: var(--cloudops-accent);
 }
 
-.stat-value--warning :deep(.el-statistic__number) {
-  color: var(--el-color-warning);
-}
-
-.stat-value--danger :deep(.el-statistic__number) {
-  color: var(--el-color-danger);
-}
-
-.stat-value--info :deep(.el-statistic__number) {
-  color: var(--el-color-info);
-}
-
-.stat-label {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
+.health-title {
+  font-size: 15px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  color: var(--cloudops-text-primary);
+}
+
+.health-bar {
+  height: 6px;
+  background: var(--el-fill-color);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+
+.health-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+
+.health-bar--success {
+  background: var(--cloudops-success);
+}
+
+.health-stats {
+  display: flex;
+  gap: 24px;
+}
+
+.health-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.health-stat-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--cloudops-text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.health-stat-label {
+  font-size: 12px;
+  color: var(--cloudops-text-muted);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.text-success {
+  color: var(--cloudops-success);
+}
+
+.text-warning {
+  color: var(--cloudops-warning);
+}
+
+.text-danger {
+  color: var(--cloudops-danger);
+}
+
+.info-card {
+  margin-bottom: 24px;
 }
 
 .section-header {
@@ -497,5 +409,15 @@ onMounted(loadOverview);
   gap: 8px;
   font-size: 15px;
   font-weight: 600;
+}
+
+@media (max-width: 768px) {
+  .overview-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .health-stats {
+    gap: 16px;
+  }
 }
 </style>

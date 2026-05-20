@@ -86,7 +86,7 @@ onMounted(loadData);
 
 <template>
   <section class="k8s-quotas-page">
-    <PageHeader title="Quotas" />
+    <PageHeader title="配额" />
 
     <FilterPanel
       @search="applyFilters"

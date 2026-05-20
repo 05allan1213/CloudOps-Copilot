@@ -66,7 +66,7 @@ onMounted(loadHPAs);
 
 <template>
   <section class="k8s-hpa-page">
-    <PageHeader title="HPA" />
+    <PageHeader title="弹性伸缩" />
 
     <FilterPanel
       @search="applyFilters"
@@ -105,7 +105,7 @@ onMounted(loadHPAs);
             >
               <Search />
             </el-icon>
-            <span class="panel-title-text">HorizontalPodAutoscaler 列表</span>
+            <span class="panel-title-text">弹性伸缩列表</span>
           </div>
           <div class="panel-actions">
             <el-tag

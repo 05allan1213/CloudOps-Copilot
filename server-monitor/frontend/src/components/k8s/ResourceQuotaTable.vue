@@ -76,7 +76,7 @@ function progressStatus(pct: number): "" | "success" | "warning" | "exception" {
       </template>
     </el-table-column>
     <el-table-column
-      label="Age"
+      label="存活"
       width="100"
       align="center"
     >

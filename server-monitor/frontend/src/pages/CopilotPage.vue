@@ -155,7 +155,7 @@ function normalizeError(err: unknown): string {
 </script>
 
 <template>
-  <div class="copilot-shell">
+  <div class="copilot-page">
     <SessionList
       :sessions="sessions"
       :active-session-id="activeSessionId"
@@ -179,15 +179,15 @@ function normalizeError(err: unknown): string {
 </template>
 
 <style scoped>
-.copilot-shell {
+.copilot-page {
   display: grid;
-  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
-  gap: 16px;
-  min-height: calc(100vh - 180px);
+  grid-template-columns: 260px minmax(0, 1fr);
+  height: 100%;
+  overflow: hidden;
 }
 
 @media (max-width: 860px) {
-  .copilot-shell {
+  .copilot-page {
     grid-template-columns: 1fr;
   }
 }

@@ -41,12 +41,12 @@ function handleRowClick(row: K8sNodeWithHost) {
     <el-table-column
       prop="node.name"
       label="名称"
-      min-width="180"
+      width="180"
       show-overflow-tooltip
     />
     <el-table-column
       label="状态"
-      width="100"
+      width="110"
       align="center"
     >
       <template #default="{ row }">
@@ -58,10 +58,10 @@ function handleRowClick(row: K8sNodeWithHost) {
     </el-table-column>
     <el-table-column
       label="角色"
-      min-width="120"
+      width="120"
     >
       <template #default="{ row }">
-        {{ (row.node.roles ?? []).join(", ") || "-" }}
+        {{ (row.node.roles ?? []).map((r: string) => r === "control-plane" ? "控制平面" : r === "worker" ? "工作节点" : r).join(", ") || "-" }}
       </template>
     </el-table-column>
     <el-table-column

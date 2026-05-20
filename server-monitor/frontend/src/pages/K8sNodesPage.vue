@@ -88,10 +88,10 @@ onMounted(loadNodes);
           全部
         </el-radio-button>
         <el-radio-button value="Ready">
-          Ready
+          就绪
         </el-radio-button>
         <el-radio-button value="NotReady">
-          NotReady
+          未就绪
         </el-radio-button>
       </el-radio-group>
     </el-form-item>
@@ -104,11 +104,11 @@ onMounted(loadNodes);
       >
         <el-option
           value="control-plane"
-          label="control-plane"
+          label="控制平面"
         />
         <el-option
           value="worker"
-          label="worker"
+          label="工作节点"
         />
       </el-select>
     </el-form-item>

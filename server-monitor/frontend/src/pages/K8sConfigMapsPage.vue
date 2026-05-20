@@ -73,7 +73,7 @@ onMounted(loadConfigMaps);
 
 <template>
   <section class="k8s-configmaps-page">
-    <PageHeader title="ConfigMaps" />
+    <PageHeader title="配置项" />
 
     <FilterPanel
       @search="applyFilters"
@@ -112,7 +112,7 @@ onMounted(loadConfigMaps);
             >
               <Search />
             </el-icon>
-            <span class="panel-title-text">ConfigMap 列表</span>
+            <span class="panel-title-text">配置项列表</span>
           </div>
           <div class="panel-actions">
             <el-tag
