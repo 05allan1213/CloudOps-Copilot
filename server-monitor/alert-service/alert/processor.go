@@ -70,9 +70,4 @@ func alertNameOrFallback(event Event) string {
 	return event.Fingerprint
 }
 
-func receivedAtOrNow(event Event) time.Time {
-	if !event.ReceivedAt.IsZero() {
-		return event.ReceivedAt
-	}
-	return time.Now().UTC()
-}
+

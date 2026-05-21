@@ -7,12 +7,12 @@ func NewHandler() http.Handler {
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"healthy":true}`))
+		_, _ = w.Write([]byte(`{"healthy":true}`))
 	})
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"ready":true}`))
+		_, _ = w.Write([]byte(`{"ready":true}`))
 	})
 	return mux
 }
