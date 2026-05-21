@@ -58,16 +58,16 @@ type Reader interface {
 }
 
 type Service struct {
-	client              kubernetes.Interface
-	enabled             bool
-	allowedNamespaces   map[string]struct{}
-	allowAllNamespaces  bool
-	defaultNamespace    string
-	requestTimeout    time.Duration
-	logTailLines      int
-	logMaxBytes       int
-	eventLimit        int
-	now               func() time.Time
+	client             kubernetes.Interface
+	enabled            bool
+	allowedNamespaces  map[string]struct{}
+	allowAllNamespaces bool
+	defaultNamespace   string
+	requestTimeout     time.Duration
+	logTailLines       int
+	logMaxBytes        int
+	eventLimit         int
+	now                func() time.Time
 }
 
 func NewServiceWithClient(client kubernetes.Interface, cfg Config) *Service {
@@ -93,16 +93,16 @@ func NewServiceWithClient(client kubernetes.Interface, cfg Config) *Service {
 		eventLimit = 50
 	}
 	return &Service{
-		client:              client,
-		enabled:             cfg.Enabled,
-		allowedNamespaces:   allowed,
-		allowAllNamespaces:  allowAll,
-		defaultNamespace:    defaultNamespace,
-		requestTimeout:    requestTimeout,
-		logTailLines:      logTailLines,
-		logMaxBytes:       logMaxBytes,
-		eventLimit:        eventLimit,
-		now:               func() time.Time { return time.Now().UTC() },
+		client:             client,
+		enabled:            cfg.Enabled,
+		allowedNamespaces:  allowed,
+		allowAllNamespaces: allowAll,
+		defaultNamespace:   defaultNamespace,
+		requestTimeout:     requestTimeout,
+		logTailLines:       logTailLines,
+		logMaxBytes:        logMaxBytes,
+		eventLimit:         eventLimit,
+		now:                func() time.Time { return time.Now().UTC() },
 	}
 }
 
