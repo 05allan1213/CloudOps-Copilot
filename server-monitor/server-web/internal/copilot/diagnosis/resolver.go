@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -322,8 +321,4 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func wrapNotFound(source string) error {
-	return fmt.Errorf("%w: %s", ErrNotFound, source)
 }

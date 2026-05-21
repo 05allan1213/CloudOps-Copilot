@@ -69,5 +69,3 @@ func alertNameOrFallback(event Event) string {
 	}
 	return event.Fingerprint
 }
-
-

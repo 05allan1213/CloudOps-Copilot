@@ -710,10 +710,6 @@ var toolNameToIntent = map[string]string{
 	"k8s_get_logs":        nlu.IntentMetricQuery,
 }
 
-func openAIToolNameToRegistryName(name string) string {
-	return strings.ReplaceAll(name, "_", ".")
-}
-
 func normalizeToolName(name string) string {
 	return strings.ReplaceAll(name, ".", "_")
 }

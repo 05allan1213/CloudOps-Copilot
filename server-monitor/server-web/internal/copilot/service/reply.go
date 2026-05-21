@@ -166,14 +166,3 @@ func buildReply(result nlu.Result, toolReply string, toolCalls []ToolCall) strin
 func buildSuggestions(result nlu.Result) []Suggestion {
 	return copilotsuggestion.Build(result)
 }
-
-func filterEmptyStrings(values []string) []string {
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value != "" {
-			result = append(result, value)
-		}
-	}
-	return result
-}

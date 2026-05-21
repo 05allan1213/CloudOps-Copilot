@@ -806,39 +806,11 @@ func (e *Executor) RunPromQueryRange(ctx context.Context, query string, start, e
 	return buildCall(ToolPromQueryRange, series, err), nil
 }
 
-func (e *Executor) runPromQueryRange(ctx context.Context, entities map[string]string) ([]copilot.ToolCall, string, error) {
-	end := e.now()
-	start := end.Add(-parseHistoryWindow(entities["window"]))
-	step := time.Minute
-	if end.Sub(start) > 24*time.Hour {
-		step = 15 * time.Minute
-	}
-
-	call, err := e.RunPromQueryRange(ctx, entities["query"], start, end, step, 1000)
-	if err != nil {
-		return nil, "", err
-	}
-	if call.Status == StatusError {
-		return []copilot.ToolCall{call}, "", nil
-	}
-	return []copilot.ToolCall{call}, "Prometheus 范围查询完成。", nil
-}
-
 func buildCall(name string, result interface{}, err error) copilot.ToolCall {
 	if err != nil {
 		return copilot.ToolCall{Name: name, Status: StatusError, Error: publicToolError(err).Error()}
 	}
 	return copilot.ToolCall{Name: name, Status: StatusSuccess, Result: sanitizeResult(result)}
-}
-
-func parseHostStatus(entities map[string]string) string {
-	value := strings.ToLower(strings.TrimSpace(entities["status"]))
-	switch value {
-	case "up", "down":
-		return value
-	default:
-		return ""
-	}
 }
 
 func parseWindow(value string) string {

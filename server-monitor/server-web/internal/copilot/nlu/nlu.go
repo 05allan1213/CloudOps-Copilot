@@ -723,23 +723,6 @@ func inheritContext(result Result, primary IntentScore, clause string) Result {
 	return result
 }
 
-func mergeIntentEntities(intents []IntentScore, newIntent Result, key string) []IntentScore {
-	for i := range intents {
-		if intents[i].Intent == key {
-			if intents[i].Entities == nil {
-				intents[i].Entities = map[string]string{}
-			}
-			for k, v := range newIntent.Entities {
-				if v != "" {
-					intents[i].Entities[k] = v
-				}
-			}
-			return intents
-		}
-	}
-	return nil
-}
-
 func HasMultiIntentHints(message string) bool {
 	lower := strings.ToLower(message)
 	for _, hint := range multiIntentHints {

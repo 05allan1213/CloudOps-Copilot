@@ -25,33 +25,6 @@ type response struct {
 	Error  string      `json:"error,omitempty"`
 }
 
-type toolSchemasResponse struct {
-	Status string          `json:"status"`
-	Data   []toolSchemaDoc `json:"data,omitempty"`
-	Error  string          `json:"error,omitempty"`
-}
-
-type toolSchemaDoc struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	Parameters  []toolParamDoc `json:"parameters"`
-	RiskLevel   string         `json:"risk_level"`
-	ReadOnly    bool           `json:"read_only"`
-	Timeout     string         `json:"timeout"`
-}
-
-type toolParamDoc struct {
-	Name        string      `json:"name"`
-	Type        string      `json:"type"`
-	Required    bool        `json:"required"`
-	Description string      `json:"description,omitempty"`
-	Enum        []string    `json:"enum,omitempty"`
-	Default     interface{} `json:"default,omitempty"`
-	Min         *float64    `json:"min,omitempty"`
-	Max         *float64    `json:"max,omitempty"`
-	Pattern     string      `json:"pattern,omitempty"`
-}
-
 func NewHandler(service *copilot.Service) *Handler {
 	return &Handler{service: service}
 }

@@ -314,11 +314,6 @@ func isAllowedSeverity(value string) bool {
 	}
 }
 
-func isAllowedRisk(value string) bool {
-	_, ok := normalizeRisk(value)
-	return ok
-}
-
 func normalizeRisk(value string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "low", "low risk", "minimal", "minor", "safe", "低", "低风险", "安全":

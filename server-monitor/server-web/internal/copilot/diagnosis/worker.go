@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -186,10 +185,6 @@ func (w *Worker) notify(ctx context.Context, alert workerAlert, status string, r
 
 func systemDiagnosisUser() User {
 	return User{ID: 0, Username: "system", Role: "admin"}
-}
-
-func isPermanentWorkerError(err error) bool {
-	return errors.Is(err, ErrInvalidRequest) || errors.Is(err, ErrNotFound) || errors.Is(err, ErrConflict) || errors.Is(err, ErrForbidden)
 }
 
 type workerAlert struct {

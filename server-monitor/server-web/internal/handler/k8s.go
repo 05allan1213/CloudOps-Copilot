@@ -70,17 +70,6 @@ func (h *K8sHandler) serviceForCluster(c *gin.Context) K8sService {
 	return h.k8sService
 }
 
-func (h *K8sHandler) clusterName(c *gin.Context) string {
-	cluster := strings.TrimSpace(c.Query("cluster"))
-	if cluster == "" {
-		return "default"
-	}
-	if _, ok := h.clusters[cluster]; ok {
-		return cluster
-	}
-	return "default"
-}
-
 func (h *K8sHandler) ListClusters(c *gin.Context) {
 	if !h.requireK8s(c) {
 		return
@@ -750,31 +739,4 @@ func handleK8sError(c *gin.Context, err error) {
 			Error:  errStr,
 		})
 	}
-}
-
-func parsePage(c *gin.Context) int {
-	v := strings.TrimSpace(c.Query("page"))
-	if v == "" {
-		return 1
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n <= 0 {
-		return 1
-	}
-	return n
-}
-
-func parsePageSize(c *gin.Context) int {
-	v := strings.TrimSpace(c.Query("page_size"))
-	if v == "" {
-		return 20
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil || n <= 0 {
-		return 20
-	}
-	if n > 100 {
-		return 100
-	}
-	return n
 }

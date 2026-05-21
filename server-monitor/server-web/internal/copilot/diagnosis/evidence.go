@@ -86,15 +86,18 @@ func NewEvidenceCollector(options EvidenceOptions) *EvidenceCollector {
 }
 
 func (c *EvidenceCollector) Collect(ctx context.Context, alert AlertContext) EvidenceBundle {
+	if c == nil || c.runner == nil {
+		return EvidenceBundle{
+			AlertContext:     alert,
+			Runbooks:         []RunbookEvidence{},
+			CollectionErrors: []CollectionError{{Source: "tool_registry", Error: "工具注册表不可用"}},
+		}
+	}
 	collectedAt := c.now().UTC()
 	bundle := EvidenceBundle{
 		AlertContext: alert,
 		Runbooks:     []RunbookEvidence{},
 		CollectedAt:  collectedAt,
-	}
-	if c == nil || c.runner == nil {
-		bundle.CollectionErrors = append(bundle.CollectionErrors, CollectionError{Source: "tool_registry", Error: "工具注册表不可用"})
-		return bundle
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)

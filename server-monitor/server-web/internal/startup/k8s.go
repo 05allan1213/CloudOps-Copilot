@@ -44,8 +44,7 @@ func InitK8sRuntime(cfg config.Config, container *di.Container) (copilotk8s.Read
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	var k8sReader copilotk8s.Reader
-	k8sReader = copilotk8s.NewServiceWithClient(k8sClient, k8sCfg)
+	k8sReader := copilotk8s.NewServiceWithClient(k8sClient, k8sCfg)
 
 	if !cfg.K8SAPIEnabled {
 		return k8sReader, k8sClient, nil, nil, nil

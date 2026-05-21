@@ -10,9 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"server-web/internal/infra/webhook"
 	"server-web/internal/model"
-	appalert "server-web/internal/service/alert"
 )
 
 const (
@@ -231,19 +229,6 @@ func parseAllowedQuery(c *gin.Context, name string, allowed map[string]struct{})
 	return value, true
 }
 
-func parseOptionalUintQuery(c *gin.Context, name string) (uint64, bool) {
-	value := strings.TrimSpace(c.Query(name))
-	if value == "" {
-		return 0, true
-	}
-	parsed, err := strconv.ParseUint(value, 10, 64)
-	if err != nil || parsed == 0 {
-		c.JSON(http.StatusBadRequest, response{Status: "error", Error: "invalid " + name})
-		return 0, false
-	}
-	return parsed, true
-}
-
 func parseOptionalTimeQuery(c *gin.Context, name string) (*time.Time, bool) {
 	value := strings.TrimSpace(c.Query(name))
 	if value == "" {
@@ -272,8 +257,4 @@ func parsePositiveIntQuery(c *gin.Context, name string, defaultValue int, maxVal
 		parsed = maxValue
 	}
 	return parsed, true
-}
-
-func buildAlertHistory(alert webhook.AlertRecord) (model.AlertHistory, error) {
-	return appalert.BuildHistory(alert)
 }

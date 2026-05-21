@@ -3,7 +3,6 @@ package feedback
 import (
 	"context"
 	"errors"
-	"strings"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -78,12 +77,4 @@ func (r *mysqlRepository) ListLowConfidence(ctx context.Context, confidenceThres
 		Limit(limit).
 		Find(&feedbacks).Error
 	return feedbacks, err
-}
-
-func isDuplicateKeyError(err error) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(err.Error(), "Duplicate entry") ||
-		strings.Contains(err.Error(), "UNIQUE constraint failed")
 }

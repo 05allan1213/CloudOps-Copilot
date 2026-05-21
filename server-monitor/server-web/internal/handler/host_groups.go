@@ -9,7 +9,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	promclient "server-web/internal/infra/prometheus"
 	"server-web/internal/model"
 )
 
@@ -396,17 +395,4 @@ func parseIDParam(c *gin.Context, name string) (uint64, bool) {
 		return 0, false
 	}
 	return id, true
-}
-
-func filterHostsByInstances(hosts []promclient.Host, allowed map[string]struct{}) []promclient.Host {
-	if allowed == nil {
-		return hosts
-	}
-	filtered := make([]promclient.Host, 0, len(hosts))
-	for _, host := range hosts {
-		if _, ok := allowed[host.Instance]; ok {
-			filtered = append(filtered, host)
-		}
-	}
-	return filtered
 }
