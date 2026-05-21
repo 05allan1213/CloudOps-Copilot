@@ -1,42 +1,41 @@
-# ============================================
-# 第一阶段：编译（Builder Stage）
-# ============================================
-# 使用 Go 官方镜像作为编译环境
-FROM golang:1.26-alpine AS builder
+# syntax=docker/dockerfile:1.7
 
-# 设置工作目录。服务模块保持在 /app/server-probe，确保 go.mod 中的 ../pkg 指向 /app/pkg。
-WORKDIR /app/server-probe
+ARG GO_IMAGE=golang:1.26-alpine
+ARG RUNTIME_IMAGE=alpine:3.21
 
-# 先复制 go.mod 依赖文件和共享 pkg 模块，提高依赖缓存命中率。
-COPY pkg/ /app/pkg/
+FROM ${GO_IMAGE} AS builder
+
+WORKDIR /src/server-probe
+
+ENV CGO_ENABLED=0 \
+    GOFLAGS=-trimpath \
+    GOPROXY=https://proxy.golang.org,direct
+
+COPY pkg/go.mod pkg/go.sum /src/pkg/
 COPY server-probe/go.mod server-probe/go.sum ./
 
-# 设置 Go 代理，加速依赖下载
-ENV GOPROXY=https://goproxy.cn,direct
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go mod download
 
-# 下载依赖
-RUN go mod download
-
-# 复制源代码到容器
+COPY pkg/ /src/pkg/
 COPY server-probe/ ./
 
-# 静态编译（CGO_ENABLED=0 禁用 CGO，生成纯静态二进制）
-RUN CGO_ENABLED=0 go build -o /app/probe .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go build -ldflags="-s -w" -o /out/probe .
 
-# ============================================
-# 第二阶段：运行（Runtime Stage）
-# ============================================
-# 使用 Alpine 最小化镜像，减小镜像体积
-FROM alpine:3.21
+FROM ${RUNTIME_IMAGE} AS runtime
 
-RUN apk add --no-cache tzdata wget
+RUN apk add --no-cache ca-certificates tzdata wget \
+    && addgroup -S app \
+    && adduser -S -G app -h /app app
 
 WORKDIR /app
 
-COPY --from=builder /app/probe .
+COPY --from=builder /out/probe /app/probe
 
-RUN addgroup -S app && adduser -S -G app app
-USER app
+USER app:app
 
 EXPOSE 9090
 

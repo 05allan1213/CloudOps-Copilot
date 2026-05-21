@@ -57,39 +57,32 @@ ensure_nginx() {
 }
 
 generate_kubeconfig() {
-    info "Generating kubeconfig for Docker internal access..."
+    info "Generating kubeconfig for Docker Compose access..."
     local control_plane_container="${CLUSTER_NAME}-control-plane"
 
-    local kind_ip
-    kind_ip=$(docker inspect "${control_plane_container}" \
-        --format '{{(index .NetworkSettings.Networks "kind").IPAddress}}' 2>/dev/null || true)
+    local api_port
+    api_port=$(docker inspect "${control_plane_container}" \
+        --format '{{(index (index .NetworkSettings.Ports "6443/tcp") 0).HostPort}}' 2>/dev/null || true)
 
-    if [ -z "${kind_ip}" ]; then
-        kind_ip=$(docker inspect "${control_plane_container}" | \
-            python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['NetworkSettings']['Networks']['kind']['IPAddress'])" 2>/dev/null || true)
+    if [ -z "${api_port}" ]; then
+        fail "Cannot determine published API server port for '${control_plane_container}'"
     fi
 
-    if [ -z "${kind_ip}" ]; then
-        fail "Cannot determine kind control plane IP on 'kind' network"
-    fi
+    info "kind API server published on host.docker.internal:${api_port}"
 
-    info "Control plane IP on kind network: ${kind_ip}"
-
-    kind get kubeconfig --name "${CLUSTER_NAME}" --internal 2>/dev/null | \
-        sed "s|server: https://[0-9.]*:[0-9]*|server: https://${kind_ip}:6443|g" \
-        > "${KUBECONFIG_FILE}"
+    kind get kubeconfig --name "${CLUSTER_NAME}" 2>/dev/null | \
+        sed -E "s|server: https://[^:]+:[0-9]+|server: https://host.docker.internal:${api_port}|g" | \
+        awk '
+            /server: https:\/\/host.docker.internal:/ {
+                print
+                print "    tls-server-name: localhost"
+                next
+            }
+            { print }
+        ' > "${KUBECONFIG_FILE}"
 
     chmod 644 "${KUBECONFIG_FILE}"
-    ok "Kubeconfig written to ${KUBECONFIG_FILE} (server: https://${kind_ip}:6443)"
-}
-
-ensure_docker_network() {
-    info "Ensuring kind Docker network exists..."
-    if docker network ls --format '{{.Name}}' | grep -q '^kind$'; then
-        ok "Docker network 'kind' exists"
-    else
-        fail "Docker network 'kind' not found. Is kind cluster running?"
-    fi
+    ok "Kubeconfig written to ${KUBECONFIG_FILE} (server: https://host.docker.internal:${api_port})"
 }
 
 main() {
@@ -103,7 +96,6 @@ main() {
     ensure_namespaces
     ensure_nginx
     generate_kubeconfig
-    ensure_docker_network
 
     echo ""
     echo "=========================================="
@@ -111,8 +103,9 @@ main() {
     echo ""
     echo "Next steps:"
     echo "  1. cd to server-monitor directory"
-    echo "  2. docker compose up -d"
-    echo "     (server-web will auto-connect to 'kind' network via docker-compose.yml)"
+    echo "  2. 启动本地栈：docker compose up -d"
+    echo "  3. 如需启用 K8s 功能，在 .env 中设置 K8S_ENABLED=true、K8S_API_ENABLED=true"
+    echo "     （server-web 将通过 host.docker.internal 访问本机 kind API Server）"
     echo ""
     echo "If server-web is already running, restart it:"
     echo "  docker compose up -d server-web"

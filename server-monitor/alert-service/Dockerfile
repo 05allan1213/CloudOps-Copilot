@@ -1,33 +1,41 @@
-# ============================================
-# 第一阶段：编译
-# ============================================
-FROM golang:1.26-alpine AS builder
+# syntax=docker/dockerfile:1.7
 
-WORKDIR /app/alert-service
+ARG GO_IMAGE=golang:1.26-alpine
+ARG RUNTIME_IMAGE=alpine:3.21
 
-COPY pkg/ /app/pkg/
+FROM ${GO_IMAGE} AS builder
+
+WORKDIR /src/alert-service
+
+ENV CGO_ENABLED=0 \
+    GOFLAGS=-trimpath \
+    GOPROXY=https://proxy.golang.org,direct
+
+COPY pkg/go.mod pkg/go.sum /src/pkg/
 COPY alert-service/go.mod alert-service/go.sum ./
 
-ENV GOPROXY=https://goproxy.cn,direct
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go mod download
 
-RUN go mod download
+COPY pkg/ /src/pkg/
 COPY alert-service/ ./
-RUN CGO_ENABLED=0 go build -o /app/alert-service .
 
-# ============================================
-# 第二阶段：运行
-# ============================================
-FROM alpine:3.21
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go build -ldflags="-s -w" -o /out/alert-service .
 
-RUN apk add --no-cache tzdata wget \
-	&& addgroup -S app \
-	&& adduser -S -G app app
+FROM ${RUNTIME_IMAGE} AS runtime
+
+RUN apk add --no-cache ca-certificates tzdata wget \
+    && addgroup -S app \
+    && adduser -S -G app -h /app app
 
 WORKDIR /app
 
-COPY --from=builder /app/alert-service .
+COPY --from=builder /out/alert-service /app/alert-service
 
-USER app
+USER app:app
 
 EXPOSE 8081
 

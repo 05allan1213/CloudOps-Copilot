@@ -1,10 +1,28 @@
 # ============================================
 # Docker Compose 编排配置
 # ============================================
-# 启动命令: docker-compose up -d
-# 停止命令: docker-compose down
-# 查看日志: docker-compose logs -f
+# 启动命令: docker compose up -d
+# 停止命令: docker compose down
+# 查看日志: docker compose logs -f
 # ============================================
+
+name: server-monitor
+
+x-app-service: &app-service
+  restart: unless-stopped
+  env_file:
+    - path: .env
+      required: false
+  init: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
+x-observability-env: &observability-env
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  TRACE_OTLP_ENDPOINT: ${TRACE_OTLP_ENDPOINT:-jaeger:4317}
+  TRACE_SAMPLE_RATE: ${TRACE_SAMPLE_RATE:-1.0}
 
 services:
   # ------------------------------------------
@@ -96,20 +114,22 @@ services:
   # server-probe 监控探针
   # ------------------------------------------
   server-probe:
+    image: server-monitor/server-probe:local
     build:
       context: .
       dockerfile: server-probe/Dockerfile
-    restart: unless-stopped
-    env_file:
-      - path: .env
-        required: false
+      target: runtime
+    <<: *app-service
     ports:
       - "127.0.0.1:8082:9090"
     environment:
+      <<: *observability-env
       LISTEN_ADDR: ":9090"
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      TRACE_OTLP_ENDPOINT: jaeger:4317
-      TRACE_SAMPLE_RATE: ${TRACE_SAMPLE_RATE:-1.0}
+      HOST_PROC: ${HOST_PROC:-/host/proc}
+      HOST_SYS: ${HOST_SYS:-/host/sys}
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
     depends_on:
       jaeger:
         condition: service_started
@@ -252,24 +272,21 @@ services:
   # alert-service 告警事件消费与状态管理
   # ------------------------------------------
   alert-service:
+    image: server-monitor/alert-service:local
     build:
       context: .
       dockerfile: alert-service/Dockerfile
-    restart: unless-stopped
-    env_file:
-      - path: .env
-        required: false
+      target: runtime
+    <<: *app-service
     ports:
       - "127.0.0.1:8081:8081"
     environment:
       LISTEN_ADDR: ":8081"
-      KAFKA_BROKERS: kafka:9092
-      KAFKA_GROUP_ID: alert-service
-      REDIS_ADDR: redis:6379
+      KAFKA_BROKERS: ${KAFKA_BROKERS:-kafka:9092}
+      KAFKA_GROUP_ID: ${KAFKA_GROUP_ID:-alert-service}
+      REDIS_ADDR: ${REDIS_ADDR:-redis:6379}
       REDIS_PASSWORD: ${REDIS_PASSWORD:-server-monitor-local-redis}
-      TRACE_OTLP_ENDPOINT: jaeger:4317
-      TRACE_SAMPLE_RATE: ${TRACE_SAMPLE_RATE:-1.0}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
+      <<: *observability-env
     depends_on:
       jaeger:
         condition: service_started
@@ -447,26 +464,25 @@ services:
   # server-web Web 展示服务
   # ------------------------------------------
   server-web:
+    image: server-monitor/server-web:local
     build:
       context: .
       dockerfile: server-web/Dockerfile
-    restart: unless-stopped
-    env_file:
-      - path: .env
-        required: false
+      target: runtime
+    <<: *app-service
     ports:
       - "127.0.0.1:8080:8080"
     environment:
-      PROMETHEUS_URL: http://prometheus:9090
-      PROMETHEUS_RELOAD_URL: http://prometheus:9090/-/reload
-      ALERT_RULES_FILE_PATH: /etc/server-monitor/rules/custom-alerts.yml
-      ALERT_RULE_SYNC_ENABLED: "true"
-      PROMTOOL_PATH: /usr/local/bin/promtool
-      ALERT_RULE_SYNC_TIMEOUT_SECONDS: "10"
-      REDIS_ADDR: redis:6379
+      PROMETHEUS_URL: ${PROMETHEUS_URL:-http://prometheus:9090}
+      PROMETHEUS_RELOAD_URL: ${PROMETHEUS_RELOAD_URL:-http://prometheus:9090/-/reload}
+      ALERT_RULES_FILE_PATH: ${ALERT_RULES_FILE_PATH:-/etc/server-monitor/rules/custom-alerts.yml}
+      ALERT_RULE_SYNC_ENABLED: ${ALERT_RULE_SYNC_ENABLED:-true}
+      PROMTOOL_PATH: ${PROMTOOL_PATH:-/usr/local/bin/promtool}
+      ALERT_RULE_SYNC_TIMEOUT_SECONDS: ${ALERT_RULE_SYNC_TIMEOUT_SECONDS:-10}
+      REDIS_ADDR: ${REDIS_ADDR:-redis:6379}
       REDIS_PASSWORD: ${REDIS_PASSWORD:-server-monitor-local-redis}
-      MYSQL_HOST: mysql
-      MYSQL_PORT: "3306"
+      MYSQL_HOST: ${MYSQL_HOST:-mysql}
+      MYSQL_PORT: ${MYSQL_PORT:-3306}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-server_monitor}
       MYSQL_USER: ${MYSQL_USER:-server_monitor}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:-server-monitor-local-mysql}
@@ -475,9 +491,9 @@ services:
       AUTH_ENABLED: ${AUTH_ENABLED:-true}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-server-monitor-local-admin}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
-      RATE_LIMIT_ENABLED: "true"
-      RATE_LIMIT_REQUESTS: "120"
-      RATE_LIMIT_WINDOW_SECONDS: "60"
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      RATE_LIMIT_REQUESTS: ${RATE_LIMIT_REQUESTS:-120}
+      RATE_LIMIT_WINDOW_SECONDS: ${RATE_LIMIT_WINDOW_SECONDS:-60}
       COPILOT_ENABLED: ${COPILOT_ENABLED:-true}
       COPILOT_TOOL_REGISTRY_ENABLED: ${COPILOT_TOOL_REGISTRY_ENABLED:-true}
       COPILOT_TOOL_DEFAULT_TIMEOUT_SECONDS: ${COPILOT_TOOL_DEFAULT_TIMEOUT_SECONDS:-30}
@@ -531,7 +547,7 @@ services:
       K8S_NODES_ENABLED: ${K8S_NODES_ENABLED:-false}
       K8S_API_ENABLED: ${K8S_API_ENABLED:-false}
       K8S_IN_CLUSTER: ${K8S_IN_CLUSTER:-false}
-      K8S_KUBECONFIG: ${K8S_KUBECONFIG:-}
+      K8S_KUBECONFIG: ${K8S_KUBECONFIG:-/opt/server-monitor/docker/kubeconfig}
       K8S_ALLOWED_NAMESPACES: ${K8S_ALLOWED_NAMESPACES:-default}
       K8S_DEFAULT_NAMESPACE: ${K8S_DEFAULT_NAMESPACE:-default}
       K8S_REQUEST_TIMEOUT_SECONDS: ${K8S_REQUEST_TIMEOUT_SECONDS:-10}
@@ -545,18 +561,15 @@ services:
       COPILOT_SESSION_TTL_SECONDS: ${COPILOT_SESSION_TTL_SECONDS:-7200}
       COPILOT_MAX_MESSAGE_LENGTH: ${COPILOT_MAX_MESSAGE_LENGTH:-2000}
       COPILOT_MAX_SESSION_MESSAGES: ${COPILOT_MAX_SESSION_MESSAGES:-50}
-      GIN_MODE: release
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      TRACE_OTLP_ENDPOINT: jaeger:4317
-      TRACE_SAMPLE_RATE: ${TRACE_SAMPLE_RATE:-1.0}
-      KAFKA_BROKERS: kafka:9092
+      GIN_MODE: ${GIN_MODE:-release}
+      KAFKA_BROKERS: ${KAFKA_BROKERS:-kafka:9092}
+      <<: *observability-env
     volumes:
       - ./docker/custom-alerts.yml:/etc/server-monitor/rules/custom-alerts.yml
       - ./runbooks:/app/runbooks:ro
-      - ./docker/kubeconfig:/app/kubeconfig:ro
-    networks:
-      - default
-      - kind
+      - ./docker:/opt/server-monitor/docker:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       jaeger:
         condition: service_started
@@ -590,7 +603,3 @@ volumes:
   elasticsearch-data:
   victoriametrics-data:
   kafka-data:
-
-networks:
-  kind:
-    external: true

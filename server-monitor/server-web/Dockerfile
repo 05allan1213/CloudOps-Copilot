@@ -1,51 +1,60 @@
-# ============================================
-# 第一阶段：前端构建
-# ============================================
-FROM node:20-alpine AS frontend-builder
+# syntax=docker/dockerfile:1.7
 
-WORKDIR /app
+ARG NODE_IMAGE=node:20-alpine
+ARG GO_IMAGE=golang:1.26-alpine
+ARG RUNTIME_IMAGE=alpine:3.21
+
+FROM ${NODE_IMAGE} AS frontend-builder
+
+WORKDIR /src/frontend
 
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --no-audit --prefer-offline
 
 COPY frontend/ ./
 RUN npm run build
 
-# ============================================
-# 第二阶段：Go 编译
-# ============================================
-FROM golang:1.26-alpine AS go-builder
+FROM ${GO_IMAGE} AS go-builder
 
-WORKDIR /app/server-web
+WORKDIR /src/server-web
 
-COPY pkg/ /app/pkg/
+ENV CGO_ENABLED=0 \
+    GOFLAGS=-trimpath \
+    GOPROXY=https://proxy.golang.org,direct
+
+COPY pkg/go.mod pkg/go.sum /src/pkg/
 COPY server-web/go.mod server-web/go.sum ./
 
-ENV GOPROXY=https://goproxy.cn,direct
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go mod download
 
-RUN go mod download
+COPY pkg/ /src/pkg/
 COPY server-web/ ./
-RUN CGO_ENABLED=0 go build -o /app/web .
 
-# ============================================
-# 第三阶段：运行
-# ============================================
-FROM alpine:3.21
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go build -ldflags="-s -w" -o /out/web .
 
-RUN apk add --no-cache tzdata wget
+FROM ${RUNTIME_IMAGE} AS runtime
+
+RUN apk add --no-cache ca-certificates tzdata wget \
+    && addgroup -S app \
+    && adduser -S -G app -h /app app
 
 WORKDIR /app
 
-COPY --from=go-builder /app/web .
+COPY --from=go-builder /out/web /app/web
 COPY --from=prom/prometheus:v2.51.0 /bin/promtool /usr/local/bin/promtool
-COPY --from=frontend-builder /app/dist ./static
-COPY runbooks ./runbooks
+COPY --from=frontend-builder /src/frontend/dist /app/static
+COPY runbooks /app/runbooks
 
-ENV STATIC_DIR=/app/static
-ENV RUNBOOK_DIR=/app/runbooks
+ENV GIN_MODE=release \
+    RUNBOOK_DIR=/app/runbooks \
+    STATIC_DIR=/app/static
 
-RUN addgroup -S app && adduser -S -G app app
-USER app
+USER app:app
 
 EXPOSE 8080
 
