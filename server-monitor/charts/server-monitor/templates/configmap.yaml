@@ -89,6 +89,7 @@ data:
   GIN_MODE: {{ .Values.config.ginMode | quote }}
   READY_TIMEOUT_SECONDS: {{ .Values.config.readyTimeoutSeconds | quote }}
   REQUEST_TIMEOUT_SECONDS: {{ .Values.config.requestTimeoutSeconds | quote }}
+  INCIDENT_AGGREGATION_WINDOW_SECONDS: {{ .Values.config.incidentAggregationWindowSeconds | quote }}
   HOSTS_CACHE_TTL_SECONDS: {{ .Values.config.hostsCacheTTLSeconds | quote }}
   TRACE_OTLP_ENDPOINT: {{ .Values.config.traceOtlpEndpoint | quote }}
   TRACE_SAMPLE_RATE: {{ .Values.config.traceSampleRate | quote }}

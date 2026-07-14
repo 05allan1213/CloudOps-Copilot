@@ -37,12 +37,13 @@ func (c MySQLConfig) DSN() string {
 		port = "3306"
 	}
 	driverConfig := drivermysql.Config{
-		User:      c.User,
-		Passwd:    c.Password,
-		Net:       "tcp",
-		Addr:      net.JoinHostPort(c.Host, port),
-		DBName:    c.Database,
-		ParseTime: true,
+		User:                 c.User,
+		Passwd:               c.Password,
+		Net:                  "tcp",
+		Addr:                 net.JoinHostPort(c.Host, port),
+		DBName:               c.Database,
+		ParseTime:            true,
+		AllowNativePasswords: true,
 	}
 	return driverConfig.FormatDSN()
 }

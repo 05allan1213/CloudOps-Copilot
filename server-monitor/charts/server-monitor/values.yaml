@@ -16,6 +16,7 @@ config:
   ginMode: release
   readyTimeoutSeconds: "3"
   requestTimeoutSeconds: "5"
+  incidentAggregationWindowSeconds: "14400"
   hostsCacheTTLSeconds: "30"
   traceOtlpEndpoint: jaeger:4317
   traceSampleRate: "1.0"

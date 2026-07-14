@@ -474,6 +474,11 @@ spec:
                 configMapKeyRef:
                   name: monitor-config
                   key: REQUEST_TIMEOUT_SECONDS
+            - name: INCIDENT_AGGREGATION_WINDOW_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: monitor-config
+                  key: INCIDENT_AGGREGATION_WINDOW_SECONDS
             - name: HOSTS_CACHE_TTL_SECONDS
               valueFrom:
                 configMapKeyRef:

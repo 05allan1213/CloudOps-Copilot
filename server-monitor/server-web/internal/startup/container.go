@@ -11,9 +11,11 @@ import (
 	"server-web/internal/config"
 	"server-web/internal/di"
 	"server-web/internal/handler"
+	"server-web/internal/infra/incidentmysql"
 	"server-web/internal/middleware"
 	appalert "server-web/internal/service/alert"
 	authpkg "server-web/internal/service/auth"
+	appincident "server-web/internal/service/incident"
 )
 
 func InitContainer(cfg *config.Config, infra *di.Infra) (*di.Container, error) {
@@ -48,6 +50,19 @@ func InitContainer(cfg *config.Config, infra *di.Infra) (*di.Container, error) {
 	}
 	container.Metrics = metrics
 
+	if infra.DB != nil {
+		incidentStore, err := incidentmysql.NewStore(infra.DB)
+		if err != nil {
+			return nil, fmt.Errorf("incident store init failed: %w", err)
+		}
+		container.IncidentService, err = appincident.NewService(appincident.Config{
+			UnitOfWork: incidentStore, AggregationWindow: cfg.IncidentAggregationWindow, Observer: metrics,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("incident service init failed: %w", err)
+		}
+	}
+
 	alertService := appalert.NewService(infra.RedisClient, appalert.Options{
 		DedupeTTL: cfg.AlertEventDedupeTTL,
 		DB:        infra.DB,
@@ -70,6 +85,7 @@ func InitContainer(cfg *config.Config, infra *di.Infra) (*di.Container, error) {
 			cfg.AlertRuleSyncTimeout,
 		),
 		AlertService:    alertService,
+		IncidentService: container.IncidentService,
 		AlertProducer:   infra.KafkaProducer,
 		CacheService:    container.Cache(),
 		HostService:     container.Host(),

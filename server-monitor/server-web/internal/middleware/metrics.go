@@ -34,6 +34,13 @@ type Metrics struct {
 	ragSearchDuration    prometheus.Histogram
 	feedbackTotal        *prometheus.CounterVec
 	feedbackCommentTotal prometheus.Counter
+	incidentSignals      *prometheus.CounterVec
+	incidentsCreated     prometheus.Counter
+	incidentsUpdated     prometheus.Counter
+	incidentTransitions  *prometheus.CounterVec
+	incidentErrors       *prometheus.CounterVec
+	incidentDuration     *prometheus.HistogramVec
+	outboxPending        prometheus.Gauge
 }
 
 func NewMetrics() *Metrics {
@@ -136,6 +143,35 @@ func NewMetrics() *Metrics {
 			Name: "copilot_feedback_comment_total",
 			Help: "Total number of diagnosis feedback with comments.",
 		}),
+		incidentSignals: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "cloudops_incident_signals_received_total",
+			Help: "Total normalized Incident signals received by source, status and result.",
+		}, []string{"source", "status", "result"}),
+		incidentsCreated: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "cloudops_incidents_created_total",
+			Help: "Total Incidents created by V2 ingestion.",
+		}),
+		incidentsUpdated: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "cloudops_incidents_updated_total",
+			Help: "Total Incidents updated, resolved or reopened by V2 ingestion.",
+		}),
+		incidentTransitions: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "cloudops_incident_transition_total",
+			Help: "Total Incident state transition attempts.",
+		}, []string{"from", "to", "result"}),
+		incidentErrors: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "cloudops_incident_ingestion_errors_total",
+			Help: "Total V2 Incident ingestion errors by bounded reason.",
+		}, []string{"reason"}),
+		incidentDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "cloudops_incident_ingestion_duration_seconds",
+			Help:    "V2 Incident webhook ingestion duration.",
+			Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5},
+		}, []string{"result"}),
+		outboxPending: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "cloudops_outbox_pending_total",
+			Help: "Current number of unpublished transactional outbox records.",
+		}),
 	}
 
 	metrics.registry.MustRegister(
@@ -161,6 +197,13 @@ func NewMetrics() *Metrics {
 		metrics.llmTokensTotal,
 		metrics.feedbackTotal,
 		metrics.feedbackCommentTotal,
+		metrics.incidentSignals,
+		metrics.incidentsCreated,
+		metrics.incidentsUpdated,
+		metrics.incidentTransitions,
+		metrics.incidentErrors,
+		metrics.incidentDuration,
+		metrics.outboxPending,
 	)
 	return metrics
 }
@@ -273,5 +316,46 @@ func (m *Metrics) ObserveFeedback(rating string, hasComment bool) {
 	m.feedbackTotal.WithLabelValues(rating).Inc()
 	if hasComment {
 		m.feedbackCommentTotal.Inc()
+	}
+}
+
+func (m *Metrics) ObserveSignal(source, status, result string) {
+	if m != nil {
+		m.incidentSignals.WithLabelValues(source, status, result).Inc()
+	}
+}
+
+func (m *Metrics) ObserveIncident(operation string) {
+	if m == nil {
+		return
+	}
+	if operation == "created" {
+		m.incidentsCreated.Inc()
+		return
+	}
+	m.incidentsUpdated.Inc()
+}
+
+func (m *Metrics) ObserveTransition(from, to, result string) {
+	if m != nil {
+		m.incidentTransitions.WithLabelValues(from, to, result).Inc()
+	}
+}
+
+func (m *Metrics) ObserveIngestionError(reason string) {
+	if m != nil {
+		m.incidentErrors.WithLabelValues(reason).Inc()
+	}
+}
+
+func (m *Metrics) ObserveIngestionDuration(result string, seconds float64) {
+	if m != nil {
+		m.incidentDuration.WithLabelValues(result).Observe(seconds)
+	}
+}
+
+func (m *Metrics) ObserveOutboxPending(count int64) {
+	if m != nil {
+		m.outboxPending.Set(float64(count))
 	}
 }

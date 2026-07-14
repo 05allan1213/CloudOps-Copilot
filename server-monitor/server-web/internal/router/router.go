@@ -58,6 +58,7 @@ func registerCoreRoutes(router *gin.Engine, cfg config.Config, deps Dependencies
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 	router.POST("/api/v1/auth/login", handler.Login)
 	router.POST("/api/v1/webhook/alertmanager", limitRequestBody(cfg.AlertmanagerWebhookMaxBodyBytes), handler.AlertmanagerWebhook)
+	router.POST("/api/v2/webhook/alertmanager", limitRequestBody(cfg.AlertmanagerWebhookMaxBodyBytes), handler.IncidentAlertmanagerWebhook)
 
 	protected := router.Group("")
 	if cfg.AuthEnabled {
@@ -70,6 +71,11 @@ func registerCoreRoutes(router *gin.Engine, cfg config.Config, deps Dependencies
 	protected.GET("/api/v1/alerts/active", handler.ActiveAlerts)
 	protected.GET("/api/v1/alerts/events", handler.AlertEvents)
 	protected.GET("/api/v1/alert-histories", handler.ListAlertHistories)
+	protected.GET("/api/v2/incidents", handler.ListIncidents)
+	protected.GET("/api/v2/incidents/:id", handler.GetIncident)
+	protected.GET("/api/v2/incidents/:id/signals", handler.ListIncidentSignals)
+	protected.GET("/api/v2/incidents/:id/timeline", handler.ListIncidentTimeline)
+	protected.GET("/api/v2/incidents/:id/evidence", handler.ListIncidentEvidence)
 
 	wsGroup := router.Group("")
 	if cfg.AuthEnabled {

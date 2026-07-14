@@ -88,6 +88,10 @@ type Config struct {
 	// 默认值：1048576（1MB）
 	AlertmanagerWebhookMaxBodyBytes int64
 
+	// IncidentAggregationWindow V2 告警聚合到同一 Incident 的时间窗口
+	// 默认值：14400s（4 小时）
+	IncidentAggregationWindow time.Duration
+
 	// GlobalMaxBodyBytes 全局 API 请求体最大字节数
 	// 默认值：2097152（2MB）
 	GlobalMaxBodyBytes int64
@@ -487,6 +491,7 @@ func Load() Config {
 		DashboardOverviewTTL:            configutil.DurationSeconds("DASHBOARD_OVERVIEW_TTL_SECONDS", 10),
 		AlertEventDedupeTTL:             configutil.DurationSeconds("ALERT_EVENT_DEDUPE_TTL_SECONDS", 86400),
 		AlertmanagerWebhookMaxBodyBytes: int64(configutil.PositiveInt("ALERTMANAGER_WEBHOOK_MAX_BODY_BYTES", 1048576)),
+		IncidentAggregationWindow:       configutil.DurationSeconds("INCIDENT_AGGREGATION_WINDOW_SECONDS", 14400),
 		GlobalMaxBodyBytes:              int64(configutil.PositiveInt("GLOBAL_MAX_BODY_BYTES", 2097152)),
 		CacheWriteTimeout:               configutil.DurationSeconds("CACHE_WRITE_TIMEOUT_SECONDS", 3),
 		GinMode:                         configutil.String("GIN_MODE", "debug"),
@@ -644,6 +649,9 @@ func (c *Config) Validate() error {
 	}
 	if c.RequestTimeout <= 0 {
 		return fmt.Errorf("REQUEST_TIMEOUT_SECONDS must be positive, got %v", c.RequestTimeout)
+	}
+	if c.IncidentAggregationWindow < time.Minute || c.IncidentAggregationWindow > 24*time.Hour {
+		return fmt.Errorf("INCIDENT_AGGREGATION_WINDOW_SECONDS must be in range 60-86400, got %v", c.IncidentAggregationWindow)
 	}
 	if c.JWTExpireHours <= 0 {
 		return fmt.Errorf("JWT_EXPIRE_HOURS must be positive, got %d", c.JWTExpireHours)

@@ -49,6 +49,7 @@ LOCAL_RUNBOOK_DIR ?= $(PROJECT_DIR)/runbooks
 	env-init frontend-install clean \
 	build build-go build-frontend build-server-probe build-server-web build-alert-service \
 	test test-go test-frontend test-server-probe test-server-web test-alert-service test-pkg test-k8s \
+	migrate-up migrate-down migrate-status migrate-version \
 	vet vet-server-probe vet-server-web vet-alert-service vet-pkg \
 	lint lint-go lint-frontend lint-server-probe lint-server-web lint-alert-service lint-pkg \
 	fmt fmt-go fmt-goimports check-goimports check ci \
@@ -114,6 +115,18 @@ test-pkg: ## 运行 pkg 测试
 
 test-k8s: ## 运行 server-web 内的 K8s 相关测试
 	cd $(SERVER_WEB_DIR) && $(GO) test ./internal/copilot/k8s/ ./internal/service/k8s/ ./internal/handler/ -run TestK8s
+
+migrate-up: ## 应用 server-web 显式 V2 SQL migrations（使用 MYSQL_* 环境变量）
+	cd $(SERVER_WEB_DIR) && $(GO) run ./cmd/migrate up
+
+migrate-down: ## 回滚一个 server-web V2 SQL migration
+	cd $(SERVER_WEB_DIR) && $(GO) run ./cmd/migrate down
+
+migrate-status: ## 查看 server-web V2 SQL migration 状态
+	cd $(SERVER_WEB_DIR) && $(GO) run ./cmd/migrate status
+
+migrate-version: ## 查看 server-web V2 SQL migration 版本
+	cd $(SERVER_WEB_DIR) && $(GO) run ./cmd/migrate version
 
 test-frontend: ## 运行前端类型检查
 	cd $(FRONTEND_DIR) && npx vue-tsc --noEmit

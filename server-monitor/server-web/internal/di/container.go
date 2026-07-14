@@ -16,6 +16,7 @@ import (
 	appalert "server-web/internal/service/alert"
 	appcache "server-web/internal/service/cache"
 	apphost "server-web/internal/service/host"
+	appincident "server-web/internal/service/incident"
 
 	eventbus "server-monitor/pkg/kafka"
 )
@@ -32,13 +33,14 @@ type Infra struct {
 
 type Container struct {
 	Infra
-	CacheService *appcache.Service
-	HostService  *apphost.Service
-	AlertService *appalert.Service
-	AuthService  handler.AuthService
-	Metrics      *middleware.Metrics
-	Handler      *handler.Handler
-	K8sHandler   *handler.K8sHandler
+	CacheService    *appcache.Service
+	HostService     *apphost.Service
+	AlertService    *appalert.Service
+	IncidentService *appincident.Service
+	AuthService     handler.AuthService
+	Metrics         *middleware.Metrics
+	Handler         *handler.Handler
+	K8sHandler      *handler.K8sHandler
 }
 
 type Config struct {
