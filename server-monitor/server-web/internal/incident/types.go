@@ -194,6 +194,7 @@ const (
 	AgentStepRunning   AgentStepStatus = "RUNNING"
 	AgentStepCompleted AgentStepStatus = "COMPLETED"
 	AgentStepFailed    AgentStepStatus = "FAILED"
+	AgentStepCancelled AgentStepStatus = "CANCELLED"
 )
 
 // AgentStep stores an auditable summary and never private model chain-of-thought.

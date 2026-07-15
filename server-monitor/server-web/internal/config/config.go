@@ -92,6 +92,23 @@ type Config struct {
 	// 默认值：14400s（4 小时）
 	IncidentAggregationWindow time.Duration
 
+	// IncidentAgentEnabled opts into the durable Phase 2 runtime. It is disabled by default.
+	IncidentAgentEnabled            bool
+	IncidentAgentWorkerID           string
+	IncidentAgentPollInterval       time.Duration
+	IncidentAgentLeaseDuration      time.Duration
+	IncidentAgentHeartbeatPeriod    time.Duration
+	IncidentAgentMaxSteps           int
+	IncidentAgentMaxToolCalls       int
+	IncidentAgentMaxModelCalls      int
+	IncidentAgentTokenBudget        int64
+	IncidentAgentMaxEvidenceItems   int
+	IncidentAgentMaxRuntime         time.Duration
+	IncidentAgentToolTimeout        time.Duration
+	IncidentAgentMaxEvidenceBytes   int
+	IncidentAgentMaxCheckpointBytes int
+	IncidentAgentMaxStepRetries     int
+
 	// GlobalMaxBodyBytes 全局 API 请求体最大字节数
 	// 默认值：2097152（2MB）
 	GlobalMaxBodyBytes int64
@@ -492,6 +509,21 @@ func Load() Config {
 		AlertEventDedupeTTL:             configutil.DurationSeconds("ALERT_EVENT_DEDUPE_TTL_SECONDS", 86400),
 		AlertmanagerWebhookMaxBodyBytes: int64(configutil.PositiveInt("ALERTMANAGER_WEBHOOK_MAX_BODY_BYTES", 1048576)),
 		IncidentAggregationWindow:       configutil.DurationSeconds("INCIDENT_AGGREGATION_WINDOW_SECONDS", 14400),
+		IncidentAgentEnabled:            configutil.Bool("INCIDENT_AGENT_ENABLED", false),
+		IncidentAgentWorkerID:           configutil.String("INCIDENT_AGENT_WORKER_ID", "server-web-agent-worker"),
+		IncidentAgentPollInterval:       configutil.DurationMilliseconds("INCIDENT_AGENT_POLL_INTERVAL_MILLISECONDS", 1000),
+		IncidentAgentLeaseDuration:      configutil.DurationSeconds("INCIDENT_AGENT_LEASE_SECONDS", 30),
+		IncidentAgentHeartbeatPeriod:    configutil.DurationSeconds("INCIDENT_AGENT_HEARTBEAT_SECONDS", 10),
+		IncidentAgentMaxSteps:           configutil.PositiveInt("INCIDENT_AGENT_MAX_STEPS", 12),
+		IncidentAgentMaxToolCalls:       configutil.PositiveInt("INCIDENT_AGENT_MAX_TOOL_CALLS", 6),
+		IncidentAgentMaxModelCalls:      configutil.PositiveInt("INCIDENT_AGENT_MAX_MODEL_CALLS", 8),
+		IncidentAgentTokenBudget:        int64(configutil.PositiveInt("INCIDENT_AGENT_TOKEN_BUDGET", 12000)),
+		IncidentAgentMaxEvidenceItems:   configutil.PositiveInt("INCIDENT_AGENT_MAX_EVIDENCE_ITEMS", 12),
+		IncidentAgentMaxRuntime:         configutil.DurationSeconds("INCIDENT_AGENT_MAX_RUNTIME_SECONDS", 120),
+		IncidentAgentToolTimeout:        configutil.DurationSeconds("INCIDENT_AGENT_TOOL_TIMEOUT_SECONDS", 15),
+		IncidentAgentMaxEvidenceBytes:   configutil.PositiveInt("INCIDENT_AGENT_MAX_EVIDENCE_BYTES", 16384),
+		IncidentAgentMaxCheckpointBytes: configutil.PositiveInt("INCIDENT_AGENT_MAX_CHECKPOINT_BYTES", 32768),
+		IncidentAgentMaxStepRetries:     configutil.NonNegativeInt("INCIDENT_AGENT_MAX_STEP_RETRIES", 1),
 		GlobalMaxBodyBytes:              int64(configutil.PositiveInt("GLOBAL_MAX_BODY_BYTES", 2097152)),
 		CacheWriteTimeout:               configutil.DurationSeconds("CACHE_WRITE_TIMEOUT_SECONDS", 3),
 		GinMode:                         configutil.String("GIN_MODE", "debug"),
@@ -652,6 +684,20 @@ func (c *Config) Validate() error {
 	}
 	if c.IncidentAggregationWindow < time.Minute || c.IncidentAggregationWindow > 24*time.Hour {
 		return fmt.Errorf("INCIDENT_AGGREGATION_WINDOW_SECONDS must be in range 60-86400, got %v", c.IncidentAggregationWindow)
+	}
+	if c.IncidentAgentEnabled {
+		if !c.CopilotEnabled || !c.CopilotToolRegistryEnabled {
+			return fmt.Errorf("COPILOT_ENABLED and COPILOT_TOOL_REGISTRY_ENABLED must be true when INCIDENT_AGENT_ENABLED is true")
+		}
+		if strings.TrimSpace(c.LLMAPIKey) == "" || strings.TrimSpace(c.MySQLHost) == "" {
+			return fmt.Errorf("LLM_API_KEY and MySQL configuration are required when INCIDENT_AGENT_ENABLED is true")
+		}
+		if c.IncidentAgentPollInterval <= 0 || c.IncidentAgentLeaseDuration <= 0 || c.IncidentAgentHeartbeatPeriod <= 0 || c.IncidentAgentHeartbeatPeriod >= c.IncidentAgentLeaseDuration || c.IncidentAgentMaxRuntime <= 0 || c.IncidentAgentToolTimeout <= 0 {
+			return fmt.Errorf("incident agent timing configuration is invalid")
+		}
+		if c.IncidentAgentMaxSteps <= 0 || c.IncidentAgentMaxToolCalls <= 0 || c.IncidentAgentMaxModelCalls <= 0 || c.IncidentAgentTokenBudget <= 0 || c.IncidentAgentMaxEvidenceItems <= 0 || c.IncidentAgentMaxEvidenceBytes < 256 || c.IncidentAgentMaxCheckpointBytes < 1024 || c.IncidentAgentMaxStepRetries < 0 {
+			return fmt.Errorf("incident agent budget configuration is invalid")
+		}
 	}
 	if c.JWTExpireHours <= 0 {
 		return fmt.Errorf("JWT_EXPIRE_HOURS must be positive, got %d", c.JWTExpireHours)

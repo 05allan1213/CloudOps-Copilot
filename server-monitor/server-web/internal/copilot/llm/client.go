@@ -17,7 +17,7 @@ import (
 
 const defaultMaxResponseBytes int64 = 64 * 1024
 const maxErrorResponseBytes int64 = 4 * 1024
-const maxRetries = 2
+const defaultMaxRetries = 2
 const initialRetryBackoff = 500 * time.Millisecond
 
 var (
@@ -37,6 +37,7 @@ type Client struct {
 	httpClient       *http.Client
 	maxResponseBytes int64
 	maxTokens        int
+	maxRetries       int
 	observer         LLMObserver
 }
 
@@ -48,7 +49,10 @@ type Options struct {
 	HTTPClient       *http.Client
 	MaxResponseBytes int64
 	MaxTokens        int
-	Observer         LLMObserver
+	// MaxRetries overrides the legacy retry count when non-nil. Agent Runtime sets zero
+	// so its persisted retry policy is the only retry owner.
+	MaxRetries *int
+	Observer   LLMObserver
 }
 
 type chatRequest struct {
@@ -128,6 +132,10 @@ func NewClient(options Options) *Client {
 	if maxResponseBytes <= 0 {
 		maxResponseBytes = defaultMaxResponseBytes
 	}
+	maxRetries := defaultMaxRetries
+	if options.MaxRetries != nil && *options.MaxRetries >= 0 {
+		maxRetries = *options.MaxRetries
+	}
 	return &Client{
 		apiKey:           strings.TrimSpace(options.APIKey),
 		apiURL:           strings.TrimSpace(options.APIURL),
@@ -136,6 +144,7 @@ func NewClient(options Options) *Client {
 		httpClient:       httpClient,
 		maxResponseBytes: maxResponseBytes,
 		maxTokens:        options.MaxTokens,
+		maxRetries:       maxRetries,
 		observer:         options.Observer,
 	}
 }
@@ -293,7 +302,7 @@ func (c *Client) Generate(ctx context.Context, systemPrompt, userPrompt string) 
 	start := time.Now()
 	var lastErr error
 	var lastUsage *ChatUsage
-	for attempt := 0; attempt <= maxRetries; attempt++ {
+	for attempt := 0; attempt <= c.maxRetries; attempt++ {
 		if attempt > 0 {
 			backoff := initialRetryBackoff * time.Duration(1<<(attempt-1))
 			timer := time.NewTimer(backoff)
@@ -344,7 +353,7 @@ func (c *Client) Chat(ctx context.Context, messages []ChatMessage) (string, *Cha
 	start := time.Now()
 	var lastErr error
 	var lastUsage *ChatUsage
-	for attempt := 0; attempt <= maxRetries; attempt++ {
+	for attempt := 0; attempt <= c.maxRetries; attempt++ {
 		if attempt > 0 {
 			backoff := initialRetryBackoff * time.Duration(1<<(attempt-1))
 			timer := time.NewTimer(backoff)

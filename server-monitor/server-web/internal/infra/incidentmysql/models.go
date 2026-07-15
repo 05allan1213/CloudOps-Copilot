@@ -71,63 +71,99 @@ type timelineRow struct {
 func (timelineRow) TableName() string { return "incident_events" }
 
 type evidenceRow struct {
-	ID            uint64 `gorm:"primaryKey"`
-	PublicID      string
-	IncidentID    uint64
-	AgentRunID    *uint64
-	Type          string
-	Source        string
-	ResourceRef   string
-	TimeRangeJSON json.RawMessage `gorm:"column:time_range_json;type:json"`
-	QueryText     string          `gorm:"column:query_text"`
-	Summary       string
-	FactsJSON     json.RawMessage `gorm:"column:facts_json;type:json"`
-	RawRef        string
-	Truncated     bool
-	CollectedAt   time.Time
-	CreatedAt     time.Time
+	ID             uint64 `gorm:"primaryKey"`
+	PublicID       string
+	IncidentID     uint64
+	AgentRunID     *uint64
+	Type           string
+	Source         string
+	ToolName       string
+	ResourceRef    string
+	TimeRangeJSON  json.RawMessage `gorm:"column:time_range_json;type:json"`
+	QueryText      string          `gorm:"column:query_text"`
+	Summary        string
+	FactsJSON      json.RawMessage `gorm:"column:facts_json;type:json"`
+	ResultHash     string
+	RawRef         string
+	RedactionJSON  json.RawMessage `gorm:"column:redaction_json;type:json"`
+	Truncated      bool
+	Valid          bool
+	IdempotencyKey *string
+	CollectedAt    time.Time
+	CreatedAt      time.Time
 }
 
 func (evidenceRow) TableName() string { return "evidence_items" }
 
 type agentRunRow struct {
-	ID                uint64 `gorm:"primaryKey"`
-	PublicID          string
-	IncidentID        uint64
-	Status            string
-	Model             string
-	PromptVersion     string
-	MaxSteps          int
-	UsedSteps         int
-	InputTokens       int64
-	OutputTokens      int64
-	CurrentCheckpoint json.RawMessage `gorm:"type:json"`
-	FinalDiagnosis    json.RawMessage `gorm:"type:json"`
-	FailureCode       string
-	StartedAt         *time.Time
-	CompletedAt       *time.Time
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	ID                      uint64 `gorm:"primaryKey"`
+	PublicID                string
+	IncidentID              uint64
+	IdempotencyKey          *string
+	Attempt                 int
+	Status                  string
+	Objective               string
+	Model                   string
+	PromptVersion           string
+	MaxSteps                int
+	UsedSteps               int
+	MaxToolCalls            int
+	UsedToolCalls           int
+	MaxModelCalls           int
+	UsedModelCalls          int
+	TokenBudget             int64
+	InputTokens             int64
+	OutputTokens            int64
+	MaxEvidenceItems        int
+	UsedEvidenceItems       int
+	MaxRuntimeMS            int64
+	ToolTimeoutMS           int64
+	MaxEvidenceBytes        int
+	MaxCheckpointBytes      int
+	MaxStepRetries          int
+	CurrentCheckpoint       json.RawMessage `gorm:"type:json"`
+	CheckpointVersion       uint64
+	CheckpointSchemaVersion int
+	CheckpointHash          string
+	LeaseOwner              string
+	LeaseExpiresAt          *time.Time
+	HeartbeatAt             *time.Time
+	CancelRequestedAt       *time.Time
+	FinalDiagnosis          json.RawMessage `gorm:"type:json"`
+	FailureCode             string
+	FailureSummary          string
+	StartedAt               *time.Time
+	CompletedAt             *time.Time
+	DeadlineAt              *time.Time
+	RowVersion              uint64
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
 }
 
 func (agentRunRow) TableName() string { return "agent_runs" }
 
 type agentStepRow struct {
-	ID            uint64 `gorm:"primaryKey"`
-	PublicID      string
-	AgentRunID    uint64
-	Sequence      int
-	StepType      string
-	ShortReason   string
-	SelectedTool  string
-	ArgumentsJSON json.RawMessage `gorm:"column:arguments_json;type:json"`
-	ResultSummary string
-	ResultRef     string
-	Status        string
-	DurationMS    int64
-	InputTokens   int64
-	OutputTokens  int64
-	CreatedAt     time.Time
+	ID               uint64 `gorm:"primaryKey"`
+	PublicID         string
+	AgentRunID       uint64
+	Sequence         int
+	StepType         string
+	ShortReason      string
+	SelectedTool     string
+	ArgumentsJSON    json.RawMessage `gorm:"column:arguments_json;type:json"`
+	ArgumentsHash    string
+	ResultSummary    string
+	ResultRef        string
+	EvidencePublicID string
+	Status           string
+	RetryCount       int
+	DurationMS       int64
+	InputTokens      int64
+	OutputTokens     int64
+	ErrorCode        string
+	StartedAt        *time.Time
+	FinishedAt       *time.Time
+	CreatedAt        time.Time
 }
 
 func (agentStepRow) TableName() string { return "agent_steps" }

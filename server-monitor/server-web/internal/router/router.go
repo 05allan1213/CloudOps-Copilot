@@ -76,6 +76,12 @@ func registerCoreRoutes(router *gin.Engine, cfg config.Config, deps Dependencies
 	protected.GET("/api/v2/incidents/:id/signals", handler.ListIncidentSignals)
 	protected.GET("/api/v2/incidents/:id/timeline", handler.ListIncidentTimeline)
 	protected.GET("/api/v2/incidents/:id/evidence", handler.ListIncidentEvidence)
+	protected.POST("/api/v2/incidents/:id/agent-runs", handler.CreateAgentRun)
+	protected.GET("/api/v2/incidents/:id/agent-runs", handler.ListAgentRuns)
+	protected.GET("/api/v2/agent-runs/:id", handler.GetAgentRun)
+	protected.GET("/api/v2/agent-runs/:id/steps", handler.ListAgentSteps)
+	protected.GET("/api/v2/agent-runs/:id/evidence", handler.ListAgentEvidence)
+	protected.POST("/api/v2/agent-runs/:id/cancel", handler.CancelAgentRun)
 
 	wsGroup := router.Group("")
 	if cfg.AuthEnabled {

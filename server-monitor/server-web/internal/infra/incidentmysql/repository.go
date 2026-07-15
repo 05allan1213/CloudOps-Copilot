@@ -493,7 +493,7 @@ func evidenceFromRow(row evidenceRow) domain.EvidenceItem {
 	return domain.EvidenceItem{ID: row.ID, PublicID: row.PublicID, IncidentID: row.IncidentID, AgentRunID: row.AgentRunID, Type: row.Type, Source: row.Source, ResourceRef: row.ResourceRef, TimeRange: row.TimeRangeJSON, Query: row.QueryText, Summary: row.Summary, Facts: row.FactsJSON, RawRef: row.RawRef, Truncated: row.Truncated, CollectedAt: row.CollectedAt, CreatedAt: row.CreatedAt}
 }
 func agentRunToRow(item *domain.AgentRun) agentRunRow {
-	return agentRunRow{ID: item.ID, PublicID: item.PublicID, IncidentID: item.IncidentID, Status: string(item.Status), Model: item.Model, PromptVersion: item.PromptVersion, MaxSteps: item.MaxSteps, UsedSteps: item.UsedSteps, InputTokens: item.InputTokens, OutputTokens: item.OutputTokens, CurrentCheckpoint: item.CurrentCheckpoint, FinalDiagnosis: item.FinalDiagnosis, FailureCode: item.FailureCode, StartedAt: item.StartedAt, CompletedAt: item.CompletedAt, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
+	return agentRunRow{ID: item.ID, PublicID: item.PublicID, IncidentID: item.IncidentID, Attempt: 1, Status: string(item.Status), Model: item.Model, PromptVersion: item.PromptVersion, MaxSteps: item.MaxSteps, UsedSteps: item.UsedSteps, MaxToolCalls: 1, MaxModelCalls: 1, TokenBudget: maxInt64(1, item.InputTokens+item.OutputTokens), InputTokens: item.InputTokens, OutputTokens: item.OutputTokens, MaxEvidenceItems: 1, MaxRuntimeMS: 120000, ToolTimeoutMS: 15000, MaxEvidenceBytes: 16384, MaxCheckpointBytes: 32768, MaxStepRetries: 1, CurrentCheckpoint: item.CurrentCheckpoint, CheckpointSchemaVersion: 1, FinalDiagnosis: item.FinalDiagnosis, FailureCode: item.FailureCode, RowVersion: 1, StartedAt: item.StartedAt, CompletedAt: item.CompletedAt, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
 }
 func agentRunFromRow(row agentRunRow) domain.AgentRun {
 	return domain.AgentRun{ID: row.ID, PublicID: row.PublicID, IncidentID: row.IncidentID, Status: domain.AgentRunStatus(row.Status), Model: row.Model, PromptVersion: row.PromptVersion, MaxSteps: row.MaxSteps, UsedSteps: row.UsedSteps, InputTokens: row.InputTokens, OutputTokens: row.OutputTokens, CurrentCheckpoint: row.CurrentCheckpoint, FinalDiagnosis: row.FinalDiagnosis, FailureCode: row.FailureCode, StartedAt: row.StartedAt, CompletedAt: row.CompletedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
@@ -506,4 +506,11 @@ func agentStepFromRow(row agentStepRow) domain.AgentStep {
 }
 func outboxToRow(item *domain.OutboxEvent) outboxRow {
 	return outboxRow{ID: item.ID, EventID: item.EventID, AggregateType: item.AggregateType, AggregateID: item.AggregateID, EventType: item.EventType, SchemaVersion: item.SchemaVersion, PayloadJSON: item.Payload, OccurredAt: item.OccurredAt, PublishedAt: item.PublishedAt, Attempts: item.Attempts, LastError: item.LastError, CreatedAt: item.CreatedAt}
+}
+
+func maxInt64(left, right int64) int64 {
+	if left > right {
+		return left
+	}
+	return right
 }

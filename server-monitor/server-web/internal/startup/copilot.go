@@ -10,6 +10,8 @@ import (
 	"gorm.io/gorm"
 	"k8s.io/client-go/kubernetes"
 
+	"server-web/internal/agent"
+	agentadapter "server-web/internal/agent/adapter"
 	"server-web/internal/config"
 	copilotaction "server-web/internal/copilot/action"
 	copilotcontext "server-web/internal/copilot/context"
@@ -25,10 +27,12 @@ import (
 	copilotsummary "server-web/internal/copilot/summary"
 	copilottool "server-web/internal/copilot/tool"
 	"server-web/internal/di"
+	"server-web/internal/infra/incidentmysql"
 	rediscache "server-web/internal/infra/redis"
 	ws "server-web/internal/infra/websocket"
 	"server-web/internal/middleware"
 	"server-web/internal/router"
+	agentruntime "server-web/internal/service/agentruntime"
 	appalert "server-web/internal/service/alert"
 
 	eventbus "server-monitor/pkg/kafka"
@@ -139,7 +143,43 @@ func InitCopilot(ctx context.Context, cfg config.Config, container *di.Container
 		}
 		deps.ActionHandler = actionHandler
 	}
-	return &router.CopilotRuntime{DiagnosisService: diagnosisService, KafkaObserver: container.Metrics}, deps, nil
+	runtime := &router.CopilotRuntime{DiagnosisService: diagnosisService, KafkaObserver: container.Metrics}
+	if cfg.IncidentAgentEnabled {
+		if container.DB == nil || toolExecutor == nil {
+			return nil, nil, fmt.Errorf("incident agent runtime requires MySQL and the tool registry")
+		}
+		store, storeErr := incidentmysql.NewStore(container.DB)
+		if storeErr != nil {
+			return nil, nil, fmt.Errorf("incident agent store init failed: %w", storeErr)
+		}
+		zeroRetries := 0
+		agentLLM := copilotllm.NewClient(copilotllm.Options{APIKey: cfg.LLMAPIKey, APIURL: cfg.LLMAPIURL, Model: cfg.LLMModel, Timeout: cfg.LLMTimeout, MaxTokens: cfg.LLMMaxTokens, MaxRetries: &zeroRetries, Observer: container.Metrics})
+		model, modelErr := agentadapter.NewLLMModel(agentLLM)
+		if modelErr != nil {
+			return nil, nil, fmt.Errorf("incident agent model init failed: %w", modelErr)
+		}
+		readOnlyTools, toolErr := agentadapter.NewReadOnlyTools(toolExecutor)
+		if toolErr != nil {
+			return nil, nil, fmt.Errorf("incident agent read-only tools init failed: %w", toolErr)
+		}
+		agentService, serviceErr := agentruntime.New(ctx, store, model, readOnlyTools, agentruntime.Config{
+			Enabled: true, WorkerID: cfg.IncidentAgentWorkerID, PollInterval: cfg.IncidentAgentPollInterval,
+			LeaseDuration: cfg.IncidentAgentLeaseDuration, HeartbeatPeriod: cfg.IncidentAgentHeartbeatPeriod,
+			Model: cfg.LLMModel, PromptVersion: "incident-agent-v2", MaxGraphRunSteps: 96,
+			Observer: container.Metrics,
+			Limits: agent.Limits{MaxSteps: cfg.IncidentAgentMaxSteps, MaxToolCalls: cfg.IncidentAgentMaxToolCalls,
+				MaxModelCalls: cfg.IncidentAgentMaxModelCalls, TokenBudget: cfg.IncidentAgentTokenBudget,
+				MaxEvidenceItems: cfg.IncidentAgentMaxEvidenceItems, MaxRuntime: cfg.IncidentAgentMaxRuntime,
+				ToolTimeout: cfg.IncidentAgentToolTimeout, MaxEvidenceBytes: cfg.IncidentAgentMaxEvidenceBytes,
+				MaxCheckpointSize: cfg.IncidentAgentMaxCheckpointBytes, MaxStepRetries: cfg.IncidentAgentMaxStepRetries},
+		})
+		if serviceErr != nil {
+			return nil, nil, fmt.Errorf("incident agent runtime init failed: %w", serviceErr)
+		}
+		container.Handler.SetAgentRuntime(agentService)
+		runtime.AgentWorker = agentService.NewWorker()
+	}
+	return runtime, deps, nil
 }
 
 func initRunbookEmbedding(ctx context.Context, cfg config.Config, docs []copilotrunbook.Document) (*copilotrunbook.Embedder, *copilotrunbook.MemoryVectorStore) {

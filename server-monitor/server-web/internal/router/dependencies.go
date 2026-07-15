@@ -8,6 +8,7 @@ import (
 	"server-web/internal/handler"
 	rediscache "server-web/internal/infra/redis"
 	"server-web/internal/middleware"
+	agentruntime "server-web/internal/service/agentruntime"
 
 	eventbus "server-monitor/pkg/kafka"
 )
@@ -15,6 +16,7 @@ import (
 type CopilotRuntime struct {
 	DiagnosisService *copilotdiagnosis.Service
 	KafkaObserver    eventbus.ConsumerObserver
+	AgentWorker      *agentruntime.Worker
 }
 
 type CopilotDeps struct {

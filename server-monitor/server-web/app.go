@@ -20,6 +20,7 @@ import (
 	rediscache "server-web/internal/infra/redis"
 	ws "server-web/internal/infra/websocket"
 	"server-web/internal/router"
+	agentruntime "server-web/internal/service/agentruntime"
 	"server-web/internal/startup"
 
 	eventbus "server-monitor/pkg/kafka"
@@ -31,6 +32,7 @@ type app struct {
 	infra             *di.Infra
 	diagnosisConsumer *eventbus.Consumer
 	copilotRuntime    *router.CopilotRuntime
+	agentWorker       *agentruntime.Worker
 	k8sReader         copilotk8s.Reader
 	server            *http.Server
 	ctx               context.Context
@@ -94,7 +96,7 @@ func initApp(ctx context.Context) (*app, error) {
 	}
 
 	appCtx, cancel := context.WithCancel(ctx)
-	return &app{
+	application := &app{
 		cfg:               cfg,
 		infra:             infra,
 		diagnosisConsumer: diagnosisConsumer,
@@ -110,7 +112,11 @@ func initApp(ctx context.Context) (*app, error) {
 		},
 		ctx:    appCtx,
 		cancel: cancel,
-	}, nil
+	}
+	if copilotRuntime != nil {
+		application.agentWorker = copilotRuntime.AgentWorker
+	}
+	return application, nil
 }
 
 func runApp(app *app) int {
@@ -144,6 +150,9 @@ func runApp(app *app) int {
 
 func startBackgroundTasks(app *app) {
 	go app.infra.WSHub.Run(app.ctx)
+	if app.agentWorker != nil {
+		app.agentWorker.Start(app.ctx)
+	}
 
 	if app.infra.RedisClient.Enabled() {
 		pingCtx, pingCancel := context.WithTimeout(context.Background(), app.cfg.RedisStartupTimeout)
@@ -225,6 +234,9 @@ func shutdownApp(app *app) {
 	})
 
 	app.cancel()
+	if app.agentWorker != nil {
+		app.agentWorker.Stop()
+	}
 	if app.diagnosisConsumer != nil {
 		if err := app.diagnosisConsumer.Close(); err != nil {
 			zap.L().Warn("diagnosis kafka consumer close failed", zap.Error(err))

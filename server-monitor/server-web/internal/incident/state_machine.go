@@ -133,3 +133,15 @@ func CanTransitionAgentRun(from, to AgentRunStatus) bool {
 		return false
 	}
 }
+
+// CanTransitionAgentStep reports whether an AgentStep status change is allowed.
+func CanTransitionAgentStep(from, to AgentStepStatus) bool {
+	switch from {
+	case AgentStepPending:
+		return to == AgentStepRunning || to == AgentStepFailed || to == AgentStepCancelled
+	case AgentStepRunning:
+		return to == AgentStepCompleted || to == AgentStepFailed || to == AgentStepCancelled
+	default:
+		return false
+	}
+}

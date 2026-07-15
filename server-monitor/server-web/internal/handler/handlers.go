@@ -62,6 +62,7 @@ type Handler struct {
 	cacheService    *appcache.Service
 	alertService    *appalert.Service
 	incidentService IncidentApplication
+	agentRuntime    AgentApplication
 	hostService     *apphost.Service
 	mysqlClient     mysqlClient
 	authService     AuthService

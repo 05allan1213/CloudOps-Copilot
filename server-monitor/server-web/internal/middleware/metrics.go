@@ -11,36 +11,49 @@ import (
 )
 
 type Metrics struct {
-	registry             *prometheus.Registry
-	requestsTotal        *prometheus.CounterVec
-	requestDuration      *prometheus.HistogramVec
-	websocketConnections prometheus.Gauge
-	kafkaAlertEvents     *prometheus.CounterVec
-	kafkaMessages        *prometheus.CounterVec
-	actionEvents         *prometheus.CounterVec
-	actionDuration       *prometheus.HistogramVec
-	copilotToolEvents    *prometheus.CounterVec
-	copilotToolDuration  *prometheus.HistogramVec
-	diagnosisConfidence  prometheus.Histogram
-	diagnosisLLMTotal    *prometheus.CounterVec
-	diagnosisDuration    *prometheus.HistogramVec
-	llmRequestTotal      *prometheus.CounterVec
-	llmRequestDuration   *prometheus.HistogramVec
-	llmTokensTotal       *prometheus.CounterVec
-	nluClassifyTotal     *prometheus.CounterVec
-	nluClassifyDuration  *prometheus.HistogramVec
-	ragSearchTotal       *prometheus.CounterVec
-	ragSearchScore       prometheus.Histogram
-	ragSearchDuration    prometheus.Histogram
-	feedbackTotal        *prometheus.CounterVec
-	feedbackCommentTotal prometheus.Counter
-	incidentSignals      *prometheus.CounterVec
-	incidentsCreated     prometheus.Counter
-	incidentsUpdated     prometheus.Counter
-	incidentTransitions  *prometheus.CounterVec
-	incidentErrors       *prometheus.CounterVec
-	incidentDuration     *prometheus.HistogramVec
-	outboxPending        prometheus.Gauge
+	registry               *prometheus.Registry
+	requestsTotal          *prometheus.CounterVec
+	requestDuration        *prometheus.HistogramVec
+	websocketConnections   prometheus.Gauge
+	kafkaAlertEvents       *prometheus.CounterVec
+	kafkaMessages          *prometheus.CounterVec
+	actionEvents           *prometheus.CounterVec
+	actionDuration         *prometheus.HistogramVec
+	copilotToolEvents      *prometheus.CounterVec
+	copilotToolDuration    *prometheus.HistogramVec
+	diagnosisConfidence    prometheus.Histogram
+	diagnosisLLMTotal      *prometheus.CounterVec
+	diagnosisDuration      *prometheus.HistogramVec
+	llmRequestTotal        *prometheus.CounterVec
+	llmRequestDuration     *prometheus.HistogramVec
+	llmTokensTotal         *prometheus.CounterVec
+	nluClassifyTotal       *prometheus.CounterVec
+	nluClassifyDuration    *prometheus.HistogramVec
+	ragSearchTotal         *prometheus.CounterVec
+	ragSearchScore         prometheus.Histogram
+	ragSearchDuration      prometheus.Histogram
+	feedbackTotal          *prometheus.CounterVec
+	feedbackCommentTotal   prometheus.Counter
+	incidentSignals        *prometheus.CounterVec
+	incidentsCreated       prometheus.Counter
+	incidentsUpdated       prometheus.Counter
+	incidentTransitions    *prometheus.CounterVec
+	incidentErrors         *prometheus.CounterVec
+	incidentDuration       *prometheus.HistogramVec
+	outboxPending          prometheus.Gauge
+	agentRuns              *prometheus.CounterVec
+	agentRunDuration       *prometheus.HistogramVec
+	agentSteps             *prometheus.CounterVec
+	agentStepDuration      *prometheus.HistogramVec
+	agentOperations        *prometheus.CounterVec
+	agentOperationDuration *prometheus.HistogramVec
+	agentRetries           *prometheus.CounterVec
+	agentLeases            *prometheus.CounterVec
+	agentCheckpoints       *prometheus.CounterVec
+	agentBudgets           *prometheus.CounterVec
+	agentEvidence          *prometheus.CounterVec
+	agentValidation        *prometheus.CounterVec
+	agentActiveRuns        *prometheus.GaugeVec
 }
 
 func NewMetrics() *Metrics {
@@ -172,6 +185,19 @@ func NewMetrics() *Metrics {
 			Name: "cloudops_outbox_pending_total",
 			Help: "Current number of unpublished transactional outbox records.",
 		}),
+		agentRuns:              prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cloudops_agent_runs_total", Help: "Durable incident Agent runs by bounded terminal or start status."}, []string{"status"}),
+		agentRunDuration:       prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "cloudops_agent_run_duration_seconds", Help: "Incident Agent run duration.", Buckets: []float64{.1, .25, .5, 1, 2.5, 5, 10, 30, 60, 120}}, []string{"status"}),
+		agentSteps:             prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cloudops_agent_steps_total", Help: "Durable Agent steps by bounded node and status."}, []string{"node", "status"}),
+		agentStepDuration:      prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "cloudops_agent_step_duration_seconds", Help: "Agent step duration.", Buckets: []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 15}}, []string{"node", "status"}),
+		agentOperations:        prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cloudops_agent_operations_total", Help: "Agent tool and model operations."}, []string{"kind", "name", "result"}),
+		agentOperationDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "cloudops_agent_operation_duration_seconds", Help: "Agent tool and model operation duration.", Buckets: []float64{.01, .025, .05, .1, .25, .5, 1, 2.5, 5, 15, 30, 60}}, []string{"kind", "name", "result"}),
+		agentRetries:           prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cloudops_agent_retries_total", Help: "Persisted Agent retries by bounded reason."}, []string{"reason"}),
+		agentLeases:            prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cloudops_agent_leases_total", Help: "Agent lease lifecycle events."}, []string{"event"}),
+		agentCheckpoints:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cloudops_agent_checkpoints_total", Help: "Agent checkpoint lifecycle events."}, []string{"event"}),
+		agentBudgets:           prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cloudops_agent_budget_exceeded_total", Help: "Agent budget exhaustion by bounded budget kind."}, []string{"budget"}),
+		agentEvidence:          prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cloudops_agent_evidence_total", Help: "Agent evidence persistence results."}, []string{"result"}),
+		agentValidation:        prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cloudops_agent_diagnosis_validation_total", Help: "Deterministic diagnosis validation results."}, []string{"result"}),
+		agentActiveRuns:        prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "cloudops_agent_runs_active", Help: "Locally observed pending and running Agent runs."}, []string{"status"}),
 	}
 
 	metrics.registry.MustRegister(
@@ -204,8 +230,73 @@ func NewMetrics() *Metrics {
 		metrics.incidentErrors,
 		metrics.incidentDuration,
 		metrics.outboxPending,
+		metrics.agentRuns,
+		metrics.agentRunDuration,
+		metrics.agentSteps,
+		metrics.agentStepDuration,
+		metrics.agentOperations,
+		metrics.agentOperationDuration,
+		metrics.agentRetries,
+		metrics.agentLeases,
+		metrics.agentCheckpoints,
+		metrics.agentBudgets,
+		metrics.agentEvidence,
+		metrics.agentValidation,
+		metrics.agentActiveRuns,
 	)
 	return metrics
+}
+
+func (m *Metrics) ObserveAgentRun(status string, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.agentRuns.WithLabelValues(status).Inc()
+	if seconds >= 0 {
+		m.agentRunDuration.WithLabelValues(status).Observe(seconds)
+	}
+}
+
+func (m *Metrics) ObserveAgentStep(node, status string, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.agentSteps.WithLabelValues(node, status).Inc()
+	m.agentStepDuration.WithLabelValues(node, status).Observe(seconds)
+}
+
+func (m *Metrics) ObserveAgentOperation(kind, name, result string, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.agentOperations.WithLabelValues(kind, name, result).Inc()
+	m.agentOperationDuration.WithLabelValues(kind, name, result).Observe(seconds)
+}
+
+func (m *Metrics) ObserveAgentEvent(kind, value string) {
+	if m == nil {
+		return
+	}
+	switch kind {
+	case "retry":
+		m.agentRetries.WithLabelValues(value).Inc()
+	case "lease":
+		m.agentLeases.WithLabelValues(value).Inc()
+	case "checkpoint":
+		m.agentCheckpoints.WithLabelValues(value).Inc()
+	case "budget":
+		m.agentBudgets.WithLabelValues(value).Inc()
+	case "evidence":
+		m.agentEvidence.WithLabelValues(value).Inc()
+	case "validation":
+		m.agentValidation.WithLabelValues(value).Inc()
+	}
+}
+
+func (m *Metrics) SetAgentActive(status string, count float64) {
+	if m != nil {
+		m.agentActiveRuns.WithLabelValues(status).Set(count)
+	}
 }
 
 func (m *Metrics) Handler() gin.HandlerFunc {
