@@ -24,6 +24,7 @@ import (
 	"server-web/internal/infra/webhook"
 	"server-web/internal/remediation"
 	appincident "server-web/internal/service/incident"
+	"server-web/internal/verification"
 	"server-web/migrations"
 )
 
@@ -89,6 +90,21 @@ func TestMySQLMigrationRepositoryAndConcurrentIngestion(t *testing.T) {
 	}
 	if err := goose.UpToContext(ctx, sqlDB, ".", 4); err != nil {
 		t.Fatalf("repeat migration 3 to 4: %v", err)
+	}
+	if err := goose.UpToContext(ctx, sqlDB, ".", 5); err != nil {
+		t.Fatalf("migration 4 to 5: %v", err)
+	}
+	if !tableExists(t, ctx, sqlDB, "verification_runs") || !tableExists(t, ctx, sqlDB, "verification_checks") {
+		t.Fatal("version 5 schema boundary is invalid")
+	}
+	if err := goose.DownToContext(ctx, sqlDB, ".", 4); err != nil {
+		t.Fatalf("migration 5 down to 4: %v", err)
+	}
+	if tableExists(t, ctx, sqlDB, "verification_runs") || tableExists(t, ctx, sqlDB, "verification_checks") || !tableExists(t, ctx, sqlDB, "change_requests") || !tableExists(t, ctx, sqlDB, "remediation_plans") || !tableExists(t, ctx, sqlDB, "incidents") || !tableExists(t, ctx, sqlDB, "agent_runs") || !tableExists(t, ctx, sqlDB, "changes") {
+		t.Fatal("Phase 5 down migration damaged Phase 1-4 schema")
+	}
+	if err := goose.UpToContext(ctx, sqlDB, ".", 5); err != nil {
+		t.Fatalf("repeat migration 4 to 5: %v", err)
 	}
 	defer func() {
 		if err := goose.DownToContext(context.Background(), sqlDB, ".", 0); err != nil {
@@ -156,6 +172,7 @@ func TestMySQLMigrationRepositoryAndConcurrentIngestion(t *testing.T) {
 	if err := store.Create(ctx, remediationItem); err != nil {
 		t.Fatal(err)
 	}
+	var phase5Delivery *remediation.ChangeRequest
 	t.Run("remediation approval idempotency hash binding and lease recovery", func(t *testing.T) {
 		repository, err := NewRemediationRepository(gormDB)
 		if err != nil {
@@ -201,6 +218,165 @@ func TestMySQLMigrationRepositoryAndConcurrentIngestion(t *testing.T) {
 		reclaimed, _, err := repository.ClaimDelivery(ctx, "worker-b", time.Now().UTC(), time.Second)
 		if err != nil || reclaimed.LeaseOwner != "worker-b" || reclaimed.Attempts != 2 {
 			t.Fatalf("expired lease not recovered: %+v err=%v", reclaimed, err)
+		}
+		phase5Delivery = reclaimed
+	})
+
+	t.Run("phase5 verification claim recovery stability and atomic resolve", func(t *testing.T) {
+		if phase5Delivery == nil {
+			t.Fatal("missing Phase 4 ChangeRequest fixture")
+		}
+		now := time.Date(2026, 7, 15, 2, 0, 0, 0, time.UTC)
+		revision := strings.Repeat("9", 40)
+		updates := map[string]any{
+			"status": "delivered", "lease_owner": "", "lease_expires_at": nil, "heartbeat_at": nil,
+			"pr_number": int64(42), "commit_sha": strings.Repeat("8", 40), "pr_state": "closed", "merged_commit_sha": revision, "target_revision": revision,
+			"argocd_application": "remediation", "argocd_project": "test", "detected_revision": revision,
+			"argocd_sync_status": "Synced", "argocd_operation_phase": "Succeeded", "argocd_health_status": "Healthy",
+			"resource_health_json": json.RawMessage(`[{"kind":"Deployment","health":"Healthy"}]`),
+			"cluster":              "test", "environment": "test", "namespace": "phase4", "workload_kind": "Deployment", "workload_name": "remediation",
+			"delivery_started_at": now.Add(-time.Minute), "delivery_deadline_at": now.Add(time.Hour), "delivery_completed_at": now,
+			"row_version": gorm.Expr("row_version + 1"),
+		}
+		if err := gormDB.Table("change_requests").Where("id = ?", phase5Delivery.ID).Updates(updates).Error; err != nil {
+			t.Fatal(err)
+		}
+		repository, err := NewVerificationRepository(gormDB)
+		if err != nil {
+			t.Fatal(err)
+		}
+		delivery, err := repository.FindDeliveredWithoutRun(ctx)
+		if err != nil || delivery.TargetRevision != revision || delivery.DetectedRevision != revision {
+			t.Fatalf("exact delivered projection=%+v err=%v", delivery, err)
+		}
+		plan, err := verification.CompileTrustedPlan(verification.Subject{Repository: delivery.Repository, PullRequest: delivery.PRNumber, Revision: revision, ArgoApplication: delivery.ArgoApplication, ArgoProject: delivery.ArgoProject, Cluster: delivery.Cluster, Environment: delivery.Environment, Namespace: delivery.Namespace, WorkloadKind: delivery.WorkloadKind, WorkloadName: delivery.WorkloadName, AlertFingerprint: delivery.IncidentFingerprint}, verification.CompilerConfig{PollInterval: time.Second, Timeout: time.Minute, StabilityWindow: 2 * time.Second, AlertLookback: time.Minute})
+		if err != nil {
+			t.Fatal(err)
+		}
+		created, err := repository.CreateRun(ctx, delivery, plan, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		replayed, err := repository.CreateRun(ctx, delivery, plan, now)
+		if err != nil || replayed.PublicID != created.PublicID {
+			t.Fatalf("run identity replay=%+v err=%v", replayed, err)
+		}
+
+		const claimers = 8
+		var wg sync.WaitGroup
+		claims := make(chan *verification.Run, claimers)
+		errs := make(chan error, claimers)
+		for index := range claimers {
+			wg.Add(1)
+			go func(index int) {
+				defer wg.Done()
+				run, claimErr := repository.ClaimRun(context.Background(), "phase5-worker-"+strconv.Itoa(index), now.Add(time.Second), 10*time.Second)
+				if claimErr == nil {
+					claims <- run
+				} else if !errors.Is(claimErr, verification.ErrNotFound) {
+					errs <- claimErr
+				}
+			}(index)
+		}
+		wg.Wait()
+		close(claims)
+		close(errs)
+		for claimErr := range errs {
+			t.Error(claimErr)
+		}
+		var winner *verification.Run
+		winnerCount := 0
+		for claim := range claims {
+			winner, winnerCount = claim, winnerCount+1
+		}
+		if winnerCount != 1 {
+			t.Fatalf("verification claim winners=%d", winnerCount)
+		}
+		checks, err := repository.ListChecks(ctx, winner.ID)
+		if err != nil || len(checks) != len(plan.Checks) {
+			t.Fatalf("checks=%d err=%v", len(checks), err)
+		}
+		stale := *winner
+		stale.RowVersion--
+		if err := repository.PersistCheckSample(ctx, &stale, &checks[0], verification.Sample{Status: verification.SamplePassed, Observed: json.RawMessage(`{"ok":true}`)}, now.Add(2*time.Second), now.Add(3*time.Second)); !errors.Is(err, verification.ErrLeaseLost) {
+			t.Fatalf("stale writer accepted: %v", err)
+		}
+		if err := gormDB.Table("verification_runs").Where("id = ?", winner.ID).Update("lease_expires_at", now).Error; err != nil {
+			t.Fatal(err)
+		}
+		takeover, err := repository.ClaimRun(ctx, "recovery-worker", now.Add(2*time.Second), 10*time.Second)
+		if err != nil || !takeover.LeaseTakeover {
+			t.Fatalf("expired lease takeover=%+v err=%v", takeover, err)
+		}
+		if err := repository.ReleaseRun(ctx, takeover, now.Add(2*time.Second)); err != nil {
+			t.Fatal(err)
+		}
+
+		for round, at := range []time.Time{now.Add(3 * time.Second), now.Add(6 * time.Second)} {
+			for index := range checks {
+				run, claimErr := repository.ClaimRun(ctx, "check-worker", at.Add(time.Duration(index)*time.Millisecond), 10*time.Second)
+				if claimErr != nil {
+					t.Fatal(claimErr)
+				}
+				currentChecks, listErr := repository.ListChecks(ctx, run.ID)
+				if listErr != nil {
+					t.Fatal(listErr)
+				}
+				current := &currentChecks[index]
+				if persistErr := repository.PersistCheckSample(ctx, run, current, verification.Sample{Status: verification.SamplePassed, Observed: json.RawMessage(`{"ok":true}`), SourceReference: "deterministic:test"}, at.Add(time.Duration(index)*time.Millisecond), at.Add(time.Second)); persistErr != nil {
+					t.Fatalf("round=%d check=%d: %v", round, index, persistErr)
+				}
+			}
+		}
+		aggregateOwner, err := repository.ClaimRun(ctx, "aggregate-worker", now.Add(7*time.Second), 10*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		completed, err := repository.AggregateRun(ctx, aggregateOwner, now.Add(8*time.Second))
+		if err != nil || completed.Status != verification.RunPassed {
+			t.Fatalf("aggregate=%+v err=%v", completed, err)
+		}
+		var incidentAfter incidentRow
+		if err := gormDB.First(&incidentAfter, remediationItem.ID).Error; err != nil || incidentAfter.Status != string(domain.StatusResolved) || incidentAfter.ResolvedAt == nil {
+			t.Fatalf("incident not resolved exactly after verification: %+v err=%v", incidentAfter, err)
+		}
+		if _, err := repository.ClaimRun(ctx, "replay-worker", now.Add(time.Minute), time.Second); !errors.Is(err, verification.ErrNotFound) {
+			t.Fatalf("terminal run replayable: %v", err)
+		}
+		var resolvedFacts, resolvedOutbox int64
+		if err := gormDB.Table("incident_events").Where("incident_id = ? AND event_type = ?", remediationItem.ID, "incident_resolved_after_verification").Count(&resolvedFacts).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := gormDB.Table("outbox_events").Where("aggregate_id = ? AND event_type = ?", remediationItem.PublicID, "incident_resolved_after_verification").Count(&resolvedOutbox).Error; err != nil {
+			t.Fatal(err)
+		}
+		if resolvedFacts != 1 || resolvedOutbox != 1 {
+			t.Fatalf("resolved facts timeline=%d outbox=%d", resolvedFacts, resolvedOutbox)
+		}
+
+		// An explicit operator retry appends attempt 2; it never changes attempt 1.
+		if err := gormDB.Model(&incidentRow{}).Where("id = ? AND version = ?", incidentAfter.ID, incidentAfter.Version).Updates(map[string]any{"status": domain.StatusApplyingChange, "resolved_at": nil, "version": incidentAfter.Version + 1}).Error; err != nil {
+			t.Fatal(err)
+		}
+		retryAt := now.Add(10 * time.Minute)
+		retry, err := repository.CreateRetryRun(ctx, delivery, plan, retryAt)
+		if err != nil || retry.Attempt != 2 || retry.PublicID == completed.PublicID {
+			t.Fatalf("retry=%+v err=%v", retry, err)
+		}
+		timeoutOwner, err := repository.ClaimRun(ctx, "timeout-worker", retryAt.Add(2*time.Minute), 10*time.Second)
+		if err != nil || timeoutOwner.Attempt != 2 {
+			t.Fatalf("timeout claim=%+v err=%v", timeoutOwner, err)
+		}
+		if err := repository.TimeoutRun(ctx, timeoutOwner, retryAt.Add(2*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+		var attempts []verificationRunRow
+		if err := gormDB.Where("change_request_id = ?", delivery.ID).Order("attempt ASC").Find(&attempts).Error; err != nil || len(attempts) != 2 || attempts[0].Status != string(verification.RunPassed) || attempts[1].Status != string(verification.RunTimedOut) {
+			t.Fatalf("preserved attempts=%+v err=%v", attempts, err)
+		}
+		incidentAfter = incidentRow{}
+		if err := gormDB.First(&incidentAfter, remediationItem.ID).Error; err != nil || incidentAfter.Status != string(domain.StatusDiagnosing) || incidentAfter.ResolvedAt != nil {
+			t.Fatalf("timeout did not return to investigation: %+v err=%v", incidentAfter, err)
 		}
 	})
 	t.Run("change idempotency filtering foreign key and atomic evidence", func(t *testing.T) {

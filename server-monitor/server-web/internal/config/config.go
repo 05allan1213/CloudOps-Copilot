@@ -184,6 +184,18 @@ type Config struct {
 	RemediationPollInterval        time.Duration
 	RemediationLeaseDuration       time.Duration
 
+	// Phase 5 delivery observation and deterministic recovery verification are independently default-off.
+	DeliveryTrackingEnabled     bool
+	VerificationEnabled         bool
+	DeliveryWorkerID            string
+	VerificationWorkerID        string
+	DeliveryPollInterval        time.Duration
+	DeliveryTimeout             time.Duration
+	VerificationTimeout         time.Duration
+	VerificationStabilityWindow time.Duration
+	VerificationLeaseDuration   time.Duration
+	VerificationMaxAttempts     int
+
 	// GlobalMaxBodyBytes 全局 API 请求体最大字节数
 	// 默认值：2097152（2MB）
 	GlobalMaxBodyBytes int64
@@ -704,6 +716,16 @@ func Load() Config {
 		RemediationWorkerID:             configutil.String("REMEDIATION_WORKER_ID", configutil.String("HOSTNAME", "server-web-remediation-worker")),
 		RemediationPollInterval:         configutil.DurationMilliseconds("REMEDIATION_POLL_INTERVAL_MILLISECONDS", 1000),
 		RemediationLeaseDuration:        configutil.DurationSeconds("REMEDIATION_LEASE_SECONDS", 30),
+		DeliveryTrackingEnabled:         configutil.Bool("DELIVERY_TRACKING_ENABLED", false),
+		VerificationEnabled:             configutil.Bool("VERIFICATION_ENABLED", false),
+		DeliveryWorkerID:                configutil.String("DELIVERY_WORKER_ID", configutil.String("HOSTNAME", "server-web-delivery-worker")),
+		VerificationWorkerID:            configutil.String("VERIFICATION_WORKER_ID", configutil.String("HOSTNAME", "server-web-verification-worker")),
+		DeliveryPollInterval:            configutil.DurationSeconds("DELIVERY_POLL_INTERVAL_SECONDS", 10),
+		DeliveryTimeout:                 configutil.DurationSeconds("DELIVERY_TIMEOUT_SECONDS", 3600),
+		VerificationTimeout:             configutil.DurationSeconds("VERIFICATION_TIMEOUT_SECONDS", 1800),
+		VerificationStabilityWindow:     configutil.DurationSeconds("VERIFICATION_STABILITY_WINDOW_SECONDS", 120),
+		VerificationLeaseDuration:       configutil.DurationSeconds("VERIFICATION_LEASE_SECONDS", 30),
+		VerificationMaxAttempts:         configutil.PositiveInt("VERIFICATION_MAX_ATTEMPTS", 180),
 		GlobalMaxBodyBytes:              int64(configutil.PositiveInt("GLOBAL_MAX_BODY_BYTES", 2097152)),
 		CacheWriteTimeout:               configutil.DurationSeconds("CACHE_WRITE_TIMEOUT_SECONDS", 3),
 		GinMode:                         configutil.String("GIN_MODE", "debug"),
@@ -1181,6 +1203,22 @@ func (c *Config) Validate() error {
 		}
 		if c.GitHubWriteTimeout <= 0 || c.GitHubWriteMaxResponseBytes < 1024 || c.GitHubWriteMaxResponseBytes > 2*1024*1024 || c.GitHubWriteMaxContentBytes < c.RemediationMaxPatchBytes || strings.TrimSpace(c.RemediationWorkerID) == "" || len(c.RemediationWorkerID) > 128 || c.RemediationPollInterval <= 0 || c.RemediationLeaseDuration <= c.RemediationPollInterval {
 			return fmt.Errorf("GitHub write or remediation worker limits are invalid")
+		}
+	}
+	if c.DeliveryTrackingEnabled {
+		if !c.RemediationEnabled || !c.GitHubEnabled || !c.ArgoCDEnabled || !c.K8SEnabled || strings.TrimSpace(c.MySQLHost) == "" {
+			return fmt.Errorf("delivery tracking requires remediation, GitHub read, Argo CD read, Kubernetes read and MySQL")
+		}
+	}
+	if c.VerificationEnabled && !c.DeliveryTrackingEnabled {
+		return fmt.Errorf("VERIFICATION_ENABLED requires DELIVERY_TRACKING_ENABLED")
+	}
+	if c.DeliveryTrackingEnabled || c.VerificationEnabled {
+		if strings.TrimSpace(c.DeliveryWorkerID) == "" || len(c.DeliveryWorkerID) > 128 || strings.TrimSpace(c.VerificationWorkerID) == "" || len(c.VerificationWorkerID) > 128 {
+			return fmt.Errorf("delivery and verification worker IDs must contain 1-128 bytes")
+		}
+		if c.DeliveryPollInterval < time.Second || c.DeliveryPollInterval > time.Minute || c.DeliveryTimeout < time.Minute || c.DeliveryTimeout > 24*time.Hour || c.VerificationTimeout < time.Minute || c.VerificationTimeout > 24*time.Hour || c.VerificationStabilityWindow < c.DeliveryPollInterval || c.VerificationStabilityWindow > c.VerificationTimeout || c.VerificationLeaseDuration <= c.DeliveryPollInterval || c.VerificationMaxAttempts < 1 || c.VerificationMaxAttempts > 10000 {
+			return fmt.Errorf("delivery and verification timing configuration is invalid")
 		}
 	}
 	return nil

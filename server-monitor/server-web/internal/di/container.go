@@ -6,6 +6,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"server-web/internal/change"
 	"server-web/internal/handler"
 	promclient "server-web/internal/infra/prometheus"
 	"server-web/internal/infra/pubsub"
@@ -17,6 +18,7 @@ import (
 	appcache "server-web/internal/service/cache"
 	apphost "server-web/internal/service/host"
 	appincident "server-web/internal/service/incident"
+	"server-web/internal/verification"
 
 	eventbus "server-monitor/pkg/kafka"
 )
@@ -41,6 +43,9 @@ type Container struct {
 	Metrics         *middleware.Metrics
 	Handler         *handler.Handler
 	K8sHandler      *handler.K8sHandler
+	ChangeGitHub    change.GitHubReader
+	ChangeArgoCD    change.ArgoCDReader
+	DeliveryRollout verification.RolloutReader
 }
 
 type Config struct {

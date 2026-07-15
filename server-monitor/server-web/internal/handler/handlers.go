@@ -56,26 +56,27 @@ type alertProducer interface {
 }
 
 type Handler struct {
-	promClient      *promclient.Client
-	db              *gorm.DB
-	cacheClient     cacheClient
-	cacheService    *appcache.Service
-	alertService    *appalert.Service
-	incidentService IncidentApplication
-	agentRuntime    AgentApplication
-	changeService   ChangeApplication
-	remediation     RemediationApplication
-	hostService     *apphost.Service
-	mysqlClient     mysqlClient
-	authService     AuthService
-	readyTimeout    time.Duration
-	requestTimeout  time.Duration
-	cacheTimeout    time.Duration
-	ruleSync        AlertRuleSyncConfig
-	websocketHub    *ws.Hub
-	k8sAPIEnabled   bool
-	k8sNodesEnabled bool
-	copilotEnabled  bool
+	promClient           *promclient.Client
+	db                   *gorm.DB
+	cacheClient          cacheClient
+	cacheService         *appcache.Service
+	alertService         *appalert.Service
+	incidentService      IncidentApplication
+	agentRuntime         AgentApplication
+	changeService        ChangeApplication
+	remediation          RemediationApplication
+	deliveryVerification DeliveryVerificationApplication
+	hostService          *apphost.Service
+	mysqlClient          mysqlClient
+	authService          AuthService
+	readyTimeout         time.Duration
+	requestTimeout       time.Duration
+	cacheTimeout         time.Duration
+	ruleSync             AlertRuleSyncConfig
+	websocketHub         *ws.Hub
+	k8sAPIEnabled        bool
+	k8sNodesEnabled      bool
+	copilotEnabled       bool
 }
 
 type response struct {

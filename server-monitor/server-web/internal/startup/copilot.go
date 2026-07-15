@@ -257,6 +257,7 @@ func initChangeIntelligence(cfg config.Config, container *di.Container, k8sClien
 		if err != nil {
 			return nil, nil, fmt.Errorf("GitHub read adapter init failed: %w", err)
 		}
+		container.ChangeGitHub = githubClient
 	}
 	var argoClient change.ArgoCDReader
 	if cfg.ArgoCDEnabled {
@@ -264,13 +265,17 @@ func initChangeIntelligence(cfg config.Config, container *di.Container, k8sClien
 		if err != nil {
 			return nil, nil, fmt.Errorf("argo CD read adapter init failed: %w", err)
 		}
+		container.ChangeArgoCD = argoClient
 	}
 	var runtimeReader change.RuntimeReader
 	if k8sClient != nil {
-		runtimeReader, err = k8schange.New(k8sClient, cfg.K8SAllowedNamespaces, cfg.K8SRequestTimeout)
+		reader, readerErr := k8schange.New(k8sClient, cfg.K8SAllowedNamespaces, cfg.K8SRequestTimeout)
+		err = readerErr
+		runtimeReader = reader
 		if err != nil {
 			return nil, nil, fmt.Errorf("runtime image reader init failed: %w", err)
 		}
+		container.DeliveryRollout = reader
 	}
 	var registryClient change.RegistryMetadataReader
 	if cfg.RegistryMetadataEnabled {

@@ -12,6 +12,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"server-web/internal/change"
+	"server-web/internal/verification"
 )
 
 type Reader struct {
@@ -22,6 +23,7 @@ type Reader struct {
 }
 
 var _ change.RuntimeReader = (*Reader)(nil)
+var _ verification.RolloutReader = (*Reader)(nil)
 
 func New(client kubernetes.Interface, allowedNamespaces []string, timeout time.Duration) (*Reader, error) {
 	if client == nil {
@@ -45,6 +47,63 @@ func New(client kubernetes.Interface, allowedNamespaces []string, timeout time.D
 		timeout = 10 * time.Second
 	}
 	return &Reader{client: client, allowedNamespaces: allowed, allowAll: allowAll, timeout: timeout}, nil
+}
+
+// ObserveDeployment returns a bounded typed rollout summary. It exposes no
+// mutation, logs, exec, generic resource, or JSONPath surface.
+func (r *Reader) ObserveDeployment(ctx context.Context, cluster, namespace, name string) (verification.RolloutObservation, error) {
+	if strings.TrimSpace(cluster) == "" || strings.TrimSpace(namespace) == "" || strings.TrimSpace(name) == "" {
+		return verification.RolloutObservation{}, verification.ErrInvalidArgument
+	}
+	if !r.allowAll {
+		if _, ok := r.allowedNamespaces[namespace]; !ok {
+			return verification.RolloutObservation{}, verification.ErrNotAllowed
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, r.timeout)
+	defer cancel()
+	deployment, err := r.client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return verification.RolloutObservation{}, err
+	}
+	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
+	if err != nil {
+		return verification.RolloutObservation{}, verification.ErrInvalidArgument
+	}
+	pods, err := r.client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector.String(), Limit: 200})
+	if err != nil {
+		return verification.RolloutObservation{}, err
+	}
+	ready := int32(0)
+	for _, pod := range pods.Items {
+		for _, condition := range pod.Status.Conditions {
+			if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+				ready++
+				break
+			}
+		}
+	}
+	progressing, available, progressDeadlineExceeded := false, false, false
+	for _, condition := range deployment.Status.Conditions {
+		if condition.Type == "Progressing" && condition.Status == corev1.ConditionTrue {
+			progressing = true
+		}
+		if condition.Type == "Progressing" && condition.Reason == "ProgressDeadlineExceeded" {
+			progressDeadlineExceeded = true
+		}
+		if condition.Type == "Available" && condition.Status == corev1.ConditionTrue {
+			available = true
+		}
+	}
+	deadline := time.Duration(0)
+	if deployment.Spec.ProgressDeadlineSeconds != nil {
+		deadline = time.Duration(*deployment.Spec.ProgressDeadlineSeconds) * time.Second
+	}
+	desired := int32(1)
+	if deployment.Spec.Replicas != nil {
+		desired = *deployment.Spec.Replicas
+	}
+	return verification.RolloutObservation{Generation: deployment.Generation, ObservedGeneration: deployment.Status.ObservedGeneration, RolloutRevision: deployment.Annotations["deployment.kubernetes.io/revision"], DesiredReplicas: desired, UpdatedReplicas: deployment.Status.UpdatedReplicas, AvailableReplicas: deployment.Status.AvailableReplicas, UnavailableReplicas: deployment.Status.UnavailableReplicas, Progressing: progressing, Available: available, ProgressDeadline: deadline, ProgressDeadlineExceeded: progressDeadlineExceeded, PodsReady: ready, PodsTotal: int32(len(pods.Items))}, nil
 }
 
 func (r *Reader) ResolveRuntime(ctx context.Context, namespace, kind, name string) ([]change.ContainerRuntime, error) {

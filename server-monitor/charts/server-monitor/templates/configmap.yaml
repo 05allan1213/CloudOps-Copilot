@@ -160,6 +160,16 @@ data:
   REMEDIATION_WORKER_ID: {{ .Values.remediation.workerID | quote }}
   REMEDIATION_POLL_INTERVAL_MILLISECONDS: {{ .Values.remediation.pollIntervalMilliseconds | quote }}
   REMEDIATION_LEASE_SECONDS: {{ .Values.remediation.leaseSeconds | quote }}
+  DELIVERY_TRACKING_ENABLED: {{ .Values.deliveryVerification.deliveryEnabled | quote }}
+  VERIFICATION_ENABLED: {{ .Values.deliveryVerification.verificationEnabled | quote }}
+  DELIVERY_WORKER_ID: {{ .Values.deliveryVerification.deliveryWorkerID | quote }}
+  VERIFICATION_WORKER_ID: {{ .Values.deliveryVerification.verificationWorkerID | quote }}
+  DELIVERY_POLL_INTERVAL_SECONDS: {{ .Values.deliveryVerification.pollIntervalSeconds | quote }}
+  DELIVERY_TIMEOUT_SECONDS: {{ .Values.deliveryVerification.deliveryTimeoutSeconds | quote }}
+  VERIFICATION_TIMEOUT_SECONDS: {{ .Values.deliveryVerification.verificationTimeoutSeconds | quote }}
+  VERIFICATION_STABILITY_WINDOW_SECONDS: {{ .Values.deliveryVerification.stabilityWindowSeconds | quote }}
+  VERIFICATION_LEASE_SECONDS: {{ .Values.deliveryVerification.leaseSeconds | quote }}
+  VERIFICATION_MAX_ATTEMPTS: {{ .Values.deliveryVerification.maxAttempts | quote }}
   HOSTS_CACHE_TTL_SECONDS: {{ .Values.config.hostsCacheTTLSeconds | quote }}
   TRACE_OTLP_ENDPOINT: {{ .Values.config.traceOtlpEndpoint | quote }}
   TRACE_SAMPLE_RATE: {{ .Values.config.traceSampleRate | quote }}

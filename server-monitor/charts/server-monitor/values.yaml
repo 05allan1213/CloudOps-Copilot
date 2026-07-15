@@ -159,6 +159,18 @@ remediation:
     # A distinct pre-existing Secret with token or private-key.pem.
     credentialSecretName: ""
 
+deliveryVerification:
+  deliveryEnabled: false
+  verificationEnabled: false
+  deliveryWorkerID: server-web-delivery-worker
+  verificationWorkerID: server-web-verification-worker
+  pollIntervalSeconds: "10"
+  deliveryTimeoutSeconds: "3600"
+  verificationTimeoutSeconds: "1800"
+  stabilityWindowSeconds: "120"
+  leaseSeconds: "30"
+  maxAttempts: "180"
+
 k8sIntegration:
   enabled: false
   writeEnabled: false

@@ -74,6 +74,20 @@ type Metrics struct {
 	remediationPlans       *prometheus.CounterVec
 	changeRequestDelivery  *prometheus.CounterVec
 	githubWriteRequests    *prometheus.CounterVec
+	deliveryObservations   *prometheus.CounterVec
+	deliveryTransitions    *prometheus.CounterVec
+	deliveryFailures       *prometheus.CounterVec
+	deliveryDuration       *prometheus.HistogramVec
+	verificationRuns       *prometheus.CounterVec
+	verificationChecks     *prometheus.CounterVec
+	verificationFailures   *prometheus.CounterVec
+	verificationDuration   *prometheus.HistogramVec
+	verificationPassed     prometheus.Counter
+	verificationFailed     prometheus.Counter
+	verificationTimedOut   prometheus.Counter
+	verificationTakeovers  prometheus.Counter
+	incidentsResolved      prometheus.Counter
+	incidentsReopened      prometheus.Counter
 }
 
 func NewMetrics() *Metrics {
@@ -238,6 +252,20 @@ func NewMetrics() *Metrics {
 		remediationPlans:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "remediation_plans_total", Help: "Remediation plans by bounded lifecycle status."}, []string{"status"}),
 		changeRequestDelivery:  prometheus.NewCounterVec(prometheus.CounterOpts{Name: "change_request_delivery_total", Help: "ChangeRequest delivery outcomes."}, []string{"result"}),
 		githubWriteRequests:    prometheus.NewCounterVec(prometheus.CounterOpts{Name: "github_write_requests_total", Help: "Constrained GitHub write adapter requests."}, []string{"operation", "result"}),
+		deliveryObservations:   prometheus.NewCounterVec(prometheus.CounterOpts{Name: "delivery_observations_total", Help: "Read-only delivery observations by bounded provider and result."}, []string{"provider", "result"}),
+		deliveryTransitions:    prometheus.NewCounterVec(prometheus.CounterOpts{Name: "delivery_state_transitions_total", Help: "Delivery state transitions."}, []string{"from", "to"}),
+		deliveryFailures:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "delivery_observation_failures_total", Help: "Delivery observation failures by bounded provider category."}, []string{"provider"}),
+		deliveryDuration:       prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "delivery_duration_seconds", Help: "Delivery duration by bounded terminal result.", Buckets: []float64{1, 5, 15, 30, 60, 120, 300, 600, 1800, 3600}}, []string{"result"}),
+		verificationRuns:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "verification_runs_total", Help: "Verification runs by bounded status."}, []string{"status"}),
+		verificationChecks:     prometheus.NewCounterVec(prometheus.CounterOpts{Name: "verification_checks_total", Help: "Verification checks by bounded type and status."}, []string{"type", "status"}),
+		verificationFailures:   prometheus.NewCounterVec(prometheus.CounterOpts{Name: "verification_check_failures_total", Help: "Verification check failures by bounded type."}, []string{"type"}),
+		verificationDuration:   prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "verification_run_duration_seconds", Help: "Verification run duration by bounded terminal status.", Buckets: []float64{1, 5, 15, 30, 60, 120, 300, 600, 1800, 3600}}, []string{"status"}),
+		verificationPassed:     prometheus.NewCounter(prometheus.CounterOpts{Name: "verification_passed_total", Help: "Verification runs that passed."}),
+		verificationFailed:     prometheus.NewCounter(prometheus.CounterOpts{Name: "verification_failed_total", Help: "Verification runs that failed."}),
+		verificationTimedOut:   prometheus.NewCounter(prometheus.CounterOpts{Name: "verification_timed_out_total", Help: "Verification runs that timed out."}),
+		verificationTakeovers:  prometheus.NewCounter(prometheus.CounterOpts{Name: "verification_lease_takeovers_total", Help: "Verification lease takeovers."}),
+		incidentsResolved:      prometheus.NewCounter(prometheus.CounterOpts{Name: "incidents_resolved_after_verification_total", Help: "Incidents resolved after deterministic verification."}),
+		incidentsReopened:      prometheus.NewCounter(prometheus.CounterOpts{Name: "incidents_reopened_after_verification_total", Help: "Incidents returned to investigation after failed verification."}),
 	}
 
 	metrics.registry.MustRegister(
@@ -303,8 +331,88 @@ func NewMetrics() *Metrics {
 		metrics.remediationPlans,
 		metrics.changeRequestDelivery,
 		metrics.githubWriteRequests,
+		metrics.deliveryObservations,
+		metrics.deliveryTransitions,
+		metrics.deliveryFailures,
+		metrics.deliveryDuration,
+		metrics.verificationRuns,
+		metrics.verificationChecks,
+		metrics.verificationFailures,
+		metrics.verificationDuration,
+		metrics.verificationPassed,
+		metrics.verificationFailed,
+		metrics.verificationTimedOut,
+		metrics.verificationTakeovers,
+		metrics.incidentsResolved,
+		metrics.incidentsReopened,
 	)
 	return metrics
+}
+
+func (m *Metrics) ObserveDeliveryObservation(provider, result string) {
+	if m != nil {
+		m.deliveryObservations.WithLabelValues(provider, result).Inc()
+		if result != "success" {
+			m.deliveryFailures.WithLabelValues(provider).Inc()
+		}
+	}
+}
+
+func (m *Metrics) ObserveDeliveryTransition(from, to string) {
+	if m != nil {
+		m.deliveryTransitions.WithLabelValues(from, to).Inc()
+	}
+}
+
+func (m *Metrics) ObserveDeliveryDuration(result string, seconds float64) {
+	if m != nil {
+		m.deliveryDuration.WithLabelValues(result).Observe(seconds)
+	}
+}
+
+func (m *Metrics) ObserveVerificationRun(status string, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.verificationRuns.WithLabelValues(status).Inc()
+	if seconds >= 0 {
+		m.verificationDuration.WithLabelValues(status).Observe(seconds)
+	}
+	switch status {
+	case "passed":
+		m.verificationPassed.Inc()
+	case "failed":
+		m.verificationFailed.Inc()
+	case "timed_out":
+		m.verificationTimedOut.Inc()
+	}
+}
+
+func (m *Metrics) ObserveVerificationCheck(checkType, status string) {
+	if m != nil {
+		m.verificationChecks.WithLabelValues(checkType, status).Inc()
+		if status == "failed" || status == "invalid" {
+			m.verificationFailures.WithLabelValues(checkType).Inc()
+		}
+	}
+}
+
+func (m *Metrics) ObserveVerificationLeaseTakeover() {
+	if m != nil {
+		m.verificationTakeovers.Inc()
+	}
+}
+
+func (m *Metrics) ObserveIncidentAfterVerification(result string) {
+	if m == nil {
+		return
+	}
+	switch result {
+	case "resolved":
+		m.incidentsResolved.Inc()
+	case "reopened", "returned_to_investigation":
+		m.incidentsReopened.Inc()
+	}
 }
 
 func (m *Metrics) ObserveRemediationPlan(status string) {

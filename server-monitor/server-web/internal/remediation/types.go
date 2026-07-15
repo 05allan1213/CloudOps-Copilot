@@ -117,10 +117,27 @@ type Approval struct {
 type ChangeRequestStatus string
 
 const (
-	DeliveryPending    ChangeRequestStatus = "pending"
-	DeliveryDelivering ChangeRequestStatus = "delivering"
-	DeliveryPRCreated  ChangeRequestStatus = "pr_created"
-	DeliveryFailed     ChangeRequestStatus = "failed"
+	DeliveryPending          ChangeRequestStatus = "pending"
+	DeliveryDelivering       ChangeRequestStatus = "delivering"
+	DeliveryPRCreated        ChangeRequestStatus = "pr_created"
+	DeliveryCIPending        ChangeRequestStatus = "ci_pending"
+	DeliveryCIPassed         ChangeRequestStatus = "ci_passed"
+	DeliveryMergePending     ChangeRequestStatus = "merge_pending"
+	DeliveryMerged           ChangeRequestStatus = "merged"
+	DeliveryArgoPending      ChangeRequestStatus = "argocd_pending"
+	DeliverySyncing          ChangeRequestStatus = "syncing"
+	DeliverySynced           ChangeRequestStatus = "synced"
+	DeliveryRolloutPending   ChangeRequestStatus = "rollout_pending"
+	DeliveryDelivered        ChangeRequestStatus = "delivered"
+	DeliveryCIFailed         ChangeRequestStatus = "ci_failed"
+	DeliveryPRClosed         ChangeRequestStatus = "pr_closed"
+	DeliveryMergeTimeout     ChangeRequestStatus = "merge_timeout"
+	DeliveryRevisionMismatch ChangeRequestStatus = "revision_mismatch"
+	DeliveryArgoFailed       ChangeRequestStatus = "argocd_failed"
+	DeliveryArgoTimeout      ChangeRequestStatus = "argocd_timeout"
+	DeliveryRolloutFailed    ChangeRequestStatus = "rollout_failed"
+	DeliveryCancelled        ChangeRequestStatus = "delivery_cancelled"
+	DeliveryFailed           ChangeRequestStatus = "failed"
 )
 
 type CIStatus string
@@ -133,26 +150,56 @@ const (
 )
 
 type ChangeRequest struct {
-	ID             uint64
-	PublicID       string
-	PlanID         uint64
-	Repository     string
-	BaseRevision   string
-	HeadBranch     string
-	CommitSHA      string
-	PRNumber       int64
-	PRURL          string
-	Status         ChangeRequestStatus
-	CIStatus       CIStatus
-	IdempotencyKey string
-	LeaseOwner     string
-	LeaseExpiresAt *time.Time
-	HeartbeatAt    *time.Time
-	Attempts       int
-	FailureCode    string
-	RowVersion     uint64
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID                   uint64
+	PublicID             string
+	PlanID               uint64
+	Repository           string
+	BaseRevision         string
+	HeadBranch           string
+	CommitSHA            string
+	PRNumber             int64
+	PRURL                string
+	Status               ChangeRequestStatus
+	CIStatus             CIStatus
+	IdempotencyKey       string
+	LeaseOwner           string
+	LeaseExpiresAt       *time.Time
+	HeartbeatAt          *time.Time
+	Attempts             int
+	FailureCode          string
+	PRState              string
+	MergedCommitSHA      string
+	TargetRevision       string
+	ArgoCDApplication    string
+	ArgoCDProject        string
+	DetectedRevision     string
+	ArgoCDSyncStatus     string
+	ArgoCDOperationPhase string
+	ArgoCDHealthStatus   string
+	ResourceHealth       json.RawMessage
+	SyncStartedAt        *time.Time
+	SyncCompletedAt      *time.Time
+	Cluster              string
+	Environment          string
+	Namespace            string
+	WorkloadKind         string
+	WorkloadName         string
+	DeploymentGeneration int64
+	ObservedGeneration   int64
+	RolloutRevision      string
+	DesiredReplicas      int32
+	UpdatedReplicas      int32
+	AvailableReplicas    int32
+	UnavailableReplicas  int32
+	DeliveryStartedAt    *time.Time
+	DeliveryDeadlineAt   *time.Time
+	DeliveryCompletedAt  *time.Time
+	NextPollAt           *time.Time
+	LastObservedAt       *time.Time
+	FailureReason        string
+	RowVersion           uint64
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 type Page struct {

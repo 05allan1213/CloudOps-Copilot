@@ -21,6 +21,7 @@ import (
 	ws "server-web/internal/infra/websocket"
 	"server-web/internal/router"
 	agentruntime "server-web/internal/service/agentruntime"
+	"server-web/internal/service/deliveryverification"
 	remediationservice "server-web/internal/service/remediation"
 	"server-web/internal/startup"
 
@@ -29,19 +30,20 @@ import (
 )
 
 type app struct {
-	cfg               config.Config
-	infra             *di.Infra
-	diagnosisConsumer *eventbus.Consumer
-	copilotRuntime    *router.CopilotRuntime
-	agentWorker       *agentruntime.Worker
-	remediationWorker *remediationservice.Worker
-	k8sReader         copilotk8s.Reader
-	server            *http.Server
-	ctx               context.Context
-	cancel            context.CancelFunc
-	subscriberDone    <-chan struct{}
-	diagnosisDone     <-chan struct{}
-	alertHubConsumers <-chan struct{}
+	cfg                        config.Config
+	infra                      *di.Infra
+	diagnosisConsumer          *eventbus.Consumer
+	copilotRuntime             *router.CopilotRuntime
+	agentWorker                *agentruntime.Worker
+	remediationWorker          *remediationservice.Worker
+	deliveryVerificationWorker *deliveryverification.Worker
+	k8sReader                  copilotk8s.Reader
+	server                     *http.Server
+	ctx                        context.Context
+	cancel                     context.CancelFunc
+	subscriberDone             <-chan struct{}
+	diagnosisDone              <-chan struct{}
+	alertHubConsumers          <-chan struct{}
 }
 
 type wsMessage struct {
@@ -88,6 +90,10 @@ func initApp(ctx context.Context) (*app, error) {
 	if err != nil {
 		return nil, err
 	}
+	deliveryVerificationWorker, err := startup.InitDeliveryVerification(cfg, container)
+	if err != nil {
+		return nil, err
+	}
 
 	deps := container.Dependencies()
 	deps.Copilot = copilotDeps
@@ -103,12 +109,13 @@ func initApp(ctx context.Context) (*app, error) {
 
 	appCtx, cancel := context.WithCancel(ctx)
 	application := &app{
-		cfg:               cfg,
-		infra:             infra,
-		diagnosisConsumer: diagnosisConsumer,
-		copilotRuntime:    copilotRuntime,
-		remediationWorker: remediationWorker,
-		k8sReader:         k8sReader,
+		cfg:                        cfg,
+		infra:                      infra,
+		diagnosisConsumer:          diagnosisConsumer,
+		copilotRuntime:             copilotRuntime,
+		remediationWorker:          remediationWorker,
+		deliveryVerificationWorker: deliveryVerificationWorker,
+		k8sReader:                  k8sReader,
 		server: &http.Server{
 			Addr:              cfg.ListenAddr,
 			Handler:           router,
@@ -162,6 +169,9 @@ func startBackgroundTasks(app *app) {
 	}
 	if app.remediationWorker != nil {
 		app.remediationWorker.Start(app.ctx)
+	}
+	if app.deliveryVerificationWorker != nil {
+		app.deliveryVerificationWorker.Start(app.ctx)
 	}
 
 	if app.infra.RedisClient.Enabled() {
@@ -246,6 +256,9 @@ func shutdownApp(app *app) {
 	app.cancel()
 	if app.agentWorker != nil {
 		app.agentWorker.Stop()
+	}
+	if app.deliveryVerificationWorker != nil {
+		app.deliveryVerificationWorker.Stop()
 	}
 	if app.diagnosisConsumer != nil {
 		if err := app.diagnosisConsumer.Close(); err != nil {
