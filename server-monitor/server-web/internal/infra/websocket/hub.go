@@ -192,11 +192,11 @@ func (h *Hub) ServeWS(w http.ResponseWriter, r *http.Request) error {
 
 	select {
 	case <-h.done:
-		conn.Close()
+		closeConnection(conn)
 		return ErrHubClosed
 	case h.register <- client:
 	default:
-		conn.Close()
+		closeConnection(conn)
 		return ErrRegisterChannel
 	}
 
@@ -249,7 +249,7 @@ func (c *Client) readPump() {
 		default:
 			zap.L().Warn("websocket hub unregister channel full, client may leak")
 		}
-		c.conn.Close()
+		closeConnection(c.conn)
 	}()
 
 	c.conn.SetReadLimit(maxMessageSize)
@@ -270,7 +270,7 @@ func (c *Client) writePump() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
-		c.conn.Close()
+		closeConnection(c.conn)
 	}()
 
 	for {
@@ -290,5 +290,13 @@ func (c *Client) writePump() {
 				return
 			}
 		}
+	}
+}
+
+// closeConnection is the single best-effort cleanup boundary for connections
+// whose caller can no longer return a close error to an HTTP response.
+func closeConnection(conn *websocket.Conn) {
+	if err := conn.Close(); err != nil {
+		zap.L().Debug("websocket connection cleanup failed")
 	}
 }

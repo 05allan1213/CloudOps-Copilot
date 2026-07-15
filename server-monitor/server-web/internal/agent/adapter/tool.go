@@ -28,6 +28,8 @@ var phase2ReadOnlyTools = []string{
 	copilottool.ToolK8sGetLogs,
 }
 
+var phase3ReadOnlyTools = copilottool.Phase3ToolNames()
+
 type ReadOnlyTools struct {
 	executor *copilottool.Executor
 	allowed  []string
@@ -49,6 +51,11 @@ func NewReadOnlyTools(executor *copilottool.Executor) (*ReadOnlyTools, error) {
 			allowed = append(allowed, name)
 		}
 	}
+	for _, name := range phase3ReadOnlyTools {
+		if registered[name] {
+			allowed = append(allowed, name)
+		}
+	}
 	sort.Strings(allowed)
 	if len(allowed) == 0 {
 		return nil, agent.ErrUnavailable
@@ -60,7 +67,7 @@ func (a *ReadOnlyTools) AllowedTools() []string { return slices.Clone(a.allowed)
 
 func (a *ReadOnlyTools) Execute(ctx context.Context, name string, args json.RawMessage, timeout time.Duration, maxBytes int) (agent.ToolResult, error) {
 	if !slices.Contains(a.allowed, name) {
-		return agent.ToolResult{}, agent.NewRuntimeError(agent.ErrorPermission, "tool is not in the Phase 2 read-only allowlist", agent.ErrInvalidArgument)
+		return agent.ToolResult{}, agent.NewRuntimeError(agent.ErrorPermission, "tool is not in the fixed read-only allowlist", agent.ErrInvalidArgument)
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

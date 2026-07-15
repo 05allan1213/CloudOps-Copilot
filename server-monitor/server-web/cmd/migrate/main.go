@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -21,7 +22,7 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, args []string) error {
+func run(ctx context.Context, args []string) (retErr error) {
 	if len(args) != 1 {
 		return fmt.Errorf("usage: migrate <up|down|status|version>")
 	}
@@ -36,7 +37,7 @@ func run(ctx context.Context, args []string) error {
 	if client == nil {
 		return fmt.Errorf("MYSQL_HOST, MYSQL_USER and MYSQL_DATABASE are required")
 	}
-	defer client.Close()
+	defer func() { retErr = errors.Join(retErr, client.Close()) }()
 	sqlDB, err := client.DB().DB()
 	if err != nil {
 		return err

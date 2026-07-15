@@ -54,6 +54,23 @@ type Metrics struct {
 	agentEvidence          *prometheus.CounterVec
 	agentValidation        *prometheus.CounterVec
 	agentActiveRuns        *prometheus.GaugeVec
+	changeCorrelation      *prometheus.CounterVec
+	changeCorrelationTime  prometheus.Histogram
+	changeCandidates       *prometheus.CounterVec
+	changeEvidence         *prometheus.CounterVec
+	githubRequests         *prometheus.CounterVec
+	githubRequestTime      *prometheus.HistogramVec
+	githubRateLimits       *prometheus.CounterVec
+	githubDiffTruncations  *prometheus.CounterVec
+	argoRequests           *prometheus.CounterVec
+	argoRequestTime        *prometheus.HistogramVec
+	argoDiffTruncations    *prometheus.CounterVec
+	imageResolution        *prometheus.CounterVec
+	registryRequests       *prometheus.CounterVec
+	registryRequestTime    *prometheus.HistogramVec
+	registryResponseLimits *prometheus.CounterVec
+	registryCache          *prometheus.CounterVec
+	imageConflicts         *prometheus.CounterVec
 }
 
 func NewMetrics() *Metrics {
@@ -198,6 +215,23 @@ func NewMetrics() *Metrics {
 		agentEvidence:          prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cloudops_agent_evidence_total", Help: "Agent evidence persistence results."}, []string{"result"}),
 		agentValidation:        prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cloudops_agent_diagnosis_validation_total", Help: "Deterministic diagnosis validation results."}, []string{"result"}),
 		agentActiveRuns:        prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "cloudops_agent_runs_active", Help: "Locally observed pending and running Agent runs."}, []string{"status"}),
+		changeCorrelation:      prometheus.NewCounterVec(prometheus.CounterOpts{Name: "change_correlation_total", Help: "Deterministic change correlation attempts by bounded result."}, []string{"result"}),
+		changeCorrelationTime:  prometheus.NewHistogram(prometheus.HistogramOpts{Name: "change_correlation_duration_seconds", Help: "Deterministic change correlation duration.", Buckets: []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1}}),
+		changeCandidates:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "change_candidates_total", Help: "Persisted change candidates by bounded source."}, []string{"source"}),
+		changeEvidence:         prometheus.NewCounterVec(prometheus.CounterOpts{Name: "change_evidence_total", Help: "Change evidence observations by bounded source and result."}, []string{"source", "result"}),
+		githubRequests:         prometheus.NewCounterVec(prometheus.CounterOpts{Name: "github_requests_total", Help: "Read-only GitHub API requests by bounded operation and result."}, []string{"operation", "result"}),
+		githubRequestTime:      prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "github_request_duration_seconds", Help: "Read-only GitHub API request duration.", Buckets: []float64{.01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10}}, []string{"operation"}),
+		githubRateLimits:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "github_rate_limit_events_total", Help: "GitHub rate-limit events by bounded reason."}, []string{"reason"}),
+		githubDiffTruncations:  prometheus.NewCounterVec(prometheus.CounterOpts{Name: "github_diff_truncations_total", Help: "GitHub diff truncations by bounded reason."}, []string{"reason"}),
+		argoRequests:           prometheus.NewCounterVec(prometheus.CounterOpts{Name: "argocd_requests_total", Help: "Read-only Argo CD API requests by bounded operation and result."}, []string{"operation", "result"}),
+		argoRequestTime:        prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "argocd_request_duration_seconds", Help: "Read-only Argo CD API request duration.", Buckets: []float64{.01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10}}, []string{"operation"}),
+		argoDiffTruncations:    prometheus.NewCounterVec(prometheus.CounterOpts{Name: "argocd_diff_truncations_total", Help: "Argo CD resource diff truncations by bounded reason."}, []string{"reason"}),
+		imageResolution:        prometheus.NewCounterVec(prometheus.CounterOpts{Name: "image_revision_resolution_total", Help: "Image revision resolution attempts by bounded result."}, []string{"result"}),
+		registryRequests:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "registry_requests_total", Help: "Read-only registry requests by bounded operation and result."}, []string{"operation", "result"}),
+		registryRequestTime:    prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "registry_request_duration_seconds", Help: "Read-only registry request duration.", Buckets: []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10}}, []string{"operation"}),
+		registryResponseLimits: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "registry_response_limit_total", Help: "Registry response byte-limit events by bounded response kind."}, []string{"kind"}),
+		registryCache:          prometheus.NewCounterVec(prometheus.CounterOpts{Name: "registry_cache_total", Help: "Registry metadata cache events by bounded result."}, []string{"result"}),
+		imageConflicts:         prometheus.NewCounterVec(prometheus.CounterOpts{Name: "image_resolution_conflicts_total", Help: "Image resolution conflicts by bounded kind."}, []string{"kind"}),
 	}
 
 	metrics.registry.MustRegister(
@@ -243,8 +277,102 @@ func NewMetrics() *Metrics {
 		metrics.agentEvidence,
 		metrics.agentValidation,
 		metrics.agentActiveRuns,
+		metrics.changeCorrelation,
+		metrics.changeCorrelationTime,
+		metrics.changeCandidates,
+		metrics.changeEvidence,
+		metrics.githubRequests,
+		metrics.githubRequestTime,
+		metrics.githubRateLimits,
+		metrics.githubDiffTruncations,
+		metrics.argoRequests,
+		metrics.argoRequestTime,
+		metrics.argoDiffTruncations,
+		metrics.imageResolution,
+		metrics.registryRequests,
+		metrics.registryRequestTime,
+		metrics.registryResponseLimits,
+		metrics.registryCache,
+		metrics.imageConflicts,
 	)
 	return metrics
+}
+
+func (m *Metrics) ObserveChangeCorrelation(result string, seconds float64) {
+	if m != nil {
+		m.changeCorrelation.WithLabelValues(result).Inc()
+		m.changeCorrelationTime.Observe(seconds)
+	}
+}
+
+func (m *Metrics) ObserveChangeCandidate(source string) {
+	if m != nil {
+		m.changeCandidates.WithLabelValues(source).Inc()
+		m.changeEvidence.WithLabelValues(source, "persisted").Inc()
+	}
+}
+
+func (m *Metrics) ObserveGitHubRequest(operation, result string, seconds float64) {
+	if m != nil {
+		m.githubRequests.WithLabelValues(operation, result).Inc()
+		m.githubRequestTime.WithLabelValues(operation).Observe(seconds)
+	}
+}
+
+func (m *Metrics) ObserveGitHubRateLimit(reason string) {
+	if m != nil {
+		m.githubRateLimits.WithLabelValues(reason).Inc()
+	}
+}
+
+func (m *Metrics) ObserveGitHubDiffTruncation(reason string) {
+	if m != nil {
+		m.githubDiffTruncations.WithLabelValues(reason).Inc()
+	}
+}
+
+func (m *Metrics) ObserveArgoCDRequest(operation, result string, seconds float64) {
+	if m != nil {
+		m.argoRequests.WithLabelValues(operation, result).Inc()
+		m.argoRequestTime.WithLabelValues(operation).Observe(seconds)
+	}
+}
+
+func (m *Metrics) ObserveArgoCDDiffTruncation(reason string) {
+	if m != nil {
+		m.argoDiffTruncations.WithLabelValues(reason).Inc()
+	}
+}
+
+func (m *Metrics) ObserveImageResolution(result string) {
+	if m != nil {
+		m.imageResolution.WithLabelValues(result).Inc()
+	}
+}
+
+func (m *Metrics) ObserveRegistryRequest(operation, result string, seconds float64) {
+	if m != nil {
+		m.registryRequests.WithLabelValues(operation, result).Inc()
+		m.registryRequestTime.WithLabelValues(operation).Observe(seconds)
+	}
+}
+
+func (m *Metrics) ObserveRegistryResponseLimit(kind string) {
+	if m != nil {
+		m.registryResponseLimits.WithLabelValues(kind).Inc()
+	}
+}
+
+func (m *Metrics) ObserveRegistryCache(result string) {
+	if m != nil {
+		m.registryCache.WithLabelValues(result).Inc()
+	}
+}
+
+func (m *Metrics) ObserveImageResolutionConflict(kind string) {
+	if m != nil {
+		m.imageConflicts.WithLabelValues(kind).Inc()
+	}
 }
 
 func (m *Metrics) ObserveAgentRun(status string, seconds float64) {

@@ -14,7 +14,12 @@ const (
 	maxDiagnosisItems        = 20
 )
 
-var prohibitedInstruction = regexp.MustCompile(`(?i)(\bkubectl\s+(apply|patch|delete|scale)\b|\brestart\s+deployment\b|\bscale\s+deployment\b|\bcreate\s+(a\s+)?pull\s+request\b|\bexecute\s+shell\b|直接(重启|扩容|缩容|修改|执行))`)
+var (
+	prohibitedInstruction = regexp.MustCompile(`(?i)(\bkubectl\s+(apply|patch|delete|scale)\b|\brestart\s+deployment\b|\bscale\s+deployment\b|\bcreate\s+(a\s+)?pull\s+request\b|\b(argocd|argo\s+cd)\s+(sync|rollback|app\s+set|app\s+patch)\b|\bexecute\s+shell\b|直接(重启|扩容|缩容|修改|执行|创建拉取请求|同步))`)
+	changeClaimPattern    = regexp.MustCompile(`(?i)(deploy|release|revision|commit|pull request|\bpr\b|image|发布|版本|提交|镜像|变更)`)
+	verifiedRevision      = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
+	verifiedDigest        = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+)
 
 // ValidateDiagnosis deterministically validates a model diagnosis against valid Evidence ownership.
 func ValidateDiagnosis(d Diagnosis, evidence map[string]EvidenceRecord) []string {
@@ -28,11 +33,12 @@ func ValidateDiagnosis(d Diagnosis, evidence map[string]EvidenceRecord) []string
 	if len(d.Hypotheses) > maxDiagnosisItems || len(d.ConfirmedFacts) > maxDiagnosisItems || len(d.Unknowns) > maxDiagnosisItems || len(d.RecommendedNextActions) > maxDiagnosisItems {
 		problems = append(problems, "diagnosis collection exceeds item limit")
 	}
-	validateIDs := func(path string, ids []string, strong bool) {
+	validateIDs := func(path, statement string, ids []string, strong bool) {
 		if strong && len(ids) == 0 {
 			problems = append(problems, path+" requires evidence")
 		}
 		validSupport := false
+		confirmedChangeSupport := false
 		for _, id := range ids {
 			item, ok := evidence[id]
 			if !ok {
@@ -42,22 +48,28 @@ func ValidateDiagnosis(d Diagnosis, evidence map[string]EvidenceRecord) []string
 			if item.Valid && !item.Truncated {
 				validSupport = true
 			}
+			if item.Valid && !item.Truncated && item.ToolName == "change.list_recent" && factsContainConfirmedChange(item.Facts) {
+				confirmedChangeSupport = true
+			}
 		}
 		if strong && len(ids) > 0 && !validSupport {
 			problems = append(problems, path+" lacks valid non-truncated support")
+		}
+		if strong && changeClaimPattern.MatchString(statement) && !confirmedChangeSupport {
+			problems = append(problems, path+" lacks deterministically correlated deployed-change support")
 		}
 	}
 	for i, hypothesis := range d.Hypotheses {
 		if strings.TrimSpace(hypothesis.Statement) == "" || hypothesis.Confidence < 0 || hypothesis.Confidence > 1 {
 			problems = append(problems, fmt.Sprintf("hypotheses[%d] is malformed", i))
 		}
-		validateIDs(fmt.Sprintf("hypotheses[%d]", i), hypothesis.EvidenceIDs, hypothesis.Confidence >= 0.7)
+		validateIDs(fmt.Sprintf("hypotheses[%d]", i), hypothesis.Statement, hypothesis.EvidenceIDs, hypothesis.Confidence >= 0.7)
 	}
 	for i, claim := range d.ConfirmedFacts {
 		if strings.TrimSpace(claim.Statement) == "" {
 			problems = append(problems, fmt.Sprintf("confirmed_facts[%d] is empty", i))
 		}
-		validateIDs(fmt.Sprintf("confirmed_facts[%d]", i), claim.EvidenceIDs, true)
+		validateIDs(fmt.Sprintf("confirmed_facts[%d]", i), claim.Statement, claim.EvidenceIDs, true)
 	}
 	for i, action := range d.RecommendedNextActions {
 		if len(action) > 1024 || prohibitedInstruction.MatchString(action) {
@@ -70,6 +82,84 @@ func ValidateDiagnosis(d Diagnosis, evidence map[string]EvidenceRecord) []string
 	}
 	sort.Strings(problems)
 	return problems
+}
+
+func factsContainConfirmedChange(raw json.RawMessage) bool {
+	var value any
+	if json.Unmarshal(raw, &value) != nil {
+		return false
+	}
+	return walkConfirmedChange(value) && walkTrustedImageResolution(value)
+}
+
+func walkTrustedImageResolution(value any) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		status, _ := typed["status"].(string)
+		valid, _ := typed["valid"].(bool)
+		truncated, _ := typed["truncated"].(bool)
+		degraded, _ := typed["degraded"].(bool)
+		registry, registryOK := typed["registry_metadata"].(map[string]any)
+		if status == "confirmed" && valid && !truncated && !degraded && registryOK {
+			digest, _ := typed["digest"].(string)
+			revision, _ := typed["revision"].(string)
+			source, _ := typed["source"].(string)
+			version, _ := typed["version"].(string)
+			registryValid, _ := registry["valid"].(bool)
+			registryTruncated, _ := registry["truncated"].(bool)
+			registryDegraded, _ := registry["degraded"].(bool)
+			integrity, _ := registry["integrity_status"].(string)
+			manifestDigest, _ := registry["manifest_digest"].(string)
+			configDigest, _ := registry["config_digest"].(string)
+			resultHash, _ := registry["result_hash"].(string)
+			registryID, _ := registry["registry_id"].(string)
+			repository, _ := registry["repository"].(string)
+			registryRevision, _ := registry["revision"].(string)
+			registrySource, _ := registry["source"].(string)
+			registryVersion, _ := registry["version"].(string)
+			redaction, redactionOK := registry["redaction"].(map[string]any)
+			authOmitted, _ := redaction["auth_material_omitted"].(bool)
+			responsesOmitted, _ := redaction["responses_omitted"].(bool)
+			if registryValid && !registryTruncated && !registryDegraded && integrity == "verified" && verifiedDigest.MatchString(digest) && manifestDigest == digest && verifiedDigest.MatchString(configDigest) && verifiedRevision.MatchString(revision) && version == revision && registryRevision == revision && registrySource == source && registryVersion == version && registryID != "" && repository != "" && len(resultHash) == 64 && redactionOK && authOmitted && responsesOmitted {
+				return true
+			}
+		}
+		for _, child := range typed {
+			if walkTrustedImageResolution(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if walkTrustedImageResolution(child) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func walkConfirmedChange(value any) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		category, _ := typed["category"].(string)
+		status, _ := typed["status"].(string)
+		if (category == "confirmed_match" || category == "high_confidence") && (status == "matched" || status == "") {
+			return true
+		}
+		for _, child := range typed {
+			if walkConfirmedChange(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if walkConfirmedChange(child) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // DegradedDiagnosis is the deterministic fallback used when model correction fails.

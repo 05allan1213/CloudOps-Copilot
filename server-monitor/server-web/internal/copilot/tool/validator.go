@@ -18,10 +18,12 @@ func NormalizeArgs(schema ToolSchema, args json.RawMessage) (json.RawMessage, er
 		return nil, err
 	}
 
+	allowed := make(map[string]struct{}, len(schema.Parameters))
 	for _, param := range schema.Parameters {
 		if strings.TrimSpace(param.Name) == "" {
 			return nil, NewInvalidArgsError("schema", "parameter name is required")
 		}
+		allowed[param.Name] = struct{}{}
 
 		value, exists := values[param.Name]
 		if !exists || value == nil {
@@ -43,6 +45,11 @@ func NormalizeArgs(schema ToolSchema, args json.RawMessage) (json.RawMessage, er
 		if param.Type == ParamTypeInteger {
 			number, _ := integerValue(value)
 			values[param.Name] = number
+		}
+	}
+	for name := range values {
+		if _, ok := allowed[name]; !ok {
+			return nil, NewInvalidArgsError(name, "is not allowed")
 		}
 	}
 

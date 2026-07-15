@@ -76,6 +76,8 @@ func registerCoreRoutes(router *gin.Engine, cfg config.Config, deps Dependencies
 	protected.GET("/api/v2/incidents/:id/signals", handler.ListIncidentSignals)
 	protected.GET("/api/v2/incidents/:id/timeline", handler.ListIncidentTimeline)
 	protected.GET("/api/v2/incidents/:id/evidence", handler.ListIncidentEvidence)
+	protected.GET("/api/v2/incidents/:id/changes", handler.ListIncidentChanges)
+	protected.GET("/api/v2/incidents/:id/change-context", handler.GetIncidentChangeContext)
 	protected.POST("/api/v2/incidents/:id/agent-runs", handler.CreateAgentRun)
 	protected.GET("/api/v2/incidents/:id/agent-runs", handler.ListAgentRuns)
 	protected.GET("/api/v2/agent-runs/:id", handler.GetAgentRun)

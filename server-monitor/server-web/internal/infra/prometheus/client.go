@@ -3,6 +3,7 @@ package promclient
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -72,7 +73,7 @@ func NewClient(baseURL string, timeout time.Duration) *Client {
 	}
 }
 
-func (c *Client) Ready(ctx context.Context) error {
+func (c *Client) Ready(ctx context.Context) (retErr error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/-/ready", nil)
 	if err != nil {
 		return fmt.Errorf("build prometheus readiness request: %w", err)
@@ -82,7 +83,7 @@ func (c *Client) Ready(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("prometheus readiness check failed: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { retErr = errors.Join(retErr, response.Body.Close()) }()
 
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("prometheus readiness check returned status %d", response.StatusCode)
@@ -165,7 +166,7 @@ func (c *Client) QueryRangeRaw(ctx context.Context, query string, start, end tim
 
 const maxInstantResponseBytes int64 = 1024 * 1024
 
-func (c *Client) queryInstantVector(ctx context.Context, query string) ([]metricValue, error) {
+func (c *Client) queryInstantVector(ctx context.Context, query string) (metrics []metricValue, retErr error) {
 	endpoint := c.baseURL + "/api/v1/query"
 	values := url.Values{}
 	values.Set("query", query)
@@ -179,7 +180,7 @@ func (c *Client) queryInstantVector(ctx context.Context, query string) ([]metric
 	if err != nil {
 		return nil, fmt.Errorf("query prometheus failed: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { retErr = errors.Join(retErr, response.Body.Close()) }()
 
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("query prometheus returned status %d", response.StatusCode)
@@ -217,7 +218,7 @@ func (c *Client) queryInstantVector(ctx context.Context, query string) ([]metric
 	return results, nil
 }
 
-func (c *Client) queryRange(ctx context.Context, query string, start, end time.Time, step time.Duration, maxResponseBytes int64) ([]RangeSeries, error) {
+func (c *Client) queryRange(ctx context.Context, query string, start, end time.Time, step time.Duration, maxResponseBytes int64) (series []RangeSeries, retErr error) {
 	if start.IsZero() || end.IsZero() {
 		return nil, fmt.Errorf("range query start and end are required")
 	}
@@ -244,7 +245,7 @@ func (c *Client) queryRange(ctx context.Context, query string, start, end time.T
 	if err != nil {
 		return nil, fmt.Errorf("range query prometheus failed: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { retErr = errors.Join(retErr, response.Body.Close()) }()
 
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("range query prometheus returned status %d", response.StatusCode)

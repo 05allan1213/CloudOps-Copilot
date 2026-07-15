@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -108,6 +109,53 @@ type Config struct {
 	IncidentAgentMaxEvidenceBytes   int
 	IncidentAgentMaxCheckpointBytes int
 	IncidentAgentMaxStepRetries     int
+
+	// Phase 3 change intelligence is read-only and disabled by default.
+	ChangeIntelligenceEnabled bool
+	ChangeLookback            time.Duration
+	ChangeMaxCandidates       int
+	ChangeServiceMappingsJSON string
+	GitHubEnabled             bool
+	GitHubAPIBaseURL          string
+	GitHubAppID               int64
+	GitHubInstallationID      int64
+	GitHubPrivateKeyFile      string
+	GitHubTokenFile           string
+	GitHubAllowedOwners       []string
+	GitHubAllowedRepositories []string
+	GitHubAllowedBranches     []string
+	GitHubAllowedPaths        []string
+	GitHubDeniedPathPatterns  []string
+	GitHubMaxDiffFiles        int
+	GitHubMaxDiffBytes        int
+	GitHubTimeout             time.Duration
+	GitHubMaxRetries          int
+	ArgoCDEnabled             bool
+	ArgoCDServer              string
+	ArgoCDTokenFile           string
+	ArgoCDAllowedApplications []string
+	ArgoCDAllowedProjects     []string
+	ArgoCDTimeout             time.Duration
+	ArgoCDMaxResources        int
+	ArgoCDMaxDiffBytes        int
+	ImageRevisionRequired     bool
+	ImageAllowedRegistries    []string
+	RegistryMetadataEnabled   bool
+	RegistryBaseURL           string
+	RegistryAllowedHosts      []string
+	RegistryAllowedRepos      []string
+	RegistryAllowedAuthRealms []string
+	RegistryAllowedRedirects  []string
+	OCIAllowedSources         []string
+	RegistryBearerTokenFile   string
+	RegistryUsernameFile      string
+	RegistryPasswordFile      string
+	RegistryTimeout           time.Duration
+	RegistryMaxRetries        int
+	RegistryManifestMaxBytes  int64
+	RegistryConfigMaxBytes    int64
+	RegistryCacheTTL          time.Duration
+	RegistryCacheMaxItems     int
 
 	// GlobalMaxBodyBytes 全局 API 请求体最大字节数
 	// 默认值：2097152（2MB）
@@ -486,6 +534,41 @@ type RateLimitConfig struct {
 	OperationTimeout time.Duration
 }
 
+type EffectiveChangeConfig struct {
+	Enabled               bool          `json:"enabled"`
+	Lookback              time.Duration `json:"lookback"`
+	MaxCandidates         int           `json:"max_candidates"`
+	MappingCount          int           `json:"mapping_count"`
+	GitHubEnabled         bool          `json:"github_enabled"`
+	GitHubAPIBaseURL      string        `json:"github_api_base_url,omitempty"`
+	GitHubRepositoryCount int           `json:"github_repository_count"`
+	ArgoCDEnabled         bool          `json:"argocd_enabled"`
+	ArgoCDServer          string        `json:"argocd_server,omitempty"`
+	ArgoApplicationCount  int           `json:"argocd_application_count"`
+	ImageRevisionRequired bool          `json:"image_revision_required"`
+	RegistryEnabled       bool          `json:"registry_metadata_enabled"`
+	RegistryBaseURL       string        `json:"registry_base_url,omitempty"`
+	RegistryHostCount     int           `json:"registry_host_count"`
+	RegistryRepoCount     int           `json:"registry_repository_count"`
+	RegistrySourceCount   int           `json:"oci_source_repository_count"`
+	RegistryTimeout       time.Duration `json:"registry_timeout"`
+	RegistryMaxRetries    int           `json:"registry_max_retries"`
+	RegistryManifestLimit int64         `json:"registry_manifest_max_bytes"`
+	RegistryConfigLimit   int64         `json:"registry_config_max_bytes"`
+	RegistryCacheTTL      time.Duration `json:"registry_cache_ttl"`
+	RegistryCacheMaxItems int           `json:"registry_cache_max_items"`
+}
+
+// EffectiveChangeConfig returns only non-secret startup diagnostics. Credential values and paths are omitted.
+func (c Config) EffectiveChangeConfig() EffectiveChangeConfig {
+	mappingCount := 0
+	var mappings map[string]json.RawMessage
+	if json.Unmarshal([]byte(c.ChangeServiceMappingsJSON), &mappings) == nil {
+		mappingCount = len(mappings)
+	}
+	return EffectiveChangeConfig{Enabled: c.ChangeIntelligenceEnabled, Lookback: c.ChangeLookback, MaxCandidates: c.ChangeMaxCandidates, MappingCount: mappingCount, GitHubEnabled: c.GitHubEnabled, GitHubAPIBaseURL: c.GitHubAPIBaseURL, GitHubRepositoryCount: len(c.GitHubAllowedRepositories), ArgoCDEnabled: c.ArgoCDEnabled, ArgoCDServer: c.ArgoCDServer, ArgoApplicationCount: len(c.ArgoCDAllowedApplications), ImageRevisionRequired: c.ImageRevisionRequired, RegistryEnabled: c.RegistryMetadataEnabled, RegistryBaseURL: c.RegistryBaseURL, RegistryHostCount: len(c.RegistryAllowedHosts), RegistryRepoCount: len(c.RegistryAllowedRepos), RegistrySourceCount: len(c.OCIAllowedSources), RegistryTimeout: c.RegistryTimeout, RegistryMaxRetries: c.RegistryMaxRetries, RegistryManifestLimit: c.RegistryManifestMaxBytes, RegistryConfigLimit: c.RegistryConfigMaxBytes, RegistryCacheTTL: c.RegistryCacheTTL, RegistryCacheMaxItems: c.RegistryCacheMaxItems}
+}
+
 func Load() Config {
 	prometheusURL := configutil.String("PROMETHEUS_URL", "http://prometheus:9090")
 	return Config{
@@ -510,7 +593,7 @@ func Load() Config {
 		AlertmanagerWebhookMaxBodyBytes: int64(configutil.PositiveInt("ALERTMANAGER_WEBHOOK_MAX_BODY_BYTES", 1048576)),
 		IncidentAggregationWindow:       configutil.DurationSeconds("INCIDENT_AGGREGATION_WINDOW_SECONDS", 14400),
 		IncidentAgentEnabled:            configutil.Bool("INCIDENT_AGENT_ENABLED", false),
-		IncidentAgentWorkerID:           configutil.String("INCIDENT_AGENT_WORKER_ID", "server-web-agent-worker"),
+		IncidentAgentWorkerID:           configutil.String("INCIDENT_AGENT_WORKER_ID", configutil.String("HOSTNAME", "server-web-agent-worker")),
 		IncidentAgentPollInterval:       configutil.DurationMilliseconds("INCIDENT_AGENT_POLL_INTERVAL_MILLISECONDS", 1000),
 		IncidentAgentLeaseDuration:      configutil.DurationSeconds("INCIDENT_AGENT_LEASE_SECONDS", 30),
 		IncidentAgentHeartbeatPeriod:    configutil.DurationSeconds("INCIDENT_AGENT_HEARTBEAT_SECONDS", 10),
@@ -524,6 +607,51 @@ func Load() Config {
 		IncidentAgentMaxEvidenceBytes:   configutil.PositiveInt("INCIDENT_AGENT_MAX_EVIDENCE_BYTES", 16384),
 		IncidentAgentMaxCheckpointBytes: configutil.PositiveInt("INCIDENT_AGENT_MAX_CHECKPOINT_BYTES", 32768),
 		IncidentAgentMaxStepRetries:     configutil.NonNegativeInt("INCIDENT_AGENT_MAX_STEP_RETRIES", 1),
+		ChangeIntelligenceEnabled:       configutil.Bool("CHANGE_INTELLIGENCE_ENABLED", false),
+		ChangeLookback:                  configutil.DurationSeconds("CHANGE_LOOKBACK", 86400),
+		ChangeMaxCandidates:             configutil.PositiveInt("CHANGE_MAX_CANDIDATES", 10),
+		ChangeServiceMappingsJSON:       configutil.String("CHANGE_SERVICE_MAPPINGS_JSON", "{}"),
+		GitHubEnabled:                   configutil.Bool("GITHUB_ENABLED", false),
+		GitHubAPIBaseURL:                configutil.String("GITHUB_API_BASE_URL", "https://api.github.com"),
+		GitHubAppID:                     int64(configutil.NonNegativeInt("GITHUB_APP_ID", 0)),
+		GitHubInstallationID:            int64(configutil.NonNegativeInt("GITHUB_INSTALLATION_ID", 0)),
+		GitHubPrivateKeyFile:            configutil.String("GITHUB_PRIVATE_KEY_FILE", ""),
+		GitHubTokenFile:                 configutil.String("GITHUB_TOKEN_FILE", ""),
+		GitHubAllowedOwners:             configutil.List("GITHUB_ALLOWED_OWNERS"),
+		GitHubAllowedRepositories:       configutil.List("GITHUB_ALLOWED_REPOSITORIES"),
+		GitHubAllowedBranches:           configutil.List("GITHUB_ALLOWED_BRANCHES"),
+		GitHubAllowedPaths:              configutil.List("GITHUB_ALLOWED_PATHS"),
+		GitHubDeniedPathPatterns:        configutil.List("GITHUB_DENIED_PATH_PATTERNS"),
+		GitHubMaxDiffFiles:              configutil.PositiveInt("GITHUB_MAX_DIFF_FILES", 100),
+		GitHubMaxDiffBytes:              configutil.PositiveInt("GITHUB_MAX_DIFF_BYTES", 131072),
+		GitHubTimeout:                   configutil.DurationSeconds("GITHUB_TIMEOUT", 10),
+		GitHubMaxRetries:                configutil.NonNegativeInt("GITHUB_MAX_RETRIES", 1),
+		ArgoCDEnabled:                   configutil.Bool("ARGOCD_ENABLED", false),
+		ArgoCDServer:                    configutil.String("ARGOCD_SERVER", ""),
+		ArgoCDTokenFile:                 configutil.String("ARGOCD_TOKEN_FILE", ""),
+		ArgoCDAllowedApplications:       configutil.List("ARGOCD_ALLOWED_APPLICATIONS"),
+		ArgoCDAllowedProjects:           configutil.List("ARGOCD_ALLOWED_PROJECTS"),
+		ArgoCDTimeout:                   configutil.DurationSeconds("ARGOCD_TIMEOUT", 10),
+		ArgoCDMaxResources:              configutil.PositiveInt("ARGOCD_MAX_RESOURCES", 100),
+		ArgoCDMaxDiffBytes:              configutil.PositiveInt("ARGOCD_MAX_DIFF_BYTES", 131072),
+		ImageRevisionRequired:           configutil.Bool("IMAGE_REVISION_REQUIRED", false),
+		ImageAllowedRegistries:          configutil.List("IMAGE_ALLOWED_REGISTRIES"),
+		RegistryMetadataEnabled:         configutil.Bool("REGISTRY_METADATA_ENABLED", false),
+		RegistryBaseURL:                 configutil.String("REGISTRY_BASE_URL", ""),
+		RegistryAllowedHosts:            configutil.List("REGISTRY_ALLOWED_HOSTS"),
+		RegistryAllowedRepos:            configutil.List("REGISTRY_ALLOWED_REPOSITORIES"),
+		RegistryAllowedAuthRealms:       configutil.List("REGISTRY_ALLOWED_AUTH_REALM_HOSTS"),
+		RegistryAllowedRedirects:        configutil.List("REGISTRY_ALLOWED_REDIRECT_HOSTS"),
+		OCIAllowedSources:               configutil.List("OCI_ALLOWED_SOURCE_REPOSITORIES"),
+		RegistryBearerTokenFile:         configutil.String("REGISTRY_BEARER_TOKEN_FILE", ""),
+		RegistryUsernameFile:            configutil.String("REGISTRY_USERNAME_FILE", ""),
+		RegistryPasswordFile:            configutil.String("REGISTRY_PASSWORD_FILE", ""),
+		RegistryTimeout:                 configutil.DurationSeconds("REGISTRY_TIMEOUT", 10),
+		RegistryMaxRetries:              configutil.NonNegativeInt("REGISTRY_MAX_RETRIES", 1),
+		RegistryManifestMaxBytes:        int64(configutil.PositiveInt("REGISTRY_MANIFEST_MAX_BYTES", 4194304)),
+		RegistryConfigMaxBytes:          int64(configutil.PositiveInt("REGISTRY_CONFIG_MAX_BYTES", 1048576)),
+		RegistryCacheTTL:                configutil.DurationSeconds("REGISTRY_CACHE_TTL_SECONDS", 300),
+		RegistryCacheMaxItems:           configutil.PositiveInt("REGISTRY_CACHE_MAX_ITEMS", 256),
 		GlobalMaxBodyBytes:              int64(configutil.PositiveInt("GLOBAL_MAX_BODY_BYTES", 2097152)),
 		CacheWriteTimeout:               configutil.DurationSeconds("CACHE_WRITE_TIMEOUT_SECONDS", 3),
 		GinMode:                         configutil.String("GIN_MODE", "debug"),
@@ -686,6 +814,9 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("INCIDENT_AGGREGATION_WINDOW_SECONDS must be in range 60-86400, got %v", c.IncidentAggregationWindow)
 	}
 	if c.IncidentAgentEnabled {
+		if workerID := strings.TrimSpace(c.IncidentAgentWorkerID); workerID == "" || len(workerID) > 128 {
+			return fmt.Errorf("INCIDENT_AGENT_WORKER_ID must contain 1-128 bytes when INCIDENT_AGENT_ENABLED is true")
+		}
 		if !c.CopilotEnabled || !c.CopilotToolRegistryEnabled {
 			return fmt.Errorf("COPILOT_ENABLED and COPILOT_TOOL_REGISTRY_ENABLED must be true when INCIDENT_AGENT_ENABLED is true")
 		}
@@ -697,6 +828,93 @@ func (c *Config) Validate() error {
 		}
 		if c.IncidentAgentMaxSteps <= 0 || c.IncidentAgentMaxToolCalls <= 0 || c.IncidentAgentMaxModelCalls <= 0 || c.IncidentAgentTokenBudget <= 0 || c.IncidentAgentMaxEvidenceItems <= 0 || c.IncidentAgentMaxEvidenceBytes < 256 || c.IncidentAgentMaxCheckpointBytes < 1024 || c.IncidentAgentMaxStepRetries < 0 {
 			return fmt.Errorf("incident agent budget configuration is invalid")
+		}
+	}
+	if c.ChangeIntelligenceEnabled {
+		if strings.TrimSpace(c.MySQLHost) == "" {
+			return fmt.Errorf("MySQL configuration is required when CHANGE_INTELLIGENCE_ENABLED is true")
+		}
+		if c.ChangeLookback < time.Minute || c.ChangeLookback > 30*24*time.Hour || c.ChangeMaxCandidates < 1 || c.ChangeMaxCandidates > 50 {
+			return fmt.Errorf("change intelligence lookback or candidate limit is invalid")
+		}
+		var mappings map[string]json.RawMessage
+		if json.Unmarshal([]byte(c.ChangeServiceMappingsJSON), &mappings) != nil || len(mappings) == 0 {
+			return fmt.Errorf("CHANGE_SERVICE_MAPPINGS_JSON must contain at least one service mapping")
+		}
+	}
+	if c.GitHubEnabled {
+		if !c.ChangeIntelligenceEnabled || !strings.HasPrefix(c.GitHubAPIBaseURL, "https://") || len(c.GitHubAllowedOwners) == 0 || len(c.GitHubAllowedRepositories) == 0 {
+			return fmt.Errorf("GitHub change integration requires change intelligence, HTTPS and owner/repository allowlists")
+		}
+		appAuth := c.GitHubAppID > 0 && c.GitHubInstallationID > 0 && strings.TrimSpace(c.GitHubPrivateKeyFile) != ""
+		fileAuth := strings.TrimSpace(c.GitHubTokenFile) != ""
+		if appAuth == fileAuth {
+			return fmt.Errorf("configure exactly one GitHub App or token-file authentication mode")
+		}
+		if c.GitHubMaxRetries < 0 || c.GitHubMaxRetries > 3 || c.GitHubMaxDiffFiles > 500 || c.GitHubMaxDiffBytes > 2*1024*1024 || c.GitHubTimeout <= 0 {
+			return fmt.Errorf("GitHub change integration limits are invalid")
+		}
+	}
+	if c.ArgoCDEnabled {
+		if !c.ChangeIntelligenceEnabled || !strings.HasPrefix(c.ArgoCDServer, "https://") || strings.TrimSpace(c.ArgoCDTokenFile) == "" || len(c.ArgoCDAllowedApplications) == 0 || len(c.ArgoCDAllowedProjects) == 0 {
+			return fmt.Errorf("argocd change integration requires change intelligence, HTTPS, token file and allowlists")
+		}
+		if c.ArgoCDTimeout <= 0 || c.ArgoCDMaxResources < 1 || c.ArgoCDMaxResources > 500 || c.ArgoCDMaxDiffBytes < 1024 || c.ArgoCDMaxDiffBytes > 2*1024*1024 {
+			return fmt.Errorf("argocd change integration limits are invalid")
+		}
+	}
+	if c.ImageRevisionRequired && len(c.ImageAllowedRegistries) == 0 {
+		return fmt.Errorf("IMAGE_ALLOWED_REGISTRIES is required when IMAGE_REVISION_REQUIRED is true")
+	}
+	if c.RegistryMetadataEnabled {
+		if !c.ChangeIntelligenceEnabled || !c.ImageRevisionRequired {
+			return fmt.Errorf("REGISTRY_METADATA_ENABLED requires CHANGE_INTELLIGENCE_ENABLED and IMAGE_REVISION_REQUIRED")
+		}
+		base, baseErr := url.Parse(strings.TrimSpace(c.RegistryBaseURL))
+		if baseErr != nil || base.Scheme != "https" || base.Host == "" || base.User != nil || base.RawQuery != "" || base.Fragment != "" || (base.Path != "" && base.Path != "/") || len(c.RegistryAllowedHosts) == 0 || len(c.RegistryAllowedRepos) == 0 || len(c.OCIAllowedSources) == 0 {
+			return fmt.Errorf("registry metadata requires a fixed HTTPS base and host, repository, and OCI source allowlists")
+		}
+		baseAllowed := false
+		for _, host := range c.RegistryAllowedHosts {
+			host = strings.TrimSpace(host)
+			if host == "" || strings.ContainsAny(host, "*/?#@") {
+				return fmt.Errorf("registry host allowlists must contain exact host names")
+			}
+			baseAllowed = baseAllowed || strings.EqualFold(host, base.Host)
+		}
+		if !baseAllowed {
+			return fmt.Errorf("REGISTRY_BASE_URL host must be explicitly allowlisted")
+		}
+		for _, host := range append(append([]string{}, c.RegistryAllowedAuthRealms...), c.RegistryAllowedRedirects...) {
+			if host = strings.TrimSpace(host); host == "" || strings.ContainsAny(host, "*/?#@") {
+				return fmt.Errorf("registry realm and redirect allowlists must contain exact host names")
+			}
+		}
+		for _, repository := range c.RegistryAllowedRepos {
+			if repository = strings.Trim(strings.TrimSpace(repository), "/"); repository == "" || strings.Contains(repository, "*") || !strings.Contains(repository, "/") {
+				return fmt.Errorf("registry repository allowlist must contain exact namespace/repository names")
+			}
+		}
+		for _, source := range c.OCIAllowedSources {
+			parsed, sourceErr := url.Parse(strings.TrimSpace(source))
+			if sourceErr != nil || parsed == nil {
+				return fmt.Errorf("OCI source repository allowlist must contain exact HTTPS repositories")
+			}
+			sourcePath := strings.Trim(strings.TrimSuffix(parsed.Path, ".git"), "/")
+			if parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || strings.Contains(parsed.Path, "*") || strings.Count(sourcePath, "/") != 1 {
+				return fmt.Errorf("OCI source repository allowlist must contain exact HTTPS repositories")
+			}
+		}
+		basicAny := strings.TrimSpace(c.RegistryUsernameFile) != "" || strings.TrimSpace(c.RegistryPasswordFile) != ""
+		basicComplete := strings.TrimSpace(c.RegistryUsernameFile) != "" && strings.TrimSpace(c.RegistryPasswordFile) != ""
+		if basicAny && !basicComplete {
+			return fmt.Errorf("registry basic authentication requires username and password file references")
+		}
+		if strings.TrimSpace(c.RegistryBearerTokenFile) != "" && basicAny {
+			return fmt.Errorf("registry bearer and basic authentication modes are mutually exclusive")
+		}
+		if c.RegistryTimeout <= 0 || c.RegistryTimeout > 30*time.Second || c.RegistryMaxRetries < 0 || c.RegistryMaxRetries > 3 || c.RegistryManifestMaxBytes < 1024 || c.RegistryManifestMaxBytes > 4*1024*1024 || c.RegistryConfigMaxBytes < 1024 || c.RegistryConfigMaxBytes > 1024*1024 || c.RegistryCacheTTL <= 0 || c.RegistryCacheTTL > time.Hour || c.RegistryCacheMaxItems < 1 || c.RegistryCacheMaxItems > 2048 {
+			return fmt.Errorf("registry metadata limits are invalid")
 		}
 	}
 	if c.JWTExpireHours <= 0 {

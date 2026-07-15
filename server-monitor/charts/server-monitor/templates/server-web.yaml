@@ -1,3 +1,9 @@
+{{- if and .Values.changeIntelligence.registry.enabled (not (has .Values.changeIntelligence.registry.auth.mode (list "none" "bearer" "basic"))) }}
+{{- fail "changeIntelligence.registry.auth.mode must be none, bearer, or basic" }}
+{{- end }}
+{{- if and .Values.changeIntelligence.registry.enabled (ne .Values.changeIntelligence.registry.auth.mode "none") (eq .Values.changeIntelligence.registry.auth.credentialSecretName "") }}
+{{- fail "registry bearer/basic auth requires a pre-existing credentialSecretName" }}
+{{- end }}
 {{- if .Values.serverWeb.enabled }}
 # ============================================
 # server-web 部署配置
@@ -57,6 +63,9 @@ spec:
           {{- end }}
           ports:
             - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: monitor-config
           resources:
             {{- toYaml .Values.serverWeb.resources | nindent 12 }}
           livenessProbe:
@@ -511,17 +520,61 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.secret.name | quote }}
                   key: ADMIN_PASSWORD
-          {{- if .Values.runbooks.enabled }}
+          {{- if or .Values.runbooks.enabled (and .Values.changeIntelligence.github.enabled (ne .Values.changeIntelligence.github.credentialSecretName "")) (and .Values.changeIntelligence.argocd.enabled (ne .Values.changeIntelligence.argocd.credentialSecretName "")) (and .Values.changeIntelligence.registry.enabled (ne .Values.changeIntelligence.registry.auth.mode "none") (ne .Values.changeIntelligence.registry.auth.credentialSecretName "")) }}
           volumeMounts:
+            {{- if .Values.runbooks.enabled }}
             - name: runbooks
               mountPath: {{ .Values.runbooks.mountPath | quote }}
               readOnly: true
+            {{- end }}
+            {{- if and .Values.changeIntelligence.github.enabled (ne .Values.changeIntelligence.github.credentialSecretName "") }}
+            - name: github-change-credentials
+              mountPath: /var/run/secrets/cloudops/github
+              readOnly: true
+            {{- end }}
+            {{- if and .Values.changeIntelligence.argocd.enabled (ne .Values.changeIntelligence.argocd.credentialSecretName "") }}
+            - name: argocd-change-credentials
+              mountPath: /var/run/secrets/cloudops/argocd
+              readOnly: true
+            {{- end }}
+            {{- if and .Values.changeIntelligence.registry.enabled (ne .Values.changeIntelligence.registry.auth.mode "none") (ne .Values.changeIntelligence.registry.auth.credentialSecretName "") }}
+            - name: registry-change-credentials
+              mountPath: /var/run/secrets/cloudops/registry
+              readOnly: true
+            {{- end }}
           {{- end }}
-      {{- if .Values.runbooks.enabled }}
+      {{- if or .Values.runbooks.enabled (and .Values.changeIntelligence.github.enabled (ne .Values.changeIntelligence.github.credentialSecretName "")) (and .Values.changeIntelligence.argocd.enabled (ne .Values.changeIntelligence.argocd.credentialSecretName "")) (and .Values.changeIntelligence.registry.enabled (ne .Values.changeIntelligence.registry.auth.mode "none") (ne .Values.changeIntelligence.registry.auth.credentialSecretName "")) }}
       volumes:
+        {{- if .Values.runbooks.enabled }}
         - name: runbooks
           configMap:
             name: {{ .Values.runbooks.configMapName | quote }}
+        {{- end }}
+        {{- if and .Values.changeIntelligence.github.enabled (ne .Values.changeIntelligence.github.credentialSecretName "") }}
+        - name: github-change-credentials
+          secret:
+            secretName: {{ .Values.changeIntelligence.github.credentialSecretName | quote }}
+        {{- end }}
+        {{- if and .Values.changeIntelligence.argocd.enabled (ne .Values.changeIntelligence.argocd.credentialSecretName "") }}
+        - name: argocd-change-credentials
+          secret:
+            secretName: {{ .Values.changeIntelligence.argocd.credentialSecretName | quote }}
+        {{- end }}
+        {{- if and .Values.changeIntelligence.registry.enabled (ne .Values.changeIntelligence.registry.auth.mode "none") (ne .Values.changeIntelligence.registry.auth.credentialSecretName "") }}
+        - name: registry-change-credentials
+          secret:
+            secretName: {{ .Values.changeIntelligence.registry.auth.credentialSecretName | quote }}
+            items:
+              {{- if eq .Values.changeIntelligence.registry.auth.mode "bearer" }}
+              - key: {{ .Values.changeIntelligence.registry.auth.bearerTokenKey | quote }}
+                path: bearer-token
+              {{- else if eq .Values.changeIntelligence.registry.auth.mode "basic" }}
+              - key: {{ .Values.changeIntelligence.registry.auth.usernameKey | quote }}
+                path: username
+              - key: {{ .Values.changeIntelligence.registry.auth.passwordKey | quote }}
+                path: password
+              {{- end }}
+        {{- end }}
       {{- end }}
 
 ---

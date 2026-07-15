@@ -25,8 +25,8 @@ var (
 	ErrMessageRequired  = errors.New("消息不能为空")
 	ErrMessageTooLong   = errors.New("消息过长")
 	ErrSessionRequired  = errors.New("session_id 不能为空")
-	ErrSessionNotFound  = errors.New("Copilot 会话未找到")
-	ErrSessionForbidden = errors.New("Copilot 会话属于其他用户")
+	ErrSessionNotFound  = errors.New("copilot 会话未找到")
+	ErrSessionForbidden = errors.New("copilot 会话属于其他用户")
 )
 
 type Config struct {

@@ -224,7 +224,7 @@ func (h *Handler) SyncAlertRules(c *gin.Context) {
 	c.JSON(http.StatusOK, response{Status: "success", Data: result})
 }
 
-func (h *Handler) syncAlertRules(ctx context.Context, rules []model.AlertRule) (alertRuleSyncResponse, error) {
+func (h *Handler) syncAlertRules(ctx context.Context, rules []model.AlertRule) (result alertRuleSyncResponse, retErr error) {
 	cfg := h.ruleSync
 	cfg.FilePath = strings.TrimSpace(cfg.FilePath)
 	cfg.Promtool = strings.TrimSpace(cfg.Promtool)
@@ -237,7 +237,7 @@ func (h *Handler) syncAlertRules(ctx context.Context, rules []model.AlertRule) (
 	}
 
 	rendered, err := renderAlertRulesYAML(rules)
-	result := alertRuleSyncResponse{
+	result = alertRuleSyncResponse{
 		Enabled:   cfg.Enabled,
 		RuleCount: len(rules),
 		FilePath:  cfg.FilePath,
@@ -253,7 +253,11 @@ func (h *Handler) syncAlertRules(ctx context.Context, rules []model.AlertRule) (
 		return result, err
 	}
 	result.RenderedTo = tmpFile
-	defer os.Remove(tmpFile)
+	defer func() {
+		if err := os.Remove(tmpFile); err != nil && !errors.Is(err, os.ErrNotExist) {
+			retErr = errors.Join(retErr, fmt.Errorf("remove temporary rules file: %w", err))
+		}
+	}()
 
 	if err := runPromtoolCheck(ctx, cfg.Promtool, tmpFile); err != nil {
 		return result, err
@@ -485,13 +489,11 @@ func writeTempAlertRulesFile(targetPath string, content string) (string, error) 
 	}
 	tmpName := tmp.Name()
 	if _, err := tmp.WriteString(content); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return "", fmt.Errorf("write temporary rules file: %w", err)
+		cleanupErr := errors.Join(tmp.Close(), os.Remove(tmpName))
+		return "", errors.Join(fmt.Errorf("write temporary rules file: %w", err), cleanupErr)
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
-		return "", fmt.Errorf("close temporary rules file: %w", err)
+		return "", errors.Join(fmt.Errorf("close temporary rules file: %w", err), os.Remove(tmpName))
 	}
 	return tmpName, nil
 }
@@ -524,7 +526,7 @@ func restoreRulesFile(path string, previous []byte, hadPrevious bool) bool {
 	return err == nil || errors.Is(err, os.ErrNotExist)
 }
 
-func reloadPrometheus(ctx context.Context, client *http.Client, reloadURL string) error {
+func reloadPrometheus(ctx context.Context, client *http.Client, reloadURL string) (retErr error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reloadURL, bytes.NewReader(nil))
 	if err != nil {
 		return err
@@ -533,7 +535,7 @@ func reloadPrometheus(ctx context.Context, client *http.Client, reloadURL string
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { retErr = errors.Join(retErr, resp.Body.Close()) }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}

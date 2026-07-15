@@ -196,14 +196,14 @@ func buildDiagnosisCandidatesReply(candidates []diagnosis.DiagnosisCandidate) st
 			builder.WriteString("\n- 还有更多候选，请使用更精确的 fingerprint 或 alert_history_id")
 			break
 		}
-		builder.WriteString(fmt.Sprintf(
+		fmt.Fprintf(&builder,
 			"\n- alert_history_id=%d fingerprint=%s alert=%s instance=%s status=%s",
 			candidate.AlertHistoryID,
 			candidate.Fingerprint,
 			candidate.AlertName,
 			candidate.Instance,
 			candidate.Status,
-		))
+		)
 	}
 	return builder.String()
 }

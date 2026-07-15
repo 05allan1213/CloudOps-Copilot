@@ -462,7 +462,7 @@ func (c *Client) doRequestWithTools(ctx context.Context, sysPrompt, userPrompt s
 	})
 }
 
-func (c *Client) doChatRequest(ctx context.Context, chatReq chatRequest) (ChatMessage, *ChatUsage, error) {
+func (c *Client) doChatRequest(ctx context.Context, chatReq chatRequest) (message ChatMessage, usage *ChatUsage, retErr error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
@@ -482,7 +482,7 @@ func (c *Client) doChatRequest(ctx context.Context, chatReq chatRequest) (ChatMe
 	if err != nil {
 		return ChatMessage{}, nil, fmt.Errorf("call llm: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { retErr = errors.Join(retErr, resp.Body.Close()) }()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return ChatMessage{}, nil, fmt.Errorf("llm returned status %d%s", resp.StatusCode, responseBodyDetail(resp.Body))
 	}
@@ -498,7 +498,7 @@ func (c *Client) doChatRequest(ctx context.Context, chatReq chatRequest) (ChatMe
 	return decoded.Choices[0].Message, decoded.Usage, nil
 }
 
-func (c *Client) doChatStreamRequest(ctx context.Context, messages []ChatMessage, onDelta func(string) error) (string, *ChatUsage, error) {
+func (c *Client) doChatStreamRequest(ctx context.Context, messages []ChatMessage, onDelta func(string) error) (content string, usageResult *ChatUsage, retErr error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
@@ -525,13 +525,12 @@ func (c *Client) doChatStreamRequest(ctx context.Context, messages []ChatMessage
 	if err != nil {
 		return "", nil, fmt.Errorf("call llm stream: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { retErr = errors.Join(retErr, resp.Body.Close()) }()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return "", nil, fmt.Errorf("llm stream returned status %d%s", resp.StatusCode, responseBodyDetail(resp.Body))
 	}
 
 	var builder strings.Builder
-	var usage *ChatUsage
 	scanner := bufio.NewScanner(resp.Body)
 	maxScanToken := int(c.maxResponseBytes)
 	if maxScanToken < 64*1024 {
@@ -553,10 +552,10 @@ func (c *Client) doChatStreamRequest(ctx context.Context, messages []ChatMessage
 
 		var chunk chatStreamChunk
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			return builder.String(), usage, fmt.Errorf("decode llm stream chunk: %w", err)
+			return builder.String(), usageResult, fmt.Errorf("decode llm stream chunk: %w", err)
 		}
 		if chunk.Usage != nil {
-			usage = chunk.Usage
+			usageResult = chunk.Usage
 		}
 		for _, choice := range chunk.Choices {
 			delta := choice.Delta.Content
@@ -569,15 +568,15 @@ func (c *Client) doChatStreamRequest(ctx context.Context, messages []ChatMessage
 			builder.WriteString(delta)
 			if onDelta != nil {
 				if err := onDelta(delta); err != nil {
-					return builder.String(), usage, fmt.Errorf("handle llm stream delta: %w", err)
+					return builder.String(), usageResult, fmt.Errorf("handle llm stream delta: %w", err)
 				}
 			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return builder.String(), usage, fmt.Errorf("read llm stream: %w", err)
+		return builder.String(), usageResult, fmt.Errorf("read llm stream: %w", err)
 	}
-	return builder.String(), usage, nil
+	return builder.String(), usageResult, nil
 }
 
 func responseBodyDetail(body io.Reader) string {

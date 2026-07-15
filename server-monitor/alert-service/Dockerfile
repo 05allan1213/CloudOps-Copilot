@@ -2,6 +2,9 @@
 
 ARG GO_IMAGE=golang:1.26-alpine
 ARG RUNTIME_IMAGE=alpine:3.21
+ARG VCS_REF=unknown
+ARG VCS_SOURCE=unknown
+ARG VERSION=dev
 
 FROM ${GO_IMAGE} AS builder
 
@@ -26,6 +29,14 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go build -ldflags="-s -w" -o /out/alert-service .
 
 FROM ${RUNTIME_IMAGE} AS runtime
+
+ARG VCS_REF
+ARG VCS_SOURCE
+ARG VERSION
+
+LABEL org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.source="${VCS_SOURCE}" \
+      org.opencontainers.image.version="${VERSION}"
 
 RUN apk add --no-cache ca-certificates tzdata wget \
     && addgroup -S app \

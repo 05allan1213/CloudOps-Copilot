@@ -656,7 +656,7 @@ func (s *Service) ListPersistentVolumeClaims(ctx context.Context, options QueryO
 	return pvcs, nil
 }
 
-func (s *Service) GetPodLogs(ctx context.Context, query LogQuery) (LogSnippet, error) {
+func (s *Service) GetPodLogs(ctx context.Context, query LogQuery) (snippet LogSnippet, retErr error) {
 	if err := s.ready(); err != nil {
 		return LogSnippet{}, err
 	}
@@ -688,7 +688,7 @@ func (s *Service) GetPodLogs(ctx context.Context, query LogQuery) (LogSnippet, e
 	if err != nil {
 		return LogSnippet{}, classifyError(err)
 	}
-	defer body.Close()
+	defer func() { retErr = errors.Join(retErr, body.Close()) }()
 	content, readErr := io.ReadAll(io.LimitReader(body, int64(s.logMaxBytes)+1))
 	if readErr != nil {
 		return LogSnippet{}, readErr
@@ -804,7 +804,7 @@ func podSummary(pod corev1.Pod, collectedAt time.Time) PodSummary {
 		CollectedAt:     collectedAt,
 	}
 	if pod.Status.StartTime != nil {
-		summary.StartTime = pod.Status.StartTime.Time.UTC()
+		summary.StartTime = pod.Status.StartTime.UTC()
 	}
 	if len(pod.OwnerReferences) > 0 {
 		summary.OwnerKind = pod.OwnerReferences[0].Kind

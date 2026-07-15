@@ -76,6 +76,61 @@ copilot:
   multiIntentEnabled: false
   multiIntentMax: 3
 
+changeIntelligence:
+  enabled: false
+  lookbackSeconds: "86400"
+  maxCandidates: "10"
+  serviceMappingsJSON: "{}"
+  github:
+    enabled: false
+    apiBaseURL: https://api.github.com
+    appID: "0"
+    installationID: "0"
+    allowedOwners: []
+    allowedRepositories: []
+    allowedBranches: []
+    allowedPaths: []
+    deniedPathPatterns: []
+    maxDiffFiles: "100"
+    maxDiffBytes: "131072"
+    timeoutSeconds: "10"
+    maxRetries: "1"
+    # Mount a pre-existing Secret; use token or private-key.pem, never ConfigMap data.
+    credentialSecretName: ""
+  argocd:
+    enabled: false
+    server: ""
+    allowedApplications: []
+    allowedProjects: []
+    timeoutSeconds: "10"
+    maxResources: "100"
+    maxDiffBytes: "131072"
+    credentialSecretName: ""
+  image:
+    revisionRequired: false
+    allowedRegistries: []
+  registry:
+    enabled: false
+    baseURL: ""
+    allowedHosts: []
+    allowedRepositories: []
+    allowedAuthRealmHosts: []
+    allowedRedirectHosts: []
+    allowedSourceRepositories: []
+    timeoutSeconds: "10"
+    maxRetries: "1"
+    manifestMaxBytes: "4194304"
+    configMaxBytes: "1048576"
+    cacheTTLSeconds: "300"
+    cacheMaxItems: "256"
+    auth:
+      # none, bearer, or basic. Mount only a pre-existing Secret; never place credential values here.
+      mode: none
+      credentialSecretName: ""
+      bearerTokenKey: bearer-token
+      usernameKey: username
+      passwordKey: password
+
 k8sIntegration:
   enabled: false
   writeEnabled: false

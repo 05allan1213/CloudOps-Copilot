@@ -351,8 +351,7 @@ func (c *Client) Subscribe(ctx context.Context, channel string) (<-chan string, 
 	pubsub := c.base.Inner().Subscribe(ctx, channel)
 
 	if err := pubsub.Ping(ctx); err != nil {
-		pubsub.Close()
-		return nil, fmt.Errorf("subscribe ping failed: %w", err)
+		return nil, errors.Join(fmt.Errorf("subscribe ping failed: %w", err), pubsub.Close())
 	}
 
 	source := pubsub.Channel()
@@ -360,7 +359,11 @@ func (c *Client) Subscribe(ctx context.Context, channel string) (<-chan string, 
 
 	go func() {
 		defer close(output)
-		defer pubsub.Close()
+		defer func() {
+			if err := pubsub.Close(); err != nil {
+				zap.L().Warn("redis subscription cleanup failed")
+			}
+		}()
 
 		for {
 			select {

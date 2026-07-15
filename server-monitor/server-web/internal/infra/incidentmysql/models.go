@@ -75,6 +75,7 @@ type evidenceRow struct {
 	PublicID       string
 	IncidentID     uint64
 	AgentRunID     *uint64
+	ChangeID       *uint64
 	Type           string
 	Source         string
 	ToolName       string
@@ -191,3 +192,50 @@ type correlationLockRow struct {
 }
 
 func (correlationLockRow) TableName() string { return "incident_correlation_locks" }
+
+type changeRow struct {
+	ID                     uint64 `gorm:"primaryKey"`
+	PublicID               string
+	IncidentID             uint64
+	SourceType             string
+	Repository             string
+	RepositoryOwner        string
+	CommitSHA              string
+	BaseCommitSHA          string
+	PullRequestNumber      int64
+	WorkflowRunID          int64
+	WorkflowName           string
+	WorkflowConclusion     string
+	ImageRepository        string
+	ImageTag               string
+	ImageDigest            string
+	ImageRevision          string
+	ArgoCDApplication      string `gorm:"column:argocd_application"`
+	ArgoCDProject          string `gorm:"column:argocd_project"`
+	ArgoCDTargetRevision   string `gorm:"column:argocd_target_revision"`
+	ArgoCDDeployedRevision string `gorm:"column:argocd_deployed_revision"`
+	Environment            string
+	Cluster                string
+	Namespace              string
+	ServiceName            string
+	WorkloadKind           string
+	WorkloadName           string
+	GitOpsPath             string `gorm:"column:gitops_path"`
+	StartedAt              *time.Time
+	CompletedAt            *time.Time
+	DeployedAt             *time.Time
+	Status                 string
+	Category               string
+	ChangeSummary          string
+	RiskSummary            string
+	CorrelationScore       int
+	CorrelationReasonsJSON json.RawMessage `gorm:"column:correlation_reasons_json;type:json"`
+	MetadataJSON           json.RawMessage `gorm:"column:metadata_json;type:json"`
+	Truncated              bool
+	Degraded               bool
+	IdempotencyKey         string
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
+}
+
+func (changeRow) TableName() string { return "changes" }

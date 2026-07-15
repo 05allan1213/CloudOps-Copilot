@@ -231,7 +231,7 @@ func normalizeNotificationChannelRequest(c *gin.Context, req notificationChannel
 	}, true
 }
 
-func testNotificationChannel(ctx context.Context, channel model.NotificationChannel, client *http.Client) (notificationChannelTestResponse, error) {
+func testNotificationChannel(ctx context.Context, channel model.NotificationChannel, client *http.Client) (result notificationChannelTestResponse, retErr error) {
 	if err := validateNotificationChannelURL(channel.URL); err != nil {
 		return notificationChannelTestResponse{}, err
 	}
@@ -250,10 +250,10 @@ func testNotificationChannel(ctx context.Context, channel model.NotificationChan
 	if err != nil {
 		return notificationChannelTestResponse{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { retErr = errors.Join(retErr, resp.Body.Close()) }()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, notificationChannelMaxBody))
 
-	result := notificationChannelTestResponse{
+	result = notificationChannelTestResponse{
 		Success:    resp.StatusCode >= 200 && resp.StatusCode < 300,
 		LatencyMS:  time.Since(start).Milliseconds(),
 		StatusCode: resp.StatusCode,

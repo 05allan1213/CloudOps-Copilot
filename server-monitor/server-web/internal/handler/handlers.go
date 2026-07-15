@@ -63,6 +63,7 @@ type Handler struct {
 	alertService    *appalert.Service
 	incidentService IncidentApplication
 	agentRuntime    AgentApplication
+	changeService   ChangeApplication
 	hostService     *apphost.Service
 	mysqlClient     mysqlClient
 	authService     AuthService
@@ -105,6 +106,7 @@ type Config struct {
 	HostService     *apphost.Service
 	AlertService    *appalert.Service
 	IncidentService IncidentApplication
+	ChangeService   ChangeApplication
 	AlertProducer   alertProducer
 	MySQLClient     mysqlClient
 	DB              *gorm.DB
@@ -147,6 +149,7 @@ func NewHandler(promClient *promclient.Client, cacheClient cacheClient, cfg Conf
 		cacheService:    cacheService,
 		alertService:    alertService,
 		incidentService: cfg.IncidentService,
+		changeService:   cfg.ChangeService,
 		hostService:     hostService,
 		mysqlClient:     cfg.MySQLClient,
 		authService:     cfg.AuthService,

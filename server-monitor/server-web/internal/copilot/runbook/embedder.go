@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -72,7 +73,7 @@ func (e *Embedder) Embed(ctx context.Context, text string) ([]float32, error) {
 	return results[0], nil
 }
 
-func (e *Embedder) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+func (e *Embedder) EmbedBatch(ctx context.Context, texts []string) (vectors [][]float32, retErr error) {
 	if len(texts) == 0 {
 		return [][]float32{}, nil
 	}
@@ -107,7 +108,7 @@ func (e *Embedder) EmbedBatch(ctx context.Context, texts []string) ([][]float32,
 	if err != nil {
 		return nil, fmt.Errorf("embedding request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { retErr = errors.Join(retErr, resp.Body.Close()) }()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {

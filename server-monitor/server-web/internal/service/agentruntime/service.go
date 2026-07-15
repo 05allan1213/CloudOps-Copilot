@@ -64,6 +64,7 @@ func New(ctx context.Context, store agent.Store, model agent.Model, tools agent.
 	if store == nil || model == nil || tools == nil {
 		return nil, fmt.Errorf("%w: store, model, and tools are required", agent.ErrInvalidArgument)
 	}
+	cfg.WorkerID = strings.TrimSpace(cfg.WorkerID)
 	if cfg.WorkerID == "" {
 		cfg.WorkerID = "agent-worker"
 	}
@@ -80,6 +81,9 @@ func New(ctx context.Context, store agent.Store, model agent.Model, tools agent.
 }
 
 func validateConfig(cfg Config) error {
+	if len(cfg.WorkerID) > 128 {
+		return fmt.Errorf("%w: worker id exceeds 128 bytes", agent.ErrInvalidArgument)
+	}
 	if cfg.PollInterval <= 0 || cfg.LeaseDuration <= 0 || cfg.HeartbeatPeriod <= 0 || cfg.HeartbeatPeriod >= cfg.LeaseDuration || cfg.MaxGraphRunSteps < 1 || cfg.Limits.MaxCheckpointSize < 1024 || cfg.Limits.MaxEvidenceBytes < 256 {
 		return fmt.Errorf("%w: invalid agent runtime configuration", agent.ErrInvalidArgument)
 	}
@@ -284,7 +288,7 @@ func (s *Service) ExecuteNode(ctx context.Context, node agent.Node, state *agent
 				_ = s.store.FinishStep(ctx, run, follow, agent.StepFinish{Status: agent.StepCompleted, ResultSummary: "evidence id bound to checkpoint", Checkpoint: checkpoint, CheckpointHash: hash, CheckpointSchema: checkpointSchemaVersion, At: s.now()})
 			}
 		}
-		logger.FromContext(ctx).Info("incident agent evidence persisted", zap.String("incident_id", run.IncidentPublicID), zap.String("agent_run_id", run.PublicID), zap.String("agent_step_id", step.PublicID), zap.Int("sequence", step.Sequence), zap.String("tool", state.CurrentAction.Tool), zap.Uint64("checkpoint_version", run.CheckpointVersion))
+		logger.FromContext(ctx).Info("incident agent evidence persisted", zap.String("worker_id", s.cfg.WorkerID), zap.String("incident_id", run.IncidentPublicID), zap.String("agent_run_id", run.PublicID), zap.String("agent_step_id", step.PublicID), zap.Int("sequence", step.Sequence), zap.String("tool", state.CurrentAction.Tool), zap.Uint64("checkpoint_version", run.CheckpointVersion))
 		return state, nil
 	}
 	checkpointCtx, checkpointSpan := otel.Tracer("server-web/internal/service/agentruntime").Start(ctx, "agent.checkpoint.persist")
@@ -307,7 +311,7 @@ func (s *Service) ExecuteNode(ctx context.Context, node agent.Node, state *agent
 			s.observer.ObserveAgentEvent("validation", result)
 		}
 	}
-	logger.FromContext(ctx).Info("incident agent step completed", zap.String("incident_id", run.IncidentPublicID), zap.String("agent_run_id", run.PublicID), zap.String("agent_step_id", step.PublicID), zap.Int("sequence", step.Sequence), zap.String("tool", state.CurrentAction.Tool), zap.Uint64("checkpoint_version", run.CheckpointVersion))
+	logger.FromContext(ctx).Info("incident agent step completed", zap.String("worker_id", s.cfg.WorkerID), zap.String("incident_id", run.IncidentPublicID), zap.String("agent_run_id", run.PublicID), zap.String("agent_step_id", step.PublicID), zap.Int("sequence", step.Sequence), zap.String("tool", state.CurrentAction.Tool), zap.Uint64("checkpoint_version", run.CheckpointVersion))
 	state.Usage, state.RowVersion, state.CheckpointVersion = run.Usage, run.RowVersion, run.CheckpointVersion
 	return state, nil
 }
@@ -467,7 +471,7 @@ func (s *Service) persistNodeFailure(ctx context.Context, run *agent.Run, step *
 			s.observer.ObserveAgentEvent("budget", "runtime")
 		}
 	}
-	logger.FromContext(ctx).Warn("incident agent step failed", zap.String("incident_id", run.IncidentPublicID), zap.String("agent_run_id", run.PublicID), zap.String("agent_step_id", step.PublicID), zap.Int("sequence", step.Sequence), zap.String("failure_code", string(code)))
+	logger.FromContext(ctx).Warn("incident agent step failed", zap.String("worker_id", s.cfg.WorkerID), zap.String("incident_id", run.IncidentPublicID), zap.String("agent_run_id", run.PublicID), zap.String("agent_step_id", step.PublicID), zap.Int("sequence", step.Sequence), zap.String("failure_code", string(code)))
 	state.Usage, state.RowVersion, state.CheckpointVersion = run.Usage, run.RowVersion, run.CheckpointVersion
 	return state, nil
 }

@@ -87,7 +87,7 @@ func (r *Reranker) Rerank(ctx context.Context, query string, candidates []Search
 	sb.WriteString(query)
 	sb.WriteString("\n\nCandidates:\n")
 	for i, c := range input {
-		sb.WriteString(fmt.Sprintf("%d. Title: %s, File: %s, Score: %.2f\n", i+1, c.Title, c.File, c.Score))
+		fmt.Fprintf(&sb, "%d. Title: %s, File: %s, Score: %.2f\n", i+1, c.Title, c.File, c.Score)
 		sb.WriteString("   Snippet: ")
 		sb.WriteString(c.Snippet)
 		sb.WriteByte('\n')

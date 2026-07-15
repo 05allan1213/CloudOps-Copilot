@@ -90,6 +90,51 @@ data:
   READY_TIMEOUT_SECONDS: {{ .Values.config.readyTimeoutSeconds | quote }}
   REQUEST_TIMEOUT_SECONDS: {{ .Values.config.requestTimeoutSeconds | quote }}
   INCIDENT_AGGREGATION_WINDOW_SECONDS: {{ .Values.config.incidentAggregationWindowSeconds | quote }}
+  CHANGE_INTELLIGENCE_ENABLED: {{ .Values.changeIntelligence.enabled | quote }}
+  CHANGE_LOOKBACK: {{ .Values.changeIntelligence.lookbackSeconds | quote }}
+  CHANGE_MAX_CANDIDATES: {{ .Values.changeIntelligence.maxCandidates | quote }}
+  CHANGE_SERVICE_MAPPINGS_JSON: {{ .Values.changeIntelligence.serviceMappingsJSON | quote }}
+  GITHUB_ENABLED: {{ .Values.changeIntelligence.github.enabled | quote }}
+  GITHUB_API_BASE_URL: {{ .Values.changeIntelligence.github.apiBaseURL | quote }}
+  GITHUB_APP_ID: {{ .Values.changeIntelligence.github.appID | quote }}
+  GITHUB_INSTALLATION_ID: {{ .Values.changeIntelligence.github.installationID | quote }}
+  GITHUB_TOKEN_FILE: {{ ternary "/var/run/secrets/cloudops/github/token" "" (and .Values.changeIntelligence.github.enabled (ne .Values.changeIntelligence.github.credentialSecretName "") (eq .Values.changeIntelligence.github.appID "0")) | quote }}
+  GITHUB_PRIVATE_KEY_FILE: {{ ternary "/var/run/secrets/cloudops/github/private-key.pem" "" (and .Values.changeIntelligence.github.enabled (ne .Values.changeIntelligence.github.credentialSecretName "") (ne .Values.changeIntelligence.github.appID "0")) | quote }}
+  GITHUB_ALLOWED_OWNERS: {{ join "," .Values.changeIntelligence.github.allowedOwners | quote }}
+  GITHUB_ALLOWED_REPOSITORIES: {{ join "," .Values.changeIntelligence.github.allowedRepositories | quote }}
+  GITHUB_ALLOWED_BRANCHES: {{ join "," .Values.changeIntelligence.github.allowedBranches | quote }}
+  GITHUB_ALLOWED_PATHS: {{ join "," .Values.changeIntelligence.github.allowedPaths | quote }}
+  GITHUB_DENIED_PATH_PATTERNS: {{ join "," .Values.changeIntelligence.github.deniedPathPatterns | quote }}
+  GITHUB_MAX_DIFF_FILES: {{ .Values.changeIntelligence.github.maxDiffFiles | quote }}
+  GITHUB_MAX_DIFF_BYTES: {{ .Values.changeIntelligence.github.maxDiffBytes | quote }}
+  GITHUB_TIMEOUT: {{ .Values.changeIntelligence.github.timeoutSeconds | quote }}
+  GITHUB_MAX_RETRIES: {{ .Values.changeIntelligence.github.maxRetries | quote }}
+  ARGOCD_ENABLED: {{ .Values.changeIntelligence.argocd.enabled | quote }}
+  ARGOCD_SERVER: {{ .Values.changeIntelligence.argocd.server | quote }}
+  ARGOCD_TOKEN_FILE: {{ ternary "/var/run/secrets/cloudops/argocd/token" "" (and .Values.changeIntelligence.argocd.enabled (ne .Values.changeIntelligence.argocd.credentialSecretName "")) | quote }}
+  ARGOCD_ALLOWED_APPLICATIONS: {{ join "," .Values.changeIntelligence.argocd.allowedApplications | quote }}
+  ARGOCD_ALLOWED_PROJECTS: {{ join "," .Values.changeIntelligence.argocd.allowedProjects | quote }}
+  ARGOCD_TIMEOUT: {{ .Values.changeIntelligence.argocd.timeoutSeconds | quote }}
+  ARGOCD_MAX_RESOURCES: {{ .Values.changeIntelligence.argocd.maxResources | quote }}
+  ARGOCD_MAX_DIFF_BYTES: {{ .Values.changeIntelligence.argocd.maxDiffBytes | quote }}
+  IMAGE_REVISION_REQUIRED: {{ .Values.changeIntelligence.image.revisionRequired | quote }}
+  IMAGE_ALLOWED_REGISTRIES: {{ join "," .Values.changeIntelligence.image.allowedRegistries | quote }}
+  REGISTRY_METADATA_ENABLED: {{ .Values.changeIntelligence.registry.enabled | quote }}
+  REGISTRY_BASE_URL: {{ .Values.changeIntelligence.registry.baseURL | quote }}
+  REGISTRY_ALLOWED_HOSTS: {{ join "," .Values.changeIntelligence.registry.allowedHosts | quote }}
+  REGISTRY_ALLOWED_REPOSITORIES: {{ join "," .Values.changeIntelligence.registry.allowedRepositories | quote }}
+  REGISTRY_ALLOWED_AUTH_REALM_HOSTS: {{ join "," .Values.changeIntelligence.registry.allowedAuthRealmHosts | quote }}
+  REGISTRY_ALLOWED_REDIRECT_HOSTS: {{ join "," .Values.changeIntelligence.registry.allowedRedirectHosts | quote }}
+  OCI_ALLOWED_SOURCE_REPOSITORIES: {{ join "," .Values.changeIntelligence.registry.allowedSourceRepositories | quote }}
+  REGISTRY_BEARER_TOKEN_FILE: {{ ternary "/var/run/secrets/cloudops/registry/bearer-token" "" (and .Values.changeIntelligence.registry.enabled (eq .Values.changeIntelligence.registry.auth.mode "bearer") (ne .Values.changeIntelligence.registry.auth.credentialSecretName "")) | quote }}
+  REGISTRY_USERNAME_FILE: {{ ternary "/var/run/secrets/cloudops/registry/username" "" (and .Values.changeIntelligence.registry.enabled (eq .Values.changeIntelligence.registry.auth.mode "basic") (ne .Values.changeIntelligence.registry.auth.credentialSecretName "")) | quote }}
+  REGISTRY_PASSWORD_FILE: {{ ternary "/var/run/secrets/cloudops/registry/password" "" (and .Values.changeIntelligence.registry.enabled (eq .Values.changeIntelligence.registry.auth.mode "basic") (ne .Values.changeIntelligence.registry.auth.credentialSecretName "")) | quote }}
+  REGISTRY_TIMEOUT: {{ .Values.changeIntelligence.registry.timeoutSeconds | quote }}
+  REGISTRY_MAX_RETRIES: {{ .Values.changeIntelligence.registry.maxRetries | quote }}
+  REGISTRY_MANIFEST_MAX_BYTES: {{ .Values.changeIntelligence.registry.manifestMaxBytes | quote }}
+  REGISTRY_CONFIG_MAX_BYTES: {{ .Values.changeIntelligence.registry.configMaxBytes | quote }}
+  REGISTRY_CACHE_TTL_SECONDS: {{ .Values.changeIntelligence.registry.cacheTTLSeconds | quote }}
+  REGISTRY_CACHE_MAX_ITEMS: {{ .Values.changeIntelligence.registry.cacheMaxItems | quote }}
   HOSTS_CACHE_TTL_SECONDS: {{ .Values.config.hostsCacheTTLSeconds | quote }}
   TRACE_OTLP_ENDPOINT: {{ .Values.config.traceOtlpEndpoint | quote }}
   TRACE_SAMPLE_RATE: {{ .Values.config.traceSampleRate | quote }}

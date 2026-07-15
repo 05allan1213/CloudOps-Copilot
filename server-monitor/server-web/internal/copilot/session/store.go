@@ -17,7 +17,7 @@ const (
 	DefaultMaxMessages   = 50
 )
 
-var ErrUnavailable = errors.New("Copilot 会话存储不可用")
+var ErrUnavailable = errors.New("copilot 会话存储不可用")
 
 type RedisClient interface {
 	Enabled() bool

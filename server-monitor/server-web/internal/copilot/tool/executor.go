@@ -103,6 +103,7 @@ type Options struct {
 	Timeout         time.Duration
 	LogArgs         bool
 	Now             func() time.Time
+	AdditionalTools []Tool
 }
 
 type DisabledExecutor struct{}
@@ -178,6 +179,14 @@ func newExecutor(options Options, registry Registry) (*Executor, error) {
 	}
 	if err := registerReadOnlyTools(registry, executor); err != nil {
 		return nil, fmt.Errorf("register copilot read-only tools: %w", err)
+	}
+	for _, additional := range options.AdditionalTools {
+		if additional == nil || !additional.Schema().ReadOnly || additional.Schema().RiskLevel == RiskLevelHigh {
+			return nil, fmt.Errorf("register additional read-only tool: %w", ErrPermissionDenied)
+		}
+		if err := registry.Register(additional); err != nil {
+			return nil, fmt.Errorf("register additional read-only tool: %w", err)
+		}
 	}
 	executor.registry = registry
 	return executor, nil
