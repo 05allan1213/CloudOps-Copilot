@@ -154,6 +154,7 @@ export interface K8sNodeQuery {
 
 /** Query parameters for listing pods */
 export interface K8sPodQuery {
+  cluster?: string;
   namespace?: string;
   phase?: string;
   search?: string;
@@ -162,6 +163,7 @@ export interface K8sPodQuery {
 
 /** Query parameters for listing deployments */
 export interface K8sDeploymentQuery {
+  cluster?: string;
   namespace?: string;
   search?: string;
   limit?: number;
@@ -169,6 +171,7 @@ export interface K8sDeploymentQuery {
 
 /** Query parameters for listing services */
 export interface K8sServiceQuery {
+  cluster?: string;
   namespace?: string;
   type?: string;
   search?: string;
@@ -177,6 +180,7 @@ export interface K8sServiceQuery {
 
 /** Query parameters for listing events */
 export interface K8sEventQuery {
+  cluster?: string;
   namespace?: string;
   type?: string;
   search?: string;

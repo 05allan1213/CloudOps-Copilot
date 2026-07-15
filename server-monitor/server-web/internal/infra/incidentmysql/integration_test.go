@@ -740,6 +740,15 @@ func TestMySQLMigrationRepositoryAndConcurrentIngestion(t *testing.T) {
 		if page.Total != 1 || len(page.Items) != 1 {
 			t.Fatalf("unexpected filtered page: %+v", page)
 		}
+		createdFrom := remediationItem.CreatedAt.Add(-time.Second)
+		createdTo := remediationItem.CreatedAt.Add(time.Second)
+		workbenchPage, err := store.List(ctx, domain.ListFilter{Environment: remediationItem.Environment, Workload: remediationItem.TargetName, Search: "isolated Phase 4", CreatedFrom: &createdFrom, CreatedTo: &createdTo, Page: 1, PageSize: 10})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if workbenchPage.Total != 1 || len(workbenchPage.Items) != 1 || workbenchPage.Items[0].PublicID != remediationItem.PublicID {
+			t.Fatalf("unexpected Workbench filtered page: %+v", workbenchPage)
+		}
 	})
 
 	if err := goose.DownToContext(ctx, sqlDB, ".", 0); err != nil {

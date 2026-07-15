@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"mime"
 	"net/http"
 	"strconv"
@@ -249,7 +250,42 @@ func (h *Handler) requireIncidentService(c *gin.Context) bool {
 }
 
 func parseIncidentFilter(c *gin.Context) (domain.ListFilter, error) {
-	filter := domain.ListFilter{Page: 1, PageSize: 20, Cluster: strings.TrimSpace(c.Query("cluster")), Namespace: strings.TrimSpace(c.Query("namespace")), ServiceName: strings.TrimSpace(c.Query("service"))}
+	for name, maximum := range map[string]int{"cluster": 128, "namespace": 128, "service": 128, "environment": 128, "workload": 253, "q": 128} {
+		if len(strings.TrimSpace(c.Query(name))) > maximum {
+			return domain.ListFilter{}, errors.Join(domain.ErrInvalidArgument, fmt.Errorf("%s exceeds maximum length %d", name, maximum))
+		}
+	}
+	filter := domain.ListFilter{
+		Page:        1,
+		PageSize:    20,
+		Cluster:     boundedQuery(c.Query("cluster"), 128),
+		Namespace:   boundedQuery(c.Query("namespace"), 128),
+		ServiceName: boundedQuery(c.Query("service"), 128),
+		Environment: boundedQuery(c.Query("environment"), 128),
+		Workload:    boundedQuery(c.Query("workload"), 253),
+		Search:      boundedQuery(c.Query("q"), 128),
+	}
+	for _, value := range []struct {
+		raw    string
+		target **time.Time
+		name   string
+	}{
+		{raw: c.Query("created_from"), target: &filter.CreatedFrom, name: "created_from"},
+		{raw: c.Query("created_to"), target: &filter.CreatedTo, name: "created_to"},
+	} {
+		if strings.TrimSpace(value.raw) == "" {
+			continue
+		}
+		parsed, parseErr := time.Parse(time.RFC3339, value.raw)
+		if parseErr != nil {
+			return filter, errors.Join(domain.ErrInvalidArgument, fmt.Errorf("%s must be RFC3339", value.name))
+		}
+		utc := parsed.UTC()
+		*value.target = &utc
+	}
+	if filter.CreatedFrom != nil && filter.CreatedTo != nil && filter.CreatedFrom.After(*filter.CreatedTo) {
+		return filter, errors.Join(domain.ErrInvalidArgument, errors.New("created_from must not be after created_to"))
+	}
 	var err error
 	if raw := c.Query("page"); raw != "" {
 		filter.Page, err = strconv.Atoi(raw)
@@ -280,6 +316,10 @@ func parseIncidentFilter(c *gin.Context) (domain.ListFilter, error) {
 		}
 	}
 	return filter, nil
+}
+
+func boundedQuery(value string, maximum int) string {
+	return strings.TrimSpace(value)
 }
 
 func writeIncidentError(c *gin.Context, err error) {

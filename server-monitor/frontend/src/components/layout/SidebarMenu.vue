@@ -72,6 +72,7 @@ interface MenuItem {
 
 const menuItems: MenuItem[] = [
   { index: "/", title: "总览", icon: "Monitor", group: "monitor" },
+  { index: "/incidents", title: "Incident Workbench", icon: "FirstAidKit", group: "incident" },
   { index: "/hosts", title: "主机", icon: "Monitor", group: "monitor" },
   { index: "/status", title: "状态", icon: "CircleCheck", group: "monitor" },
   {
@@ -95,26 +96,26 @@ const menuItems: MenuItem[] = [
   },
   {
     index: "alert-group",
-    title: "告警",
+    title: "告警（Legacy）",
     icon: "Bell",
     group: "alert",
     children: [
-      { index: "/alerts", title: "当前告警", icon: "Bell", group: "alert" },
+      { index: "/alerts", title: "当前告警（Legacy）", icon: "Bell", group: "alert" },
       { index: "/alert-histories", title: "历史告警", icon: "Clock", group: "alert" },
     ],
   },
   {
     index: "ai-group",
-    title: "智能",
+    title: "智能（Legacy）",
     icon: "ChatDotRound",
     group: "ai",
     children: [
-      { index: "/copilot", title: "Copilot", icon: "ChatDotRound", group: "ai" },
-      { index: "/diagnosis", title: "诊断", icon: "FirstAidKit", group: "ai" },
+      { index: "/copilot", title: "Copilot（Legacy）", icon: "ChatDotRound", group: "ai" },
+      { index: "/diagnosis", title: "诊断（Legacy）", icon: "FirstAidKit", group: "ai" },
     ],
   },
-  { index: "/actions", title: "动作", icon: "Operation", group: "admin", admin: true },
-  { index: "/audit-logs", title: "审计日志", icon: "Document", group: "admin", admin: true },
+  { index: "/actions", title: "动作（Legacy）", icon: "Operation", group: "admin", admin: true },
+  { index: "/audit-logs", title: "审计日志（Legacy）", icon: "Document", group: "admin", admin: true },
   {
     index: "settings-group",
     title: "设置",
@@ -150,6 +151,7 @@ const activeMenu = computed(() => {
   const path = route.path;
 
   if (path.startsWith("/hosts/")) return "/hosts";
+  if (path.startsWith("/incidents/")) return "/incidents";
   if (path.startsWith("/k8s/nodes/")) return "/k8s/nodes";
   if (path.startsWith("/diagnosis/")) return "/diagnosis";
   if (path.startsWith("/actions/")) return "/actions";

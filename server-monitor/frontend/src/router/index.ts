@@ -19,6 +19,18 @@ export const router = createRouter({
       meta: { title: "总览", icon: "Monitor", group: "monitor" },
     },
     {
+      path: "/incidents",
+      name: "incidents",
+      component: () => import("../views/incidents/IncidentListView.vue"),
+      meta: { title: "Incident Workbench", icon: "FirstAidKit", group: "incident" },
+    },
+    {
+      path: "/incidents/:incidentId",
+      name: "incident-detail",
+      component: () => import("../views/incidents/IncidentDetailView.vue"),
+      meta: { title: "Incident Detail", hidden: true },
+    },
+    {
       path: "/hosts",
       name: "hosts",
       component: () => import("../pages/HostsPage.vue"),
@@ -41,7 +53,7 @@ export const router = createRouter({
       path: "/alerts",
       name: "alerts",
       component: () => import("../pages/AlertsPage.vue"),
-      meta: { title: "当前告警", icon: "Bell", group: "alert" },
+      meta: { title: "当前告警（Legacy）", icon: "Bell", group: "alert", legacy: true },
     },
     {
       path: "/alert-histories",
@@ -53,13 +65,13 @@ export const router = createRouter({
       path: "/copilot",
       name: "copilot",
       component: () => import("../pages/CopilotPage.vue"),
-      meta: { title: "Copilot", icon: "ChatDotRound", group: "ai", fullBleed: true },
+      meta: { title: "Copilot（Legacy）", icon: "ChatDotRound", group: "ai", fullBleed: true, legacy: true },
     },
     {
       path: "/diagnosis",
       name: "diagnosis",
       component: () => import("../pages/DiagnosisListPage.vue"),
-      meta: { title: "诊断", icon: "FirstAidKit", group: "ai" },
+      meta: { title: "诊断（Legacy）", icon: "FirstAidKit", group: "ai", legacy: true },
     },
     {
       path: "/diagnosis/:id",
@@ -72,7 +84,7 @@ export const router = createRouter({
       path: "/actions",
       name: "actions",
       component: () => import("../pages/ActionsPage.vue"),
-      meta: { admin: true, title: "动作", icon: "Operation", group: "admin" },
+      meta: { admin: true, title: "动作（Legacy）", icon: "Operation", group: "admin", legacy: true },
     },
     {
       path: "/actions/:id",
@@ -85,7 +97,7 @@ export const router = createRouter({
       path: "/audit-logs",
       name: "audit-logs",
       component: () => import("../pages/AuditLogsPage.vue"),
-      meta: { admin: true, title: "审计日志", icon: "Document", group: "admin" },
+      meta: { admin: true, title: "审计日志（Legacy）", icon: "Document", group: "admin", legacy: true },
     },
     {
       path: "/settings",

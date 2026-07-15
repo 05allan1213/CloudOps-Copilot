@@ -11,6 +11,20 @@ const httpClient = axios.create({
   timeout: 10000,
 });
 
+export class ApiError extends Error {
+  readonly status: number | null;
+
+  constructor(message: string, status: number | null = null) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+export function isApiError(error: unknown): error is ApiError {
+  return error instanceof ApiError;
+}
+
 httpClient.interceptors.request.use((config) => {
   const token = getStoredToken();
   if (token) {
@@ -188,16 +202,16 @@ export async function getApiResponse<T>(
 function normalizeAxiosError(err: AxiosError<ApiResponse<unknown>>): Error {
   const payloadError = err.response?.data?.error;
   if (payloadError) {
-    return new Error(payloadError);
+    return new ApiError(payloadError, err.response?.status ?? null);
   }
 
   if (err.response) {
-    return new Error(`Request failed with status ${err.response.status}`);
+    return new ApiError(`Request failed with status ${err.response.status}`, err.response.status);
   }
 
   if (err.code === AxiosError.ETIMEDOUT || err.code === "ECONNABORTED") {
-    return new Error("Request timed out");
+    return new ApiError("Request timed out");
   }
 
-  return new Error(err.message || "Request failed");
+  return new ApiError(err.message || "Request failed");
 }

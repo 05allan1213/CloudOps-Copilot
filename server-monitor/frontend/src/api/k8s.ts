@@ -111,6 +111,10 @@ export async function fetchK8sPods(
 ): Promise<K8sPodListResult> {
   const params: Record<string, string> = {};
 
+  if (query.cluster) {
+    params.cluster = query.cluster;
+  }
+
   if (query.namespace) {
     params.namespace = query.namespace;
   }
@@ -138,6 +142,10 @@ export async function fetchK8sDeployments(
 ): Promise<K8sDeploymentListResult> {
   const params: Record<string, string> = {};
 
+  if (query.cluster) {
+    params.cluster = query.cluster;
+  }
+
   if (query.namespace) {
     params.namespace = query.namespace;
   }
@@ -160,6 +168,10 @@ export async function fetchK8sServices(
   query: K8sServiceQuery = {},
 ): Promise<K8sServiceListResult> {
   const params: Record<string, string> = {};
+
+  if (query.cluster) {
+    params.cluster = query.cluster;
+  }
 
   if (query.namespace) {
     params.namespace = query.namespace;
@@ -186,6 +198,10 @@ export async function fetchK8sEvents(
   query: K8sEventQuery = {},
 ): Promise<K8sEventListResult> {
   const params: Record<string, string> = {};
+
+  if (query.cluster) {
+    params.cluster = query.cluster;
+  }
 
   if (query.namespace) {
     params.namespace = query.namespace;

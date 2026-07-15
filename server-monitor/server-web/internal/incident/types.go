@@ -243,6 +243,11 @@ type ListFilter struct {
 	Cluster     string
 	Namespace   string
 	ServiceName string
+	Environment string
+	Workload    string
+	Search      string
+	CreatedFrom *time.Time
+	CreatedTo   *time.Time
 	Page        int
 	PageSize    int
 }

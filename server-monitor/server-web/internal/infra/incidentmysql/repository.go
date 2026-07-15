@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	drivermysql "github.com/go-sql-driver/mysql"
@@ -185,6 +186,22 @@ func (s *Store) List(ctx context.Context, filter domain.ListFilter) (domain.Page
 	if filter.ServiceName != "" {
 		query = query.Where("service_name = ?", filter.ServiceName)
 	}
+	if filter.Environment != "" {
+		query = query.Where("environment = ?", filter.Environment)
+	}
+	if filter.Workload != "" {
+		query = query.Where("target_name = ?", filter.Workload)
+	}
+	if filter.Search != "" {
+		pattern := "%" + escapeLike(filter.Search) + "%"
+		query = query.Where("(summary LIKE ? ESCAPE '\\\\' OR service_name LIKE ? ESCAPE '\\\\' OR target_name LIKE ? ESCAPE '\\\\' OR namespace LIKE ? ESCAPE '\\\\')", pattern, pattern, pattern, pattern)
+	}
+	if filter.CreatedFrom != nil {
+		query = query.Where("created_at >= ?", filter.CreatedFrom.UTC())
+	}
+	if filter.CreatedTo != nil {
+		query = query.Where("created_at <= ?", filter.CreatedTo.UTC())
+	}
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return domain.Page{}, classify(err)
@@ -198,6 +215,11 @@ func (s *Store) List(ctx context.Context, filter domain.ListFilter) (domain.Page
 		items = append(items, incidentFromRow(row))
 	}
 	return domain.Page{Items: items, Total: total, Page: filter.Page, PageSize: filter.PageSize}, nil
+}
+
+func escapeLike(value string) string {
+	replacer := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return replacer.Replace(value)
 }
 
 // CreateIfAbsent inserts a signal at most once by source and source event ID.
