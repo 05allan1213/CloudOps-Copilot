@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
@@ -11,83 +12,90 @@ import (
 )
 
 type Metrics struct {
-	registry               *prometheus.Registry
-	requestsTotal          *prometheus.CounterVec
-	requestDuration        *prometheus.HistogramVec
-	websocketConnections   prometheus.Gauge
-	kafkaAlertEvents       *prometheus.CounterVec
-	kafkaMessages          *prometheus.CounterVec
-	actionEvents           *prometheus.CounterVec
-	actionDuration         *prometheus.HistogramVec
-	copilotToolEvents      *prometheus.CounterVec
-	copilotToolDuration    *prometheus.HistogramVec
-	diagnosisConfidence    prometheus.Histogram
-	diagnosisLLMTotal      *prometheus.CounterVec
-	diagnosisDuration      *prometheus.HistogramVec
-	llmRequestTotal        *prometheus.CounterVec
-	llmRequestDuration     *prometheus.HistogramVec
-	llmTokensTotal         *prometheus.CounterVec
-	nluClassifyTotal       *prometheus.CounterVec
-	nluClassifyDuration    *prometheus.HistogramVec
-	ragSearchTotal         *prometheus.CounterVec
-	ragSearchScore         prometheus.Histogram
-	ragSearchDuration      prometheus.Histogram
-	feedbackTotal          *prometheus.CounterVec
-	feedbackCommentTotal   prometheus.Counter
-	incidentSignals        *prometheus.CounterVec
-	incidentsCreated       prometheus.Counter
-	incidentsUpdated       prometheus.Counter
-	incidentTransitions    *prometheus.CounterVec
-	incidentErrors         *prometheus.CounterVec
-	incidentDuration       *prometheus.HistogramVec
-	outboxPending          prometheus.Gauge
-	agentRuns              *prometheus.CounterVec
-	agentRunDuration       *prometheus.HistogramVec
-	agentSteps             *prometheus.CounterVec
-	agentStepDuration      *prometheus.HistogramVec
-	agentOperations        *prometheus.CounterVec
-	agentOperationDuration *prometheus.HistogramVec
-	agentRetries           *prometheus.CounterVec
-	agentLeases            *prometheus.CounterVec
-	agentCheckpoints       *prometheus.CounterVec
-	agentBudgets           *prometheus.CounterVec
-	agentEvidence          *prometheus.CounterVec
-	agentValidation        *prometheus.CounterVec
-	agentActiveRuns        *prometheus.GaugeVec
-	changeCorrelation      *prometheus.CounterVec
-	changeCorrelationTime  prometheus.Histogram
-	changeCandidates       *prometheus.CounterVec
-	changeEvidence         *prometheus.CounterVec
-	githubRequests         *prometheus.CounterVec
-	githubRequestTime      *prometheus.HistogramVec
-	githubRateLimits       *prometheus.CounterVec
-	githubDiffTruncations  *prometheus.CounterVec
-	argoRequests           *prometheus.CounterVec
-	argoRequestTime        *prometheus.HistogramVec
-	argoDiffTruncations    *prometheus.CounterVec
-	imageResolution        *prometheus.CounterVec
-	registryRequests       *prometheus.CounterVec
-	registryRequestTime    *prometheus.HistogramVec
-	registryResponseLimits *prometheus.CounterVec
-	registryCache          *prometheus.CounterVec
-	imageConflicts         *prometheus.CounterVec
-	remediationPlans       *prometheus.CounterVec
-	changeRequestDelivery  *prometheus.CounterVec
-	githubWriteRequests    *prometheus.CounterVec
-	deliveryObservations   *prometheus.CounterVec
-	deliveryTransitions    *prometheus.CounterVec
-	deliveryFailures       *prometheus.CounterVec
-	deliveryDuration       *prometheus.HistogramVec
-	verificationRuns       *prometheus.CounterVec
-	verificationChecks     *prometheus.CounterVec
-	verificationFailures   *prometheus.CounterVec
-	verificationDuration   *prometheus.HistogramVec
-	verificationPassed     prometheus.Counter
-	verificationFailed     prometheus.Counter
-	verificationTimedOut   prometheus.Counter
-	verificationTakeovers  prometheus.Counter
-	incidentsResolved      prometheus.Counter
-	incidentsReopened      prometheus.Counter
+	registry                        *prometheus.Registry
+	requestsTotal                   *prometheus.CounterVec
+	requestDuration                 *prometheus.HistogramVec
+	websocketConnections            prometheus.Gauge
+	kafkaAlertEvents                *prometheus.CounterVec
+	kafkaMessages                   *prometheus.CounterVec
+	actionEvents                    *prometheus.CounterVec
+	actionDuration                  *prometheus.HistogramVec
+	copilotToolEvents               *prometheus.CounterVec
+	copilotToolDuration             *prometheus.HistogramVec
+	diagnosisConfidence             prometheus.Histogram
+	diagnosisLLMTotal               *prometheus.CounterVec
+	diagnosisDuration               *prometheus.HistogramVec
+	llmRequestTotal                 *prometheus.CounterVec
+	llmRequestDuration              *prometheus.HistogramVec
+	llmTokensTotal                  *prometheus.CounterVec
+	nluClassifyTotal                *prometheus.CounterVec
+	nluClassifyDuration             *prometheus.HistogramVec
+	ragSearchTotal                  *prometheus.CounterVec
+	ragSearchScore                  prometheus.Histogram
+	ragSearchDuration               prometheus.Histogram
+	feedbackTotal                   *prometheus.CounterVec
+	feedbackCommentTotal            prometheus.Counter
+	incidentSignals                 *prometheus.CounterVec
+	incidentsCreated                prometheus.Counter
+	incidentsUpdated                prometheus.Counter
+	incidentTransitions             *prometheus.CounterVec
+	incidentErrors                  *prometheus.CounterVec
+	incidentDuration                *prometheus.HistogramVec
+	outboxPending                   prometheus.Gauge
+	agentRuns                       *prometheus.CounterVec
+	agentRunDuration                *prometheus.HistogramVec
+	agentSteps                      *prometheus.CounterVec
+	agentStepDuration               *prometheus.HistogramVec
+	agentOperations                 *prometheus.CounterVec
+	agentOperationDuration          *prometheus.HistogramVec
+	agentRetries                    *prometheus.CounterVec
+	agentLeases                     *prometheus.CounterVec
+	agentCheckpoints                *prometheus.CounterVec
+	agentBudgets                    *prometheus.CounterVec
+	agentEvidence                   *prometheus.CounterVec
+	agentValidation                 *prometheus.CounterVec
+	agentActiveRuns                 *prometheus.GaugeVec
+	changeCorrelation               *prometheus.CounterVec
+	changeCorrelationTime           prometheus.Histogram
+	changeCandidates                *prometheus.CounterVec
+	changeEvidence                  *prometheus.CounterVec
+	githubRequests                  *prometheus.CounterVec
+	githubRequestTime               *prometheus.HistogramVec
+	githubRateLimits                *prometheus.CounterVec
+	githubDiffTruncations           *prometheus.CounterVec
+	argoRequests                    *prometheus.CounterVec
+	argoRequestTime                 *prometheus.HistogramVec
+	argoDiffTruncations             *prometheus.CounterVec
+	imageResolution                 *prometheus.CounterVec
+	registryRequests                *prometheus.CounterVec
+	registryRequestTime             *prometheus.HistogramVec
+	registryResponseLimits          *prometheus.CounterVec
+	registryCache                   *prometheus.CounterVec
+	imageConflicts                  *prometheus.CounterVec
+	remediationPlans                *prometheus.CounterVec
+	changeRequestDelivery           *prometheus.CounterVec
+	githubWriteRequests             *prometheus.CounterVec
+	deliveryObservations            *prometheus.CounterVec
+	deliveryTransitions             *prometheus.CounterVec
+	deliveryFailures                *prometheus.CounterVec
+	deliveryDuration                *prometheus.HistogramVec
+	verificationRuns                *prometheus.CounterVec
+	verificationChecks              *prometheus.CounterVec
+	verificationFailures            *prometheus.CounterVec
+	verificationDuration            *prometheus.HistogramVec
+	verificationPassed              prometheus.Counter
+	verificationFailed              prometheus.Counter
+	verificationTimedOut            prometheus.Counter
+	verificationTakeovers           prometheus.Counter
+	incidentsResolved               prometheus.Counter
+	incidentsReopened               prometheus.Counter
+	verificationProviderRequests    *prometheus.CounterVec
+	verificationProviderFailures    *prometheus.CounterVec
+	verificationProviderDuration    *prometheus.HistogramVec
+	verificationObservabilityChecks *prometheus.CounterVec
+	verificationStabilityResets     *prometheus.CounterVec
+	postmortemsGenerated            *prometheus.CounterVec
+	postmortemGenerationFailures    prometheus.Counter
 }
 
 func NewMetrics() *Metrics {
@@ -219,53 +227,60 @@ func NewMetrics() *Metrics {
 			Name: "cloudops_outbox_pending_total",
 			Help: "Current number of unpublished transactional outbox records.",
 		}),
-		agentRuns:              prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cloudops_agent_runs_total", Help: "Durable incident Agent runs by bounded terminal or start status."}, []string{"status"}),
-		agentRunDuration:       prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "cloudops_agent_run_duration_seconds", Help: "Incident Agent run duration.", Buckets: []float64{.1, .25, .5, 1, 2.5, 5, 10, 30, 60, 120}}, []string{"status"}),
-		agentSteps:             prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cloudops_agent_steps_total", Help: "Durable Agent steps by bounded node and status."}, []string{"node", "status"}),
-		agentStepDuration:      prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "cloudops_agent_step_duration_seconds", Help: "Agent step duration.", Buckets: []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 15}}, []string{"node", "status"}),
-		agentOperations:        prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cloudops_agent_operations_total", Help: "Agent tool and model operations."}, []string{"kind", "name", "result"}),
-		agentOperationDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "cloudops_agent_operation_duration_seconds", Help: "Agent tool and model operation duration.", Buckets: []float64{.01, .025, .05, .1, .25, .5, 1, 2.5, 5, 15, 30, 60}}, []string{"kind", "name", "result"}),
-		agentRetries:           prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cloudops_agent_retries_total", Help: "Persisted Agent retries by bounded reason."}, []string{"reason"}),
-		agentLeases:            prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cloudops_agent_leases_total", Help: "Agent lease lifecycle events."}, []string{"event"}),
-		agentCheckpoints:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cloudops_agent_checkpoints_total", Help: "Agent checkpoint lifecycle events."}, []string{"event"}),
-		agentBudgets:           prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cloudops_agent_budget_exceeded_total", Help: "Agent budget exhaustion by bounded budget kind."}, []string{"budget"}),
-		agentEvidence:          prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cloudops_agent_evidence_total", Help: "Agent evidence persistence results."}, []string{"result"}),
-		agentValidation:        prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cloudops_agent_diagnosis_validation_total", Help: "Deterministic diagnosis validation results."}, []string{"result"}),
-		agentActiveRuns:        prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "cloudops_agent_runs_active", Help: "Locally observed pending and running Agent runs."}, []string{"status"}),
-		changeCorrelation:      prometheus.NewCounterVec(prometheus.CounterOpts{Name: "change_correlation_total", Help: "Deterministic change correlation attempts by bounded result."}, []string{"result"}),
-		changeCorrelationTime:  prometheus.NewHistogram(prometheus.HistogramOpts{Name: "change_correlation_duration_seconds", Help: "Deterministic change correlation duration.", Buckets: []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1}}),
-		changeCandidates:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "change_candidates_total", Help: "Persisted change candidates by bounded source."}, []string{"source"}),
-		changeEvidence:         prometheus.NewCounterVec(prometheus.CounterOpts{Name: "change_evidence_total", Help: "Change evidence observations by bounded source and result."}, []string{"source", "result"}),
-		githubRequests:         prometheus.NewCounterVec(prometheus.CounterOpts{Name: "github_requests_total", Help: "Read-only GitHub API requests by bounded operation and result."}, []string{"operation", "result"}),
-		githubRequestTime:      prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "github_request_duration_seconds", Help: "Read-only GitHub API request duration.", Buckets: []float64{.01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10}}, []string{"operation"}),
-		githubRateLimits:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "github_rate_limit_events_total", Help: "GitHub rate-limit events by bounded reason."}, []string{"reason"}),
-		githubDiffTruncations:  prometheus.NewCounterVec(prometheus.CounterOpts{Name: "github_diff_truncations_total", Help: "GitHub diff truncations by bounded reason."}, []string{"reason"}),
-		argoRequests:           prometheus.NewCounterVec(prometheus.CounterOpts{Name: "argocd_requests_total", Help: "Read-only Argo CD API requests by bounded operation and result."}, []string{"operation", "result"}),
-		argoRequestTime:        prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "argocd_request_duration_seconds", Help: "Read-only Argo CD API request duration.", Buckets: []float64{.01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10}}, []string{"operation"}),
-		argoDiffTruncations:    prometheus.NewCounterVec(prometheus.CounterOpts{Name: "argocd_diff_truncations_total", Help: "Argo CD resource diff truncations by bounded reason."}, []string{"reason"}),
-		imageResolution:        prometheus.NewCounterVec(prometheus.CounterOpts{Name: "image_revision_resolution_total", Help: "Image revision resolution attempts by bounded result."}, []string{"result"}),
-		registryRequests:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "registry_requests_total", Help: "Read-only registry requests by bounded operation and result."}, []string{"operation", "result"}),
-		registryRequestTime:    prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "registry_request_duration_seconds", Help: "Read-only registry request duration.", Buckets: []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10}}, []string{"operation"}),
-		registryResponseLimits: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "registry_response_limit_total", Help: "Registry response byte-limit events by bounded response kind."}, []string{"kind"}),
-		registryCache:          prometheus.NewCounterVec(prometheus.CounterOpts{Name: "registry_cache_total", Help: "Registry metadata cache events by bounded result."}, []string{"result"}),
-		imageConflicts:         prometheus.NewCounterVec(prometheus.CounterOpts{Name: "image_resolution_conflicts_total", Help: "Image resolution conflicts by bounded kind."}, []string{"kind"}),
-		remediationPlans:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "remediation_plans_total", Help: "Remediation plans by bounded lifecycle status."}, []string{"status"}),
-		changeRequestDelivery:  prometheus.NewCounterVec(prometheus.CounterOpts{Name: "change_request_delivery_total", Help: "ChangeRequest delivery outcomes."}, []string{"result"}),
-		githubWriteRequests:    prometheus.NewCounterVec(prometheus.CounterOpts{Name: "github_write_requests_total", Help: "Constrained GitHub write adapter requests."}, []string{"operation", "result"}),
-		deliveryObservations:   prometheus.NewCounterVec(prometheus.CounterOpts{Name: "delivery_observations_total", Help: "Read-only delivery observations by bounded provider and result."}, []string{"provider", "result"}),
-		deliveryTransitions:    prometheus.NewCounterVec(prometheus.CounterOpts{Name: "delivery_state_transitions_total", Help: "Delivery state transitions."}, []string{"from", "to"}),
-		deliveryFailures:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "delivery_observation_failures_total", Help: "Delivery observation failures by bounded provider category."}, []string{"provider"}),
-		deliveryDuration:       prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "delivery_duration_seconds", Help: "Delivery duration by bounded terminal result.", Buckets: []float64{1, 5, 15, 30, 60, 120, 300, 600, 1800, 3600}}, []string{"result"}),
-		verificationRuns:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "verification_runs_total", Help: "Verification runs by bounded status."}, []string{"status"}),
-		verificationChecks:     prometheus.NewCounterVec(prometheus.CounterOpts{Name: "verification_checks_total", Help: "Verification checks by bounded type and status."}, []string{"type", "status"}),
-		verificationFailures:   prometheus.NewCounterVec(prometheus.CounterOpts{Name: "verification_check_failures_total", Help: "Verification check failures by bounded type."}, []string{"type"}),
-		verificationDuration:   prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "verification_run_duration_seconds", Help: "Verification run duration by bounded terminal status.", Buckets: []float64{1, 5, 15, 30, 60, 120, 300, 600, 1800, 3600}}, []string{"status"}),
-		verificationPassed:     prometheus.NewCounter(prometheus.CounterOpts{Name: "verification_passed_total", Help: "Verification runs that passed."}),
-		verificationFailed:     prometheus.NewCounter(prometheus.CounterOpts{Name: "verification_failed_total", Help: "Verification runs that failed."}),
-		verificationTimedOut:   prometheus.NewCounter(prometheus.CounterOpts{Name: "verification_timed_out_total", Help: "Verification runs that timed out."}),
-		verificationTakeovers:  prometheus.NewCounter(prometheus.CounterOpts{Name: "verification_lease_takeovers_total", Help: "Verification lease takeovers."}),
-		incidentsResolved:      prometheus.NewCounter(prometheus.CounterOpts{Name: "incidents_resolved_after_verification_total", Help: "Incidents resolved after deterministic verification."}),
-		incidentsReopened:      prometheus.NewCounter(prometheus.CounterOpts{Name: "incidents_reopened_after_verification_total", Help: "Incidents returned to investigation after failed verification."}),
+		agentRuns:                       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cloudops_agent_runs_total", Help: "Durable incident Agent runs by bounded terminal or start status."}, []string{"status"}),
+		agentRunDuration:                prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "cloudops_agent_run_duration_seconds", Help: "Incident Agent run duration.", Buckets: []float64{.1, .25, .5, 1, 2.5, 5, 10, 30, 60, 120}}, []string{"status"}),
+		agentSteps:                      prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cloudops_agent_steps_total", Help: "Durable Agent steps by bounded node and status."}, []string{"node", "status"}),
+		agentStepDuration:               prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "cloudops_agent_step_duration_seconds", Help: "Agent step duration.", Buckets: []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 15}}, []string{"node", "status"}),
+		agentOperations:                 prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cloudops_agent_operations_total", Help: "Agent tool and model operations."}, []string{"kind", "name", "result"}),
+		agentOperationDuration:          prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "cloudops_agent_operation_duration_seconds", Help: "Agent tool and model operation duration.", Buckets: []float64{.01, .025, .05, .1, .25, .5, 1, 2.5, 5, 15, 30, 60}}, []string{"kind", "name", "result"}),
+		agentRetries:                    prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cloudops_agent_retries_total", Help: "Persisted Agent retries by bounded reason."}, []string{"reason"}),
+		agentLeases:                     prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cloudops_agent_leases_total", Help: "Agent lease lifecycle events."}, []string{"event"}),
+		agentCheckpoints:                prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cloudops_agent_checkpoints_total", Help: "Agent checkpoint lifecycle events."}, []string{"event"}),
+		agentBudgets:                    prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cloudops_agent_budget_exceeded_total", Help: "Agent budget exhaustion by bounded budget kind."}, []string{"budget"}),
+		agentEvidence:                   prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cloudops_agent_evidence_total", Help: "Agent evidence persistence results."}, []string{"result"}),
+		agentValidation:                 prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cloudops_agent_diagnosis_validation_total", Help: "Deterministic diagnosis validation results."}, []string{"result"}),
+		agentActiveRuns:                 prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "cloudops_agent_runs_active", Help: "Locally observed pending and running Agent runs."}, []string{"status"}),
+		changeCorrelation:               prometheus.NewCounterVec(prometheus.CounterOpts{Name: "change_correlation_total", Help: "Deterministic change correlation attempts by bounded result."}, []string{"result"}),
+		changeCorrelationTime:           prometheus.NewHistogram(prometheus.HistogramOpts{Name: "change_correlation_duration_seconds", Help: "Deterministic change correlation duration.", Buckets: []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1}}),
+		changeCandidates:                prometheus.NewCounterVec(prometheus.CounterOpts{Name: "change_candidates_total", Help: "Persisted change candidates by bounded source."}, []string{"source"}),
+		changeEvidence:                  prometheus.NewCounterVec(prometheus.CounterOpts{Name: "change_evidence_total", Help: "Change evidence observations by bounded source and result."}, []string{"source", "result"}),
+		githubRequests:                  prometheus.NewCounterVec(prometheus.CounterOpts{Name: "github_requests_total", Help: "Read-only GitHub API requests by bounded operation and result."}, []string{"operation", "result"}),
+		githubRequestTime:               prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "github_request_duration_seconds", Help: "Read-only GitHub API request duration.", Buckets: []float64{.01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10}}, []string{"operation"}),
+		githubRateLimits:                prometheus.NewCounterVec(prometheus.CounterOpts{Name: "github_rate_limit_events_total", Help: "GitHub rate-limit events by bounded reason."}, []string{"reason"}),
+		githubDiffTruncations:           prometheus.NewCounterVec(prometheus.CounterOpts{Name: "github_diff_truncations_total", Help: "GitHub diff truncations by bounded reason."}, []string{"reason"}),
+		argoRequests:                    prometheus.NewCounterVec(prometheus.CounterOpts{Name: "argocd_requests_total", Help: "Read-only Argo CD API requests by bounded operation and result."}, []string{"operation", "result"}),
+		argoRequestTime:                 prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "argocd_request_duration_seconds", Help: "Read-only Argo CD API request duration.", Buckets: []float64{.01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10}}, []string{"operation"}),
+		argoDiffTruncations:             prometheus.NewCounterVec(prometheus.CounterOpts{Name: "argocd_diff_truncations_total", Help: "Argo CD resource diff truncations by bounded reason."}, []string{"reason"}),
+		imageResolution:                 prometheus.NewCounterVec(prometheus.CounterOpts{Name: "image_revision_resolution_total", Help: "Image revision resolution attempts by bounded result."}, []string{"result"}),
+		registryRequests:                prometheus.NewCounterVec(prometheus.CounterOpts{Name: "registry_requests_total", Help: "Read-only registry requests by bounded operation and result."}, []string{"operation", "result"}),
+		registryRequestTime:             prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "registry_request_duration_seconds", Help: "Read-only registry request duration.", Buckets: []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10}}, []string{"operation"}),
+		registryResponseLimits:          prometheus.NewCounterVec(prometheus.CounterOpts{Name: "registry_response_limit_total", Help: "Registry response byte-limit events by bounded response kind."}, []string{"kind"}),
+		registryCache:                   prometheus.NewCounterVec(prometheus.CounterOpts{Name: "registry_cache_total", Help: "Registry metadata cache events by bounded result."}, []string{"result"}),
+		imageConflicts:                  prometheus.NewCounterVec(prometheus.CounterOpts{Name: "image_resolution_conflicts_total", Help: "Image resolution conflicts by bounded kind."}, []string{"kind"}),
+		remediationPlans:                prometheus.NewCounterVec(prometheus.CounterOpts{Name: "remediation_plans_total", Help: "Remediation plans by bounded lifecycle status."}, []string{"status"}),
+		changeRequestDelivery:           prometheus.NewCounterVec(prometheus.CounterOpts{Name: "change_request_delivery_total", Help: "ChangeRequest delivery outcomes."}, []string{"result"}),
+		githubWriteRequests:             prometheus.NewCounterVec(prometheus.CounterOpts{Name: "github_write_requests_total", Help: "Constrained GitHub write adapter requests."}, []string{"operation", "result"}),
+		deliveryObservations:            prometheus.NewCounterVec(prometheus.CounterOpts{Name: "delivery_observations_total", Help: "Read-only delivery observations by bounded provider and result."}, []string{"provider", "result"}),
+		deliveryTransitions:             prometheus.NewCounterVec(prometheus.CounterOpts{Name: "delivery_state_transitions_total", Help: "Delivery state transitions."}, []string{"from", "to"}),
+		deliveryFailures:                prometheus.NewCounterVec(prometheus.CounterOpts{Name: "delivery_observation_failures_total", Help: "Delivery observation failures by bounded provider category."}, []string{"provider"}),
+		deliveryDuration:                prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "delivery_duration_seconds", Help: "Delivery duration by bounded terminal result.", Buckets: []float64{1, 5, 15, 30, 60, 120, 300, 600, 1800, 3600}}, []string{"result"}),
+		verificationRuns:                prometheus.NewCounterVec(prometheus.CounterOpts{Name: "verification_runs_total", Help: "Verification runs by bounded status."}, []string{"status"}),
+		verificationChecks:              prometheus.NewCounterVec(prometheus.CounterOpts{Name: "verification_checks_total", Help: "Verification checks by bounded type and status."}, []string{"type", "status"}),
+		verificationFailures:            prometheus.NewCounterVec(prometheus.CounterOpts{Name: "verification_check_failures_total", Help: "Verification check failures by bounded type."}, []string{"type"}),
+		verificationDuration:            prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "verification_run_duration_seconds", Help: "Verification run duration by bounded terminal status.", Buckets: []float64{1, 5, 15, 30, 60, 120, 300, 600, 1800, 3600}}, []string{"status"}),
+		verificationPassed:              prometheus.NewCounter(prometheus.CounterOpts{Name: "verification_passed_total", Help: "Verification runs that passed."}),
+		verificationFailed:              prometheus.NewCounter(prometheus.CounterOpts{Name: "verification_failed_total", Help: "Verification runs that failed."}),
+		verificationTimedOut:            prometheus.NewCounter(prometheus.CounterOpts{Name: "verification_timed_out_total", Help: "Verification runs that timed out."}),
+		verificationTakeovers:           prometheus.NewCounter(prometheus.CounterOpts{Name: "verification_lease_takeovers_total", Help: "Verification lease takeovers."}),
+		incidentsResolved:               prometheus.NewCounter(prometheus.CounterOpts{Name: "incidents_resolved_after_verification_total", Help: "Incidents resolved after deterministic verification."}),
+		incidentsReopened:               prometheus.NewCounter(prometheus.CounterOpts{Name: "incidents_reopened_after_verification_total", Help: "Incidents returned to investigation after failed verification."}),
+		verificationProviderRequests:    prometheus.NewCounterVec(prometheus.CounterOpts{Name: "verification_provider_requests_total", Help: "Bounded read-only verification provider requests."}, []string{"provider", "result"}),
+		verificationProviderFailures:    prometheus.NewCounterVec(prometheus.CounterOpts{Name: "verification_provider_failures_total", Help: "Bounded read-only verification provider failures."}, []string{"provider", "result"}),
+		verificationProviderDuration:    prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "verification_provider_duration_seconds", Help: "Read-only verification provider duration.", Buckets: []float64{.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10}}, []string{"provider"}),
+		verificationObservabilityChecks: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "verification_observability_checks_total", Help: "Deterministic observability checks."}, []string{"type", "status"}),
+		verificationStabilityResets:     prometheus.NewCounterVec(prometheus.CounterOpts{Name: "verification_stability_resets_total", Help: "Observability stability window resets."}, []string{"type"}),
+		postmortemsGenerated:            prometheus.NewCounterVec(prometheus.CounterOpts{Name: "postmortems_generated_total", Help: "Deterministic postmortem generation results."}, []string{"result"}),
+		postmortemGenerationFailures:    prometheus.NewCounter(prometheus.CounterOpts{Name: "postmortem_generation_failures_total", Help: "Deterministic postmortem generation failures."}),
 	}
 
 	metrics.registry.MustRegister(
@@ -345,8 +360,39 @@ func NewMetrics() *Metrics {
 		metrics.verificationTakeovers,
 		metrics.incidentsResolved,
 		metrics.incidentsReopened,
+		metrics.verificationProviderRequests,
+		metrics.verificationProviderFailures,
+		metrics.verificationProviderDuration,
+		metrics.verificationObservabilityChecks,
+		metrics.verificationStabilityResets,
+		metrics.postmortemsGenerated,
+		metrics.postmortemGenerationFailures,
 	)
 	return metrics
+}
+
+func (m *Metrics) ObserveVerificationProvider(provider, result string, seconds float64) {
+	if !slices.Contains([]string{"prometheus", "loki", "tempo"}, provider) {
+		return
+	}
+	if !slices.Contains([]string{"passed", "pending", "failed", "unavailable", "invalid"}, result) {
+		result = "invalid"
+	}
+	m.verificationProviderRequests.WithLabelValues(provider, result).Inc()
+	m.verificationProviderDuration.WithLabelValues(provider).Observe(seconds)
+	if result == "failed" || result == "unavailable" || result == "invalid" {
+		m.verificationProviderFailures.WithLabelValues(provider, result).Inc()
+	}
+}
+func (m *Metrics) ObserveVerificationStabilityReset(checkType string) {
+	m.verificationStabilityResets.WithLabelValues(checkType).Inc()
+}
+func (m *Metrics) ObservePostmortem(result string) {
+	if result != "generated" {
+		result = "failed"
+		m.postmortemGenerationFailures.Inc()
+	}
+	m.postmortemsGenerated.WithLabelValues(result).Inc()
 }
 
 func (m *Metrics) ObserveDeliveryObservation(provider, result string) {
@@ -391,6 +437,9 @@ func (m *Metrics) ObserveVerificationRun(status string, seconds float64) {
 func (m *Metrics) ObserveVerificationCheck(checkType, status string) {
 	if m != nil {
 		m.verificationChecks.WithLabelValues(checkType, status).Inc()
+		if slices.Contains([]string{"metric_error_rate_below", "metric_availability_above", "metric_latency_p95_below", "log_error_absent", "log_error_rate_below", "trace_error_rate_below", "trace_latency_p95_below"}, checkType) {
+			m.verificationObservabilityChecks.WithLabelValues(checkType, status).Inc()
+		}
 		if status == "failed" || status == "invalid" {
 			m.verificationFailures.WithLabelValues(checkType).Inc()
 		}

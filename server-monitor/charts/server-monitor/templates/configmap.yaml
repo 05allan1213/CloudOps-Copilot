@@ -170,6 +170,21 @@ data:
   VERIFICATION_STABILITY_WINDOW_SECONDS: {{ .Values.deliveryVerification.stabilityWindowSeconds | quote }}
   VERIFICATION_LEASE_SECONDS: {{ .Values.deliveryVerification.leaseSeconds | quote }}
   VERIFICATION_MAX_ATTEMPTS: {{ .Values.deliveryVerification.maxAttempts | quote }}
+  VERIFICATION_PROFILES_JSON: {{ .Values.deliveryVerification.profilesJSON | quote }}
+  OBSERVABILITY_PROMETHEUS_URL: {{ .Values.deliveryVerification.observability.prometheusURL | quote }}
+  OBSERVABILITY_LOKI_URL: {{ .Values.deliveryVerification.observability.lokiURL | quote }}
+  OBSERVABILITY_TEMPO_URL: {{ .Values.deliveryVerification.observability.tempoURL | quote }}
+  OBSERVABILITY_PROMETHEUS_TOKEN_FILE: {{ .Values.deliveryVerification.observability.prometheusTokenFile | quote }}
+  OBSERVABILITY_LOKI_TOKEN_FILE: {{ .Values.deliveryVerification.observability.lokiTokenFile | quote }}
+  OBSERVABILITY_TEMPO_TOKEN_FILE: {{ .Values.deliveryVerification.observability.tempoTokenFile | quote }}
+  OBSERVABILITY_LOKI_TENANT: {{ .Values.deliveryVerification.observability.lokiTenant | quote }}
+  OBSERVABILITY_REQUEST_TIMEOUT_SECONDS: {{ .Values.deliveryVerification.observability.requestTimeoutSeconds | quote }}
+  OBSERVABILITY_MAX_LOOKBACK_SECONDS: {{ .Values.deliveryVerification.observability.maxLookbackSeconds | quote }}
+  OBSERVABILITY_MAX_RESPONSE_BYTES: {{ .Values.deliveryVerification.observability.maxResponseBytes | quote }}
+  OBSERVABILITY_MAX_SAMPLES: {{ .Values.deliveryVerification.observability.maxSamples | quote }}
+  OBSERVABILITY_MAX_SERIES: {{ .Values.deliveryVerification.observability.maxSeries | quote }}
+  OBSERVABILITY_MAX_TRACES: {{ .Values.deliveryVerification.observability.maxTraces | quote }}
+  OBSERVABILITY_MAX_RETRIES: {{ .Values.deliveryVerification.observability.maxRetries | quote }}
   HOSTS_CACHE_TTL_SECONDS: {{ .Values.config.hostsCacheTTLSeconds | quote }}
   TRACE_OTLP_ENDPOINT: {{ .Values.config.traceOtlpEndpoint | quote }}
   TRACE_SAMPLE_RATE: {{ .Values.config.traceSampleRate | quote }}

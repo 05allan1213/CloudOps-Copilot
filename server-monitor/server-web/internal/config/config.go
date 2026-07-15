@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"regexp"
 	"slices"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"server-monitor/pkg/configutil"
+	"server-web/internal/verification"
 )
 
 type Config struct {
@@ -185,16 +187,31 @@ type Config struct {
 	RemediationLeaseDuration       time.Duration
 
 	// Phase 5 delivery observation and deterministic recovery verification are independently default-off.
-	DeliveryTrackingEnabled     bool
-	VerificationEnabled         bool
-	DeliveryWorkerID            string
-	VerificationWorkerID        string
-	DeliveryPollInterval        time.Duration
-	DeliveryTimeout             time.Duration
-	VerificationTimeout         time.Duration
-	VerificationStabilityWindow time.Duration
-	VerificationLeaseDuration   time.Duration
-	VerificationMaxAttempts     int
+	DeliveryTrackingEnabled       bool
+	VerificationEnabled           bool
+	DeliveryWorkerID              string
+	VerificationWorkerID          string
+	DeliveryPollInterval          time.Duration
+	DeliveryTimeout               time.Duration
+	VerificationTimeout           time.Duration
+	VerificationStabilityWindow   time.Duration
+	VerificationLeaseDuration     time.Duration
+	VerificationMaxAttempts       int
+	VerificationProfilesJSON      string
+	ObservabilityPrometheusURL    string
+	ObservabilityLokiURL          string
+	ObservabilityTempoURL         string
+	ObservabilityPromTokenFile    string
+	ObservabilityLokiTokenFile    string
+	ObservabilityTempoTokenFile   string
+	ObservabilityLokiTenant       string
+	ObservabilityRequestTimeout   time.Duration
+	ObservabilityMaxLookback      time.Duration
+	ObservabilityMaxResponseBytes int64
+	ObservabilityMaxSamples       int
+	ObservabilityMaxSeries        int
+	ObservabilityMaxTraces        int
+	ObservabilityMaxRetries       int
 
 	// GlobalMaxBodyBytes 全局 API 请求体最大字节数
 	// 默认值：2097152（2MB）
@@ -726,6 +743,21 @@ func Load() Config {
 		VerificationStabilityWindow:     configutil.DurationSeconds("VERIFICATION_STABILITY_WINDOW_SECONDS", 120),
 		VerificationLeaseDuration:       configutil.DurationSeconds("VERIFICATION_LEASE_SECONDS", 30),
 		VerificationMaxAttempts:         configutil.PositiveInt("VERIFICATION_MAX_ATTEMPTS", 180),
+		VerificationProfilesJSON:        configutil.String("VERIFICATION_PROFILES_JSON", `{"profiles":[]}`),
+		ObservabilityPrometheusURL:      configutil.String("OBSERVABILITY_PROMETHEUS_URL", "https://prometheus.invalid"),
+		ObservabilityLokiURL:            configutil.String("OBSERVABILITY_LOKI_URL", "https://loki.invalid"),
+		ObservabilityTempoURL:           configutil.String("OBSERVABILITY_TEMPO_URL", "https://tempo.invalid"),
+		ObservabilityPromTokenFile:      configutil.String("OBSERVABILITY_PROMETHEUS_TOKEN_FILE", ""),
+		ObservabilityLokiTokenFile:      configutil.String("OBSERVABILITY_LOKI_TOKEN_FILE", ""),
+		ObservabilityTempoTokenFile:     configutil.String("OBSERVABILITY_TEMPO_TOKEN_FILE", ""),
+		ObservabilityLokiTenant:         configutil.String("OBSERVABILITY_LOKI_TENANT", ""),
+		ObservabilityRequestTimeout:     configutil.DurationSeconds("OBSERVABILITY_REQUEST_TIMEOUT_SECONDS", 10),
+		ObservabilityMaxLookback:        configutil.DurationSeconds("OBSERVABILITY_MAX_LOOKBACK_SECONDS", 3600),
+		ObservabilityMaxResponseBytes:   int64(configutil.PositiveInt("OBSERVABILITY_MAX_RESPONSE_BYTES", 262144)),
+		ObservabilityMaxSamples:         configutil.PositiveInt("OBSERVABILITY_MAX_SAMPLES", 1000),
+		ObservabilityMaxSeries:          configutil.PositiveInt("OBSERVABILITY_MAX_SERIES", 20),
+		ObservabilityMaxTraces:          configutil.PositiveInt("OBSERVABILITY_MAX_TRACES", 100),
+		ObservabilityMaxRetries:         configutil.NonNegativeInt("OBSERVABILITY_MAX_RETRIES", 1),
 		GlobalMaxBodyBytes:              int64(configutil.PositiveInt("GLOBAL_MAX_BODY_BYTES", 2097152)),
 		CacheWriteTimeout:               configutil.DurationSeconds("CACHE_WRITE_TIMEOUT_SECONDS", 3),
 		GinMode:                         configutil.String("GIN_MODE", "debug"),
@@ -1213,12 +1245,35 @@ func (c *Config) Validate() error {
 	if c.VerificationEnabled && !c.DeliveryTrackingEnabled {
 		return fmt.Errorf("VERIFICATION_ENABLED requires DELIVERY_TRACKING_ENABLED")
 	}
+	var profiles verification.Profiles
+	decoder := json.NewDecoder(strings.NewReader(c.VerificationProfilesJSON))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&profiles); err != nil || profiles.Validate() != nil {
+		return fmt.Errorf("VERIFICATION_PROFILES_JSON is invalid")
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("VERIFICATION_PROFILES_JSON is invalid")
+	}
+	if len(profiles.Items) > 0 && !c.VerificationEnabled {
+		return fmt.Errorf("non-empty VERIFICATION_PROFILES_JSON requires VERIFICATION_ENABLED")
+	}
 	if c.DeliveryTrackingEnabled || c.VerificationEnabled {
 		if strings.TrimSpace(c.DeliveryWorkerID) == "" || len(c.DeliveryWorkerID) > 128 || strings.TrimSpace(c.VerificationWorkerID) == "" || len(c.VerificationWorkerID) > 128 {
 			return fmt.Errorf("delivery and verification worker IDs must contain 1-128 bytes")
 		}
 		if c.DeliveryPollInterval < time.Second || c.DeliveryPollInterval > time.Minute || c.DeliveryTimeout < time.Minute || c.DeliveryTimeout > 24*time.Hour || c.VerificationTimeout < time.Minute || c.VerificationTimeout > 24*time.Hour || c.VerificationStabilityWindow < c.DeliveryPollInterval || c.VerificationStabilityWindow > c.VerificationTimeout || c.VerificationLeaseDuration <= c.DeliveryPollInterval || c.VerificationMaxAttempts < 1 || c.VerificationMaxAttempts > 10000 {
 			return fmt.Errorf("delivery and verification timing configuration is invalid")
+		}
+		if len(profiles.Items) > 0 {
+			for name, raw := range map[string]string{"OBSERVABILITY_PROMETHEUS_URL": c.ObservabilityPrometheusURL, "OBSERVABILITY_LOKI_URL": c.ObservabilityLokiURL, "OBSERVABILITY_TEMPO_URL": c.ObservabilityTempoURL} {
+				u, err := url.Parse(strings.TrimSpace(raw))
+				if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" {
+					return fmt.Errorf("%s must be fixed HTTPS", name)
+				}
+			}
+			if c.ObservabilityRequestTimeout < time.Second || c.ObservabilityRequestTimeout > time.Minute || c.ObservabilityMaxLookback < time.Minute || c.ObservabilityMaxLookback > 24*time.Hour || c.ObservabilityMaxResponseBytes < 1024 || c.ObservabilityMaxResponseBytes > 1024*1024 || c.ObservabilityMaxSamples < 1 || c.ObservabilityMaxSamples > 10000 || c.ObservabilityMaxSeries < 1 || c.ObservabilityMaxSeries > 100 || c.ObservabilityMaxTraces < 1 || c.ObservabilityMaxTraces > 1000 || c.ObservabilityMaxRetries < 0 || c.ObservabilityMaxRetries > 2 {
+				return fmt.Errorf("observability verification limits are invalid")
+			}
 		}
 	}
 	return nil

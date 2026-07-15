@@ -30,6 +30,9 @@ type Observer interface {
 	ObserveVerificationCheck(checkType, status string)
 	ObserveVerificationLeaseTakeover()
 	ObserveIncidentAfterVerification(result string)
+	ObserveVerificationProvider(provider, result string, seconds float64)
+	ObserveVerificationStabilityReset(checkType string)
+	ObservePostmortem(result string)
 }
 
 type Config struct {
@@ -48,6 +51,10 @@ type Config struct {
 	ArgoCD               verification.ArgoReader
 	Rollout              verification.RolloutReader
 	Alerts               verification.AlertReader
+	Metrics              verification.MetricReader
+	Logs                 verification.LogReader
+	Traces               verification.TraceReader
+	Profiles             verification.Profiles
 	Mappings             map[string]Mapping
 	Observer             Observer
 	Now                  func() time.Time
@@ -69,6 +76,12 @@ func New(cfg Config) (*Service, error) {
 		return nil, verification.ErrInvalidArgument
 	}
 	if cfg.VerificationEnabled && (cfg.ArgoCD == nil || cfg.Rollout == nil || cfg.Alerts == nil) {
+		return nil, verification.ErrInvalidArgument
+	}
+	if err := cfg.Profiles.Validate(); err != nil {
+		return nil, err
+	}
+	if len(cfg.Profiles.Items) > 0 && (cfg.Metrics == nil || cfg.Logs == nil || cfg.Traces == nil) {
 		return nil, verification.ErrInvalidArgument
 	}
 	return &Service{cfg: cfg}, nil
@@ -101,6 +114,15 @@ func (s *Service) GetRun(ctx context.Context, incidentID, runID string) (*verifi
 	}
 	checks, err := s.cfg.Repository.ListRunChecks(ctx, incidentID, runID)
 	return run, checks, err
+}
+
+func (s *Service) GetPostmortem(ctx context.Context, incidentID string) (*verification.Postmortem, error) {
+	if !s.VerificationEnabled() {
+		return nil, verification.ErrUnavailable
+	}
+	ctx, span := otel.Tracer("server-web/deliveryverification").Start(ctx, "postmortem.query")
+	defer span.End()
+	return s.cfg.Repository.GetPostmortem(ctx, incidentID)
 }
 
 func (s *Service) ObserveNext(ctx context.Context) (bool, error) {
@@ -331,6 +353,11 @@ func (s *Service) VerifyNext(ctx context.Context) (bool, error) {
 			_, outcomeSpan := otel.Tracer("server-web/deliveryverification").Start(ctx, spanName)
 			outcomeSpan.End()
 			s.observeRunResult(result, now)
+			if result.Status == verification.RunPassed && s.cfg.Observer != nil {
+				s.cfg.Observer.ObservePostmortem("generated")
+			}
+		} else if s.cfg.Observer != nil {
+			s.cfg.Observer.ObservePostmortem("failed")
 		}
 		err = aggregateErr
 		return true, err
@@ -355,14 +382,31 @@ func (s *Service) VerifyNext(ctx context.Context) (bool, error) {
 		}
 		return true, nil
 	}
+	if selected.FirstCheckedAt != nil && !now.Before(selected.FirstCheckedAt.Add(selected.Timeout)) {
+		sample := verification.Sample{Status: verification.SampleTimedOut, Observed: json.RawMessage(`{"bounded":true}`), ReasonCode: "check_timeout"}
+		if err := s.cfg.Repository.PersistCheckSample(ctx, run, selected, sample, now, now); err != nil {
+			return true, err
+		}
+		return true, nil
+	}
 	leaseCtx, finishHeartbeat := s.startLeaseHeartbeat(ctx, func(at time.Time) error {
 		return s.cfg.Repository.HeartbeatRun(context.WithoutCancel(ctx), run.ID, run.RowVersion, run.LeaseOwner, at, s.cfg.LeaseDuration)
 	})
+	providerStarted := time.Now()
 	sample := s.executeCheck(leaseCtx, run, selected, now)
+	if s.cfg.Observer != nil && verificationProvider(selected.Type) != "" {
+		s.cfg.Observer.ObserveVerificationProvider(verificationProvider(selected.Type), string(sample.Status), time.Since(providerStarted).Seconds())
+		if selected.ConsecutiveSuccessSince != nil && sample.Status != verification.SamplePassed {
+			s.cfg.Observer.ObserveVerificationStabilityReset(string(selected.Type))
+		}
+	}
 	if heartbeatErr := finishHeartbeat(); heartbeatErr != nil {
 		return true, heartbeatErr
 	}
-	if err := s.cfg.Repository.PersistCheckSample(ctx, run, selected, sample, now, now.Add(selected.PollInterval)); err != nil {
+	_, persistSpan := otel.Tracer("server-web/deliveryverification").Start(ctx, "verification.persist_check")
+	err = s.cfg.Repository.PersistCheckSample(ctx, run, selected, sample, now, now.Add(selected.PollInterval))
+	persistSpan.End()
+	if err != nil {
 		return true, err
 	}
 	if s.cfg.Observer != nil {
@@ -374,14 +418,35 @@ func (s *Service) VerifyNext(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
+func verificationProvider(t verification.CheckType) string {
+	switch t {
+	case verification.CheckMetricErrorRateBelow, verification.CheckMetricAvailabilityAbove, verification.CheckMetricLatencyP95Below:
+		return "prometheus"
+	case verification.CheckLogErrorAbsent, verification.CheckLogErrorRateBelow:
+		return "loki"
+	case verification.CheckTraceErrorRateBelow, verification.CheckTraceLatencyP95Below:
+		return "tempo"
+	default:
+		return ""
+	}
+}
+
 func (s *Service) ensureVerificationRun(ctx context.Context) (*verification.Run, error) {
 	d, err := s.cfg.Repository.FindDeliveredWithoutRun(ctx)
 	if err != nil {
 		return nil, err
 	}
-	subject := verification.Subject{Repository: d.Repository, PullRequest: d.PRNumber, Revision: d.TargetRevision, ArgoApplication: d.ArgoApplication, ArgoProject: d.ArgoProject, Cluster: d.Cluster, Environment: d.Environment, Namespace: d.Namespace, WorkloadKind: d.WorkloadKind, WorkloadName: d.WorkloadName, AlertFingerprint: d.IncidentFingerprint}
+	subject := verification.Subject{Repository: d.Repository, PullRequest: d.PRNumber, Revision: d.TargetRevision, ArgoApplication: d.ArgoApplication, ArgoProject: d.ArgoProject, Cluster: d.Cluster, Environment: d.Environment, Namespace: d.Namespace, Service: d.ServiceName, WorkloadKind: d.WorkloadKind, WorkloadName: d.WorkloadName, AlertFingerprint: d.IncidentFingerprint}
 	ctx, span := otel.Tracer("server-web/deliveryverification").Start(ctx, "verification.compile_plan")
-	plan, err := verification.CompileTrustedPlan(subject, verification.CompilerConfig{PollInterval: s.cfg.PollInterval, Timeout: s.cfg.VerificationTimeout, StabilityWindow: s.cfg.StabilityWindow, AlertLookback: s.cfg.VerificationTimeout})
+	var profile *verification.Profile
+	if len(s.cfg.Profiles.Items) > 0 {
+		profile, err = s.cfg.Profiles.Match(subject)
+		if err != nil {
+			span.End()
+			return nil, err
+		}
+	}
+	plan, err := verification.CompileTrustedPlanWithProfile(subject, verification.CompilerConfig{PollInterval: s.cfg.PollInterval, Timeout: s.cfg.VerificationTimeout, StabilityWindow: s.cfg.StabilityWindow, AlertLookback: s.cfg.VerificationTimeout}, profile)
 	span.End()
 	if err != nil {
 		return nil, err
@@ -456,6 +521,26 @@ func (s *Service) executeCheck(ctx context.Context, run *verification.Run, check
 		if resolved {
 			sample.Status = verification.SamplePassed
 		}
+	case verification.CheckMetricErrorRateBelow, verification.CheckMetricAvailabilityAbove, verification.CheckMetricLatencyP95Below,
+		verification.CheckLogErrorAbsent, verification.CheckLogErrorRateBelow,
+		verification.CheckTraceErrorRateBelow, verification.CheckTraceLatencyP95Below:
+		query := verification.SignalQuery{Template: string(check.Type), Service: check.Subject.Service, Namespace: check.Subject.Namespace, Environment: check.Subject.Environment, Revision: check.Subject.Revision, Lookback: check.Lookback, Step: check.PollInterval, MaxSeries: 20, MaxSamples: 1000}
+		var result verification.SignalResult
+		var err error
+		switch check.Type {
+		case verification.CheckMetricErrorRateBelow, verification.CheckMetricAvailabilityAbove, verification.CheckMetricLatencyP95Below:
+			result, err = s.cfg.Metrics.ObserveMetric(ctx, query)
+		case verification.CheckLogErrorAbsent, verification.CheckLogErrorRateBelow:
+			result, err = s.cfg.Logs.ObserveLogErrorRate(ctx, query)
+		default:
+			result, err = s.cfg.Traces.ObserveTraceErrorRate(ctx, query)
+		}
+		if err != nil && result.Observation.Status == "" {
+			result.Observation = verification.Observation{Status: verification.ObservationUnavailable, ReasonCode: "provider_unavailable"}
+		}
+		_, evaluateSpan := otel.Tracer("server-web/deliveryverification").Start(ctx, "verification.evaluate_check")
+		sample = verification.EvaluateObservation(*check, result.Observation, now)
+		evaluateSpan.End()
 	default:
 		sample.Status, sample.ReasonCode = verification.SampleInvalid, "unsupported_check_type"
 	}

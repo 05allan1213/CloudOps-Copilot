@@ -47,6 +47,21 @@ type fakeAlerts struct {
 	err      error
 }
 
+type fakeSignals struct {
+	result verification.SignalResult
+	err    error
+}
+
+func (f fakeSignals) ObserveMetric(context.Context, verification.SignalQuery) (verification.SignalResult, error) {
+	return f.result, f.err
+}
+func (f fakeSignals) ObserveLogErrorRate(context.Context, verification.SignalQuery) (verification.SignalResult, error) {
+	return f.result, f.err
+}
+func (f fakeSignals) ObserveTraceErrorRate(context.Context, verification.SignalQuery) (verification.SignalResult, error) {
+	return f.result, f.err
+}
+
 func (f fakeAlerts) ResolvedSignal(context.Context, uint64, string, time.Time) (bool, time.Time, error) {
 	return f.resolved, time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC), f.err
 }
@@ -135,5 +150,27 @@ func TestVerificationProviderUnavailableAndRevisionMismatchNeverPass(t *testing.
 	sample = service.executeCheck(context.Background(), run, check, now)
 	if sample.Status != verification.SampleFailed || sample.ReasonCode != "revision_mismatch" {
 		t.Fatalf("revision mismatch must fail: %+v", sample)
+	}
+}
+
+func TestObservabilityChecksUseDeterministicEvaluator(t *testing.T) {
+	now := time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)
+	check := &verification.Check{Type: verification.CheckMetricErrorRateBelow, Comparison: verification.CompareLTE, Threshold: .01, Lookback: 5 * time.Minute, PollInterval: 10 * time.Second, Subject: verification.Subject{Service: "api", Namespace: "payments", Environment: "staging"}}
+	result := verification.SignalResult{Observation: verification.Observation{Status: verification.ObservationAvailable, Value: .01, SampleCount: 1, SampledAt: now, SourceReference: "prometheus://trusted"}}
+	service := newObservationService(now, fakeGitHub{}, fakeArgo{}, fakeRollout{})
+	service.cfg.Metrics = fakeSignals{result: result}
+	sample := service.executeCheck(context.Background(), &verification.Run{}, check, now)
+	if sample.Status != verification.SamplePassed || sample.SourceReference != "prometheus://trusted" {
+		t.Fatalf("threshold evaluator=%+v", sample)
+	}
+	service.cfg.Metrics = fakeSignals{err: errors.New("secret token must not pass")}
+	sample = service.executeCheck(context.Background(), &verification.Run{}, check, now)
+	if sample.Status != verification.SampleUnavailable || strings.Contains(string(sample.Observed), "secret") {
+		t.Fatalf("provider error leaked or passed=%+v", sample)
+	}
+	check.Type, check.Comparison = verification.CheckLogErrorAbsent, verification.CompareAbsent
+	service.cfg.Logs = fakeSignals{result: verification.SignalResult{Observation: verification.Observation{Status: verification.ObservationNoData}}}
+	if sample = service.executeCheck(context.Background(), &verification.Run{}, check, now); sample.Status != verification.SamplePassed {
+		t.Fatalf("explicit absence no-data=%+v", sample)
 	}
 }

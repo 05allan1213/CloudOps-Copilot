@@ -23,6 +23,7 @@ const (
 	CheckRunning     CheckStatus = "running"
 	CheckPassed      CheckStatus = "passed"
 	CheckFailed      CheckStatus = "failed"
+	CheckTimedOut    CheckStatus = "timed_out"
 	CheckUnavailable CheckStatus = "unavailable"
 	CheckInvalid     CheckStatus = "invalid"
 	CheckCancelled   CheckStatus = "cancelled"
@@ -31,15 +32,34 @@ const (
 type CheckType string
 
 const (
-	CheckArgoRevision      CheckType = "argocd_revision"
-	CheckArgoSync          CheckType = "argocd_sync"
-	CheckArgoHealth        CheckType = "argocd_health"
-	CheckDeploymentRollout CheckType = "deployment_rollout"
-	CheckWorkloadReady     CheckType = "workload_ready"
-	CheckAlertResolved     CheckType = "alert_resolved"
-	CheckMetricThreshold   CheckType = "metric_threshold"
-	CheckLogErrorRate      CheckType = "log_error_rate"
-	CheckTraceErrorRate    CheckType = "trace_error_rate"
+	CheckArgoRevision            CheckType = "argocd_revision"
+	CheckArgoSync                CheckType = "argocd_sync"
+	CheckArgoHealth              CheckType = "argocd_health"
+	CheckDeploymentRollout       CheckType = "deployment_rollout"
+	CheckWorkloadReady           CheckType = "workload_ready"
+	CheckAlertResolved           CheckType = "alert_resolved"
+	CheckMetricErrorRateBelow    CheckType = "metric_error_rate_below"
+	CheckMetricAvailabilityAbove CheckType = "metric_availability_above"
+	CheckMetricLatencyP95Below   CheckType = "metric_latency_p95_below"
+	CheckLogErrorAbsent          CheckType = "log_error_absent"
+	CheckLogErrorRateBelow       CheckType = "log_error_rate_below"
+	CheckTraceErrorRateBelow     CheckType = "trace_error_rate_below"
+	CheckTraceLatencyP95Below    CheckType = "trace_latency_p95_below"
+	// Legacy reserved identifiers remain compile-time compatible with Phase 5
+	// tests, but ValidatePlan never authorizes them for execution.
+	CheckMetricThreshold CheckType = "metric_threshold"
+	CheckLogErrorRate    CheckType = "log_error_rate"
+	CheckTraceErrorRate  CheckType = "trace_error_rate"
+)
+
+type Comparison string
+
+const (
+	CompareLT     Comparison = "lt"
+	CompareLTE    Comparison = "lte"
+	CompareGT     Comparison = "gt"
+	CompareGTE    Comparison = "gte"
+	CompareAbsent Comparison = "absent"
 )
 
 type Subject struct {
@@ -51,6 +71,7 @@ type Subject struct {
 	Cluster          string `json:"cluster,omitempty"`
 	Environment      string `json:"environment,omitempty"`
 	Namespace        string `json:"namespace,omitempty"`
+	Service          string `json:"service,omitempty"`
 	WorkloadKind     string `json:"workload_kind,omitempty"`
 	WorkloadName     string `json:"workload_name,omitempty"`
 	AlertFingerprint string `json:"alert_fingerprint,omitempty"`
@@ -65,6 +86,11 @@ type CheckSpec struct {
 	Timeout         time.Duration   `json:"timeout"`
 	PollInterval    time.Duration   `json:"poll_interval"`
 	Source          string          `json:"source"`
+	SourceIdentity  string          `json:"source_identity"`
+	ProfileID       string          `json:"profile_id,omitempty"`
+	TemplateID      string          `json:"template_id,omitempty"`
+	Comparison      Comparison      `json:"comparison,omitempty"`
+	Threshold       float64         `json:"threshold,omitempty"`
 	Required        bool            `json:"required"`
 }
 
@@ -174,6 +200,10 @@ type Check struct {
 	ConsecutiveSuccessSince *time.Time
 	AttemptCount            int
 	FailureReason           string
+	ProfileID               string
+	TemplateID              string
+	Comparison              Comparison
+	Threshold               float64
 	CreatedAt               time.Time
 	UpdatedAt               time.Time
 }
@@ -186,6 +216,7 @@ const (
 	SamplePending     SampleStatus = "pending"
 	SampleUnavailable SampleStatus = "unavailable"
 	SampleInvalid     SampleStatus = "invalid"
+	SampleTimedOut    SampleStatus = "timed_out"
 )
 
 type Sample struct {
@@ -193,6 +224,33 @@ type Sample struct {
 	Observed        json.RawMessage
 	SourceReference string
 	ReasonCode      string
+}
+
+type ObservationStatus string
+
+const (
+	ObservationAvailable   ObservationStatus = "available"
+	ObservationNoData      ObservationStatus = "no_data"
+	ObservationUnavailable ObservationStatus = "unavailable"
+	ObservationMalformed   ObservationStatus = "malformed"
+)
+
+// Observation is the bounded provider-neutral fact evaluated by deterministic
+// code. It never contains provider query language or an unbounded response.
+type Observation struct {
+	Status           ObservationStatus `json:"status"`
+	Value            float64           `json:"value,omitempty"`
+	Numerator        float64           `json:"numerator,omitempty"`
+	Denominator      float64           `json:"denominator,omitempty"`
+	SampleCount      int               `json:"sample_count"`
+	SeriesCount      int               `json:"series_count,omitempty"`
+	MatchedCount     int               `json:"matched_count,omitempty"`
+	FirstSeen        *time.Time        `json:"first_seen,omitempty"`
+	LastSeen         *time.Time        `json:"last_seen,omitempty"`
+	SampledAt        time.Time         `json:"sampled_at,omitempty"`
+	RedactedExamples []string          `json:"redacted_examples,omitempty"`
+	SourceReference  string            `json:"source_reference,omitempty"`
+	ReasonCode       string            `json:"reason_code,omitempty"`
 }
 
 type RunPage struct {

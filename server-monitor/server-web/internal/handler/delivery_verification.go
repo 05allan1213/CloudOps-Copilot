@@ -20,6 +20,7 @@ type DeliveryVerificationApplication interface {
 	GetDelivery(context.Context, string) (*verification.Delivery, error)
 	ListRuns(context.Context, string, int, int) (verification.RunPage, error)
 	GetRun(context.Context, string, string) (*verification.Run, []verification.Check, error)
+	GetPostmortem(context.Context, string) (*verification.Postmortem, error)
 }
 
 func (h *Handler) SetDeliveryVerification(service DeliveryVerificationApplication) {
@@ -161,6 +162,23 @@ func (h *Handler) GetIncidentVerification(c *gin.Context) {
 		checkDTOs = append(checkDTOs, toVerificationCheckDTO(&checks[i]))
 	}
 	c.JSON(http.StatusOK, response{Status: "success", Data: gin.H{"verification": toVerificationRunDTO(run), "checks": checkDTOs}})
+}
+
+func (h *Handler) GetIncidentPostmortem(c *gin.Context) {
+	if !validPublicID(c.Param("id")) {
+		writeDeliveryVerificationError(c, verification.ErrInvalidArgument)
+		return
+	}
+	if h.deliveryVerification == nil || !h.deliveryVerification.VerificationEnabled() {
+		writeDeliveryVerificationError(c, verification.ErrUnavailable)
+		return
+	}
+	item, err := h.deliveryVerification.GetPostmortem(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		writeDeliveryVerificationError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response{Status: "success", Data: item})
 }
 
 func toDeliveryDTO(item *verification.Delivery) deliveryDTO {

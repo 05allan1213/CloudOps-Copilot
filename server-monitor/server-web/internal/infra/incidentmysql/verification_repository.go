@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
@@ -66,6 +67,38 @@ type verificationCheckRow struct {
 	CreatedAt               time.Time       `gorm:"column:created_at"`
 	UpdatedAt               time.Time       `gorm:"column:updated_at"`
 }
+
+type postmortemRow struct {
+	ID                     uint64          `gorm:"column:id;primaryKey"`
+	PublicID               string          `gorm:"column:public_id"`
+	IncidentID             uint64          `gorm:"column:incident_id"`
+	VerificationRunID      uint64          `gorm:"column:verification_run_id"`
+	Title                  string          `gorm:"column:title"`
+	ImpactSummary          string          `gorm:"column:impact_summary"`
+	DetectedAt             time.Time       `gorm:"column:detected_at"`
+	MitigatedAt            *time.Time      `gorm:"column:mitigated_at"`
+	ResolvedAt             time.Time       `gorm:"column:resolved_at"`
+	DurationSeconds        int64           `gorm:"column:duration_seconds"`
+	Service                string          `gorm:"column:service"`
+	Workload               string          `gorm:"column:workload"`
+	Environment            string          `gorm:"column:environment"`
+	TriggeringSignalJSON   json.RawMessage `gorm:"column:triggering_signal_json"`
+	ChangeCorrelationJSON  json.RawMessage `gorm:"column:change_correlation_json"`
+	RootCauseJSON          json.RawMessage `gorm:"column:root_cause_json"`
+	RemediationSummaryJSON json.RawMessage `gorm:"column:remediation_summary_json"`
+	ApprovalSummaryJSON    json.RawMessage `gorm:"column:approval_summary_json"`
+	DeliveryRevision       string          `gorm:"column:delivery_revision"`
+	VerificationSummary    string          `gorm:"column:verification_summary"`
+	ChecksJSON             json.RawMessage `gorm:"column:checks_json"`
+	TimelineJSON           json.RawMessage `gorm:"column:timeline_json"`
+	FollowUpActionsJSON    json.RawMessage `gorm:"column:follow_up_actions_json"`
+	GeneratedAt            time.Time       `gorm:"column:generated_at"`
+	GenerationVersion      int             `gorm:"column:generation_version"`
+	CreatedAt              time.Time       `gorm:"column:created_at"`
+	UpdatedAt              time.Time       `gorm:"column:updated_at"`
+}
+
+func (postmortemRow) TableName() string { return "postmortems" }
 
 // phase5TimelineRow is deliberately separate from timelineRow so the Phase 1-4
 // repository model continues to operate when migration 00005 is rolled back.
@@ -458,7 +491,7 @@ func (r *VerificationRepository) PersistCheckSample(ctx context.Context, run *ve
 		}
 		run.RowVersion++
 		*check = current
-		if before != current.Status && (current.Status == verification.CheckPassed || current.Status == verification.CheckFailed || current.Status == verification.CheckInvalid) {
+		if before != current.Status && (current.Status == verification.CheckPassed || current.Status == verification.CheckFailed || current.Status == verification.CheckTimedOut || current.Status == verification.CheckInvalid) {
 			eventType := "verification_check_passed"
 			if current.Status != verification.CheckPassed {
 				eventType = "verification_check_failed"
@@ -536,6 +569,11 @@ func (r *VerificationRepository) AggregateRun(ctx context.Context, run *verifica
 		if err := appendVerificationAudit(tx, result.IncidentID, run.IncidentPublicID, incidentEvent, result.PublicID+":"+incidentEvent, summary, map[string]any{"verification_id": result.PublicID, "from": domain.StatusVerifying, "to": to}, completed); err != nil {
 			return err
 		}
+		if status == verification.RunPassed {
+			if err := generatePostmortem(tx, result, incident, checks, run.IncidentPublicID, completed); err != nil {
+				return err
+			}
+		}
 		result.Status, result.ResultSummary, result.CompletedAt, result.RowVersion = string(status), reason, &completed, result.RowVersion+1
 		result.LeaseOwner, result.LeaseExpiresAt = "", nil
 		if status != verification.RunPassed {
@@ -547,6 +585,93 @@ func (r *VerificationRepository) AggregateRun(ctx context.Context, run *verifica
 		return nil, err
 	}
 	return runFromVerificationRow(result, run.IncidentPublicID), nil
+}
+
+func generatePostmortem(tx *gorm.DB, run verificationRunRow, incident incidentRow, checks []verification.Check, incidentPublicID string, at time.Time) error {
+	_, span := otel.Tracer("server-web/incidentmysql").Start(tx.Statement.Context, "postmortem.generate")
+	defer span.End()
+	// Keep a Phase 5 binary/schema rollback readable. Phase 6 startup/migration
+	// validation requires this table before observability profiles are enabled.
+	if !tx.Migrator().HasTable(&postmortemRow{}) {
+		return nil
+	}
+	var signal signalRow
+	_ = tx.Where("incident_id = ?", incident.ID).Order("occurred_at ASC, id ASC").First(&signal).Error
+	var change changeRow
+	_ = tx.Where("incident_id = ?", incident.ID).Order("correlation_score DESC, id DESC").First(&change).Error
+	var evidenceIDs []string
+	if err := tx.Model(&evidenceRow{}).Where("incident_id = ? AND valid = ?", incident.ID, true).Order("id ASC").Limit(50).Pluck("public_id", &evidenceIDs).Error; err != nil {
+		return mapVerificationError(err)
+	}
+	rootCause := verification.ClassifiedFact{Classification: "unknown", Summary: "Root cause was not deterministically confirmed by persisted evidence.", EvidenceIDs: evidenceIDs}
+	var diagnosisRow struct {
+		FinalDiagnosis json.RawMessage `gorm:"column:final_diagnosis"`
+	}
+	if err := tx.Table("agent_runs").Select("final_diagnosis").Where("incident_id = ? AND status = 'COMPLETED'", incident.ID).Order("completed_at DESC, id DESC").Take(&diagnosisRow).Error; err == nil && len(diagnosisRow.FinalDiagnosis) > 0 {
+		var parsed struct {
+			Summary        string   `json:"summary"`
+			ConfirmedFacts []string `json:"confirmed_facts"`
+		}
+		if json.Unmarshal(diagnosisRow.FinalDiagnosis, &parsed) == nil && len(parsed.ConfirmedFacts) > 0 {
+			rootCause.Classification, rootCause.Summary = "inference", bound(parsed.Summary, 2048)
+		}
+	}
+	checkFacts := make([]verification.PostmortemCheckFact, 0, len(checks))
+	for _, check := range checks {
+		checkFacts = append(checkFacts, verification.PostmortemCheckFact{CheckID: check.PublicID, Type: check.Type, Status: check.Status, Required: check.Required, TemplateID: check.TemplateID, Reason: check.FailureReason})
+	}
+	var eventRows []phase5TimelineRow
+	if err := tx.Where("incident_id = ?", incident.ID).Order("occurred_at ASC, id ASC").Limit(100).Find(&eventRows).Error; err != nil {
+		return mapVerificationError(err)
+	}
+	timeline := make([]verification.TimelineFact, 0, len(eventRows))
+	for _, event := range eventRows {
+		timeline = append(timeline, verification.TimelineFact{EventType: event.EventType, Summary: bound(event.Summary, 512), OccurredAt: event.OccurredAt.UTC()})
+	}
+	trigger := verification.ClassifiedFact{Classification: "fact", Summary: bound(signal.Summary, 2048)}
+	changeFact := verification.ClassifiedFact{Classification: "unknown", Summary: "No confirmed triggering change was persisted."}
+	if change.ID != 0 {
+		changeFact = verification.ClassifiedFact{Classification: "fact", Summary: bound(change.ChangeSummary, 2048), EvidenceIDs: evidenceIDs}
+	}
+	remediation := verification.ClassifiedFact{Classification: "fact", Summary: "Approved remediation was delivered at exact revision " + safeRevision(run.TargetRevision), EvidenceIDs: evidenceIDs}
+	approval := verification.ClassifiedFact{Classification: "fact", Summary: "Human approval and delivery records are bound to the persisted remediation attempt."}
+	triggerJSON, _ := json.Marshal(trigger)
+	changeJSON, _ := json.Marshal(changeFact)
+	rootJSON, _ := json.Marshal(rootCause)
+	remediationJSON, _ := json.Marshal(remediation)
+	approvalJSON, _ := json.Marshal(approval)
+	checksJSON, _ := json.Marshal(checkFacts)
+	timelineJSON, _ := json.Marshal(timeline)
+	followupsJSON, _ := json.Marshal([]string{"Complete credentialed staging verification before production enablement."})
+	row := postmortemRow{PublicID: uuid.NewString(), IncidentID: incident.ID, VerificationRunID: run.ID, Title: bound("Incident "+incidentPublicID+" postmortem", 512), ImpactSummary: bound(incident.Summary, 2048), DetectedAt: incident.FirstSeenAt.UTC(), MitigatedAt: ptrTime(at.UTC()), ResolvedAt: at.UTC(), DurationSeconds: max(0, int64(at.Sub(incident.FirstSeenAt).Seconds())), Service: bound(incident.ServiceName, 255), Workload: bound(incident.TargetName, 255), Environment: bound(incident.Environment, 255), TriggeringSignalJSON: triggerJSON, ChangeCorrelationJSON: changeJSON, RootCauseJSON: rootJSON, RemediationSummaryJSON: remediationJSON, ApprovalSummaryJSON: approvalJSON, DeliveryRevision: run.TargetRevision, VerificationSummary: "All required deterministic checks satisfied their stability windows.", ChecksJSON: checksJSON, TimelineJSON: timelineJSON, FollowUpActionsJSON: followupsJSON, GeneratedAt: at.UTC(), GenerationVersion: 1, CreatedAt: at.UTC(), UpdatedAt: at.UTC()}
+	var existing postmortemRow
+	if err := tx.Where("incident_id = ?", incident.ID).First(&existing).Error; err == nil {
+		row.ID, row.PublicID, row.CreatedAt = existing.ID, existing.PublicID, existing.CreatedAt
+		return mapVerificationError(tx.Save(&row).Error)
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return mapVerificationError(err)
+	}
+	return mapVerificationError(tx.Create(&row).Error)
+}
+
+func (r *VerificationRepository) GetPostmortem(ctx context.Context, incidentPublicID string) (*verification.Postmortem, error) {
+	var row postmortemRow
+	if err := r.db.WithContext(ctx).Table("postmortems p").Select("p.*").Joins("JOIN incidents i ON i.id = p.incident_id").Where("i.public_id = ?", incidentPublicID).First(&row).Error; err != nil {
+		return nil, mapVerificationError(err)
+	}
+	var incident incidentRow
+	if err := r.db.WithContext(ctx).Select("public_id").First(&incident, row.IncidentID).Error; err != nil {
+		return nil, mapVerificationError(err)
+	}
+	var run verificationRunRow
+	if err := r.db.WithContext(ctx).Select("public_id").First(&run, row.VerificationRunID).Error; err != nil {
+		return nil, mapVerificationError(err)
+	}
+	result := &verification.Postmortem{PublicID: row.PublicID, IncidentPublicID: incident.PublicID, VerificationRunPublicID: run.PublicID, Title: row.Title, ImpactSummary: row.ImpactSummary, DetectedAt: row.DetectedAt.UTC(), MitigatedAt: row.MitigatedAt, ResolvedAt: row.ResolvedAt.UTC(), DurationSeconds: row.DurationSeconds, Service: row.Service, Workload: row.Workload, Environment: row.Environment, DeliveryRevision: row.DeliveryRevision, VerificationSummary: row.VerificationSummary, GeneratedAt: row.GeneratedAt.UTC(), GenerationVersion: row.GenerationVersion, CreatedAt: row.CreatedAt.UTC(), UpdatedAt: row.UpdatedAt.UTC()}
+	if json.Unmarshal(row.TriggeringSignalJSON, &result.TriggeringSignal) != nil || json.Unmarshal(row.ChangeCorrelationJSON, &result.ChangeCorrelation) != nil || json.Unmarshal(row.RootCauseJSON, &result.RootCause) != nil || json.Unmarshal(row.RemediationSummaryJSON, &result.RemediationSummary) != nil || json.Unmarshal(row.ApprovalSummaryJSON, &result.ApprovalSummary) != nil || json.Unmarshal(row.ChecksJSON, &result.Checks) != nil || json.Unmarshal(row.TimelineJSON, &result.Timeline) != nil || json.Unmarshal(row.FollowUpActionsJSON, &result.FollowUpActions) != nil {
+		return nil, verification.ErrInvalidArgument
+	}
+	return result, nil
 }
 
 func (r *VerificationRepository) TimeoutRun(ctx context.Context, run *verification.Run, now time.Time) error {
@@ -669,7 +794,14 @@ func checkFromRow(row verificationCheckRow) (verification.Check, error) {
 	if json.Unmarshal(row.SubjectJSON, &subject) != nil || !json.Valid(row.ExpectedJSON) {
 		return verification.Check{}, verification.ErrInvalidArgument
 	}
-	return verification.Check{ID: row.ID, PublicID: row.PublicID, VerificationRunID: row.VerificationRunID, Type: verification.CheckType(row.CheckType), Status: verification.CheckStatus(row.Status), Required: row.RequiredCheck, Subject: subject, Expected: row.ExpectedJSON, Observed: row.ObservedJSON, SourceReference: row.SourceReference, Lookback: time.Duration(row.LookbackMS) * time.Millisecond, StabilityWindow: time.Duration(row.StabilityWindowMS) * time.Millisecond, Timeout: time.Duration(row.TimeoutMS) * time.Millisecond, PollInterval: time.Duration(row.PollIntervalMS) * time.Millisecond, FirstCheckedAt: row.FirstCheckedAt, LastCheckedAt: row.LastCheckedAt, PassedAt: row.PassedAt, ConsecutiveSuccessSince: row.ConsecutiveSuccessSince, AttemptCount: row.AttemptCount, FailureReason: row.FailureReason, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}, nil
+	var condition struct {
+		ProfileID  string                  `json:"profile_id"`
+		TemplateID string                  `json:"template_id"`
+		Comparison verification.Comparison `json:"comparison"`
+		Threshold  float64                 `json:"threshold"`
+	}
+	_ = json.Unmarshal(row.ExpectedJSON, &condition)
+	return verification.Check{ID: row.ID, PublicID: row.PublicID, VerificationRunID: row.VerificationRunID, Type: verification.CheckType(row.CheckType), Status: verification.CheckStatus(row.Status), Required: row.RequiredCheck, Subject: subject, Expected: row.ExpectedJSON, Observed: row.ObservedJSON, SourceReference: row.SourceReference, Lookback: time.Duration(row.LookbackMS) * time.Millisecond, StabilityWindow: time.Duration(row.StabilityWindowMS) * time.Millisecond, Timeout: time.Duration(row.TimeoutMS) * time.Millisecond, PollInterval: time.Duration(row.PollIntervalMS) * time.Millisecond, FirstCheckedAt: row.FirstCheckedAt, LastCheckedAt: row.LastCheckedAt, PassedAt: row.PassedAt, ConsecutiveSuccessSince: row.ConsecutiveSuccessSince, AttemptCount: row.AttemptCount, FailureReason: row.FailureReason, ProfileID: condition.ProfileID, TemplateID: condition.TemplateID, Comparison: condition.Comparison, Threshold: condition.Threshold, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}, nil
 }
 
 func appendVerificationAudit(tx *gorm.DB, incidentID uint64, incidentPublicID, eventType, identity, summary string, metadata map[string]any, at time.Time) error {

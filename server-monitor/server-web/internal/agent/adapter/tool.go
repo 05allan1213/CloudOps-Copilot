@@ -19,7 +19,6 @@ import (
 var phase2ReadOnlyTools = []string{
 	copilottool.ToolAlertListActive,
 	copilottool.ToolAlertHistory,
-	copilottool.ToolPromQueryRange,
 	copilottool.ToolRunbookSearch,
 	copilottool.ToolK8sGetPods,
 	copilottool.ToolK8sGetDeployments,

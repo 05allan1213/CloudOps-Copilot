@@ -106,6 +106,21 @@ func TestMySQLMigrationRepositoryAndConcurrentIngestion(t *testing.T) {
 	if err := goose.UpToContext(ctx, sqlDB, ".", 5); err != nil {
 		t.Fatalf("repeat migration 4 to 5: %v", err)
 	}
+	if err := goose.UpToContext(ctx, sqlDB, ".", 6); err != nil {
+		t.Fatalf("migration 5 to 6: %v", err)
+	}
+	if !tableExists(t, ctx, sqlDB, "postmortems") {
+		t.Fatal("version 6 schema boundary is invalid")
+	}
+	if err := goose.DownToContext(ctx, sqlDB, ".", 5); err != nil {
+		t.Fatalf("migration 6 down to 5: %v", err)
+	}
+	if tableExists(t, ctx, sqlDB, "postmortems") || !tableExists(t, ctx, sqlDB, "verification_runs") || !tableExists(t, ctx, sqlDB, "verification_checks") || !tableExists(t, ctx, sqlDB, "incidents") || !tableExists(t, ctx, sqlDB, "changes") || !tableExists(t, ctx, sqlDB, "change_requests") {
+		t.Fatal("Phase 6 down migration damaged Phase 1-5 schema")
+	}
+	if err := goose.UpToContext(ctx, sqlDB, ".", 6); err != nil {
+		t.Fatalf("repeat migration 5 to 6: %v", err)
+	}
 	defer func() {
 		if err := goose.DownToContext(context.Background(), sqlDB, ".", 0); err != nil {
 			t.Errorf("cleanup down migration: %v", err)
@@ -353,6 +368,14 @@ func TestMySQLMigrationRepositoryAndConcurrentIngestion(t *testing.T) {
 		if resolvedFacts != 1 || resolvedOutbox != 1 {
 			t.Fatalf("resolved facts timeline=%d outbox=%d", resolvedFacts, resolvedOutbox)
 		}
+		postmortem, err := repository.GetPostmortem(ctx, remediationItem.PublicID)
+		if err != nil || postmortem.VerificationRunPublicID != completed.PublicID || postmortem.GenerationVersion != 1 || postmortem.RootCause.Classification == "fact" {
+			t.Fatalf("postmortem integrity=%+v err=%v", postmortem, err)
+		}
+		var postmortemCount int64
+		if err := gormDB.Table("postmortems").Where("incident_id = ?", remediationItem.ID).Count(&postmortemCount).Error; err != nil || postmortemCount != 1 {
+			t.Fatalf("postmortem count=%d err=%v", postmortemCount, err)
+		}
 
 		// An explicit operator retry appends attempt 2; it never changes attempt 1.
 		if err := gormDB.Model(&incidentRow{}).Where("id = ? AND version = ?", incidentAfter.ID, incidentAfter.Version).Updates(map[string]any{"status": domain.StatusApplyingChange, "resolved_at": nil, "version": incidentAfter.Version + 1}).Error; err != nil {
@@ -377,6 +400,57 @@ func TestMySQLMigrationRepositoryAndConcurrentIngestion(t *testing.T) {
 		incidentAfter = incidentRow{}
 		if err := gormDB.First(&incidentAfter, remediationItem.ID).Error; err != nil || incidentAfter.Status != string(domain.StatusDiagnosing) || incidentAfter.ResolvedAt != nil {
 			t.Fatalf("timeout did not return to investigation: %+v err=%v", incidentAfter, err)
+		}
+
+		// A later successful Phase 6 attempt persists an observability check and
+		// rebinds the one Postmortem to the final passing attempt.
+		if err := gormDB.Model(&incidentRow{}).Where("id = ? AND version = ?", incidentAfter.ID, incidentAfter.Version).Updates(map[string]any{"status": domain.StatusApplyingChange, "version": incidentAfter.Version + 1}).Error; err != nil {
+			t.Fatal(err)
+		}
+		phase6Subject := verification.Subject{Repository: delivery.Repository, PullRequest: delivery.PRNumber, Revision: revision, ArgoApplication: delivery.ArgoApplication, ArgoProject: delivery.ArgoProject, Cluster: delivery.Cluster, Environment: delivery.Environment, Namespace: delivery.Namespace, Service: delivery.ServiceName, WorkloadKind: delivery.WorkloadKind, WorkloadName: delivery.WorkloadName, AlertFingerprint: delivery.IncidentFingerprint}
+		profiles := verification.Profiles{Items: []verification.Profile{{ID: "mysql-phase6", Service: delivery.ServiceName, Environment: delivery.Environment, Namespace: delivery.Namespace, Workload: delivery.WorkloadName, Templates: []verification.Template{{ID: "metric-error-v1", Type: verification.CheckMetricErrorRateBelow, Required: true, Comparison: verification.CompareLTE, Threshold: .01, LookbackSeconds: 60, TimeoutSeconds: 60, StabilitySeconds: 2}}}}}
+		if err := profiles.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		phase6Plan, err := verification.CompileTrustedPlanWithProfile(phase6Subject, verification.CompilerConfig{PollInterval: time.Second, Timeout: time.Minute, StabilityWindow: 2 * time.Second, AlertLookback: time.Minute}, &profiles.Items[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		finalAt := retryAt.Add(5 * time.Minute)
+		finalRun, err := repository.CreateRetryRun(ctx, delivery, phase6Plan, finalAt)
+		if err != nil || finalRun.Attempt != 3 {
+			t.Fatalf("final retry=%+v err=%v", finalRun, err)
+		}
+		for _, sampledAt := range []time.Time{finalAt.Add(time.Second), finalAt.Add(4 * time.Second)} {
+			for index := range phase6Plan.Checks {
+				owner, claimErr := repository.ClaimRun(ctx, "phase6-worker", sampledAt.Add(time.Duration(index)*time.Millisecond), 10*time.Second)
+				if claimErr != nil {
+					t.Fatal(claimErr)
+				}
+				items, listErr := repository.ListChecks(ctx, owner.ID)
+				if listErr != nil {
+					t.Fatal(listErr)
+				}
+				if persistErr := repository.PersistCheckSample(ctx, owner, &items[index], verification.Sample{Status: verification.SamplePassed, Observed: json.RawMessage(`{"status":"available","value":0.01,"sample_count":1}`), SourceReference: "prometheus://trusted"}, sampledAt.Add(time.Duration(index)*time.Millisecond), sampledAt.Add(time.Second)); persistErr != nil {
+					t.Fatal(persistErr)
+				}
+			}
+		}
+		finalOwner, err := repository.ClaimRun(ctx, "phase6-aggregate", finalAt.Add(6*time.Second), 10*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		finalCompleted, err := repository.AggregateRun(ctx, finalOwner, finalAt.Add(7*time.Second))
+		if err != nil || finalCompleted.Status != verification.RunPassed {
+			t.Fatalf("final aggregate=%+v err=%v", finalCompleted, err)
+		}
+		finalPostmortem, err := repository.GetPostmortem(ctx, remediationItem.PublicID)
+		if err != nil || finalPostmortem.PublicID != postmortem.PublicID || finalPostmortem.VerificationRunPublicID != finalCompleted.PublicID {
+			t.Fatalf("final postmortem=%+v err=%v", finalPostmortem, err)
+		}
+		var observabilityChecks int64
+		if err := gormDB.Table("verification_checks").Where("verification_run_id = ? AND check_type = ?", finalCompleted.ID, verification.CheckMetricErrorRateBelow).Count(&observabilityChecks).Error; err != nil || observabilityChecks != 1 {
+			t.Fatalf("phase6 checks=%d err=%v", observabilityChecks, err)
 		}
 	})
 	t.Run("change idempotency filtering foreign key and atomic evidence", func(t *testing.T) {

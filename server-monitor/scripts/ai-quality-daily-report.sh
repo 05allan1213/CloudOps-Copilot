@@ -12,7 +12,8 @@ urlencode() {
 
 query_prometheus() {
     local query="$1"
-    local url="${PROMETHEUS_URL}/api/v1/query?query=$(urlencode "$query")"
+    local url
+    url="${PROMETHEUS_URL}/api/v1/query?query=$(urlencode "$query")"
     local response
     response=$(curl -sf --max-time 10 "$url" 2>/dev/null) || {
         echo "ERROR: Failed to query Prometheus: $query" >&2
@@ -29,7 +30,8 @@ query_prometheus() {
 
 query_prometheus_vector() {
     local query="$1"
-    local url="${PROMETHEUS_URL}/api/v1/query?query=$(urlencode "$query")"
+    local url
+    url="${PROMETHEUS_URL}/api/v1/query?query=$(urlencode "$query")"
     local response
     response=$(curl -sf --max-time 10 "$url" 2>/dev/null) || {
         echo "ERROR: Failed to query Prometheus: $query" >&2
@@ -169,7 +171,7 @@ diag_success_rate=$(safe_divide "${diag_success_total}" "${diag_total}")
 diag_fallback_rate=$(safe_divide "${diag_fallback_total}" "${diag_total}")
 llm_error_rate=$(safe_divide "${llm_error_total}" "${llm_total}")
 
-period_start=$(date -u -d "-${HOURS} hours" "+%Y-%m-%d" 2>/dev/null || date -u -v-${HOURS}H "+%Y-%m-%d")
+period_start=$(date -u -d "-${HOURS} hours" "+%Y-%m-%d" 2>/dev/null || date -u -v-"${HOURS}"H "+%Y-%m-%d")
 period_end=$(date -u "+%Y-%m-%d")
 generated=$(date -u "+%Y-%m-%d %H:%M:%S UTC")
 

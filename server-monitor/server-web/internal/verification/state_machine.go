@@ -54,9 +54,9 @@ func TerminalRun(status RunStatus) bool {
 func CanTransitionCheck(from, to CheckStatus) bool {
 	switch from {
 	case CheckPending:
-		return to == CheckRunning || to == CheckPassed || to == CheckFailed || to == CheckUnavailable || to == CheckInvalid || to == CheckCancelled
+		return to == CheckRunning || to == CheckPassed || to == CheckFailed || to == CheckTimedOut || to == CheckUnavailable || to == CheckInvalid || to == CheckCancelled
 	case CheckRunning, CheckUnavailable:
-		return to == CheckRunning || to == CheckPassed || to == CheckFailed || to == CheckUnavailable || to == CheckInvalid || to == CheckCancelled
+		return to == CheckRunning || to == CheckPassed || to == CheckFailed || to == CheckTimedOut || to == CheckUnavailable || to == CheckInvalid || to == CheckCancelled
 	default:
 		return false
 	}
@@ -93,6 +93,8 @@ func ApplySample(check *Check, sample Sample, now time.Time) error {
 		check.Status, check.ConsecutiveSuccessSince = CheckFailed, nil
 	case SampleInvalid:
 		check.Status, check.ConsecutiveSuccessSince = CheckInvalid, nil
+	case SampleTimedOut:
+		check.Status, check.ConsecutiveSuccessSince = CheckTimedOut, nil
 	default:
 		return fmt.Errorf("%w: unknown sample", ErrInvalidArgument)
 	}
@@ -100,7 +102,7 @@ func ApplySample(check *Check, sample Sample, now time.Time) error {
 }
 
 func TerminalCheck(status CheckStatus) bool {
-	return status == CheckPassed || status == CheckFailed || status == CheckInvalid || status == CheckCancelled
+	return status == CheckPassed || status == CheckFailed || status == CheckTimedOut || status == CheckInvalid || status == CheckCancelled
 }
 
 func Aggregate(checks []Check) (RunStatus, string, bool) {
@@ -111,6 +113,8 @@ func Aggregate(checks []Check) (RunStatus, string, bool) {
 	for _, check := range checks {
 		if check.Required {
 			switch check.Status {
+			case CheckTimedOut:
+				return RunTimedOut, "required_check_timed_out", true
 			case CheckFailed, CheckInvalid, CheckCancelled:
 				return RunFailed, "required_check_" + string(check.Status), true
 			case CheckPassed:

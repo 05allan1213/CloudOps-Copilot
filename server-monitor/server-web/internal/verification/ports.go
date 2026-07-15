@@ -55,6 +55,7 @@ type Repository interface {
 	GetRun(context.Context, string, string) (*Run, error)
 	ListRuns(context.Context, string, int, int) (RunPage, error)
 	ListRunChecks(context.Context, string, string) ([]Check, error)
+	GetPostmortem(context.Context, string) (*Postmortem, error)
 }
 
 type PullRequestObservation struct {
@@ -142,6 +143,7 @@ type SignalResult struct {
 	SampleCount int
 	SeriesCount int
 	Truncated   bool
+	Observation Observation
 }
 
 type MetricReader interface {

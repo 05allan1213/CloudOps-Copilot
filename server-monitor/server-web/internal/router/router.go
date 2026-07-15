@@ -81,6 +81,7 @@ func registerCoreRoutes(router *gin.Engine, cfg config.Config, deps Dependencies
 	protected.GET("/api/v2/incidents/:id/delivery", handler.GetIncidentDelivery)
 	protected.GET("/api/v2/incidents/:id/verifications", handler.ListIncidentVerifications)
 	protected.GET("/api/v2/incidents/:id/verifications/:verification_id", handler.GetIncidentVerification)
+	protected.GET("/api/v2/incidents/:id/postmortem", handler.GetIncidentPostmortem)
 	protected.POST("/api/v2/incidents/:id/agent-runs", handler.CreateAgentRun)
 	protected.GET("/api/v2/incidents/:id/agent-runs", handler.ListAgentRuns)
 	protected.GET("/api/v2/agent-runs/:id", handler.GetAgentRun)

@@ -170,6 +170,22 @@ deliveryVerification:
   stabilityWindowSeconds: "120"
   leaseSeconds: "30"
   maxAttempts: "180"
+  profilesJSON: '{"profiles":[]}'
+  observability:
+    prometheusURL: https://prometheus.invalid
+    lokiURL: https://loki.invalid
+    tempoURL: https://tempo.invalid
+    prometheusTokenFile: ""
+    lokiTokenFile: ""
+    tempoTokenFile: ""
+    lokiTenant: ""
+    requestTimeoutSeconds: "10"
+    maxLookbackSeconds: "3600"
+    maxResponseBytes: "262144"
+    maxSamples: "1000"
+    maxSeries: "20"
+    maxTraces: "100"
+    maxRetries: "1"
 
 k8sIntegration:
   enabled: false

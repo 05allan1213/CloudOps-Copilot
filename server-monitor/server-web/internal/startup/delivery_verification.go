@@ -10,8 +10,10 @@ import (
 	"server-web/internal/di"
 	"server-web/internal/infra/deliveryread"
 	"server-web/internal/infra/incidentmysql"
+	"server-web/internal/infra/observabilityread"
 	"server-web/internal/service/changeintelligence"
 	"server-web/internal/service/deliveryverification"
+	"server-web/internal/verification"
 )
 
 func InitDeliveryVerification(cfg config.Config, container *di.Container) (*deliveryverification.Worker, error) {
@@ -38,7 +40,48 @@ func InitDeliveryVerification(cfg config.Config, container *di.Container) (*deli
 	for key, mapping := range sourceMappings {
 		mappings[strings.ToLower(strings.TrimSpace(key))] = deliveryverification.Mapping{ArgoApplication: mapping.ArgoApplication, ArgoProject: mapping.ArgoProject}
 	}
-	service, err := deliveryverification.New(deliveryverification.Config{DeliveryEnabled: cfg.DeliveryTrackingEnabled, VerificationEnabled: cfg.VerificationEnabled, DeliveryWorkerID: cfg.DeliveryWorkerID, VerificationWorkerID: cfg.VerificationWorkerID, PollInterval: cfg.DeliveryPollInterval, DeliveryTimeout: cfg.DeliveryTimeout, VerificationTimeout: cfg.VerificationTimeout, StabilityWindow: cfg.VerificationStabilityWindow, LeaseDuration: cfg.VerificationLeaseDuration, MaxAttempts: cfg.VerificationMaxAttempts, Repository: repository, GitHub: deliveryread.GitHub{Reader: container.ChangeGitHub}, ArgoCD: deliveryread.Argo{Reader: container.ChangeArgoCD}, Rollout: container.DeliveryRollout, Alerts: repository, Mappings: mappings, Observer: container.Metrics})
+	var profiles verification.Profiles
+	profileDecoder := json.NewDecoder(strings.NewReader(cfg.VerificationProfilesJSON))
+	profileDecoder.DisallowUnknownFields()
+	if err := profileDecoder.Decode(&profiles); err != nil {
+		return nil, fmt.Errorf("decode verification profiles: %w", err)
+	}
+	if err := profileDecoder.Decode(&struct{}{}); err != io.EOF {
+		return nil, fmt.Errorf("decode verification profiles: trailing JSON value")
+	}
+	if err := profiles.Validate(); err != nil {
+		return nil, err
+	}
+	var metricReader verification.MetricReader
+	var logReader verification.LogReader
+	var traceReader verification.TraceReader
+	if len(profiles.Items) > 0 {
+		services, namespaces, environments := map[string]struct{}{}, map[string]struct{}{}, map[string]struct{}{}
+		for _, profile := range profiles.Items {
+			services[profile.Service], namespaces[profile.Namespace], environments[profile.Environment] = struct{}{}, struct{}{}, struct{}{}
+		}
+		base := observabilityread.Config{Timeout: cfg.ObservabilityRequestTimeout, MaxResponseBytes: cfg.ObservabilityMaxResponseBytes, MaxSamples: cfg.ObservabilityMaxSamples, MaxSeries: cfg.ObservabilityMaxSeries, MaxTraces: cfg.ObservabilityMaxTraces, MaxLookback: cfg.ObservabilityMaxLookback, Retries: cfg.ObservabilityMaxRetries, AllowedServices: services, AllowedNamespaces: namespaces, AllowedEnvironments: environments}
+		promCfg := base
+		promCfg.BaseURL, promCfg.TokenFile = cfg.ObservabilityPrometheusURL, cfg.ObservabilityPromTokenFile
+		lokiCfg := base
+		lokiCfg.BaseURL, lokiCfg.TokenFile, lokiCfg.Tenant = cfg.ObservabilityLokiURL, cfg.ObservabilityLokiTokenFile, cfg.ObservabilityLokiTenant
+		tempoCfg := base
+		tempoCfg.BaseURL, tempoCfg.TokenFile = cfg.ObservabilityTempoURL, cfg.ObservabilityTempoTokenFile
+		prom, err := observabilityread.NewPrometheus(promCfg)
+		if err != nil {
+			return nil, err
+		}
+		loki, err := observabilityread.NewLoki(lokiCfg)
+		if err != nil {
+			return nil, err
+		}
+		tempo, err := observabilityread.NewTempo(tempoCfg)
+		if err != nil {
+			return nil, err
+		}
+		metricReader, logReader, traceReader = prom, loki, tempo
+	}
+	service, err := deliveryverification.New(deliveryverification.Config{DeliveryEnabled: cfg.DeliveryTrackingEnabled, VerificationEnabled: cfg.VerificationEnabled, DeliveryWorkerID: cfg.DeliveryWorkerID, VerificationWorkerID: cfg.VerificationWorkerID, PollInterval: cfg.DeliveryPollInterval, DeliveryTimeout: cfg.DeliveryTimeout, VerificationTimeout: cfg.VerificationTimeout, StabilityWindow: cfg.VerificationStabilityWindow, LeaseDuration: cfg.VerificationLeaseDuration, MaxAttempts: cfg.VerificationMaxAttempts, Repository: repository, GitHub: deliveryread.GitHub{Reader: container.ChangeGitHub}, ArgoCD: deliveryread.Argo{Reader: container.ChangeArgoCD}, Rollout: container.DeliveryRollout, Alerts: repository, Metrics: metricReader, Logs: logReader, Traces: traceReader, Profiles: profiles, Mappings: mappings, Observer: container.Metrics})
 	if err != nil {
 		return nil, err
 	}
