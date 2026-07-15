@@ -21,6 +21,7 @@ import (
 	ws "server-web/internal/infra/websocket"
 	"server-web/internal/router"
 	agentruntime "server-web/internal/service/agentruntime"
+	remediationservice "server-web/internal/service/remediation"
 	"server-web/internal/startup"
 
 	eventbus "server-monitor/pkg/kafka"
@@ -33,6 +34,7 @@ type app struct {
 	diagnosisConsumer *eventbus.Consumer
 	copilotRuntime    *router.CopilotRuntime
 	agentWorker       *agentruntime.Worker
+	remediationWorker *remediationservice.Worker
 	k8sReader         copilotk8s.Reader
 	server            *http.Server
 	ctx               context.Context
@@ -82,6 +84,10 @@ func initApp(ctx context.Context) (*app, error) {
 	if err != nil {
 		return nil, err
 	}
+	remediationWorker, err := startup.InitRemediation(cfg, container)
+	if err != nil {
+		return nil, err
+	}
 
 	deps := container.Dependencies()
 	deps.Copilot = copilotDeps
@@ -101,6 +107,7 @@ func initApp(ctx context.Context) (*app, error) {
 		infra:             infra,
 		diagnosisConsumer: diagnosisConsumer,
 		copilotRuntime:    copilotRuntime,
+		remediationWorker: remediationWorker,
 		k8sReader:         k8sReader,
 		server: &http.Server{
 			Addr:              cfg.ListenAddr,
@@ -152,6 +159,9 @@ func startBackgroundTasks(app *app) {
 	go app.infra.WSHub.Run(app.ctx)
 	if app.agentWorker != nil {
 		app.agentWorker.Start(app.ctx)
+	}
+	if app.remediationWorker != nil {
+		app.remediationWorker.Start(app.ctx)
 	}
 
 	if app.infra.RedisClient.Enabled() {

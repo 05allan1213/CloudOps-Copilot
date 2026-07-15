@@ -520,7 +520,7 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.secret.name | quote }}
                   key: ADMIN_PASSWORD
-          {{- if or .Values.runbooks.enabled (and .Values.changeIntelligence.github.enabled (ne .Values.changeIntelligence.github.credentialSecretName "")) (and .Values.changeIntelligence.argocd.enabled (ne .Values.changeIntelligence.argocd.credentialSecretName "")) (and .Values.changeIntelligence.registry.enabled (ne .Values.changeIntelligence.registry.auth.mode "none") (ne .Values.changeIntelligence.registry.auth.credentialSecretName "")) }}
+          {{- if or .Values.runbooks.enabled (and .Values.changeIntelligence.github.enabled (ne .Values.changeIntelligence.github.credentialSecretName "")) (and .Values.changeIntelligence.argocd.enabled (ne .Values.changeIntelligence.argocd.credentialSecretName "")) (and .Values.changeIntelligence.registry.enabled (ne .Values.changeIntelligence.registry.auth.mode "none") (ne .Values.changeIntelligence.registry.auth.credentialSecretName "")) (and .Values.remediation.githubWrite.enabled (ne .Values.remediation.githubWrite.credentialSecretName "")) }}
           volumeMounts:
             {{- if .Values.runbooks.enabled }}
             - name: runbooks
@@ -542,8 +542,13 @@ spec:
               mountPath: /var/run/secrets/cloudops/registry
               readOnly: true
             {{- end }}
+            {{- if and .Values.remediation.githubWrite.enabled (ne .Values.remediation.githubWrite.credentialSecretName "") }}
+            - name: github-write-credentials
+              mountPath: /var/run/secrets/cloudops/github-write
+              readOnly: true
+            {{- end }}
           {{- end }}
-      {{- if or .Values.runbooks.enabled (and .Values.changeIntelligence.github.enabled (ne .Values.changeIntelligence.github.credentialSecretName "")) (and .Values.changeIntelligence.argocd.enabled (ne .Values.changeIntelligence.argocd.credentialSecretName "")) (and .Values.changeIntelligence.registry.enabled (ne .Values.changeIntelligence.registry.auth.mode "none") (ne .Values.changeIntelligence.registry.auth.credentialSecretName "")) }}
+      {{- if or .Values.runbooks.enabled (and .Values.changeIntelligence.github.enabled (ne .Values.changeIntelligence.github.credentialSecretName "")) (and .Values.changeIntelligence.argocd.enabled (ne .Values.changeIntelligence.argocd.credentialSecretName "")) (and .Values.changeIntelligence.registry.enabled (ne .Values.changeIntelligence.registry.auth.mode "none") (ne .Values.changeIntelligence.registry.auth.credentialSecretName "")) (and .Values.remediation.githubWrite.enabled (ne .Values.remediation.githubWrite.credentialSecretName "")) }}
       volumes:
         {{- if .Values.runbooks.enabled }}
         - name: runbooks
@@ -574,6 +579,11 @@ spec:
               - key: {{ .Values.changeIntelligence.registry.auth.passwordKey | quote }}
                 path: password
               {{- end }}
+        {{- end }}
+        {{- if and .Values.remediation.githubWrite.enabled (ne .Values.remediation.githubWrite.credentialSecretName "") }}
+        - name: github-write-credentials
+          secret:
+            secretName: {{ .Values.remediation.githubWrite.credentialSecretName | quote }}
         {{- end }}
       {{- end }}
 

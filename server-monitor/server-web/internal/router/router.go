@@ -125,6 +125,15 @@ func registerAdminRoutes(router *gin.Engine, cfg config.Config, deps Dependencie
 	admin.POST("/auth/register", handler.Register)
 	admin.GET("/users", handler.ListUsers)
 	admin.DELETE("/users/:id", handler.DeleteUser)
+
+	remediationAdmin := router.Group("/api/v2")
+	if cfg.AuthEnabled {
+		remediationAdmin.Use(middleware.Auth(deps.AuthService), middleware.VerifyTokenVersion(deps.AuthService), middleware.RequireRole("admin"))
+	}
+	remediationAdmin.GET("/remediations", handler.ListRemediations)
+	remediationAdmin.GET("/remediations/:id", handler.GetRemediation)
+	remediationAdmin.POST("/remediations/:id/approve", handler.ApproveRemediation)
+	remediationAdmin.POST("/remediations/:id/reject", handler.RejectRemediation)
 }
 
 func registerCopilotRoutes(router *gin.Engine, cfg config.Config, deps Dependencies) {

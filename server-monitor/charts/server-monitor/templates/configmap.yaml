@@ -135,6 +135,31 @@ data:
   REGISTRY_CONFIG_MAX_BYTES: {{ .Values.changeIntelligence.registry.configMaxBytes | quote }}
   REGISTRY_CACHE_TTL_SECONDS: {{ .Values.changeIntelligence.registry.cacheTTLSeconds | quote }}
   REGISTRY_CACHE_MAX_ITEMS: {{ .Values.changeIntelligence.registry.cacheMaxItems | quote }}
+  REMEDIATION_ENABLED: {{ .Values.remediation.enabled | quote }}
+  GITOPS_PR_ENABLED: {{ .Values.remediation.gitopsPREnabled | quote }}
+  GITHUB_WRITE_ENABLED: {{ .Values.remediation.githubWrite.enabled | quote }}
+  REMEDIATION_ALLOWED_OPERATIONS: {{ join "," .Values.remediation.allowedOperations | quote }}
+  REMEDIATION_MAX_PATCH_BYTES: {{ .Values.remediation.maxPatchBytes | quote }}
+  REMEDIATION_MAX_FILES: {{ .Values.remediation.maxFiles | quote }}
+  REMEDIATION_MAX_RISK: {{ .Values.remediation.maxRisk | quote }}
+  REMEDIATION_MIN_REPLICAS: {{ .Values.remediation.minReplicas | quote }}
+  REMEDIATION_MAX_REPLICAS: {{ .Values.remediation.maxReplicas | quote }}
+  REMEDIATION_HPA_TARGETS: {{ join "," .Values.remediation.hpaTargets | quote }}
+  GITOPS_BASE_BRANCHES_JSON: {{ .Values.remediation.baseBranchesJSON | quote }}
+  GITHUB_WRITE_API_BASE_URL: {{ .Values.remediation.githubWrite.apiBaseURL | quote }}
+  GITHUB_WRITE_APP_ID: {{ .Values.remediation.githubWrite.appID | quote }}
+  GITHUB_WRITE_INSTALLATION_ID: {{ .Values.remediation.githubWrite.installationID | quote }}
+  GITHUB_WRITE_TOKEN_FILE: {{ ternary "/var/run/secrets/cloudops/github-write/token" "" (and .Values.remediation.githubWrite.enabled (ne .Values.remediation.githubWrite.credentialSecretName "") (eq .Values.remediation.githubWrite.appID "0")) | quote }}
+  GITHUB_WRITE_PRIVATE_KEY_FILE: {{ ternary "/var/run/secrets/cloudops/github-write/private-key.pem" "" (and .Values.remediation.githubWrite.enabled (ne .Values.remediation.githubWrite.credentialSecretName "") (ne .Values.remediation.githubWrite.appID "0")) | quote }}
+  GITHUB_WRITE_ALLOWED_REPOSITORIES: {{ join "," .Values.remediation.githubWrite.allowedRepositories | quote }}
+  GITHUB_WRITE_ALLOWED_BASE_BRANCHES: {{ join "," .Values.remediation.githubWrite.allowedBaseBranches | quote }}
+  GITHUB_WRITE_ALLOWED_PATHS: {{ join "," .Values.remediation.githubWrite.allowedPaths | quote }}
+  GITHUB_WRITE_TIMEOUT_SECONDS: {{ .Values.remediation.githubWrite.timeoutSeconds | quote }}
+  GITHUB_WRITE_MAX_RESPONSE_BYTES: {{ .Values.remediation.githubWrite.maxResponseBytes | quote }}
+  GITHUB_WRITE_MAX_CONTENT_BYTES: {{ .Values.remediation.githubWrite.maxContentBytes | quote }}
+  REMEDIATION_WORKER_ID: {{ .Values.remediation.workerID | quote }}
+  REMEDIATION_POLL_INTERVAL_MILLISECONDS: {{ .Values.remediation.pollIntervalMilliseconds | quote }}
+  REMEDIATION_LEASE_SECONDS: {{ .Values.remediation.leaseSeconds | quote }}
   HOSTS_CACHE_TTL_SECONDS: {{ .Values.config.hostsCacheTTLSeconds | quote }}
   TRACE_OTLP_ENDPOINT: {{ .Values.config.traceOtlpEndpoint | quote }}
   TRACE_SAMPLE_RATE: {{ .Values.config.traceSampleRate | quote }}

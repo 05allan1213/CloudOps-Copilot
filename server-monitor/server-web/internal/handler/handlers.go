@@ -64,6 +64,7 @@ type Handler struct {
 	incidentService IncidentApplication
 	agentRuntime    AgentApplication
 	changeService   ChangeApplication
+	remediation     RemediationApplication
 	hostService     *apphost.Service
 	mysqlClient     mysqlClient
 	authService     AuthService

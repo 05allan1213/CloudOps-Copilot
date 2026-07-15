@@ -131,6 +131,34 @@ changeIntelligence:
       usernameKey: username
       passwordKey: password
 
+remediation:
+  enabled: false
+  gitopsPREnabled: false
+  allowedOperations: [rollback_image, set_replicas]
+  maxPatchBytes: "16384"
+  maxFiles: "1"
+  maxRisk: medium
+  minReplicas: "1"
+  maxReplicas: "20"
+  hpaTargets: []
+  baseBranchesJSON: "{}"
+  workerID: server-web-remediation-worker
+  pollIntervalMilliseconds: "1000"
+  leaseSeconds: "30"
+  githubWrite:
+    enabled: false
+    apiBaseURL: https://api.github.com
+    appID: "0"
+    installationID: "0"
+    allowedRepositories: []
+    allowedBaseBranches: []
+    allowedPaths: []
+    timeoutSeconds: "10"
+    maxResponseBytes: "1048576"
+    maxContentBytes: "131072"
+    # A distinct pre-existing Secret with token or private-key.pem.
+    credentialSecretName: ""
+
 k8sIntegration:
   enabled: false
   writeEnabled: false

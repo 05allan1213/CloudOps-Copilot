@@ -143,13 +143,17 @@ type EvidenceItem struct {
 	AgentRunID  *uint64
 	Type        string
 	Source      string
+	ToolName    string
 	ResourceRef string
 	TimeRange   json.RawMessage
 	Query       string
 	Summary     string
 	Facts       json.RawMessage
+	ResultHash  string
 	RawRef      string
+	Redaction   json.RawMessage
 	Truncated   bool
+	Valid       bool
 	CollectedAt time.Time
 	CreatedAt   time.Time
 }

@@ -71,6 +71,9 @@ type Metrics struct {
 	registryResponseLimits *prometheus.CounterVec
 	registryCache          *prometheus.CounterVec
 	imageConflicts         *prometheus.CounterVec
+	remediationPlans       *prometheus.CounterVec
+	changeRequestDelivery  *prometheus.CounterVec
+	githubWriteRequests    *prometheus.CounterVec
 }
 
 func NewMetrics() *Metrics {
@@ -232,6 +235,9 @@ func NewMetrics() *Metrics {
 		registryResponseLimits: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "registry_response_limit_total", Help: "Registry response byte-limit events by bounded response kind."}, []string{"kind"}),
 		registryCache:          prometheus.NewCounterVec(prometheus.CounterOpts{Name: "registry_cache_total", Help: "Registry metadata cache events by bounded result."}, []string{"result"}),
 		imageConflicts:         prometheus.NewCounterVec(prometheus.CounterOpts{Name: "image_resolution_conflicts_total", Help: "Image resolution conflicts by bounded kind."}, []string{"kind"}),
+		remediationPlans:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "remediation_plans_total", Help: "Remediation plans by bounded lifecycle status."}, []string{"status"}),
+		changeRequestDelivery:  prometheus.NewCounterVec(prometheus.CounterOpts{Name: "change_request_delivery_total", Help: "ChangeRequest delivery outcomes."}, []string{"result"}),
+		githubWriteRequests:    prometheus.NewCounterVec(prometheus.CounterOpts{Name: "github_write_requests_total", Help: "Constrained GitHub write adapter requests."}, []string{"operation", "result"}),
 	}
 
 	metrics.registry.MustRegister(
@@ -294,8 +300,29 @@ func NewMetrics() *Metrics {
 		metrics.registryResponseLimits,
 		metrics.registryCache,
 		metrics.imageConflicts,
+		metrics.remediationPlans,
+		metrics.changeRequestDelivery,
+		metrics.githubWriteRequests,
 	)
 	return metrics
+}
+
+func (m *Metrics) ObserveRemediationPlan(status string) {
+	if m != nil {
+		m.remediationPlans.WithLabelValues(status).Inc()
+	}
+}
+
+func (m *Metrics) ObserveChangeRequestDelivery(result string) {
+	if m != nil {
+		m.changeRequestDelivery.WithLabelValues(result).Inc()
+	}
+}
+
+func (m *Metrics) ObserveGitHubWrite(operation, result string, _ float64) {
+	if m != nil {
+		m.githubWriteRequests.WithLabelValues(operation, result).Inc()
+	}
 }
 
 func (m *Metrics) ObserveChangeCorrelation(result string, seconds float64) {

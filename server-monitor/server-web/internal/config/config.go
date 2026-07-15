@@ -157,6 +157,33 @@ type Config struct {
 	RegistryCacheTTL          time.Duration
 	RegistryCacheMaxItems     int
 
+	// Phase 4 human-approved GitOps remediation is independently default-off.
+	RemediationEnabled             bool
+	GitOpsPREnabled                bool
+	GitHubWriteEnabled             bool
+	RemediationAllowedOperations   []string
+	RemediationMaxPatchBytes       int
+	RemediationMaxFiles            int
+	RemediationMaxRisk             string
+	RemediationMinReplicas         int
+	RemediationMaxReplicas         int
+	RemediationHPATargets          []string
+	GitOpsBaseBranchesJSON         string
+	GitHubWriteAPIBaseURL          string
+	GitHubWriteAppID               int64
+	GitHubWriteInstallationID      int64
+	GitHubWritePrivateKeyFile      string
+	GitHubWriteTokenFile           string
+	GitHubWriteAllowedRepositories []string
+	GitHubWriteAllowedBaseBranches []string
+	GitHubWriteAllowedPaths        []string
+	GitHubWriteTimeout             time.Duration
+	GitHubWriteMaxResponseBytes    int64
+	GitHubWriteMaxContentBytes     int
+	RemediationWorkerID            string
+	RemediationPollInterval        time.Duration
+	RemediationLeaseDuration       time.Duration
+
 	// GlobalMaxBodyBytes 全局 API 请求体最大字节数
 	// 默认值：2097152（2MB）
 	GlobalMaxBodyBytes int64
@@ -652,6 +679,31 @@ func Load() Config {
 		RegistryConfigMaxBytes:          int64(configutil.PositiveInt("REGISTRY_CONFIG_MAX_BYTES", 1048576)),
 		RegistryCacheTTL:                configutil.DurationSeconds("REGISTRY_CACHE_TTL_SECONDS", 300),
 		RegistryCacheMaxItems:           configutil.PositiveInt("REGISTRY_CACHE_MAX_ITEMS", 256),
+		RemediationEnabled:              configutil.Bool("REMEDIATION_ENABLED", false),
+		GitOpsPREnabled:                 configutil.Bool("GITOPS_PR_ENABLED", false),
+		GitHubWriteEnabled:              configutil.Bool("GITHUB_WRITE_ENABLED", false),
+		RemediationAllowedOperations:    configutil.List("REMEDIATION_ALLOWED_OPERATIONS"),
+		RemediationMaxPatchBytes:        configutil.PositiveInt("REMEDIATION_MAX_PATCH_BYTES", 16384),
+		RemediationMaxFiles:             configutil.PositiveInt("REMEDIATION_MAX_FILES", 1),
+		RemediationMaxRisk:              configutil.String("REMEDIATION_MAX_RISK", "medium"),
+		RemediationMinReplicas:          configutil.NonNegativeInt("REMEDIATION_MIN_REPLICAS", 1),
+		RemediationMaxReplicas:          configutil.PositiveInt("REMEDIATION_MAX_REPLICAS", 20),
+		RemediationHPATargets:           configutil.List("REMEDIATION_HPA_TARGETS"),
+		GitOpsBaseBranchesJSON:          configutil.String("GITOPS_BASE_BRANCHES_JSON", "{}"),
+		GitHubWriteAPIBaseURL:           configutil.String("GITHUB_WRITE_API_BASE_URL", "https://api.github.com"),
+		GitHubWriteAppID:                int64(configutil.NonNegativeInt("GITHUB_WRITE_APP_ID", 0)),
+		GitHubWriteInstallationID:       int64(configutil.NonNegativeInt("GITHUB_WRITE_INSTALLATION_ID", 0)),
+		GitHubWritePrivateKeyFile:       configutil.String("GITHUB_WRITE_PRIVATE_KEY_FILE", ""),
+		GitHubWriteTokenFile:            configutil.String("GITHUB_WRITE_TOKEN_FILE", ""),
+		GitHubWriteAllowedRepositories:  configutil.List("GITHUB_WRITE_ALLOWED_REPOSITORIES"),
+		GitHubWriteAllowedBaseBranches:  configutil.List("GITHUB_WRITE_ALLOWED_BASE_BRANCHES"),
+		GitHubWriteAllowedPaths:         configutil.List("GITHUB_WRITE_ALLOWED_PATHS"),
+		GitHubWriteTimeout:              configutil.DurationSeconds("GITHUB_WRITE_TIMEOUT_SECONDS", 10),
+		GitHubWriteMaxResponseBytes:     int64(configutil.PositiveInt("GITHUB_WRITE_MAX_RESPONSE_BYTES", 1048576)),
+		GitHubWriteMaxContentBytes:      configutil.PositiveInt("GITHUB_WRITE_MAX_CONTENT_BYTES", 131072),
+		RemediationWorkerID:             configutil.String("REMEDIATION_WORKER_ID", configutil.String("HOSTNAME", "server-web-remediation-worker")),
+		RemediationPollInterval:         configutil.DurationMilliseconds("REMEDIATION_POLL_INTERVAL_MILLISECONDS", 1000),
+		RemediationLeaseDuration:        configutil.DurationSeconds("REMEDIATION_LEASE_SECONDS", 30),
 		GlobalMaxBodyBytes:              int64(configutil.PositiveInt("GLOBAL_MAX_BODY_BYTES", 2097152)),
 		CacheWriteTimeout:               configutil.DurationSeconds("CACHE_WRITE_TIMEOUT_SECONDS", 3),
 		GinMode:                         configutil.String("GIN_MODE", "debug"),
@@ -1084,6 +1136,52 @@ func (c *Config) Validate() error {
 	}
 	if c.GlobalMaxBodyBytes < 65536 || c.GlobalMaxBodyBytes > 16777216 {
 		return fmt.Errorf("GLOBAL_MAX_BODY_BYTES must be in range 65536-16777216, got %d", c.GlobalMaxBodyBytes)
+	}
+	if c.GitOpsPREnabled && !c.RemediationEnabled {
+		return fmt.Errorf("GITOPS_PR_ENABLED requires REMEDIATION_ENABLED")
+	}
+	if c.GitHubWriteEnabled && (!c.RemediationEnabled || !c.GitOpsPREnabled) {
+		return fmt.Errorf("GITHUB_WRITE_ENABLED requires REMEDIATION_ENABLED and GITOPS_PR_ENABLED")
+	}
+	if c.RemediationEnabled {
+		if !c.ChangeIntelligenceEnabled || !c.RegistryMetadataEnabled || !c.GitOpsPREnabled || !c.GitHubWriteEnabled || strings.TrimSpace(c.MySQLHost) == "" {
+			return fmt.Errorf("remediation requires change intelligence, registry metadata, GitOps PR, GitHub write and MySQL")
+		}
+		if len(c.RemediationAllowedOperations) == 0 || len(c.GitHubWriteAllowedRepositories) == 0 || len(c.GitHubWriteAllowedBaseBranches) == 0 || len(c.GitHubWriteAllowedPaths) == 0 {
+			return fmt.Errorf("remediation operation, repository, base branch and path allowlists are required")
+		}
+		for _, operation := range c.RemediationAllowedOperations {
+			if operation != "rollback_image" && operation != "set_replicas" {
+				return fmt.Errorf("unsupported REMEDIATION_ALLOWED_OPERATIONS value %q", operation)
+			}
+		}
+		if c.RemediationMaxFiles != 1 || c.RemediationMaxPatchBytes < 256 || c.RemediationMaxPatchBytes > 131072 || (c.RemediationMaxRisk != "low" && c.RemediationMaxRisk != "medium" && c.RemediationMaxRisk != "high") || c.RemediationMinReplicas < 0 || c.RemediationMaxReplicas < c.RemediationMinReplicas {
+			return fmt.Errorf("remediation policy limits are invalid")
+		}
+		var branches map[string]string
+		if json.Unmarshal([]byte(c.GitOpsBaseBranchesJSON), &branches) != nil || len(branches) == 0 {
+			return fmt.Errorf("GITOPS_BASE_BRANCHES_JSON must contain repository to branch mappings")
+		}
+		for repository, branch := range branches {
+			if !slices.Contains(c.GitHubWriteAllowedRepositories, repository) || !slices.Contains(c.GitHubWriteAllowedBaseBranches, branch) {
+				return fmt.Errorf("GitOps base branch mapping is outside write allowlists")
+			}
+		}
+		base, err := url.Parse(strings.TrimSpace(c.GitHubWriteAPIBaseURL))
+		if err != nil || base.Scheme != "https" || base.Host == "" {
+			return fmt.Errorf("GITHUB_WRITE_API_BASE_URL must be fixed HTTPS")
+		}
+		appAuth := c.GitHubWriteAppID > 0 && c.GitHubWriteInstallationID > 0 && strings.TrimSpace(c.GitHubWritePrivateKeyFile) != ""
+		fileAuth := strings.TrimSpace(c.GitHubWriteTokenFile) != ""
+		if appAuth == fileAuth {
+			return fmt.Errorf("configure exactly one isolated GitHub write App or token-file authentication mode")
+		}
+		if (c.GitHubWritePrivateKeyFile != "" && c.GitHubWritePrivateKeyFile == c.GitHubPrivateKeyFile) || (c.GitHubWriteTokenFile != "" && c.GitHubWriteTokenFile == c.GitHubTokenFile) {
+			return fmt.Errorf("GitHub write credentials must not reuse Phase 3 read credential files")
+		}
+		if c.GitHubWriteTimeout <= 0 || c.GitHubWriteMaxResponseBytes < 1024 || c.GitHubWriteMaxResponseBytes > 2*1024*1024 || c.GitHubWriteMaxContentBytes < c.RemediationMaxPatchBytes || strings.TrimSpace(c.RemediationWorkerID) == "" || len(c.RemediationWorkerID) > 128 || c.RemediationPollInterval <= 0 || c.RemediationLeaseDuration <= c.RemediationPollInterval {
+			return fmt.Errorf("GitHub write or remediation worker limits are invalid")
+		}
 	}
 	return nil
 }

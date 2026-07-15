@@ -22,6 +22,7 @@ import (
 	"server-web/internal/change"
 	domain "server-web/internal/incident"
 	"server-web/internal/infra/webhook"
+	"server-web/internal/remediation"
 	appincident "server-web/internal/service/incident"
 	"server-web/migrations"
 )
@@ -45,6 +46,14 @@ func TestMySQLMigrationRepositoryAndConcurrentIngestion(t *testing.T) {
 	if !strings.Contains(strings.ToLower(databaseName), "test") {
 		t.Fatalf("refusing destructive migration test against non-test database %q", databaseName)
 	}
+	var mysqlVersion string
+	if err := sqlDB.QueryRowContext(ctx, "SELECT VERSION()").Scan(&mysqlVersion); err != nil {
+		t.Fatal(err)
+	}
+	if strings.SplitN(mysqlVersion, ".", 2)[0] != "8" {
+		t.Fatalf("requires MySQL 8, got %q", mysqlVersion)
+	}
+	t.Logf("mysql_version=%s database=%s", mysqlVersion, databaseName)
 	var existing int
 	if err := sqlDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'incidents'").Scan(&existing); err != nil {
 		t.Fatal(err)
@@ -66,20 +75,20 @@ func TestMySQLMigrationRepositoryAndConcurrentIngestion(t *testing.T) {
 	if err := goose.UpToContext(ctx, sqlDB, ".", 3); err != nil {
 		t.Fatalf("migration 2 to 3: %v", err)
 	}
-	if err := goose.UpContext(ctx, sqlDB, "."); err != nil {
-		t.Fatalf("repeat up migration: %v", err)
+	if err := goose.UpToContext(ctx, sqlDB, ".", 4); err != nil {
+		t.Fatalf("migration 3 to 4: %v", err)
 	}
-	if !tableExists(t, ctx, sqlDB, "changes") {
-		t.Fatal("version 3 changes table missing")
+	if !tableExists(t, ctx, sqlDB, "changes") || !tableExists(t, ctx, sqlDB, "remediation_plans") || !tableExists(t, ctx, sqlDB, "remediation_approvals") || !tableExists(t, ctx, sqlDB, "change_requests") {
+		t.Fatal("version 4 schema boundary is invalid")
 	}
-	if err := goose.DownToContext(ctx, sqlDB, ".", 2); err != nil {
-		t.Fatalf("migration 3 down to 2: %v", err)
+	if err := goose.DownToContext(ctx, sqlDB, ".", 3); err != nil {
+		t.Fatalf("migration 4 down to 3: %v", err)
 	}
-	if tableExists(t, ctx, sqlDB, "changes") || !tableExists(t, ctx, sqlDB, "incidents") || !tableExists(t, ctx, sqlDB, "agent_runs") {
-		t.Fatal("Phase 3 down migration damaged Phase 1 or Phase 2 schema")
+	if tableExists(t, ctx, sqlDB, "remediation_plans") || !tableExists(t, ctx, sqlDB, "changes") || !tableExists(t, ctx, sqlDB, "incidents") || !tableExists(t, ctx, sqlDB, "agent_runs") {
+		t.Fatal("Phase 4 down migration damaged Phase 1-3 schema")
 	}
-	if err := goose.UpToContext(ctx, sqlDB, ".", 3); err != nil {
-		t.Fatalf("repeat migration 2 to 3: %v", err)
+	if err := goose.UpToContext(ctx, sqlDB, ".", 4); err != nil {
+		t.Fatalf("repeat migration 3 to 4: %v", err)
 	}
 	defer func() {
 		if err := goose.DownToContext(context.Background(), sqlDB, ".", 0); err != nil {
@@ -137,6 +146,63 @@ func TestMySQLMigrationRepositoryAndConcurrentIngestion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	remediationItem := &domain.Incident{
+		PublicID: uuid.NewString(), Fingerprint: "phase4-remediation", CorrelationKey: "v1:" + strings.Repeat("4", 64),
+		Cluster: "test", Namespace: "phase4", ServiceName: "remediation", Environment: "test",
+		TargetKind: "deployment", TargetName: "remediation", Severity: domain.SeverityWarning,
+		Status: domain.StatusDiagnosisCompleted, Summary: "isolated Phase 4 remediation fixture",
+		FirstSeenAt: time.Now().UTC(), LastSeenAt: time.Now().UTC(), Version: 1,
+	}
+	if err := store.Create(ctx, remediationItem); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("remediation approval idempotency hash binding and lease recovery", func(t *testing.T) {
+		repository, err := NewRemediationRepository(gormDB)
+		if err != nil {
+			t.Fatal(err)
+		}
+		plan := &remediation.RemediationPlan{PublicID: uuid.NewString(), IncidentID: remediationItem.ID, IncidentPublicID: remediationItem.PublicID, PlanVersion: 1, PlanHash: strings.Repeat("a", 64), Status: remediation.PlanAwaitingApproval, OperationType: remediation.OperationSetReplicas, TargetRepository: "acme/gitops", TargetBaseRevision: strings.Repeat("b", 40), TargetPath: "apps/api.yaml", Parameters: remediation.Parameters{Target: remediation.TargetResource{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "default", Name: "api"}}, EvidenceReferences: []string{uuid.NewString()}, RiskLevel: remediation.RiskLow, PolicySnapshotHash: strings.Repeat("c", 64), ExpectedBeforeHash: strings.Repeat("d", 64), ProposedPatchHash: strings.Repeat("e", 64), PatchSummary: "set replicas", RollbackPlan: "revert", ValidationPlan: "checks", RowVersion: 1}
+		if err := repository.CreatePlan(ctx, plan); err != nil {
+			t.Fatal(err)
+		}
+		badApproval := remediation.Approval{PublicID: uuid.NewString(), Decision: remediation.DecisionApproved, Actor: "admin", ApprovedPlanHash: strings.Repeat("f", 64), ApprovedPatchHash: plan.ProposedPatchHash}
+		delivery := &remediation.ChangeRequest{PublicID: uuid.NewString(), Repository: plan.TargetRepository, BaseRevision: plan.TargetBaseRevision, HeadBranch: "cloudops/incident-" + remediationItem.PublicID + "/remediation-" + plan.PublicID, Status: remediation.DeliveryPending, CIStatus: remediation.CIPending, IdempotencyKey: strings.Repeat("1", 64), RowVersion: 1}
+		if _, _, err := repository.ApprovePlan(ctx, plan.PublicID, plan.RowVersion, badApproval, delivery); !errors.Is(err, remediation.ErrApprovalMismatch) {
+			t.Fatalf("approval hash mismatch err=%v", err)
+		}
+		approval := badApproval
+		approval.PublicID, approval.ApprovedPlanHash = uuid.NewString(), plan.PlanHash
+		approved, createdDelivery, err := repository.ApprovePlan(ctx, plan.PublicID, plan.RowVersion, approval, delivery)
+		if err != nil || approved.Status != remediation.PlanDeliveryPending || createdDelivery.ID == 0 {
+			t.Fatalf("approved=%+v delivery=%+v err=%v", approved, createdDelivery, err)
+		}
+		_, replayDelivery, err := repository.ApprovePlan(ctx, plan.PublicID, plan.RowVersion, approval, delivery)
+		if err != nil || replayDelivery.ID != createdDelivery.ID {
+			t.Fatalf("approval replay was not idempotent: delivery=%+v err=%v", replayDelivery, err)
+		}
+		var approvalCount, deliveryCount int64
+		if err := gormDB.Model(&remediationApprovalRow{}).Where("plan_id = ?", plan.ID).Count(&approvalCount).Error; err != nil || approvalCount != 1 {
+			t.Fatalf("approval uniqueness count=%d err=%v", approvalCount, err)
+		}
+		if err := gormDB.Model(&changeRequestRow{}).Where("plan_id = ?", plan.ID).Count(&deliveryCount).Error; err != nil || deliveryCount != 1 {
+			t.Fatalf("delivery uniqueness count=%d err=%v", deliveryCount, err)
+		}
+		rejection := remediation.Approval{PublicID: uuid.NewString(), Decision: remediation.DecisionRejected, Actor: "other-admin", ApprovedPlanHash: plan.PlanHash, ApprovedPatchHash: plan.ProposedPatchHash}
+		if _, err := repository.RejectPlan(ctx, plan.PublicID, approved.RowVersion, rejection); !errors.Is(err, remediation.ErrConflict) {
+			t.Fatalf("approved plan accepted a second decision: %v", err)
+		}
+		claimed, claimedPlan, err := repository.ClaimDelivery(ctx, "worker-a", time.Now().UTC(), time.Second)
+		if err != nil || claimed.Status != remediation.DeliveryDelivering || claimedPlan.IncidentPublicID != remediationItem.PublicID {
+			t.Fatalf("claim=%+v plan=%+v err=%v", claimed, claimedPlan, err)
+		}
+		if err := gormDB.Model(&changeRequestRow{}).Where("id = ?", claimed.ID).Update("lease_expires_at", time.Now().UTC().Add(-time.Second)).Error; err != nil {
+			t.Fatal(err)
+		}
+		reclaimed, _, err := repository.ClaimDelivery(ctx, "worker-b", time.Now().UTC(), time.Second)
+		if err != nil || reclaimed.LeaseOwner != "worker-b" || reclaimed.Attempts != 2 {
+			t.Fatalf("expired lease not recovered: %+v err=%v", reclaimed, err)
+		}
+	})
 	t.Run("change idempotency filtering foreign key and atomic evidence", func(t *testing.T) {
 		repository, err := NewChangeRepository(gormDB)
 		if err != nil {
