@@ -384,6 +384,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PACKAGE: ${{ steps.image.outputs.package }}
           VALIDATION_TAG: ${{ steps.image.outputs.tag_name }}
+          DIGEST: ${{ steps.build-push.outputs.digest }}
         run: |
           EVIDENCE_DIR="${EVIDENCE_DIR:-${RUNNER_TEMP}/${EVIDENCE_SUBDIR}}"
           mkdir -p "${EVIDENCE_DIR}"
@@ -391,6 +392,11 @@ jobs:
           CLEANUP_SCOPE=""
           CLEANUP_VERSION_ID=""
           CLEANUP_RESULT="not_found"
+          POST_DELETE_VERSION_HTTP=""
+          POST_DELETE_VERSION_STATE="not_run"
+          REFERRERS_HTTP=""
+          REFERRER_STATE="not_run"
+          REFERRERS='[]'
           for scope in orgs users; do
             endpoint="/${scope}/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE}/versions?per_page=100"
             versions="$(gh api -H 'Accept: application/vnd.github+json' "${endpoint}" 2>/dev/null)" || continue
@@ -411,13 +417,64 @@ jobs:
               break
             fi
           done
+
+          if [ "${CLEANUP_RESULT}" = "deleted" ]; then
+            version_endpoint="/${CLEANUP_SCOPE}/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE}/versions/${CLEANUP_VERSION_ID}"
+            post_delete_response="$(gh api --include \
+              -H 'Accept: application/vnd.github+json' \
+              "${version_endpoint}" 2>/dev/null)"
+            POST_DELETE_VERSION_HTTP="$(awk '/^HTTP\// { code=$2 } END { print code }' \
+              <<<"${post_delete_response}")"
+            case "${POST_DELETE_VERSION_HTTP}" in
+              404) POST_DELETE_VERSION_STATE="absent" ;;
+              200) POST_DELETE_VERSION_STATE="present" ;;
+              *) POST_DELETE_VERSION_STATE="check_failed" ;;
+            esac
+          fi
+
+          if [[ "${DIGEST}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            token_response="$(curl --silent --show-error --fail \
+              --user "${GITHUB_ACTOR}:${GH_TOKEN}" \
+              "https://ghcr.io/token?scope=repository:${GITHUB_REPOSITORY_OWNER}/${PACKAGE}:pull")"
+            registry_bearer="$(jq -er '.token // .access_token' <<<"${token_response}")"
+            referrers_response="${RUNNER_TEMP}/${PACKAGE}-referrers.json"
+            REFERRERS_HTTP="$(curl --silent --show-error \
+              --output "${referrers_response}" \
+              --write-out '%{http_code}' \
+              --oauth2-bearer "${registry_bearer}" \
+              -H 'Accept: application/vnd.oci.image.index.v1+json' \
+              "https://ghcr.io/v2/${GITHUB_REPOSITORY_OWNER}/${PACKAGE}/referrers/${DIGEST}")"
+            unset registry_bearer token_response
+            case "${REFERRERS_HTTP}" in
+              200)
+                REFERRERS="$(jq -c '[.manifests[]? | {digest, mediaType, artifactType, size}]' \
+                  "${referrers_response}")"
+                if [ "$(jq 'length' <<<"${REFERRERS}")" -eq 0 ]; then
+                  REFERRER_STATE="none"
+                else
+                  REFERRER_STATE="residual"
+                fi
+                ;;
+              404) REFERRER_STATE="subject_not_found" ;;
+              *) REFERRER_STATE="check_failed" ;;
+            esac
+          fi
           jq -n \
             --arg result "${CLEANUP_RESULT}" \
             --arg package "${PACKAGE}" \
             --arg tag "${VALIDATION_TAG}" \
             --arg scope "${CLEANUP_SCOPE}" \
             --arg version_id "${CLEANUP_VERSION_ID}" \
+            --arg post_delete_version_http "${POST_DELETE_VERSION_HTTP}" \
+            --arg post_delete_version_state "${POST_DELETE_VERSION_STATE}" \
+            --arg referrers_http "${REFERRERS_HTTP}" \
+            --arg referrer_state "${REFERRER_STATE}" \
+            --argjson referrers "${REFERRERS}" \
             '{result: $result, package: $package, tag: $tag, scope: $scope, version_id: $version_id,
+              post_delete_version_http: $post_delete_version_http,
+              post_delete_version_state: $post_delete_version_state,
+              referrers_http: $referrers_http, referrer_state: $referrer_state,
+              referrers: $referrers,
               note: "Cleanup runs after evidence capture and cannot change the sign/verify result."}' \
             >"${EVIDENCE_DIR}/registry-cleanup.json"
           exit 0
