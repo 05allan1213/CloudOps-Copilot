@@ -21,7 +21,9 @@ import (
 	"server-web/internal/agent"
 	"server-web/internal/change"
 	domain "server-web/internal/incident"
+	dbinfra "server-web/internal/infra/database"
 	"server-web/internal/infra/webhook"
+	legacymodel "server-web/internal/model"
 	"server-web/internal/remediation"
 	appincident "server-web/internal/service/incident"
 	"server-web/internal/verification"
@@ -62,6 +64,48 @@ func TestMySQLMigrationRepositoryAndConcurrentIngestion(t *testing.T) {
 	if existing != 0 {
 		t.Fatal("test requires an empty disposable database without incidents table")
 	}
+
+	t.Run("concurrent legacy auto migration", func(t *testing.T) {
+		legacyDB, err := gorm.Open(mysql.New(mysql.Config{Conn: sqlDB, SkipInitializeWithVersion: true}), &gorm.Config{})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		const workers = 8
+		start := make(chan struct{})
+		errs := make(chan error, workers)
+		var wg sync.WaitGroup
+		for range workers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				errs <- dbinfra.Migrate(legacyDB)
+			}()
+		}
+		close(start)
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			if err != nil {
+				t.Errorf("concurrent migration: %v", err)
+			}
+		}
+		if t.Failed() {
+			return
+		}
+		if !legacyDB.Migrator().HasTable(&legacymodel.NotificationChannel{}) {
+			t.Fatal("notification_channels table was not created")
+		}
+
+		models := legacymodel.AllModels()
+		for left, right := 0, len(models)-1; left < right; left, right = left+1, right-1 {
+			models[left], models[right] = models[right], models[left]
+		}
+		if err := legacyDB.Migrator().DropTable(models...); err != nil {
+			t.Fatalf("drop legacy migration tables: %v", err)
+		}
+	})
 
 	goose.SetBaseFS(migrations.FS)
 	if err := goose.SetDialect("mysql"); err != nil {
