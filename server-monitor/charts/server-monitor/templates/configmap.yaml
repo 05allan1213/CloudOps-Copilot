@@ -70,6 +70,21 @@ data:
   COPILOT_TOOLS_CLASSIFY_ENABLED: {{ .Values.copilot.toolsClassifyEnabled | quote }}
   COPILOT_MULTI_INTENT_ENABLED: {{ .Values.copilot.multiIntentEnabled | quote }}
   COPILOT_MULTI_INTENT_MAX: {{ .Values.copilot.multiIntentMax | quote }}
+  INCIDENT_AGENT_ENABLED: {{ .Values.incidentAgent.enabled | quote }}
+  INCIDENT_AGENT_WORKER_ID: {{ .Values.incidentAgent.workerID | quote }}
+  INCIDENT_AGENT_POLL_INTERVAL_MILLISECONDS: {{ .Values.incidentAgent.pollIntervalMilliseconds | quote }}
+  INCIDENT_AGENT_LEASE_SECONDS: {{ .Values.incidentAgent.leaseSeconds | quote }}
+  INCIDENT_AGENT_HEARTBEAT_SECONDS: {{ .Values.incidentAgent.heartbeatSeconds | quote }}
+  INCIDENT_AGENT_MAX_STEPS: {{ .Values.incidentAgent.maxSteps | quote }}
+  INCIDENT_AGENT_MAX_TOOL_CALLS: {{ .Values.incidentAgent.maxToolCalls | quote }}
+  INCIDENT_AGENT_MAX_MODEL_CALLS: {{ .Values.incidentAgent.maxModelCalls | quote }}
+  INCIDENT_AGENT_TOKEN_BUDGET: {{ .Values.incidentAgent.tokenBudget | quote }}
+  INCIDENT_AGENT_MAX_EVIDENCE_ITEMS: {{ .Values.incidentAgent.maxEvidenceItems | quote }}
+  INCIDENT_AGENT_MAX_RUNTIME_SECONDS: {{ .Values.incidentAgent.maxRuntimeSeconds | quote }}
+  INCIDENT_AGENT_TOOL_TIMEOUT_SECONDS: {{ .Values.incidentAgent.toolTimeoutSeconds | quote }}
+  INCIDENT_AGENT_MAX_EVIDENCE_BYTES: {{ .Values.incidentAgent.maxEvidenceBytes | quote }}
+  INCIDENT_AGENT_MAX_CHECKPOINT_BYTES: {{ .Values.incidentAgent.maxCheckpointBytes | quote }}
+  INCIDENT_AGENT_MAX_STEP_RETRIES: {{ .Values.incidentAgent.maxStepRetries | quote }}
   RUNBOOK_DIR: {{ .Values.config.runbookDir | quote }}
   RUNBOOK_MAX_FILES: {{ .Values.config.runbookMaxFiles | quote }}
   RUNBOOK_MAX_FILE_BYTES: {{ .Values.config.runbookMaxFileBytes | quote }}

@@ -33,7 +33,7 @@ spec:
       {{- end }}
       containers:
         - name: server-probe
-          image: "{{ .Values.serverProbe.image.repository }}:{{ .Values.serverProbe.image.tag }}"
+          image: {{ include "server-monitor.image" .Values.serverProbe.image | quote }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           {{- with .Values.global.containerSecurityContext }}
           securityContext:

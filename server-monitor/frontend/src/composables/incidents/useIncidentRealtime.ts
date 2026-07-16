@@ -6,6 +6,13 @@ import type { IncidentRealtimeEvent } from "../../types/incidents";
 
 export type RealtimeState = "connecting" | "connected" | "reconnecting" | "disconnected";
 
+export const maximumReconnectAttempts = 8;
+
+export function reconnectDelayForAttempt(attempt: number): number | null {
+  if (!Number.isInteger(attempt) || attempt < 0 || attempt >= maximumReconnectAttempts) return null;
+  return Math.min(1000 * 2 ** attempt, 30000);
+}
+
 export function acceptRealtimeSequence(lastSequence: number, event: IncidentRealtimeEvent, incidentID: string): number | null {
   if (event.incident_id !== incidentID || event.kind !== "refresh" || !Number.isSafeInteger(event.sequence) || event.sequence <= lastSequence) {
     return null;
@@ -20,7 +27,6 @@ export function useIncidentRealtime(incidentID: string, resync: () => Promise<vo
   let reconnectTimer: number | null = null;
   let reconnectAttempts = 0;
   let stopped = false;
-  const maximumReconnectAttempts = 8;
 
   function clearTimer() {
     if (reconnectTimer !== null) {
@@ -41,7 +47,6 @@ export function useIncidentRealtime(incidentID: string, resync: () => Promise<vo
       const response = await fetch(incidentRealtimeURL(incidentID), { headers, signal: controller.signal });
       if (!response.ok || !response.body) throw new Error(`Realtime request failed with status ${response.status}`);
       state.value = "connected";
-      reconnectAttempts = 0;
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
@@ -64,6 +69,7 @@ export function useIncidentRealtime(incidentID: string, resync: () => Promise<vo
         }
         if (done) break;
       }
+      if (!stopped) await resync().catch(() => undefined);
     } catch (cause) {
       if (!stopped && !(cause instanceof DOMException && cause.name === "AbortError")) {
         await resync().catch(() => undefined);
@@ -75,12 +81,12 @@ export function useIncidentRealtime(incidentID: string, resync: () => Promise<vo
   }
 
   function scheduleReconnect() {
-    if (stopped || reconnectAttempts >= maximumReconnectAttempts) {
+    const delay = reconnectDelayForAttempt(reconnectAttempts);
+    if (stopped || delay === null) {
       state.value = "disconnected";
       return;
     }
     state.value = "reconnecting";
-    const delay = Math.min(1000 * 2 ** reconnectAttempts, 30000);
     reconnectAttempts += 1;
     reconnectTimer = window.setTimeout(() => void connect(), delay);
   }
@@ -103,7 +109,7 @@ export function useIncidentRealtime(incidentID: string, resync: () => Promise<vo
   return { state, lastSequence, start, stop };
 }
 
-function parseRefreshEvent(block: string): IncidentRealtimeEvent | null {
+export function parseRefreshEvent(block: string): IncidentRealtimeEvent | null {
   let name = "message";
   const data: string[] = [];
   for (const line of block.split("\n")) {

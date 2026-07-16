@@ -1,8 +1,8 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 
-ARG NODE_IMAGE=node:20-alpine
-ARG GO_IMAGE=golang:1.26-alpine
-ARG RUNTIME_IMAGE=alpine:3.21
+ARG NODE_IMAGE=node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293
+ARG GO_IMAGE=golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2
+ARG RUNTIME_IMAGE=alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d
 ARG VCS_REF=unknown
 ARG VCS_SOURCE=unknown
 ARG VERSION=dev
@@ -57,7 +57,7 @@ RUN apk add --no-cache ca-certificates tzdata wget \
 WORKDIR /app
 
 COPY --from=go-builder /out/web /app/web
-COPY --from=prom/prometheus:v2.51.0 /bin/promtool /usr/local/bin/promtool
+COPY --from=prom/prometheus:v2.51.0@sha256:5ccad477d0057e62a7cd1981ffcc43785ac10c5a35522dc207466ff7e7ec845f /bin/promtool /usr/local/bin/promtool
 COPY --from=frontend-builder /src/frontend/dist /app/static
 COPY runbooks /app/runbooks
 

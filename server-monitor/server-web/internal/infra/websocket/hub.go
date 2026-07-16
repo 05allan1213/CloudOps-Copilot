@@ -57,6 +57,7 @@ func NewHub(maxConnections int, allowedOrigins ...[]string) *Hub {
 		done:           make(chan struct{}),
 		maxConnections: maxConnections,
 		upgrader: websocket.Upgrader{
+			Subprotocols: []string{"cloudops-bearer"},
 			CheckOrigin: func(r *http.Request) bool {
 				return isOriginAllowed(r, origins)
 			},

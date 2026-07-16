@@ -8,6 +8,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - 'v*'
     paths:
       - .github/workflows/ci.yaml
       - server-monitor/**
@@ -25,11 +27,13 @@ permissions:
   contents: read
 
 env:
+  GO_VERSION: '1.26.5'
   GOIMPORTS_VERSION: v0.43.0
   GOLANGCI_LINT_VERSION: v2.11.4
+  GOVULNCHECK_VERSION: v1.6.0
   NODE_VERSION: '20'
   HELM_VERSION: v3.14.4
-  PROMETHEUS_IMAGE: prom/prometheus:v2.51.0
+  PROMETHEUS_IMAGE: prom/prometheus:v2.51.0@sha256:5ccad477d0057e62a7cd1981ffcc43785ac10c5a35522dc207466ff7e7ec845f
   DOCKERHUB_NAMESPACE: ${{ secrets.DOCKERHUB_USERNAME }}
 
 jobs:
@@ -55,7 +59,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: server-monitor/${{ matrix.module }}/go.mod
+          go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: server-monitor/${{ matrix.module }}/go.sum
 
       - name: Install goimports
@@ -76,13 +80,19 @@ jobs:
           "${GOLANGCI_LINT_BIN}" run --timeout=5m ./...
 
       - name: Run tests
-        run: go test ./...
+        run: go test -count=1 ./...
 
       - name: Run race tests
-        run: go test -race ./...
+        run: go test -race -count=1 ./...
 
       - name: Run go vet
         run: go vet ./...
+
+      - name: Build module
+        run: go build ./...
+
+      - name: Scan reachable Go vulnerabilities
+        run: go run "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}" ./...
 
       - name: NLU evaluation
         if: matrix.module == 'server-web'
@@ -123,8 +133,17 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --prefer-offline
 
+      - name: Audit production and build dependencies
+        run: npm audit --audit-level=high --registry=https://registry.npmjs.org
+
       - name: Run ESLint
-        run: npx eslint . --ext .ts,.vue
+        run: npm run lint
+
+      - name: Run strict typecheck
+        run: npx vue-tsc --noEmit
+
+      - name: Run unit tests
+        run: npm test
 
       - name: Build frontend
         run: npm run build
@@ -156,8 +175,20 @@ jobs:
           cp .env.example .env
           docker compose --env-file .env.example config >/tmp/server-monitor-compose.yaml
 
-      - name: Check K8s setup script syntax
-        run: bash -n docker/setup-k8s.sh
+      - name: Check shell syntax
+        run: |
+          while IFS= read -r script; do
+            bash -n "${script}"
+          done < <(rg --files -g '*.sh')
+
+      - name: Run shellcheck
+        run: |
+          mapfile -t scripts < <(rg --files -g '*.sh')
+          docker run --rm \
+            -v "${{ github.workspace }}:/repo" \
+            -w /repo/server-monitor \
+            koalaman/shellcheck:v0.10.0 \
+            "${scripts[@]}"
 
   prometheus:
     name: prometheus config checks
@@ -199,6 +230,68 @@ jobs:
       - name: Lint chart
         run: helm lint server-monitor/charts/server-monitor
 
+      - name: Render chart
+        run: helm template cloudops server-monitor/charts/server-monitor >/tmp/cloudops-rendered.yaml
+
+      - name: Validate rendered Kubernetes schema
+        run: |
+          docker run --rm -i \
+            ghcr.io/yannh/kubeconform:v0.6.7 \
+            -strict -summary -ignore-missing-schemas \
+            </tmp/cloudops-rendered.yaml
+
+  static-delivery:
+    name: workflow and manifest checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Parse workflow YAML
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/repo" \
+            -w /repo \
+            mikefarah/yq:4.44.1 eval '.' .github/workflows/ci.yaml >/dev/null
+
+      - name: Run actionlint
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/repo" \
+            -w /repo \
+            rhysd/actionlint:1.7.7 -color
+
+      - name: Parse raw Kubernetes YAML
+        run: |
+          for manifest in server-monitor/k8s/*.yaml; do
+            docker run --rm \
+              -v "${{ github.workspace }}:/repo" \
+              -w /repo \
+              mikefarah/yq:4.44.1 eval '.' "${manifest}" >/dev/null
+          done
+
+      - name: Validate raw Kubernetes schema
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/repo" \
+            -w /repo \
+            ghcr.io/yannh/kubeconform:v0.6.7 \
+            -strict -summary -ignore-missing-schemas \
+            server-monitor/k8s/*.yaml
+
+      - name: Check patch whitespace
+        env:
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          BASE_SHA="${EVENT_BASE_SHA}"
+          if [ -z "${BASE_SHA}" ] || [ "${BASE_SHA}" = "0000000000000000000000000000000000000000" ]; then
+            BASE_SHA="HEAD^"
+          fi
+          git diff --check "${BASE_SHA}" "${GITHUB_SHA}" --
+
   docker-build:
     name: docker build (${{ matrix.image.name }})
     runs-on: ubuntu-latest
@@ -209,6 +302,7 @@ jobs:
       - compose
       - prometheus
       - helm
+      - static-delivery
     strategy:
       fail-fast: false
       matrix:
@@ -257,13 +351,38 @@ jobs:
           test "$(docker image inspect "${IMAGE_TAG}" --format '{{ index .Config.Labels "org.opencontainers.image.source" }}')" = "${EXPECTED_SOURCE}"
           test "$(docker image inspect "${IMAGE_TAG}" --format '{{ index .Config.Labels "org.opencontainers.image.version" }}')" = "${EXPECTED_REVISION}"
 
+      - name: Scan image vulnerabilities
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: ${{ matrix.image.tag }}
+          format: table
+          exit-code: '1'
+          severity: HIGH,CRITICAL
+
+      - name: Generate image SBOM
+        uses: anchore/sbom-action@v0.20.6
+        with:
+          image: ${{ matrix.image.tag }}
+          format: spdx-json
+          output-file: ${{ matrix.image.name }}.spdx.json
+
+      - name: Upload image SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.image.name }}
+          path: ${{ matrix.image.name }}.spdx.json
+          if-no-files-found: error
+
   push-images:
     name: push images (${{ matrix.image.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs:
       - docker-build
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       fail-fast: false
       matrix:
@@ -287,18 +406,17 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push image
+      - name: Build and push immutable image
+        id: build-push
         uses: docker/build-push-action@v6
         with:
           context: ./server-monitor
           file: ${{ matrix.image.file }}
           target: runtime
           push: true
-          provenance: false
-          sbom: false
-          tags: |
-            ${{ env.DOCKERHUB_NAMESPACE }}/${{ matrix.image.name }}:latest
-            ${{ env.DOCKERHUB_NAMESPACE }}/${{ matrix.image.name }}:${{ github.sha }}
+          provenance: mode=max
+          sbom: true
+          tags: ${{ env.DOCKERHUB_NAMESPACE }}/${{ matrix.image.name }}:${{ github.sha }}
           build-args: |
             VCS_REF=${{ github.sha }}
             VCS_SOURCE=${{ github.server_url }}/${{ github.repository }}
@@ -306,13 +424,37 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}
 
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3.10.0
+
+      - name: Sign immutable image digest
+        env:
+          IMAGE: ${{ env.DOCKERHUB_NAMESPACE }}/${{ matrix.image.name }}
+          DIGEST: ${{ steps.build-push.outputs.digest }}
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+
+      - name: Record immutable digest
+        env:
+          DIGEST: ${{ steps.build-push.outputs.digest }}
+        run: |
+          test "${DIGEST#sha256:}" != "${DIGEST}"
+          printf '%s' "${DIGEST}" >"${{ matrix.image.name }}.digest"
+
+      - name: Upload immutable digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-digest-${{ matrix.image.name }}
+          path: ${{ matrix.image.name }}.digest
+          if-no-files-found: error
+
   deploy:
     name: deploy chart
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && vars.DEPLOY_ENABLED == 'true'
     needs:
       - push-images
+    environment: production
     env:
       KUBE_CONFIG_DATA: ${{ secrets.KUBE_CONFIG_DATA }}
       DEPLOY_NAMESPACE: ${{ vars.DEPLOY_NAMESPACE }}
@@ -330,6 +472,13 @@ jobs:
       - name: Setup kubectl
         uses: azure/setup-kubectl@v4
 
+      - name: Download immutable image digests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: image-digest-*
+          path: ${{ runner.temp }}/image-digests
+          merge-multiple: true
+
       - name: Configure kubeconfig
         run: |
           if [ -z "${KUBE_CONFIG_DATA}" ]; then
@@ -346,6 +495,12 @@ jobs:
           RELEASE_NAME="${DEPLOY_RELEASE_NAME:-server-monitor}"
           NAMESPACE="${DEPLOY_NAMESPACE:-server-monitor}"
           VALUES_FILE="${DEPLOY_VALUES_FILE:-server-monitor/charts/server-monitor/values.yaml}"
+          SERVER_WEB_DIGEST="$(cat "${RUNNER_TEMP}/image-digests/server-web.digest")"
+          ALERT_SERVICE_DIGEST="$(cat "${RUNNER_TEMP}/image-digests/alert-service.digest")"
+          SERVER_PROBE_DIGEST="$(cat "${RUNNER_TEMP}/image-digests/server-probe.digest")"
+          for digest in "${SERVER_WEB_DIGEST}" "${ALERT_SERVICE_DIGEST}" "${SERVER_PROBE_DIGEST}"; do
+            [[ "${digest}" =~ ^sha256:[a-f0-9]{64}$ ]]
+          done
 
           helm upgrade --install "${RELEASE_NAME}" server-monitor/charts/server-monitor \
             --namespace "${NAMESPACE}" \
@@ -355,8 +510,8 @@ jobs:
             --timeout 10m \
             --values "${VALUES_FILE}" \
             --set-string "serverWeb.image.repository=${DOCKERHUB_NAMESPACE}/server-web" \
-            --set-string "serverWeb.image.tag=${GITHUB_SHA}" \
+            --set-string "serverWeb.image.digest=${SERVER_WEB_DIGEST}" \
             --set-string "alertService.image.repository=${DOCKERHUB_NAMESPACE}/alert-service" \
-            --set-string "alertService.image.tag=${GITHUB_SHA}" \
+            --set-string "alertService.image.digest=${ALERT_SERVICE_DIGEST}" \
             --set-string "serverProbe.image.repository=${DOCKERHUB_NAMESPACE}/server-probe" \
-            --set-string "serverProbe.image.tag=${GITHUB_SHA}"
+            --set-string "serverProbe.image.digest=${SERVER_PROBE_DIGEST}"

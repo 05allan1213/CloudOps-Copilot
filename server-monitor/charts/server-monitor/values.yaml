@@ -76,6 +76,23 @@ copilot:
   multiIntentEnabled: false
   multiIntentMax: 3
 
+incidentAgent:
+  enabled: false
+  workerID: server-web-agent-worker
+  pollIntervalMilliseconds: "1000"
+  leaseSeconds: "30"
+  heartbeatSeconds: "10"
+  maxSteps: "12"
+  maxToolCalls: "6"
+  maxModelCalls: "8"
+  tokenBudget: "12000"
+  maxEvidenceItems: "12"
+  maxRuntimeSeconds: "120"
+  toolTimeoutSeconds: "15"
+  maxEvidenceBytes: "16384"
+  maxCheckpointBytes: "32768"
+  maxStepRetries: "1"
+
 changeIntelligence:
   enabled: false
   lookbackSeconds: "86400"
@@ -235,6 +252,7 @@ serverWeb:
   image:
     repository: goproject-server-web
     tag: 0.1.0
+    digest: ""
   service:
     type: NodePort
     port: 8080
@@ -422,6 +440,7 @@ alertService:
   image:
     repository: goproject-alert-service
     tag: 0.1.0
+    digest: ""
   service:
     type: ClusterIP
     port: 8081
@@ -438,6 +457,7 @@ serverProbe:
   image:
     repository: goproject-server-probe
     tag: 0.1.0
+    digest: ""
   listenAddr: ":9090"
   metricsPath: /metrics
   scrapeInterval: "5"

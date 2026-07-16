@@ -24,6 +24,9 @@ go.work.sum
 # env file
 .env
 
+# Generated local cluster credentials
+server-monitor/docker/kubeconfig
+
 # Editor/IDE
 .idea/
 .vscode/

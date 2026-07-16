@@ -55,7 +55,7 @@ spec:
           command: ["sh", "-c", "until nc -z mysql 3306; do echo waiting for mysql; sleep 2; done"]
       containers:
         - name: server-web
-          image: "{{ .Values.serverWeb.image.repository }}:{{ .Values.serverWeb.image.tag }}"
+          image: {{ include "server-monitor.image" .Values.serverWeb.image | quote }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           {{- with .Values.global.containerSecurityContext }}
           securityContext:

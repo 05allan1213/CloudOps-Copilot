@@ -30,7 +30,7 @@ spec:
       {{- end }}
       containers:
         - name: alert-service
-          image: "{{ .Values.alertService.image.repository }}:{{ .Values.alertService.image.tag }}"
+          image: {{ include "server-monitor.image" .Values.alertService.image | quote }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
           {{- with .Values.global.containerSecurityContext }}
           securityContext:

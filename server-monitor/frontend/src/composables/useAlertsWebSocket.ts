@@ -1,7 +1,7 @@
 import { onBeforeUnmount, ref } from "vue";
 
 import type { ActionUpdate, AlertEvent, DiagnosisUpdate, Host } from "../types";
-import { getStoredToken } from "../api/authStorage";
+import { openAuthenticatedWebSocket } from "../api/websocketAuth";
 
 type ConnectionState = "connecting" | "connected" | "disconnected";
 
@@ -16,10 +16,6 @@ function buildWebSocketUrl() {
     base = `${protocol}//${window.location.host}/ws/alerts`;
   }
 
-  const token = getStoredToken();
-  if (token) {
-    return `${base}?token=${encodeURIComponent(token)}`;
-  }
   return base;
 }
 
@@ -124,7 +120,7 @@ export function useAlertsWebSocket(
     }
 
     connectionState.value = "connecting";
-    socket = new WebSocket(buildWebSocketUrl());
+    socket = openAuthenticatedWebSocket(buildWebSocketUrl());
 
     socket.onopen = () => {
       reconnectDelay = 1000;

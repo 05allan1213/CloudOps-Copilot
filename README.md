@@ -179,8 +179,10 @@ make deploy-helm HELM_RELEASE=server-monitor KUBE_NAMESPACE=server-monitor
 make deploy-helm \
   HELM_RELEASE=server-monitor \
   KUBE_NAMESPACE=server-monitor \
-  HELM_SET_ARGS="--set serverWeb.image.repository=<repo>/server-web --set serverWeb.image.tag=<tag>"
+  HELM_SET_ARGS="--set serverWeb.image.repository=<repo>/server-web --set serverWeb.image.digest=sha256:<digest>"
 ```
+
+生产发布应为三个应用镜像分别提供不可变 `sha256` digest；`image.tag` 仅作为本地兼容回退。Chart 的 `values.schema.json` 会拒绝格式无效的 digest。
 
 原始清单部署：
 
@@ -196,7 +198,7 @@ cd server-monitor
 make k8s-setup
 ```
 
-这会创建/检查 kind 集群、准备测试资源并生成 `docker/kubeconfig`。完成后按 `.env.example` 调整 `.env` 中的 K8s 相关开关，再重新启动 `server-web` 或整套 Compose 服务。
+这会创建/检查 kind 集群、准备测试资源并生成本机 `docker/kubeconfig`。该文件含本地集群凭据、已被 Git 忽略，不得提交。完成后按 `.env.example` 调整 `.env` 中的 K8s 相关开关，再重新启动 `server-web` 或整套 Compose 服务。
 
 ## Makefile 常用命令
 
@@ -299,12 +301,12 @@ make k8s-setup
 
 CI 定义位于 `.github/workflows/ci.yaml`，当前流程覆盖：
 
-- Go 模块矩阵检查：`goimports`、`golangci-lint`、`go test`、`go vet`
+- Go 模块矩阵检查：`goimports`、`golangci-lint`、uncached `go test`、race、`go vet`、`go build`
 - `server-web` 的 NLU / RAG / Multi-intent 评估
-- 前端 ESLint 与构建
-- Compose 配置校验
+- 前端 clean install、ESLint、strict typecheck、unit test 与 production build
+- Compose、Shell、Workflow YAML/actionlint、Kubernetes YAML/kubeconform 校验
 - Prometheus 规则校验
-- Helm lint
-- Docker 镜像构建校验
-- DockerHub 镜像推送（`push-images`，仅 `main` 分支 push 触发）
-- 可选 Helm 部署（`deploy`，仅 `main` 分支 push 且 `vars.DEPLOY_ENABLED == 'true'` 时触发）
+- Helm values schema、lint、template 与渲染清单校验
+- Docker 镜像构建、OCI label、漏洞扫描和 SBOM 校验
+- DockerHub commit-SHA 镜像、provenance/SBOM attestations 与 keyless signing（`push-images`，仅 `v*` tag 触发）
+- 可选受保护环境 Helm 部署（`deploy`，仅 `v*` tag、`vars.DEPLOY_ENABLED == 'true'` 且实际 image digest 完整时触发）

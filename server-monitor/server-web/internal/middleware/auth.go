@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -14,6 +15,8 @@ const (
 	ContextUserID   = "user_id"
 	ContextUsername = "username"
 	ContextRole     = "role"
+
+	webSocketBearerSubprotocol = "cloudops-bearer"
 )
 
 type authVerifier interface {
@@ -64,11 +67,11 @@ func AuthWebSocket(verifier authVerifier) gin.HandlerFunc {
 
 		identity, err := verifier.AuthenticateBearer(c.GetHeader("Authorization"))
 		if errors.Is(err, authpkg.ErrBearerTokenMissing) {
-			token := c.Query("token")
+			token := webSocketBearerToken(c.GetHeader("Sec-WebSocket-Protocol"))
 			if token == "" {
 				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
 					"status": "error",
-					"error":  "authorization header required",
+					"error":  "authorization header or websocket bearer subprotocol required",
 				})
 				return
 			}
@@ -88,6 +91,16 @@ func AuthWebSocket(verifier authVerifier) gin.HandlerFunc {
 		c.Request = c.Request.WithContext(WithIdentity(c.Request.Context(), identity))
 		c.Next()
 	}
+}
+
+func webSocketBearerToken(header string) string {
+	parts := strings.Split(header, ",")
+	for index := 0; index+1 < len(parts); index++ {
+		if strings.TrimSpace(parts[index]) == webSocketBearerSubprotocol {
+			return strings.TrimSpace(parts[index+1])
+		}
+	}
+	return ""
 }
 
 func VerifyTokenVersion(verifier tokenVersionVerifier) gin.HandlerFunc {
