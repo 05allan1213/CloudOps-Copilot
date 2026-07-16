@@ -57,7 +57,8 @@ RUN apk add --no-cache ca-certificates tzdata wget \
 WORKDIR /app
 
 COPY --from=go-builder /out/web /app/web
-COPY --from=prom/prometheus:v2.51.0@sha256:5ccad477d0057e62a7cd1981ffcc43785ac10c5a35522dc207466ff7e7ec845f /bin/promtool /usr/local/bin/promtool
+# Keep the runtime validator patched while CI also checks rules against the deployed 2.51 line.
+COPY --from=prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893 /bin/promtool /usr/local/bin/promtool
 COPY --from=frontend-builder /src/frontend/dist /app/static
 COPY runbooks /app/runbooks
 
