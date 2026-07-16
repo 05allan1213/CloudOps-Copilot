@@ -273,16 +273,6 @@ jobs:
           cosign download signature "${IMAGE_REPOSITORY}@${DIGEST}" \
             >"${EVIDENCE_DIR}/cosign-signatures.json"
 
-          jq '[.[] | .optional | {
-            issuer: .Issuer,
-            certificate_identity: .Subject,
-            repository: .githubWorkflowRepository,
-            workflow_name: .githubWorkflowName,
-            workflow_ref: .githubWorkflowRef,
-            workflow_sha: .githubWorkflowSHA,
-            workflow_trigger: .githubWorkflowTrigger
-          }]' "${EVIDENCE_DIR}/cosign-verify.json" \
-            >"${EVIDENCE_DIR}/certificate-claims.json"
           CERTIFICATE_BYTES="$(jq -er '
             .verificationMaterial.certificate.rawBytes //
             .verificationMaterial.x509CertificateChain.certificates[0].rawBytes
@@ -290,6 +280,60 @@ jobs:
           printf '%s' "${CERTIFICATE_BYTES}" | base64 -d \
             | openssl x509 -inform DER -noout -text \
             >"${EVIDENCE_DIR}/certificate-claims.txt"
+          certificate_claim() {
+            local oid="$1"
+            awk -v oid="${oid}:" '
+              index($0, oid) {
+                getline
+                sub(/^[[:space:]]+/, "")
+                print
+                exit
+              }
+            ' "${EVIDENCE_DIR}/certificate-claims.txt"
+          }
+          CERTIFICATE_IDENTITY_FROM_CERT="$(awk '
+            /X509v3 Subject Alternative Name/ {
+              getline
+              sub(/^[[:space:]]*URI:/, "")
+              print
+              exit
+            }
+          ' "${EVIDENCE_DIR}/certificate-claims.txt")"
+          CERTIFICATE_ISSUER="$(certificate_claim 1.3.6.1.4.1.57264.1.1)"
+          CERTIFICATE_TRIGGER="$(certificate_claim 1.3.6.1.4.1.57264.1.2)"
+          CERTIFICATE_SHA="$(certificate_claim 1.3.6.1.4.1.57264.1.3)"
+          CERTIFICATE_WORKFLOW_NAME="$(certificate_claim 1.3.6.1.4.1.57264.1.4)"
+          CERTIFICATE_REPOSITORY="$(certificate_claim 1.3.6.1.4.1.57264.1.5)"
+          CERTIFICATE_REF="$(certificate_claim 1.3.6.1.4.1.57264.1.6)"
+          jq -n \
+            --arg issuer "${CERTIFICATE_ISSUER}" \
+            --arg certificate_identity "${CERTIFICATE_IDENTITY_FROM_CERT}" \
+            --arg repository "${CERTIFICATE_REPOSITORY}" \
+            --arg workflow_name "${CERTIFICATE_WORKFLOW_NAME}" \
+            --arg workflow_ref "${CERTIFICATE_REF}" \
+            --arg workflow_sha "${CERTIFICATE_SHA}" \
+            --arg workflow_trigger "${CERTIFICATE_TRIGGER}" \
+            '[{issuer: $issuer, certificate_identity: $certificate_identity,
+              repository: $repository, workflow_name: $workflow_name,
+              workflow_ref: $workflow_ref, workflow_sha: $workflow_sha,
+              workflow_trigger: $workflow_trigger}]' \
+            >"${EVIDENCE_DIR}/certificate-claims.json"
+          jq -e \
+            --arg issuer "https://token.actions.githubusercontent.com" \
+            --arg identity "${CERTIFICATE_IDENTITY}" \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg workflow_name "${GITHUB_WORKFLOW}" \
+            --arg workflow_ref "refs/heads/main" \
+            --arg workflow_sha "${GITHUB_SHA}" \
+            --arg workflow_trigger "workflow_dispatch" \
+            'length == 1 and .[0].issuer == $issuer and
+              .[0].certificate_identity == $identity and
+              .[0].repository == $repository and
+              .[0].workflow_name == $workflow_name and
+              .[0].workflow_ref == $workflow_ref and
+              .[0].workflow_sha == $workflow_sha and
+              .[0].workflow_trigger == $workflow_trigger' \
+            "${EVIDENCE_DIR}/certificate-claims.json" >/dev/null
           jq '{mediaType, tlogEntries: .verificationMaterial.tlogEntries}' \
             "${EVIDENCE_DIR}/cosign-sign.bundle.json" \
             >"${EVIDENCE_DIR}/rekor-transparency.json"
