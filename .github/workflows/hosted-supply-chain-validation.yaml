@@ -1,0 +1,381 @@
+name: Hosted Supply-Chain Validation
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: hosted-supply-chain-validation-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+jobs:
+  validate-context:
+    name: validate non-production context
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact dispatch commit
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Fail closed outside the approved main ref
+        run: |
+          [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]
+          [[ "${GITHUB_REF}" == "refs/heads/main" ]]
+          [[ "${GITHUB_SHA}" =~ ^[a-f0-9]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+
+      - name: Prove validation has no deployment surface
+        run: |
+          WORKFLOW=.github/workflows/hosted-supply-chain-validation.yaml
+          if rg -n '^[[:space:]]+environment:' "${WORKFLOW}"; then
+            exit 1
+          fi
+          if rg -n '^[[:space:]]+uses:[[:space:]]+azure/setup-(helm|kubectl)@' "${WORKFLOW}"; then
+            exit 1
+          fi
+          if rg -n '^[[:space:]]+(helm|kubectl|argocd)[[:space:]]' "${WORKFLOW}"; then
+            exit 1
+          fi
+          if rg -n '^[[:space:]]+[A-Za-z0-9_-]+:.*secrets\.' "${WORKFLOW}"; then
+            exit 1
+          fi
+
+  validate-images:
+    name: validate image (${{ matrix.image.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs:
+      - validate-context
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+      attestations: write
+    env:
+      EVIDENCE_SUBDIR: hosted-validation-evidence/${{ matrix.image.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - name: server-probe
+            file: ./server-monitor/server-probe/Dockerfile
+          - name: server-web
+            file: ./server-monitor/server-web/Dockerfile
+          - name: alert-service
+            file: ./server-monitor/alert-service/Dockerfile
+    steps:
+      - name: Checkout exact dispatch commit
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Login to validation GHCR namespace
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Prepare validation-only image identity
+        id: image
+        env:
+          SERVICE: ${{ matrix.image.name }}
+        run: |
+          case "${SERVICE}" in
+            server-probe|server-web|alert-service) ;;
+            *) exit 1 ;;
+          esac
+          OWNER="${GITHUB_REPOSITORY_OWNER,,}"
+          PACKAGE="cloudops-copilot-validation-${SERVICE}"
+          IMAGE_REPOSITORY="ghcr.io/${OWNER}/${PACKAGE}"
+          VALIDATION_TAG="validation-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          IMAGE_TAG="${IMAGE_REPOSITORY}:${VALIDATION_TAG}"
+          EVIDENCE_DIR="${RUNNER_TEMP}/${EVIDENCE_SUBDIR}"
+          mkdir -p "${EVIDENCE_DIR}"
+          echo "EVIDENCE_DIR=${EVIDENCE_DIR}" >>"${GITHUB_ENV}"
+          {
+            echo "package=${PACKAGE}"
+            echo "repository=${IMAGE_REPOSITORY}"
+            echo "tag=${IMAGE_TAG}"
+            echo "tag_name=${VALIDATION_TAG}"
+          } >>"${GITHUB_OUTPUT}"
+          printf '%s\n' "${GITHUB_SHA}" >"${EVIDENCE_DIR}/git-sha.txt"
+
+      - name: Build and push validation image
+        id: build-push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: ./server-monitor
+          file: ${{ matrix.image.file }}
+          target: runtime
+          push: true
+          provenance: false
+          sbom: false
+          tags: ${{ steps.image.outputs.tag }}
+          build-args: |
+            VCS_REF=${{ github.sha }}
+            VCS_SOURCE=${{ github.server_url }}/${{ github.repository }}
+            VERSION=${{ github.sha }}
+          cache-from: type=gha,scope=hosted-validation-${{ matrix.image.name }}
+          cache-to: type=gha,mode=max,scope=hosted-validation-${{ matrix.image.name }}
+
+      - name: Verify Registry digest and OCI labels
+        env:
+          DIGEST: ${{ steps.build-push.outputs.digest }}
+          IMAGE_REPOSITORY: ${{ steps.image.outputs.repository }}
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
+          SERVICE: ${{ matrix.image.name }}
+        run: |
+          [[ "${DIGEST}" =~ ^sha256:[a-f0-9]{64}$ ]]
+          REGISTRY_DIGEST="$(docker buildx imagetools inspect "${IMAGE_TAG}" --format '{{json .Manifest}}' | jq -r '.digest')"
+          test "${REGISTRY_DIGEST}" = "${DIGEST}"
+
+          IMAGE_REF="${IMAGE_REPOSITORY}@${DIGEST}"
+          docker buildx imagetools inspect "${IMAGE_REF}" --format '{{json .Image}}' >"${EVIDENCE_DIR}/oci-labels.json"
+          jq -e --arg sha "${GITHUB_SHA}" --arg source "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" '
+            .config.Labels["org.opencontainers.image.revision"] == $sha and
+            .config.Labels["org.opencontainers.image.version"] == $sha and
+            .config.Labels["org.opencontainers.image.source"] == $source
+          ' "${EVIDENCE_DIR}/oci-labels.json" >/dev/null
+
+          jq -n \
+            --arg service "${SERVICE}" \
+            --arg repository "${IMAGE_REPOSITORY}" \
+            --arg digest "${DIGEST}" \
+            --arg validation_tag "${IMAGE_TAG}" \
+            '{service: $service, repository: $repository, digest: $digest, validation_tag: $validation_tag}' \
+            >"${EVIDENCE_DIR}/image-digests.json"
+
+      - name: Scan exact validation digest
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
+        with:
+          image-ref: ${{ steps.image.outputs.repository }}@${{ steps.build-push.outputs.digest }}
+          format: json
+          output: ${{ runner.temp }}/hosted-validation-evidence/${{ matrix.image.name }}/trivy.json
+          exit-code: '1'
+          ignore-unfixed: false
+          severity: HIGH,CRITICAL
+
+      - name: Generate exact validation digest SBOM
+        uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
+        with:
+          image: ${{ steps.image.outputs.repository }}@${{ steps.build-push.outputs.digest }}
+          format: spdx-json
+          output-file: ${{ runner.temp }}/hosted-validation-evidence/${{ matrix.image.name }}/${{ matrix.image.name }}.spdx.json
+
+      - name: Record scan and SBOM hashes
+        run: |
+          sha256sum \
+            "${EVIDENCE_DIR}/${{ matrix.image.name }}.spdx.json" \
+            "${EVIDENCE_DIR}/trivy.json" \
+            >"${EVIDENCE_DIR}/evidence.sha256"
+
+      - name: Attest exact digest build provenance
+        id: provenance
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-name: ${{ steps.image.outputs.repository }}
+          subject-digest: ${{ steps.build-push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest exact digest SBOM
+        id: sbom-attestation
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-name: ${{ steps.image.outputs.repository }}
+          subject-digest: ${{ steps.build-push.outputs.digest }}
+          sbom-path: ${{ runner.temp }}/hosted-validation-evidence/${{ matrix.image.name }}/${{ matrix.image.name }}.spdx.json
+          push-to-registry: true
+
+      - name: Inspect provenance and SBOM subjects
+        env:
+          DIGEST: ${{ steps.build-push.outputs.digest }}
+          IMAGE_REPOSITORY: ${{ steps.image.outputs.repository }}
+          PROVENANCE_BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+          SBOM_BUNDLE: ${{ steps.sbom-attestation.outputs.bundle-path }}
+        run: |
+          extract_statement() {
+            local bundle="$1"
+            local output="$2"
+            jq -er '.. | objects | .payload? // empty' "${bundle}" | head -n 1 | base64 -d >"${output}"
+          }
+
+          cp "${PROVENANCE_BUNDLE}" "${EVIDENCE_DIR}/provenance.bundle.json"
+          cp "${SBOM_BUNDLE}" "${EVIDENCE_DIR}/sbom.bundle.json"
+          extract_statement "${PROVENANCE_BUNDLE}" "${EVIDENCE_DIR}/provenance-inspection.json"
+          extract_statement "${SBOM_BUNDLE}" "${EVIDENCE_DIR}/sbom-attestation-inspection.json"
+
+          for statement in provenance-inspection.json sbom-attestation-inspection.json; do
+            jq -e --arg name "${IMAGE_REPOSITORY}" --arg digest "${DIGEST#sha256:}" '
+              any(.subject[]; .name == $name and .digest.sha256 == $digest)
+            ' "${EVIDENCE_DIR}/${statement}" >/dev/null
+          done
+          jq -e '.predicateType == "https://slsa.dev/provenance/v1"' \
+            "${EVIDENCE_DIR}/provenance-inspection.json" >/dev/null
+          jq -e '.predicateType | startswith("https://spdx.dev/")' \
+            "${EVIDENCE_DIR}/sbom-attestation-inspection.json" >/dev/null
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62 # v3.10.0
+
+      - name: Sign exact validation digest with GitHub OIDC
+        env:
+          DIGEST: ${{ steps.build-push.outputs.digest }}
+          IMAGE_REPOSITORY: ${{ steps.image.outputs.repository }}
+          SERVICE: ${{ matrix.image.name }}
+        run: |
+          cosign sign --yes \
+            --oidc-provider=github-actions \
+            --bundle "${EVIDENCE_DIR}/cosign-sign.bundle.json" \
+            -a "service=${SERVICE}" \
+            -a "digest=${DIGEST}" \
+            -a "git.sha=${GITHUB_SHA}" \
+            "${IMAGE_REPOSITORY}@${DIGEST}"
+
+      - name: Verify exact hosted identity and transparency log
+        env:
+          DIGEST: ${{ steps.build-push.outputs.digest }}
+          IMAGE_REPOSITORY: ${{ steps.image.outputs.repository }}
+          SERVICE: ${{ matrix.image.name }}
+        run: |
+          CERTIFICATE_IDENTITY="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/hosted-supply-chain-validation.yaml@refs/heads/main"
+          cosign verify \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --certificate-identity "${CERTIFICATE_IDENTITY}" \
+            --certificate-github-workflow-repository "${GITHUB_REPOSITORY}" \
+            --certificate-github-workflow-name "${GITHUB_WORKFLOW}" \
+            --certificate-github-workflow-ref "refs/heads/main" \
+            --certificate-github-workflow-sha "${GITHUB_SHA}" \
+            --certificate-github-workflow-trigger "workflow_dispatch" \
+            -a "service=${SERVICE}" \
+            -a "digest=${DIGEST}" \
+            -a "git.sha=${GITHUB_SHA}" \
+            --output json \
+            "${IMAGE_REPOSITORY}@${DIGEST}" \
+            >"${EVIDENCE_DIR}/cosign-verify.json"
+          cosign download signature "${IMAGE_REPOSITORY}@${DIGEST}" \
+            >"${EVIDENCE_DIR}/cosign-signatures.json"
+
+          jq '[.[] | .optional | {
+            issuer: .Issuer,
+            certificate_identity: .Subject,
+            repository: .githubWorkflowRepository,
+            workflow_name: .githubWorkflowName,
+            workflow_ref: .githubWorkflowRef,
+            workflow_sha: .githubWorkflowSHA,
+            workflow_trigger: .githubWorkflowTrigger
+          }]' "${EVIDENCE_DIR}/cosign-verify.json" \
+            >"${EVIDENCE_DIR}/certificate-claims.json"
+          CERTIFICATE_BYTES="$(jq -er '
+            .verificationMaterial.certificate.rawBytes //
+            .verificationMaterial.x509CertificateChain.certificates[0].rawBytes
+          ' "${EVIDENCE_DIR}/cosign-sign.bundle.json")"
+          printf '%s' "${CERTIFICATE_BYTES}" | base64 -d \
+            | openssl x509 -inform DER -noout -text \
+            >"${EVIDENCE_DIR}/certificate-claims.txt"
+          jq '{mediaType, tlogEntries: .verificationMaterial.tlogEntries}' \
+            "${EVIDENCE_DIR}/cosign-sign.bundle.json" \
+            >"${EVIDENCE_DIR}/rekor-transparency.json"
+          jq -e '.tlogEntries | length > 0 and all(.[]; .logIndex != null and .logId != null)' \
+            "${EVIDENCE_DIR}/rekor-transparency.json" >/dev/null
+
+      - name: Record hosted workflow evidence
+        env:
+          DIGEST: ${{ steps.build-push.outputs.digest }}
+          IMAGE_REPOSITORY: ${{ steps.image.outputs.repository }}
+          SERVICE: ${{ matrix.image.name }}
+        run: |
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          jq -n \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg workflow_name "${GITHUB_WORKFLOW}" \
+            --arg workflow_path ".github/workflows/hosted-supply-chain-validation.yaml" \
+            --arg run_id "${GITHUB_RUN_ID}" \
+            --arg run_attempt "${GITHUB_RUN_ATTEMPT}" \
+            --arg run_url "${RUN_URL}" \
+            --arg event "${GITHUB_EVENT_NAME}" \
+            --arg ref "${GITHUB_REF}" \
+            --arg sha "${GITHUB_SHA}" \
+            --arg actor "${GITHUB_ACTOR}" \
+            --arg environment "none" \
+            --arg issuer "https://token.actions.githubusercontent.com" \
+            --arg certificate_identity "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/hosted-supply-chain-validation.yaml@refs/heads/main" \
+            --arg service "${SERVICE}" \
+            --arg image_repository "${IMAGE_REPOSITORY}" \
+            --arg image_digest "${DIGEST}" \
+            '{repository: $repository, workflow_name: $workflow_name, workflow_path: $workflow_path,
+              run_id: $run_id, run_attempt: $run_attempt, run_url: $run_url, event: $event,
+              ref: $ref, sha: $sha, actor: $actor, environment: $environment, issuer: $issuer,
+              certificate_identity: $certificate_identity, service: $service,
+              image_repository: $image_repository, image_digest: $image_digest}' \
+            >"${EVIDENCE_DIR}/workflow-run.json"
+          grep -RhoE 'uses:[[:space:]]+[^[:space:]]+' .github/workflows .github/actions 2>/dev/null \
+            | sed -E 's/^uses:[[:space:]]+//' | sort -u >"${EVIDENCE_DIR}/action-pins.txt"
+          sha256sum "${EVIDENCE_DIR}"/*.json >"${EVIDENCE_DIR}/json-evidence.sha256"
+
+      - name: Delete temporary validation package version
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGE: ${{ steps.image.outputs.package }}
+          VALIDATION_TAG: ${{ steps.image.outputs.tag_name }}
+        run: |
+          EVIDENCE_DIR="${EVIDENCE_DIR:-${RUNNER_TEMP}/${EVIDENCE_SUBDIR}}"
+          mkdir -p "${EVIDENCE_DIR}"
+          set +e
+          CLEANUP_SCOPE=""
+          CLEANUP_VERSION_ID=""
+          CLEANUP_RESULT="not_found"
+          for scope in orgs users; do
+            endpoint="/${scope}/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE}/versions?per_page=100"
+            versions="$(gh api -H 'Accept: application/vnd.github+json' "${endpoint}" 2>/dev/null)" || continue
+            version_id="$(jq -r --arg tag "${VALIDATION_TAG}" '
+              [.[] | select(any(.metadata.container.tags[]?; . == $tag)) | .id][0] // empty
+            ' <<<"${versions}")"
+            if [ -n "${version_id}" ]; then
+              CLEANUP_SCOPE="${scope}"
+              CLEANUP_VERSION_ID="${version_id}"
+              if gh api --method DELETE \
+                -H 'Accept: application/vnd.github+json' \
+                "/${scope}/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE}/versions/${version_id}" \
+                >/dev/null 2>&1; then
+                CLEANUP_RESULT="deleted"
+              else
+                CLEANUP_RESULT="delete_failed"
+              fi
+              break
+            fi
+          done
+          jq -n \
+            --arg result "${CLEANUP_RESULT}" \
+            --arg package "${PACKAGE}" \
+            --arg tag "${VALIDATION_TAG}" \
+            --arg scope "${CLEANUP_SCOPE}" \
+            --arg version_id "${CLEANUP_VERSION_ID}" \
+            '{result: $result, package: $package, tag: $tag, scope: $scope, version_id: $version_id,
+              note: "Cleanup runs after evidence capture and cannot change the sign/verify result."}' \
+            >"${EVIDENCE_DIR}/registry-cleanup.json"
+          exit 0
+
+      - name: Upload hosted validation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: hosted-validation-evidence-${{ matrix.image.name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/hosted-validation-evidence/${{ matrix.image.name }}
+          if-no-files-found: error
+          retention-days: 30

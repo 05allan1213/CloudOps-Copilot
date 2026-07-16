@@ -299,7 +299,7 @@ make k8s-setup
 
 ## CI
 
-CI 定义位于 `.github/workflows/ci.yaml`，当前流程覆盖：
+CI 定义位于 `.github/workflows/ci.yaml`，所有外部 Actions 均固定到经过官方仓库 release 核验的 40 位 commit SHA。当前流程覆盖：
 
 - Go 模块矩阵检查：`goimports`、`golangci-lint`、uncached `go test`、race、`go vet`、`go build`
 - `server-web` 的 NLU / RAG / Multi-intent 评估
@@ -308,5 +308,11 @@ CI 定义位于 `.github/workflows/ci.yaml`，当前流程覆盖：
 - Prometheus 规则校验
 - Helm values schema、lint、template 与渲染清单校验
 - Docker 镜像构建、OCI label、漏洞扫描和 SBOM 校验
-- DockerHub commit-SHA 镜像、provenance/SBOM attestations 与 keyless signing（`push-images`，仅 `v*` tag 触发）
-- 可选受保护环境 Helm 部署（`deploy`，仅 `v*` tag、`vars.DEPLOY_ENABLED == 'true'` 且实际 image digest 完整时触发）
+- DockerHub commit-SHA 镜像、exact-digest Trivy/SBOM、provenance/SBOM attestations、OIDC keyless signing 与严格 Cosign verify（`push-images`，仅 pushed `v*` tag 且通过 `production` environment 后触发）
+- 三服务验证通过后生成单一原子 digest manifest；可选 Helm 部署仅消费该 manifest 中的 repository 和 digest（`deploy`，仅 `v*` tag、`vars.DEPLOY_ENABLED == 'true'` 且受保护 `production` environment 通过后触发）
+
+非生产 hosted supply-chain 验证定义于 `.github/workflows/hosted-supply-chain-validation.yaml`。它只有无输入的 `workflow_dispatch` 入口，并在 job 层拒绝非 `refs/heads/main` 的执行。该路径使用 `GITHUB_TOKEN` 写入独立的 `ghcr.io/<owner>/cloudops-copilot-validation-<service>` package，不读取 DockerHub、Kubernetes、Argo CD 或 production secrets，也没有 Helm/Kubernetes deploy job。
+
+每个 validation tag 都包含 exact Git SHA、workflow run ID 和 run attempt。签名与验证只使用 Registry digest；验证同时限制 GitHub Actions issuer、repository、workflow 文件、workflow name、`refs/heads/main`、Git SHA 和 `workflow_dispatch` event，并导出 workflow metadata、OCI labels、SBOM/Trivy hashes、provenance/SBOM bundle、Cosign certificate claims 和 Rekor evidence。临时 GHCR package version 在证据生成后 best-effort 删除；清理结果单独写入 artifact，清理失败不会覆盖主 sign/verify Gate 的结果。GHCR 的未标记 referrer/retention 行为仍应由专用 validation package 的 retention policy 兜底。
+
+该 hosted validation workflow 目前只完成本地静态实现与检查，尚未在 GitHub-hosted runner 上执行。运行前需要确认仓库允许 Actions 写入/删除上述专用 GHCR package，并保留 `packages: write`、`attestations: write` 与 `id-token: write` 的最小 job 权限；不得把 validation package 改为正式 release repository。
