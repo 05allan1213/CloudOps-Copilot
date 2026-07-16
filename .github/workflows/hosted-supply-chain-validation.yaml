@@ -394,7 +394,9 @@ jobs:
           CLEANUP_RESULT="not_found"
           POST_DELETE_VERSION_HTTP=""
           POST_DELETE_VERSION_STATE="not_run"
-          REFERRERS_HTTP=""
+          POST_DELETE_PACKAGE_HTTP=""
+          POST_DELETE_PACKAGE_VERSIONS='[]'
+          REFERRER_PROBE_EXIT=""
           REFERRER_STATE="not_run"
           REFERRERS='[]'
           for scope in orgs users; do
@@ -432,32 +434,51 @@ jobs:
             esac
           fi
 
+          if [ -n "${CLEANUP_SCOPE}" ]; then
+            post_delete_versions="$(gh api \
+              -H 'Accept: application/vnd.github+json' \
+              "/${CLEANUP_SCOPE}/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE}/versions?per_page=100" \
+              2>/dev/null)"
+            if [ -n "${post_delete_versions}" ] && \
+              jq -e 'type == "array"' <<<"${post_delete_versions}" >/dev/null 2>&1; then
+              POST_DELETE_PACKAGE_HTTP="200"
+              POST_DELETE_PACKAGE_VERSIONS="$(jq -c \
+                '[.[] | {id, name, tags: .metadata.container.tags, created_at, updated_at}]' \
+                <<<"${post_delete_versions}")"
+            else
+              post_delete_package_response="$(gh api --include \
+                -H 'Accept: application/vnd.github+json' \
+                "/${CLEANUP_SCOPE}/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE}/versions?per_page=100" \
+                2>/dev/null)"
+              POST_DELETE_PACKAGE_HTTP="$(awk '/^HTTP\// { code=$2 } END { print code }' \
+                <<<"${post_delete_package_response}")"
+            fi
+          fi
+
           if [[ "${DIGEST}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
-            token_response="$(curl --silent --show-error --fail \
-              --user "${GITHUB_ACTOR}:${GH_TOKEN}" \
-              "https://ghcr.io/token?scope=repository:${GITHUB_REPOSITORY_OWNER}/${PACKAGE}:pull")"
-            registry_bearer="$(jq -er '.token // .access_token' <<<"${token_response}")"
-            referrers_response="${RUNNER_TEMP}/${PACKAGE}-referrers.json"
-            REFERRERS_HTTP="$(curl --silent --show-error \
-              --output "${referrers_response}" \
-              --write-out '%{http_code}' \
-              --oauth2-bearer "${registry_bearer}" \
-              -H 'Accept: application/vnd.oci.image.index.v1+json' \
-              "https://ghcr.io/v2/${GITHUB_REPOSITORY_OWNER}/${PACKAGE}/referrers/${DIGEST}")"
-            unset registry_bearer token_response
-            case "${REFERRERS_HTTP}" in
-              200)
-                REFERRERS="$(jq -c '[.manifests[]? | {digest, mediaType, artifactType, size}]' \
-                  "${referrers_response}")"
-                if [ "$(jq 'length' <<<"${REFERRERS}")" -eq 0 ]; then
-                  REFERRER_STATE="none"
-                else
-                  REFERRER_STATE="residual"
-                fi
-                ;;
-              404) REFERRER_STATE="subject_not_found" ;;
-              *) REFERRER_STATE="check_failed" ;;
-            esac
+            referrer_output="${RUNNER_TEMP}/${PACKAGE}-post-delete-signatures.jsonl"
+            referrer_error="${RUNNER_TEMP}/${PACKAGE}-post-delete-signatures.err"
+            cosign download signature \
+              "ghcr.io/${GITHUB_REPOSITORY_OWNER}/${PACKAGE}@${DIGEST}" \
+              >"${referrer_output}" 2>"${referrer_error}"
+            REFERRER_PROBE_EXIT="$?"
+            if [ "${REFERRER_PROBE_EXIT}" -eq 0 ]; then
+              REFERRERS="$(jq -sc '[.[] | {
+                mediaType,
+                predicateType: (.dsseEnvelope.payload | @base64d | fromjson | .predicateType),
+                subjects: (.dsseEnvelope.payload | @base64d | fromjson | .subject)
+              }]' "${referrer_output}")"
+              if [ "$(jq 'length' <<<"${REFERRERS}")" -eq 0 ]; then
+                REFERRER_STATE="none"
+              else
+                REFERRER_STATE="residual"
+              fi
+            elif rg -qi 'manifest unknown|name unknown|not found|no signatures|404' \
+              "${referrer_error}"; then
+              REFERRER_STATE="subject_not_found"
+            else
+              REFERRER_STATE="check_failed"
+            fi
           fi
           jq -n \
             --arg result "${CLEANUP_RESULT}" \
@@ -467,13 +488,17 @@ jobs:
             --arg version_id "${CLEANUP_VERSION_ID}" \
             --arg post_delete_version_http "${POST_DELETE_VERSION_HTTP}" \
             --arg post_delete_version_state "${POST_DELETE_VERSION_STATE}" \
-            --arg referrers_http "${REFERRERS_HTTP}" \
+            --arg post_delete_package_http "${POST_DELETE_PACKAGE_HTTP}" \
+            --arg referrer_probe_exit "${REFERRER_PROBE_EXIT}" \
+            --argjson post_delete_package_versions "${POST_DELETE_PACKAGE_VERSIONS}" \
             --arg referrer_state "${REFERRER_STATE}" \
             --argjson referrers "${REFERRERS}" \
             '{result: $result, package: $package, tag: $tag, scope: $scope, version_id: $version_id,
               post_delete_version_http: $post_delete_version_http,
               post_delete_version_state: $post_delete_version_state,
-              referrers_http: $referrers_http, referrer_state: $referrer_state,
+              post_delete_package_http: $post_delete_package_http,
+              post_delete_package_versions: $post_delete_package_versions,
+              referrer_probe_exit: $referrer_probe_exit, referrer_state: $referrer_state,
               referrers: $referrers,
               note: "Cleanup runs after evidence capture and cannot change the sign/verify result."}' \
             >"${EVIDENCE_DIR}/registry-cleanup.json"
