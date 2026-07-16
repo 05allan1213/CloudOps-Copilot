@@ -326,7 +326,11 @@ jobs:
               certificate_identity: $certificate_identity, service: $service,
               image_repository: $image_repository, image_digest: $image_digest}' \
             >"${EVIDENCE_DIR}/workflow-run.json"
-          grep -RhoE 'uses:[[:space:]]+[^[:space:]]+' .github/workflows .github/actions 2>/dev/null \
+          ACTION_PATHS=(.github/workflows)
+          if [ -d .github/actions ]; then
+            ACTION_PATHS+=(.github/actions)
+          fi
+          grep -RhoE 'uses:[[:space:]]+[^[:space:]]+' "${ACTION_PATHS[@]}" \
             | sed -E 's/^uses:[[:space:]]+//' | sort -u >"${EVIDENCE_DIR}/action-pins.txt"
           sha256sum "${EVIDENCE_DIR}"/*.json >"${EVIDENCE_DIR}/json-evidence.sha256"
 
