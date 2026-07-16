@@ -59,7 +59,7 @@ var _ remediation.GitHubWriter = (*Client)(nil)
 
 func New(cfg Config) (*Client, error) {
 	base, err := url.Parse(cfg.BaseURL)
-	if err != nil || base.Host == "" || (base.Scheme != "https" && !(cfg.AllowInsecureForTests && base.Scheme == "http")) || cfg.TokenProvider == nil || len(cfg.AllowedRepositories) == 0 || len(cfg.AllowedBaseBranches) == 0 || len(cfg.AllowedPaths) == 0 {
+	if err != nil || base.Host == "" || (base.Scheme != "https" && (!cfg.AllowInsecureForTests || base.Scheme != "http")) || cfg.TokenProvider == nil || len(cfg.AllowedRepositories) == 0 || len(cfg.AllowedBaseBranches) == 0 || len(cfg.AllowedPaths) == 0 {
 		return nil, fmt.Errorf("%w: GitHub write configuration", remediation.ErrInvalidArgument)
 	}
 	for _, repo := range cfg.AllowedRepositories {

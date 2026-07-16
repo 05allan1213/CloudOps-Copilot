@@ -398,9 +398,10 @@ func (r *RemediationRepository) UpdateCI(ctx context.Context, id, version uint64
 		return remediation.ErrInvalidArgument
 	}
 	planStatus := remediation.PlanCIPending
-	if status == remediation.CIPassing {
+	switch status {
+	case remediation.CIPassing:
 		planStatus = remediation.PlanCIPassed
-	} else if status == remediation.CIFailing || status == remediation.CICancelled {
+	case remediation.CIFailing, remediation.CICancelled:
 		planStatus = remediation.PlanCIFailed
 	}
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

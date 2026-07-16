@@ -75,7 +75,7 @@ func NewTempo(cfg Config) (*Tempo, error) { c, err := newClient(cfg); return &Te
 
 func newClient(cfg Config) (*client, error) {
 	base, err := url.Parse(strings.TrimSpace(cfg.BaseURL))
-	if err != nil || base.Host == "" || base.User != nil || base.RawQuery != "" || base.Fragment != "" || (base.Scheme != "https" && !(cfg.AllowHTTPForTests && base.Scheme == "http")) {
+	if err != nil || base.Host == "" || base.User != nil || base.RawQuery != "" || base.Fragment != "" || (base.Scheme != "https" && (!cfg.AllowHTTPForTests || base.Scheme != "http")) {
 		return nil, fmt.Errorf("invalid fixed observability endpoint")
 	}
 	if cfg.Timeout < time.Second || cfg.Timeout > time.Minute || cfg.MaxLookback < time.Minute || cfg.MaxLookback > 24*time.Hour || len(cfg.AllowedServices) == 0 || len(cfg.AllowedNamespaces) == 0 || len(cfg.AllowedEnvironments) == 0 || cfg.Retries < 0 || cfg.Retries > 2 {
