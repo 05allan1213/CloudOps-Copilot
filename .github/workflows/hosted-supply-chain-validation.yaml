@@ -163,6 +163,7 @@ jobs:
       - name: Scan exact validation digest
         uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
         with:
+          version: v0.72.0
           image-ref: ${{ steps.image.outputs.repository }}@${{ steps.build-push.outputs.digest }}
           format: json
           output: ${{ runner.temp }}/hosted-validation-evidence/${{ matrix.image.name }}/trivy.json
