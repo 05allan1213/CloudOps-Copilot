@@ -29,6 +29,8 @@ spec:
     metadata:
       labels:
         app: server-web
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
     spec:
       {{- if .Values.k8sIntegration.rbac.create }}
       serviceAccountName: cloudops-copilot
@@ -81,6 +83,10 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 5
           env:
+            - name: INCIDENT_AGENT_WORKER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
             - name: TZ
               value: Asia/Shanghai
             - name: LOG_LEVEL

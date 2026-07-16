@@ -25,6 +25,7 @@ spec:
       labels:
         app: kafka
     spec:
+      enableServiceLinks: false
       {{- with .Values.global.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
@@ -119,6 +120,7 @@ metadata:
   labels:
     {{- include "server-monitor.labels" . | nindent 4 }}
 spec:
+  publishNotReadyAddresses: true
   selector:
     app: kafka
   ports:
@@ -140,9 +142,11 @@ metadata:
   name: kafka-init
   labels:
     {{- include "server-monitor.labels" . | nindent 4 }}
+  {{- if .Release.IsUpgrade }}
   annotations:
-    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook": post-upgrade
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+  {{- end }}
 spec:
   template:
     metadata:

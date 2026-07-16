@@ -501,6 +501,17 @@ mysql:
   image: mysql:8.0
   database: server_monitor
   user: server_monitor
+  podSecurityContext:
+    runAsUser: 999
+    runAsGroup: 999
+    fsGroup: 999
+    fsGroupChangePolicy: OnRootMismatch
+  containerSecurityContext:
+    runAsNonRoot: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
   persistence:
     enabled: true
     accessModes:

@@ -19,7 +19,7 @@ spec:
       labels:
         app: mysql
     spec:
-      {{- with .Values.global.podSecurityContext }}
+      {{- with .Values.mysql.podSecurityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -27,7 +27,7 @@ spec:
         - name: mysql
           image: {{ .Values.mysql.image | quote }}
           imagePullPolicy: {{ .Values.global.imagePullPolicy }}
-          {{- with .Values.global.containerSecurityContext }}
+          {{- with .Values.mysql.containerSecurityContext }}
           securityContext:
             {{- toYaml . | nindent 12 }}
           {{- end }}
