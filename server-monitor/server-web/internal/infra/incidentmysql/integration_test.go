@@ -25,6 +25,7 @@ import (
 	"server-web/internal/infra/webhook"
 	legacymodel "server-web/internal/model"
 	"server-web/internal/remediation"
+	appauth "server-web/internal/service/auth"
 	appincident "server-web/internal/service/incident"
 	"server-web/internal/verification"
 	"server-web/migrations"
@@ -96,6 +97,49 @@ func TestMySQLMigrationRepositoryAndConcurrentIngestion(t *testing.T) {
 		}
 		if !legacyDB.Migrator().HasTable(&legacymodel.NotificationChannel{}) {
 			t.Fatal("notification_channels table was not created")
+		}
+
+		authService, err := appauth.NewService(legacyDB, "mysql-concurrent-auth-secret-at-least-32-bytes", time.Hour)
+		if err != nil {
+			t.Fatal(err)
+		}
+		start = make(chan struct{})
+		created := make(chan bool, workers)
+		errs = make(chan error, workers)
+		for range workers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				wasCreated, err := authService.EnsureInitialAdmin(ctx, "mysql-concurrent-admin")
+				created <- wasCreated
+				errs <- err
+			}()
+		}
+		close(start)
+		wg.Wait()
+		close(created)
+		close(errs)
+		createdCount := 0
+		for wasCreated := range created {
+			if wasCreated {
+				createdCount++
+			}
+		}
+		for err := range errs {
+			if err != nil {
+				t.Errorf("concurrent initial admin: %v", err)
+			}
+		}
+		if createdCount != 1 {
+			t.Errorf("initial admin creators=%d, want 1", createdCount)
+		}
+		var adminCount int64
+		if err := legacyDB.Model(&legacymodel.User{}).Where("username = ?", "admin").Count(&adminCount).Error; err != nil {
+			t.Fatal(err)
+		}
+		if adminCount != 1 {
+			t.Fatalf("admin rows=%d, want 1", adminCount)
 		}
 
 		models := legacymodel.AllModels()

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"server-web/internal/model"
 )
@@ -62,10 +63,11 @@ func (s *Service) EnsureInitialAdmin(ctx context.Context, adminPassword string) 
 		Password: hashedPassword,
 		Role:     "admin",
 	}
-	if err := s.db.WithContext(ctx).Create(&admin).Error; err != nil {
-		return false, err
+	result := s.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&admin)
+	if result.Error != nil {
+		return false, result.Error
 	}
-	return true, nil
+	return result.RowsAffected == 1, nil
 }
 
 func (s *Service) Login(ctx context.Context, username string, password string) (LoginResult, error) {
