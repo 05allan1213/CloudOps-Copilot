@@ -297,6 +297,25 @@ func (s *Service) resolveSignal(ctx context.Context, repos domain.Repositories, 
 		item.LastSeenAt = signal.OccurredAt
 	}
 	item.Fingerprint = signal.Fingerprint
+	if item.Status == domain.StatusApplyingChange || item.Status == domain.StatusVerifying {
+		item.Version++
+		item.UpdatedAt = signal.ReceivedAt.UTC()
+		if err := repos.Incidents.Update(ctx, item, expected); err != nil {
+			return result, err
+		}
+		if err := repos.Signals.AttachToIncident(ctx, signal.ID, item.ID); err != nil {
+			return result, err
+		}
+		if err := s.appendTimeline(ctx, repos, item.ID, domain.EventSignalReceived, domain.ActorSource, signal.SourceEventID, signal.Summary, map[string]any{"status": signal.Status, "source": signal.Source, "resolution_deferred_to_verification": true}, signal.OccurredAt); err != nil {
+			return result, err
+		}
+		if err := s.addOutbox(ctx, repos, item, "incident.signal_resolved", signal.ReceivedAt); err != nil {
+			return result, err
+		}
+		result.IncidentPublicID = item.PublicID
+		s.observeSignal(signal, "resolved_deferred_to_verification")
+		return result, nil
+	}
 	from := item.Status
 	eventType, err := item.Transition(domain.StatusResolved, signal.ReceivedAt)
 	if err != nil {

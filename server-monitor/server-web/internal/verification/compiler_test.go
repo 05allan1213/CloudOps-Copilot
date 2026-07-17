@@ -59,3 +59,19 @@ func TestCompilerRejectsUntrustedAndUnsupportedInputs(t *testing.T) {
 		t.Fatal("arbitrary metric plan must be rejected without a trusted template adapter")
 	}
 }
+
+func TestCompileControlledDirectPlanOmitsGitOpsChecks(t *testing.T) {
+	subject := Subject{Repository: "controlled-direct/cloudops-demo", Revision: strings.Repeat("a", 40), Cluster: "kind-cloudops-demo", Environment: "demo", Namespace: "default", Service: "cloudops-demo-workload", WorkloadKind: "Deployment", WorkloadName: "cloudops-demo-workload", AlertFingerprint: "demo-fingerprint"}
+	plan, err := CompileControlledDirectPlan(subject, CompilerConfig{PollInterval: time.Second, StabilityWindow: time.Second, Timeout: time.Minute, AlertLookback: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Checks) != 3 {
+		t.Fatalf("expected three direct checks, got %d", len(plan.Checks))
+	}
+	for _, check := range plan.Checks {
+		if check.Type == CheckArgoRevision || check.Type == CheckArgoSync || check.Type == CheckArgoHealth {
+			t.Fatalf("controlled direct plan must omit Argo check %s", check.Type)
+		}
+	}
+}

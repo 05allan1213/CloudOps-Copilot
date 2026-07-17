@@ -72,10 +72,19 @@ func (s *Store) CreateRun(ctx context.Context, request agent.CreateRunRequest) (
 		if err := tx.Create(&result).Error; err != nil {
 			return mapAgentError(err)
 		}
-		if err := tx.Model(&incidentRow{}).Where("id = ?", incident.ID).Updates(map[string]any{
-			"current_agent_run_id": result.ID, "version": gorm.Expr("version + 1"), "updated_at": now,
-		}).Error; err != nil {
+		incidentUpdates := map[string]any{"current_agent_run_id": result.ID, "version": gorm.Expr("version + 1"), "updated_at": now}
+		startingDiagnosis := incident.Status == string(incidentdomain.StatusCorrelating)
+		if startingDiagnosis {
+			incidentUpdates["status"] = incidentdomain.StatusDiagnosing
+		}
+		if err := tx.Model(&incidentRow{}).Where("id = ?", incident.ID).Updates(incidentUpdates).Error; err != nil {
 			return mapAgentError(err)
+		}
+		if startingDiagnosis {
+			metadata, _ := json.Marshal(map[string]any{"from": incidentdomain.StatusCorrelating, "to": incidentdomain.StatusDiagnosing, "agent_run_id": result.PublicID})
+			if err := tx.Create(&timelineRow{IncidentID: incident.ID, EventType: string(incidentdomain.EventStatusChanged), ActorType: string(incidentdomain.ActorUser), ActorID: "api", Summary: "Incident diagnosis started", MetadataJSON: metadata, OccurredAt: now, CreatedAt: now}).Error; err != nil {
+				return mapAgentError(err)
+			}
 		}
 		metadata, _ := json.Marshal(map[string]any{"agent_run_id": result.PublicID, "attempt": result.Attempt})
 		return mapAgentError(tx.Create(&timelineRow{IncidentID: incident.ID, EventType: string(incidentdomain.EventAgentRunCreated), ActorType: string(incidentdomain.ActorUser), ActorID: "api", Summary: "Bounded incident agent run created", MetadataJSON: metadata, OccurredAt: now, CreatedAt: now}).Error)

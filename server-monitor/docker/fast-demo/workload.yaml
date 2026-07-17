@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudops-demo-workload
+  namespace: default
+  labels:
+    app: cloudops-demo-workload
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: cloudops-demo-workload
+  template:
+    metadata:
+      labels:
+        app: cloudops-demo-workload
+    spec:
+      containers:
+        - name: workload
+          image: cloudops-demo/workload:2acec15910fd8c8605eb34990423c5c029f820d8
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: http
+            periodSeconds: 2
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cloudops-demo-workload
+  namespace: default
+spec:
+  selector:
+    app: cloudops-demo-workload
+  ports:
+    - name: metrics
+      port: 80
+      targetPort: http

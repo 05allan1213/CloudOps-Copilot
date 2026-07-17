@@ -149,6 +149,11 @@ func registerAdminRoutes(router *gin.Engine, cfg config.Config, deps Dependencie
 	remediationAdmin.GET("/remediations/:id", handler.GetRemediation)
 	remediationAdmin.POST("/remediations/:id/approve", handler.ApproveRemediation)
 	remediationAdmin.POST("/remediations/:id/reject", handler.RejectRemediation)
+	if cfg.FastDemoEnabled {
+		remediationAdmin.POST("/fast-demo/incidents/:id/plan", handler.CreateFastDemoPlan)
+		remediationAdmin.POST("/fast-demo/remediations/:id/execute", handler.ExecuteFastDemo)
+		remediationAdmin.POST("/fast-demo/incidents/:id/verify", handler.VerifyFastDemo)
+	}
 }
 
 func registerCopilotRoutes(router *gin.Engine, cfg config.Config, deps Dependencies) {

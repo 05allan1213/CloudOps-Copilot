@@ -202,6 +202,24 @@ type ChangeRequest struct {
 	UpdatedAt            time.Time
 }
 
+// ControlledExecutionResult is the bounded observation persisted by the
+// disposable fast-demo executor after an approved Kubernetes mutation.
+type ControlledExecutionResult struct {
+	Revision             string
+	Cluster              string
+	Environment          string
+	Namespace            string
+	WorkloadName         string
+	DeploymentGeneration int64
+	ObservedGeneration   int64
+	RolloutRevision      string
+	DesiredReplicas      int32
+	UpdatedReplicas      int32
+	AvailableReplicas    int32
+	UnavailableReplicas  int32
+	ObservedAt           time.Time
+}
+
 type Page struct {
 	Items    []RemediationPlan
 	Total    int64

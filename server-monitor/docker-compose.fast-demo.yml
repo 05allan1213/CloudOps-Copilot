@@ -1,0 +1,47 @@
+services:
+  mysql:
+    ports: !override
+      - "127.0.0.1:33306:3306"
+  server-probe:
+    image: cloudops-demo/server-probe:${FAST_DEMO_IMAGE_TAG}
+  alert-service:
+    image: cloudops-demo/alert-service:${FAST_DEMO_IMAGE_TAG}
+  server-web:
+    image: cloudops-demo/server-web:${FAST_DEMO_IMAGE_TAG}
+    environment:
+      AUTH_ENABLED: "false"
+      RATE_LIMIT_ENABLED: "false"
+      ALERT_RULE_SYNC_ENABLED: "false"
+      INCIDENT_AGENT_ENABLED: "true"
+      INCIDENT_AGENT_WORKER_ID: fast-demo-agent-worker
+      FAST_DEMO_ENABLED: "true"
+      FAST_DEMO_REVISION: ${FAST_DEMO_REVISION}
+      FAST_DEMO_CLUSTER: kind-cloudops-demo
+      FAST_DEMO_NAMESPACE: default
+      FAST_DEMO_WORKLOAD: cloudops-demo-workload
+      FAST_DEMO_RECOVERY_REPLICAS: "2"
+      K8S_ENABLED: "true"
+      K8S_WRITE_ENABLED: "true"
+      ACTION_EXECUTION_ENABLED: "true"
+      K8S_API_ENABLED: "true"
+      K8S_IN_CLUSTER: "false"
+      K8S_KUBECONFIG: /opt/server-monitor/docker/kubeconfig
+      K8S_ALLOWED_NAMESPACES: default
+      K8S_DEFAULT_NAMESPACE: default
+      K8S_REQUEST_TIMEOUT_SECONDS: "10"
+    networks:
+      - default
+      - kind
+  prometheus:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./docker/fast-demo/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./docker/fast-demo/alerts.yml:/etc/prometheus/rules/fast-demo-alerts.yml:ro
+  alertmanager:
+    volumes:
+      - ./docker/fast-demo/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+
+networks:
+  kind:
+    external: true

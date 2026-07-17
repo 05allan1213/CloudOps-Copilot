@@ -86,13 +86,21 @@ func initApp(ctx context.Context) (*app, error) {
 	if err != nil {
 		return nil, err
 	}
-	remediationWorker, err := startup.InitRemediation(cfg, container)
-	if err != nil {
-		return nil, err
-	}
-	deliveryVerificationWorker, err := startup.InitDeliveryVerification(cfg, container)
-	if err != nil {
-		return nil, err
+	var remediationWorker *remediationservice.Worker
+	var deliveryVerificationWorker *deliveryverification.Worker
+	if cfg.FastDemoEnabled {
+		if _, err := startup.InitFastDemo(cfg, container, k8sClient); err != nil {
+			return nil, err
+		}
+	} else {
+		remediationWorker, err = startup.InitRemediation(cfg, container)
+		if err != nil {
+			return nil, err
+		}
+		deliveryVerificationWorker, err = startup.InitDeliveryVerification(cfg, container)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	deps := container.Dependencies()

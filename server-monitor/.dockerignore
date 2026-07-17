@@ -7,6 +7,8 @@ docs/
 charts/
 k8s/
 docker/
+!docker/fast-demo/
+!docker/fast-demo/metrics
 !server-web/docs/
 !server-web/docs/**
 frontend/node_modules/

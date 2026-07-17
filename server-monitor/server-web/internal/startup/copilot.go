@@ -171,10 +171,18 @@ func InitCopilot(ctx context.Context, cfg config.Config, container *di.Container
 			return nil, nil, fmt.Errorf("incident agent store init failed: %w", storeErr)
 		}
 		zeroRetries := 0
-		agentLLM := copilotllm.NewClient(copilotllm.Options{APIKey: cfg.LLMAPIKey, APIURL: cfg.LLMAPIURL, Model: cfg.LLMModel, Timeout: cfg.LLMTimeout, MaxTokens: cfg.LLMMaxTokens, MaxRetries: &zeroRetries, Observer: container.Metrics})
-		model, modelErr := agentadapter.NewLLMModel(agentLLM)
-		if modelErr != nil {
-			return nil, nil, fmt.Errorf("incident agent model init failed: %w", modelErr)
+		var model agent.Model
+		modelName, promptVersion := cfg.LLMModel, "incident-agent-v3-change-readonly"
+		if cfg.FastDemoEnabled {
+			model = agentadapter.NewDemoModel()
+			modelName, promptVersion = "fast-demo-deterministic", "incident-agent-fast-demo-v1"
+		} else {
+			agentLLM := copilotllm.NewClient(copilotllm.Options{APIKey: cfg.LLMAPIKey, APIURL: cfg.LLMAPIURL, Model: cfg.LLMModel, Timeout: cfg.LLMTimeout, MaxTokens: cfg.LLMMaxTokens, MaxRetries: &zeroRetries, Observer: container.Metrics})
+			llmModel, modelErr := agentadapter.NewLLMModel(agentLLM)
+			if modelErr != nil {
+				return nil, nil, fmt.Errorf("incident agent model init failed: %w", modelErr)
+			}
+			model = llmModel
 		}
 		readOnlyTools, toolErr := agentadapter.NewReadOnlyTools(toolExecutor)
 		if toolErr != nil {
@@ -183,7 +191,7 @@ func InitCopilot(ctx context.Context, cfg config.Config, container *di.Container
 		agentService, serviceErr := agentruntime.New(ctx, store, model, readOnlyTools, agentruntime.Config{
 			Enabled: true, WorkerID: cfg.IncidentAgentWorkerID, PollInterval: cfg.IncidentAgentPollInterval,
 			LeaseDuration: cfg.IncidentAgentLeaseDuration, HeartbeatPeriod: cfg.IncidentAgentHeartbeatPeriod,
-			Model: cfg.LLMModel, PromptVersion: "incident-agent-v3-change-readonly", MaxGraphRunSteps: 96,
+			Model: modelName, PromptVersion: promptVersion, MaxGraphRunSteps: 96,
 			Observer: container.Metrics,
 			Limits: agent.Limits{MaxSteps: cfg.IncidentAgentMaxSteps, MaxToolCalls: cfg.IncidentAgentMaxToolCalls,
 				MaxModelCalls: cfg.IncidentAgentMaxModelCalls, TokenBudget: cfg.IncidentAgentTokenBudget,

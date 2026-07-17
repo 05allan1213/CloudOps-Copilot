@@ -1,0 +1,16 @@
+groups:
+  - name: cloudops-fast-demo
+    rules:
+      - alert: CloudOpsDemoDeploymentUnavailable
+        expr: up{job="cloudops-demo-workload"} == 0
+        for: 4s
+        labels:
+          severity: critical
+          cluster: kind-cloudops-demo
+          environment: demo
+          namespace: default
+          service: cloudops-demo-workload
+          deployment: cloudops-demo-workload
+        annotations:
+          summary: "Demo Deployment has no ready replicas"
+          description: "Prometheus cannot scrape the demo Deployment metrics endpoint."

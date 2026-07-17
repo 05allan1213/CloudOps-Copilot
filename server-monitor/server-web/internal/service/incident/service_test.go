@@ -108,6 +108,35 @@ func TestResolvedWithoutIncidentIsExplicitNoOp(t *testing.T) {
 	}
 }
 
+func TestResolvedSignalDefersIncidentClosureDuringControlledChange(t *testing.T) {
+	store := newFakeUnitOfWork()
+	clock := time.Date(2026, 7, 14, 1, 0, 0, 0, time.UTC)
+	service := mustTestService(t, store, &clock)
+	payload := firingPayload("change-in-flight", "checkout", clock)
+	result, err := service.IngestAlertmanager(context.Background(), payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, next := range []domain.Status{domain.StatusDiagnosing, domain.StatusDiagnosisCompleted, domain.StatusPlanningRemediation, domain.StatusAwaitingApproval, domain.StatusApplyingChange} {
+		clock = clock.Add(time.Second)
+		if err := service.TransitionIncident(context.Background(), result[0].IncidentPublicID, next, domain.ActorSystem, "test"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	resolved := payload.Alerts[0]
+	resolved.Status, resolved.EndsAt = "resolved", clock.Add(time.Second)
+	if _, err := service.IngestAlertmanager(context.Background(), webhook.AlertmanagerWebhookRequest{Alerts: []webhook.AlertRecord{resolved}}); err != nil {
+		t.Fatal(err)
+	}
+	state := store.snapshot()
+	if item := onlyIncident(state); item.Status != domain.StatusApplyingChange || item.ResolvedAt != nil {
+		t.Fatalf("resolved signal must wait for Verification closure: %+v", item)
+	}
+	if len(state.signals) != 2 {
+		t.Fatalf("resolved signal was not persisted: %+v", state.counts())
+	}
+}
+
 func TestTransactionFailureRollsBackAllEffects(t *testing.T) {
 	store := newFakeUnitOfWork()
 	store.failAt = "outbox"

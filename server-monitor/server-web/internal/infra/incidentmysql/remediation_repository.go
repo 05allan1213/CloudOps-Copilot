@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -414,6 +415,50 @@ func (r *RemediationRepository) UpdateCI(ctx context.Context, id, version uint64
 			return remediation.ErrConflict
 		}
 		return tx.Model(&remediationPlanRow{}).Where("id = ?", row.PlanID).Updates(map[string]any{"status": planStatus, "row_version": gorm.Expr("row_version + 1")}).Error
+	})
+}
+
+var controlledRevisionPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+// CompleteControlledExecution persists a real, approved Kubernetes execution
+// without manufacturing GitHub or Argo facts. It is used only by fast demo mode.
+func (r *RemediationRepository) CompleteControlledExecution(ctx context.Context, delivery *remediation.ChangeRequest, result remediation.ControlledExecutionResult) error {
+	if delivery == nil || delivery.Status != remediation.DeliveryDelivering || delivery.LeaseOwner == "" || !controlledRevisionPattern.MatchString(strings.ToLower(result.Revision)) || result.Cluster == "" || result.Environment == "" || result.Namespace == "" || result.WorkloadName == "" || result.ObservedAt.IsZero() || result.DesiredReplicas < 1 || result.UpdatedReplicas != result.DesiredReplicas || result.AvailableReplicas != result.DesiredReplicas || result.UnavailableReplicas != 0 || result.ObservedGeneration < result.DeploymentGeneration {
+		return remediation.ErrInvalidArgument
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var row changeRequestRow
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&row, delivery.ID).Error; err != nil {
+			return classifyRemediationError(err)
+		}
+		if row.RowVersion != delivery.RowVersion || row.Status != string(remediation.DeliveryDelivering) || row.LeaseOwner != delivery.LeaseOwner {
+			return remediation.ErrConflict
+		}
+		observedAt := result.ObservedAt.UTC()
+		resourceHealth := json.RawMessage(`{"execution_mode":"controlled_direct","workload":"healthy"}`)
+		updates := map[string]any{
+			"status": remediation.DeliveryDelivered, "target_revision": strings.ToLower(result.Revision),
+			"detected_revision": strings.ToLower(result.Revision), "cluster": result.Cluster,
+			"environment": result.Environment, "namespace": result.Namespace,
+			"workload_kind": "Deployment", "workload_name": result.WorkloadName,
+			"deployment_generation": result.DeploymentGeneration, "observed_generation": result.ObservedGeneration,
+			"rollout_revision": result.RolloutRevision, "desired_replicas": result.DesiredReplicas,
+			"updated_replicas": result.UpdatedReplicas, "available_replicas": result.AvailableReplicas,
+			"unavailable_replicas": result.UnavailableReplicas, "resource_health_json": resourceHealth,
+			"delivery_started_at": observedAt, "delivery_completed_at": observedAt,
+			"last_observed_at": observedAt, "next_poll_at": observedAt,
+			"lease_owner": "", "lease_expires_at": nil, "heartbeat_at": nil,
+			"failure_code": "", "failure_reason": "", "row_version": gorm.Expr("row_version + 1"),
+		}
+		res := tx.Model(&changeRequestRow{}).Where("id = ? AND row_version = ?", row.ID, row.RowVersion).Updates(updates)
+		if res.Error != nil || res.RowsAffected != 1 {
+			return remediation.ErrConflict
+		}
+		var plan remediationPlanRow
+		if err := tx.First(&plan, row.PlanID).Error; err != nil {
+			return classifyRemediationError(err)
+		}
+		return appendRemediationAudit(tx, plan.IncidentID, "controlled_direct_execution_delivered", "system", delivery.LeaseOwner, "Approved controlled direct execution restored the Kubernetes workload", map[string]any{"change_request_id": row.PublicID, "revision": strings.ToLower(result.Revision), "namespace": result.Namespace, "workload": result.WorkloadName, "desired_replicas": result.DesiredReplicas})
 	})
 }
 

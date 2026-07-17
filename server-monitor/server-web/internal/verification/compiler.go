@@ -26,6 +26,33 @@ func CompileTrustedPlanWithProfile(subject Subject, cfg CompilerConfig, profile 
 	return compileTrustedPlan(subject, cfg, profile)
 }
 
+// CompileControlledDirectPlan omits GitHub and Argo checks for the explicitly
+// flagged disposable demo fallback. Kubernetes rollout and resolved Signal
+// remain required, deterministic, and persisted.
+func CompileControlledDirectPlan(subject Subject, cfg CompilerConfig) (Plan, error) {
+	if !exactRevisionPattern.MatchString(strings.ToLower(subject.Revision)) || subject.Repository == "" || subject.Cluster == "" || subject.Environment == "" || subject.Namespace == "" || subject.WorkloadKind != "Deployment" || subject.WorkloadName == "" || subject.AlertFingerprint == "" {
+		return Plan{}, fmt.Errorf("%w: incomplete controlled-direct subject", ErrInvalidArgument)
+	}
+	if cfg.PollInterval < time.Second || cfg.PollInterval > time.Minute || cfg.Timeout < time.Minute || cfg.Timeout > 24*time.Hour || cfg.StabilityWindow < cfg.PollInterval || cfg.StabilityWindow > cfg.Timeout || cfg.AlertLookback < time.Minute || cfg.AlertLookback > 24*time.Hour {
+		return Plan{}, fmt.Errorf("%w: compiler bounds", ErrInvalidArgument)
+	}
+	checks := []struct {
+		typeName CheckType
+		expected any
+		lookback time.Duration
+	}{
+		{CheckDeploymentRollout, map[string]any{"observed_generation_caught_up": true, "updated_equals_desired": true, "unavailable_max": 0}, 0},
+		{CheckWorkloadReady, map[string]any{"available_equals_desired": true, "progressing": true, "available": true}, 0},
+		{CheckAlertResolved, map[string]any{"status": "resolved", "fingerprint": subject.AlertFingerprint}, cfg.AlertLookback},
+	}
+	plan := Plan{SchemaVersion: 1, TargetRevision: strings.ToLower(subject.Revision)}
+	for _, item := range checks {
+		expected, _ := json.Marshal(item.expected)
+		plan.Checks = append(plan.Checks, CheckSpec{Type: item.typeName, Subject: subject, Expected: expected, Lookback: item.lookback, StabilityWindow: cfg.StabilityWindow, Timeout: cfg.Timeout, PollInterval: cfg.PollInterval, Source: "controlled_direct", SourceIdentity: "controlled_direct", Required: true})
+	}
+	return plan, ValidatePlan(plan)
+}
+
 func compileTrustedPlan(subject Subject, cfg CompilerConfig, profile *Profile) (Plan, error) {
 	if !exactRevisionPattern.MatchString(strings.ToLower(subject.Revision)) || subject.Repository == "" || subject.PullRequest <= 0 || subject.ArgoApplication == "" || subject.ArgoProject == "" || subject.Cluster == "" || subject.Environment == "" || subject.Namespace == "" || subject.WorkloadKind != "Deployment" || subject.WorkloadName == "" || subject.AlertFingerprint == "" {
 		return Plan{}, fmt.Errorf("%w: incomplete trusted subject", ErrInvalidArgument)

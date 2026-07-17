@@ -112,6 +112,14 @@ type Config struct {
 	IncidentAgentMaxCheckpointBytes int
 	IncidentAgentMaxStepRetries     int
 
+	// FastDemo enables the disposable, controlled-direct V2 demo path only.
+	FastDemoEnabled          bool
+	FastDemoRevision         string
+	FastDemoCluster          string
+	FastDemoNamespace        string
+	FastDemoWorkload         string
+	FastDemoRecoveryReplicas int
+
 	// Phase 3 change intelligence is read-only and disabled by default.
 	ChangeIntelligenceEnabled bool
 	ChangeLookback            time.Duration
@@ -663,6 +671,12 @@ func Load() Config {
 		IncidentAgentMaxEvidenceBytes:   configutil.PositiveInt("INCIDENT_AGENT_MAX_EVIDENCE_BYTES", 16384),
 		IncidentAgentMaxCheckpointBytes: configutil.PositiveInt("INCIDENT_AGENT_MAX_CHECKPOINT_BYTES", 32768),
 		IncidentAgentMaxStepRetries:     configutil.NonNegativeInt("INCIDENT_AGENT_MAX_STEP_RETRIES", 1),
+		FastDemoEnabled:                 configutil.Bool("FAST_DEMO_ENABLED", false),
+		FastDemoRevision:                configutil.String("FAST_DEMO_REVISION", ""),
+		FastDemoCluster:                 configutil.String("FAST_DEMO_CLUSTER", "kind-cloudops-demo"),
+		FastDemoNamespace:               configutil.String("FAST_DEMO_NAMESPACE", "default"),
+		FastDemoWorkload:                configutil.String("FAST_DEMO_WORKLOAD", "cloudops-demo-workload"),
+		FastDemoRecoveryReplicas:        configutil.PositiveInt("FAST_DEMO_RECOVERY_REPLICAS", 2),
 		ChangeIntelligenceEnabled:       configutil.Bool("CHANGE_INTELLIGENCE_ENABLED", false),
 		ChangeLookback:                  configutil.DurationSeconds("CHANGE_LOOKBACK", 86400),
 		ChangeMaxCandidates:             configutil.PositiveInt("CHANGE_MAX_CANDIDATES", 10),
@@ -926,14 +940,25 @@ func (c *Config) Validate() error {
 		if !c.CopilotEnabled || !c.CopilotToolRegistryEnabled {
 			return fmt.Errorf("COPILOT_ENABLED and COPILOT_TOOL_REGISTRY_ENABLED must be true when INCIDENT_AGENT_ENABLED is true")
 		}
-		if strings.TrimSpace(c.LLMAPIKey) == "" || strings.TrimSpace(c.MySQLHost) == "" {
-			return fmt.Errorf("LLM_API_KEY and MySQL configuration are required when INCIDENT_AGENT_ENABLED is true")
+		if (!c.FastDemoEnabled && strings.TrimSpace(c.LLMAPIKey) == "") || strings.TrimSpace(c.MySQLHost) == "" {
+			return fmt.Errorf("LLM_API_KEY and MySQL configuration are required when INCIDENT_AGENT_ENABLED is true outside fast demo mode")
 		}
 		if c.IncidentAgentPollInterval <= 0 || c.IncidentAgentLeaseDuration <= 0 || c.IncidentAgentHeartbeatPeriod <= 0 || c.IncidentAgentHeartbeatPeriod >= c.IncidentAgentLeaseDuration || c.IncidentAgentMaxRuntime <= 0 || c.IncidentAgentToolTimeout <= 0 {
 			return fmt.Errorf("incident agent timing configuration is invalid")
 		}
 		if c.IncidentAgentMaxSteps <= 0 || c.IncidentAgentMaxToolCalls <= 0 || c.IncidentAgentMaxModelCalls <= 0 || c.IncidentAgentTokenBudget <= 0 || c.IncidentAgentMaxEvidenceItems <= 0 || c.IncidentAgentMaxEvidenceBytes < 256 || c.IncidentAgentMaxCheckpointBytes < 1024 || c.IncidentAgentMaxStepRetries < 0 {
 			return fmt.Errorf("incident agent budget configuration is invalid")
+		}
+	}
+	if c.FastDemoEnabled {
+		if !c.IncidentAgentEnabled || !c.K8SEnabled || !c.K8SWriteEnabled || strings.TrimSpace(c.MySQLHost) == "" {
+			return fmt.Errorf("FAST_DEMO_ENABLED requires incident Agent, Kubernetes read/write and MySQL")
+		}
+		if !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(strings.ToLower(strings.TrimSpace(c.FastDemoRevision))) {
+			return fmt.Errorf("FAST_DEMO_REVISION must be an exact 40-character commit SHA")
+		}
+		if strings.TrimSpace(c.FastDemoCluster) == "" || strings.TrimSpace(c.FastDemoNamespace) == "" || strings.TrimSpace(c.FastDemoWorkload) == "" || c.FastDemoRecoveryReplicas < 1 || c.FastDemoRecoveryReplicas > c.ActionMaxReplicas {
+			return fmt.Errorf("fast demo target or recovery replica configuration is invalid")
 		}
 	}
 	if c.ChangeIntelligenceEnabled {
