@@ -1,8 +1,8 @@
-// @title           Server Monitor API
-// @version         1.0
-// @description     服务器监控平台 API，提供主机监控、告警管理、规则配置等功能。
+// @title           CloudOps-Copilot Incident API
+// @version         2.0
+// @description     Incident-centric APIs for signal ingestion, bounded Agent investigation, approval-bound remediation, deterministic verification, postmortem, and Workbench queries.
 // @host             localhost:8080
-// @BasePath         /api/v1
+// @BasePath         /api/v2
 // @schemes          http https
 // @securityDefinitions.apikey BearerAuth
 // @in header

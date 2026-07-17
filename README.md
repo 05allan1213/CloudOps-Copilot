@@ -1,62 +1,116 @@
-# CloudOps
+# CloudOps-Copilot
 
-## 项目概述
+> A Go-based cloud-native Incident Copilot for evidence-driven investigation, approval-bound remediation, and deterministic recovery verification.
 
-CloudOps 的核心项目位于 `server-monitor/`。当前 V2 是面向学习、秋招展示和本地演示的 Incident Agent 项目，不宣称生产就绪。
+CloudOps-Copilot（云原生 Incident Copilot）是一个以 Go 为核心、运行于 Kubernetes、围绕 Incident 构建的故障调查与受控恢复系统。它把 Signal、调查证据、诊断、审批、变更、恢复验证和复盘放进同一条可审计生命周期，而不是只生成一段运维建议。
 
-项目主线为：Signal → Incident → Agent Investigation → Evidence → Diagnosis → RemediationPlan → Approval → Controlled Change → Verification → Resolved → Postmortem → Incident Workbench。
+当前成果用于秋招、源码讲解、项目演示和技术面试，是可重复运行的 **local disposable Demo**；项目达到 interview-ready，但不宣称 production-ready。
 
-适用场景：
+## 项目解决的问题
 
-- Go 后端、Agent runtime、持久化与云原生适配器的源码讲解
-- 本地 disposable kind + Compose 的完整故障闭环演示
-- Incident Workbench、审批边界和 Verification 约束展示
+常见运维流程中，告警、诊断、变更和恢复验证分散在不同工具里：
 
-## 架构
+- 告警只说明“发生了什么”，没有形成可追踪的故障对象；
+- 普通 ChatOps 或 LLM Chatbot 可以给建议，却无法证明结论来自哪些真实证据；
+- 自动化脚本可能直接执行写操作，缺少人工审批、范围约束和审计事实；
+- Kubernetes API 返回成功，只能证明请求被接受，不能证明工作负载、告警和用户影响已经恢复。
+
+CloudOps-Copilot 使用统一 Incident 串联整个过程，并规定只有 required Verification checks 全部通过后，Incident 才能进入 `RESOLVED`。
+
+## 核心流程
 
 ```mermaid
-graph LR
-    Workload[Demo workload] --> Prom[Prometheus]
-    Prom --> AM[Alertmanager]
-    AM --> Web[server-web]
-    Web --> MySQL[(MySQL)]
-    Web --> Agent[Agent runtime + read-only tools]
-    Agent --> Runbook[Runbook RAG]
-    Agent -. optional .-> LLM[LLM provider]
-    Agent --> K8S[Kubernetes bounded reads]
-    Web --> Change[Guarded Demo change]
-    Change --> Verify[Verification]
-    Verify --> Web
-    Web --> UI[Incident Workbench]
+flowchart LR
+    Signal[Prometheus / Alertmanager Signal] --> Incident[Incident aggregation]
+    Incident --> Agent[Durable bounded Agent]
+    Agent --> Evidence[Evidence]
+    Evidence --> Diagnosis[Evidence-bound Diagnosis]
+    Diagnosis --> Plan[RemediationPlan]
+    Plan --> Approval[Human Approval]
+    Approval --> Change[Controlled Change]
+    Change --> Verification[Deterministic Verification]
+    Verification -->|required checks pass| Resolved[RESOLVED]
+    Verification -->|fail or timeout| Agent
+    Resolved --> Postmortem[Postmortem]
+    Postmortem --> Workbench[Incident Workbench]
 ```
 
-## 项目目录
+核心技术主线：
 
 ```text
-server-monitor/
-├── charts/server-monitor/    # Helm Chart
-├── docker/                   # Compose、Prometheus、Grafana、Jaeger、Fluent Bit 等配置
-├── docs/                     # 说明文档与辅助资料
-├── frontend/                 # 前端工程
-├── k8s/                      # 原始 Kubernetes 清单
-├── pkg/                      # 共享 Go 包
-├── runbooks/                 # Runbook 知识库
-├── scripts/                  # 辅助脚本
-├── server-web/               # Incident API、Agent runtime、Workbench 与 V2 服务
-├── .env.example              # 本地配置参考
-├── docker-compose.yml        # 本地编排入口
-└── Makefile                  # 构建、测试、部署命令入口
+Prometheus / Alertmanager Signal
+-> Incident aggregation
+-> durable Agent investigation
+-> Evidence-bound Diagnosis
+-> Approval-bound Remediation
+-> controlled change
+-> deterministic recovery Verification
+-> Incident Workbench
 ```
 
-补充说明：
+## 核心能力
 
-- `server-web/internal/` 以 incident、agent、remediation、verification、infra 和 compatibility 边界组织。
-- `docker/` 目录维护 Prometheus、AlertManager、Grafana、Jaeger、Fluent Bit、Elasticsearch 初始化等运行时配置。
-- `charts/server-monitor/` 与 `k8s/` 分别提供 Helm 和原始清单两套集群部署入口。
+- **Incident aggregation**：标准化 Alertmanager firing/resolved Signal，并按确定性规则聚合 Incident。
+- **Durable multi-step Agent**：基于 Eino Graph 运行有界调查，持久化 AgentRun、AgentStep、预算、lease、heartbeat 和 checkpoint。
+- **Observation-driven loop**：Agent 根据工具 Observation 判断证据覆盖是否足够，不足时继续选择动作或 replan。
+- **Evidence-bound Diagnosis**：诊断必须引用持久化 Evidence，校验无证据断言和越权结论。
+- **Bounded tools**：Kubernetes、Prometheus、Runbook、GitHub、Argo CD、Registry 等能力通过 allowlist、超时、结果上限和脱敏边界调用。
+- **Runbook RAG**：支持 BM25、可选 Embedding、RRF 与 reranker，为调查提供可追踪的 Runbook 上下文。
+- **Approval-bound remediation**：RemediationPlan、patch hash、plan hash、actor 和 Approval 分离记录；模型不能自行获得审批或凭据。
+- **Guarded Demo change**：本地 Demo 仅在 disposable kind、专用 namespace、受限 RBAC 和多重配置 guard 同时满足时执行受控 scale。
+- **Deterministic Verification**：Kubernetes rollout、workload readiness 和 Alert resolved 等 required checks 独立判断恢复结果。
+- **Postmortem**：只把经过 Evidence 和最终 Verification 支持的事实写入复盘。
+- **Incident Workbench**：统一展示 Signal、Timeline、Agent、Evidence、Diagnosis、Remediation、Delivery、Verification 和 Postmortem。
+- **Metrics / Logs / Traces**：保留 Prometheus、Alertmanager、Grafana、VictoriaMetrics、Fluent Bit、Elasticsearch、Kibana 和 Jaeger 展示能力。
 
-## 快速开始
+## 技术架构
 
-### V2 一键 Demo
+| 层次 | 技术与职责 |
+| --- | --- |
+| Backend | Go、Gin、GORM、Goose migrations、Eino Graph |
+| Frontend | Vue 3、TypeScript、Vite、Element Plus |
+| Durable state | MySQL |
+| Cache / coordination | Redis |
+| Event infrastructure | Kafka |
+| Container / orchestration | Docker Compose、Kubernetes、kind、Helm |
+| Metrics / alerts | Prometheus、Alertmanager、Grafana、VictoriaMetrics |
+| Logs | structured JSON logs、Fluent Bit、Elasticsearch、Kibana |
+| Traces | OpenTelemetry SDK、OTLP、Jaeger |
+| Formal delivery adapters | GitHub、Registry、Argo CD、Delivery / Verification adapters（默认关闭） |
+| Engineering | GitHub Actions、go test/vet/race、golangci-lint、ESLint、Vitest、promtool、shellcheck |
+
+应用依赖方向：
+
+```text
+router / handler
+-> application services
+-> incident / agent / remediation / verification domains and ports
+-> infrastructure adapters
+-> MySQL / Redis / Kafka / Prometheus / Kubernetes / GitHub / Argo CD / Registry
+```
+
+## 快速演示
+
+### 环境依赖
+
+需要 Linux 或兼容容器环境，并安装：
+
+```text
+Docker + Docker Compose
+kind
+kubectl
+Go
+Helm
+curl
+jq
+git
+sed
+awk
+```
+
+`shellcheck` 可选，但安装后会由 preflight 自动执行。建议预留约 8 GB 可用内存；首次运行需要拉取镜像。
+
+### 一键运行
 
 ```bash
 cd server-monitor
@@ -64,9 +118,35 @@ make demo-v2-check
 make demo-v2
 ```
 
-`make demo-v2-clean` 只清理 `cloudops-v2-demo` Compose 项目和 `cloudops-demo` kind 集群。
+`make demo-v2` 通常约 100 秒完成，输出八个阶段以及 Incident、AgentRun、Evidence、RemediationPlan、ChangeRequest、VerificationRun、Postmortem ID，最终应看到：
 
-### 本地 Compose
+```text
+DEMO_STATUS=PASS
+Final Incident state: RESOLVED
+Verification required checks: deployment_rollout=PASSED,workload_ready=PASSED,alert_resolved=PASSED
+Execution mode: CONTROLLED_DIRECT_LOCAL_DEMO
+PRODUCTION_GITOPS_E2E_VALIDATED=NO
+```
+
+Workbench 地址会在结果中打印，格式为：
+
+```text
+http://127.0.0.1:18080/incidents/<incident-id>
+```
+
+安全清理：
+
+```bash
+make demo-v2-clean
+```
+
+脚本只操作 `cloudops-v2-demo` Compose project、`cloudops-demo` kind cluster、专用 namespace/workload 和对应 disposable kubeconfig，不清理无关 Docker/Kubernetes 资源。
+
+完整操作说明见 [V2 Demo Guide](doc/v2-demo-guide.md)。
+
+### 启动完整本地栈
+
+如需同时查看 Grafana、VictoriaMetrics、ELK 和 Jaeger：
 
 ```bash
 cd server-monitor
@@ -74,193 +154,139 @@ make env-init
 make compose-up
 ```
 
-启动后可访问：
+`make compose-up` 会先等待 Compose MySQL 就绪，使用显式 Goose migration 应用 V2 `00001-00006`，再启动完整 14 服务栈。它不会用 GORM 隐式替代 V2 migration。
 
-| 服务 | 地址 |
-|------|------|
-| 监控大屏 | http://localhost:8080 |
-| Grafana | http://localhost:3000 |
-| Prometheus | http://localhost:9090 |
-| Alertmanager | http://localhost:9093 |
-| Kibana | http://localhost:5601 |
-| Jaeger | http://localhost:16686 |
+## 可观测能力
 
-默认登录信息：
+### Metrics / Alerts
 
-| 服务 | 用户名 | 密码 |
-|------|--------|------|
-| 监控大屏 | `admin` | `server-monitor-local-admin` |
-| Grafana | `admin` | `server-monitor-local-grafana` |
-
-说明：
-
-- `.env.example` 提供完整本地配置参考，复制后按需修改 `.env` 即可。
-- 如果需要启用 LLM 或 Kubernetes 集成，请直接编辑 `.env`，具体项以 `.env.example` 为准。
-
-### 本地开发
-
-```bash
-cd server-monitor
-make frontend-install
-make dev-deps
-make dev-web
+```text
+Application / Demo workload
+-> Prometheus
+-> Alertmanager
+-> POST /api/v2/webhook/alertmanager
+-> Signal / Incident / Workbench
 ```
 
-前端开发可另开一个终端：
+Grafana 展示指标；Prometheus 通过 remote-write 把样本写入 VictoriaMetrics。
 
-```bash
-cd server-monitor
-make dev-frontend
+### Logs
+
+```text
+Container JSON logs
+-> Fluent Bit
+-> Elasticsearch
+-> Kibana
 ```
 
-开发模式约定：
+server-web 日志包含 `service`、`instance`、`ts`、`level`、`msg`、request/trace identity 等字段。
 
-- `make dev-deps` 启动 Redis、MySQL、Kafka、Prometheus、Alertmanager、Grafana 和 Jaeger。
-- `make dev-web` 本地运行 `server-web`，使用适配本机端口的默认开发配置。
-- `make dev-stop` 停止 Compose 依赖服务。
+### Traces
 
-### Helm / Kubernetes 部署
-
-Helm 部署：
-
-```bash
-cd server-monitor
-make helm-lint
-make deploy-helm HELM_RELEASE=server-monitor KUBE_NAMESPACE=server-monitor
+```text
+server-web OpenTelemetry spans
+-> OTLP
+-> Jaeger
 ```
 
-如果需要覆盖镜像、Secret 或其他 values，可追加 `HELM_SET_ARGS` 或直接替换 `HELM_VALUES`：
+HTTP、Incident、Agent node、Agent tool、Remediation、Verification 等路径存在 Trace instrumentation。本地完整栈可查询 HTTP Trace；V2 Demo 可产生 Agent/Tool span。
 
-```bash
-make deploy-helm \
-  HELM_RELEASE=server-monitor \
-  KUBE_NAMESPACE=server-monitor \
-  HELM_SET_ARGS="--set serverWeb.image.repository=<repo>/server-web --set serverWeb.image.digest=sha256:<digest>"
+### 本地入口
+
+| 服务 | Compose 默认地址 |
+| --- | --- |
+| Incident Workbench | http://127.0.0.1:8080/incidents |
+| Grafana | http://127.0.0.1:3000 |
+| Prometheus | http://127.0.0.1:9090 |
+| Alertmanager | http://127.0.0.1:9093 |
+| VictoriaMetrics | http://127.0.0.1:8428 |
+| Jaeger | http://127.0.0.1:16686 |
+| Elasticsearch | http://127.0.0.1:9200 |
+| Kibana | http://127.0.0.1:5601 |
+
+完整数据路径、验证命令和边界见 [V2 Observability](doc/v2-observability.md)。
+
+## 核心 Demo 与扩展可观测栈
+
+核心 Demo 为控制时长只启动必要路径：
+
+```text
+Prometheus, Alertmanager, MySQL, Redis, Kafka, server-web, kind, Demo workload
 ```
 
-生产发布应为三个应用镜像分别提供不可变 `sha256` digest；`image.tag` 仅作为本地兼容回退。Chart 的 `values.schema.json` 会拒绝格式无效的 digest。
+Jaeger 也随 Demo 启动以保留 Trace 证据。完整 Compose 和 Helm 继续提供扩展展示能力：
 
-原始清单部署：
-
-```bash
-cd server-monitor
-make deploy-k8s
+```text
+Grafana, VictoriaMetrics, Fluent Bit, Elasticsearch, Kibana, Jaeger
 ```
 
-### 本地启用 K8s 集成（可选）
+当前 Agent 核心调查主要消费 Incident、Kubernetes、Prometheus 和 Runbook Evidence。Elasticsearch/Kibana、Jaeger 和 VictoriaMetrics 目前主要用于可观测展示和人工排障；不要把它们描述成已完整接入 Agent 自动诊断的数据源。
 
-```bash
-cd server-monitor
-make k8s-setup
+## 项目结构
+
+```text
+CloudOps-Copilot/
+├── README.md
+├── doc/
+│   ├── v2-architecture.md
+│   ├── v2-demo-guide.md
+│   ├── v2-observability.md
+│   ├── v2-project-boundaries.md
+│   └── v2-interview-materials.md
+└── server-monitor/
+    ├── server-web/                 # Incident API、Agent runtime、Remediation、Verification、Workbench
+    ├── pkg/                        # logger、tracer、Kafka、config utilities 等共享 Go 包
+    ├── frontend/                   # Vue 3 Incident Workbench
+    ├── runbooks/                   # Runbook knowledge base
+    ├── docker/                     # Prometheus、Alertmanager、Grafana、ELK、Jaeger 配置
+    ├── charts/server-monitor/      # 完整展示型 Helm Chart
+    ├── k8s/                        # raw Kubernetes manifests
+    ├── scripts/run-v2-demo.sh      # disposable Demo orchestration
+    ├── docker-compose.yml
+    ├── docker-compose.fast-demo.yml
+    └── Makefile
 ```
 
-这会创建/检查 kind 集群、准备测试资源并生成本机 `docker/kubeconfig`。该文件含本地集群凭据、已被 Git 忽略，不得提交。完成后按 `.env.example` 调整 `.env` 中的 K8s 相关开关，再重新启动 `server-web` 或整套 Compose 服务。
+更详细的源码入口见 [V2 Core Code Map](doc/refactor/v2-core-code-map.md) 和 [V2 Architecture](doc/v2-architecture.md)。
 
-## Makefile 常用命令
+## 已验证结果
 
-以下命令都在 `server-monitor/` 目录执行。
+截至 V2 Step 4，本地证据包括：
 
-### 构建
+- Step 3 连续两次 `make demo-v2` 通过，分别约 100 秒和 96 秒；
+- 每次 Demo 均产生 10 个 AgentStep，Incident 最终为 `RESOLVED`；
+- `deployment_rollout`、`workload_ready`、`alert_resolved` 三个 required checks 全部通过；
+- Go 两个 modules 的 test、vet、build、goimports、lint 和高风险包 race 通过；
+- 前端 lint、typecheck、unit test、build 通过；
+- Compose、Helm、Shell、Prometheus/Alertmanager 配置检查通过；
+- Prometheus/Alertmanager Signal path、VictoriaMetrics remote-write/sample query、Fluent Bit→Elasticsearch 日志查询、Jaeger Trace query 已实际验证。
 
-| 命令 | 说明 |
-|------|------|
-| `make build` | 构建所有 Go 服务和前端资源 |
-| `make build-go` | 构建所有 Go 服务 |
-| `make build-server-web` | 构建 `server-web` |
-| `make build-frontend` | 构建前端资源 |
+最终命令、ID 和证据见 [Step 4 Final Audit Report](doc/refactor/v2-step-4-interview-delivery-observability-validation-and-final-audit-report.md)。
 
-### 测试与校验
+## 项目边界
 
-| 命令 | 说明 |
-|------|------|
-| `make test` | 运行 Go 测试和前端类型检查 |
-| `make test-go` | 运行所有 Go 模块测试 |
-| `make test-k8s` | 运行 `server-web` 中的 K8s 相关测试 |
-| `make test-frontend` | 运行前端类型检查 |
-| `make vet` | 运行所有 Go vet |
-| `make lint` | 运行 Go lint 和前端 ESLint |
-| `make check-goimports` | 检查 Go imports 是否规范 |
-| `make fmt` | 使用 `go fmt` 格式化 Go 代码 |
-| `make fmt-goimports` | 使用 `goimports` 格式化 Go 代码 |
-| `make k8s-script-check` | 检查 `docker/setup-k8s.sh` 语法 |
-| `make check` | 本地完整校验入口 |
-| `make ci` | 对齐 CI 的本地校验入口 |
+- 当前结果是 **local disposable Demo**，不是生产部署证明。
+- Demo 使用 guarded controlled direct execution；正式源码中的 GitHub、Registry、Argo CD 和 Delivery/Verification adapter 默认关闭。
+- 未验证真实 GitHub → CI → Argo CD → Kubernetes production GitOps E2E。
+- transactional outbox 表和事务边界存在，但 outbox relay、inbox、DLQ 未实现。
+- Compose/Helm 中的可观测组件是学习和展示型单节点拓扑，不包含 HA、DR 或生产容量规划。
+- 未验证多副本、性能容量、生产安全基线和真实云平台凭据链路。
 
-### 开发运行
+这些边界不削弱项目作为秋招作品的目标：项目重点证明 Go 后端建模、持久化状态机、Agent 工程约束、云原生集成、可观测性和从告警到恢复验证的闭环设计。详见 [Project Boundaries](doc/v2-project-boundaries.md)。
 
-| 命令 | 说明 |
-|------|------|
-| `make frontend-install` | 安装前端依赖 |
-| `make dev-deps` | 启动本地开发依赖 |
-| `make dev-web` | 本地运行 `server-web` |
-| `make dev-frontend` | 启动前端开发服务器 |
-| `make dev-stop` | 停止本地开发依赖 |
+## 面试导航
 
-### Compose / 部署
+| 想讲的主题 | 首选源码入口 |
+| --- | --- |
+| Signal 如何成为 Incident | `server-web/internal/handler/incidents.go`、`internal/service/incident` |
+| Incident 状态机 | `server-web/internal/incident/state_machine.go` |
+| Agent Graph 与循环 | `server-web/internal/agent/graph`、`internal/service/agentruntime` |
+| AgentRun / Step / Evidence 持久化 | `server-web/internal/infra/incidentmysql/agent_runtime.go` |
+| bounded tools / Runbook RAG | `server-web/internal/agent/tool`、`internal/agent/runbook` |
+| Approval 与 Remediation | `server-web/internal/remediation`、`internal/service/remediation` |
+| guarded Demo write | `server-web/internal/service/fastdemo`、`internal/infra/k8schange` |
+| deterministic Verification | `server-web/internal/verification`、`internal/service/deliveryverification` |
+| Workbench API / UI | `server-web/internal/handler/incident_workbench.go`、`frontend/src/views/incidents` |
+| Metrics / logs / traces | `server-web/internal/middleware`、`pkg/logger`、`pkg/tracer`、`docker/` |
 
-| 命令 | 说明 |
-|------|------|
-| `make compose-config` | 展开并检查 Compose 配置 |
-| `make compose-build` | 构建 Compose 镜像 |
-| `make compose-up` | 启动 Compose 服务 |
-| `make compose-down` | 停止 Compose 服务 |
-| `make compose-ps` | 查看 Compose 服务状态 |
-| `make compose-logs LOGS_SERVICE=server-web` | 查看日志 |
-| `make compose-clean` | 停止并清理 Compose 数据卷 |
-| `make helm-lint` | 校验 Helm Chart |
-| `make helm-template` | 渲染 Helm 模板 |
-| `make deploy-helm` | 使用 Helm 部署/升级 |
-| `make undeploy-helm` | 卸载 Helm Release |
-| `make deploy-k8s` | 使用原始清单部署 |
-| `make undeploy-k8s` | 删除原始清单 |
-| `make k8s-setup` | 准备本地 kind 集成环境 |
-| `make k8s-teardown` | 删除本地 kind 集群 |
-| `make clean` | 清理本地产物 |
-
-兼容说明：旧的 `make docker-up`、`make docker-down`、`make docker-logs`、`make ci-check` 等命令仍可用，但 README 统一以新的标准命名为准。
-
-## 配置与部署文件
-
-| 路径 | 用途 |
-|------|------|
-| `server-monitor/.env.example` | 本地配置参考 |
-| `server-monitor/docker-compose.yml` | 本地 Compose 编排入口 |
-| `server-monitor/docker/` | Prometheus、Alertmanager、Grafana、Jaeger、Fluent Bit、Elasticsearch 初始化等配置 |
-| `server-monitor/charts/server-monitor/values.yaml` | Helm 默认 values |
-| `server-monitor/k8s/` | 原始 Kubernetes 清单 |
-| `server-monitor/docker/setup-k8s.sh` | 本地 kind 集成环境准备脚本 |
-
-## 服务端口
-
-| 服务 | 端口 | 说明 |
-|------|------|------|
-| `server-web` | `8080` | API、WebSocket、内置静态资源 |
-| `Grafana` | `3000` | 监控大盘 |
-| `Redis` | `6379` | 缓存与 Pub/Sub |
-| `VictoriaMetrics` | `8428` | 长期指标存储 |
-| `Prometheus` | `9090` | 指标查询与规则加载 |
-| `Kafka` | `9092` | 事件总线 |
-| `Alertmanager` | `9093` | 告警管理 |
-| `Jaeger` | `16686` | 链路追踪 UI |
-| `Elasticsearch` | `9200` | 日志存储 |
-| `Kibana` | `5601` | 日志查询 |
-
-## CI
-
-CI 定义位于 `.github/workflows/ci.yaml`，所有外部 Actions 均固定到经过官方仓库 release 核验的 40 位 commit SHA。当前流程覆盖：
-
-- Go 模块矩阵检查：`goimports`、`golangci-lint`、uncached `go test`、race、`go vet`、`go build`
-- `server-web` 的 Agent runtime、Runbook RAG、Remediation、Verification 与 Workbench 检查
-- 前端 clean install、ESLint、strict typecheck、unit test 与 production build
-- Compose、Shell、Workflow YAML/actionlint、Kubernetes YAML/kubeconform 校验
-- Prometheus 规则校验
-- Helm values schema、lint、template 与渲染清单校验
-- Docker 镜像构建、OCI label、漏洞扫描和 SBOM 校验
-- DockerHub commit-SHA 镜像、exact-digest Trivy/SBOM、provenance/SBOM attestations、OIDC keyless signing 与严格 Cosign verify（`push-images`，仅 pushed `v*` tag 且通过 `production` environment 后触发）
-- 三服务验证通过后生成单一原子 digest manifest；可选 Helm 部署仅消费该 manifest 中的 repository 和 digest（`deploy`，仅 `v*` tag、`vars.DEPLOY_ENABLED == 'true'` 且受保护 `production` environment 通过后触发）
-
-非生产 hosted supply-chain 验证定义于 `.github/workflows/hosted-supply-chain-validation.yaml`。它只有无输入的 `workflow_dispatch` 入口，并在 job 层拒绝非 `refs/heads/main` 的执行。该路径使用 `GITHUB_TOKEN` 写入独立的 `ghcr.io/<owner>/cloudops-copilot-validation-<service>` package，不读取 DockerHub、Kubernetes、Argo CD 或 production secrets，也没有 Helm/Kubernetes deploy job。
-
-每个 validation tag 都包含 exact Git SHA、workflow run ID 和 run attempt。签名与验证只使用 Registry digest；验证同时限制 GitHub Actions issuer、repository、workflow 文件、workflow name、`refs/heads/main`、Git SHA 和 `workflow_dispatch` event，并导出 workflow metadata、OCI labels、SBOM/Trivy hashes、provenance/SBOM bundle、Cosign certificate claims 和 Rekor evidence。临时 GHCR package version 在证据生成后 best-effort 删除；清理结果单独写入 artifact，清理失败不会覆盖主 sign/verify Gate 的结果。GHCR 的未标记 referrer/retention 行为仍应由专用 validation package 的 retention policy 兜底。
-
-该 hosted validation workflow 目前只完成本地静态实现与检查，尚未在 GitHub-hosted runner 上执行。运行前需要确认仓库允许 Actions 写入/删除上述专用 GHCR package，并保留 `packages: write`、`attestations: write` 与 `id-token: write` 的最小 job 权限；不得把 validation package 改为正式 release repository。
+可直接口述的项目介绍、双语简历 bullet 和常见追问答案见 [V2 Interview Materials](doc/v2-interview-materials.md)。

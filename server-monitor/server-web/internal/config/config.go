@@ -414,10 +414,6 @@ type Config struct {
 	// KafkaBrokers Kafka Broker 地址列表，为空时禁用 Kafka 事件发送
 	// 默认值：空
 	KafkaBrokers []string
-
-	// WSMaxConnections WebSocket 最大并发连接数，0 或负值使用默认值 1000
-	// 默认值：1000
-	WSMaxConnections int
 }
 
 type K8SClusterConfig struct {
@@ -685,7 +681,6 @@ func Load() Config {
 		TraceOTLPEndpoint:          configutil.NonEmptyString("TRACE_OTLP_ENDPOINT", ""),
 		TraceSampleRate:            configutil.FloatRange("TRACE_SAMPLE_RATE", 1.0, 0, 1),
 		KafkaBrokers:               configutil.List("KAFKA_BROKERS"),
-		WSMaxConnections:           configutil.PositiveInt("WS_MAX_CONNECTIONS", 1000),
 	}
 }
 

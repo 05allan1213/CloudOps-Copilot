@@ -11,7 +11,5 @@ route:
 receivers:
   - name: cloudops-demo
     webhook_configs:
-      - url: http://server-web:8080/api/v1/webhook/alertmanager
-        send_resolved: true
       - url: http://server-web:8080/api/v2/webhook/alertmanager
         send_resolved: true

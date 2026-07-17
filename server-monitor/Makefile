@@ -50,7 +50,7 @@ LOCAL_RUNBOOK_DIR ?= $(PROJECT_DIR)/runbooks
 	lint lint-go lint-frontend lint-server-web lint-pkg \
 	fmt fmt-go fmt-goimports check-goimports check ci \
 	dev-deps dev-stop dev-web dev-frontend \
-	compose-config compose-build compose-up compose-down compose-logs compose-ps compose-clean \
+	compose-config compose-build compose-migrate compose-up compose-down compose-logs compose-ps compose-clean \
 	helm-lint helm-template deploy-helm undeploy-helm deploy-k8s undeploy-k8s k8s-script-check k8s-setup k8s-teardown \
 	docker docker-up docker-down docker-logs docker-clean ci-check dev-server-web
 
@@ -221,7 +221,21 @@ dev-stop: ## 停止本地开发依赖
 compose-build: ## 构建 Compose 中的应用镜像
 	$(DOCKER_COMPOSE) build $(COMPOSE_SERVICES)
 
-compose-up: ## 启动 Compose 服务
+compose-migrate: ## 启动 Compose MySQL 并执行显式 V2 Goose migrations
+	$(DOCKER_COMPOSE) up -d mysql
+	@set -e; \
+	for attempt in $$(seq 1 60); do \
+		if $(DOCKER_COMPOSE) exec -T mysql sh -ec 'mysqladmin ping -h 127.0.0.1 -u"$$MYSQL_USER" -p"$$MYSQL_PASSWORD" --silent' >/dev/null 2>&1; then break; fi; \
+		if [ "$$attempt" -eq 60 ]; then echo "Compose MySQL did not become ready" >&2; exit 1; fi; \
+		sleep 2; \
+	done; \
+	mysql_port="$$($(DOCKER_COMPOSE) port mysql 3306 | awk -F: 'END {print $$NF}')"; \
+	mysql_database="$$($(DOCKER_COMPOSE) exec -T mysql printenv MYSQL_DATABASE | tr -d '\r')"; \
+	mysql_user="$$($(DOCKER_COMPOSE) exec -T mysql printenv MYSQL_USER | tr -d '\r')"; \
+	mysql_password="$$($(DOCKER_COMPOSE) exec -T mysql printenv MYSQL_PASSWORD | tr -d '\r')"; \
+	cd $(SERVER_WEB_DIR) && MYSQL_HOST=127.0.0.1 MYSQL_PORT="$$mysql_port" MYSQL_DATABASE="$$mysql_database" MYSQL_USER="$$mysql_user" MYSQL_PASSWORD="$$mysql_password" $(GO) run ./cmd/migrate up
+
+compose-up: compose-migrate ## 执行 V2 migrations 后启动 Compose 完整服务
 	$(DOCKER_COMPOSE) up -d $(COMPOSE_SERVICES)
 
 compose-down: ## 停止 Compose 服务

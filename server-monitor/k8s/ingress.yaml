@@ -35,6 +35,6 @@ spec:
 # 2. 配置本地 hosts: <节点IP> monitor.local
 # 3. 访问 https://monitor.local
 #    - 前端页面: /
-#    - API: /api/v1/*
+#    - API: /api/v2/* (with /api/v1/auth/* retained for authentication only)
 #    - Incident-scoped realtime: /api/v2/workbench/incidents/:id/realtime
 # ============================================
