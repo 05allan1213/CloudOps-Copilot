@@ -5,6 +5,7 @@ import {
   getIncident,
   getIncidentDelivery,
   getIncidentInvestigation,
+  getIncidentResources,
   getIncidentPostmortem,
   getIncidentRemediation,
   getIncidentVerification,
@@ -13,7 +14,6 @@ import {
   listIncidentTimeline,
   listIncidentVerifications,
 } from "../../api/incidents";
-import { fetchK8sClusters, fetchK8sDeployments, fetchK8sEvents, fetchK8sPods, fetchK8sServices } from "../../api/k8s";
 import { isCurrentRequest, loadStateForStatus, postmortemStateForStatus, sortTimeline } from "../../models/incidents";
 import type {
   DeliveryDTO,
@@ -21,6 +21,7 @@ import type {
   IncidentEvidenceDTO,
   IncidentSignalDTO,
   IncidentTimelineDTO,
+  IncidentResourcesDTO,
   InvestigationDTO,
   LoadState,
   PostmortemDTO,
@@ -28,7 +29,6 @@ import type {
   VerificationDetailDTO,
   VerificationRunDTO,
 } from "../../types/incidents";
-import type { K8sDeploymentSummary, K8sEventSummary, K8sPodSummary, K8sServiceSummary } from "../../types";
 
 interface Section<T> {
   state: LoadState;
@@ -51,7 +51,7 @@ export function useIncidentDetail(incidentID: string, canViewApproval: boolean) 
   const verificationRuns = reactive<Section<VerificationRunDTO[]>>({ state: "loading", error: "", data: [] });
   const verification = reactive<Section<VerificationDetailDTO | null>>({ state: "loading", error: "", data: null });
   const postmortem = reactive<Section<PostmortemDTO | null>>({ state: "loading", error: "", data: null });
-  const resources = reactive<Section<{ deployments: K8sDeploymentSummary[]; pods: K8sPodSummary[]; services: K8sServiceSummary[]; events: K8sEventSummary[] }>>({ state: "loading", error: "", data: { deployments: [], pods: [], services: [], events: [] } });
+  const resources = reactive<Section<IncidentResourcesDTO>>({ state: "loading", error: "", data: { cluster: "", namespace: "", deployments: [], pods: [], services: [], events: [] } });
   let requestIdentity = 0;
   let controller: AbortController | null = null;
 
@@ -75,7 +75,7 @@ export function useIncidentDetail(incidentID: string, canViewApproval: boolean) 
         loadSimpleSection(identity, delivery, () => getIncidentDelivery(incidentID, controller?.signal)),
         loadVerificationSections(identity),
         loadPostmortem(identity),
-        loadResources(identity, item),
+        loadResources(identity),
       ]);
     } catch (cause) {
       if (identity !== requestIdentity || controller.signal.aborted) return;
@@ -134,25 +134,14 @@ export function useIncidentDetail(incidentID: string, canViewApproval: boolean) 
     return loadTimeline(requestIdentity, timelinePage.value + 1, true);
   }
 
-  async function loadResources(identity: number, item: IncidentDTO) {
+  async function loadResources(identity: number) {
     resources.state = "loading";
     resources.error = "";
     try {
-      const clusters = await fetchK8sClusters();
-      const requestedCluster = item.cluster || "default";
-      if (!clusters.includes(requestedCluster)) {
-        throw new Error(`Cluster ${requestedCluster} is not in the authenticated read allowlist`);
-      }
-      const options = { cluster: requestedCluster, namespace: item.namespace || undefined, search: item.workload_name || undefined, limit: 20 };
-      const [deployments, pods, services, events] = await Promise.all([
-        fetchK8sDeployments(options),
-        fetchK8sPods(options),
-        fetchK8sServices({ cluster: requestedCluster, namespace: item.namespace || undefined, search: item.service || undefined, limit: 20 }),
-        fetchK8sEvents({ cluster: requestedCluster, namespace: item.namespace || undefined, search: item.workload_name || undefined, limit: 20 }),
-      ]);
+      const result = await getIncidentResources(incidentID, controller?.signal);
       if (identity !== requestIdentity) return;
-      resources.data = { deployments: deployments.items, pods: pods.items, services: services.items, events: events.items };
-      resources.state = Object.values(resources.data).every((items) => items.length === 0) ? "empty" : "ready";
+      resources.data = result;
+      resources.state = [result.deployments, result.pods, result.services, result.events].every((items) => items.length === 0) ? "empty" : "ready";
     } catch (cause) {
       if (identity !== requestIdentity) return;
       resources.state = loadStateForStatus(isApiError(cause) ? cause.status : null, "unavailable");

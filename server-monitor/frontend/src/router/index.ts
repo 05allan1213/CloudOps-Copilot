@@ -1,7 +1,6 @@
 import { createRouter, createWebHistory } from "vue-router";
 
 import { useAuthStore } from "../stores/auth";
-import { useMonitorStore } from "../stores/monitor";
 import { appRoutes } from "./routes";
 
 export const router = createRouter({
@@ -35,17 +34,6 @@ router.beforeEach(async (to) => {
         path: "/login",
         query: { redirect: to.fullPath },
       };
-    }
-  }
-
-  if (to.meta.admin && !auth.isAdmin) {
-    return { path: "/incidents" };
-  }
-
-  if (to.meta.nodesRequired) {
-    const { k8sNodesEnabled } = useMonitorStore();
-    if (!k8sNodesEnabled) {
-      return { path: "/k8s" };
     }
   }
 

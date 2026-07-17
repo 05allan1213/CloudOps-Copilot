@@ -13,9 +13,6 @@ services:
       FAST_DEMO_CONFIRM_DISPOSABLE: "true"
       AUTH_ENABLED: "false"
       RATE_LIMIT_ENABLED: "false"
-      ALERT_RULE_SYNC_ENABLED: "false"
-      COPILOT_ENABLED: "true"
-      DIAGNOSIS_ENABLED: "false"
       INCIDENT_AGENT_ENABLED: "true"
       INCIDENT_AGENT_WORKER_ID: fast-demo-agent-worker
       FAST_DEMO_ENABLED: "true"
@@ -26,8 +23,6 @@ services:
       FAST_DEMO_RECOVERY_REPLICAS: "2"
       K8S_ENABLED: "true"
       K8S_WRITE_ENABLED: "true"
-      ACTION_EXECUTION_ENABLED: "false"
-      K8S_API_ENABLED: "true"
       K8S_IN_CLUSTER: "false"
       K8S_KUBECONFIG: /opt/server-monitor/docker/kubeconfig
       K8S_ALLOWED_NAMESPACES: cloudops-demo

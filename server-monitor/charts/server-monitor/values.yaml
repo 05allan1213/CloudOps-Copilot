@@ -28,30 +28,11 @@ config:
   mysqlDatabase: server_monitor
   mysqlStartupTimeoutSeconds: "10"
   mysqlPingTimeoutSeconds: "3"
-  copilotEnabled: "false"
   llmApiUrl: https://api.deepseek.com/v1/chat/completions
   llmModel: deepseek-chat
   llmTimeoutSeconds: "60"
   llmMaxTokens: "800"
-  diagnosisLLMTimeoutSeconds: "15"
-  diagnosisEnabled: "false"
-  diagnosisWorkerCount: "1"
-  diagnosisKafkaGroupID: diagnosis-worker
-  diagnosisTaskTTLSeconds: "1800"
-  diagnosisTaskTimeoutSeconds: "120"
-  diagnosisRetryableErrors: "true"
-  diagnosisStatusPushEnabled: "true"
-  feedbackEnabled: true
-  feedbackCommentMaxLength: 500
-  actionApprovalEnabled: "true"
-  actionExecutionEnabled: "false"
   actionMaxReplicas: "10"
-  actionPendingTTLHours: "24"
-  actionOperationEventsEnabled: "true"
-  actionStatusPushEnabled: "true"
-  copilotSessionTTLSeconds: "7200"
-  copilotMaxMessageLength: "2000"
-  copilotMaxSessionMessages: "50"
   copilotToolRegistryEnabled: "true"
   copilotToolDefaultTimeoutSeconds: "30"
   copilotToolLogArgs: "false"
@@ -71,11 +52,6 @@ config:
   rerankerEnabled: "false"
   rerankerTopN: "2"
   rerankerTimeoutSeconds: "10"
-
-copilot:
-  toolsClassifyEnabled: false
-  multiIntentEnabled: false
-  multiIntentMax: 3
 
 incidentAgent:
   enabled: false
@@ -208,8 +184,6 @@ deliveryVerification:
 k8sIntegration:
   enabled: false
   writeEnabled: false
-  nodesEnabled: false
-  apiEnabled: false
   inCluster: true
   kubeconfig: ""
   allowedNamespaces:
@@ -219,10 +193,6 @@ k8sIntegration:
   logTailLines: "100"
   logMaxBytes: "32768"
   eventLimit: "50"
-  cacheTTlSeconds: "30"
-  listCacheTTLSeconds: "15"
-  eventWatchIntervalSeconds: "5"
-  clusters: ""
   rbac:
     create: true
     bindWriteRole: false
@@ -436,7 +406,7 @@ runbooks:
       HostDown 可能是真实故障，也可能是监控链路误报；诊断必须区分业务不可用和观测不可用。
 
 alertService:
-  enabled: true
+  enabled: false
   replicas: 1
   image:
     repository: goproject-alert-service
@@ -454,7 +424,7 @@ alertService:
       memory: 128Mi
 
 serverProbe:
-  enabled: true
+  enabled: false
   image:
     repository: goproject-server-probe
     tag: 0.1.0

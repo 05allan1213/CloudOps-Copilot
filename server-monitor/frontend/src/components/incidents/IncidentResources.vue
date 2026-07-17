@@ -1,13 +1,12 @@
 <script setup lang="ts">
-import type { K8sDeploymentSummary, K8sEventSummary, K8sPodSummary, K8sServiceSummary } from "../../types";
-import type { LoadState } from "../../types/incidents";
+import type { IncidentK8sDeploymentDTO, IncidentK8sEventDTO, IncidentK8sPodDTO, IncidentK8sServiceDTO, LoadState } from "../../types/incidents";
 import IncidentSectionShell from "./IncidentSectionShell.vue";
 
 defineProps<{
   state: LoadState;
   error: string;
   cluster: string;
-  resources: { deployments: K8sDeploymentSummary[]; pods: K8sPodSummary[]; services: K8sServiceSummary[]; events: K8sEventSummary[] };
+  resources: { deployments: IncidentK8sDeploymentDTO[]; pods: IncidentK8sPodDTO[]; services: IncidentK8sServiceDTO[]; events: IncidentK8sEventDTO[] };
 }>();
 </script>
 

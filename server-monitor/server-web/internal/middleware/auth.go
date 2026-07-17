@@ -2,9 +2,7 @@ package middleware
 
 import (
 	"context"
-	"errors"
 	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -15,13 +13,10 @@ const (
 	ContextUserID   = "user_id"
 	ContextUsername = "username"
 	ContextRole     = "role"
-
-	webSocketBearerSubprotocol = "cloudops-bearer"
 )
 
 type authVerifier interface {
 	AuthenticateBearer(authHeader string) (authpkg.Identity, error)
-	AuthenticateToken(token string) (authpkg.Identity, error)
 }
 
 type tokenVersionVerifier interface {
@@ -53,54 +48,6 @@ func Auth(verifier authVerifier) gin.HandlerFunc {
 		c.Request = c.Request.WithContext(WithIdentity(c.Request.Context(), identity))
 		c.Next()
 	}
-}
-
-func AuthWebSocket(verifier authVerifier) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if verifier == nil {
-			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
-				"status": "error",
-				"error":  "auth service unavailable",
-			})
-			return
-		}
-
-		identity, err := verifier.AuthenticateBearer(c.GetHeader("Authorization"))
-		if errors.Is(err, authpkg.ErrBearerTokenMissing) {
-			token := webSocketBearerToken(c.GetHeader("Sec-WebSocket-Protocol"))
-			if token == "" {
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-					"status": "error",
-					"error":  "authorization header or websocket bearer subprotocol required",
-				})
-				return
-			}
-			identity, err = verifier.AuthenticateToken(token)
-		}
-		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"status": "error",
-				"error":  "invalid or expired token",
-			})
-			return
-		}
-
-		c.Set(ContextUserID, identity.ID)
-		c.Set(ContextUsername, identity.Username)
-		c.Set(ContextRole, identity.Role)
-		c.Request = c.Request.WithContext(WithIdentity(c.Request.Context(), identity))
-		c.Next()
-	}
-}
-
-func webSocketBearerToken(header string) string {
-	parts := strings.Split(header, ",")
-	for index := 0; index+1 < len(parts); index++ {
-		if strings.TrimSpace(parts[index]) == webSocketBearerSubprotocol {
-			return strings.TrimSpace(parts[index+1])
-		}
-	}
-	return ""
 }
 
 func VerifyTokenVersion(verifier tokenVersionVerifier) gin.HandlerFunc {

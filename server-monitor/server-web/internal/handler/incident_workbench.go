@@ -18,6 +18,7 @@ import (
 
 	"server-web/internal/agent"
 	"server-web/internal/change"
+	copilotk8s "server-web/internal/copilot/k8s"
 	domain "server-web/internal/incident"
 	"server-web/internal/middleware"
 	"server-web/internal/remediation"
@@ -92,6 +93,15 @@ type workbenchEvidenceDTO struct {
 	RelatedClaim  string    `json:"related_claim"`
 	Truncated     bool      `json:"truncated"`
 	CollectedAt   time.Time `json:"collected_at"`
+}
+
+type workbenchResourcesDTO struct {
+	Cluster     string                         `json:"cluster"`
+	Namespace   string                         `json:"namespace"`
+	Deployments []copilotk8s.DeploymentSummary `json:"deployments"`
+	Pods        []copilotk8s.PodSummary        `json:"pods"`
+	Services    []copilotk8s.ServiceSummary    `json:"services"`
+	Events      []copilotk8s.EventSummary      `json:"events"`
 }
 
 type workbenchAgentRunDTO struct {
@@ -307,6 +317,65 @@ func (h *Handler) ListWorkbenchEvidence(c *gin.Context) {
 		dtos = append(dtos, workbenchEvidenceDTO{ID: item.PublicID, Type: item.Type, Source: item.Source, ResourceRef: item.ResourceRef, Summary: item.Summary, State: evidenceState(item.Valid, item.Truncated), DataFreshness: "unknown", RelatedClaim: "Unknown", Truncated: item.Truncated, CollectedAt: item.CollectedAt})
 	}
 	writeWorkbenchPage(c, dtos, page, pageSize)
+}
+
+func (h *Handler) GetWorkbenchResources(c *gin.Context) {
+	item, ok := h.loadWorkbenchIncident(c)
+	if !ok {
+		return
+	}
+	if h.k8sReader == nil {
+		c.JSON(http.StatusServiceUnavailable, response{Status: "error", Error: "incident Kubernetes context unavailable"})
+		return
+	}
+	namespace := strings.TrimSpace(item.Namespace)
+	workload := strings.TrimSpace(item.TargetName)
+	if namespace == "" || workload == "" {
+		c.JSON(http.StatusOK, response{Status: "success", Data: workbenchResourcesDTO{Cluster: item.Cluster, Namespace: namespace, Deployments: []copilotk8s.DeploymentSummary{}, Pods: []copilotk8s.PodSummary{}, Services: []copilotk8s.ServiceSummary{}, Events: []copilotk8s.EventSummary{}}})
+		return
+	}
+	ctx := c.Request.Context()
+	deployments, err := h.k8sReader.ListDeployments(ctx, copilotk8s.QueryOptions{Namespace: namespace, Name: workload, Limit: 1})
+	if err != nil {
+		writeWorkbenchK8sError(c, err)
+		return
+	}
+	pods, err := h.k8sReader.ListPods(ctx, copilotk8s.QueryOptions{Namespace: namespace, Limit: 50})
+	if err != nil {
+		writeWorkbenchK8sError(c, err)
+		return
+	}
+	pods = filterIncidentPods(pods, workload)
+	services := []copilotk8s.ServiceSummary{}
+	if serviceName := strings.TrimSpace(item.ServiceName); serviceName != "" {
+		if serviceItems, serviceErr := h.k8sReader.ListServices(ctx, copilotk8s.QueryOptions{Namespace: namespace, Name: serviceName, Limit: 1}); serviceErr == nil {
+			services = serviceItems
+		}
+	}
+	events, err := h.k8sReader.ListEvents(ctx, copilotk8s.EventQuery{Namespace: namespace, InvolvedKind: item.TargetKind, InvolvedName: workload, Limit: 20})
+	if err != nil {
+		writeWorkbenchK8sError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, response{Status: "success", Data: workbenchResourcesDTO{Cluster: item.Cluster, Namespace: namespace, Deployments: deployments, Pods: pods, Services: services, Events: events}})
+}
+
+func filterIncidentPods(items []copilotk8s.PodSummary, workload string) []copilotk8s.PodSummary {
+	filtered := make([]copilotk8s.PodSummary, 0, len(items))
+	for _, item := range items {
+		if item.OwnerName == workload || item.Name == workload || strings.HasPrefix(item.Name, workload+"-") {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
+}
+
+func writeWorkbenchK8sError(c *gin.Context, err error) {
+	status := http.StatusServiceUnavailable
+	if errors.Is(err, copilotk8s.ErrInvalidArgument) || errors.Is(err, copilotk8s.ErrNamespaceNotAllowed) {
+		status = http.StatusBadRequest
+	}
+	c.JSON(status, response{Status: "error", Error: "incident Kubernetes context unavailable"})
 }
 
 func (h *Handler) GetWorkbenchInvestigation(c *gin.Context) {

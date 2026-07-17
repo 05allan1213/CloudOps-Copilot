@@ -7,6 +7,7 @@ import type {
   IncidentListQuery,
   IncidentSignalDTO,
   IncidentTimelineDTO,
+  IncidentResourcesDTO,
   InvestigationDTO,
   PostmortemDTO,
   RemediationDTO,
@@ -47,6 +48,10 @@ export function listIncidentEvidence(incidentID: string, page = 1, pageSize = 20
 
 export function getIncidentInvestigation(incidentID: string, signal?: AbortSignal) {
   return getApiData<InvestigationDTO>(`${base}/${encodeURIComponent(incidentID)}/investigation`, { signal });
+}
+
+export function getIncidentResources(incidentID: string, signal?: AbortSignal) {
+  return getApiData<IncidentResourcesDTO>(`${base}/${encodeURIComponent(incidentID)}/resources`, { signal });
 }
 
 export function getIncidentRemediation(incidentID: string, signal?: AbortSignal) {

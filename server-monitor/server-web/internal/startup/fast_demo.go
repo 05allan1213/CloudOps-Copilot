@@ -6,7 +6,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"server-web/internal/config"
-	"server-web/internal/copilot/action"
 	"server-web/internal/di"
 	"server-web/internal/infra/incidentmysql"
 	"server-web/internal/infra/k8schange"
@@ -36,7 +35,10 @@ func InitFastDemo(cfg config.Config, container *di.Container, client kubernetes.
 	if err != nil {
 		return nil, err
 	}
-	executor := action.NewClientK8sExecutor(client, action.ClientK8sExecutorConfig{AllowedNamespaces: cfg.K8SAllowedNamespaces, MaxReplicas: cfg.ActionMaxReplicas, RequestTimeout: cfg.K8SRequestTimeout})
+	executor, err := k8schange.NewControlledScaleExecutor(client, k8schange.ControlledScaleConfig{AllowedNamespaces: cfg.K8SAllowedNamespaces, MaxReplicas: cfg.ActionMaxReplicas, RequestTimeout: cfg.K8SRequestTimeout})
+	if err != nil {
+		return nil, err
+	}
 	service, err := fastdemo.New(fastdemo.Config{Revision: cfg.FastDemoRevision, Cluster: cfg.FastDemoCluster, Environment: "local-demo", Namespace: cfg.FastDemoNamespace, Workload: cfg.FastDemoWorkload, RecoveryReplicas: cfg.FastDemoRecoveryReplicas, Executor: executor, Rollout: rollout, Incidents: incidents, Remediations: remediations, Verifications: verifications})
 	if err != nil {
 		return nil, err

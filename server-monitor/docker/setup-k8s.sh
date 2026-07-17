@@ -104,7 +104,7 @@ main() {
     echo "Next steps:"
     echo "  1. cd to server-monitor directory"
     echo "  2. 启动本地栈：docker compose up -d"
-    echo "  3. 如需启用 K8s 功能，在 .env 中设置 K8S_ENABLED=true、K8S_API_ENABLED=true"
+    echo "  3. 如需启用 Incident Agent/Workbench 的受限 K8s 读取，在 .env 中设置 K8S_ENABLED=true"
     echo "     （server-web 将通过 host.docker.internal 访问本机 kind API Server）"
     echo ""
     echo "If server-web is already running, restart it:"

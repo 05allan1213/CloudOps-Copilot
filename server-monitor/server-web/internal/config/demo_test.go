@@ -7,7 +7,7 @@ import (
 
 func TestV2BaselineDefaultsAreSafe(t *testing.T) {
 	cfg := Load()
-	if cfg.FastDemoEnabled || cfg.FastDemoConfirmDisposable || cfg.ActionExecutionEnabled || cfg.K8SWriteEnabled || cfg.CopilotEnabled {
+	if cfg.FastDemoEnabled || cfg.FastDemoConfirmDisposable || cfg.ActionExecutionEnabled || cfg.K8SWriteEnabled || cfg.CopilotEnabled || cfg.DiagnosisEnabled || cfg.ActionApprovalEnabled || cfg.K8SAPIEnabled {
 		t.Fatalf("unsafe or legacy defaults enabled: %+v", cfg)
 	}
 	if !cfg.AuthEnabled || !cfg.RateLimit.Enabled {
@@ -20,7 +20,6 @@ func TestFastDemoRequiresExplicitDisposableLocalEnvironment(t *testing.T) {
 	base.AuthEnabled = false
 	base.FastDemoEnabled = true
 	base.IncidentAgentEnabled = true
-	base.CopilotEnabled = true
 	base.K8SEnabled = true
 	base.K8SWriteEnabled = true
 	base.K8SInCluster = false

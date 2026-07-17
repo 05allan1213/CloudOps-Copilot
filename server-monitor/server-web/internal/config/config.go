@@ -34,7 +34,8 @@ type Config struct {
 	// 默认值：空
 	AlertRulesFilePath string
 
-	// AlertRuleSyncEnabled 是否启用告警规则同步到 Prometheus
+	// AlertRuleSyncEnabled is compatibility-only and rejected when true.
+	// AlertRule CRUD/sync is no longer part of the V2 product surface.
 	// 默认值：true
 	AlertRuleSyncEnabled bool
 
@@ -248,7 +249,8 @@ type Config struct {
 	// RateLimit 限流配置
 	RateLimit RateLimitConfig
 
-	// CopilotEnabled 是否启用 Copilot API
+	// CopilotEnabled is compatibility-only and rejected when true.
+	// Shared Agent LLM/runbook/tool code no longer registers generic chat routes.
 	// 默认值：true
 	CopilotEnabled bool
 
@@ -345,7 +347,8 @@ type Config struct {
 	// 默认值：15s
 	DiagnosisLLMTimeout time.Duration
 
-	// DiagnosisEnabled 是否启用告警自动诊断 Worker
+	// DiagnosisEnabled is compatibility-only and rejected when true.
+	// V2 AgentRun is the only diagnosis writer.
 	// 默认值：false
 	DiagnosisEnabled bool
 
@@ -376,7 +379,8 @@ type Config struct {
 	FeedbackEnabled          bool
 	FeedbackCommentMaxLength int
 
-	// ActionApprovalEnabled 是否启用动作审批 API
+	// ActionApprovalEnabled is compatibility-only and rejected when true.
+	// V2 RemediationPlan/Approval is the only approval path.
 	// 默认值：true
 	ActionApprovalEnabled bool
 
@@ -412,7 +416,8 @@ type Config struct {
 	// 默认值：false
 	K8SNodesEnabled bool
 
-	// K8SAPIEnabled 是否启用 K8s HTTP API 和前端页面
+	// K8SAPIEnabled is compatibility-only and rejected when true.
+	// Kubernetes context is exposed only through incident-scoped Workbench DTOs.
 	// 默认值：false
 	K8SAPIEnabled bool
 
@@ -645,7 +650,7 @@ func Load() Config {
 		PrometheusURL:                   prometheusURL,
 		PrometheusReloadURL:             configutil.NonEmptyString("PROMETHEUS_RELOAD_URL", strings.TrimRight(prometheusURL, "/")+"/-/reload"),
 		AlertRulesFilePath:              configutil.String("ALERT_RULES_FILE_PATH", ""),
-		AlertRuleSyncEnabled:            configutil.Bool("ALERT_RULE_SYNC_ENABLED", true),
+		AlertRuleSyncEnabled:            configutil.Bool("ALERT_RULE_SYNC_ENABLED", false),
 		PromtoolPath:                    configutil.String("PROMTOOL_PATH", "promtool"),
 		AlertRuleSyncTimeout:            configutil.DurationSeconds("ALERT_RULE_SYNC_TIMEOUT_SECONDS", 10),
 		RequestTimeout:                  configutil.DurationSeconds("REQUEST_TIMEOUT_SECONDS", 5),
@@ -833,12 +838,12 @@ func Load() Config {
 		DiagnosisStatusPushEnabled:   configutil.Bool("DIAGNOSIS_STATUS_PUSH_ENABLED", true),
 		FeedbackEnabled:              configutil.Bool("FEEDBACK_ENABLED", true),
 		FeedbackCommentMaxLength:     configutil.PositiveInt("FEEDBACK_COMMENT_MAX_LENGTH", 500),
-		ActionApprovalEnabled:        configutil.Bool("ACTION_APPROVAL_ENABLED", true),
+		ActionApprovalEnabled:        configutil.Bool("ACTION_APPROVAL_ENABLED", false),
 		ActionExecutionEnabled:       configutil.Bool("ACTION_EXECUTION_ENABLED", false),
 		ActionMaxReplicas:            configutil.PositiveInt("ACTION_MAX_REPLICAS", 10),
 		ActionPendingTTL:             time.Duration(configutil.PositiveInt("ACTION_PENDING_TTL_HOURS", 24)) * time.Hour,
-		ActionOperationEventsEnabled: configutil.Bool("ACTION_OPERATION_EVENTS_ENABLED", true),
-		ActionStatusPushEnabled:      configutil.Bool("ACTION_STATUS_PUSH_ENABLED", true),
+		ActionOperationEventsEnabled: configutil.Bool("ACTION_OPERATION_EVENTS_ENABLED", false),
+		ActionStatusPushEnabled:      configutil.Bool("ACTION_STATUS_PUSH_ENABLED", false),
 		K8SEnabled:                   configutil.Bool("K8S_ENABLED", false),
 		K8SWriteEnabled:              configutil.Bool("K8S_WRITE_ENABLED", false),
 		K8SNodesEnabled:              configutil.Bool("K8S_NODES_ENABLED", false),
@@ -946,8 +951,8 @@ func (c *Config) Validate() error {
 		if workerID := strings.TrimSpace(c.IncidentAgentWorkerID); workerID == "" || len(workerID) > 128 {
 			return fmt.Errorf("INCIDENT_AGENT_WORKER_ID must contain 1-128 bytes when INCIDENT_AGENT_ENABLED is true")
 		}
-		if !c.CopilotEnabled || !c.CopilotToolRegistryEnabled {
-			return fmt.Errorf("COPILOT_ENABLED and COPILOT_TOOL_REGISTRY_ENABLED must be true when INCIDENT_AGENT_ENABLED is true")
+		if !c.CopilotToolRegistryEnabled {
+			return fmt.Errorf("COPILOT_TOOL_REGISTRY_ENABLED must remain true while the shared V2 Agent tool registry uses the compatibility key")
 		}
 		if (!c.FastDemoEnabled && strings.TrimSpace(c.LLMAPIKey) == "") || strings.TrimSpace(c.MySQLHost) == "" {
 			return fmt.Errorf("LLM_API_KEY and MySQL configuration are required when INCIDENT_AGENT_ENABLED is true outside fast demo mode")
@@ -1092,19 +1097,17 @@ func (c *Config) Validate() error {
 	if c.DiagnosisTaskTimeout <= c.DiagnosisLLMTimeout {
 		return fmt.Errorf("DIAGNOSIS_TASK_TIMEOUT_SECONDS must be greater than DIAGNOSIS_LLM_TIMEOUT_SECONDS")
 	}
+	if c.CopilotEnabled {
+		return fmt.Errorf("COPILOT_ENABLED is deprecated: the generic Copilot product was removed in V2 Step 2")
+	}
 	if c.DiagnosisEnabled {
-		if !c.CopilotEnabled {
-			return fmt.Errorf("COPILOT_ENABLED must be true when DIAGNOSIS_ENABLED is true")
-		}
-		if len(c.KafkaBrokers) == 0 {
-			return fmt.Errorf("KAFKA_BROKERS is required when DIAGNOSIS_ENABLED is true")
-		}
-		if strings.TrimSpace(c.DiagnosisKafkaGroupID) == "" {
-			return fmt.Errorf("DIAGNOSIS_KAFKA_GROUP_ID is required when DIAGNOSIS_ENABLED is true")
-		}
-		if strings.TrimSpace(c.RedisAddr) == "" {
-			return fmt.Errorf("REDIS_ADDR is required when DIAGNOSIS_ENABLED is true")
-		}
+		return fmt.Errorf("DIAGNOSIS_ENABLED is deprecated: the legacy diagnosis worker was removed in V2 Step 2")
+	}
+	if c.ActionApprovalEnabled {
+		return fmt.Errorf("ACTION_APPROVAL_ENABLED is deprecated: use V2 remediation approval")
+	}
+	if c.AlertRuleSyncEnabled {
+		return fmt.Errorf("ALERT_RULE_SYNC_ENABLED is deprecated: AlertRule CRUD and sync were removed in V2 Step 2")
 	}
 	if c.FeedbackCommentMaxLength < 100 || c.FeedbackCommentMaxLength > 2000 {
 		return fmt.Errorf("FEEDBACK_COMMENT_MAX_LENGTH must be in range 100-2000, got %d", c.FeedbackCommentMaxLength)
@@ -1129,8 +1132,8 @@ func (c *Config) Validate() error {
 	if c.K8SNodesEnabled && !c.K8SEnabled {
 		return fmt.Errorf("K8S_ENABLED must be true when K8S_NODES_ENABLED is true")
 	}
-	if c.K8SAPIEnabled && !c.K8SEnabled {
-		return fmt.Errorf("K8S_ENABLED must be true when K8S_API_ENABLED is true")
+	if c.K8SAPIEnabled {
+		return fmt.Errorf("K8S_API_ENABLED is deprecated: use incident-scoped Workbench Kubernetes context")
 	}
 	if err := checkK8SNamespace("K8S_DEFAULT_NAMESPACE", c.K8SDefaultNamespace); err != nil {
 		return err

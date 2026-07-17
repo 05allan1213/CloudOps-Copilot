@@ -9,9 +9,7 @@ import (
 	"server-web/internal/change"
 	"server-web/internal/handler"
 	promclient "server-web/internal/infra/prometheus"
-	"server-web/internal/infra/pubsub"
 	rediscache "server-web/internal/infra/redis"
-	ws "server-web/internal/infra/websocket"
 	"server-web/internal/middleware"
 	"server-web/internal/router"
 	appalert "server-web/internal/service/alert"
@@ -28,8 +26,6 @@ type Infra struct {
 	DB             *gorm.DB
 	KafkaProducer  *eventbus.Producer
 	PromClient     *promclient.Client
-	WSHub          *ws.Hub
-	AlertHub       *pubsub.Hub
 	ShutdownTracer func(context.Context) error
 }
 
@@ -42,7 +38,6 @@ type Container struct {
 	AuthService     handler.AuthService
 	Metrics         *middleware.Metrics
 	Handler         *handler.Handler
-	K8sHandler      *handler.K8sHandler
 	ChangeGitHub    change.GitHubReader
 	ChangeArgoCD    change.ArgoCDReader
 	DeliveryRollout verification.RolloutReader
@@ -76,7 +71,6 @@ func (c *Container) Dependencies() router.Dependencies {
 		Metrics:     c.Metrics,
 		CacheClient: c.RedisClient,
 		Handler:     c.Handler,
-		K8sHandler:  c.K8sHandler,
 		AuthService: c.AuthService,
 	}
 }

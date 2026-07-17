@@ -8,56 +8,45 @@ import (
 	"path"
 	"regexp"
 	"strings"
-	"time"
 
 	"go.uber.org/zap"
-	"gorm.io/gorm"
 	"k8s.io/client-go/kubernetes"
 
 	"server-web/internal/agent"
 	agentadapter "server-web/internal/agent/adapter"
 	"server-web/internal/change"
 	"server-web/internal/config"
-	copilotaction "server-web/internal/copilot/action"
-	copilotcontext "server-web/internal/copilot/context"
-	copilotdiagnosis "server-web/internal/copilot/diagnosis"
-	copilotfeedback "server-web/internal/copilot/feedback"
-	copilothandler "server-web/internal/copilot/handler"
 	copilotk8s "server-web/internal/copilot/k8s"
 	copilotllm "server-web/internal/copilot/llm"
-	copilotnlu "server-web/internal/copilot/nlu"
 	copilotrunbook "server-web/internal/copilot/runbook"
-	copilotservice "server-web/internal/copilot/service"
-	copilotsession "server-web/internal/copilot/session"
-	copilotsummary "server-web/internal/copilot/summary"
 	copilottool "server-web/internal/copilot/tool"
 	"server-web/internal/di"
 	"server-web/internal/infra/argocdread"
 	"server-web/internal/infra/githubread"
 	"server-web/internal/infra/incidentmysql"
 	"server-web/internal/infra/k8schange"
-	rediscache "server-web/internal/infra/redis"
 	"server-web/internal/infra/registryread"
-	ws "server-web/internal/infra/websocket"
-	"server-web/internal/middleware"
-	"server-web/internal/router"
 	agentruntime "server-web/internal/service/agentruntime"
-	appalert "server-web/internal/service/alert"
 	changeintelligence "server-web/internal/service/changeintelligence"
-
-	eventbus "server-monitor/pkg/kafka"
 )
 
-func InitCopilot(ctx context.Context, cfg config.Config, container *di.Container, k8sDeps copilotk8s.Deps) (*router.CopilotRuntime, *router.CopilotDeps, error) {
+// InitAgentRuntime assembles the V2 investigation runtime without registering
+// the removed generic Copilot, legacy Diagnosis, or legacy Actions products.
+// Shared LLM, runbook retrieval, tool contracts, and Kubernetes read adapters
+// remain internal implementation details of the Incident Agent.
+func InitAgentRuntime(ctx context.Context, cfg config.Config, container *di.Container, k8sDeps copilotk8s.Deps) (*agentruntime.Worker, error) {
 	changeService, changeTools, err := initChangeIntelligence(cfg, container, k8sDeps.Client)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if changeService != nil {
 		container.Handler.SetChangeIntelligence(changeService)
 	}
-	if !cfg.CopilotEnabled {
-		return nil, nil, nil
+	if !cfg.IncidentAgentEnabled {
+		return nil, nil
+	}
+	if container.DB == nil {
+		return nil, fmt.Errorf("incident agent runtime requires MySQL")
 	}
 
 	runbookDocs, err := copilotrunbook.LoadDir(context.Background(), cfg.RunbookDir, copilotrunbook.LoadOptions{
@@ -65,7 +54,7 @@ func InitCopilot(ctx context.Context, cfg config.Config, container *di.Container
 		MaxFileBytes: cfg.RunbookMaxFileBytes,
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	llmClient := copilotllm.NewClient(copilotllm.Options{
@@ -90,123 +79,61 @@ func InitCopilot(ctx context.Context, cfg config.Config, container *di.Container
 		Reranker:     buildRunbookReranker(cfg, llmClient),
 	})
 
-	var tools copilotservice.ToolExecutor
-	var toolExecutor *copilottool.Executor
-	if cfg.CopilotToolRegistryEnabled {
-		toolExecutor, err = copilottool.NewExecutor(copilottool.Options{
-			HostService:     container.Host(),
-			AlertService:    container.AlertService,
-			PromClient:      container.PromClient,
-			RunbookSearcher: runbookRetriever,
-			K8sReader:       k8sDeps.Reader,
-			K8sNodesEnabled: cfg.K8SNodesEnabled,
-			DB:              container.DB,
-			Observer:        container.Metrics,
-			Timeout:         cfg.CopilotToolDefaultTimeout,
-			LogArgs:         cfg.CopilotToolLogArgs,
-			AdditionalTools: changeTools,
-		})
-		if err != nil {
-			return nil, nil, err
-		}
-		tools = toolExecutor
-	} else {
-		tools = copilottool.NewDisabledExecutor()
-	}
-
-	diagnosisRepo := copilotdiagnosis.NewRepository(container.DB)
-	feedbackRepo := copilotfeedback.NewMySQLRepository(container.DB)
-	diagnosisService := initDiagnosisService(cfg, container.AlertService, llmClient, toolExecutor, diagnosisRepo, feedbackRepo, container.DB, container.Metrics)
-	copilotStore := copilotsession.NewRedisStore(container.RedisClient)
-	copilotContextMgr := copilotcontext.NewManager(copilotcontext.Options{
-		Store:     copilotStore,
-		MaxRounds: cfg.CopilotChatHistoryMaxRounds,
+	toolExecutor, err := copilottool.NewExecutor(copilottool.Options{
+		HostService:     container.Host(),
+		AlertService:    container.AlertService,
+		PromClient:      container.PromClient,
+		RunbookSearcher: runbookRetriever,
+		K8sReader:       k8sDeps.Reader,
+		K8sNodesEnabled: cfg.K8SNodesEnabled,
+		DB:              container.DB,
+		Observer:        container.Metrics,
+		Timeout:         cfg.CopilotToolDefaultTimeout,
+		LogArgs:         cfg.CopilotToolLogArgs,
+		AdditionalTools: changeTools,
 	})
-	var copilotSummarizer *copilotsummary.Summarizer
-	if llmClient != nil {
-		copilotSummarizer = copilotsummary.NewSummarizer(copilotsummary.Options{
-			LLM:       llmClient,
-			Timeout:   cfg.CopilotSummaryTimeout,
-			MaxPrompt: cfg.CopilotSummaryMaxPromptBytes,
-		})
+	if err != nil {
+		return nil, err
 	}
-	copilotHandler := copilothandler.NewHandler(copilotservice.NewService(copilotservice.Config{
-		MaxMessageLength:     cfg.CopilotMaxMessageLength,
-		SessionTTL:           cfg.CopilotSessionTTL,
-		MaxSessionMessages:   cfg.CopilotMaxSessionMessages,
-		Store:                copilotStore,
-		Classifier:           copilotnlu.NewClassifier(copilotnlu.WithNLUObserver(container.Metrics)),
-		LLM:                  llmClient,
-		Tools:                tools,
-		Diagnosis:            diagnosisService,
-		Summarizer:           copilotSummarizer,
-		SummaryEnabled:       cfg.CopilotSummaryEnabled,
-		ContextManager:       copilotContextMgr,
-		ToolDefs:             toolDefinitions(toolExecutor),
-		ToolsClassifyEnabled: cfg.CopilotToolsClassifyEnabled,
-		LLMClassifyThreshold: cfg.CopilotLLMClassifyThreshold,
-		MultiIntentEnabled:   cfg.CopilotMultiIntentEnabled,
-		MultiIntentMax:       cfg.CopilotMultiIntentMax,
-	}))
-
-	deps := &router.CopilotDeps{
-		Handler:          copilotHandler,
-		DiagnosisHandler: copilotdiagnosis.NewHandler(diagnosisService),
-		FeedbackHandler:  copilotfeedback.NewHandler(copilotfeedback.NewService(feedbackRepo, container.Metrics), copilotdiagnosis.NewReportAccessChecker(diagnosisRepo), cfg.FeedbackCommentMaxLength),
+	store, err := incidentmysql.NewStore(container.DB)
+	if err != nil {
+		return nil, fmt.Errorf("incident agent store init failed: %w", err)
 	}
-	if cfg.ActionApprovalEnabled {
-		actionHandler, err := initActionHandler(cfg, container, k8sDeps.Client)
-		if err != nil {
-			return nil, nil, err
+	zeroRetries := 0
+	var model agent.Model
+	modelName, promptVersion := cfg.LLMModel, "incident-agent-v3-change-readonly"
+	if cfg.FastDemoEnabled {
+		model = agentadapter.NewDemoModel()
+		modelName, promptVersion = "fast-demo-deterministic", "incident-agent-fast-demo-v1"
+	} else {
+		agentLLM := copilotllm.NewClient(copilotllm.Options{APIKey: cfg.LLMAPIKey, APIURL: cfg.LLMAPIURL, Model: cfg.LLMModel, Timeout: cfg.LLMTimeout, MaxTokens: cfg.LLMMaxTokens, MaxRetries: &zeroRetries, Observer: container.Metrics})
+		llmModel, modelErr := agentadapter.NewLLMModel(agentLLM)
+		if modelErr != nil {
+			return nil, fmt.Errorf("incident agent model init failed: %w", modelErr)
 		}
-		deps.ActionHandler = actionHandler
+		model = llmModel
 	}
-	runtime := &router.CopilotRuntime{DiagnosisService: diagnosisService, KafkaObserver: container.Metrics}
-	if cfg.IncidentAgentEnabled {
-		if container.DB == nil || toolExecutor == nil {
-			return nil, nil, fmt.Errorf("incident agent runtime requires MySQL and the tool registry")
-		}
-		store, storeErr := incidentmysql.NewStore(container.DB)
-		if storeErr != nil {
-			return nil, nil, fmt.Errorf("incident agent store init failed: %w", storeErr)
-		}
-		zeroRetries := 0
-		var model agent.Model
-		modelName, promptVersion := cfg.LLMModel, "incident-agent-v3-change-readonly"
-		if cfg.FastDemoEnabled {
-			model = agentadapter.NewDemoModel()
-			modelName, promptVersion = "fast-demo-deterministic", "incident-agent-fast-demo-v1"
-		} else {
-			agentLLM := copilotllm.NewClient(copilotllm.Options{APIKey: cfg.LLMAPIKey, APIURL: cfg.LLMAPIURL, Model: cfg.LLMModel, Timeout: cfg.LLMTimeout, MaxTokens: cfg.LLMMaxTokens, MaxRetries: &zeroRetries, Observer: container.Metrics})
-			llmModel, modelErr := agentadapter.NewLLMModel(agentLLM)
-			if modelErr != nil {
-				return nil, nil, fmt.Errorf("incident agent model init failed: %w", modelErr)
-			}
-			model = llmModel
-		}
-		readOnlyTools, toolErr := agentadapter.NewReadOnlyTools(toolExecutor)
-		if toolErr != nil {
-			return nil, nil, fmt.Errorf("incident agent read-only tools init failed: %w", toolErr)
-		}
-		agentService, serviceErr := agentruntime.New(ctx, store, model, readOnlyTools, agentruntime.Config{
-			Enabled: true, WorkerID: cfg.IncidentAgentWorkerID, PollInterval: cfg.IncidentAgentPollInterval,
-			LeaseDuration: cfg.IncidentAgentLeaseDuration, HeartbeatPeriod: cfg.IncidentAgentHeartbeatPeriod,
-			Model: modelName, PromptVersion: promptVersion, MaxGraphRunSteps: 96,
-			Observer: container.Metrics,
-			Limits: agent.Limits{MaxSteps: cfg.IncidentAgentMaxSteps, MaxToolCalls: cfg.IncidentAgentMaxToolCalls,
-				MaxModelCalls: cfg.IncidentAgentMaxModelCalls, TokenBudget: cfg.IncidentAgentTokenBudget,
-				MaxEvidenceItems: cfg.IncidentAgentMaxEvidenceItems, MaxRuntime: cfg.IncidentAgentMaxRuntime,
-				ToolTimeout: cfg.IncidentAgentToolTimeout, MaxEvidenceBytes: cfg.IncidentAgentMaxEvidenceBytes,
-				MaxCheckpointSize: cfg.IncidentAgentMaxCheckpointBytes, MaxStepRetries: cfg.IncidentAgentMaxStepRetries},
-		})
-		if serviceErr != nil {
-			return nil, nil, fmt.Errorf("incident agent runtime init failed: %w", serviceErr)
-		}
-		zap.L().Info("incident agent worker initialized", zap.String("worker_id", cfg.IncidentAgentWorkerID))
-		container.Handler.SetAgentRuntime(agentService)
-		runtime.AgentWorker = agentService.NewWorker()
+	readOnlyTools, err := agentadapter.NewReadOnlyTools(toolExecutor)
+	if err != nil {
+		return nil, fmt.Errorf("incident agent read-only tools init failed: %w", err)
 	}
-	return runtime, deps, nil
+	agentService, err := agentruntime.New(ctx, store, model, readOnlyTools, agentruntime.Config{
+		Enabled: true, WorkerID: cfg.IncidentAgentWorkerID, PollInterval: cfg.IncidentAgentPollInterval,
+		LeaseDuration: cfg.IncidentAgentLeaseDuration, HeartbeatPeriod: cfg.IncidentAgentHeartbeatPeriod,
+		Model: modelName, PromptVersion: promptVersion, MaxGraphRunSteps: 96,
+		Observer: container.Metrics,
+		Limits: agent.Limits{MaxSteps: cfg.IncidentAgentMaxSteps, MaxToolCalls: cfg.IncidentAgentMaxToolCalls,
+			MaxModelCalls: cfg.IncidentAgentMaxModelCalls, TokenBudget: cfg.IncidentAgentTokenBudget,
+			MaxEvidenceItems: cfg.IncidentAgentMaxEvidenceItems, MaxRuntime: cfg.IncidentAgentMaxRuntime,
+			ToolTimeout: cfg.IncidentAgentToolTimeout, MaxEvidenceBytes: cfg.IncidentAgentMaxEvidenceBytes,
+			MaxCheckpointSize: cfg.IncidentAgentMaxCheckpointBytes, MaxStepRetries: cfg.IncidentAgentMaxStepRetries},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("incident agent runtime init failed: %w", err)
+	}
+	zap.L().Info("incident agent worker initialized", zap.String("worker_id", cfg.IncidentAgentWorkerID))
+	container.Handler.SetAgentRuntime(agentService)
+	return agentService.NewWorker(), nil
 }
 
 func initChangeIntelligence(cfg config.Config, container *di.Container, k8sClient kubernetes.Interface) (*changeintelligence.Service, []copilottool.Tool, error) {
@@ -368,156 +295,6 @@ func initRunbookEmbedding(ctx context.Context, cfg config.Config, docs []copilot
 		return embedder, nil
 	}
 	return embedder, store
-}
-
-func initDiagnosisService(cfg config.Config, alertService *appalert.Service, llmClient *copilotllm.Client, toolExecutor *copilottool.Executor, diagnosisRepo *copilotdiagnosis.Repository, feedbackRepo copilotfeedback.Repository, db *gorm.DB, metrics *middleware.Metrics) *copilotdiagnosis.Service {
-	var runner copilotdiagnosis.ToolRunner
-	if toolExecutor != nil {
-		runner = diagnosisToolRunner{executor: toolExecutor}
-	}
-	return copilotdiagnosis.NewService(copilotdiagnosis.Config{
-		Repository: diagnosisRepo,
-		Resolver: copilotdiagnosis.NewResolver(copilotdiagnosis.ResolverOptions{
-			DB:           db,
-			AlertService: alertService,
-			Timeout:      cfg.CopilotToolDefaultTimeout,
-		}),
-		Collector: copilotdiagnosis.NewEvidenceCollector(copilotdiagnosis.EvidenceOptions{
-			Runner:        runner,
-			Timeout:       45 * time.Second,
-			RunbookLimit:  cfg.RunbookSearchTopN,
-			RerankEnabled: cfg.RerankerEnabled,
-		}),
-		Summarizer: copilotdiagnosis.NewLLMSummarizerWithOptions(llmClient, copilotdiagnosis.LLMSummarizerOptions{
-			Timeout:  cfg.DiagnosisLLMTimeout,
-			Observer: metrics,
-		}),
-		FeedbackRepository: feedbackRepo,
-	})
-}
-
-func initActionHandler(cfg config.Config, container *di.Container, k8sClient kubernetes.Interface) (*copilotaction.Handler, error) {
-	actionExecutionEnabled := cfg.ActionExecutionEnabled && cfg.K8SWriteEnabled
-	actionExecutor := copilotaction.K8sExecutor(copilotaction.DisabledK8sExecutor{})
-	if actionExecutionEnabled {
-		if k8sClient == nil {
-			return nil, errK8sClientRequired()
-		}
-		actionExecutor = copilotaction.NewClientK8sExecutor(k8sClient, copilotaction.ClientK8sExecutorConfig{
-			AllowedNamespaces: cfg.K8SAllowedNamespaces,
-			MaxReplicas:       cfg.ActionMaxReplicas,
-			RequestTimeout:    cfg.K8SRequestTimeout,
-		})
-	} else if cfg.ActionExecutionEnabled && !cfg.K8SWriteEnabled {
-		zap.L().Warn("ACTION_EXECUTION_ENABLED=true but K8S_WRITE_ENABLED=false; forcing k8s action execution disabled")
-	}
-	actionService := copilotaction.NewService(copilotaction.ServiceConfig{
-		Repository:             copilotaction.NewRepository(container.DB),
-		Policy:                 copilotaction.NewPolicy(copilotaction.PolicyConfig{MaxReplicas: cfg.ActionMaxReplicas}),
-		Executor:               actionExecutor,
-		Notifier:               copilotaction.NewWebSocketNotifier(container.WSHub),
-		OperationEvents:        operationEventProducer{producer: container.KafkaProducer},
-		Observer:               container.Metrics,
-		OperationEventsEnabled: cfg.ActionOperationEventsEnabled,
-		StatusPushEnabled:      cfg.ActionStatusPushEnabled,
-		ActionExecutionEnabled: actionExecutionEnabled,
-		PendingTTL:             cfg.ActionPendingTTL,
-	})
-	return copilotaction.NewHandler(actionService), nil
-}
-
-func toolDefinitions(toolExecutor *copilottool.Executor) []copilotllm.ToolDefinition {
-	if toolExecutor == nil {
-		return nil
-	}
-	return copilottool.ConvertToOpenAITools(toolExecutor.Registry().List())
-}
-
-func InitDiagnosisConsumer(cfg config.Config, redisClient *rediscache.Client, runtime *router.CopilotRuntime, hub *ws.Hub) (*eventbus.Consumer, error) {
-	if !cfg.DiagnosisEnabled {
-		zap.L().Info("diagnosis worker disabled")
-		return nil, nil
-	}
-	if runtime == nil || runtime.DiagnosisService == nil {
-		return nil, fmt.Errorf("diagnosis worker requires copilot diagnosis service")
-	}
-	if redisClient == nil || !redisClient.Enabled() {
-		return nil, fmt.Errorf("diagnosis worker requires redis")
-	}
-
-	var notifier copilotdiagnosis.Notifier
-	if cfg.DiagnosisStatusPushEnabled {
-		notifier = copilotdiagnosis.NewWebSocketNotifier(hub)
-	}
-	worker := copilotdiagnosis.NewWorker(copilotdiagnosis.WorkerConfig{
-		Service:     runtime.DiagnosisService,
-		TaskStore:   copilotdiagnosis.NewRedisTaskStore(redisClient, nil),
-		Notifier:    notifier,
-		Timeout:     cfg.DiagnosisTaskTimeout,
-		TTL:         cfg.DiagnosisTaskTTL,
-		Concurrency: cfg.DiagnosisWorkerCount,
-		Logger:      zap.L(),
-	})
-	consumer, err := eventbus.NewConsumer(eventbus.ConsumerConfig{
-		Brokers:      cfg.KafkaBrokers,
-		GroupID:      cfg.DiagnosisKafkaGroupID,
-		RetryBackoff: eventbus.DefaultConsumeRetryBackoff,
-	}, worker)
-	if err != nil {
-		return nil, fmt.Errorf("diagnosis kafka consumer init failed: %w", err)
-	}
-	consumer.SetRetryableErrors(cfg.DiagnosisRetryableErrors)
-	consumer.SetObserver(runtime.KafkaObserver)
-	zap.L().Info("diagnosis worker initialized",
-		zap.Strings("brokers", cfg.KafkaBrokers),
-		zap.String("group_id", cfg.DiagnosisKafkaGroupID),
-		zap.Int("worker_count", cfg.DiagnosisWorkerCount),
-	)
-	return consumer, nil
-}
-
-type copilotToolExecutor interface {
-	ExecuteTool(ctx context.Context, name string, args json.RawMessage) (copilottool.ToolResult, error)
-}
-
-type diagnosisToolRunner struct {
-	executor copilotToolExecutor
-}
-
-func (r diagnosisToolRunner) ExecuteTool(ctx context.Context, name string, args json.RawMessage) (copilotdiagnosis.ToolResult, error) {
-	if r.executor == nil {
-		return copilotdiagnosis.ToolResult{Success: false, Error: "tool registry unavailable"}, nil
-	}
-	if _, ok := copilotservice.UserFromContext(ctx); !ok {
-		if user, ok := copilotdiagnosis.UserFromContext(ctx); ok {
-			ctx = copilotservice.WithUser(ctx, copilotservice.User{
-				ID:       user.ID,
-				Username: user.Username,
-				Role:     user.Role,
-			})
-		}
-	}
-	result, err := r.executor.ExecuteTool(ctx, name, args)
-	errorMessage := ""
-	if result.Error != nil {
-		errorMessage = result.Error.Error()
-	}
-	return copilotdiagnosis.ToolResult{
-		Success: result.Success,
-		Data:    result.Data,
-		Error:   errorMessage,
-	}, err
-}
-
-type operationEventProducer struct {
-	producer *eventbus.Producer
-}
-
-func (p operationEventProducer) SendOperationEvent(event copilotaction.OperationEvent) error {
-	if p.producer == nil {
-		return nil
-	}
-	return p.producer.SendOperationEvent(event.ActionType, event)
 }
 
 func buildRunbookVectorStore(ctx context.Context, docs []copilotrunbook.Document, embedder *copilotrunbook.Embedder, observers ...copilotrunbook.BuildIndexObserver) (*copilotrunbook.MemoryVectorStore, error) {

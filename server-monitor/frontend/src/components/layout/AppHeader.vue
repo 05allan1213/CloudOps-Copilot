@@ -1,131 +1,21 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { Search } from "@element-plus/icons-vue";
 
-import { useAlertsWebSocket } from "../../composables/useAlertsWebSocket";
 import { useTheme } from "../../composables/useTheme";
-import { useK8sCluster } from "../../composables/useK8sCluster";
 import { useAuthStore } from "../../stores/auth";
-import { useMonitorStore } from "../../stores/monitor";
-import GlobalSearchDialog from "../common/GlobalSearchDialog.vue";
 
 defineProps<{
   pageTitle: string;
 }>();
 
 const auth = useAuthStore();
-const monitor = useMonitorStore();
 const router = useRouter();
 const { isDark, toggleTheme } = useTheme();
-const { clusters, currentCluster, setCluster } = useK8sCluster();
-
-const beijingTime = ref("");
-const beijingTimer = ref<number | null>(null);
-const updateAgoTimer = ref<number | null>(null);
-const liveDataStarted = ref(false);
-const searchVisible = ref(false);
-
-const { connectionState, connect, disconnect } = useAlertsWebSocket(
-  monitor.applyIncomingAlert,
-  monitor.applyIncomingHosts,
-  monitor.applyIncomingDiagnosisUpdate,
-  monitor.applyIncomingActionUpdate,
-);
-
-const connectionLabel = computed(() => {
-  switch (connectionState.value) {
-    case "connected":
-      return "已连接";
-    case "connecting":
-      return "连接中";
-    case "disconnected":
-      return "离线";
-    default:
-      return "";
-  }
-});
-
-const connectionType = computed(() => {
-  switch (connectionState.value) {
-    case "connected":
-      return "success";
-    case "connecting":
-      return "warning";
-    case "disconnected":
-      return "danger";
-    default:
-      return "";
-  }
-});
-
-const shouldUseLiveData = computed(() => auth.isAuthenticated);
-
-function updateBeijingTime() {
-  beijingTime.value = new Date().toLocaleString("zh-CN", {
-    timeZone: "Asia/Shanghai",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  });
-}
-
-function startLiveData() {
-  if (liveDataStarted.value) return;
-  monitor.refreshAll();
-  connect();
-  liveDataStarted.value = true;
-}
-
-function stopLiveData() {
-  if (!liveDataStarted.value) return;
-  disconnect();
-  liveDataStarted.value = false;
-}
 
 async function logout() {
   auth.logout();
-  stopLiveData();
   await router.push("/login");
 }
-
-function handleSearchKeydown(e: KeyboardEvent) {
-  if ((e.metaKey || e.ctrlKey) && e.key === "k") {
-    e.preventDefault();
-    searchVisible.value = true;
-  }
-}
-
-watch(
-  shouldUseLiveData,
-  (enabled) => {
-    if (enabled) {
-      startLiveData();
-    } else {
-      stopLiveData();
-    }
-  },
-  { immediate: true },
-);
-
-onMounted(() => {
-  updateBeijingTime();
-  monitor.updateAgoText();
-  beijingTimer.value = window.setInterval(updateBeijingTime, 1000);
-  updateAgoTimer.value = window.setInterval(monitor.updateAgoText, 5000);
-  document.addEventListener("keydown", handleSearchKeydown);
-});
-
-onBeforeUnmount(() => {
-  stopLiveData();
-  if (beijingTimer.value !== null) clearInterval(beijingTimer.value);
-  if (updateAgoTimer.value !== null) clearInterval(updateAgoTimer.value);
-  document.removeEventListener("keydown", handleSearchKeydown);
-});
 </script>
 
 <template>
@@ -137,45 +27,16 @@ onBeforeUnmount(() => {
       <h2 class="header-page-title">
         {{ pageTitle }}
       </h2>
-      <span class="header-update-ago">{{ monitor.updateAgo }}</span>
     </div>
     <div class="header-right">
-      <el-select
-        v-if="clusters.length > 1"
-        v-model="currentCluster"
-        size="small"
-        style="width: 140px"
-        @change="setCluster"
-      >
-        <el-option
-          v-for="c in clusters"
-          :key="c"
-          :label="c"
-          :value="c"
-        />
-      </el-select>
-      <el-button
-        size="small"
-        :icon="Search"
-        @click="searchVisible = true"
-      >
-        <span class="search-btn-text">搜索</span>
-        <span class="search-btn-shortcut">Ctrl+K</span>
-      </el-button>
       <el-tag
-        :type="connectionType"
+        type="success"
         size="small"
-        effect="dark"
+        effect="plain"
         round
-        class="ws-tag"
       >
-        <span
-          class="ws-dot"
-          :class="'ws-' + connectionState"
-        />
-        {{ connectionLabel }}
+        Incident V2
       </el-tag>
-      <span class="header-clock">{{ beijingTime }}</span>
       <el-switch
         :model-value="isDark"
         inline-prompt
@@ -203,7 +64,6 @@ onBeforeUnmount(() => {
       </el-button>
     </div>
   </el-header>
-  <GlobalSearchDialog v-model="searchVisible" />
 </template>
 
 <style scoped>

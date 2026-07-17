@@ -44,7 +44,6 @@ func InitContainer(cfg *config.Config, infra *di.Infra) (*di.Container, error) {
 	container.AuthService = authService
 
 	metrics := middleware.NewMetrics()
-	infra.WSHub.SetConnectionObserver(metrics.SetWebSocketConnections)
 	if infra.KafkaProducer != nil {
 		infra.KafkaProducer.SetObserver(metrics)
 	}
@@ -71,31 +70,11 @@ func InitContainer(cfg *config.Config, infra *di.Infra) (*di.Container, error) {
 	container.AlertService = alertService
 
 	h, err := handler.NewHandler(infra.PromClient, infra.RedisClient, handler.Config{
-		ReadyTimeout:   cfg.ReadyTimeout,
-		RequestTimeout: cfg.RequestTimeout,
-		HostsTTL:       cfg.HostsCacheTTL,
-		DashboardTTL:   cfg.DashboardOverviewTTL,
-		DedupeTTL:      cfg.AlertEventDedupeTTL,
-		CacheTimeout:   cfg.CacheWriteTimeout,
-		RuleSync: handler.NewAlertRuleSyncConfig(
-			cfg.AlertRuleSyncEnabled,
-			cfg.AlertRulesFilePath,
-			cfg.PromtoolPath,
-			cfg.PrometheusReloadURL,
-			cfg.AlertRuleSyncTimeout,
-		),
-		AlertService:    alertService,
+		ReadyTimeout:    cfg.ReadyTimeout,
+		RequestTimeout:  cfg.RequestTimeout,
 		IncidentService: container.IncidentService,
-		AlertProducer:   infra.KafkaProducer,
-		CacheService:    container.Cache(),
-		HostService:     container.Host(),
-		MySQLClient:     nil,
-		DB:              infra.DB,
 		AuthService:     authService,
-		K8sAPIEnabled:   cfg.K8SEnabled && cfg.K8SAPIEnabled,
-		K8sNodesEnabled: cfg.K8SEnabled && cfg.K8SAPIEnabled && cfg.K8SNodesEnabled,
-		CopilotEnabled:  cfg.CopilotEnabled,
-	}, infra.WSHub)
+	})
 	if err != nil {
 		return nil, err
 	}

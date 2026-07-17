@@ -32,6 +32,7 @@ data:
             - targets: ['alertmanager:9093']
 
     scrape_configs:
+      {{- if .Values.serverProbe.enabled }}
       - job_name: 'server-probe'
         metrics_path: /metrics
         kubernetes_sd_configs:
@@ -54,6 +55,7 @@ data:
             target_label: node
           - source_labels: [__meta_kubernetes_pod_name]
             target_label: pod
+      {{- end }}
 
       - job_name: 'server-web'
         metrics_path: /metrics
@@ -159,6 +161,7 @@ data:
               summary: "High disk usage on {{ "{{" }} $labels.instance {{ "}}" }}"
               description: "Disk usage on {{ "{{" }} $labels.mountpoint {{ "}}" }} is {{ "{{" }} $value {{ "}}" }}% (threshold: 90%)."
 
+          {{- if .Values.serverProbe.enabled }}
           - alert: HostDown
             expr: up{job="server-probe"} == 0
             for: 1m
@@ -167,6 +170,7 @@ data:
             annotations:
               summary: "Host {{ "{{" }} $labels.instance {{ "}}" }} is down"
               description: "Prometheus cannot reach the probe on {{ "{{" }} $labels.instance {{ "}}" }}."
+          {{- end }}
 
       - name: service-alerts
         rules:

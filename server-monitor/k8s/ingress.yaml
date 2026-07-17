@@ -36,5 +36,5 @@ spec:
 # 3. 访问 https://monitor.local
 #    - 前端页面: /
 #    - API: /api/v1/*
-#    - WebSocket: /ws/alerts
+#    - Incident-scoped realtime: /api/v2/workbench/incidents/:id/realtime
 # ============================================

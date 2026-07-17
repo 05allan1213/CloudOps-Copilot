@@ -188,11 +188,6 @@ spec:
                 configMapKeyRef:
                   name: monitor-config
                   key: RATE_LIMIT_WINDOW_SECONDS
-            - name: COPILOT_ENABLED
-              valueFrom:
-                configMapKeyRef:
-                  name: monitor-config
-                  key: COPILOT_ENABLED
             - name: LLM_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -218,76 +213,11 @@ spec:
                 configMapKeyRef:
                   name: monitor-config
                   key: LLM_MAX_TOKENS
-            - name: DIAGNOSIS_LLM_TIMEOUT_SECONDS
-              valueFrom:
-                configMapKeyRef:
-                  name: monitor-config
-                  key: DIAGNOSIS_LLM_TIMEOUT_SECONDS
-            - name: DIAGNOSIS_ENABLED
-              valueFrom:
-                configMapKeyRef:
-                  name: monitor-config
-                  key: DIAGNOSIS_ENABLED
-            - name: DIAGNOSIS_WORKER_COUNT
-              valueFrom:
-                configMapKeyRef:
-                  name: monitor-config
-                  key: DIAGNOSIS_WORKER_COUNT
-            - name: DIAGNOSIS_KAFKA_GROUP_ID
-              valueFrom:
-                configMapKeyRef:
-                  name: monitor-config
-                  key: DIAGNOSIS_KAFKA_GROUP_ID
-            - name: DIAGNOSIS_TASK_TTL_SECONDS
-              valueFrom:
-                configMapKeyRef:
-                  name: monitor-config
-                  key: DIAGNOSIS_TASK_TTL_SECONDS
-            - name: DIAGNOSIS_TASK_TIMEOUT_SECONDS
-              valueFrom:
-                configMapKeyRef:
-                  name: monitor-config
-                  key: DIAGNOSIS_TASK_TIMEOUT_SECONDS
-            - name: DIAGNOSIS_RETRYABLE_ERRORS
-              valueFrom:
-                configMapKeyRef:
-                  name: monitor-config
-                  key: DIAGNOSIS_RETRYABLE_ERRORS
-            - name: DIAGNOSIS_STATUS_PUSH_ENABLED
-              valueFrom:
-                configMapKeyRef:
-                  name: monitor-config
-                  key: DIAGNOSIS_STATUS_PUSH_ENABLED
-            - name: ACTION_APPROVAL_ENABLED
-              valueFrom:
-                configMapKeyRef:
-                  name: monitor-config
-                  key: ACTION_APPROVAL_ENABLED
-            - name: ACTION_EXECUTION_ENABLED
-              valueFrom:
-                configMapKeyRef:
-                  name: monitor-config
-                  key: ACTION_EXECUTION_ENABLED
             - name: ACTION_MAX_REPLICAS
               valueFrom:
                 configMapKeyRef:
                   name: monitor-config
                   key: ACTION_MAX_REPLICAS
-            - name: ACTION_PENDING_TTL_HOURS
-              valueFrom:
-                configMapKeyRef:
-                  name: monitor-config
-                  key: ACTION_PENDING_TTL_HOURS
-            - name: ACTION_OPERATION_EVENTS_ENABLED
-              valueFrom:
-                configMapKeyRef:
-                  name: monitor-config
-                  key: ACTION_OPERATION_EVENTS_ENABLED
-            - name: ACTION_STATUS_PUSH_ENABLED
-              valueFrom:
-                configMapKeyRef:
-                  name: monitor-config
-                  key: ACTION_STATUS_PUSH_ENABLED
             - name: K8S_ENABLED
               valueFrom:
                 configMapKeyRef:
@@ -298,16 +228,6 @@ spec:
                 configMapKeyRef:
                   name: monitor-config
                   key: K8S_WRITE_ENABLED
-            - name: K8S_NODES_ENABLED
-              valueFrom:
-                configMapKeyRef:
-                  name: monitor-config
-                  key: K8S_NODES_ENABLED
-            - name: K8S_API_ENABLED
-              valueFrom:
-                configMapKeyRef:
-                  name: monitor-config
-                  key: K8S_API_ENABLED
             - name: K8S_IN_CLUSTER
               valueFrom:
                 configMapKeyRef:
@@ -348,21 +268,6 @@ spec:
                 configMapKeyRef:
                   name: monitor-config
                   key: K8S_EVENT_LIMIT
-            - name: COPILOT_SESSION_TTL_SECONDS
-              valueFrom:
-                configMapKeyRef:
-                  name: monitor-config
-                  key: COPILOT_SESSION_TTL_SECONDS
-            - name: COPILOT_MAX_MESSAGE_LENGTH
-              valueFrom:
-                configMapKeyRef:
-                  name: monitor-config
-                  key: COPILOT_MAX_MESSAGE_LENGTH
-            - name: COPILOT_MAX_SESSION_MESSAGES
-              valueFrom:
-                configMapKeyRef:
-                  name: monitor-config
-                  key: COPILOT_MAX_SESSION_MESSAGES
             - name: COPILOT_TOOL_REGISTRY_ENABLED
               valueFrom:
                 configMapKeyRef:

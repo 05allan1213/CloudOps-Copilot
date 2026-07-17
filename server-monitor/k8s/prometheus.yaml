@@ -37,29 +37,6 @@ data:
           max_shards: 5
 
     scrape_configs:
-      - job_name: 'server-probe'
-        metrics_path: /metrics
-        kubernetes_sd_configs:
-          - role: pod
-            namespaces:
-              own_namespace: true
-        relabel_configs:
-          - source_labels: [__meta_kubernetes_pod_label_app]
-            action: keep
-            regex: server-probe
-          - source_labels: [__meta_kubernetes_pod_phase]
-            action: keep
-            regex: Running
-          - source_labels: [__meta_kubernetes_pod_ip]
-            target_label: __address__
-            replacement: ${1}:9090
-          - source_labels: [__meta_kubernetes_pod_node_name]
-            target_label: instance
-          - source_labels: [__meta_kubernetes_pod_node_name]
-            target_label: node
-          - source_labels: [__meta_kubernetes_pod_name]
-            target_label: pod
-
       - job_name: 'server-web'
         metrics_path: /metrics
         kubernetes_sd_configs:
@@ -70,27 +47,6 @@ data:
           - source_labels: [__meta_kubernetes_pod_label_app]
             action: keep
             regex: server-web
-          - source_labels: [__meta_kubernetes_pod_phase]
-            action: keep
-            regex: Running
-          - source_labels: [__meta_kubernetes_pod_ip]
-            target_label: __address__
-            replacement: ${1}:8080
-          - source_labels: [__meta_kubernetes_pod_name]
-            target_label: instance
-          - source_labels: [__meta_kubernetes_pod_name]
-            target_label: pod
-
-      - job_name: 'alert-service'
-        metrics_path: /metrics
-        kubernetes_sd_configs:
-          - role: pod
-            namespaces:
-              own_namespace: true
-        relabel_configs:
-          - source_labels: [__meta_kubernetes_pod_label_app]
-            action: keep
-            regex: alert-service
           - source_labels: [__meta_kubernetes_pod_phase]
             action: keep
             regex: Running
@@ -151,15 +107,6 @@ data:
             annotations:
               summary: "High disk usage on {{ $labels.instance }}"
               description: "Disk usage on {{ $labels.mountpoint }} is {{ $value }}% (threshold: 90%)."
-
-          - alert: HostDown
-            expr: up{job="server-probe"} == 0
-            for: 1m
-            labels:
-              severity: critical
-            annotations:
-              summary: "Host {{ $labels.instance }} is down"
-              description: "Prometheus cannot reach the probe on {{ $labels.instance }}."
 
       - name: service-alerts
         rules:

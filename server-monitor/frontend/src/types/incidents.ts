@@ -160,6 +160,62 @@ export interface InvestigationDTO {
   evidence: AgentEvidenceDTO[];
 }
 
+export interface IncidentK8sPodDTO {
+  namespace: string;
+  name: string;
+  phase: string;
+  ready_containers: number;
+  total_containers: number;
+  restart_count: number;
+  node_name?: string;
+  pod_ip?: string;
+  owner_kind?: string;
+  owner_name?: string;
+  collected_at?: string;
+}
+
+export interface IncidentK8sDeploymentDTO {
+  namespace: string;
+  name: string;
+  replicas: number;
+  ready_replicas: number;
+  updated_replicas: number;
+  available_replicas: number;
+  strategy?: string;
+  collected_at?: string;
+}
+
+export interface IncidentK8sServiceDTO {
+  namespace: string;
+  name: string;
+  type: string;
+  cluster_ip?: string;
+  ports?: Array<{ name?: string; protocol: string; port: number; target_port?: string }>;
+  collected_at?: string;
+}
+
+export interface IncidentK8sEventDTO {
+  namespace?: string;
+  name: string;
+  type?: string;
+  reason?: string;
+  message?: string;
+  involved_kind?: string;
+  involved_name?: string;
+  count?: number;
+  last_seen?: string;
+  collected_at?: string;
+}
+
+export interface IncidentResourcesDTO {
+  cluster: string;
+  namespace: string;
+  deployments: IncidentK8sDeploymentDTO[];
+  pods: IncidentK8sPodDTO[];
+  services: IncidentK8sServiceDTO[];
+  events: IncidentK8sEventDTO[];
+}
+
 export interface RemediationDTO {
   id: string;
   status: string;

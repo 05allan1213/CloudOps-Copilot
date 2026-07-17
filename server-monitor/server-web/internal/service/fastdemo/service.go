@@ -14,7 +14,6 @@ import (
 	"github.com/google/uuid"
 
 	"server-web/internal/agent"
-	"server-web/internal/copilot/action"
 	"server-web/internal/incident"
 	"server-web/internal/infra/incidentmysql"
 	"server-web/internal/remediation"
@@ -28,12 +27,16 @@ type Config struct {
 	Namespace        string
 	Workload         string
 	RecoveryReplicas int
-	Executor         action.K8sExecutor
+	Executor         ControlledScaleExecutor
 	Rollout          verification.RolloutReader
 	Incidents        *incidentmysql.Store
 	Remediations     *incidentmysql.RemediationRepository
 	Verifications    *incidentmysql.VerificationRepository
 	Now              func() time.Time
+}
+
+type ControlledScaleExecutor interface {
+	ScaleDeployment(ctx context.Context, namespace, name string, replicas int32) error
 }
 
 type Service struct{ cfg Config }
@@ -176,7 +179,7 @@ func (s *Service) Execute(ctx context.Context, planID string) (*verification.Run
 	if err != nil || computed != plan.PlanHash || plan.Parameters.ProposedValue.Replicas == nil {
 		return nil, remediation.ErrApprovalMismatch
 	}
-	if _, err := s.cfg.Executor.ScaleDeployment(ctx, s.cfg.Namespace, s.cfg.Workload, int32(*plan.Parameters.ProposedValue.Replicas)); err != nil {
+	if err := s.cfg.Executor.ScaleDeployment(ctx, s.cfg.Namespace, s.cfg.Workload, int32(*plan.Parameters.ProposedValue.Replicas)); err != nil {
 		_ = s.cfg.Remediations.ReleaseDelivery(context.WithoutCancel(ctx), delivery.ID, delivery.RowVersion, delivery.LeaseOwner, "controlled_execution_failed")
 		return nil, err
 	}

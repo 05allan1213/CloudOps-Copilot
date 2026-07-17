@@ -12,9 +12,7 @@ import (
 	"server-web/internal/di"
 	"server-web/internal/infra/database"
 	promclient "server-web/internal/infra/prometheus"
-	"server-web/internal/infra/pubsub"
 	rediscache "server-web/internal/infra/redis"
-	ws "server-web/internal/infra/websocket"
 
 	eventbus "server-monitor/pkg/kafka"
 	"server-monitor/pkg/tracer"
@@ -50,8 +48,6 @@ func InitInfra(ctx context.Context, cfg config.Config) (*di.Infra, error) {
 		RedisClient:    redisClient,
 		DB:             dbFromMySQL(mysqlClient),
 		KafkaProducer:  initKafkaProducer(cfg),
-		WSHub:          ws.NewHub(cfg.WSMaxConnections, cfg.CORSOrigins),
-		AlertHub:       pubsub.NewHub(64),
 	}, nil
 }
 
