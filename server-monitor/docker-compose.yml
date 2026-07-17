@@ -111,42 +111,6 @@ services:
           memory: 512M
 
   # ------------------------------------------
-  # server-probe 监控探针
-  # ------------------------------------------
-  server-probe:
-    profiles: ["legacy-demo-support"]
-    image: server-monitor/server-probe:local
-    build:
-      context: .
-      dockerfile: server-probe/Dockerfile
-      target: runtime
-    <<: *app-service
-    ports:
-      - "127.0.0.1:${SERVER_PROBE_HOST_PORT:-8082}:9090"
-    environment:
-      <<: *observability-env
-      LISTEN_ADDR: ":9090"
-      HOST_PROC: ${HOST_PROC:-/host/proc}
-      HOST_SYS: ${HOST_SYS:-/host/sys}
-    volumes:
-      - /proc:/host/proc:ro
-      - /sys:/host/sys:ro
-    depends_on:
-      jaeger:
-        condition: service_started
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9090/healthz"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-      start_period: 10s
-    deploy:
-      resources:
-        limits:
-          cpus: "0.20"
-          memory: 128M
-
-  # ------------------------------------------
   # Prometheus 监控服务
   # ------------------------------------------
   prometheus:
@@ -267,45 +231,6 @@ services:
         limits:
           cpus: "0.10"
           memory: 256M
-
-  # ------------------------------------------
-  # alert-service 告警事件消费与状态管理
-  # ------------------------------------------
-  alert-service:
-    profiles: ["legacy-demo-support"]
-    image: server-monitor/alert-service:local
-    build:
-      context: .
-      dockerfile: alert-service/Dockerfile
-      target: runtime
-    <<: *app-service
-    ports:
-      - "127.0.0.1:${ALERT_SERVICE_HOST_PORT:-8081}:8081"
-    environment:
-      LISTEN_ADDR: ":8081"
-      KAFKA_BROKERS: ${KAFKA_BROKERS:-kafka:9092}
-      KAFKA_GROUP_ID: ${KAFKA_GROUP_ID:-alert-service}
-      REDIS_ADDR: ${REDIS_ADDR:-redis:6379}
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-server-monitor-local-redis}
-      <<: *observability-env
-    depends_on:
-      jaeger:
-        condition: service_started
-      redis:
-        condition: service_healthy
-      kafka-init:
-        condition: service_completed_successfully
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8081/healthz"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-      start_period: 10s
-    deploy:
-      resources:
-        limits:
-          cpus: "0.20"
-          memory: 128M
 
   # ------------------------------------------
   # AlertManager 告警管理
@@ -589,9 +514,9 @@ services:
       RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
       RATE_LIMIT_REQUESTS: ${RATE_LIMIT_REQUESTS:-120}
       RATE_LIMIT_WINDOW_SECONDS: ${RATE_LIMIT_WINDOW_SECONDS:-60}
-      COPILOT_TOOL_REGISTRY_ENABLED: ${COPILOT_TOOL_REGISTRY_ENABLED:-true}
-      COPILOT_TOOL_DEFAULT_TIMEOUT_SECONDS: ${COPILOT_TOOL_DEFAULT_TIMEOUT_SECONDS:-30}
-      COPILOT_TOOL_LOG_ARGS: ${COPILOT_TOOL_LOG_ARGS:-false}
+      AGENT_TOOL_REGISTRY_ENABLED: ${AGENT_TOOL_REGISTRY_ENABLED:-true}
+      AGENT_TOOL_DEFAULT_TIMEOUT_SECONDS: ${AGENT_TOOL_DEFAULT_TIMEOUT_SECONDS:-30}
+      AGENT_TOOL_LOG_ARGS: ${AGENT_TOOL_LOG_ARGS:-false}
       INCIDENT_AGENT_ENABLED: ${INCIDENT_AGENT_ENABLED:-false}
       INCIDENT_AGENT_WORKER_ID: ${INCIDENT_AGENT_WORKER_ID:-server-web-agent-worker}
       INCIDENT_AGENT_POLL_INTERVAL_MILLISECONDS: ${INCIDENT_AGENT_POLL_INTERVAL_MILLISECONDS:-1000}
@@ -629,7 +554,6 @@ services:
       LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-60}
       LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-2048}
-      ACTION_MAX_REPLICAS: ${ACTION_MAX_REPLICAS:-10}
       K8S_ENABLED: ${K8S_ENABLED:-false}
       K8S_WRITE_ENABLED: ${K8S_WRITE_ENABLED:-false}
       K8S_IN_CLUSTER: ${K8S_IN_CLUSTER:-false}

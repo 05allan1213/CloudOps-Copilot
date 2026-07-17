@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -19,14 +18,6 @@ import (
 type Client struct {
 	baseURL    string
 	httpClient *http.Client
-}
-
-type Host struct {
-	Instance   string  `json:"instance"`
-	CPU        float64 `json:"cpu"`
-	Memory     float64 `json:"memory"`
-	Status     string  `json:"status"`
-	LastScrape string  `json:"lastScrape"`
 }
 
 type apiResponse struct {
@@ -45,12 +36,6 @@ type vectorResult struct {
 	Metric map[string]string `json:"metric"`
 	Value  []interface{}     `json:"value"`
 	Values [][]interface{}   `json:"values"`
-}
-
-type metricValue struct {
-	Instance  string
-	Value     float64
-	Timestamp time.Time
 }
 
 type RangePoint struct {
@@ -92,69 +77,6 @@ func (c *Client) Ready(ctx context.Context) (retErr error) {
 	return nil
 }
 
-func (c *Client) GetHosts(ctx context.Context) ([]Host, error) {
-	upValues, err := c.queryInstantVector(ctx, queryHostUp)
-	if err != nil {
-		return nil, err
-	}
-
-	cpuValues, err := c.queryInstantVector(ctx, queryCPUUsage)
-	if err != nil {
-		return nil, err
-	}
-
-	memoryValues, err := c.queryInstantVector(ctx, queryMemoryUsage)
-	if err != nil {
-		return nil, err
-	}
-
-	hostsByInstance := map[string]*Host{}
-
-	for _, item := range upValues {
-		host := getOrCreateHost(hostsByInstance, item.Instance)
-		host.Status = "down"
-		if item.Value >= 1 {
-			host.Status = "up"
-		}
-		host.LastScrape = item.Timestamp.UTC().Format(time.RFC3339)
-	}
-
-	for _, item := range cpuValues {
-		host := getOrCreateHost(hostsByInstance, item.Instance)
-		host.CPU = item.Value
-		updateLastScrape(host, item.Timestamp)
-	}
-
-	for _, item := range memoryValues {
-		host := getOrCreateHost(hostsByInstance, item.Instance)
-		host.Memory = item.Value
-		updateLastScrape(host, item.Timestamp)
-	}
-
-	hosts := make([]Host, 0, len(hostsByInstance))
-	for _, host := range hostsByInstance {
-		if host.Status == "" {
-			host.Status = "unknown"
-		}
-		hosts = append(hosts, *host)
-	}
-
-	sort.Slice(hosts, func(i, j int) bool {
-		return hosts[i].Instance < hosts[j].Instance
-	})
-
-	return hosts, nil
-}
-
-func (c *Client) QueryRange(ctx context.Context, metric, instance string, params map[string]string, start, end time.Time, step time.Duration) ([]RangeSeries, error) {
-	query, err := BuildQuery(metric, instance, params)
-	if err != nil {
-		return nil, err
-	}
-
-	return c.queryRange(ctx, query, start, end, step, 0)
-}
-
 func (c *Client) QueryRangeRaw(ctx context.Context, query string, start, end time.Time, step time.Duration) ([]RangeSeries, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
@@ -162,60 +84,6 @@ func (c *Client) QueryRangeRaw(ctx context.Context, query string, start, end tim
 	}
 
 	return c.queryRange(ctx, query, start, end, step, 1024*1024)
-}
-
-const maxInstantResponseBytes int64 = 1024 * 1024
-
-func (c *Client) queryInstantVector(ctx context.Context, query string) (metrics []metricValue, retErr error) {
-	endpoint := c.baseURL + "/api/v1/query"
-	values := url.Values{}
-	values.Set("query", query)
-
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"?"+values.Encode(), nil)
-	if err != nil {
-		return nil, fmt.Errorf("build prometheus query request: %w", err)
-	}
-
-	response, err := c.httpClient.Do(request)
-	if err != nil {
-		return nil, fmt.Errorf("query prometheus failed: %w", err)
-	}
-	defer func() { retErr = errors.Join(retErr, response.Body.Close()) }()
-
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("query prometheus returned status %d", response.StatusCode)
-	}
-
-	data, err := io.ReadAll(io.LimitReader(response.Body, maxInstantResponseBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("read prometheus response: %w", err)
-	}
-	if int64(len(data)) > maxInstantResponseBytes {
-		return nil, fmt.Errorf("prometheus response too large")
-	}
-
-	var payload apiResponse
-	if err := json.Unmarshal(data, &payload); err != nil {
-		return nil, fmt.Errorf("decode prometheus response: %w", err)
-	}
-
-	if payload.Status != "success" {
-		if payload.Error != "" {
-			return nil, fmt.Errorf("prometheus query error: %s", payload.Error)
-		}
-		return nil, fmt.Errorf("prometheus query failed with status %s", payload.Status)
-	}
-
-	results := make([]metricValue, 0, len(payload.Data.Result))
-	for _, item := range payload.Data.Result {
-		metric, err := parseVectorResult(item)
-		if err != nil {
-			return nil, err
-		}
-		results = append(results, metric)
-	}
-
-	return results, nil
 }
 
 func (c *Client) queryRange(ctx context.Context, query string, start, end time.Time, step time.Duration, maxResponseBytes int64) (series []RangeSeries, retErr error) {
@@ -297,33 +165,6 @@ func decodeRangeResponse(body io.Reader, maxResponseBytes int64) (apiResponse, e
 	return payload, nil
 }
 
-func parseVectorResult(item vectorResult) (metricValue, error) {
-	instance := item.Metric["instance"]
-	if instance == "" {
-		instance = item.Metric["job"]
-	}
-
-	if len(item.Value) != 2 {
-		return metricValue{}, fmt.Errorf("unexpected prometheus value format")
-	}
-
-	timestamp, err := parseTimestamp(item.Value[0])
-	if err != nil {
-		return metricValue{}, err
-	}
-
-	value, err := parseFloat(item.Value[1])
-	if err != nil {
-		return metricValue{}, err
-	}
-
-	return metricValue{
-		Instance:  instance,
-		Value:     value,
-		Timestamp: timestamp,
-	}, nil
-}
-
 func parseRangeResult(item vectorResult) (RangeSeries, error) {
 	points := make([]RangePoint, 0, len(item.Values))
 	for _, rawPoint := range item.Values {
@@ -384,38 +225,4 @@ func formatPrometheusTime(ts time.Time) string {
 
 func formatPrometheusStep(step time.Duration) string {
 	return strconv.FormatFloat(step.Seconds(), 'f', -1, 64)
-}
-
-func getOrCreateHost(hosts map[string]*Host, instance string) *Host {
-	host, ok := hosts[instance]
-	if ok {
-		return host
-	}
-
-	host = &Host{
-		Instance: instance,
-		Status:   "unknown",
-	}
-	hosts[instance] = host
-	return host
-}
-
-func updateLastScrape(host *Host, timestamp time.Time) {
-	if host.LastScrape == "" {
-		host.LastScrape = timestamp.UTC().Format(time.RFC3339)
-		return
-	}
-
-	lastScrape, err := parseTime(host.LastScrape)
-	if err != nil || timestamp.After(lastScrape) {
-		host.LastScrape = timestamp.UTC().Format(time.RFC3339)
-	}
-}
-
-func parseTime(value string) (time.Time, error) {
-	parsed, err := time.Parse(time.RFC3339, value)
-	if err != nil {
-		return time.Time{}, err
-	}
-	return parsed, nil
 }

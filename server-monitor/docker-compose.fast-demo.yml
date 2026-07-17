@@ -2,10 +2,6 @@ services:
   mysql:
     ports: !override
       - "127.0.0.1:${DEMO_MYSQL_HOST_PORT:-33307}:3306"
-  server-probe:
-    image: ${FAST_DEMO_PROBE_IMAGE:-server-monitor/server-probe:local}
-  alert-service:
-    image: ${FAST_DEMO_ALERT_IMAGE:-server-monitor/alert-service:local}
   server-web:
     image: cloudops-demo/server-web:${FAST_DEMO_IMAGE_TAG:-v2-demo}
     environment:
@@ -21,6 +17,7 @@ services:
       FAST_DEMO_NAMESPACE: cloudops-demo
       FAST_DEMO_WORKLOAD: cloudops-demo-workload
       FAST_DEMO_RECOVERY_REPLICAS: "2"
+      FAST_DEMO_MAX_REPLICAS: "10"
       K8S_ENABLED: "true"
       K8S_WRITE_ENABLED: "true"
       K8S_IN_CLUSTER: "false"

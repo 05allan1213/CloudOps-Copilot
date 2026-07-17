@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"server-web/internal/copilot/llm"
+	"server-web/internal/agent/llm"
 	"server-web/internal/remediation"
 )
 

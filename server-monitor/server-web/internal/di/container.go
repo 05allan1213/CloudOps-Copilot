@@ -2,7 +2,6 @@ package di
 
 import (
 	"context"
-	"time"
 
 	"gorm.io/gorm"
 
@@ -13,8 +12,6 @@ import (
 	"server-web/internal/middleware"
 	"server-web/internal/router"
 	appalert "server-web/internal/service/alert"
-	appcache "server-web/internal/service/cache"
-	apphost "server-web/internal/service/host"
 	appincident "server-web/internal/service/incident"
 	"server-web/internal/verification"
 
@@ -31,8 +28,6 @@ type Infra struct {
 
 type Container struct {
 	Infra
-	CacheService    *appcache.Service
-	HostService     *apphost.Service
 	AlertService    *appalert.Service
 	IncidentService *appincident.Service
 	AuthService     handler.AuthService
@@ -43,27 +38,8 @@ type Container struct {
 	DeliveryRollout verification.RolloutReader
 }
 
-type Config struct {
-	HostsTTL       time.Duration
-	DashboardTTL   time.Duration
-	RequestTimeout time.Duration
-	CacheTimeout   time.Duration
-}
-
-func NewContainer(cfg Config, infra *Infra) *Container {
-	cacheService := appcache.NewService(infra.RedisClient, appcache.Options{
-		HostsTTL:     cfg.HostsTTL,
-		DashboardTTL: cfg.DashboardTTL,
-	})
-	hostService := apphost.NewService(infra.PromClient, cacheService, apphost.Options{
-		RequestTimeout: cfg.RequestTimeout,
-		CacheTimeout:   cfg.CacheTimeout,
-	})
-	return &Container{
-		Infra:        *infra,
-		CacheService: cacheService,
-		HostService:  hostService,
-	}
+func NewContainer(infra *Infra) *Container {
+	return &Container{Infra: *infra}
 }
 
 func (c *Container) Dependencies() router.Dependencies {
@@ -73,12 +49,4 @@ func (c *Container) Dependencies() router.Dependencies {
 		Handler:     c.Handler,
 		AuthService: c.AuthService,
 	}
-}
-
-func (c *Container) Cache() *appcache.Service {
-	return c.CacheService
-}
-
-func (c *Container) Host() *apphost.Service {
-	return c.HostService
 }

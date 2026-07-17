@@ -4,6 +4,7 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
+MODE="${1:-run}"
 COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-cloudops-v2-demo}"
 KIND_CLUSTER_NAME="${KIND_CLUSTER_NAME:-cloudops-demo}"
 KIND_CONTEXT="kind-${KIND_CLUSTER_NAME}"
@@ -14,59 +15,72 @@ DEMO_NODE_PORT="${DEMO_NODE_PORT:-30082}"
 DEMO_MYSQL_HOST_PORT="${DEMO_MYSQL_HOST_PORT:-33307}"
 DEMO_BASE_URL="http://127.0.0.1:${SERVER_WEB_HOST_PORT}"
 REVISION="$(git rev-parse HEAD)"
-FAST_DEMO_IMAGE_TAG="${FAST_DEMO_IMAGE_TAG:-${REVISION:0:12}-step1}"
+FAST_DEMO_IMAGE_TAG="${FAST_DEMO_IMAGE_TAG:-${REVISION:0:12}-step3}"
 MYSQL_DATABASE="${MYSQL_DATABASE:-server_monitor_demo_$(date -u +%Y%m%d%H%M%S)}"
 KUBECONFIG_FILE="${ROOT_DIR}/docker/kubeconfig"
+CURRENT_STAGE="initialization"
+FAILURE_REASON=""
+START_EPOCH="$(date +%s)"
 
 export COMPOSE_PROJECT_NAME FAST_DEMO_IMAGE_TAG MYSQL_DATABASE
-export DEMO_MYSQL_HOST_PORT
-export FAST_DEMO_REVISION="${REVISION}"
-export SERVER_WEB_HOST_PORT
+export DEMO_MYSQL_HOST_PORT FAST_DEMO_REVISION="${REVISION}" SERVER_WEB_HOST_PORT
 export REDIS_HOST_PORT="${REDIS_HOST_PORT:-16379}"
 export JAEGER_UI_HOST_PORT="${JAEGER_UI_HOST_PORT:-16687}"
 export OTLP_GRPC_HOST_PORT="${OTLP_GRPC_HOST_PORT:-14317}"
 export OTLP_HTTP_HOST_PORT="${OTLP_HTTP_HOST_PORT:-14318}"
-export SERVER_PROBE_HOST_PORT="${SERVER_PROBE_HOST_PORT:-18083}"
 export PROMETHEUS_HOST_PORT="${PROMETHEUS_HOST_PORT:-19090}"
 export KAFKA_HOST_PORT="${KAFKA_HOST_PORT:-19092}"
-export ALERT_SERVICE_HOST_PORT="${ALERT_SERVICE_HOST_PORT:-18081}"
 export ALERTMANAGER_HOST_PORT="${ALERTMANAGER_HOST_PORT:-19093}"
 
 COMPOSE=(docker compose --env-file .env.example -f docker-compose.yml -f docker-compose.fast-demo.yml)
 
-info() { printf '[INFO] %s\n' "$*"; }
-pass() { printf '[PASS] %s\n' "$*"; }
-fail() { printf '[FAIL] %s\n' "$*" >&2; exit 1; }
-
-on_error() {
-  local exit_code=$?
-  trap - ERR
-  printf '[FAIL] Demo stopped with exit code %s\n' "${exit_code}" >&2
-  "${COMPOSE[@]}" logs --tail=120 server-web 2>/dev/null || true
-  exit "${exit_code}"
+stage() {
+  CURRENT_STAGE=$2
+  printf '\n[%s/8] %s\n' "$1" "$2"
 }
-trap on_error ERR
+
+pass() { printf '[PASS] %s\n' "$*"; }
+
+fail() {
+  FAILURE_REASON="$*"
+  printf '[FAIL] %s\n' "$*" >&2
+  return 1
+}
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || fail "missing required command: $1"
 }
 
-resolve_service_image() {
-  local service=$1
-  local variable=$2
-  local fallback=$3
-  local candidate="${!variable:-}"
-  if [[ -z "${candidate}" ]] && docker container inspect "server-monitor-${service}-1" >/dev/null 2>&1; then
-    candidate="$(docker container inspect "server-monitor-${service}-1" --format '{{.Config.Image}}')"
-  fi
-  if [[ -z "${candidate}" ]]; then
-    candidate="$(docker image ls --format '{{.Repository}}:{{.Tag}}' | awk -v service="${service}" '$0 ~ "cloudops-local/" service ":" { print; exit }')"
-  fi
-  if [[ -z "${candidate}" ]]; then
-    candidate="${fallback}"
-  fi
-  declare -gx "${variable}=${candidate}"
+diagnostics() {
+  local container_id service
+  printf '\nDEMO_STATUS=FAIL\n' >&2
+  printf 'FAILED_STAGE=%s\n' "${CURRENT_STAGE}" >&2
+  printf 'FAILED_COMMAND=%s\n' "${1:-unknown}" >&2
+  printf 'FAILURE_REASON=%s\n' "${FAILURE_REASON:-unknown}" >&2
+  printf 'SERVICE_STATUS_BEGIN\n' >&2
+  docker ps -a --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}' >&2 || true
+  printf 'SERVICE_STATUS_END\n' >&2
+  for service in server-web prometheus alertmanager mysql kafka redis; do
+    printf 'LOG_TAIL_%s_BEGIN\n' "${service}" >&2
+    container_id="$(docker ps -aq --filter "label=com.docker.compose.project=${COMPOSE_PROJECT_NAME}" --filter "label=com.docker.compose.service=${service}" | head -n1)"
+    if [[ -n "${container_id}" ]]; then
+      docker logs --tail=60 "${container_id}" >&2 2>/dev/null || true
+    fi
+    printf 'LOG_TAIL_%s_END\n' "${service}" >&2
+  done
+  kubectl --context "${KIND_CONTEXT}" -n "${DEMO_NAMESPACE}" get pods,deployments,services 2>/dev/null >&2 || true
+  printf 'SAFE_RETRY=make demo-v2\n' >&2
+  printf 'SAFE_CLEAN=make demo-v2-clean\n' >&2
 }
+
+on_error() {
+  local exit_code=$1
+  local failed_command=$2
+  trap - ERR
+  diagnostics "${failed_command}"
+  exit "${exit_code}"
+}
+trap 'on_error "$?" "$BASH_COMMAND"' ERR
 
 wait_http() {
   local url=$1
@@ -97,20 +111,97 @@ wait_for_json_value() {
   return 1
 }
 
-for command in docker kind kubectl curl jq go git sed awk; do
-  require_command "${command}"
-done
-docker info >/dev/null 2>&1 || fail "Docker daemon is unavailable"
-resolve_service_image server-probe FAST_DEMO_PROBE_IMAGE server-monitor/server-probe:local
-resolve_service_image alert-service FAST_DEMO_ALERT_IMAGE server-monitor/alert-service:local
+check_required_files() {
+  local file
+  for file in \
+    docker-compose.yml \
+    docker-compose.fast-demo.yml \
+    docker/fast-demo/alertmanager.yml \
+    docker/fast-demo/alerts.yml \
+    docker/fast-demo/prometheus.yml \
+    docker/fast-demo/rbac.yaml \
+    docker/fast-demo/workload.yaml \
+    server-web/migrations/00001_incident_foundation.sql \
+    server-web/migrations/00006_observability_verification_postmortem.sql; do
+    [[ -f "${file}" ]] || fail "required file is missing: ${file}"
+  done
+}
 
-info "Preparing disposable kind cluster ${KIND_CLUSTER_NAME}"
-if ! kind get clusters 2>/dev/null | awk -v name="${KIND_CLUSTER_NAME}" '$0 == name { found=1 } END { exit !found }'; then
+check_dependencies() {
+  local command
+  for command in docker kind kubectl curl jq go git sed awk; do
+    require_command "${command}"
+  done
+  docker info >/dev/null 2>&1 || fail "Docker daemon is unavailable"
+  check_required_files
+  "${COMPOSE[@]}" config --quiet
+}
+
+report_port_owners() {
+  local port owners
+  for port in "${SERVER_WEB_HOST_PORT}" "${DEMO_MYSQL_HOST_PORT}" "${REDIS_HOST_PORT}" "${PROMETHEUS_HOST_PORT}" "${KAFKA_HOST_PORT}" "${ALERTMANAGER_HOST_PORT}"; do
+    owners="$(docker ps --format '{{.Names}} {{.Ports}}' | awk -v port=":${port}->" 'index($0, port) {print $1}' | paste -sd, -)"
+    if [[ -n "${owners}" ]]; then
+      printf '[INFO] port %s currently published by %s\n' "${port}" "${owners}"
+    else
+      printf '[PASS] port %s has no Docker publisher\n' "${port}"
+    fi
+  done
+}
+
+run_check() {
+  CURRENT_STAGE="preflight check"
+  check_dependencies
+  require_command helm
+  docker compose --env-file .env.example -f docker-compose.yml config --quiet
+  "${COMPOSE[@]}" config --quiet
+  helm lint charts/server-monitor
+  helm template server-monitor charts/server-monitor >/dev/null
+  bash -n scripts/run-v2-demo.sh
+  if command -v shellcheck >/dev/null 2>&1; then
+    shellcheck scripts/run-v2-demo.sh
+  fi
+  report_port_owners
+  if kind get clusters 2>/dev/null | awk -v name="${KIND_CLUSTER_NAME}" '$0 == name {found=1} END {exit !found}'; then
+    kubectl --context "${KIND_CONTEXT}" cluster-info >/dev/null
+    pass "existing disposable kind cluster is reachable"
+  else
+    printf '[INFO] disposable kind cluster will be created by make demo-v2\n'
+  fi
+  printf '\nDEMO_CHECK_STATUS=PASS\n'
+}
+
+run_clean() {
+  CURRENT_STAGE="cleaning disposable Demo resources"
+  check_dependencies
+  "${COMPOSE[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
+  if kind get clusters 2>/dev/null | awk -v name="${KIND_CLUSTER_NAME}" '$0 == name {found=1} END {exit !found}'; then
+    kind delete cluster --name "${KIND_CLUSTER_NAME}"
+  fi
+  rm -f "${KUBECONFIG_FILE}"
+  printf 'DEMO_CLEAN_STATUS=PASS\n'
+  printf 'CLEANED_COMPOSE_PROJECT=%s\n' "${COMPOSE_PROJECT_NAME}"
+  printf 'CLEANED_KIND_CLUSTER=%s\n' "${KIND_CLUSTER_NAME}"
+}
+
+case "${MODE}" in
+  --check) run_check; exit 0 ;;
+  --clean) run_clean; exit 0 ;;
+  run|"") ;;
+  *) fail "unsupported mode: ${MODE}" ;;
+esac
+
+stage 1 "Checking local dependencies"
+check_dependencies
+pass "dependencies, required files and Compose rendering"
+
+stage 2 "Preparing disposable infrastructure"
+"${COMPOSE[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
+if ! kind get clusters 2>/dev/null | awk -v name="${KIND_CLUSTER_NAME}" '$0 == name {found=1} END {exit !found}'; then
   kind create cluster --name "${KIND_CLUSTER_NAME}" --wait 90s
 fi
 kubectl --context "${KIND_CONTEXT}" apply -f docker/fast-demo/rbac.yaml >/dev/null
 
-info "Generating namespace-scoped demo kubeconfig"
 token="$(kubectl --context "${KIND_CONTEXT}" -n "${DEMO_NAMESPACE}" create token demo-operator --duration=2h)"
 kind get kubeconfig --name "${KIND_CLUSTER_NAME}" |
   sed -E "s|server: https://[^:]+:[0-9]+|server: https://${KIND_CLUSTER_NAME}-control-plane:6443|g" >"${KUBECONFIG_FILE}"
@@ -118,13 +209,14 @@ kubectl config --kubeconfig "${KUBECONFIG_FILE}" set-credentials demo-operator -
 kubectl config --kubeconfig "${KUBECONFIG_FILE}" set-context "${KIND_CONTEXT}" --cluster="${KIND_CONTEXT}" --user=demo-operator --namespace="${DEMO_NAMESPACE}" >/dev/null
 kubectl config --kubeconfig "${KUBECONFIG_FILE}" use-context "${KIND_CONTEXT}" >/dev/null
 kubectl config --kubeconfig "${KUBECONFIG_FILE}" unset "users.${KIND_CONTEXT}" >/dev/null 2>&1 || true
+# The non-root application container reads this disposable bind mount once
+# during startup. Restrict it again immediately after readiness succeeds.
 chmod 644 "${KUBECONFIG_FILE}"
 demo_subject="system:serviceaccount:${DEMO_NAMESPACE}:demo-operator"
 kubectl --context "${KIND_CONTEXT}" auth can-i update deployments/scale -n "${DEMO_NAMESPACE}" --as="${demo_subject}" | grep -qx yes || fail "demo service account lacks scoped write permission"
 outside_write="$(kubectl --context "${KIND_CONTEXT}" auth can-i update deployments/scale -n default --as="${demo_subject}" 2>/dev/null || true)"
 [[ "${outside_write}" == "no" ]] || fail "demo service account unexpectedly writes outside the demo namespace"
 
-info "Building and loading the disposable demo workload"
 docker build -q -t cloudops-demo/workload:v2-demo -f docker/fast-demo/workload.Dockerfile . >/dev/null
 kind load docker-image cloudops-demo/workload:v2-demo --name "${KIND_CLUSTER_NAME}" >/dev/null
 kubectl --context "${KIND_CONTEXT}" apply -f docker/fast-demo/workload.yaml >/dev/null
@@ -132,29 +224,10 @@ kubectl --context "${KIND_CONTEXT}" -n "${DEMO_NAMESPACE}" rollout status deploy
 kind_node_ip="$(docker inspect "${KIND_CLUSTER_NAME}-control-plane" --format '{{(index .NetworkSettings.Networks "kind").IPAddress}}')"
 workload_url="http://${kind_node_ip}:${DEMO_NODE_PORT}/"
 wait_http "${workload_url}metrics" 30 || fail "workload NodePort did not become ready"
+pass "kind cluster, guarded RBAC and workload are ready"
 
-info "Recreating only prior ${COMPOSE_PROJECT_NAME} disposable containers and volumes"
-"${COMPOSE[@]}" down --volumes --remove-orphans >/dev/null 2>&1 || true
-
-info "Building current-source demo application images"
-for service_image in "server-probe:${FAST_DEMO_PROBE_IMAGE}" "alert-service:${FAST_DEMO_ALERT_IMAGE}"; do
-  service="${service_image%%:*}"
-  image="${service_image#*:}"
-  if ! docker image inspect "${image}" >/dev/null 2>&1; then
-    built=false
-    for attempt in 1 2 3; do
-      if BUILDKIT_PROGRESS=plain "${COMPOSE[@]}" build "${service}"; then
-        built=true
-        break
-      fi
-      sleep 2
-    done
-    [[ "${built}" == "true" ]] || fail "failed to build ${service} after three attempts"
-  fi
-done
+stage 3 "Starting CloudOps services"
 BUILDKIT_PROGRESS=plain "${COMPOSE[@]}" build server-web
-
-info "Starting disposable dependencies"
 "${COMPOSE[@]}" up -d mysql redis kafka kafka-init jaeger
 for ((attempt = 1; attempt <= 60; attempt++)); do
   if "${COMPOSE[@]}" exec -T mysql mysqladmin ping -h 127.0.0.1 -uroot -pserver-monitor-local-root --silent >/dev/null 2>&1; then
@@ -164,25 +237,23 @@ for ((attempt = 1; attempt <= 60; attempt++)); do
   sleep 2
 done
 "${COMPOSE[@]}" exec -T mysql mysql -uroot -pserver-monitor-local-root -e "CREATE DATABASE IF NOT EXISTS \`${MYSQL_DATABASE}\`; GRANT ALL PRIVILEGES ON \`${MYSQL_DATABASE}\`.* TO 'server_monitor'@'%'; FLUSH PRIVILEGES;" >/dev/null
-
-info "Applying explicit V2 Goose migrations to ${MYSQL_DATABASE}"
 (
   cd server-web
   MYSQL_HOST=127.0.0.1 MYSQL_PORT="${DEMO_MYSQL_HOST_PORT}" MYSQL_DATABASE="${MYSQL_DATABASE}" MYSQL_USER=server_monitor MYSQL_PASSWORD=server-monitor-local-mysql \
     GOCACHE="${GOCACHE:-/tmp/cloudops-v2-demo-gocache}" go run ./cmd/migrate up
 )
-
-info "Starting the V2 demo application path"
-"${COMPOSE[@]}" up -d server-probe alert-service prometheus alertmanager server-web
+"${COMPOSE[@]}" up -d prometheus alertmanager server-web
 wait_http "${DEMO_BASE_URL}/readyz" 90 || fail "server-web did not become ready"
+chmod 600 "${KUBECONFIG_FILE}"
 wait_http "${DEMO_BASE_URL}/incidents" 30 || fail "Incident Workbench is not accessible"
+pass "MySQL migrations 00001-00006 and CloudOps services are ready"
 
-info "Injecting the demo failure through Kubernetes"
+stage 4 "Injecting workload failure"
 kubectl --context "${KIND_CONTEXT}" -n "${DEMO_NAMESPACE}" scale deployment/"${DEMO_WORKLOAD}" --replicas=0 >/dev/null
 incident_id="$(wait_for_json_value "${DEMO_BASE_URL}/api/v2/workbench/incidents?page=1&page_size=50" '.data.items | map(select(.service == "cloudops-demo-workload" and .environment == "local-demo")) | first | .id' 90)" || fail "Incident was not created from the firing Signal"
-pass "Incident created: ${incident_id}"
+pass "real Alertmanager Signal created Incident ${incident_id}"
 
-info "Starting the durable deterministic AgentRun"
+stage 5 "Running Agent investigation"
 agent_response="$(curl --fail --silent --show-error -X POST -H "Idempotency-Key: demo-${REVISION:0:12}-$(date +%s)" "${DEMO_BASE_URL}/api/v2/incidents/${incident_id}/agent-runs")"
 agent_run_id="$(jq -er '.data.id' <<<"${agent_response}")"
 for ((attempt = 1; attempt <= 90; attempt++)); do
@@ -198,9 +269,9 @@ step_count="$(jq -r '.data | length' <<<"${steps_response}")"
 [[ "${step_count}" -gt 1 ]] || fail "AgentRun did not persist multiple AgentSteps"
 evidence_response="$(curl --fail --silent --show-error "${DEMO_BASE_URL}/api/v2/agent-runs/${agent_run_id}/evidence")"
 evidence_id="$(jq -er '.data | map(select(.valid == true)) | first | .id' <<<"${evidence_response}")"
-pass "AgentRun completed: ${agent_run_id}; Evidence: ${evidence_id}; steps=${step_count}"
+pass "AgentRun ${agent_run_id}; AgentSteps=${step_count}; Evidence=${evidence_id}"
 
-info "Creating, approving and executing the controlled Demo remediation"
+stage 6 "Approving and applying Demo remediation"
 plan_response="$(curl --fail --silent --show-error -X POST "${DEMO_BASE_URL}/api/v2/demo/incidents/${incident_id}/plan")"
 plan_id="$(jq -er '.data.id' <<<"${plan_response}")"
 plan_hash="$(jq -er '.data.plan_hash' <<<"${plan_response}")"
@@ -211,16 +282,19 @@ approval_response="$(curl --fail --silent --show-error -X POST -H 'Content-Type:
 change_request_id="$(jq -er '.data.change_request_id' <<<"${approval_response}")"
 execute_response="$(curl --fail --silent --show-error -X POST "${DEMO_BASE_URL}/api/v2/demo/remediations/${plan_id}/execute")"
 verification_run_id="$(jq -er '.data.id' <<<"${execute_response}")"
+pass "RemediationPlan ${plan_id}; ChangeRequest=${change_request_id}; actor=demo-operator"
+
+stage 7 "Running Verification"
 verify_response="$(curl --fail --silent --show-error -X POST "${DEMO_BASE_URL}/api/v2/demo/incidents/${incident_id}/verify")"
 verification_status="$(jq -er '.data.status' <<<"${verify_response}")"
 [[ "${verification_status}" == "passed" ]] || fail "Verification ended as ${verification_status}"
-
 incident_response="$(curl --fail --silent --show-error "${DEMO_BASE_URL}/api/v2/workbench/incidents/${incident_id}")"
 incident_state="$(jq -er '.data.status' <<<"${incident_response}")"
 [[ "${incident_state}" == "RESOLVED" ]] || fail "Incident final state is ${incident_state}"
 checks_response="$(curl --fail --silent --show-error "${DEMO_BASE_URL}/api/v2/workbench/incidents/${incident_id}/verifications/${verification_run_id}")"
 failed_required="$(jq -r '[.data.checks[] | select(.required == true and .status != "passed")] | length' <<<"${checks_response}")"
 [[ "${failed_required}" == "0" ]] || fail "one or more required Verification checks did not pass"
+required_checks="$(jq -r '[.data.checks[] | select(.required == true) | .type + "=" + (.status | ascii_upcase)] | join(",")' <<<"${checks_response}")"
 postmortem_response="$(curl --fail --silent --show-error "${DEMO_BASE_URL}/api/v2/incidents/${incident_id}/postmortem")"
 postmortem_id="$(jq -er '.data.id' <<<"${postmortem_response}")"
 root_classification="$(jq -er '.data.root_cause.classification' <<<"${postmortem_response}")"
@@ -230,21 +304,35 @@ root_evidence="$(jq -r '.data.root_cause.evidence_ids | join(",")' <<<"${postmor
 remediation_response="$(curl --fail --silent --show-error "${DEMO_BASE_URL}/api/v2/workbench/incidents/${incident_id}/remediation")"
 approval_actor="$(jq -er '.data.approval_actor' <<<"${remediation_response}")"
 [[ "${approval_actor}" == "demo-operator" ]] || fail "Demo approval actor was ${approval_actor}"
+signals_response="$(curl --fail --silent --show-error "${DEMO_BASE_URL}/api/v2/workbench/incidents/${incident_id}/signals")"
+timeline_response="$(curl --fail --silent --show-error "${DEMO_BASE_URL}/api/v2/workbench/incidents/${incident_id}/timeline")"
+investigation_response="$(curl --fail --silent --show-error "${DEMO_BASE_URL}/api/v2/workbench/incidents/${incident_id}/investigation")"
+signal_count="$(jq -er '.data | length' <<<"${signals_response}")"
+timeline_count="$(jq -er '.data | length' <<<"${timeline_response}")"
+workbench_run_count="$(jq -er '.data.runs | length' <<<"${investigation_response}")"
+workbench_step_count="$(jq -er '.data.steps | length' <<<"${investigation_response}")"
+workbench_evidence_count="$(jq -er '.data.evidence | length' <<<"${investigation_response}")"
+[[ "${signal_count}" -gt 0 && "${timeline_count}" -gt 0 && "${workbench_run_count}" -gt 0 && "${workbench_step_count}" -gt 1 && "${workbench_evidence_count}" -gt 0 ]] || fail "Workbench core sections are incomplete"
+pass "Verification required checks passed; Incident RESOLVED; Workbench sections populated"
 
+stage 8 "Demo completed"
 workbench_url="${DEMO_BASE_URL}/incidents/${incident_id}"
-pass "LOCAL_DEMO_PASS"
-printf '\nIncident ID: %s\n' "${incident_id}"
+duration_seconds="$(( $(date +%s) - START_EPOCH ))"
+printf '\nDEMO_STATUS=PASS\n'
+printf 'Incident ID: %s\n' "${incident_id}"
 printf 'AgentRun ID: %s\n' "${agent_run_id}"
 printf 'Evidence ID: %s\n' "${evidence_id}"
 printf 'RemediationPlan ID: %s\n' "${plan_id}"
 printf 'ChangeRequest ID: %s\n' "${change_request_id}"
 printf 'VerificationRun ID: %s\n' "${verification_run_id}"
 printf 'Postmortem ID: %s\n' "${postmortem_id}"
-printf 'Incident final state: %s\n' "${incident_state}"
-printf 'Required Verification checks: PASS\n'
-printf 'Approval actor: %s (Demo)\n' "${approval_actor}"
-printf 'Execution mode: CONTROLLED_DIRECT_LOCAL_DEMO\n'
+printf 'Final Incident state: %s\n' "${incident_state}"
+printf 'Verification required checks: %s\n' "${required_checks}"
+printf 'Workbench sections: signals=%s,timeline=%s,agent_runs=%s,agent_steps=%s,evidence=%s,remediation=present,verification=present,postmortem=fact\n' "${signal_count}" "${timeline_count}" "${workbench_run_count}" "${workbench_step_count}" "${workbench_evidence_count}"
 printf 'Workbench URL: %s\n' "${workbench_url}"
-printf 'Workload URL: %s\n' "${workload_url}"
+printf 'Execution mode: CONTROLLED_DIRECT_LOCAL_DEMO\n'
+printf 'Approval actor: %s (Demo)\n' "${approval_actor}"
 printf 'Demo database: %s\n' "${MYSQL_DATABASE}"
+printf 'Demo duration seconds: %s\n' "${duration_seconds}"
+printf 'Production disclaimer: local disposable Demo only; no production GitOps validation.\n'
 printf 'PRODUCTION_GITOPS_E2E_VALIDATED=NO\n'

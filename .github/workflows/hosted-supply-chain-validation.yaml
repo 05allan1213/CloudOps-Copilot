@@ -68,12 +68,8 @@ jobs:
       fail-fast: false
       matrix:
         image:
-          - name: server-probe
-            file: ./server-monitor/server-probe/Dockerfile
           - name: server-web
             file: ./server-monitor/server-web/Dockerfile
-          - name: alert-service
-            file: ./server-monitor/alert-service/Dockerfile
     steps:
       - name: Checkout exact dispatch commit
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -96,7 +92,7 @@ jobs:
           SERVICE: ${{ matrix.image.name }}
         run: |
           case "${SERVICE}" in
-            server-probe|server-web|alert-service) ;;
+            server-web) ;;
             *) exit 1 ;;
           esac
           OWNER="${GITHUB_REPOSITORY_OWNER,,}"

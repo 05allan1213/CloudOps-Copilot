@@ -12,29 +12,28 @@ import (
 	"time"
 
 	"server-web/internal/agent"
-	copilotservice "server-web/internal/copilot/service"
-	copilottool "server-web/internal/copilot/tool"
+	agenttool "server-web/internal/agent/tool"
 )
 
 var phase2ReadOnlyTools = []string{
-	copilottool.ToolAlertListActive,
-	copilottool.ToolAlertHistory,
-	copilottool.ToolRunbookSearch,
-	copilottool.ToolK8sGetPods,
-	copilottool.ToolK8sGetDeployments,
-	copilottool.ToolK8sGetServices,
-	copilottool.ToolK8sGetEvents,
-	copilottool.ToolK8sGetLogs,
+	agenttool.ToolAlertListActive,
+	agenttool.ToolAlertHistory,
+	agenttool.ToolRunbookSearch,
+	agenttool.ToolK8sGetPods,
+	agenttool.ToolK8sGetDeployments,
+	agenttool.ToolK8sGetServices,
+	agenttool.ToolK8sGetEvents,
+	agenttool.ToolK8sGetLogs,
 }
 
-var phase3ReadOnlyTools = copilottool.Phase3ToolNames()
+var phase3ReadOnlyTools = agenttool.Phase3ToolNames()
 
 type ReadOnlyTools struct {
-	executor *copilottool.Executor
+	executor *agenttool.Executor
 	allowed  []string
 }
 
-func NewReadOnlyTools(executor *copilottool.Executor) (*ReadOnlyTools, error) {
+func NewReadOnlyTools(executor *agenttool.Executor) (*ReadOnlyTools, error) {
 	if executor == nil {
 		return nil, agent.ErrInvalidArgument
 	}
@@ -70,11 +69,11 @@ func (a *ReadOnlyTools) Execute(ctx context.Context, name string, args json.RawM
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	ctx = copilotservice.WithUser(ctx, copilotservice.User{Username: "incident-agent-runtime", Role: "admin"})
+	ctx = agenttool.WithActor(ctx, agenttool.Actor{Name: "incident-agent-runtime", Role: "admin"})
 	result, err := a.executor.ExecuteTool(ctx, name, args)
 	if err != nil {
 		code := agent.ErrorTemporary
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, copilottool.ErrToolTimeout) {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, agenttool.ErrToolTimeout) {
 			code = agent.ErrorTimeout
 		}
 		return agent.ToolResult{}, agent.NewRuntimeError(code, "read-only tool execution failed", err)
@@ -97,5 +96,5 @@ func (a *ReadOnlyTools) Execute(ctx context.Context, name string, args json.RawM
 		truncated = true
 		data, _ = json.Marshal(map[string]any{"truncated": true, "result_hash": hash, "original_bytes": len(data)})
 	}
-	return agent.ToolResult{Summary: fmt.Sprintf("%s returned %d bounded bytes", name, len(data)), Facts: data, ResultHash: hash, Redaction: json.RawMessage(`{"policy":"copilot_tool_sanitizer"}`), Truncated: truncated, Valid: true}, nil
+	return agent.ToolResult{Summary: fmt.Sprintf("%s returned %d bounded bytes", name, len(data)), Facts: data, ResultHash: hash, Redaction: json.RawMessage(`{"policy":"agent_tool_sanitizer"}`), Truncated: truncated, Valid: true}, nil
 }

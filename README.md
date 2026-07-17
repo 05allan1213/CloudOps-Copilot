@@ -2,90 +2,38 @@
 
 ## 项目概述
 
-CloudOps 的核心项目位于 `server-monitor/`，它是一套面向学习、演示和小规模实验环境的监控与智能运维平台，覆盖指标采集、告警管理、实时推送、可视化展示、Copilot 辅助诊断，以及 Docker Compose / Kubernetes / Helm 多种部署方式。
+CloudOps 的核心项目位于 `server-monitor/`。当前 V2 是面向学习、秋招展示和本地演示的 Incident Agent 项目，不宣称生产就绪。
 
-项目当前聚焦三条主线：
-
-- 监控链路：`server-probe` 采集主机指标，Prometheus 负责抓取与查询，Alertmanager 负责告警路由，VictoriaMetrics 用于长期存储。
-- 告警链路：`server-web` 接收告警 Webhook 并写入 Kafka，`alert-service` 消费事件后写入 Redis，再由前端与 WebSocket 消费。
-- Copilot 链路：`server-web` 提供 NLU、Runbook 检索、诊断和 Kubernetes 工具入口，可按配置接入 LLM 与集群能力。
+项目主线为：Signal → Incident → Agent Investigation → Evidence → Diagnosis → RemediationPlan → Approval → Controlled Change → Verification → Resolved → Postmortem → Incident Workbench。
 
 适用场景：
 
-- 云原生监控体系的端到端学习与参考
-- 本地开发、测试或演示环境的快速部署
-- 中小规模主机监控、告警联动和 AI 辅助排障实践
+- Go 后端、Agent runtime、持久化与云原生适配器的源码讲解
+- 本地 disposable kind + Compose 的完整故障闭环演示
+- Incident Workbench、审批边界和 Verification 约束展示
 
 ## 架构
 
 ```mermaid
 graph LR
-    subgraph 采集层
-        Probe[server-probe\n主机指标采集]
-    end
-
-    subgraph 监控与存储
-        Prom[Prometheus\n采集与查询]
-        AM[Alertmanager\n告警路由]
-        VM[VictoriaMetrics\n长期存储]
-    end
-
-    subgraph 应用层
-        Web[server-web\nAPI + WebSocket + Copilot]
-        Redis[(Redis)]
-        MySQL[(MySQL)]
-        Runbook[Runbooks]
-        LLM[LLM / AI Provider]
-        K8S[Kubernetes API]
-    end
-
-    subgraph 事件流转
-        Kafka{{Kafka}}
-        AlertSvc[alert-service\n事件消费]
-    end
-
-    subgraph 展示层
-        FE[Frontend]
-        Grafana[Grafana]
-    end
-
-    subgraph 可观测性
-        FB[Fluent Bit]
-        ES[(Elasticsearch)]
-        Kibana[Kibana]
-        Jaeger[Jaeger]
-    end
-
-    Probe -->|metrics| Prom
-    Prom -->|query| Web
-    Prom -->|remote_write| VM
-    Prom -->|alert| AM
-    AM -->|webhook| Web
-    Web -->|produce| Kafka
-    Kafka -->|consume| AlertSvc
-    AlertSvc -->|read/write| Redis
-    Web --> MySQL
-    Web --> Redis
-    Web --> Runbook
-    Web -. optional .-> LLM
-    Web -. optional .-> K8S
-    Web -->|HTTP / WS| FE
-    Prom --> Grafana
-    Probe --> FB
-    Web --> FB
-    AlertSvc --> FB
-    FB --> ES
-    ES --> Kibana
-    Probe --> Jaeger
-    Web --> Jaeger
-    AlertSvc --> Jaeger
+    Workload[Demo workload] --> Prom[Prometheus]
+    Prom --> AM[Alertmanager]
+    AM --> Web[server-web]
+    Web --> MySQL[(MySQL)]
+    Web --> Agent[Agent runtime + read-only tools]
+    Agent --> Runbook[Runbook RAG]
+    Agent -. optional .-> LLM[LLM provider]
+    Agent --> K8S[Kubernetes bounded reads]
+    Web --> Change[Guarded Demo change]
+    Change --> Verify[Verification]
+    Verify --> Web
+    Web --> UI[Incident Workbench]
 ```
 
 ## 项目目录
 
 ```text
 server-monitor/
-├── alert-service/            # 告警事件消费服务
 ├── charts/server-monitor/    # Helm Chart
 ├── docker/                   # Compose、Prometheus、Grafana、Jaeger、Fluent Bit 等配置
 ├── docs/                     # 说明文档与辅助资料
@@ -94,8 +42,7 @@ server-monitor/
 ├── pkg/                      # 共享 Go 包
 ├── runbooks/                 # Runbook 知识库
 ├── scripts/                  # 辅助脚本
-├── server-probe/             # 监控探针
-├── server-web/               # Web API、WebSocket、Copilot 服务
+├── server-web/               # Incident API、Agent runtime、Workbench 与 V2 服务
 ├── .env.example              # 本地配置参考
 ├── docker-compose.yml        # 本地编排入口
 └── Makefile                  # 构建、测试、部署命令入口
@@ -103,11 +50,21 @@ server-monitor/
 
 补充说明：
 
-- `server-web/internal/` 包含配置、路由、handler、service、infra 和 Copilot 相关实现。
+- `server-web/internal/` 以 incident、agent、remediation、verification、infra 和 compatibility 边界组织。
 - `docker/` 目录维护 Prometheus、AlertManager、Grafana、Jaeger、Fluent Bit、Elasticsearch 初始化等运行时配置。
 - `charts/server-monitor/` 与 `k8s/` 分别提供 Helm 和原始清单两套集群部署入口。
 
 ## 快速开始
+
+### V2 一键 Demo
+
+```bash
+cd server-monitor
+make demo-v2-check
+make demo-v2
+```
+
+`make demo-v2-clean` 只清理 `cloudops-v2-demo` Compose 项目和 `cloudops-demo` kind 集群。
 
 ### 本地 Compose
 
@@ -158,9 +115,8 @@ make dev-frontend
 
 开发模式约定：
 
-- `make dev-deps` 启动 Redis、MySQL、Kafka、Prometheus、Alertmanager、Grafana、Jaeger 和 `server-probe`。
+- `make dev-deps` 启动 Redis、MySQL、Kafka、Prometheus、Alertmanager、Grafana 和 Jaeger。
 - `make dev-web` 本地运行 `server-web`，使用适配本机端口的默认开发配置。
-- `make dev-alert-service` 可单独在本机启动告警消费服务。
 - `make dev-stop` 停止 Compose 依赖服务。
 
 ### Helm / Kubernetes 部署
@@ -210,9 +166,7 @@ make k8s-setup
 |------|------|
 | `make build` | 构建所有 Go 服务和前端资源 |
 | `make build-go` | 构建所有 Go 服务 |
-| `make build-server-probe` | 构建 `server-probe` |
 | `make build-server-web` | 构建 `server-web` |
-| `make build-alert-service` | 构建 `alert-service` |
 | `make build-frontend` | 构建前端资源 |
 
 ### 测试与校验
@@ -239,8 +193,6 @@ make k8s-setup
 | `make frontend-install` | 安装前端依赖 |
 | `make dev-deps` | 启动本地开发依赖 |
 | `make dev-web` | 本地运行 `server-web` |
-| `make dev-probe` | 本地运行 `server-probe` |
-| `make dev-alert-service` | 本地运行 `alert-service` |
 | `make dev-frontend` | 启动前端开发服务器 |
 | `make dev-stop` | 停止本地开发依赖 |
 
@@ -283,8 +235,6 @@ make k8s-setup
 | 服务 | 端口 | 说明 |
 |------|------|------|
 | `server-web` | `8080` | API、WebSocket、内置静态资源 |
-| `alert-service` | `8081` | 告警事件消费服务 |
-| `server-probe` | `8082 -> 9090` | Prometheus 指标出口 |
 | `Grafana` | `3000` | 监控大盘 |
 | `Redis` | `6379` | 缓存与 Pub/Sub |
 | `VictoriaMetrics` | `8428` | 长期指标存储 |
@@ -295,14 +245,12 @@ make k8s-setup
 | `Elasticsearch` | `9200` | 日志存储 |
 | `Kibana` | `5601` | 日志查询 |
 
-说明：Compose 场景下 `server-probe` 通过宿主机 `8082` 映射到容器内 `9090`；如果直接执行 `make dev-probe`，默认监听 `http://localhost:9090`。
-
 ## CI
 
 CI 定义位于 `.github/workflows/ci.yaml`，所有外部 Actions 均固定到经过官方仓库 release 核验的 40 位 commit SHA。当前流程覆盖：
 
 - Go 模块矩阵检查：`goimports`、`golangci-lint`、uncached `go test`、race、`go vet`、`go build`
-- `server-web` 的 NLU / RAG / Multi-intent 评估
+- `server-web` 的 Agent runtime、Runbook RAG、Remediation、Verification 与 Workbench 检查
 - 前端 clean install、ESLint、strict typecheck、unit test 与 production build
 - Compose、Shell、Workflow YAML/actionlint、Kubernetes YAML/kubeconform 校验
 - Prometheus 规则校验

@@ -160,11 +160,6 @@ spec:
                 configMapKeyRef:
                   name: monitor-config
                   key: LLM_MAX_TOKENS
-            - name: ACTION_MAX_REPLICAS
-              valueFrom:
-                configMapKeyRef:
-                  name: monitor-config
-                  key: ACTION_MAX_REPLICAS
             - name: K8S_ENABLED
               valueFrom:
                 configMapKeyRef:
@@ -215,21 +210,21 @@ spec:
                 configMapKeyRef:
                   name: monitor-config
                   key: K8S_EVENT_LIMIT
-            - name: COPILOT_TOOL_REGISTRY_ENABLED
+            - name: AGENT_TOOL_REGISTRY_ENABLED
               valueFrom:
                 configMapKeyRef:
                   name: monitor-config
-                  key: COPILOT_TOOL_REGISTRY_ENABLED
-            - name: COPILOT_TOOL_DEFAULT_TIMEOUT_SECONDS
+                  key: AGENT_TOOL_REGISTRY_ENABLED
+            - name: AGENT_TOOL_DEFAULT_TIMEOUT_SECONDS
               valueFrom:
                 configMapKeyRef:
                   name: monitor-config
-                  key: COPILOT_TOOL_DEFAULT_TIMEOUT_SECONDS
-            - name: COPILOT_TOOL_LOG_ARGS
+                  key: AGENT_TOOL_DEFAULT_TIMEOUT_SECONDS
+            - name: AGENT_TOOL_LOG_ARGS
               valueFrom:
                 configMapKeyRef:
                   name: monitor-config
-                  key: COPILOT_TOOL_LOG_ARGS
+                  key: AGENT_TOOL_LOG_ARGS
             - name: RUNBOOK_DIR
               valueFrom:
                 configMapKeyRef:
@@ -331,11 +326,6 @@ spec:
                 configMapKeyRef:
                   name: monitor-config
                   key: INCIDENT_AGGREGATION_WINDOW_SECONDS
-            - name: HOSTS_CACHE_TTL_SECONDS
-              valueFrom:
-                configMapKeyRef:
-                  name: monitor-config
-                  key: HOSTS_CACHE_TTL_SECONDS
             - name: TRACE_OTLP_ENDPOINT
               valueFrom:
                 configMapKeyRef:

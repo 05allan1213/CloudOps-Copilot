@@ -4,26 +4,26 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"server-web/internal/config"
-	copilotk8s "server-web/internal/copilot/k8s"
+	"server-web/internal/infra/k8sread"
 )
 
 // InitK8sRuntime creates the shared read adapter used by the Incident Agent,
 // incident-scoped Workbench context, Verification, and guarded Fast Demo. The
 // removed generic Kubernetes Dashboard has no HTTP handler or route wiring.
-func InitK8sRuntime(cfg config.Config) (copilotk8s.Reader, kubernetes.Interface, error) {
+func InitK8sRuntime(cfg config.Config) (k8sread.Reader, kubernetes.Interface, error) {
 	if !cfg.K8SEnabled {
 		return nil, nil, nil
 	}
 	k8sCfg := k8sConfigFromApp(cfg)
-	client, err := copilotk8s.NewClient(k8sCfg)
+	client, err := k8sread.NewClient(k8sCfg)
 	if err != nil {
 		return nil, nil, err
 	}
-	return copilotk8s.NewServiceWithClient(client, k8sCfg), client, nil
+	return k8sread.NewServiceWithClient(client, k8sCfg), client, nil
 }
 
-func k8sConfigFromApp(cfg config.Config) copilotk8s.Config {
-	return copilotk8s.Config{
+func k8sConfigFromApp(cfg config.Config) k8sread.Config {
+	return k8sread.Config{
 		Enabled:           cfg.K8SEnabled,
 		WriteEnabled:      cfg.K8SWriteEnabled,
 		InCluster:         cfg.K8SInCluster,

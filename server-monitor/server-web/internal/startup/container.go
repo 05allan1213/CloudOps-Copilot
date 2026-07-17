@@ -19,12 +19,7 @@ import (
 )
 
 func InitContainer(cfg *config.Config, infra *di.Infra) (*di.Container, error) {
-	container := di.NewContainer(di.Config{
-		HostsTTL:       cfg.HostsCacheTTL,
-		DashboardTTL:   cfg.DashboardOverviewTTL,
-		RequestTimeout: cfg.CopilotToolDefaultTimeout,
-		CacheTimeout:   cfg.CacheWriteTimeout,
-	}, infra)
+	container := di.NewContainer(infra)
 
 	var authService *authpkg.Service
 	if infra.DB != nil && len(strings.TrimSpace(cfg.JWTSecret)) >= 32 {

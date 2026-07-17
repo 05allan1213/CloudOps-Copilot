@@ -11,15 +11,9 @@ alerting:
         - targets: ["alertmanager:9093"]
 
 scrape_configs:
-  - job_name: server-probe
-    static_configs:
-      - targets: ["server-probe:9090"]
   - job_name: server-web
     static_configs:
       - targets: ["server-web:8080"]
-  - job_name: alert-service
-    static_configs:
-      - targets: ["alert-service:8081"]
   - job_name: cloudops-demo-workload
     metrics_path: /metrics
     static_configs:

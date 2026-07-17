@@ -10,7 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	copilotk8s "server-web/internal/copilot/k8s"
+	"server-web/internal/infra/k8sread"
 	promclient "server-web/internal/infra/prometheus"
 	authpkg "server-web/internal/service/auth"
 )
@@ -41,7 +41,7 @@ type Handler struct {
 	deliveryVerification DeliveryVerificationApplication
 	fastDemo             FastDemoApplication
 	fastDemoActor        string
-	k8sReader            copilotk8s.Reader
+	k8sReader            k8sread.Reader
 	mysqlClient          mysqlClient
 	authService          AuthService
 	readyTimeout         time.Duration
@@ -73,7 +73,7 @@ func NewHandler(promClient *promclient.Client, cache cacheClient, cfg Config) (*
 	}, nil
 }
 
-func (h *Handler) SetIncidentK8sReader(reader copilotk8s.Reader) {
+func (h *Handler) SetIncidentK8sReader(reader k8sread.Reader) {
 	h.k8sReader = reader
 }
 

@@ -24,7 +24,6 @@ data:
   LLM_MODEL: {{ .Values.config.llmModel | quote }}
   LLM_TIMEOUT_SECONDS: {{ .Values.config.llmTimeoutSeconds | quote }}
   LLM_MAX_TOKENS: {{ .Values.config.llmMaxTokens | quote }}
-  ACTION_MAX_REPLICAS: {{ .Values.config.actionMaxReplicas | quote }}
   K8S_ENABLED: {{ .Values.k8sIntegration.enabled | quote }}
   K8S_WRITE_ENABLED: {{ .Values.k8sIntegration.writeEnabled | quote }}
   K8S_IN_CLUSTER: {{ .Values.k8sIntegration.inCluster | quote }}
@@ -35,9 +34,9 @@ data:
   K8S_LOG_TAIL_LINES: {{ .Values.k8sIntegration.logTailLines | quote }}
   K8S_LOG_MAX_BYTES: {{ .Values.k8sIntegration.logMaxBytes | quote }}
   K8S_EVENT_LIMIT: {{ .Values.k8sIntegration.eventLimit | quote }}
-  COPILOT_TOOL_REGISTRY_ENABLED: {{ .Values.config.copilotToolRegistryEnabled | quote }}
-  COPILOT_TOOL_DEFAULT_TIMEOUT_SECONDS: {{ .Values.config.copilotToolDefaultTimeoutSeconds | quote }}
-  COPILOT_TOOL_LOG_ARGS: {{ .Values.config.copilotToolLogArgs | quote }}
+  AGENT_TOOL_REGISTRY_ENABLED: {{ .Values.config.agentToolRegistryEnabled | quote }}
+  AGENT_TOOL_DEFAULT_TIMEOUT_SECONDS: {{ .Values.config.agentToolDefaultTimeoutSeconds | quote }}
+  AGENT_TOOL_LOG_ARGS: {{ .Values.config.agentToolLogArgs | quote }}
   INCIDENT_AGENT_ENABLED: {{ .Values.incidentAgent.enabled | quote }}
   INCIDENT_AGENT_WORKER_ID: {{ .Values.incidentAgent.workerID | quote }}
   INCIDENT_AGENT_POLL_INTERVAL_MILLISECONDS: {{ .Values.incidentAgent.pollIntervalMilliseconds | quote }}
@@ -168,13 +167,9 @@ data:
   OBSERVABILITY_MAX_SERIES: {{ .Values.deliveryVerification.observability.maxSeries | quote }}
   OBSERVABILITY_MAX_TRACES: {{ .Values.deliveryVerification.observability.maxTraces | quote }}
   OBSERVABILITY_MAX_RETRIES: {{ .Values.deliveryVerification.observability.maxRetries | quote }}
-  HOSTS_CACHE_TTL_SECONDS: {{ .Values.config.hostsCacheTTLSeconds | quote }}
   TRACE_OTLP_ENDPOINT: {{ .Values.config.traceOtlpEndpoint | quote }}
   TRACE_SAMPLE_RATE: {{ .Values.config.traceSampleRate | quote }}
   KAFKA_BROKERS: {{ ternary .Values.config.kafkaBrokers "" .Values.kafka.enabled | quote }}
-  PROBE_LISTEN_ADDR: {{ .Values.serverProbe.listenAddr | quote }}
-  PROBE_METRICS_PATH: {{ .Values.serverProbe.metricsPath | quote }}
-  PROBE_SCRAPE_INTERVAL: {{ .Values.serverProbe.scrapeInterval | quote }}
   MYSQL_HOST: {{ .Values.config.mysqlHost | quote }}
   MYSQL_PORT: {{ .Values.config.mysqlPort | quote }}
   MYSQL_USER: {{ .Values.config.mysqlUser | quote }}

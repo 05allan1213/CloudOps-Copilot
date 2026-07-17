@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"server-web/internal/copilot/llm"
+	"server-web/internal/agent/llm"
 )
 
 type fakeChat struct{ output string }

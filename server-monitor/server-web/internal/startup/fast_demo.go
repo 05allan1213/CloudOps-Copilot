@@ -35,7 +35,7 @@ func InitFastDemo(cfg config.Config, container *di.Container, client kubernetes.
 	if err != nil {
 		return nil, err
 	}
-	executor, err := k8schange.NewControlledScaleExecutor(client, k8schange.ControlledScaleConfig{AllowedNamespaces: cfg.K8SAllowedNamespaces, MaxReplicas: cfg.ActionMaxReplicas, RequestTimeout: cfg.K8SRequestTimeout})
+	executor, err := k8schange.NewControlledScaleExecutor(client, k8schange.ControlledScaleConfig{AllowedNamespaces: cfg.K8SAllowedNamespaces, MaxReplicas: cfg.FastDemoMaxReplicas, RequestTimeout: cfg.K8SRequestTimeout})
 	if err != nil {
 		return nil, err
 	}

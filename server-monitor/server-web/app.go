@@ -11,8 +11,8 @@ import (
 	"go.uber.org/zap"
 
 	"server-web/internal/config"
-	copilotk8s "server-web/internal/copilot/k8s"
 	"server-web/internal/di"
+	"server-web/internal/infra/k8sread"
 	"server-web/internal/router"
 	agentruntime "server-web/internal/service/agentruntime"
 	"server-web/internal/service/deliveryverification"
@@ -63,7 +63,7 @@ func initApp(ctx context.Context) (*app, error) {
 	}
 	container.Handler.SetIncidentK8sReader(k8sReader)
 
-	k8sDeps := copilotk8s.Deps{Reader: k8sReader, Client: k8sClient}
+	k8sDeps := k8sread.Deps{Reader: k8sReader, Client: k8sClient}
 	agentWorker, err := startup.InitAgentRuntime(ctx, cfg, container, k8sDeps)
 	if err != nil {
 		return nil, err

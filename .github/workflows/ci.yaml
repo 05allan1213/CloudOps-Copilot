@@ -50,9 +50,7 @@ jobs:
       fail-fast: false
       matrix:
         module:
-          - server-probe
           - server-web
-          - alert-service
           - pkg
     defaults:
       run:
@@ -221,10 +219,6 @@ jobs:
         run: |
           docker run --rm             --entrypoint promtool             -v "${{ github.workspace }}/server-monitor/docker/custom-alerts.yml:/etc/prometheus/rules/custom-alerts.yml:ro"             ${{ env.PROMETHEUS_IMAGE }}             check rules /etc/prometheus/rules/custom-alerts.yml
 
-      - name: Check AI quality alert rules
-        run: |
-          docker run --rm             --entrypoint promtool             -v "${{ github.workspace }}/server-monitor/docker/copilot-ai-quality-rules.yml:/etc/prometheus/rules/copilot-ai-quality-rules.yml:ro"             ${{ env.PROMETHEUS_IMAGE }}             check rules /etc/prometheus/rules/copilot-ai-quality-rules.yml
-
   helm:
     name: helm chart checks
     runs-on: ubuntu-latest
@@ -339,15 +333,9 @@ jobs:
       fail-fast: false
       matrix:
         image:
-          - name: server-probe
-            file: ./server-monitor/server-probe/Dockerfile
-            tag: server-probe:ci
           - name: server-web
             file: ./server-monitor/server-web/Dockerfile
             tag: server-web:ci
-          - name: alert-service
-            file: ./server-monitor/alert-service/Dockerfile
-            tag: alert-service:ci
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -424,12 +412,8 @@ jobs:
       fail-fast: false
       matrix:
         image:
-          - name: server-probe
-            file: ./server-monitor/server-probe/Dockerfile
           - name: server-web
             file: ./server-monitor/server-web/Dockerfile
-          - name: alert-service
-            file: ./server-monitor/alert-service/Dockerfile
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -458,7 +442,7 @@ jobs:
           SERVICE: ${{ matrix.image.name }}
         run: |
           case "${SERVICE}" in
-            server-probe|server-web|alert-service) ;;
+            server-web) ;;
             *) exit 1 ;;
           esac
           IMAGE_REPOSITORY="${DOCKERHUB_NAMESPACE}/${SERVICE}"
@@ -709,7 +693,7 @@ jobs:
       - name: Assemble all-or-nothing digest manifest
         run: |
           mapfile -t DIGEST_FILES < <(find "${RUNNER_TEMP}/release-evidence" -name image-digests.json -type f | sort)
-          test "${#DIGEST_FILES[@]}" -eq 3
+          test "${#DIGEST_FILES[@]}" -eq 1
           jq -s \
             --arg git_sha "${GITHUB_SHA}" \
             --arg git_ref "${GITHUB_REF}" \
@@ -719,7 +703,7 @@ jobs:
             "${DIGEST_FILES[@]}" >"${RUNNER_TEMP}/release-manifest.json"
           jq -e --arg sha "${GITHUB_SHA}" '
             .git_sha == $sha and
-            (.images | keys | sort) == ["alert-service", "server-probe", "server-web"] and
+            (.images | keys | sort) == ["server-web"] and
             all(.images[]; (.repository | length > 0) and (.digest | test("^sha256:[a-f0-9]{64}$")))
           ' "${RUNNER_TEMP}/release-manifest.json" >/dev/null
           (
@@ -796,14 +780,8 @@ jobs:
           test "$(jq -r '.git_sha' "${MANIFEST}")" = "${GITHUB_SHA}"
 
           SERVER_WEB_REPOSITORY="$(jq -r '.images["server-web"].repository' "${MANIFEST}")"
-          ALERT_SERVICE_REPOSITORY="$(jq -r '.images["alert-service"].repository' "${MANIFEST}")"
-          SERVER_PROBE_REPOSITORY="$(jq -r '.images["server-probe"].repository' "${MANIFEST}")"
           SERVER_WEB_DIGEST="$(jq -r '.images["server-web"].digest' "${MANIFEST}")"
-          ALERT_SERVICE_DIGEST="$(jq -r '.images["alert-service"].digest' "${MANIFEST}")"
-          SERVER_PROBE_DIGEST="$(jq -r '.images["server-probe"].digest' "${MANIFEST}")"
-          for digest in "${SERVER_WEB_DIGEST}" "${ALERT_SERVICE_DIGEST}" "${SERVER_PROBE_DIGEST}"; do
-            [[ "${digest}" =~ ^sha256:[a-f0-9]{64}$ ]]
-          done
+          [[ "${SERVER_WEB_DIGEST}" =~ ^sha256:[a-f0-9]{64}$ ]]
 
           helm upgrade --install "${RELEASE_NAME}" server-monitor/charts/server-monitor \
             --namespace "${NAMESPACE}" \
@@ -813,8 +791,4 @@ jobs:
             --timeout 10m \
             --values "${VALUES_FILE}" \
             --set-string "serverWeb.image.repository=${SERVER_WEB_REPOSITORY}" \
-            --set-string "serverWeb.image.digest=${SERVER_WEB_DIGEST}" \
-            --set-string "alertService.image.repository=${ALERT_SERVICE_REPOSITORY}" \
-            --set-string "alertService.image.digest=${ALERT_SERVICE_DIGEST}" \
-            --set-string "serverProbe.image.repository=${SERVER_PROBE_REPOSITORY}" \
-            --set-string "serverProbe.image.digest=${SERVER_PROBE_DIGEST}"
+            --set-string "serverWeb.image.digest=${SERVER_WEB_DIGEST}"

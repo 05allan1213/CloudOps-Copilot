@@ -20,6 +20,7 @@ import (
 
 	"server-web/internal/agent"
 	"server-web/internal/change"
+	"server-web/internal/compatibility/legacyschema"
 	domain "server-web/internal/incident"
 	dbinfra "server-web/internal/infra/database"
 	"server-web/internal/infra/webhook"
@@ -95,7 +96,7 @@ func TestMySQLMigrationRepositoryAndConcurrentIngestion(t *testing.T) {
 		if t.Failed() {
 			return
 		}
-		if !legacyDB.Migrator().HasTable(&legacymodel.NotificationChannel{}) {
+		if !legacyDB.Migrator().HasTable(&legacyschema.NotificationChannel{}) {
 			t.Fatal("notification_channels table was not created")
 		}
 

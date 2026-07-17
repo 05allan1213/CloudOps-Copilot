@@ -1,14 +1,19 @@
 package config
 
 import (
+	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestV2BaselineDefaultsAreSafe(t *testing.T) {
 	cfg := Load()
-	if cfg.FastDemoEnabled || cfg.FastDemoConfirmDisposable || cfg.ActionExecutionEnabled || cfg.K8SWriteEnabled || cfg.CopilotEnabled || cfg.DiagnosisEnabled || cfg.ActionApprovalEnabled || cfg.K8SAPIEnabled {
-		t.Fatalf("unsafe or legacy defaults enabled: %+v", cfg)
+	if cfg.FastDemoEnabled || cfg.FastDemoConfirmDisposable || cfg.K8SWriteEnabled {
+		t.Fatalf("unsafe defaults enabled: %+v", cfg)
+	}
+	if !cfg.AgentToolRegistryEnabled || cfg.AgentToolDefaultTimeout != 30*time.Second || cfg.AgentToolLogArgs {
+		t.Fatalf("unexpected Agent tool defaults: enabled=%v timeout=%v log_args=%v", cfg.AgentToolRegistryEnabled, cfg.AgentToolDefaultTimeout, cfg.AgentToolLogArgs)
 	}
 	if !cfg.AuthEnabled || !cfg.RateLimit.Enabled {
 		t.Fatalf("formal security defaults must stay enabled: auth=%v rate_limit=%v", cfg.AuthEnabled, cfg.RateLimit.Enabled)
@@ -44,7 +49,7 @@ func TestFastDemoRequiresExplicitDisposableLocalEnvironment(t *testing.T) {
 	}
 }
 
-func TestFormalKubernetesAndLegacyActionWritesFailClosed(t *testing.T) {
+func TestFormalKubernetesWriteFailsClosed(t *testing.T) {
 	cfg := Load()
 	cfg.AuthEnabled = false
 	cfg.K8SEnabled = true
@@ -52,9 +57,53 @@ func TestFormalKubernetesAndLegacyActionWritesFailClosed(t *testing.T) {
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "guarded local Fast Demo") {
 		t.Fatalf("formal Kubernetes write accepted: %v", err)
 	}
-	cfg.K8SWriteEnabled = false
-	cfg.ActionExecutionEnabled = true
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "frozen") {
-		t.Fatalf("legacy action execution accepted: %v", err)
+}
+
+func TestAgentToolLegacyAliasesAndNewNamePriority(t *testing.T) {
+	unsetForTest(t, "AGENT_TOOL_REGISTRY_ENABLED")
+	unsetForTest(t, "AGENT_TOOL_DEFAULT_TIMEOUT_SECONDS")
+	unsetForTest(t, "AGENT_TOOL_LOG_ARGS")
+	t.Setenv("COPILOT_TOOL_REGISTRY_ENABLED", "false")
+	t.Setenv("COPILOT_TOOL_DEFAULT_TIMEOUT_SECONDS", "17")
+	t.Setenv("COPILOT_TOOL_LOG_ARGS", "true")
+
+	legacy := Load()
+	if legacy.AgentToolRegistryEnabled || legacy.AgentToolDefaultTimeout != 17*time.Second || !legacy.AgentToolLogArgs {
+		t.Fatalf("legacy aliases were not applied: %+v", legacy)
 	}
+
+	t.Setenv("AGENT_TOOL_REGISTRY_ENABLED", "true")
+	t.Setenv("AGENT_TOOL_DEFAULT_TIMEOUT_SECONDS", "9")
+	t.Setenv("AGENT_TOOL_LOG_ARGS", "false")
+	current := Load()
+	if !current.AgentToolRegistryEnabled || current.AgentToolDefaultTimeout != 9*time.Second || current.AgentToolLogArgs {
+		t.Fatalf("new Agent tool names did not take priority: %+v", current)
+	}
+}
+
+func TestFastDemoReplicaLegacyAliasAndNewNamePriority(t *testing.T) {
+	unsetForTest(t, "FAST_DEMO_MAX_REPLICAS")
+	t.Setenv("ACTION_MAX_REPLICAS", "12")
+	if cfg := Load(); cfg.FastDemoMaxReplicas != 12 {
+		t.Fatalf("legacy Fast Demo replica alias=%d, want 12", cfg.FastDemoMaxReplicas)
+	}
+	t.Setenv("FAST_DEMO_MAX_REPLICAS", "7")
+	if cfg := Load(); cfg.FastDemoMaxReplicas != 7 {
+		t.Fatalf("new Fast Demo replica limit=%d, want 7", cfg.FastDemoMaxReplicas)
+	}
+}
+
+func unsetForTest(t *testing.T, key string) {
+	t.Helper()
+	old, existed := os.LookupEnv(key)
+	if err := os.Unsetenv(key); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if existed {
+			_ = os.Setenv(key, old)
+		} else {
+			_ = os.Unsetenv(key)
+		}
+	})
 }

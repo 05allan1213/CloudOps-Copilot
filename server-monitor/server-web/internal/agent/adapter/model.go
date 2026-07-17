@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"server-web/internal/agent"
-	"server-web/internal/copilot/llm"
+	"server-web/internal/agent/llm"
 )
 
 type LLMModel struct{ client *llm.Client }
