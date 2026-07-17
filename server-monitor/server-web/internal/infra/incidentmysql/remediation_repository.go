@@ -137,6 +137,15 @@ func (r *RemediationRepository) CreatePlan(ctx context.Context, plan *remediatio
 	return nil
 }
 
+func (r *RemediationRepository) GetApproval(ctx context.Context, planPublicID string) (*remediation.Approval, error) {
+	var row remediationApprovalRow
+	err := r.db.WithContext(ctx).Table("remediation_approvals a").Select("a.*").Joins("JOIN remediation_plans p ON p.id = a.plan_id").Where("p.public_id = ?", planPublicID).Order("a.id DESC").First(&row).Error
+	if err != nil {
+		return nil, classifyRemediationError(err)
+	}
+	return approvalFromRow(row), nil
+}
+
 func (r *RemediationRepository) GetPlan(ctx context.Context, publicID string) (*remediation.RemediationPlan, error) {
 	var row remediationPlanRow
 	if err := r.db.WithContext(ctx).Model(&remediationPlanRow{}).Select("remediation_plans.*, incidents.public_id AS incident_public_id").Joins("JOIN incidents ON incidents.id = remediation_plans.incident_id").Where("remediation_plans.public_id = ?", publicID).First(&row).Error; err != nil {
@@ -495,6 +504,10 @@ func remediationPlanFromRow(row remediationPlanRow) (*remediation.RemediationPla
 
 func approvalToRow(value remediation.Approval) remediationApprovalRow {
 	return remediationApprovalRow{ID: value.ID, PublicID: value.PublicID, PlanID: value.PlanID, Decision: string(value.Decision), Actor: value.Actor, ApprovedPlanHash: value.ApprovedPlanHash, ApprovedPatchHash: value.ApprovedPatchHash, CreatedAt: value.CreatedAt}
+}
+
+func approvalFromRow(row remediationApprovalRow) *remediation.Approval {
+	return &remediation.Approval{ID: row.ID, PublicID: row.PublicID, PlanID: row.PlanID, Decision: remediation.Decision(row.Decision), Actor: row.Actor, ApprovedPlanHash: row.ApprovedPlanHash, ApprovedPatchHash: row.ApprovedPatchHash, CreatedAt: row.CreatedAt}
 }
 
 func ptrApprovalRow(value remediationApprovalRow) *remediationApprovalRow { return &value }

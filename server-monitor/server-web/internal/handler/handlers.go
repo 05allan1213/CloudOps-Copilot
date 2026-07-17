@@ -67,6 +67,7 @@ type Handler struct {
 	remediation          RemediationApplication
 	deliveryVerification DeliveryVerificationApplication
 	fastDemo             FastDemoApplication
+	fastDemoActor        string
 	hostService          *apphost.Service
 	mysqlClient          mysqlClient
 	authService          AuthService

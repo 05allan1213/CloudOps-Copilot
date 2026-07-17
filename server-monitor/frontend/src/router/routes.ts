@@ -2,9 +2,10 @@ import type { RouteRecordRaw } from "vue-router";
 
 export const appRoutes: RouteRecordRaw[] = [
   { path: "/login", name: "login", component: () => import("../pages/LoginPage.vue"), meta: { public: true, title: "登录", hidden: true } },
-  { path: "/", name: "overview", component: () => import("../pages/OverviewPage.vue"), meta: { title: "总览", icon: "Monitor", group: "monitor" } },
+  { path: "/", redirect: "/incidents", meta: { title: "Incident Workbench", hidden: true } },
   { path: "/incidents", name: "incidents", component: () => import("../views/incidents/IncidentListView.vue"), meta: { title: "Incident Workbench", icon: "FirstAidKit", group: "incident" } },
   { path: "/incidents/:incidentId", name: "incident-detail", component: () => import("../views/incidents/IncidentDetailView.vue"), meta: { title: "Incident Detail", hidden: true } },
+  { path: "/overview", name: "overview", component: () => import("../pages/OverviewPage.vue"), meta: { title: "总览（Legacy）", icon: "Monitor", group: "legacy", legacy: true } },
   { path: "/hosts", name: "hosts", component: () => import("../pages/HostsPage.vue"), meta: { title: "主机", icon: "Monitor", group: "monitor" } },
   { path: "/hosts/:instance", name: "host-detail", component: () => import("../pages/HostDetailPage.vue"), props: true, meta: { title: "主机详情", hidden: true } },
   { path: "/status", name: "status", component: () => import("../pages/StatusPage.vue"), meta: { title: "状态", icon: "CircleCheck", group: "monitor" } },

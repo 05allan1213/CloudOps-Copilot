@@ -608,13 +608,7 @@ func generatePostmortem(tx *gorm.DB, run verificationRunRow, incident incidentRo
 		FinalDiagnosis json.RawMessage `gorm:"column:final_diagnosis"`
 	}
 	if err := tx.Table("agent_runs").Select("final_diagnosis").Where("incident_id = ? AND status = 'COMPLETED'", incident.ID).Order("completed_at DESC, id DESC").Take(&diagnosisRow).Error; err == nil && len(diagnosisRow.FinalDiagnosis) > 0 {
-		var parsed struct {
-			Summary        string   `json:"summary"`
-			ConfirmedFacts []string `json:"confirmed_facts"`
-		}
-		if json.Unmarshal(diagnosisRow.FinalDiagnosis, &parsed) == nil && len(parsed.ConfirmedFacts) > 0 {
-			rootCause.Classification, rootCause.Summary = "inference", bound(parsed.Summary, 2048)
-		}
+		rootCause = decodePostmortemRootCause(diagnosisRow.FinalDiagnosis, evidenceIDs)
 	}
 	checkFacts := make([]verification.PostmortemCheckFact, 0, len(checks))
 	for _, check := range checks {
@@ -652,6 +646,79 @@ func generatePostmortem(tx *gorm.DB, run verificationRunRow, incident incidentRo
 		return mapVerificationError(err)
 	}
 	return mapVerificationError(tx.Create(&row).Error)
+}
+
+func decodePostmortemRootCause(raw json.RawMessage, fallbackEvidence []string) verification.ClassifiedFact {
+	unknown := func(summary string) verification.ClassifiedFact {
+		return verification.ClassifiedFact{Classification: "unknown", Summary: summary, EvidenceIDs: dedupePostmortemEvidence(fallbackEvidence)}
+	}
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return unknown("No persisted confirmed facts were available for Postmortem root-cause classification.")
+	}
+	var envelope struct {
+		ConfirmedFacts json.RawMessage `json:"confirmed_facts"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return unknown("Persisted final diagnosis JSON was malformed; Postmortem root-cause information is degraded.")
+	}
+	facts := strings.TrimSpace(string(envelope.ConfirmedFacts))
+	if facts == "" || facts == "null" || facts == "[]" {
+		return unknown("The persisted diagnosis contained no confirmed facts; Postmortem root cause remains unknown.")
+	}
+	type persistedClaim struct {
+		Statement   string   `json:"statement"`
+		EvidenceIDs []string `json:"evidence_ids"`
+	}
+	var claims []persistedClaim
+	if err := json.Unmarshal(envelope.ConfirmedFacts, &claims); err == nil {
+		statements := make([]string, 0, len(claims))
+		evidence := make([]string, 0)
+		for _, claim := range claims {
+			if statement := strings.TrimSpace(claim.Statement); statement != "" {
+				statements = append(statements, statement)
+				evidence = append(evidence, claim.EvidenceIDs...)
+			}
+		}
+		if len(statements) == 0 {
+			return unknown("Persisted structured confirmed facts contained no usable statements; Postmortem root-cause information is degraded.")
+		}
+		if len(evidence) == 0 {
+			evidence = fallbackEvidence
+		}
+		return verification.ClassifiedFact{Classification: "fact", Summary: bound(strings.Join(statements, "; "), 2048), EvidenceIDs: dedupePostmortemEvidence(evidence)}
+	}
+	var historical []string
+	if err := json.Unmarshal(envelope.ConfirmedFacts, &historical); err == nil {
+		statements := make([]string, 0, len(historical))
+		for _, statement := range historical {
+			if statement = strings.TrimSpace(statement); statement != "" {
+				statements = append(statements, statement)
+			}
+		}
+		if len(statements) == 0 {
+			return unknown("Persisted historical confirmed facts contained no usable statements; Postmortem root-cause information is degraded.")
+		}
+		return verification.ClassifiedFact{Classification: "fact", Summary: bound(strings.Join(statements, "; "), 2048), EvidenceIDs: dedupePostmortemEvidence(fallbackEvidence)}
+	}
+	return unknown("Persisted confirmed_facts could not be decoded as structured claims or historical strings; Postmortem root-cause information is degraded.")
+}
+
+func dedupePostmortemEvidence(values []string) []string {
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }
 
 func (r *VerificationRepository) GetPostmortem(ctx context.Context, incidentPublicID string) (*verification.Postmortem, error) {

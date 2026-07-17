@@ -15,7 +15,7 @@ router.beforeEach(async (to) => {
 
   if (isPublicRoute) {
     if (auth.isAuthenticated) {
-      return { path: "/" };
+      return { path: "/incidents" };
     }
     return true;
   }
@@ -39,7 +39,7 @@ router.beforeEach(async (to) => {
   }
 
   if (to.meta.admin && !auth.isAdmin) {
-    return { path: "/" };
+    return { path: "/incidents" };
   }
 
   if (to.meta.nodesRequired) {

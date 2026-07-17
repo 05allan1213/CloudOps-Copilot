@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -19,6 +20,7 @@ type RemediationApplication interface {
 	Enabled() bool
 	List(context.Context, remediation.ListFilter) (remediation.Page, error)
 	Get(context.Context, string) (*remediation.RemediationPlan, error)
+	GetApproval(context.Context, string) (*remediation.Approval, error)
 	Approve(context.Context, string, string, string, string, string, uint64) (*remediation.RemediationPlan, *remediation.ChangeRequest, error)
 	Reject(context.Context, string, string, string, string, string, uint64) (*remediation.RemediationPlan, error)
 }
@@ -108,12 +110,19 @@ func (h *Handler) decideRemediation(c *gin.Context, approve bool) {
 		writeRemediationError(c, remediation.ErrInvalidArgument)
 		return
 	}
-	actor, role := "local-admin", "admin"
+	actor, role := "", ""
 	if value, exists := c.Get(middleware.ContextUsername); exists {
 		actor, _ = value.(string)
 	}
 	if value, exists := c.Get(middleware.ContextRole); exists {
 		role, _ = value.(string)
+	}
+	if strings.TrimSpace(actor) == "" && h.fastDemo != nil && h.fastDemoActor != "" {
+		actor, role = h.fastDemoActor, "admin"
+	}
+	if strings.TrimSpace(actor) == "" || strings.TrimSpace(role) == "" {
+		writeRemediationError(c, remediation.ErrForbidden)
+		return
 	}
 	if approve {
 		plan, delivery, err := h.remediation.Approve(c.Request.Context(), c.Param("id"), actor, role, request.PlanHash, request.PatchHash, request.Version)

@@ -297,7 +297,7 @@ func (s *Service) resolveSignal(ctx context.Context, repos domain.Repositories, 
 		item.LastSeenAt = signal.OccurredAt
 	}
 	item.Fingerprint = signal.Fingerprint
-	if item.Status == domain.StatusApplyingChange || item.Status == domain.StatusVerifying {
+	if resolutionRequiresVerification(item.Status) {
 		item.Version++
 		item.UpdatedAt = signal.ReceivedAt.UTC()
 		if err := repos.Incidents.Update(ctx, item, expected); err != nil {
@@ -306,7 +306,7 @@ func (s *Service) resolveSignal(ctx context.Context, repos domain.Repositories, 
 		if err := repos.Signals.AttachToIncident(ctx, signal.ID, item.ID); err != nil {
 			return result, err
 		}
-		if err := s.appendTimeline(ctx, repos, item.ID, domain.EventSignalReceived, domain.ActorSource, signal.SourceEventID, signal.Summary, map[string]any{"status": signal.Status, "source": signal.Source, "resolution_deferred_to_verification": true}, signal.OccurredAt); err != nil {
+		if err := s.appendTimeline(ctx, repos, item.ID, domain.EventSignalReceived, domain.ActorSource, signal.SourceEventID, signal.Summary, map[string]any{"status": signal.Status, "source": signal.Source, "signal_recovered": true, "resolution_deferred_to_verification": true, "incident_status_preserved": item.Status}, signal.OccurredAt); err != nil {
 			return result, err
 		}
 		if err := s.addOutbox(ctx, repos, item, "incident.signal_resolved", signal.ReceivedAt); err != nil {
@@ -337,6 +337,20 @@ func (s *Service) resolveSignal(ctx context.Context, repos domain.Repositories, 
 	s.observeSignal(signal, "resolved")
 	s.observeIncident("updated")
 	return result, nil
+}
+
+func resolutionRequiresVerification(status domain.Status) bool {
+	switch status {
+	case domain.StatusDiagnosing,
+		domain.StatusDiagnosisCompleted,
+		domain.StatusPlanningRemediation,
+		domain.StatusAwaitingApproval,
+		domain.StatusApplyingChange,
+		domain.StatusVerifying:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Service) recordTransition(ctx context.Context, repos domain.Repositories, item *domain.Incident, from domain.Status, eventType domain.EventType, at time.Time) error {

@@ -11,6 +11,7 @@ metadata:
   name: monitor-config
   namespace: server-monitor
 data:
+  APP_ENV: production
   PROMETHEUS_URL: http://prometheus:9090
   PROMETHEUS_RELOAD_URL: http://prometheus:9090/-/reload
   ALERT_RULES_FILE_PATH: ""
@@ -30,7 +31,7 @@ data:
   RATE_LIMIT_ENABLED: "true"
   RATE_LIMIT_REQUESTS: "120"
   RATE_LIMIT_WINDOW_SECONDS: "60"
-  COPILOT_ENABLED: "true"
+  COPILOT_ENABLED: "false"
   COPILOT_TOOL_REGISTRY_ENABLED: "true"
   COPILOT_TOOL_DEFAULT_TIMEOUT_SECONDS: "30"
   COPILOT_TOOL_LOG_ARGS: "false"

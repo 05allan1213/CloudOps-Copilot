@@ -37,12 +37,12 @@ func InitFastDemo(cfg config.Config, container *di.Container, client kubernetes.
 		return nil, err
 	}
 	executor := action.NewClientK8sExecutor(client, action.ClientK8sExecutorConfig{AllowedNamespaces: cfg.K8SAllowedNamespaces, MaxReplicas: cfg.ActionMaxReplicas, RequestTimeout: cfg.K8SRequestTimeout})
-	service, err := fastdemo.New(fastdemo.Config{Revision: cfg.FastDemoRevision, Cluster: cfg.FastDemoCluster, Environment: "demo", Namespace: cfg.FastDemoNamespace, Workload: cfg.FastDemoWorkload, RecoveryReplicas: cfg.FastDemoRecoveryReplicas, Executor: executor, Rollout: rollout, Incidents: incidents, Remediations: remediations, Verifications: verifications})
+	service, err := fastdemo.New(fastdemo.Config{Revision: cfg.FastDemoRevision, Cluster: cfg.FastDemoCluster, Environment: "local-demo", Namespace: cfg.FastDemoNamespace, Workload: cfg.FastDemoWorkload, RecoveryReplicas: cfg.FastDemoRecoveryReplicas, Executor: executor, Rollout: rollout, Incidents: incidents, Remediations: remediations, Verifications: verifications})
 	if err != nil {
 		return nil, err
 	}
 	container.Handler.SetRemediation(service)
 	container.Handler.SetDeliveryVerification(service)
-	container.Handler.SetFastDemo(service)
+	container.Handler.SetFastDemo(service, "demo-operator")
 	return service, nil
 }

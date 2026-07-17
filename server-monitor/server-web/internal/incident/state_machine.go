@@ -14,19 +14,19 @@ var allowedTransitions = map[Status]map[Status]struct{}{
 		StatusDiagnosing: {}, StatusResolved: {}, StatusFailed: {}, StatusClosedNoAction: {},
 	},
 	StatusDiagnosing: {
-		StatusDiagnosisCompleted: {}, StatusResolved: {}, StatusFailed: {},
+		StatusDiagnosisCompleted: {}, StatusFailed: {},
 	},
 	StatusDiagnosisCompleted: {
-		StatusPlanningRemediation: {}, StatusResolved: {}, StatusFailed: {},
+		StatusPlanningRemediation: {}, StatusFailed: {},
 	},
 	StatusPlanningRemediation: {
-		StatusAwaitingApproval: {}, StatusResolved: {}, StatusFailed: {},
+		StatusAwaitingApproval: {}, StatusFailed: {},
 	},
 	StatusAwaitingApproval: {
-		StatusApplyingChange: {}, StatusResolved: {}, StatusFailed: {},
+		StatusApplyingChange: {}, StatusFailed: {},
 	},
 	StatusApplyingChange: {
-		StatusVerifying: {}, StatusResolved: {}, StatusFailed: {},
+		StatusVerifying: {}, StatusFailed: {},
 	},
 	StatusVerifying: {
 		StatusResolved: {}, StatusDiagnosing: {}, StatusFailed: {},

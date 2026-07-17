@@ -23,6 +23,12 @@ describe("frontend route compatibility", () => {
     }
   });
 
+  it("makes the V2 Incident Workbench the default product entry", () => {
+	const root = appRoutes.find((route) => route.path === "/");
+	expect(root?.redirect).toBe("/incidents");
+	expect(appRoutes.find((route) => route.path === "/overview")?.meta?.legacy).toBe(true);
+  });
+
   it("retains administrator protection for legacy write and audit pages", () => {
     for (const name of ["actions", "action-detail", "audit-logs"]) {
       const route = appRoutes.find((candidate) => candidate.name === name);

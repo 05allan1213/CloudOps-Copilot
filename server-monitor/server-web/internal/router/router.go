@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
 	"server-web/internal/config"
+	apphandler "server-web/internal/handler"
 	"server-web/internal/middleware"
 
 	_ "server-web/docs"
@@ -149,11 +150,16 @@ func registerAdminRoutes(router *gin.Engine, cfg config.Config, deps Dependencie
 	remediationAdmin.GET("/remediations/:id", handler.GetRemediation)
 	remediationAdmin.POST("/remediations/:id/approve", handler.ApproveRemediation)
 	remediationAdmin.POST("/remediations/:id/reject", handler.RejectRemediation)
-	if cfg.FastDemoEnabled {
-		remediationAdmin.POST("/fast-demo/incidents/:id/plan", handler.CreateFastDemoPlan)
-		remediationAdmin.POST("/fast-demo/remediations/:id/execute", handler.ExecuteFastDemo)
-		remediationAdmin.POST("/fast-demo/incidents/:id/verify", handler.VerifyFastDemo)
+	registerDemoRoutes(remediationAdmin, cfg, handler)
+}
+
+func registerDemoRoutes(group *gin.RouterGroup, cfg config.Config, h *apphandler.Handler) {
+	if !cfg.FastDemoEnabled {
+		return
 	}
+	group.POST("/demo/incidents/:id/plan", h.CreateFastDemoPlan)
+	group.POST("/demo/remediations/:id/execute", h.ExecuteFastDemo)
+	group.POST("/demo/incidents/:id/verify", h.VerifyFastDemo)
 }
 
 func registerCopilotRoutes(router *gin.Engine, cfg config.Config, deps Dependencies) {

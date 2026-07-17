@@ -21,6 +21,9 @@ func (*workerRepository) CreatePlan(context.Context, *remediation.RemediationPla
 func (*workerRepository) GetPlan(context.Context, string) (*remediation.RemediationPlan, error) {
 	return nil, remediation.ErrNotFound
 }
+func (*workerRepository) GetApproval(context.Context, string) (*remediation.Approval, error) {
+	return nil, remediation.ErrNotFound
+}
 func (*workerRepository) ListPlans(context.Context, remediation.ListFilter) (remediation.Page, error) {
 	return remediation.Page{}, nil
 }

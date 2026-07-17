@@ -45,7 +45,7 @@ LOCAL_TRACE_OTLP_ENDPOINT ?= localhost:4317
 LOCAL_RULES_FILE ?= $(PROJECT_DIR)/docker/custom-alerts.yml
 LOCAL_RUNBOOK_DIR ?= $(PROJECT_DIR)/runbooks
 
-.PHONY: help \
+.PHONY: help demo-v2 \
 	env-init frontend-install clean \
 	build build-go build-frontend build-server-probe build-server-web build-alert-service \
 	test test-go test-frontend test-server-probe test-server-web test-alert-service test-pkg test-k8s \
@@ -69,6 +69,9 @@ endef
 env-init: ## 初始化 .env（若不存在则从 .env.example 复制）
 	@if [ ! -f .env ]; then cp .env.example .env; fi
 	@echo ".env 已就绪"
+
+demo-v2: ## 运行受 local-demo/disposable 保护的 V2 完整演示链路
+	bash scripts/run-v2-demo.sh
 
 frontend-install: ## 安装前端依赖
 	cd $(FRONTEND_DIR) && $(NPM) ci --no-audit --prefer-offline

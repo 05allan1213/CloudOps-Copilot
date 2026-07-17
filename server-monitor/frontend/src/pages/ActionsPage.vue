@@ -1,15 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
 import { RouterLink } from "vue-router";
-import { ElMessage, ElMessageBox } from "element-plus";
 import { Refresh } from "@element-plus/icons-vue";
 
-import {
-  approveAction,
-  executeAction,
-  listActions,
-  rejectAction,
-} from "../api/actions";
+import { listActions } from "../api/actions";
 import { formatTime } from "../utils/format";
 import { usePagination } from "../composables/usePagination";
 import { riskTagType, statusTagType } from "../composables/useTagTypes";
@@ -20,7 +14,6 @@ import type { PendingAction } from "../types";
 
 const actions = ref<PendingAction[]>([]);
 const loading = ref(false);
-const actingID = ref<number | null>(null);
 const error = ref("");
 const filters = reactive({
   status: "",
@@ -36,12 +29,6 @@ const stateKey = computed(() => {
   if (actions.value.length === 0) return "empty" as const;
   return "default" as const;
 });
-
-const approveDialogVisible = ref(false);
-const rejectDialogVisible = ref(false);
-const currentAction = ref<PendingAction | null>(null);
-const approveComment = ref("");
-const rejectReason = ref("");
 
 function targetOf(action: PendingAction) {
   return `${action.namespace || "-"}/${action.target_name || "-"}`;
@@ -81,7 +68,7 @@ async function loadActions() {
     actions.value = response.items;
     total.value = response.total ?? 0;
   } catch (err) {
-    error.value = err instanceof Error ? err.message : "加载待审批动作失败";
+    error.value = err instanceof Error ? err.message : "Legacy 动作历史不可用";
   } finally {
     loading.value = false;
   }
@@ -105,88 +92,14 @@ function handlePageChange(newPage: number) {
   loadActions();
 }
 
-function openApproveDialog(action: PendingAction) {
-  currentAction.value = action;
-  approveComment.value = "";
-  approveDialogVisible.value = true;
-}
-
-function openRejectDialog(action: PendingAction) {
-  currentAction.value = action;
-  rejectReason.value = "";
-  rejectDialogVisible.value = true;
-}
-
-async function confirmApprove() {
-  if (!currentAction.value) return;
-  const id = currentAction.value.id;
-  actingID.value = id;
-  approveDialogVisible.value = false;
-  try {
-    await approveAction(id, approveComment.value);
-    ElMessage.success("审批通过");
-    await loadActions();
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : "审批失败";
-  } finally {
-    actingID.value = null;
-  }
-}
-
-async function confirmReject() {
-  if (!currentAction.value) return;
-  if (!rejectReason.value.trim()) {
-    ElMessage.warning("请输入拒绝原因");
-    return;
-  }
-  const id = currentAction.value.id;
-  actingID.value = id;
-  rejectDialogVisible.value = false;
-  try {
-    await rejectAction(id, rejectReason.value);
-    ElMessage.success("已拒绝");
-    await loadActions();
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : "拒绝失败";
-  } finally {
-    actingID.value = null;
-  }
-}
-
-async function confirmExecute(action: PendingAction) {
-  try {
-    await ElMessageBox.confirm(
-      `确认执行 ${action.action_type} ${targetOf(action)}？`,
-      "执行确认",
-      {
-        confirmButtonText: "执行",
-        cancelButtonText: "取消",
-        type: "warning",
-      },
-    );
-    actingID.value = action.id;
-    try {
-      await executeAction(action.id);
-      ElMessage.success("执行成功");
-      await loadActions();
-    } catch (err) {
-      error.value = err instanceof Error ? err.message : "执行失败";
-    } finally {
-      actingID.value = null;
-    }
-  } catch {
-    // cancelled
-  }
-}
-
 onMounted(loadActions);
 </script>
 
 <template>
   <section class="actions-page">
     <PageHeader
-      title="动作审批"
-      subtitle="诊断建议生成的待审批动作，写操作默认需要 admin 审批。"
+      title="动作历史（Deprecated）"
+      subtitle="该页面仅保留兼容性历史查看；V2 基线不允许在此审批或执行 Kubernetes 写操作。"
     >
       <template #default>
         <el-button
@@ -198,6 +111,13 @@ onMounted(loadActions);
         </el-button>
       </template>
     </PageHeader>
+
+    <el-alert
+      title="Legacy direct action execution is frozen. Use Incident Workbench remediation, approval and Verification."
+      type="warning"
+      show-icon
+      :closable="false"
+    />
 
     <FilterPanel
       @search="applyFilters"
@@ -358,40 +278,13 @@ onMounted(loadActions);
         </el-table-column>
         <el-table-column
           label="操作"
-          width="200"
+          width="120"
           align="center"
         >
           <template #default="{ row }">
-            <el-button
-              v-if="row.status === 'pending'"
-              type="primary"
-              link
-              size="small"
-              :loading="actingID === row.id"
-              @click="openApproveDialog(row)"
-            >
-              批准
-            </el-button>
-            <el-button
-              v-if="row.status === 'pending'"
-              type="danger"
-              link
-              size="small"
-              :loading="actingID === row.id"
-              @click="openRejectDialog(row)"
-            >
-              拒绝
-            </el-button>
-            <el-button
-              v-if="row.status === 'approved'"
-              type="warning"
-              link
-              size="small"
-              :loading="actingID === row.id"
-              @click="confirmExecute(row)"
-            >
-              执行
-            </el-button>
+            <RouterLink :to="`/actions/${row.id}`">
+              查看历史
+            </RouterLink>
           </template>
         </el-table-column>
       </el-table>
@@ -407,65 +300,6 @@ onMounted(loadActions);
         />
       </div>
     </StateWrapper>
-
-    <el-dialog
-      v-model="approveDialogVisible"
-      title="审批通过"
-      width="460px"
-    >
-      <el-form label-position="top">
-        <el-form-item label="审批备注">
-          <el-input
-            v-model="approveComment"
-            type="textarea"
-            :rows="3"
-            placeholder="可选：输入审批备注"
-          />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="approveDialogVisible = false">
-          取消
-        </el-button>
-        <el-button
-          type="primary"
-          @click="confirmApprove"
-        >
-          确认批准
-        </el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog
-      v-model="rejectDialogVisible"
-      title="拒绝动作"
-      width="460px"
-    >
-      <el-form label-position="top">
-        <el-form-item
-          label="拒绝原因"
-          required
-        >
-          <el-input
-            v-model="rejectReason"
-            type="textarea"
-            :rows="3"
-            placeholder="必填：输入拒绝原因"
-          />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="rejectDialogVisible = false">
-          取消
-        </el-button>
-        <el-button
-          type="danger"
-          @click="confirmReject"
-        >
-          确认拒绝
-        </el-button>
-      </template>
-    </el-dialog>
   </section>
 </template>
 

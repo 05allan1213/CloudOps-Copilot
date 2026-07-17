@@ -9,6 +9,7 @@ global:
         - ALL
 
 config:
+  appEnv: production
   logLevel: info
   prometheusUrl: http://prometheus:9090
   redisAddr: redis:6379
@@ -27,7 +28,7 @@ config:
   mysqlDatabase: server_monitor
   mysqlStartupTimeoutSeconds: "10"
   mysqlPingTimeoutSeconds: "3"
-  copilotEnabled: "true"
+  copilotEnabled: "false"
   llmApiUrl: https://api.deepseek.com/v1/chat/completions
   llmModel: deepseek-chat
   llmTimeoutSeconds: "60"

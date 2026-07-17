@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -108,33 +109,153 @@ func TestResolvedWithoutIncidentIsExplicitNoOp(t *testing.T) {
 	}
 }
 
-func TestResolvedSignalDefersIncidentClosureDuringControlledChange(t *testing.T) {
+func TestResolvedSignalDefersIncidentClosureAfterInvestigationStarts(t *testing.T) {
+	tests := []struct {
+		name   string
+		status domain.Status
+	}{
+		{name: "diagnosing", status: domain.StatusDiagnosing},
+		{name: "awaiting approval", status: domain.StatusAwaitingApproval},
+		{name: "applying change", status: domain.StatusApplyingChange},
+		{name: "verifying", status: domain.StatusVerifying},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newFakeUnitOfWork()
+			clock := time.Date(2026, 7, 14, 1, 0, 0, 0, time.UTC)
+			service := mustTestService(t, store, &clock)
+			payload := firingPayload("change-in-flight-"+tt.name, "checkout", clock)
+			result, err := service.IngestAlertmanager(context.Background(), payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			advanceIncidentTo(t, service, result[0].IncidentPublicID, tt.status, &clock)
+			before := store.snapshot().counts()
+
+			resolved := payload.Alerts[0]
+			resolved.Status, resolved.EndsAt = "resolved", clock.Add(time.Second)
+			if _, err := service.IngestAlertmanager(context.Background(), webhook.AlertmanagerWebhookRequest{Alerts: []webhook.AlertRecord{resolved}}); err != nil {
+				t.Fatal(err)
+			}
+			state := store.snapshot()
+			if item := onlyIncident(state); item.Status != tt.status || item.ResolvedAt != nil {
+				t.Fatalf("resolved signal must preserve %s until Verification closure: %+v", tt.status, item)
+			}
+			if state.counts().signals != before.signals+1 || state.counts().timeline != before.timeline+1 || state.counts().outbox != before.outbox+1 {
+				t.Fatalf("resolved recovery fact was not persisted exactly once: before=%+v after=%+v", before, state.counts())
+			}
+			metadata := string(state.timeline[len(state.timeline)-1].Metadata)
+			if !strings.Contains(metadata, `"signal_recovered":true`) || !strings.Contains(metadata, `"resolution_deferred_to_verification":true`) {
+				t.Fatalf("recovery timeline metadata missing: %s", metadata)
+			}
+		})
+	}
+}
+
+func TestDuplicateResolvedSignalIsIdempotent(t *testing.T) {
 	store := newFakeUnitOfWork()
 	clock := time.Date(2026, 7, 14, 1, 0, 0, 0, time.UTC)
 	service := mustTestService(t, store, &clock)
-	payload := firingPayload("change-in-flight", "checkout", clock)
+	payload := firingPayload("duplicate-resolved", "checkout", clock)
 	result, err := service.IngestAlertmanager(context.Background(), payload)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, next := range []domain.Status{domain.StatusDiagnosing, domain.StatusDiagnosisCompleted, domain.StatusPlanningRemediation, domain.StatusAwaitingApproval, domain.StatusApplyingChange} {
-		clock = clock.Add(time.Second)
-		if err := service.TransitionIncident(context.Background(), result[0].IncidentPublicID, next, domain.ActorSystem, "test"); err != nil {
-			t.Fatal(err)
-		}
-	}
+	advanceIncidentTo(t, service, result[0].IncidentPublicID, domain.StatusDiagnosing, &clock)
 	resolved := payload.Alerts[0]
 	resolved.Status, resolved.EndsAt = "resolved", clock.Add(time.Second)
-	if _, err := service.IngestAlertmanager(context.Background(), webhook.AlertmanagerWebhookRequest{Alerts: []webhook.AlertRecord{resolved}}); err != nil {
+	request := webhook.AlertmanagerWebhookRequest{Alerts: []webhook.AlertRecord{resolved}}
+	if _, err := service.IngestAlertmanager(context.Background(), request); err != nil {
 		t.Fatal(err)
 	}
+	afterFirst := store.snapshot().counts()
+	duplicate, err := service.IngestAlertmanager(context.Background(), request)
+	if err != nil || len(duplicate) != 1 || !duplicate[0].Duplicate {
+		t.Fatalf("duplicate resolved result=%+v err=%v", duplicate, err)
+	}
+	if afterSecond := store.snapshot().counts(); afterSecond != afterFirst {
+		t.Fatalf("duplicate resolved produced business effects: first=%+v second=%+v", afterFirst, afterSecond)
+	}
+}
+
+func TestConcurrentFiringAndResolvedPreserveInvestigation(t *testing.T) {
+	store := newFakeUnitOfWork()
+	clock := time.Date(2026, 7, 14, 1, 0, 0, 0, time.UTC)
+	service := mustTestService(t, store, &clock)
+	payload := firingPayload("concurrent-base", "checkout", clock)
+	result, err := service.IngestAlertmanager(context.Background(), payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	advanceIncidentTo(t, service, result[0].IncidentPublicID, domain.StatusDiagnosing, &clock)
+
+	firing := firingPayload("concurrent-followup", "checkout", clock.Add(time.Second))
+	resolved := payload.Alerts[0]
+	resolved.Status, resolved.EndsAt = "resolved", clock.Add(2*time.Second)
+	requests := []webhook.AlertmanagerWebhookRequest{firing, {Alerts: []webhook.AlertRecord{resolved}}}
+	errCh := make(chan error, len(requests))
+	var wg sync.WaitGroup
+	for _, request := range requests {
+		request := request
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, ingestErr := service.IngestAlertmanager(context.Background(), request)
+			errCh <- ingestErr
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for ingestErr := range errCh {
+		if ingestErr != nil {
+			t.Fatal(ingestErr)
+		}
+	}
 	state := store.snapshot()
-	if item := onlyIncident(state); item.Status != domain.StatusApplyingChange || item.ResolvedAt != nil {
-		t.Fatalf("resolved signal must wait for Verification closure: %+v", item)
+	if item := onlyIncident(state); item.Status != domain.StatusDiagnosing || item.ResolvedAt != nil {
+		t.Fatalf("concurrent recovery bypassed investigation: %+v", item)
 	}
-	if len(state.signals) != 2 {
-		t.Fatalf("resolved signal was not persisted: %+v", state.counts())
+	if len(state.incidents) != 1 || len(state.signals) != 3 {
+		t.Fatalf("unexpected concurrent aggregation state: %+v", state.counts())
 	}
+}
+
+func TestResolvedSignalStaleVersionRollsBack(t *testing.T) {
+	store := newFakeUnitOfWork()
+	clock := time.Date(2026, 7, 14, 1, 0, 0, 0, time.UTC)
+	service := mustTestService(t, store, &clock)
+	payload := firingPayload("stale-resolved", "checkout", clock)
+	result, err := service.IngestAlertmanager(context.Background(), payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	advanceIncidentTo(t, service, result[0].IncidentPublicID, domain.StatusDiagnosing, &clock)
+	before := store.snapshot().counts()
+	store.failAt = "incident_update_conflict"
+	resolved := payload.Alerts[0]
+	resolved.Status, resolved.EndsAt = "resolved", clock.Add(time.Second)
+	_, err = service.IngestAlertmanager(context.Background(), webhook.AlertmanagerWebhookRequest{Alerts: []webhook.AlertRecord{resolved}})
+	if !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("expected stale version conflict, got %v", err)
+	}
+	if after := store.snapshot().counts(); after != before {
+		t.Fatalf("stale resolved write was not rolled back: before=%+v after=%+v", before, after)
+	}
+}
+
+func advanceIncidentTo(t *testing.T, service *Service, publicID string, target domain.Status, clock *time.Time) {
+	t.Helper()
+	path := []domain.Status{domain.StatusDiagnosing, domain.StatusDiagnosisCompleted, domain.StatusPlanningRemediation, domain.StatusAwaitingApproval, domain.StatusApplyingChange, domain.StatusVerifying}
+	for _, next := range path {
+		*clock = clock.Add(time.Second)
+		if err := service.TransitionIncident(context.Background(), publicID, next, domain.ActorSystem, "test"); err != nil {
+			t.Fatal(err)
+		}
+		if next == target {
+			return
+		}
+	}
+	t.Fatalf("unsupported target status %s", target)
 }
 
 func TestTransactionFailureRollsBackAllEffects(t *testing.T) {
@@ -308,6 +429,9 @@ func (r fakeIncidents) Create(_ context.Context, item *domain.Incident) error {
 	return nil
 }
 func (r fakeIncidents) Update(_ context.Context, item *domain.Incident, expected uint64) error {
+	if r.u.failAt == "incident_update_conflict" {
+		return domain.ErrConflict
+	}
 	current, ok := r.u.state.incidents[item.ID]
 	if !ok {
 		return domain.ErrNotFound

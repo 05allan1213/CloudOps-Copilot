@@ -134,6 +134,10 @@ func (s *Service) Get(ctx context.Context, publicID string) (*remediation.Remedi
 	return s.cfg.Remediations.GetPlan(ctx, publicID)
 }
 
+func (s *Service) GetApproval(ctx context.Context, publicID string) (*remediation.Approval, error) {
+	return s.cfg.Remediations.GetApproval(ctx, publicID)
+}
+
 func (s *Service) Approve(ctx context.Context, publicID, actor, role, planHash, patchHash string, expectedVersion uint64) (*remediation.RemediationPlan, *remediation.ChangeRequest, error) {
 	if role != "admin" || strings.TrimSpace(actor) == "" {
 		return nil, nil, remediation.ErrForbidden

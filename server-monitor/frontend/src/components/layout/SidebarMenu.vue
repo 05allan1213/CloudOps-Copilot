@@ -5,23 +5,16 @@ import { useRoute, useRouter } from "vue-router";
 import {
   AlarmClock,
   Bell,
-  Box,
   ChatDotRound,
   CircleCheck,
   Clock,
-  Coin,
-  Connection,
-  DataLine,
   Document,
   FirstAidKit,
   Grid,
-  Guide,
   Message,
   Monitor,
-  Odometer,
   Operation,
   Setting,
-  Share,
   User,
 } from "@element-plus/icons-vue";
 
@@ -51,13 +44,6 @@ const iconMap: Record<string, typeof Monitor> = {
   Message: markRaw(Message),
   User: markRaw(User),
   Grid: markRaw(Grid),
-  Box: markRaw(Box),
-  Connection: markRaw(Connection),
-  Coin: markRaw(Coin),
-  DataLine: markRaw(DataLine),
-  Guide: markRaw(Guide),
-  Odometer: markRaw(Odometer),
-  Share: markRaw(Share),
 };
 
 interface MenuItem {
@@ -71,51 +57,25 @@ interface MenuItem {
 }
 
 const menuItems: MenuItem[] = [
-  { index: "/", title: "总览", icon: "Monitor", group: "monitor" },
   { index: "/incidents", title: "Incident Workbench", icon: "FirstAidKit", group: "incident" },
-  { index: "/hosts", title: "主机", icon: "Monitor", group: "monitor" },
-  { index: "/status", title: "状态", icon: "CircleCheck", group: "monitor" },
   {
-    index: "k8s-group",
-    title: "K8s",
+    index: "compatibility-group",
+    title: "Legacy / Compatibility",
     icon: "Grid",
-    group: "k8s",
+    group: "legacy",
     children: [
-      { index: "/k8s", title: "集群概览", icon: "Grid", group: "k8s" },
-      { index: "/k8s/nodes", title: "节点", icon: "Monitor", group: "k8s", nodesRequired: true },
-      { index: "/k8s/workloads", title: "工作负载", icon: "Box", group: "k8s" },
-      { index: "/k8s/services", title: "服务", icon: "Connection", group: "k8s" },
-      { index: "/k8s/configmaps", title: "配置项", icon: "Document", group: "k8s" },
-      { index: "/k8s/ingresses", title: "入口路由", icon: "Guide", group: "k8s" },
-      { index: "/k8s/storage", title: "存储", icon: "Coin", group: "k8s" },
-      { index: "/k8s/quotas", title: "配额", icon: "DataLine", group: "k8s" },
-      { index: "/k8s/hpas", title: "弹性伸缩", icon: "Odometer", group: "k8s" },
-      { index: "/k8s/topology", title: "拓扑图", icon: "Share", group: "k8s" },
-      { index: "/k8s/events", title: "事件", icon: "Bell", group: "k8s" },
-    ],
-  },
-  {
-    index: "alert-group",
-    title: "告警（Legacy）",
-    icon: "Bell",
-    group: "alert",
-    children: [
+      { index: "/overview", title: "旧版总览", icon: "Monitor", group: "legacy" },
+      { index: "/hosts", title: "主机", icon: "Monitor", group: "legacy" },
+      { index: "/status", title: "状态", icon: "CircleCheck", group: "legacy" },
       { index: "/alerts", title: "当前告警（Legacy）", icon: "Bell", group: "alert" },
       { index: "/alert-histories", title: "历史告警", icon: "Clock", group: "alert" },
-    ],
-  },
-  {
-    index: "ai-group",
-    title: "智能（Legacy）",
-    icon: "ChatDotRound",
-    group: "ai",
-    children: [
       { index: "/copilot", title: "Copilot（Legacy）", icon: "ChatDotRound", group: "ai" },
       { index: "/diagnosis", title: "诊断（Legacy）", icon: "FirstAidKit", group: "ai" },
+      { index: "/actions", title: "动作历史（Deprecated）", icon: "Operation", group: "admin", admin: true },
+      { index: "/audit-logs", title: "旧版审计日志", icon: "Document", group: "admin", admin: true },
+      { index: "/k8s", title: "Kubernetes Dashboard", icon: "Grid", group: "k8s" },
     ],
   },
-  { index: "/actions", title: "动作（Legacy）", icon: "Operation", group: "admin", admin: true },
-  { index: "/audit-logs", title: "审计日志（Legacy）", icon: "Document", group: "admin", admin: true },
   {
     index: "settings-group",
     title: "设置",
@@ -163,14 +123,8 @@ const activeMenu = computed(() => {
 const defaultOpeneds = computed(() => {
   const groups: string[] = [];
   const path = route.path;
-  if (path.startsWith("/alerts") || path.startsWith("/alert-histories")) {
-    groups.push("alert-group");
-  }
-  if (path.startsWith("/k8s")) {
-    groups.push("k8s-group");
-  }
-  if (path.startsWith("/copilot") || path.startsWith("/diagnosis")) {
-    groups.push("ai-group");
+  if (["/overview", "/hosts", "/status", "/alerts", "/alert-histories", "/copilot", "/diagnosis", "/actions", "/audit-logs", "/k8s"].some((prefix) => path.startsWith(prefix))) {
+    groups.push("compatibility-group");
   }
   if (path.startsWith("/settings/")) {
     groups.push("settings-group");

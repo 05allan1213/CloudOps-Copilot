@@ -15,6 +15,9 @@ import (
 )
 
 type Config struct {
+	// AppEnv identifies the deployment profile. Fast Demo is allowed only in local-demo.
+	AppEnv string
+
 	// ListenAddr HTTP 监听地址，格式为 host:port
 	// 默认值：:8080
 	ListenAddr string
@@ -113,12 +116,13 @@ type Config struct {
 	IncidentAgentMaxStepRetries     int
 
 	// FastDemo enables the disposable, controlled-direct V2 demo path only.
-	FastDemoEnabled          bool
-	FastDemoRevision         string
-	FastDemoCluster          string
-	FastDemoNamespace        string
-	FastDemoWorkload         string
-	FastDemoRecoveryReplicas int
+	FastDemoEnabled           bool
+	FastDemoConfirmDisposable bool
+	FastDemoRevision          string
+	FastDemoCluster           string
+	FastDemoNamespace         string
+	FastDemoWorkload          string
+	FastDemoRecoveryReplicas  int
 
 	// Phase 3 change intelligence is read-only and disabled by default.
 	ChangeIntelligenceEnabled bool
@@ -636,6 +640,7 @@ func (c Config) EffectiveChangeConfig() EffectiveChangeConfig {
 func Load() Config {
 	prometheusURL := configutil.String("PROMETHEUS_URL", "http://prometheus:9090")
 	return Config{
+		AppEnv:                          configutil.String("APP_ENV", "development"),
 		ListenAddr:                      configutil.String("LISTEN_ADDR", ":8080"),
 		PrometheusURL:                   prometheusURL,
 		PrometheusReloadURL:             configutil.NonEmptyString("PROMETHEUS_RELOAD_URL", strings.TrimRight(prometheusURL, "/")+"/-/reload"),
@@ -672,6 +677,7 @@ func Load() Config {
 		IncidentAgentMaxCheckpointBytes: configutil.PositiveInt("INCIDENT_AGENT_MAX_CHECKPOINT_BYTES", 32768),
 		IncidentAgentMaxStepRetries:     configutil.NonNegativeInt("INCIDENT_AGENT_MAX_STEP_RETRIES", 1),
 		FastDemoEnabled:                 configutil.Bool("FAST_DEMO_ENABLED", false),
+		FastDemoConfirmDisposable:       configutil.Bool("FAST_DEMO_CONFIRM_DISPOSABLE", false),
 		FastDemoRevision:                configutil.String("FAST_DEMO_REVISION", ""),
 		FastDemoCluster:                 configutil.String("FAST_DEMO_CLUSTER", "kind-cloudops-demo"),
 		FastDemoNamespace:               configutil.String("FAST_DEMO_NAMESPACE", "default"),
@@ -778,12 +784,12 @@ func Load() Config {
 		TrustedProxies:                  configutil.List("TRUSTED_PROXIES"),
 		CORSOrigins:                     configutil.List("CORS_ALLOWED_ORIGINS"),
 		RateLimit: RateLimitConfig{
-			Enabled:          configutil.Bool("RATE_LIMIT_ENABLED", false),
+			Enabled:          configutil.Bool("RATE_LIMIT_ENABLED", true),
 			Requests:         int64(configutil.PositiveInt("RATE_LIMIT_REQUESTS", 120)),
 			Window:           configutil.DurationSeconds("RATE_LIMIT_WINDOW_SECONDS", 60),
 			OperationTimeout: configutil.DurationMilliseconds("RATE_LIMIT_OPERATION_TIMEOUT_MILLISECONDS", 500),
 		},
-		CopilotEnabled:               configutil.Bool("COPILOT_ENABLED", true),
+		CopilotEnabled:               configutil.Bool("COPILOT_ENABLED", false),
 		CopilotToolRegistryEnabled:   configutil.Bool("COPILOT_TOOL_REGISTRY_ENABLED", true),
 		CopilotToolDefaultTimeout:    configutil.DurationSeconds("COPILOT_TOOL_DEFAULT_TIMEOUT_SECONDS", 30),
 		CopilotToolLogArgs:           configutil.Bool("COPILOT_TOOL_LOG_ARGS", false),
@@ -881,6 +887,9 @@ func Load() Config {
 }
 
 func (c *Config) Validate() error {
+	if appEnv := strings.TrimSpace(c.AppEnv); appEnv == "" || len(appEnv) > 64 || !regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`).MatchString(appEnv) {
+		return fmt.Errorf("APP_ENV must contain 1-64 lowercase letters, digits or hyphens")
+	}
 	if c.AuthEnabled && len(strings.TrimSpace(c.JWTSecret)) < 32 {
 		return fmt.Errorf("JWT_SECRET must be at least 32 bytes when auth is enabled, got %d", len(strings.TrimSpace(c.JWTSecret)))
 	}
@@ -951,15 +960,23 @@ func (c *Config) Validate() error {
 		}
 	}
 	if c.FastDemoEnabled {
+		if c.AppEnv != "local-demo" || !c.FastDemoConfirmDisposable {
+			return fmt.Errorf("FAST_DEMO_ENABLED requires APP_ENV=local-demo and FAST_DEMO_CONFIRM_DISPOSABLE=true")
+		}
 		if !c.IncidentAgentEnabled || !c.K8SEnabled || !c.K8SWriteEnabled || strings.TrimSpace(c.MySQLHost) == "" {
 			return fmt.Errorf("FAST_DEMO_ENABLED requires incident Agent, Kubernetes read/write and MySQL")
+		}
+		if c.K8SInCluster || strings.TrimSpace(c.K8SKubeconfig) == "" {
+			return fmt.Errorf("FAST_DEMO_ENABLED requires an explicit disposable kubeconfig and K8S_IN_CLUSTER=false")
 		}
 		if !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(strings.ToLower(strings.TrimSpace(c.FastDemoRevision))) {
 			return fmt.Errorf("FAST_DEMO_REVISION must be an exact 40-character commit SHA")
 		}
-		if strings.TrimSpace(c.FastDemoCluster) == "" || strings.TrimSpace(c.FastDemoNamespace) == "" || strings.TrimSpace(c.FastDemoWorkload) == "" || c.FastDemoRecoveryReplicas < 1 || c.FastDemoRecoveryReplicas > c.ActionMaxReplicas {
+		if !strings.HasPrefix(strings.TrimSpace(c.FastDemoCluster), "kind-") || strings.TrimSpace(c.FastDemoNamespace) == "" || c.FastDemoNamespace == "default" || strings.TrimSpace(c.FastDemoWorkload) == "" || c.FastDemoRecoveryReplicas < 1 || c.FastDemoRecoveryReplicas > c.ActionMaxReplicas {
 			return fmt.Errorf("fast demo target or recovery replica configuration is invalid")
 		}
+	} else if c.FastDemoConfirmDisposable {
+		return fmt.Errorf("FAST_DEMO_CONFIRM_DISPOSABLE must be false when FAST_DEMO_ENABLED is false")
 	}
 	if c.ChangeIntelligenceEnabled {
 		if strings.TrimSpace(c.MySQLHost) == "" {
@@ -1098,15 +1115,15 @@ func (c *Config) Validate() error {
 	if c.ActionPendingTTL < time.Hour || c.ActionPendingTTL > 168*time.Hour {
 		return fmt.Errorf("ACTION_PENDING_TTL_HOURS must be in range 1-168, got %v", c.ActionPendingTTL)
 	}
+	if c.ActionExecutionEnabled {
+		return fmt.Errorf("ACTION_EXECUTION_ENABLED is frozen in the V2 baseline; use V2 remediation or the guarded local demo executor")
+	}
 	if c.K8SWriteEnabled {
 		if !c.K8SEnabled {
 			return fmt.Errorf("K8S_ENABLED must be true when K8S_WRITE_ENABLED is true")
 		}
-		if !c.ActionApprovalEnabled {
-			return fmt.Errorf("ACTION_APPROVAL_ENABLED must be true when K8S_WRITE_ENABLED is true")
-		}
-		if !c.ActionExecutionEnabled {
-			return fmt.Errorf("ACTION_EXECUTION_ENABLED must be true when K8S_WRITE_ENABLED is true")
+		if !c.FastDemoEnabled {
+			return fmt.Errorf("K8S_WRITE_ENABLED is reserved for the guarded local Fast Demo and must be false in formal V2 modes")
 		}
 	}
 	if c.K8SNodesEnabled && !c.K8SEnabled {

@@ -25,9 +25,9 @@ const rules: FormRules = {
 const redirectTarget = computed(() => {
   const redirect = route.query.redirect;
   if (typeof redirect !== "string" || !redirect.startsWith("/")) {
-    return "/";
+    return "/incidents";
   }
-  return redirect === "/login" ? "/" : redirect;
+  return redirect === "/login" ? "/incidents" : redirect;
 });
 
 async function onSubmit() {
@@ -65,8 +65,8 @@ async function onSubmit() {
           </svg>
         </div>
         <div>
-          <h1>服务监控大屏</h1>
-          <p>使用后台账号登录后继续查看主机指标与告警。</p>
+          <h1>CloudOps-Copilot V2</h1>
+          <p>登录后进入 Incident Workbench，查看从 Signal 到 Verification 与 Postmortem 的完整过程。</p>
           <p class="login-hint">
             默认账号: admin / server-monitor-local-admin
           </p>

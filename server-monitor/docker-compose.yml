@@ -42,7 +42,7 @@ services:
       - --maxmemory-policy
       - allkeys-lru
     ports:
-      - "127.0.0.1:6379:6379"
+      - "127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"
     volumes:
       - redis-data:/data
     environment:
@@ -95,9 +95,9 @@ services:
     volumes:
       - ./docker/jaeger/jaeger.yaml:/etc/jaeger/jaeger.yaml:ro
     ports:
-      - "127.0.0.1:16686:16686"
-      - "127.0.0.1:4317:4317"
-      - "127.0.0.1:4318:4318"
+      - "127.0.0.1:${JAEGER_UI_HOST_PORT:-16686}:16686"
+      - "127.0.0.1:${OTLP_GRPC_HOST_PORT:-4317}:4317"
+      - "127.0.0.1:${OTLP_HTTP_HOST_PORT:-4318}:4318"
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:16686/ || exit 1"]
       interval: 10s
@@ -121,7 +121,7 @@ services:
       target: runtime
     <<: *app-service
     ports:
-      - "127.0.0.1:8082:9090"
+      - "127.0.0.1:${SERVER_PROBE_HOST_PORT:-8082}:9090"
     environment:
       <<: *observability-env
       LISTEN_ADDR: ":9090"
@@ -152,7 +152,7 @@ services:
     image: prom/prometheus:v2.51.0
     restart: unless-stopped
     ports:
-      - "127.0.0.1:9090:9090"
+      - "127.0.0.1:${PROMETHEUS_HOST_PORT:-9090}:9090"
     volumes:
       - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./docker/alerts.yml:/etc/prometheus/rules/alerts.yml:ro
@@ -209,7 +209,7 @@ services:
     image: confluentinc/cp-kafka:7.6.1
     restart: unless-stopped
     ports:
-      - "127.0.0.1:9092:19092"
+      - "127.0.0.1:${KAFKA_HOST_PORT:-9092}:19092"
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
@@ -279,7 +279,7 @@ services:
       target: runtime
     <<: *app-service
     ports:
-      - "127.0.0.1:8081:8081"
+      - "127.0.0.1:${ALERT_SERVICE_HOST_PORT:-8081}:8081"
     environment:
       LISTEN_ADDR: ":8081"
       KAFKA_BROKERS: ${KAFKA_BROKERS:-kafka:9092}
@@ -313,7 +313,7 @@ services:
     image: prom/alertmanager:v0.27.0
     restart: unless-stopped
     ports:
-      - "127.0.0.1:9093:9093"
+      - "127.0.0.1:${ALERTMANAGER_HOST_PORT:-9093}:9093"
     volumes:
       - ./docker/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
     command:
@@ -471,8 +471,11 @@ services:
       target: runtime
     <<: *app-service
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${SERVER_WEB_HOST_PORT:-8080}:8080"
     environment:
+      APP_ENV: ${APP_ENV:-development}
+      FAST_DEMO_ENABLED: ${FAST_DEMO_ENABLED:-false}
+      FAST_DEMO_CONFIRM_DISPOSABLE: ${FAST_DEMO_CONFIRM_DISPOSABLE:-false}
       PROMETHEUS_URL: ${PROMETHEUS_URL:-http://prometheus:9090}
       PROMETHEUS_RELOAD_URL: ${PROMETHEUS_RELOAD_URL:-http://prometheus:9090/-/reload}
       ALERT_RULES_FILE_PATH: ${ALERT_RULES_FILE_PATH:-/etc/server-monitor/rules/custom-alerts.yml}
@@ -590,7 +593,7 @@ services:
       RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
       RATE_LIMIT_REQUESTS: ${RATE_LIMIT_REQUESTS:-120}
       RATE_LIMIT_WINDOW_SECONDS: ${RATE_LIMIT_WINDOW_SECONDS:-60}
-      COPILOT_ENABLED: ${COPILOT_ENABLED:-true}
+      COPILOT_ENABLED: ${COPILOT_ENABLED:-false}
       COPILOT_TOOL_REGISTRY_ENABLED: ${COPILOT_TOOL_REGISTRY_ENABLED:-true}
       COPILOT_TOOL_DEFAULT_TIMEOUT_SECONDS: ${COPILOT_TOOL_DEFAULT_TIMEOUT_SECONDS:-30}
       COPILOT_TOOL_LOG_ARGS: ${COPILOT_TOOL_LOG_ARGS:-false}
@@ -640,7 +643,7 @@ services:
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-60}
       LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-2048}
       DIAGNOSIS_LLM_TIMEOUT_SECONDS: ${DIAGNOSIS_LLM_TIMEOUT_SECONDS:-15}
-      DIAGNOSIS_ENABLED: ${DIAGNOSIS_ENABLED:-true}
+      DIAGNOSIS_ENABLED: ${DIAGNOSIS_ENABLED:-false}
       DIAGNOSIS_WORKER_COUNT: ${DIAGNOSIS_WORKER_COUNT:-1}
       DIAGNOSIS_KAFKA_GROUP_ID: ${DIAGNOSIS_KAFKA_GROUP_ID:-diagnosis-worker}
       DIAGNOSIS_TASK_TTL_SECONDS: ${DIAGNOSIS_TASK_TTL_SECONDS:-1800}
@@ -678,7 +681,6 @@ services:
     volumes:
       - ./docker/custom-alerts.yml:/etc/server-monitor/rules/custom-alerts.yml
       - ./runbooks:/app/runbooks:ro
-      - ./docker:/opt/server-monitor/docker:ro
       - ${REGISTRY_CREDENTIALS_DIR:-./docker/registry-credentials}:/var/run/secrets/cloudops/registry:ro
       - ${GITHUB_WRITE_CREDENTIALS_DIR:-./docker/github-write-credentials}:/var/run/secrets/cloudops/github-write:ro
     extra_hosts:

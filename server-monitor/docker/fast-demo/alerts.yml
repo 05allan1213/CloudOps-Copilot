@@ -2,13 +2,13 @@ groups:
   - name: cloudops-fast-demo
     rules:
       - alert: CloudOpsDemoDeploymentUnavailable
-        expr: up{job="cloudops-demo-workload"} == 0
+        expr: up{job="cloudops-demo-workload",instance="cloudops-demo-control-plane:30082"} == 0
         for: 4s
         labels:
           severity: critical
           cluster: kind-cloudops-demo
-          environment: demo
-          namespace: default
+          environment: local-demo
+          namespace: cloudops-demo
           service: cloudops-demo-workload
           deployment: cloudops-demo-workload
         annotations:

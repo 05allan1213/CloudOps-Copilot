@@ -373,6 +373,13 @@ func (h *Handler) GetWorkbenchRemediation(c *gin.Context) {
 	}
 	item := page.Items[0]
 	dto := workbenchRemediationDTO{ID: item.PublicID, Status: item.Status, OperationType: item.OperationType, Target: item.Parameters.Target, ProposedValue: item.Parameters.ProposedValue, RiskLevel: item.RiskLevel, PatchSummary: item.PatchSummary, RollbackPlan: item.RollbackPlan, ValidationPlan: item.ValidationPlan, ApprovalActor: "Unknown", CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt}
+	if approval, approvalErr := h.remediation.GetApproval(c.Request.Context(), item.PublicID); approvalErr == nil {
+		dto.ApprovalActor = approval.Actor
+		dto.ApprovalDecidedAt = &approval.CreatedAt
+	} else if !errors.Is(approvalErr, remediation.ErrNotFound) {
+		writeRemediationError(c, approvalErr)
+		return
+	}
 	c.JSON(http.StatusOK, response{Status: "success", Data: dto})
 }
 

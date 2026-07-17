@@ -10,11 +10,11 @@ func TestStateMachineAllPairs(t *testing.T) {
 	allowed := map[[2]Status]bool{
 		{StatusDetected, StatusCorrelating}: true, {StatusDetected, StatusFailed}: true, {StatusDetected, StatusClosedNoAction}: true,
 		{StatusCorrelating, StatusDiagnosing}: true, {StatusCorrelating, StatusResolved}: true, {StatusCorrelating, StatusFailed}: true, {StatusCorrelating, StatusClosedNoAction}: true,
-		{StatusDiagnosing, StatusDiagnosisCompleted}: true, {StatusDiagnosing, StatusResolved}: true, {StatusDiagnosing, StatusFailed}: true,
-		{StatusDiagnosisCompleted, StatusPlanningRemediation}: true, {StatusDiagnosisCompleted, StatusResolved}: true, {StatusDiagnosisCompleted, StatusFailed}: true,
-		{StatusPlanningRemediation, StatusAwaitingApproval}: true, {StatusPlanningRemediation, StatusResolved}: true, {StatusPlanningRemediation, StatusFailed}: true,
-		{StatusAwaitingApproval, StatusApplyingChange}: true, {StatusAwaitingApproval, StatusResolved}: true, {StatusAwaitingApproval, StatusFailed}: true,
-		{StatusApplyingChange, StatusVerifying}: true, {StatusApplyingChange, StatusResolved}: true, {StatusApplyingChange, StatusFailed}: true,
+		{StatusDiagnosing, StatusDiagnosisCompleted}: true, {StatusDiagnosing, StatusFailed}: true,
+		{StatusDiagnosisCompleted, StatusPlanningRemediation}: true, {StatusDiagnosisCompleted, StatusFailed}: true,
+		{StatusPlanningRemediation, StatusAwaitingApproval}: true, {StatusPlanningRemediation, StatusFailed}: true,
+		{StatusAwaitingApproval, StatusApplyingChange}: true, {StatusAwaitingApproval, StatusFailed}: true,
+		{StatusApplyingChange, StatusVerifying}: true, {StatusApplyingChange, StatusFailed}: true,
 		{StatusVerifying, StatusResolved}: true, {StatusVerifying, StatusDiagnosing}: true, {StatusVerifying, StatusFailed}: true,
 		{StatusResolved, StatusDiagnosing}: true,
 	}

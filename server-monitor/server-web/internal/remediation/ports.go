@@ -8,6 +8,7 @@ import (
 type Repository interface {
 	CreatePlan(context.Context, *RemediationPlan) error
 	GetPlan(context.Context, string) (*RemediationPlan, error)
+	GetApproval(context.Context, string) (*Approval, error)
 	ListPlans(context.Context, ListFilter) (Page, error)
 	ApprovePlan(context.Context, string, uint64, Approval, *ChangeRequest) (*RemediationPlan, *ChangeRequest, error)
 	RejectPlan(context.Context, string, uint64, Approval) (*RemediationPlan, error)

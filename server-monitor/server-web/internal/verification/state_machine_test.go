@@ -70,4 +70,8 @@ func TestUnavailableIsNeverPassAndAggregateRequiresAllRequired(t *testing.T) {
 	if status != RunPassed || !terminal {
 		t.Fatalf("optional failure must be recorded but not block required aggregate: %s %v", status, terminal)
 	}
+	status, reason, terminal = Aggregate([]Check{{Required: true, Status: CheckPassed}, {Required: true, Status: CheckFailed, FailureReason: "rollout_failed"}})
+	if status != RunFailed || !terminal || reason == "" {
+		t.Fatalf("required failure must fail Verification: %s %s %v", status, reason, terminal)
+	}
 }
