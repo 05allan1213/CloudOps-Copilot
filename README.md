@@ -1,5 +1,10 @@
 # CloudOps-Copilot
 
+> [!IMPORTANT]
+> CloudOps Incident Agent V3 的唯一规范来源是
+> [`docs/CloudOps-Incident-Agent-V3-Refactor-Design.md`](docs/CloudOps-Incident-Agent-V3-Refactor-Design.md)。
+> 本 README 其余内容描述审计时仍存在的 V2 实现与历史演示，只是迁移输入，不具有 V3 规范地位，也不能用于证明任何 V3 Gate 已通过。
+
 > A Go-based cloud-native Incident Copilot for evidence-driven investigation, approval-bound remediation, and deterministic recovery verification.
 
 CloudOps-Copilot（云原生 Incident Copilot）是一个以 Go 为核心、运行于 Kubernetes、围绕 Incident 构建的故障调查与受控恢复系统。它把 Signal、调查证据、诊断、审批、变更、恢复验证和复盘放进同一条可审计生命周期，而不是只生成一段运维建议。
@@ -142,7 +147,7 @@ make demo-v2-clean
 
 脚本只操作 `cloudops-v2-demo` Compose project、`cloudops-demo` kind cluster、专用 namespace/workload 和对应 disposable kubeconfig，不清理无关 Docker/Kubernetes 资源。
 
-完整操作说明见 [V2 Demo Guide](doc/v2-demo-guide.md)。
+历史 V2 Demo Guide 已从当前 HEAD 删除；当前行为边界和删除条件见 [V3 Architecture Baseline](docs/architecture.md)。
 
 ### 启动完整本地栈
 
@@ -204,7 +209,7 @@ HTTP、Incident、Agent node、Agent tool、Remediation、Verification 等路径
 | Elasticsearch | http://127.0.0.1:9200 |
 | Kibana | http://127.0.0.1:5601 |
 
-完整数据路径、验证命令和边界见 [V2 Observability](doc/v2-observability.md)。
+历史 V2 Observability 文档已从当前 HEAD 删除；V3 观测目标只以 [V3 设计](docs/CloudOps-Incident-Agent-V3-Refactor-Design.md) 为准。
 
 ## 核心 Demo 与扩展可观测栈
 
@@ -227,12 +232,13 @@ Grafana, VictoriaMetrics, Fluent Bit, Elasticsearch, Kibana, Jaeger
 ```text
 CloudOps-Copilot/
 ├── README.md
-├── doc/
-│   ├── v2-architecture.md
-│   ├── v2-demo-guide.md
-│   ├── v2-observability.md
-│   ├── v2-project-boundaries.md
-│   └── v2-interview-materials.md
+├── docs/
+│   ├── CloudOps-Incident-Agent-V3-Refactor-Design.md  # V3 唯一规范
+│   ├── architecture.md
+│   ├── migration-ledger.md
+│   ├── risk-register.md
+│   ├── adr/
+│   └── evidence/
 └── server-monitor/
     ├── server-web/                 # Incident API、Agent runtime、Remediation、Verification、Workbench
     ├── pkg/                        # logger、tracer、Kafka、config utilities 等共享 Go 包
@@ -247,7 +253,7 @@ CloudOps-Copilot/
     └── Makefile
 ```
 
-更详细的源码入口见 [V2 Core Code Map](doc/refactor/v2-core-code-map.md) 和 [V2 Architecture](doc/v2-architecture.md)。
+当前源码入口和迁移决策见 [V3 Architecture Baseline](docs/architecture.md)；已删除的 V2 code map/architecture 只保留在 Git 历史中。
 
 ## 已验证结果
 
@@ -261,7 +267,7 @@ CloudOps-Copilot/
 - Compose、Helm、Shell、Prometheus/Alertmanager 配置检查通过；
 - Prometheus/Alertmanager Signal path、VictoriaMetrics remote-write/sample query、Fluent Bit→Elasticsearch 日志查询、Jaeger Trace query 已实际验证。
 
-最终命令、ID 和证据见 [Step 4 Final Audit Report](doc/refactor/v2-step-4-interview-delivery-observability-validation-and-final-audit-report.md)。
+旧 Step 4 报告已从当前 HEAD 删除，且不得作为 V3 证据；当前 Phase 0 证据见 [Baseline Audit Report](docs/evidence/phase-0-baseline-audit-report.md)。
 
 ## 项目边界
 
@@ -272,7 +278,7 @@ CloudOps-Copilot/
 - Compose/Helm 中的可观测组件是学习和展示型单节点拓扑，不包含 HA、DR 或生产容量规划。
 - 未验证多副本、性能容量、生产安全基线和真实云平台凭据链路。
 
-这些边界不削弱项目作为秋招作品的目标：项目重点证明 Go 后端建模、持久化状态机、Agent 工程约束、云原生集成、可观测性和从告警到恢复验证的闭环设计。详见 [Project Boundaries](doc/v2-project-boundaries.md)。
+这些边界不削弱项目作为秋招作品的目标：项目重点证明 Go 后端建模、持久化状态机、Agent 工程约束、云原生集成、可观测性和从告警到恢复验证的闭环设计。V3 产品边界见 [V3 设计](docs/CloudOps-Incident-Agent-V3-Refactor-Design.md)。
 
 ## 面试导航
 
@@ -289,4 +295,4 @@ CloudOps-Copilot/
 | Workbench API / UI | `server-web/internal/handler/incident_workbench.go`、`frontend/src/views/incidents` |
 | Metrics / logs / traces | `server-web/internal/middleware`、`pkg/logger`、`pkg/tracer`、`docker/` |
 
-可直接口述的项目介绍、双语简历 bullet 和常见追问答案见 [V2 Interview Materials](doc/v2-interview-materials.md)。
+历史 V2 Interview Materials 已删除；只有对应 V3 Gate 与最终 DoD 真实通过后，才可使用 V3 设计中的项目表述。
