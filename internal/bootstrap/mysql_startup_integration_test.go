@@ -1,8 +1,11 @@
 package bootstrap
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -11,8 +14,10 @@ import (
 
 	drivermysql "github.com/go-sql-driver/mysql"
 
+	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
 	apibootstrap "github.com/05allan1213/CloudOps-Copilot/internal/bootstrap/api"
 	appconfig "github.com/05allan1213/CloudOps-Copilot/internal/config"
+	"github.com/05allan1213/CloudOps-Copilot/internal/taskhandler"
 )
 
 func TestRuntimeStartsWithDMLOnlyMySQLAndDoesNotMutateSchema(t *testing.T) {
@@ -26,7 +31,7 @@ func TestRuntimeStartsWithDMLOnlyMySQLAndDoesNotMutateSchema(t *testing.T) {
 	}
 	defer func() { _ = verifier.Close() }()
 	before := runtimeTableCount(t, verifier)
-	exerciseRuntime(t, runtimeApplication(t, dsn), http.StatusOK)
+	exerciseRuntime(t, runtimeApplication(t, dsn), verifier, http.StatusOK)
 	after := runtimeTableCount(t, verifier)
 	if before != after {
 		t.Fatalf("runtime startup changed table count: before=%d after=%d", before, after)
@@ -44,7 +49,7 @@ func TestRuntimeDoesNotAutoMigrateUnmigratedDatabase(t *testing.T) {
 	}
 	defer func() { _ = verifier.Close() }()
 	before := runtimeTableCount(t, verifier)
-	exerciseRuntime(t, runtimeApplication(t, dsn), http.StatusServiceUnavailable)
+	exerciseRuntime(t, runtimeApplication(t, dsn), verifier, http.StatusServiceUnavailable)
 	after := runtimeTableCount(t, verifier)
 	if before != after {
 		t.Fatalf("unmigrated runtime startup changed table count: before=%d after=%d", before, after)
@@ -83,7 +88,7 @@ func runtimeApplication(t *testing.T, dsn string) appconfig.Config {
 	return application
 }
 
-func exerciseRuntime(t *testing.T, application appconfig.Config, expectedReadiness int) {
+func exerciseRuntime(t *testing.T, application appconfig.Config, verifier *sql.DB, expectedReadiness int) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	api, err := apibootstrap.NewAPI(ctx, apibootstrap.APIConfig{Application: application})
@@ -94,9 +99,35 @@ func exerciseRuntime(t *testing.T, application appconfig.Config, expectedReadine
 	if err != nil {
 		t.Fatal(err)
 	}
+	internalListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
 	apiDone := make(chan error, 1)
-	go func() { apiDone <- api.Serve(ctx, apiListener) }()
+	go func() { apiDone <- api.Serve(ctx, apiListener, internalListener) }()
 	waitForHTTPStatus(t, "http://"+apiListener.Addr().String()+"/readyz", expectedReadiness)
+	waitForHTTPStatus(t, "http://"+internalListener.Addr().String()+"/readyz", expectedReadiness)
+	if status := runtimeHTTPStatus(t, http.MethodGet, "http://"+internalListener.Addr().String()+"/api/v3/incidents", nil, ""); status != http.StatusNotFound {
+		t.Fatalf("INTERNAL listener exposed user API: status=%d", status)
+	}
+	if status := runtimeHTTPStatus(t, http.MethodPost, "http://"+apiListener.Addr().String()+"/webhooks/alertmanager", bytes.NewBufferString(`{}`), "application/json"); status != http.StatusNotFound {
+		t.Fatalf("user listener exposed V3 webhook: status=%d", status)
+	}
+	if expectedReadiness == http.StatusOK {
+		fingerprint := fmt.Sprintf("a%015x", time.Now().UnixNano())
+		body := fmt.Sprintf(`{"version":"4","groupKey":"{}:{alertname=\"CloudOpsDemoDeploymentUnavailable\"}","truncatedAlerts":0,"status":"firing","receiver":"cloudops-demo","groupLabels":{},"commonLabels":{},"commonAnnotations":{},"externalURL":"http://alertmanager:9093","alerts":[{"status":"firing","labels":{"alertname":"CloudOpsDemoDeploymentUnavailable","severity":"critical","cluster":"kind-cloudops-demo","environment":"local-demo","namespace":"cloudops-demo","service":"cloudops-demo-workload","deployment":"cloudops-demo-workload"},"annotations":{"summary":"DML-only V3 ingress proof"},"startsAt":"2026-07-18T12:00:00.123456Z","endsAt":"0001-01-01T00:00:00Z","generatorURL":"http://prometheus:9090/graph","fingerprint":"%s"}]}`, fingerprint)
+		status := runtimeHTTPStatus(t, http.MethodPost, "http://"+internalListener.Addr().String()+"/webhooks/alertmanager", bytes.NewBufferString(body), "application/json")
+		if status != http.StatusAccepted {
+			t.Fatalf("V3 Alertmanager ingress status=%d", status)
+		}
+		var signalCount int
+		if err := verifier.QueryRow(`SELECT COUNT(*) FROM incident_signals WHERE source = 'alertmanager' AND fingerprint = ? AND domain_schema_version = 3 AND canonical_schema_version = 2 AND correlation_key_version = 2`, fingerprint).Scan(&signalCount); err != nil {
+			t.Fatal(err)
+		}
+		if signalCount != 1 {
+			t.Fatalf("durable V3 Alertmanager signal count=%d, want 1", signalCount)
+		}
+	}
 	cancel()
 	if err := <-apiDone; err != nil {
 		t.Fatal(err)
@@ -105,6 +136,7 @@ func exerciseRuntime(t *testing.T, application appconfig.Config, expectedReadine
 	workerContext, stopWorker := context.WithCancel(context.Background())
 	workerConfig := WorkerConfig{
 		Application:       application,
+		TaskOperations:    testRuntimeTaskOperations(),
 		ManagementAddr:    "127.0.0.1:18081",
 		ReadHeaderTimeout: time.Second,
 		ReadTimeout:       time.Second,
@@ -127,6 +159,32 @@ func exerciseRuntime(t *testing.T, application appconfig.Config, expectedReadine
 		t.Fatal(err)
 	}
 
+}
+
+func runtimeHTTPStatus(t *testing.T, method, url string, body io.Reader, contentType string) int {
+	t.Helper()
+	request, err := http.NewRequest(method, url, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contentType != "" {
+		request.Header.Set("Content-Type", contentType)
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	return response.StatusCode
+}
+
+func testRuntimeTaskOperations() taskhandler.Config {
+	operation := func(context.Context, asyncjob.Execution) asyncjob.Result { return asyncjob.Succeeded(nil) }
+	return taskhandler.Config{
+		InvestigationStep: operation, RemediationPrepare: operation, ChangeEnsurePR: operation,
+		DeliveryObserve: operation, VerificationAdvance: operation,
+	}
 }
 
 func runtimeTableCount(t *testing.T, db *sql.DB) int {

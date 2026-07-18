@@ -5,6 +5,8 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/05allan1213/CloudOps-Copilot/internal/alertmanageringress"
+	"github.com/05allan1213/CloudOps-Copilot/internal/apiv3"
 	"github.com/05allan1213/CloudOps-Copilot/internal/change"
 	"github.com/05allan1213/CloudOps-Copilot/internal/handler"
 	"github.com/05allan1213/CloudOps-Copilot/internal/infra/database"
@@ -38,6 +40,9 @@ type Container struct {
 	ChangeGitHub    change.GitHubReader
 	ChangeArgoCD    change.ArgoCDReader
 	DeliveryRollout verification.RolloutReader
+	V3Queries       apiv3.QueryPort
+	V3Commands      apiv3.CommandPort
+	V3Alertmanager  *alertmanageringress.Handler
 }
 
 func NewContainer(infra *Infra) *Container {
@@ -46,9 +51,12 @@ func NewContainer(infra *Infra) *Container {
 
 func (c *Container) Dependencies() router.Dependencies {
 	return router.Dependencies{
-		Metrics:     c.Metrics,
-		CacheClient: c.RedisClient,
-		Handler:     c.Handler,
-		AuthService: c.AuthService,
+		Metrics:        c.Metrics,
+		CacheClient:    c.RedisClient,
+		Handler:        c.Handler,
+		AuthService:    c.AuthService,
+		V3Queries:      c.V3Queries,
+		V3Commands:     c.V3Commands,
+		V3Alertmanager: c.V3Alertmanager,
 	}
 }

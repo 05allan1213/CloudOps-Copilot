@@ -1,11 +1,12 @@
 # CloudOps Incident Agent V3 重构设计
 
-> 状态：FROZEN TARGET DESIGN — 当前工作树内 V3 实施的唯一规范入口；文档尚未提交
+> 状态：FROZEN TARGET DESIGN — 当前工作树内 V3 实施的唯一规范入口；Phase 0 基线已提交，当前阶段边界修订随 owning phase 提交
 > 日期：2026-07-17
 > 源码审计基线：main@2f7e426d69a4ed7d8d32ec3ca83c13af0c71586e
-> 文档 revision：WORKTREE_UNCOMMITTED；提交后由外部 Evidence Manifest 记录承载 commit，并用 git rev-parse COMMIT:docs/CloudOps-Incident-Agent-V3-Refactor-Design.md 固化 blob ID，本文不自嵌入 commit SHA
+> 文档 revision：Phase 0 基线由本地提交 `1ea0c3a21ed3ed1f822399f205afac225b1d5464` 承载；后续修订由外部 Evidence Manifest 记录承载 commit，并用 `git rev-parse COMMIT:docs/CloudOps-Incident-Agent-V3-Refactor-Design.md` 固化 blob ID，本文不自嵌入当前提交 SHA
 > 目标读者：实现者、评审者、测试者、演示者和面试准备者
 > 项目定位：以云原生和 Agent 为两条主轴，监控、告警、日志、Trace、运维和 DevOps 为支撑能力，且只有一条 Incident 主链
+> 阶段边界修订（2026-07-18）：经实施授权确认，Phase 2 只冻结并验证统一 Task runtime、registry 和 `investigation.start`；五个 subject-bound 业务 operation 由 Phase 4-6 的 owning Gate 实现。该修订只消除实施顺序循环，不降低最终运行时、Phase 4-7 或 DoD 要求。
 
 ## 目录
 
@@ -752,6 +753,20 @@ verify:      verification.advance
 ~~~
 
 每个 Worker Pod 的默认 max-in-flight 冻结为 investigate=2、deliver=1、observe=2、verify=2，四个独立 semaphore 之间不借用配额。Runner 只有拿到对应 semaphore 后才 claim，不建立无界内存队列；池饱和时通过停止 claim 向 MySQL queue 施加 backpressure。SIGTERM 同时关闭四个 claim loop，再等待各池有界 drain。
+
+Task runtime 与业务 operation 的阶段所有权冻结为：
+
+- Phase 2 实现并验证 `async_tasks` repository、四池 Runner、typed registry 和无外部调用的 `investigation.start`；旧三套 claim 路径从 V3 Worker binary 不可达。
+- Phase 4 实现并注册 `investigation.step`。
+- Phase 5 实现并注册 `remediation.prepare` 与 `change.ensure_pr`。
+- Phase 6 实现并注册 `delivery.observe` 与 `verification.advance`，并在五个 subject-bound operation 全部存在后首次通过 production Worker 正向启动/readiness Gate。
+- 任一 owning operation 缺失时，production Worker 构造必须在 claim 前 fail closed；测试专用 registry 可以注入显式 fixture operation，但空操作、强制 dead 或 legacy wrapper 不得作为业务迁移证据。
+
+Phase 3 只部署和验证观测栈、Demo 与 ingress 数据合同，不以一个缺少 owning operation 的 Worker 作为常驻就绪组件。后续 Phase 可以在 operation 级 task-fenced harness 中先验证自己的 handler；只有 Phase 6 完成全部注册后才启用完整 Worker 部署。该顺序不改变最终四池常驻拓扑，也不授权从 legacy lease 或 outbox 执行业务。
+
+Registry 的实际 dispatch identity 是 `task_type + subject_type + transition`：冻结的 Task type 仍只有五个，`investigation.start` 与 `investigation.step` 是同一 `investigation.advance` Task type 下的两个 transition，不得新增同名 Task type。Phase 2 拥有 start transition；后续 owning operation 共五个：investigation step、remediation prepare、change ensure PR、delivery observe 和 verification advance。
+
+Phase 4/5 的 `TARGETED_HANDLER_GATE` 必须使用真实 MySQL 8 `async_tasks` repository、lease owner/generation、四池 Runner、heartbeat/checkpoint/complete fencing和业务事务完成协议，只插入并 claim 当前 owning Phase 允许的 task/subject/transition。未 owning 类型可以在测试 registry 中使用会产生 `ErrInvalidResult` 的拒绝 sentinel，但 Gate 必须证明它们没有 Task、没有 claim、没有领域效果；该 sentinel 不算 operation 实现证据。阶段报告必须把 `TARGETED_HANDLER_GATE` 与仍为 `NOT RUN` 的 `PRODUCTION_WORKER_READINESS` 分列，禁止用直接调用函数或 fixture operation 冒充 task-fenced 执行。
 
 隔离 Gate 必须证明：持续填满 investigate queue 时 deliver 与 verify 仍能推进；observe 慢调用不能耗尽其他池；每池实际并发不超过配置；shutdown 后没有新 claim，超出租约的任务可被另一 Worker 接管。
 
@@ -2240,6 +2255,15 @@ preflight
 → Phase 3 baseline readiness probe；Phase 5+ baseline-verifier Job
 ~~~
 
+上述为最终 Phase 6+ 完整 profile。阶段 profile 冻结为：
+
+- Phase 3：安装 platform、MySQL、migration Job、CloudOps API internal webhook listener、Argo Application/Demo 与观测资产；`cloudops-worker` 和 oauth2-proxy 禁用，用户 API Service 不暴露。API 仍不挂载 Kubernetes token。
+- Phase 4：继续使用 Phase 3 部署 profile；真实模型只进入离线 Eval 与 `TARGETED_HANDLER_GATE`，不启用 incomplete production Worker。
+- Phase 5：增加 oauth2-proxy/GitHub OAuth、GitHub App、baseline-verifier 和审批/PR相关 API；subject-bound operation 使用 targeted Gate，production Worker仍不宣称 ready。
+- Phase 6：五个 subject-bound operation 全部注册后启用完整 `cloudops-worker`，首次执行 production Worker startup/readiness Gate并开放完整两页 Workbench。
+
+Chart/Make profile 必须显式渲染上述开关并有负向 contract test，禁止依赖“缺 Secret 后 CrashLoop”来表达阶段禁用。
+
 ### 22.3 所有权
 
 Platform bootstrap 管理：
@@ -2325,6 +2349,8 @@ Preflight 必须检查：
 - OAuth、GitHub App、模型和Repo配置。
 - 已存在的同名kind。
 - 旧Compose和端口冲突。
+
+Preflight 同样按阶段 profile 收敛：Phase 3 不要求 LLM、GitHub OAuth 或 GitHub App凭据，只检查平台工具、Chart/镜像网络、Argo/GitOps repo和由人创建 regression PR所需的 `gh` 身份；Phase 4增加模型配置；Phase 5增加OAuth/App/ruleset配置；Phase 6沿用全部配置。任何未在当前 profile启用的后续凭据不得阻塞较早 Gate。
 
 发现冲突直接FAIL，不自动删除或停止用户现有环境。
 
@@ -2668,7 +2694,7 @@ Gate：
 - async_tasks / attempts。
 - Incident状态压缩。
 - 统一唯一lease。
-- Agent/Delivery/Verification loop逐个迁移。
+- 建立五类 Task 的 typed registry、唯一 claim path 和 handler 注入合同；Phase 2 只实现无外调的 Incident-scoped `investigation.start`，subject-bound 业务 operation 按本节修订后的 Phase 4-6 所有权实现。
 - API v3 Command/Query skeleton。
 
 Gate：
@@ -2678,7 +2704,7 @@ Gate：
 - 四个池的max-in-flight、backpressure、饥饿隔离和shutdown Gate通过。
 - API/Worker readiness合同分离，lease/heartbeat/deadline/termination关系配置校验与故障测试通过。
 - Command idempotency与replay generation并发Gate通过。
-- 在 V3 compatibility binary 的代码与测试配置中，旧三套lease claim入口不可达，V3 task是唯一claim path；legacy字段保持只读兼容，直到Phase 7B独立contract migration才删除。该条是代码/测试Gate，不是 live data cutover授权；CUTOVER_V3前禁止旧Worker与V3 Worker并发运行，实际task/state conversion和marker仍在Phase 7A执行。
+- 在 V3 compatibility binary 的代码与测试配置中，旧三套lease claim入口不可达，V3 task是唯一claim path；registry 在任一 owning operation 缺失时必须于 claim 前 fail closed，且不能用 no-op/dead/legacy wrapper 冒充迁移。legacy字段保持只读兼容，直到Phase 7B独立contract migration才删除。该条是代码/测试Gate，不是 live data cutover授权；CUTOVER_V3前禁止旧Worker与V3 Worker并发运行，实际task/state conversion和marker仍在Phase 7A执行。
 - Duplicate Webhook不重复Incident/start Task；并发claim同一start Task不重复AgentRun，multi-alert每个correlation最多一次状态决策。
 - Graceful shutdown可恢复。
 
@@ -2709,6 +2735,7 @@ Gate：
 范围：
 
 - StateDelta。
+- task-fenced `investigation.step` operation 注册到统一 registry；不恢复 AgentRun 自有 lease/claim。
 - 八个工具。
 - Evidence trust。
 - Deterministic sufficiency。
@@ -2735,6 +2762,7 @@ Gate：
 - 三类revision。
 - ChangeCandidate。
 - restore_required_env。
+- task-fenced `remediation.prepare` 与分相 `change.ensure_pr` operation 注册到统一 registry。
 - Complete diff。
 - Policy和Approval。
 - GitHub App Draft PR。
@@ -2754,6 +2782,7 @@ Gate：
 范围：
 
 - Argo exact revision。
+- task-fenced `delivery.observe` 与 `verification.advance` operation 注册到统一 registry；五个 subject-bound operation 完整后启用 production Worker 并验证正向 startup/readiness。
 - Delivery observation。
 - Verification profiles/samples/stability。
 - ResolutionReport。

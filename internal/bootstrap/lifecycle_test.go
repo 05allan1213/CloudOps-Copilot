@@ -11,32 +11,34 @@ import (
 	"time"
 
 	"github.com/05allan1213/CloudOps-Copilot/internal/bootstrap/health"
-	appconfig "github.com/05allan1213/CloudOps-Copilot/internal/config"
 )
 
-type testLoop struct {
-	starts atomic.Int32
-	stops  atomic.Int32
+type testTaskRunner struct {
+	starts       atomic.Int32
+	stops        atomic.Int32
+	shutdowns    atomic.Int32
+	startErr     error
+	readyErr     error
+	shutdownFunc func(context.Context) error
 }
 
-func (l *testLoop) Start(context.Context) { l.starts.Add(1) }
-func (l *testLoop) Stop()                 { l.stops.Add(1) }
-
-type blockingTestLoop struct{ release <-chan struct{} }
-
-func (l *blockingTestLoop) Start(context.Context) {}
-func (l *blockingTestLoop) Stop()                 { <-l.release }
-
-func TestWorkerOwnsLegacyLoopsAndShutsDown(t *testing.T) {
-	loops := []*testLoop{{}, {}, {}}
-	worker := &Worker{
-		cfg:        WorkerConfig{Application: appconfig.Config{ShutdownTimeout: time.Second}},
-		loops:      []legacyLoop{loops[0], loops[1], loops[2]},
-		mysqlReady: func(context.Context) error { return nil },
+func (r *testTaskRunner) Start(context.Context) error {
+	r.starts.Add(1)
+	return r.startErr
+}
+func (r *testTaskRunner) StopClaims() { r.stops.Add(1) }
+func (r *testTaskRunner) Shutdown(ctx context.Context) error {
+	r.shutdowns.Add(1)
+	if r.shutdownFunc != nil {
+		return r.shutdownFunc(ctx)
 	}
-	worker.management = &http.Server{
-		Handler: health.NewHandler(health.Options{Process: "cloudops-worker", Ready: worker.readiness}),
-	}
+	return nil
+}
+func (r *testTaskRunner) Ready(context.Context) error { return r.readyErr }
+
+func TestWorkerOwnsAsyncRunnerAndShutsDown(t *testing.T) {
+	runner := &testTaskRunner{}
+	worker := testWorker(runner, DefaultAsyncWorkerConfig())
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -50,41 +52,74 @@ func TestWorkerOwnsLegacyLoopsAndShutsDown(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	for index, loop := range loops {
-		if loop.starts.Load() != 1 || loop.stops.Load() != 1 {
-			t.Fatalf("loop %d starts=%d stops=%d", index, loop.starts.Load(), loop.stops.Load())
-		}
+	if runner.starts.Load() != 1 || runner.stops.Load() == 0 || runner.shutdowns.Load() != 1 {
+		t.Fatalf("starts=%d stops=%d shutdowns=%d", runner.starts.Load(), runner.stops.Load(), runner.shutdowns.Load())
 	}
 }
 
-func TestWorkerReadinessRequiresLoopsAndMySQLSchema(t *testing.T) {
+func TestWorkerReadinessRequiresClaimLoopsMySQLAndQueue(t *testing.T) {
 	worker := &Worker{}
-	if err := worker.readiness(context.Background()); err == nil || !strings.Contains(err.Error(), "loops") {
-		t.Fatalf("uninitialized loops readiness err=%v", err)
+	if err := worker.readiness(context.Background()); err == nil || !strings.Contains(err.Error(), "claim loops") {
+		t.Fatalf("uninitialized runtime readiness err=%v", err)
 	}
 	worker.ready.Store(true)
 	if err := worker.readiness(context.Background()); err == nil || !strings.Contains(err.Error(), "mysql") {
 		t.Fatalf("missing MySQL readiness err=%v", err)
 	}
-	worker.mysqlReady = func(context.Context) error { return errors.New("unsupported schema version 6, want 7") }
-	if err := worker.readiness(context.Background()); err == nil || !strings.Contains(err.Error(), "schema version 6") {
+	worker.mysqlReady = func(context.Context) error { return errors.New("unsupported schema version 7, want 8") }
+	if err := worker.readiness(context.Background()); err == nil || !strings.Contains(err.Error(), "schema version 7") {
 		t.Fatalf("schema mismatch readiness err=%v", err)
 	}
 	worker.mysqlReady = func(context.Context) error { return nil }
+	worker.runner = &testTaskRunner{}
+	worker.stateMu.Lock()
+	worker.runnerStarted = true
+	worker.stateMu.Unlock()
 	if err := worker.readiness(context.Background()); err != nil {
 		t.Fatalf("ready worker err=%v", err)
 	}
+	worker.runner.(*testTaskRunner).readyErr = errors.New("queue schema is incomplete")
+	if err := worker.readiness(context.Background()); err == nil || !strings.Contains(err.Error(), "queue schema") {
+		t.Fatalf("queue readiness err=%v", err)
+	}
 }
 
-func TestWorkerShutdownBoundsBlockingLegacyLoop(t *testing.T) {
-	release := make(chan struct{})
-	defer close(release)
-	worker := &Worker{
-		cfg:        WorkerConfig{Application: appconfig.Config{ShutdownTimeout: 50 * time.Millisecond}},
-		loops:      []legacyLoop{&blockingTestLoop{release: release}},
-		mysqlReady: func(context.Context) error { return nil },
+func TestWorkerExitsWhenAsyncRunnerCannotStart(t *testing.T) {
+	runner := &testTaskRunner{startErr: errors.New("queue schema is incomplete")}
+	worker := testWorker(runner, DefaultAsyncWorkerConfig())
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
 	}
-	worker.management = &http.Server{Handler: health.NewHandler(health.Options{Process: "cloudops-worker", Ready: worker.readiness})}
+	err = worker.Serve(context.Background(), listener)
+	if err == nil || !strings.Contains(err.Error(), "queue schema is incomplete") {
+		t.Fatalf("serve error=%v", err)
+	}
+	if runner.stops.Load() != 0 || runner.shutdowns.Load() != 0 {
+		t.Fatalf("failed start invoked stop/shutdown: stops=%d shutdowns=%d", runner.stops.Load(), runner.shutdowns.Load())
+	}
+}
+
+func TestNewWorkerFailsClosedBeforeClaimingWhenOperationsAreMissing(t *testing.T) {
+	t.Setenv("AUTH_ENABLED", "false")
+	cfg, err := LoadWorkerConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewWorker(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), "operations are not migrated") {
+		t.Fatalf("missing task operations error=%v", err)
+	}
+}
+
+func TestWorkerShutdownBoundsStuckHandler(t *testing.T) {
+	asyncConfig := DefaultAsyncWorkerConfig()
+	asyncConfig.DrainTimeout = 20 * time.Millisecond
+	asyncConfig.ExitDeadline = 50 * time.Millisecond
+	runner := &testTaskRunner{shutdownFunc: func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}}
+	worker := testWorker(runner, asyncConfig)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -96,12 +131,22 @@ func TestWorkerShutdownBoundsBlockingLegacyLoop(t *testing.T) {
 	cancel()
 	select {
 	case err := <-done:
-		if err == nil || !strings.Contains(err.Error(), "stop legacy worker loops") {
+		if err == nil || !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("shutdown err=%v", err)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("worker shutdown exceeded bounded timeout")
+		t.Fatal("worker shutdown exceeded bounded deadline")
 	}
+}
+
+func testWorker(runner taskRunner, asyncConfig AsyncWorkerConfig) *Worker {
+	worker := &Worker{
+		cfg:        WorkerConfig{Async: asyncConfig},
+		runner:     runner,
+		mysqlReady: func(context.Context) error { return nil },
+	}
+	worker.management = &http.Server{Handler: health.NewHandler(health.Options{Process: "cloudops-worker", Ready: worker.readiness})}
+	return worker
 }
 
 func waitForHTTPStatus(t *testing.T, url string, expected int) {

@@ -108,8 +108,14 @@ check-structure:
 	! rg -n '(^[[:space:]]*"|^import[[:space:]]+")(server-web|server-monitor/pkg)(/|")' --glob '*.go' cmd internal migrations
 	! rg -n 'internal/copilot/(nlu|runbook)/eval' .github/workflows
 	! rg -n 'server-web/migrations|cd[[:space:]]+server-web|\./cmd/migrate|^migrate-(down|status|version):' server-monitor/Makefile server-monitor/scripts
-	! rg -n 'async_tasks|CUTOVER_V3|state conversion|lease conversion|outbox conversion' --glob '*.go' --glob '*.sql' cmd internal migrations
+	! rg -n 'CUTOVER_V3|state conversion|lease conversion|outbox conversion' --glob '*.go' --glob '*.sql' --glob '!**/*_test.go' cmd internal migrations
 	test -z "$$($(GO) list -deps ./cmd/cloudops-worker | rg 'github.com/05allan1213/CloudOps-Copilot/(internal/bootstrap/migrate|internal/migration|migrations)$$')"
+	test -z "$$($(GO) list -deps ./cmd/cloudops-worker | rg 'github.com/05allan1213/CloudOps-Copilot/internal/(startup/legacyworker|service/agentruntime|service/remediation|service/deliveryverification|infra/incidentmysql)$$')"
+	! rg -n '\b(ClaimNext|ClaimDelivery|ClaimRun)\b' cmd/cloudops-worker internal/bootstrap/worker.go internal/taskhandler --glob '!**/*_test.go'
+	@worker_bin="$$(mktemp "$(TMPDIR)/cloudops-worker-symbols.XXXXXX")"; \
+		trap 'rm -f "$$worker_bin"' EXIT; \
+		$(GO) build -trimpath -o "$$worker_bin" ./cmd/cloudops-worker; \
+		test -z "$$($(GO) tool nm "$$worker_bin" | rg 'incidentmysql.*\.(ClaimNext|ClaimDelivery|ClaimRun)$$')"
 	test -z "$$($(GO) list -deps ./cmd/cloudops-migrate | rg 'github.com/05allan1213/CloudOps-Copilot/internal/(bootstrap$$|startup|service/agentruntime|service/remediation|service/deliveryverification|agent/llm|infra/githubwrite|infra/observabilityread)')"
 
 actionlint:

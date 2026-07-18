@@ -14,12 +14,14 @@ import (
 )
 
 type API struct {
-	cfg    APIConfig
-	infra  *di.Infra
-	server *http.Server
+	cfg            APIConfig
+	infra          *di.Infra
+	userServer     *http.Server
+	internalServer *http.Server
 }
 
 func NewAPI(ctx context.Context, cfg APIConfig) (*API, error) {
+	cfg = cfg.normalized()
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -44,16 +46,28 @@ func NewAPI(ctx context.Context, cfg APIConfig) (*API, error) {
 	if err := startup.InitAPIApplications(application, container, k8sReader, k8sClient); err != nil {
 		return fail(err)
 	}
-	handler, err := router.NewRouter(application, container.Dependencies())
+	userHandler, err := router.NewRouter(application, container.Dependencies())
 	if err != nil {
 		return fail(fmt.Errorf("create API router: %w", err))
+	}
+	internalHandler, err := router.NewInternalRouter(application, container.Dependencies())
+	if err != nil {
+		return fail(fmt.Errorf("create INTERNAL API router: %w", err))
 	}
 	return &API{
 		cfg:   cfg,
 		infra: infra,
-		server: &http.Server{
+		userServer: &http.Server{
 			Addr:              application.ListenAddr,
-			Handler:           handler,
+			Handler:           userHandler,
+			ReadHeaderTimeout: application.HTTPReadHeaderTimeout,
+			ReadTimeout:       application.HTTPReadTimeout,
+			WriteTimeout:      application.HTTPWriteTimeout,
+			IdleTimeout:       application.HTTPIdleTimeout,
+		},
+		internalServer: &http.Server{
+			Addr:              cfg.InternalListenAddr,
+			Handler:           internalHandler,
 			ReadHeaderTimeout: application.HTTPReadHeaderTimeout,
 			ReadTimeout:       application.HTTPReadTimeout,
 			WriteTimeout:      application.HTTPWriteTimeout,
@@ -62,14 +76,22 @@ func NewAPI(ctx context.Context, cfg APIConfig) (*API, error) {
 	}, nil
 }
 
-func (a *API) Serve(ctx context.Context, listener net.Listener) error {
-	serverErr := make(chan error, 1)
-	go func() {
-		if err := a.server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			serverErr <- err
+func (a *API) Serve(ctx context.Context, userListener, internalListener net.Listener) error {
+	if userListener == nil || internalListener == nil {
+		return errors.New("both user and INTERNAL API listeners are required")
+	}
+	defer func() { _ = userListener.Close() }()
+	defer func() { _ = internalListener.Close() }()
+	serverErr := make(chan error, 2)
+	serve := func(server *http.Server, listener net.Listener) {
+		err := server.Serve(listener)
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
 		}
-		close(serverErr)
-	}()
+		serverErr <- err
+	}
+	go serve(a.userServer, userListener)
+	go serve(a.internalServer, internalListener)
 
 	var runErr error
 	select {
@@ -81,7 +103,12 @@ func (a *API) Serve(ctx context.Context, listener net.Listener) error {
 	timeout := a.cfg.Application.ShutdownTimeout
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	return errors.Join(runErr, a.server.Shutdown(shutdownCtx), closeInfra(shutdownCtx, a.infra))
+	return errors.Join(
+		runErr,
+		a.userServer.Shutdown(shutdownCtx),
+		a.internalServer.Shutdown(shutdownCtx),
+		closeInfra(shutdownCtx, a.infra),
+	)
 }
 
 func RunAPI(ctx context.Context) error {
@@ -98,11 +125,18 @@ func RunAPI(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	listener, err := net.Listen("tcp", cfg.Application.ListenAddr)
+	userListener, err := net.Listen("tcp", cfg.Application.ListenAddr)
 	if err != nil {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), cfg.Application.ShutdownTimeout)
 		defer cancel()
 		return errors.Join(err, closeInfra(cleanupCtx, application.infra))
 	}
-	return application.Serve(ctx, listener)
+	internalListener, err := net.Listen("tcp", cfg.InternalListenAddr)
+	if err != nil {
+		_ = userListener.Close()
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), cfg.Application.ShutdownTimeout)
+		defer cancel()
+		return errors.Join(err, closeInfra(cleanupCtx, application.infra))
+	}
+	return application.Serve(ctx, userListener, internalListener)
 }

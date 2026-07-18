@@ -22,6 +22,76 @@ func TestWorkerDoesNotCompileMigrationCapability(t *testing.T) {
 	}
 }
 
+func TestWorkerDoesNotCompileLegacyLeaseClaimLoops(t *testing.T) {
+	dependencies := processDependencies(t, "./cmd/cloudops-worker")
+	for _, forbidden := range []string{
+		rootModulePath + "/internal/startup/legacyworker",
+		rootModulePath + "/internal/service/agentruntime",
+		rootModulePath + "/internal/service/remediation",
+		rootModulePath + "/internal/service/deliveryverification",
+		rootModulePath + "/internal/infra/incidentmysql",
+	} {
+		if dependencies[forbidden] {
+			t.Errorf("cloudops-worker compiles legacy lease claim package %s", forbidden)
+		}
+	}
+	for _, required := range []string{
+		rootModulePath + "/internal/asyncjob",
+		rootModulePath + "/internal/taskhandler",
+	} {
+		if !dependencies[required] {
+			t.Errorf("cloudops-worker does not compile required task runtime %s", required)
+		}
+	}
+}
+
+func TestWorkerBinaryDoesNotLinkLegacyClaimSymbols(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(t.TempDir(), "cloudops-worker")
+	build := exec.Command("go", "build", "-o", binary, "./cmd/cloudops-worker")
+	build.Dir = root
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build cloudops-worker: %v\n%s", err, output)
+	}
+	nm := exec.Command("go", "tool", "nm", binary)
+	nm.Dir = root
+	output, err := nm.CombinedOutput()
+	if err != nil {
+		t.Fatalf("inspect cloudops-worker symbols: %v\n%s", err, output)
+	}
+	symbols := string(output)
+	for _, forbidden := range []string{
+		"internal/infra/incidentmysql.(*Store).ClaimNext",
+		"internal/infra/incidentmysql.(*RemediationRepository).ClaimDelivery",
+		"internal/infra/incidentmysql.(*VerificationRepository).ClaimDelivery",
+		"internal/infra/incidentmysql.(*VerificationRepository).ClaimRun",
+		"internal/service/agentruntime.(*Service).ProcessNext",
+		"internal/service/remediation.(*Worker).RunOnce",
+		"internal/service/deliveryverification.(*Service).ObserveNext",
+		"internal/service/deliveryverification.(*Service).VerifyNext",
+		"internal/startup/legacyworker.InitAgentRuntime",
+		"internal/startup/legacyworker.InitRemediation",
+		"internal/startup/legacyworker.InitDeliveryVerification",
+	} {
+		if strings.Contains(symbols, forbidden) {
+			t.Errorf("cloudops-worker links forbidden legacy claim symbol %s", forbidden)
+		}
+	}
+	for _, required := range []string{
+		"internal/asyncjob.(*Repository).Claim",
+		"internal/asyncjob.(*Repository).ClaimReady",
+		"internal/asyncjob.(*Repository).TakeoverExpired",
+		"internal/asyncjob.(*Runner).runPool",
+	} {
+		if !strings.Contains(symbols, required) {
+			t.Errorf("cloudops-worker is missing required async claim symbol %s", required)
+		}
+	}
+}
+
 func TestMigrateDoesNotCompileRuntimeCapability(t *testing.T) {
 	dependencies := processDependencies(t, "./cmd/cloudops-migrate")
 	if dependencies[rootModulePath+"/internal/bootstrap"] {

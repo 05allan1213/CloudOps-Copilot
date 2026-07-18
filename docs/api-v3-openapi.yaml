@@ -1,0 +1,384 @@
+openapi: 3.1.0
+info:
+  title: CloudOps Incident API v3
+  version: 0.2.0-phase2
+  description: >-
+    Phase 2 Command and Query skeleton. Queries are read-only MySQL projection
+    ports and return 501 until explicitly wired; they never fall back to fake
+    in-memory runtime state. Numeric database identifiers are never public.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+paths:
+  /api/v3/session/csrf:
+    get:
+      operationId: issueCsrf
+      description: Returns a short-lived signed token bound to the authenticated provider/login.
+      responses:
+        "200":
+          description: Identity-bound short-lived CSRF token
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CsrfToken" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v3/incidents:
+    get:
+      operationId: listIncidents
+      parameters:
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200":
+          description: Incident page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Incident" }
+                  next_cursor: { type: string }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v3/incidents/{id}:
+    parameters:
+      - { $ref: "#/components/parameters/PublicID" }
+    get:
+      operationId: getIncident
+      responses:
+        "200":
+          description: Incident projection
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [incident]
+                properties:
+                  incident: { $ref: "#/components/schemas/Incident" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v3/incidents/{id}/signals:
+    parameters:
+      - { $ref: "#/components/parameters/PublicID" }
+    get:
+      operationId: listIncidentSignals
+      parameters: [{ $ref: "#/components/parameters/Cursor" }, { $ref: "#/components/parameters/Limit" }]
+      responses:
+        "200": { $ref: "#/components/responses/ResourcePage" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v3/incidents/{id}/timeline:
+    parameters:
+      - { $ref: "#/components/parameters/PublicID" }
+    get:
+      operationId: listIncidentTimeline
+      parameters: [{ $ref: "#/components/parameters/AfterID" }, { $ref: "#/components/parameters/Limit" }]
+      responses:
+        "200": { $ref: "#/components/responses/ResourcePage" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v3/incidents/{id}/evidence:
+    parameters:
+      - { $ref: "#/components/parameters/PublicID" }
+    get:
+      operationId: listIncidentEvidence
+      parameters: [{ $ref: "#/components/parameters/Cursor" }, { $ref: "#/components/parameters/Limit" }]
+      responses:
+        "200": { $ref: "#/components/responses/ResourcePage" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v3/incidents/{id}/investigations:
+    parameters:
+      - { $ref: "#/components/parameters/PublicID" }
+    get:
+      operationId: listInvestigations
+      parameters: [{ $ref: "#/components/parameters/Cursor" }, { $ref: "#/components/parameters/Limit" }]
+      responses:
+        "200": { $ref: "#/components/responses/ResourcePage" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: startInvestigation
+      description: Operator-only command with optimistic version and durable idempotency fencing.
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/CsrfToken" }
+        - { $ref: "#/components/parameters/Origin" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VersionedCommand" }
+      responses:
+        "202": { $ref: "#/components/responses/CommandAccepted" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "413": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v3/incidents/{id}/close:
+    parameters:
+      - { $ref: "#/components/parameters/PublicID" }
+    post:
+      operationId: closeIncident
+      description: Operator-only command with optimistic version and durable idempotency fencing.
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/CsrfToken" }
+        - { $ref: "#/components/parameters/Origin" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/VersionedCommand" }
+      responses:
+        "202": { $ref: "#/components/responses/CommandAccepted" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "413": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v3/incidents/{id}/remediation-plans:
+    parameters:
+      - { $ref: "#/components/parameters/PublicID" }
+    get:
+      operationId: listRemediationPlans
+      parameters: [{ $ref: "#/components/parameters/Cursor" }, { $ref: "#/components/parameters/Limit" }]
+      responses:
+        "200": { $ref: "#/components/responses/ResourcePage" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v3/incidents/{id}/delivery:
+    parameters:
+      - { $ref: "#/components/parameters/PublicID" }
+    get:
+      operationId: getDelivery
+      responses:
+        "200": { $ref: "#/components/responses/Resource" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v3/incidents/{id}/verifications:
+    parameters:
+      - { $ref: "#/components/parameters/PublicID" }
+    get:
+      operationId: listVerifications
+      parameters: [{ $ref: "#/components/parameters/Cursor" }, { $ref: "#/components/parameters/Limit" }]
+      responses:
+        "200": { $ref: "#/components/responses/ResourcePage" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v3/incidents/{id}/resolution-report:
+    parameters:
+      - { $ref: "#/components/parameters/PublicID" }
+    get:
+      operationId: getResolutionReport
+      responses:
+        "200": { $ref: "#/components/responses/Resource" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v3/incidents/{id}/events:
+    parameters:
+      - { $ref: "#/components/parameters/PublicID" }
+      - name: Last-Event-ID
+        in: header
+        schema: { type: string, maxLength: 256 }
+    get:
+      operationId: streamIncidentEvents
+      responses:
+        "200":
+          description: Incident-scoped refresh hints
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v3/remediation-plans/{id}/decisions:
+    parameters:
+      - { $ref: "#/components/parameters/PublicID" }
+    post:
+      operationId: decideRemediation
+      description: Operator-only command binding the expected plan version and canonical hash.
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/CsrfToken" }
+        - { $ref: "#/components/parameters/Origin" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DecisionCommand" }
+      responses:
+        "202": { $ref: "#/components/responses/CommandAccepted" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "413": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    PublicID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid, minLength: 36, maxLength: 36 }
+    Cursor:
+      name: cursor
+      in: query
+      schema: { type: string, maxLength: 256 }
+    AfterID:
+      name: after_id
+      in: query
+      schema: { type: string, maxLength: 256 }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128 }
+    CsrfToken:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 768 }
+    Origin:
+      name: Origin
+      in: header
+      required: true
+      schema: { type: string, format: uri, maxLength: 2048 }
+  schemas:
+    Incident:
+      type: object
+      additionalProperties: false
+      required: [id, cycle, status, severity, version, needs_attention]
+      properties:
+        id: { type: string, format: uuid }
+        cycle: { type: integer, minimum: 1 }
+        status:
+          type: string
+          enum: [detected, investigating, awaiting_approval, delivering, verifying, resolved, closed]
+        severity: { type: string, enum: [unknown, info, warning, critical] }
+        summary: { type: string, maxLength: 2048 }
+        version: { type: integer, minimum: 1 }
+        needs_attention: { type: boolean }
+        blocking_reason_code: { type: string, maxLength: 128 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    Resource:
+      type: object
+      additionalProperties: false
+      required: [id, kind]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, maxLength: 64 }
+        status: { type: string, maxLength: 64 }
+        version: { type: integer, minimum: 1 }
+        cycle: { type: integer, minimum: 1 }
+        summary: { type: string, maxLength: 2048 }
+        hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    VersionedCommand:
+      type: object
+      additionalProperties: false
+      required: [expected_version]
+      properties:
+        expected_version: { type: integer, minimum: 1 }
+        reason: { type: string, maxLength: 2048 }
+    DecisionCommand:
+      type: object
+      additionalProperties: false
+      required: [decision, expected_version, expected_hash]
+      properties:
+        decision: { type: string, enum: [approved, rejected] }
+        expected_version: { type: integer, minimum: 1 }
+        expected_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+        reason: { type: string, maxLength: 2048 }
+    CommandResult:
+      type: object
+      additionalProperties: false
+      required: [id, command, status]
+      properties:
+        id: { type: string, format: uuid }
+        command: { type: string }
+        status: { type: string }
+        version: { type: integer, minimum: 1 }
+        cycle: { type: integer, minimum: 1 }
+    CsrfToken:
+      type: object
+      additionalProperties: false
+      required: [token, expires_at]
+      properties:
+        token: { type: string }
+        expires_at: { type: string, format: date-time }
+    Problem:
+      type: object
+      additionalProperties: false
+      required: [type, title, status, detail, instance, code, request_id, trace_id]
+      properties:
+        type: { type: string, format: uri-reference }
+        title: { type: string }
+        status: { type: integer, minimum: 400, maximum: 599 }
+        detail: { type: string }
+        instance: { type: string }
+        code: { type: string }
+        request_id: { type: string }
+        trace_id: { type: string }
+  responses:
+    ResourcePage:
+      description: Bounded resource page
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [items]
+            properties:
+              items:
+                type: array
+                items: { $ref: "#/components/schemas/Resource" }
+              next_cursor: { type: string }
+    Resource:
+      description: Bounded resource projection
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [resource]
+            properties:
+              resource: { $ref: "#/components/schemas/Resource" }
+    CommandAccepted:
+      description: Command persisted and queued
+      headers:
+        X-Request-ID: { schema: { type: string } }
+        X-Trace-ID: { schema: { type: string } }
+        Idempotent-Replay: { schema: { type: string, enum: ["true"] } }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/CommandResult" }
+    Problem:
+      description: Stable problem response
+      headers:
+        X-Request-ID: { schema: { type: string } }
+        X-Trace-ID: { schema: { type: string } }
+        Idempotent-Replay: { schema: { type: string, enum: ["true"] } }
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }

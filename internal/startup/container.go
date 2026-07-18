@@ -2,16 +2,21 @@ package startup
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"go.uber.org/zap"
 
+	"github.com/05allan1213/CloudOps-Copilot/internal/alertmanageringress"
+	commandapp "github.com/05allan1213/CloudOps-Copilot/internal/command"
 	"github.com/05allan1213/CloudOps-Copilot/internal/config"
 	"github.com/05allan1213/CloudOps-Copilot/internal/di"
 	"github.com/05allan1213/CloudOps-Copilot/internal/handler"
 	"github.com/05allan1213/CloudOps-Copilot/internal/infra/incidentmysql"
+	"github.com/05allan1213/CloudOps-Copilot/internal/infra/incidentv3mysql"
 	"github.com/05allan1213/CloudOps-Copilot/internal/middleware"
 	appalert "github.com/05allan1213/CloudOps-Copilot/internal/service/alert"
 	authpkg "github.com/05allan1213/CloudOps-Copilot/internal/service/auth"
@@ -64,6 +69,19 @@ func initContainer(cfg *config.Config, infra *di.Infra, initializeAuth bool) (*d
 			return nil, fmt.Errorf("incident service init failed: %w", err)
 		}
 	}
+	if infra.MySQL != nil && infra.MySQL.SQLDB() != nil {
+		var err error
+		container.V3Commands, err = commandapp.NewPort(infra.MySQL.SQLDB())
+		if err != nil {
+			return nil, fmt.Errorf("V3 command port init failed: %w", err)
+		}
+		if initializeAuth {
+			container.V3Alertmanager, err = initV3AlertmanagerIngress(cfg, infra.MySQL.SQLDB())
+			if err != nil {
+				return nil, fmt.Errorf("V3 Alertmanager ingress init failed: %w", err)
+			}
+		}
+	}
 
 	alertService := appalert.NewService(infra.RedisClient, appalert.Options{
 		DedupeTTL: cfg.AlertEventDedupeTTL,
@@ -85,4 +103,27 @@ func initContainer(cfg *config.Config, infra *di.Infra, initializeAuth bool) (*d
 	container.Handler = h
 
 	return container, nil
+}
+
+func initV3AlertmanagerIngress(cfg *config.Config, db *sql.DB) (*alertmanageringress.Handler, error) {
+	incidentStore, err := incidentv3mysql.NewStore(db)
+	if err != nil {
+		return nil, fmt.Errorf("incident store: %w", err)
+	}
+	targets, err := alertmanageringress.ParseTargetAllowlist(cfg.SignalTargetAllowlistJSON)
+	if err != nil {
+		return nil, fmt.Errorf("target allowlist: %w", err)
+	}
+	bearerToken, err := alertmanageringress.ReadBearerToken(cfg.AlertmanagerWebhookBearerTokenFile)
+	if err != nil {
+		return nil, fmt.Errorf("bearer: %w", err)
+	}
+	if cfg.AlertmanagerWebhookRequireBearer && len(bearerToken) == 0 {
+		return nil, errors.New("bearer is required but ALERTMANAGER_WEBHOOK_BEARER_TOKEN_FILE is empty")
+	}
+	return alertmanageringress.NewHandler(alertmanageringress.Config{
+		Store: incidentStore, Targets: targets,
+		MaxBodyBytes: cfg.AlertmanagerWebhookMaxBodyBytes, RequestTimeout: cfg.RequestTimeout,
+		BearerToken: bearerToken,
+	})
 }

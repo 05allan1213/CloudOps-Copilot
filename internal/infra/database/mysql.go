@@ -13,7 +13,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const SupportedSchemaVersion int64 = 7
+const SupportedSchemaVersion int64 = 8
 
 type MySQLConfig struct {
 	Host        string
@@ -95,6 +95,15 @@ func (m *MySQL) DB() *gorm.DB {
 		return nil
 	}
 	return m.db
+}
+
+// SQLDB exposes the pooled connection used by bounded queue transactions.
+// Runtime callers must not mutate schema through this handle.
+func (m *MySQL) SQLDB() *sql.DB {
+	if m == nil {
+		return nil
+	}
+	return m.sqlDB
 }
 
 func (m *MySQL) Ping(ctx context.Context) error {

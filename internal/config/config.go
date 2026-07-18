@@ -64,6 +64,16 @@ type Config struct {
 	// 默认值：1048576（1MB）
 	AlertmanagerWebhookMaxBodyBytes int64
 
+	// SignalTargetAllowlistJSON maps Alertmanager labels to server-owned V3
+	// target identities. The default contains only the golden demo workload.
+	SignalTargetAllowlistJSON string
+
+	// AlertmanagerWebhookBearerTokenFile is the independent INTERNAL webhook
+	// credential. RequireBearer remains false only as an explicit Phase 2
+	// compatibility boundary before the Phase 3 deployment profile owns it.
+	AlertmanagerWebhookBearerTokenFile string
+	AlertmanagerWebhookRequireBearer   bool
+
 	// IncidentAggregationWindow V2 告警聚合到同一 Incident 的时间窗口
 	// 默认值：14400s（4 小时）
 	IncidentAggregationWindow time.Duration
@@ -480,7 +490,7 @@ func (c Config) EffectiveChangeConfig() EffectiveChangeConfig {
 
 func Load() Config {
 	prometheusURL := configutil.String("PROMETHEUS_URL", "http://prometheus:9090")
-	return Config{
+	result := Config{
 		AppEnv:                          configutil.String("APP_ENV", "development"),
 		ListenAddr:                      configutil.String("LISTEN_ADDR", ":8080"),
 		PrometheusURL:                   prometheusURL,
@@ -682,6 +692,10 @@ func Load() Config {
 		TraceSampleRate:            configutil.FloatRange("TRACE_SAMPLE_RATE", 1.0, 0, 1),
 		KafkaBrokers:               configutil.List("KAFKA_BROKERS"),
 	}
+	result.SignalTargetAllowlistJSON = configutil.String("SIGNAL_TARGET_ALLOWLIST_JSON", `[{"cluster_id":"kind-cloudops-demo","environment":"local-demo","namespace":"cloudops-demo","workload_kind":"Deployment","workload_name":"cloudops-demo-workload","service_name":"cloudops-demo-workload","match_labels":{"cluster":"kind-cloudops-demo","environment":"local-demo","namespace":"cloudops-demo","deployment":"cloudops-demo-workload"}}]`)
+	result.AlertmanagerWebhookBearerTokenFile = configutil.String("ALERTMANAGER_WEBHOOK_BEARER_TOKEN_FILE", "")
+	result.AlertmanagerWebhookRequireBearer = configutil.Bool("ALERTMANAGER_WEBHOOK_REQUIRE_BEARER", false)
+	return result
 }
 
 func (c *Config) Validate() error {

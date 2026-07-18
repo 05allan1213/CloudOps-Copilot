@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 
+	"github.com/05allan1213/CloudOps-Copilot/internal/apiv3"
 	"github.com/05allan1213/CloudOps-Copilot/internal/config"
 	apphandler "github.com/05allan1213/CloudOps-Copilot/internal/handler"
 	"github.com/05allan1213/CloudOps-Copilot/internal/middleware"
@@ -15,20 +16,30 @@ import (
 func NewRouter(cfg config.Config, deps Dependencies) (*gin.Engine, error) {
 	router := gin.New()
 
-	globalBodyLimit := limitRequestBody(cfg.GlobalMaxBodyBytes)
+	legacyBodyLimit := limitRequestBody(cfg.GlobalMaxBodyBytes)
+	v3BodyLimit := apiv3.LimitRequestBody(cfg.GlobalMaxBodyBytes)
+	legacyRateLimit := middleware.RateLimit(deps.CacheClient, cfg.RateLimit)
+	v3RateLimit := apiv3.RateLimit(deps.CacheClient, apiv3.RateLimitConfig{
+		Enabled: cfg.RateLimit.Enabled, Requests: cfg.RateLimit.Requests,
+		Window: cfg.RateLimit.Window, OperationTimeout: cfg.RateLimit.OperationTimeout,
+	})
 	router.Use(
-		middleware.CORS(cfg.CORSOrigins),
+		selectV3Middleware(apiv3.CORS(cfg.CORSOrigins), middleware.CORS(cfg.CORSOrigins)),
 		otelgin.Middleware("server-web"),
 		middleware.Logging(),
-		middleware.Recovery(),
+		selectV3Middleware(apiv3.Recovery(), middleware.Recovery()),
 		deps.Metrics.Handler(),
-		middleware.RateLimit(deps.CacheClient, cfg.RateLimit),
+		selectV3Middleware(v3RateLimit, legacyRateLimit),
 		func(c *gin.Context) {
-			if strings.HasPrefix(c.Request.URL.Path, "/api/") && c.Request.Method != http.MethodGet {
-				globalBodyLimit(c)
-			} else {
+			if c.Request.Method == http.MethodGet || !strings.HasPrefix(c.Request.URL.Path, "/api/") {
 				c.Next()
+				return
 			}
+			if isV3Path(c.Request.URL.Path) {
+				v3BodyLimit(c)
+				return
+			}
+			legacyBodyLimit(c)
 		},
 	)
 
@@ -38,6 +49,7 @@ func NewRouter(cfg config.Config, deps Dependencies) (*gin.Engine, error) {
 
 	registerCoreRoutes(router, cfg, deps)
 	registerRemediationRoutes(router, cfg, deps)
+	registerV3Routes(router, cfg, deps)
 	if err := registerStaticRoutes(router, cfg.StaticDir); err != nil {
 		return nil, err
 	}

@@ -103,6 +103,16 @@ func NormalizeSeverity(value string) Severity {
 	}
 }
 
+// IsValidSeverity reports whether a value belongs to the bounded domain enum.
+func IsValidSeverity(value Severity) bool {
+	switch value {
+	case SeverityUnknown, SeverityInfo, SeverityWarning, SeverityCritical:
+		return true
+	default:
+		return false
+	}
+}
+
 // ApplySignalTimes updates the aggregate with deterministic signal times and severity.
 func (i *Incident) ApplySignalTimes(occurredAt, receivedAt time.Time, severity Severity) error {
 	if i == nil || occurredAt.IsZero() || receivedAt.IsZero() {

@@ -1,5 +1,4 @@
-// Command cloudops-worker owns only the existing V2 Agent, remediation, and
-// delivery/verification loops during the Phase 1 mechanical process split.
+// Command cloudops-worker owns the bounded MySQL-backed V3 async task runtime.
 package main
 
 import (
