@@ -392,8 +392,8 @@ services:
   server-web:
     image: server-monitor/server-web:local
     build:
-      context: .
-      dockerfile: server-web/Dockerfile
+      context: ..
+      dockerfile: Dockerfile
       target: runtime
     <<: *app-service
     ports:

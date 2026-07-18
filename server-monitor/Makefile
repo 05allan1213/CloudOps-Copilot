@@ -12,9 +12,8 @@ GOLANGCI_LINT ?= golangci-lint
 GOIMPORTS ?= goimports
 
 PROJECT_DIR := $(CURDIR)
+ROOT_DIR := $(abspath $(PROJECT_DIR)/..)
 FRONTEND_DIR := frontend
-SERVER_WEB_DIR := server-web
-PKG_DIR := pkg
 CHART_DIR := charts/server-monitor
 MANIFEST_DIR := k8s
 
@@ -43,9 +42,9 @@ LOCAL_RUNBOOK_DIR ?= $(PROJECT_DIR)/runbooks
 
 .PHONY: help demo-v2 demo-v2-check demo-v2-clean \
 	env-init frontend-install clean \
-	build build-go build-frontend build-server-web \
+	build build-go build-frontend build-api build-worker build-migrate build-server-web \
 	test test-go test-frontend test-server-web test-pkg test-k8s \
-	migrate-up migrate-down migrate-status migrate-version \
+	migrate-up \
 	vet vet-server-web vet-pkg \
 	lint lint-go lint-frontend lint-server-web lint-pkg \
 	fmt fmt-go fmt-goimports check-goimports check ci \
@@ -84,10 +83,18 @@ frontend-install: ## 安装前端依赖
 
 build: build-go build-frontend ## 构建全部可执行产物
 
-build-go: build-server-web ## 构建 Go 服务
+build-go: build-api build-worker build-migrate ## 构建三个 root Go 进程
 
-build-server-web: ## 构建 server-web
-	cd $(SERVER_WEB_DIR) && $(GO) build -o web .
+build-api: ## 构建 cloudops-api
+	$(MAKE) -C $(ROOT_DIR) build-api
+
+build-worker: ## 构建 cloudops-worker
+	$(MAKE) -C $(ROOT_DIR) build-worker
+
+build-migrate: ## 构建 cloudops-migrate
+	$(MAKE) -C $(ROOT_DIR) build-migrate
+
+build-server-web: build-api ## 兼容旧目标名；只构建 cloudops-api
 
 build-frontend: ## 构建前端静态资源
 	cd $(FRONTEND_DIR) && $(NPM) run build
@@ -98,39 +105,28 @@ build-frontend: ## 构建前端静态资源
 
 test: test-go test-frontend ## 运行项目测试与前端类型检查
 
-test-go: test-server-web test-pkg ## 运行所有 Go 测试
+test-go: ## 从 root module 运行所有 Go 测试
+	cd $(ROOT_DIR) && $(GO) test -count=1 ./...
 
-test-server-web: ## 运行 server-web 测试
-	cd $(SERVER_WEB_DIR) && $(GO) test ./...
+test-server-web: test-go ## 兼容旧目标名；运行 root module 测试
 
-test-pkg: ## 运行 pkg 测试
-	cd $(PKG_DIR) && $(GO) test ./...
+test-pkg: test-go ## 兼容旧目标名；pkg 已吸收到 root module
 
-test-k8s: ## 运行 server-web 内的 K8s 相关测试
-	cd $(SERVER_WEB_DIR) && $(GO) test ./internal/infra/k8sread ./internal/infra/k8schange ./internal/handler/ -run TestK8s
+test-k8s: ## 运行 root module 内的 K8s 相关测试
+	cd $(ROOT_DIR) && $(GO) test ./internal/infra/k8sread ./internal/infra/k8schange ./internal/handler/ -run TestK8s
 
-migrate-up: ## 应用 server-web 显式 V2 SQL migrations（使用 MYSQL_* 环境变量）
-	cd $(SERVER_WEB_DIR) && $(GO) run ./cmd/migrate up
-
-migrate-down: ## 回滚一个 server-web V2 SQL migration
-	cd $(SERVER_WEB_DIR) && $(GO) run ./cmd/migrate down
-
-migrate-status: ## 查看 server-web V2 SQL migration 状态
-	cd $(SERVER_WEB_DIR) && $(GO) run ./cmd/migrate status
-
-migrate-version: ## 查看 server-web V2 SQL migration 版本
-	cd $(SERVER_WEB_DIR) && $(GO) run ./cmd/migrate version
+migrate-up: ## 使用 root cloudops-migrate 执行 forward up
+	cd $(ROOT_DIR) && $(GO) run ./cmd/cloudops-migrate up
 
 test-frontend: ## 运行前端类型检查
 	cd $(FRONTEND_DIR) && npx vue-tsc --noEmit
 
-vet: vet-server-web vet-pkg ## 运行所有 Go vet 检查
+vet: ## 从 root module 运行 Go vet
+	cd $(ROOT_DIR) && $(GO) vet ./...
 
-vet-server-web: ## 对 server-web 运行 go vet
-	cd $(SERVER_WEB_DIR) && $(GO) vet ./...
+vet-server-web: vet ## 兼容旧目标名
 
-vet-pkg: ## 对 pkg 运行 go vet
-	cd $(PKG_DIR) && $(GO) vet ./...
+vet-pkg: vet ## 兼容旧目标名
 
 # ============================================
 # 格式与校验
@@ -139,30 +135,24 @@ vet-pkg: ## 对 pkg 运行 go vet
 fmt: fmt-go ## 格式化 Go 代码
 
 fmt-go: ## 使用 go fmt 格式化 Go 模块
-	cd $(SERVER_WEB_DIR) && $(GO) fmt ./...
-	cd $(PKG_DIR) && $(GO) fmt ./...
+	cd $(ROOT_DIR) && $(GO) fmt ./cmd/... ./internal/... ./migrations/...
 
 fmt-goimports: ## 使用 goimports 格式化 Go 代码
 	$(call require_cmd,$(GOIMPORTS))
-	cd $(SERVER_WEB_DIR) && $(GOIMPORTS) -w .
-	cd $(PKG_DIR) && $(GOIMPORTS) -w .
+	cd $(ROOT_DIR) && $(GOIMPORTS) -w cmd internal migrations
 
 check-goimports: ## 检查 Go imports 是否规范
 	$(call require_cmd,$(GOIMPORTS))
-	cd $(SERVER_WEB_DIR) && test -z "$$($(GOIMPORTS) -l .)"
-	cd $(PKG_DIR) && test -z "$$($(GOIMPORTS) -l .)"
+	$(MAKE) -C $(ROOT_DIR) check-goimports
 
 lint: lint-go lint-frontend ## 运行 Go 与前端静态检查
 
-lint-go: lint-server-web lint-pkg ## 运行所有 Go 模块 lint
+lint-go: ## 从 root module 运行 Go lint
+	$(MAKE) -C $(ROOT_DIR) lint-go
 
-lint-server-web: ## 对 server-web 运行 golangci-lint
-	$(call require_cmd,$(GOLANGCI_LINT))
-	cd $(SERVER_WEB_DIR) && $(GOLANGCI_LINT) run ./...
+lint-server-web: lint-go ## 兼容旧目标名
 
-lint-pkg: ## 对 pkg 运行 golangci-lint
-	$(call require_cmd,$(GOLANGCI_LINT))
-	cd $(PKG_DIR) && $(GOLANGCI_LINT) run ./...
+lint-pkg: lint-go ## 兼容旧目标名
 
 lint-frontend: ## 运行前端 ESLint
 	cd $(FRONTEND_DIR) && $(NPM) run lint
@@ -191,7 +181,7 @@ dev-deps: ## 启动本地开发依赖（Redis/MySQL/Kafka/Prometheus/AlertManage
 	@echo "依赖服务已启动：Prometheus=http://localhost:9090 Grafana=http://localhost:3000"
 
 dev-web: ## 本地运行 server-web（需先启动 make dev-deps）
-	cd $(SERVER_WEB_DIR) && \
+	cd $(ROOT_DIR) && \
 	PROMETHEUS_URL=$(LOCAL_PROMETHEUS_URL) \
 	REDIS_ADDR=$(LOCAL_REDIS_ADDR) \
 	REDIS_PASSWORD=$(LOCAL_REDIS_PASSWORD) \
@@ -206,7 +196,7 @@ dev-web: ## 本地运行 server-web（需先启动 make dev-deps）
 	TRACE_OTLP_ENDPOINT=$(LOCAL_TRACE_OTLP_ENDPOINT) \
 	RUNBOOK_DIR=$(LOCAL_RUNBOOK_DIR) \
 	GIN_MODE=debug \
-	$(GO) run .
+	$(GO) run ./cmd/cloudops-api
 
 dev-frontend: ## 启动前端开发服务器
 	cd $(FRONTEND_DIR) && $(NPM) run dev
@@ -233,7 +223,7 @@ compose-migrate: ## 启动 Compose MySQL 并执行显式 V2 Goose migrations
 	mysql_database="$$($(DOCKER_COMPOSE) exec -T mysql printenv MYSQL_DATABASE | tr -d '\r')"; \
 	mysql_user="$$($(DOCKER_COMPOSE) exec -T mysql printenv MYSQL_USER | tr -d '\r')"; \
 	mysql_password="$$($(DOCKER_COMPOSE) exec -T mysql printenv MYSQL_PASSWORD | tr -d '\r')"; \
-	cd $(SERVER_WEB_DIR) && MYSQL_HOST=127.0.0.1 MYSQL_PORT="$$mysql_port" MYSQL_DATABASE="$$mysql_database" MYSQL_USER="$$mysql_user" MYSQL_PASSWORD="$$mysql_password" $(GO) run ./cmd/migrate up
+	cd $(ROOT_DIR) && MYSQL_HOST=127.0.0.1 MYSQL_PORT="$$mysql_port" MYSQL_DATABASE="$$mysql_database" MYSQL_USER="$$mysql_user" MYSQL_PASSWORD="$$mysql_password" $(GO) run ./cmd/cloudops-migrate up
 
 compose-up: compose-migrate ## 执行 V2 migrations 后启动 Compose 完整服务
 	$(DOCKER_COMPOSE) up -d $(COMPOSE_SERVICES)
@@ -285,7 +275,7 @@ k8s-teardown: ## 删除 kind 集群
 # ============================================
 
 clean: ## 清理本地产物
-	rm -f $(SERVER_WEB_DIR)/web
+	rm -rf /tmp/cloudops-copilot-build
 	rm -rf $(FRONTEND_DIR)/dist
 
 help: ## 显示帮助信息

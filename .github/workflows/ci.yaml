@@ -4,6 +4,14 @@ on:
   pull_request:
     paths:
       - .github/workflows/ci.yaml
+      - .dockerignore
+      - Dockerfile
+      - Makefile
+      - go.mod
+      - go.sum
+      - cmd/**
+      - internal/**
+      - migrations/**
       - server-monitor/**
   push:
     branches:
@@ -12,6 +20,14 @@ on:
       - 'v*'
     paths:
       - .github/workflows/ci.yaml
+      - .dockerignore
+      - Dockerfile
+      - Makefile
+      - go.mod
+      - go.sum
+      - cmd/**
+      - internal/**
+      - migrations/**
       - server-monitor/**
   workflow_dispatch:
 
@@ -41,20 +57,11 @@ env:
 
 jobs:
   go-checks:
-    name: ${{ matrix.module }} checks
+    name: root Go checks
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        module:
-          - server-web
-          - pkg
-    defaults:
-      run:
-        working-directory: server-monitor/${{ matrix.module }}
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -63,7 +70,7 @@ jobs:
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: server-monitor/${{ matrix.module }}/go.sum
+          cache-dependency-path: go.sum
 
       - name: Install goimports
         run: go install "golang.org/x/tools/cmd/goimports@${GOIMPORTS_VERSION}"
@@ -96,24 +103,6 @@ jobs:
 
       - name: Scan reachable Go vulnerabilities
         run: go run "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}" ./...
-
-      - name: NLU evaluation
-        if: matrix.module == 'server-web'
-        run: |
-          set -o pipefail
-          go test ./internal/copilot/nlu/eval/ -run TestEvaluate -v -count=1 2>&1 | tee nlu-eval-report.txt
-
-      - name: RAG evaluation
-        if: matrix.module == 'server-web'
-        run: |
-          set -o pipefail
-          go test ./internal/copilot/runbook/eval/ -run TestRAGEval -v -count=1 2>&1 | tee rag-eval-report.txt
-
-      - name: NLU multi-intent evaluation
-        if: matrix.module == 'server-web'
-        run: |
-          set -o pipefail
-          go test ./internal/copilot/nlu/eval/ -run TestEvaluateMulti -v -count=1 2>&1 | tee nlu-multi-eval-report.txt
 
   frontend:
     name: frontend build
@@ -333,9 +322,18 @@ jobs:
       fail-fast: false
       matrix:
         image:
-          - name: server-web
-            file: ./server-monitor/server-web/Dockerfile
-            tag: server-web:ci
+          - name: cloudops-api
+            target: cloudops-api
+            file: ./Dockerfile
+            tag: cloudops-api:ci
+          - name: cloudops-worker
+            target: cloudops-worker
+            file: ./Dockerfile
+            tag: cloudops-worker:ci
+          - name: cloudops-migrate
+            target: cloudops-migrate
+            file: ./Dockerfile
+            tag: cloudops-migrate:ci
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -346,9 +344,9 @@ jobs:
       - name: Build image
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
-          context: ./server-monitor
+          context: .
           file: ${{ matrix.image.file }}
-          target: runtime
+          target: ${{ matrix.image.target }}
           push: false
           load: true
           provenance: false
@@ -413,7 +411,7 @@ jobs:
       matrix:
         image:
           - name: server-web
-            file: ./server-monitor/server-web/Dockerfile
+            file: ./Dockerfile
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -458,7 +456,7 @@ jobs:
         id: build-push
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
-          context: ./server-monitor
+          context: .
           file: ${{ matrix.image.file }}
           target: runtime
           push: true

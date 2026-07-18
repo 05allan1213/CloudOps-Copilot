@@ -69,7 +69,7 @@ jobs:
       matrix:
         image:
           - name: server-web
-            file: ./server-monitor/server-web/Dockerfile
+            file: ./Dockerfile
     steps:
       - name: Checkout exact dispatch commit
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -115,7 +115,7 @@ jobs:
         id: build-push
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
-          context: ./server-monitor
+          context: .
           file: ${{ matrix.image.file }}
           target: runtime
           push: true

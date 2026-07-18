@@ -1,10 +1,12 @@
 # V3 Migration Ledger
 
-> Status: Phase 0 migration contract
+> Status: Phase 1 `EXPAND-LEGACY-SCHEMA` locally verified; later migration units `NOT RUN`
 >
 > Normative source: [`CloudOps-Incident-Agent-V3-Refactor-Design.md`](CloudOps-Incident-Agent-V3-Refactor-Design.md)
 >
-> Audited source: `main@2f7e426d69a4ed7d8d32ec3ca83c13af0c71586e`
+> Phase 0 audited source: `main@2f7e426d69a4ed7d8d32ec3ca83c13af0c71586e`
+>
+> Phase 1 implementation base: `main@1ea0c3a21ed3ed1f822399f205afac225b1d5464` plus the staged, uncommitted worktree
 
 ## 1. Invariants
 
@@ -21,18 +23,19 @@
 
 ## 2. Immutable Goose History
 
-The Git blob is the repository content address. SHA-256 is recorded for external tooling. `Current data` is `NOT RUN` because Phase 0 did not connect to either local MySQL container.
+The Git blob is the repository content address. SHA-256 is recorded for external tooling. The Phase 1 mechanical move changed the path of `00001` through `00006` but not one byte of their content; every historical blob and SHA-256 remains identical to the Phase 0 ledger.
 
 | Version | File | Lines | Git blob | SHA-256 | Current schema effect | V3 treatment |
 |---|---|---:|---|---|---|---|
-| 00001 | `server-monitor/server-web/migrations/00001_incident_foundation.sql` | 200 | `042bda4fd6a0ddce32e7ab61ab6f0a1c1c06cb4f` | `8f7dd2e188fba00f6a7cce45f7c2f2319a4f80c7df7882c1a3e4c6471bce080d` | Creates Incident, AgentRun/Step, Signal, Event, Evidence, outbox and correlation-lock tables; adds `incidents.current_agent_run_id` | KEEP history; expand cycle/identity/generated keys; eventually remove circular current-run FK and archive outbox |
-| 00002 | `server-monitor/server-web/migrations/00002_agent_runtime.sql` | 116 | `98942847d3c28c02d32d48c6cbeac69a7358f165` | `f515765f604391c933bc59b6fd3b7c7d3cfd17f3c429a403bcc014b82d370411` | Adds Agent budgets, whole checkpoint, idempotency, active generated key and AgentRun lease/heartbeat | KEEP history; versioned checkpoint conversion; task owns future lease; contract removes legacy lease |
-| 00003 | `server-monitor/server-web/migrations/00003_change_intelligence.sql` | 77 | `7fc0aa8f3a5e3f6b49a369b52a7c0d2bf52ee4ae` | `584fda2c41ca7657228aba5f0b4b0e2d62bd2a4cfd54ec386198c22e163fd0f6` | Creates mutable `changes`; adds one-to-one-ish `evidence_items.change_id` | KEEP history; backfill immutable Candidate and append-only Assessment; contract removes legacy coupling/table |
-| 00004 | `server-monitor/server-web/migrations/00004_gitops_remediation.sql` | 98 | `b47e1a3bb8aeffb523ab45c3e2f75fc67a3eace7` | `fc4773b65f89626bcfb678526d3c631bef89188007df00cda7a96813d7f95c84` | Creates Plans, Approvals and ChangeRequests; operations are `rollback_image`/`set_replicas`; ChangeRequest owns a lease | KEEP history; add immutable V3 hashes/cycle/phase; archive old Approval; contract removes lease and forbidden operation path |
-| 00005 | `server-monitor/server-web/migrations/00005_delivery_verification.sql` | 178 | `7f142552d88e0f4760491cd86a1bf6430aa1cb19` | `8168e75a60f18ba5b8818c82b6dda71131adc8b9cca1f52eb93abce111f4a61d` | Expands many delivery statuses; creates leased VerificationRun and VerificationCheck | KEEP history; add cycle/trigger/profile/sample/inconclusive; compatible conversion only; contract removes lease |
-| 00006 | `server-monitor/server-web/migrations/00006_observability_verification_postmortem.sql` | 69 | `f3857c1a46c16cedc6ae8be81be7bd462ad2d613` | `8e1a0b1f0a1125ffb54f8049be17617c1130cebbf446ecc371a281b4a7301fdb` | Adds observability check types/status and creates `postmortems` | KEEP history; archive as legacy Postmortem; never convert narrative into Evidence/Diagnosis/ResolutionReport |
+| 00001 | `migrations/00001_incident_foundation.sql` | 200 | `042bda4fd6a0ddce32e7ab61ab6f0a1c1c06cb4f` | `8f7dd2e188fba00f6a7cce45f7c2f2319a4f80c7df7882c1a3e4c6471bce080d` | Creates Incident, AgentRun/Step, Signal, Event, Evidence, outbox and correlation-lock tables; adds `incidents.current_agent_run_id` | KEEP history; expand cycle/identity/generated keys; eventually remove circular current-run FK and archive outbox |
+| 00002 | `migrations/00002_agent_runtime.sql` | 116 | `98942847d3c28c02d32d48c6cbeac69a7358f165` | `f515765f604391c933bc59b6fd3b7c7d3cfd17f3c429a403bcc014b82d370411` | Adds Agent budgets, whole checkpoint, idempotency, active generated key and AgentRun lease/heartbeat | KEEP history; versioned checkpoint conversion; task owns future lease; contract removes legacy lease |
+| 00003 | `migrations/00003_change_intelligence.sql` | 77 | `7fc0aa8f3a5e3f6b49a369b52a7c0d2bf52ee4ae` | `584fda2c41ca7657228aba5f0b4b0e2d62bd2a4cfd54ec386198c22e163fd0f6` | Creates mutable `changes`; adds one-to-one-ish `evidence_items.change_id` | KEEP history; backfill immutable Candidate and append-only Assessment; contract removes legacy coupling/table |
+| 00004 | `migrations/00004_gitops_remediation.sql` | 98 | `b47e1a3bb8aeffb523ab45c3e2f75fc67a3eace7` | `fc4773b65f89626bcfb678526d3c631bef89188007df00cda7a96813d7f95c84` | Creates Plans, Approvals and ChangeRequests; operations are `rollback_image`/`set_replicas`; ChangeRequest owns a lease | KEEP history; add immutable V3 hashes/cycle/phase; archive old Approval; contract removes lease and forbidden operation path |
+| 00005 | `migrations/00005_delivery_verification.sql` | 178 | `7f142552d88e0f4760491cd86a1bf6430aa1cb19` | `8168e75a60f18ba5b8818c82b6dda71131adc8b9cca1f52eb93abce111f4a61d` | Expands many delivery statuses; creates leased VerificationRun and VerificationCheck | KEEP history; add cycle/trigger/profile/sample/inconclusive; compatible conversion only; contract removes lease |
+| 00006 | `migrations/00006_observability_verification_postmortem.sql` | 69 | `f3857c1a46c16cedc6ae8be81be7bd462ad2d613` | `8e1a0b1f0a1125ffb54f8049be17617c1130cebbf446ecc371a281b4a7301fdb` | Adds observability check types/status and creates `postmortems` | KEEP history; archive as legacy Postmortem; never convert narrative into Evidence/Diagnosis/ResolutionReport |
+| 00007 | `migrations/00007_expand_legacy_schema.sql` | 190 | `ba66c7c8f69465cdaa6232f9d68b0bc41003550e` | `e254655698086f7ff3679fe615d0d7b6c2bd58158eb44501086ca37f44c54f45` | Creates the ten compatibility tables previously owned by runtime GORM, using idempotent `CREATE TABLE IF NOT EXISTS`; contains no DML, ALTER, conversion or Down section | Phase 1 `EXPAND-LEGACY-SCHEMA`; retain all legacy rows and semantics until their later owning archive/contract Gates |
 
-All six migrations use Goose `NO TRANSACTION`; DDL is not atomically rolled back. Every future release must verify pre/post schema and ledger state explicitly.
+All seven migrations use Goose `NO TRANSACTION`; DDL is not atomically rolled back. `00007` is restartable because every statement is an additive `CREATE TABLE IF NOT EXISTS`, but an existing drifted table would still require the canonical schema check below. Every future release must verify pre/post schema and ledger state explicitly.
 
 ## 3. Current Table Ledger
 
@@ -58,7 +61,7 @@ All six migrations use Goose `NO TRANSACTION`; DDL is not atomically rolled back
 
 ### 3.2 Runtime AutoMigrate tables
 
-Current row counts and schema parity are `NOT RUN` until an authorized real-MySQL audit.
+Phase 1 disposable-MySQL schema parity and sentinel preservation are `PASS`. Row counts and hashes from any existing deployed database remain `NOT RUN`; the local sentinel fixture is not a production inventory or pre-contract archive.
 
 | Current model/table | Decision | Required pre-contract evidence |
 |---|---|---|
@@ -72,13 +75,28 @@ Current row counts and schema parity are `NOT RUN` until an authorized real-MySQ
 
 Before runtime AutoMigrate is removed, the first new forward migration(s), starting after `00006`, must explicitly own any legacy schema still required by the compatibility binary and validate an existing AutoMigrated schema. A fresh database and an existing V2 database must both reach the same verified schema.
 
-## 4. Planned Forward Units
+Phase 1 satisfied that expand-only boundary on disposable MySQL `8.0.46-0ubuntu0.24.04.3`:
 
-Exact filenames are allocated by the owning phase immediately before implementation. No Phase 0 document fabricates checksums for files that do not yet exist. The next numeric Goose version is `00007`.
+| Phase 1 migration control | Status | Evidence |
+|---|---|---|
+| Fresh database `00001` through `00007` | PASS | Forward Up reached schema version 7 and created the Goose-owned and ten compatibility tables |
+| Existing V2 database upgrade | PASS | `00001` through `00006` plus the actual legacy GORM model fixture upgraded to 7 without conversion |
+| Fresh/existing target schema parity | PASS | Canonical `information_schema` snapshot SHA-256 `ac1a0e1cd0882d55eea7d4d13356581f0c309d7d9001e0d994d23efd7d1d3e3c`; columns, defaults, indexes, constraints, engines and collations are included |
+| Existing data preservation | PASS | All ten sentinel tables had identical pre/post canonical data SHA-256 `01320e2b8b0ea4375fe5abc55b48bdc8cfbb17c3f878c9d47a021de4db10afcf` |
+| Repeated Up | PASS | Applied zero new migrations; schema and data hashes remained unchanged |
+| Concurrent Up | PASS | Two independent runners completed; `goose_db_version` contains exactly one applied row for version 7 |
+| Advisory lock blocking/release | PASS | A pre-held legacy-compatible lock kept the database at version 6; release allowed version 7; an intentionally invalid test-only migration also proved failure releases the lock for another connection |
+| Forward-only command | PASS | DDL identity reached version 7; repeat `up` exited 0; `cloudops-migrate down` exited non-zero and no production Down/Redo/Reset call exists |
+| DML-only runtime startup | PASS | `phase1_dml@127.0.0.1` had only USAGE plus SELECT/INSERT/UPDATE/DELETE on the disposable runtime database; API and Worker returned ready, shut down, and left the table count unchanged |
+| Production AutoMigrate call scan | PASS | No non-test Go source contains an `AutoMigrate` call; the remaining calls are test-only existing-V2 schema fixtures |
+
+## 4. Forward Units
+
+Phase 1 allocated and verified `00007_expand_legacy_schema.sql`. Exact filenames for later units remain unallocated until their owning phase; this ledger does not fabricate their checksums or status.
 
 | Ledger unit | Earliest owner | Purpose | Compatibility boundary | Required evidence |
 |---|---|---|---|---|
-| `EXPAND-LEGACY-SCHEMA` | Phase 1 | Transfer required legacy tables from AutoMigrate to explicit Goose ownership; add binary/schema compatibility check | V2 behavior remains readable; no state conversion | fresh/existing MySQL schema parity; runtime no AutoMigrate |
+| `EXPAND-LEGACY-SCHEMA` | Phase 1 | Implemented by `migrations/00007_expand_legacy_schema.sql`; transfers all ten compatibility tables from AutoMigrate to explicit Goose ownership | V2 behavior remains readable; no state/data/lease/outbox conversion | PASS locally: fresh/existing parity, data preservation, repeat/concurrent/lock and DML-only runtime evidence in section 3.2 |
 | `EXPAND-INCIDENT-TASK` | Phase 2 | Add cycle, active generated keys, `async_tasks`, attempts, command idempotency, signal rejection and migration ledger | Old binary can read old columns only; new enums live in new fields/tables | generated-key negative tests, EXPLAIN, queue concurrency |
 | `EXPAND-INVESTIGATION` | Phase 4 | Add V3 checkpoint/StateDelta/Evidence producer/trust fields and assessment tables | V2 facts remain archive-readable | converter fixtures and cross-cycle rejection |
 | `EXPAND-OBSERVABILITY` | Phase 3-4 | Add typed source/template/provenance fields needed by real Metric/Log/Trace/K8s Evidence | No external raw data copy | adapter contract and bounded payload proof |
@@ -198,15 +216,22 @@ Any failed count/hash, unknown event type, incompatible generated expression, ex
 - Release B must prove no old Deployment/Job image, no old-binary startup, zero active legacy lease, zero legacy caller, complete export hashes and all ledger rows `passed`.
 - Goose Down remains a local recovery tool in immutable historical files; it is not a Kubernetes upgrade/rollback mechanism.
 
-## 10. Phase 0 Status
+## 10. Migration Status
 
 | Control | Status |
 |---|---|
 | 00001-00006 identity and purpose recorded | PASS |
+| 00001-00006 root-path blobs and SHA-256 remain byte-identical | PASS |
+| 00007 path, purpose, blob and SHA-256 recorded | PASS |
 | Legacy state/lease/outbox ownership recorded | PASS |
 | AutoMigrate table risk recorded | PASS |
 | Expand/backfill/quiesce/cutover/contract path executable on paper | PASS |
-| Existing database row counts/hashes/schema parity | NOT RUN |
-| Any migration, DDL, DML, backfill or cutover executed | NOT RUN |
+| Phase 1 disposable fresh/existing schema parity | PASS |
+| Phase 1 disposable existing-data preservation | PASS |
+| Repeat/concurrent/advisory-lock/failure-release behavior | PASS |
+| DML-only API/Worker startup without schema mutation | PASS |
+| Runtime production AutoMigrate call absence | PASS |
+| Existing deployed database row counts/hashes | NOT RUN |
+| Backfill, state/lease/outbox conversion, CUTOVER-V3 or CONTRACT-V3 | NOT RUN |
 
-This ledger is a required implementation input. It is not evidence that any database has been migrated.
+This ledger records the Phase 1 local expand evidence only. It does not claim that any existing deployed database was migrated, that Phase 1's complete non-migration Gate has passed, or that any Phase 2/7A/7B unit has started.

@@ -1,10 +1,12 @@
 # V3 Risk Register
 
-> Status: Phase 0 risk baseline
+> Status: Phase 1 local Gate evidence recorded; later-phase and external risks remain explicitly open
 >
 > Normative source: [`CloudOps-Incident-Agent-V3-Refactor-Design.md`](CloudOps-Incident-Agent-V3-Refactor-Design.md)
 >
-> Audited source: `main@2f7e426d69a4ed7d8d32ec3ca83c13af0c71586e`
+> Phase 0 audited source: `main@2f7e426d69a4ed7d8d32ec3ca83c13af0c71586e`
+>
+> Phase 1 implementation base: `main@1ea0c3a21ed3ed1f822399f205afac225b1d5464` plus the staged, uncommitted worktree
 
 ## 1. Status and Severity
 
@@ -30,19 +32,19 @@ Phase 0 `PASS` means the risk is evidenced, owned and gated. It does not mean an
 
 | ID | Severity | Risk and trigger | Current evidence | Treatment / owner | Status |
 |---|---|---|---|---|---|
-| ARCH-001 | HIGH | Empty root directories are mistaken for a completed root module, causing a parallel implementation | No root `go.mod`; Git tracks only the two nested modules | Phase 1 mechanically creates one tracked root module and proves no parallel path | OPEN; Phase 1 BLOCKER |
-| ARCH-002 | CRITICAL | API process continues to run Agent/Delivery/Verification and carries write/read credentials | `server-monitor/server-web/app.go:44-112,144-153` | Phase 1 separates API/Worker/Migrate; binary/package negative checks | OPEN; Phase 1 BLOCKER |
+| ARCH-001 | HIGH | Empty root directories are mistaken for a completed root module, causing a parallel implementation | Root `go.mod`/`go.sum`, feature-first `internal/` and root migrations build; no nested module, replace or old import remains | Phase 1 mechanical move, root dependency checks and negative scans | CONTROLLED locally in Phase 1; publication/CI remains uncommitted |
+| ARCH-002 | CRITICAL | API process continues to run Agent/Delivery/Verification and carries write/read credentials | API `go list -deps` and `go tool nm` contain zero legacy worker/LLM/GitHub-write/delivery-worker entries; API uses repository-only facades. Fast Demo compatibility still initializes K8s when explicitly enabled, and shared legacy config remains | Phase 1 process package split and binary negative checks; later credential/K8s-token hardening is separate | Worker-loop boundary CONTROLLED locally; K8s-token/config residual OPEN for later phase |
 | ARCH-003 | CRITICAL | Compose, raw Kubernetes and Helm drift, allowing a shortcut deployment to be mistaken for V3 | 14-service Compose, 18 raw files and a 54-resource Chart | Delete parallel sources only after kind+Helm replacement and Golden proof | OPEN; Phase 7B BLOCKER |
 | ARCH-004 | HIGH | Runtime/task cutover and product/contract cutover are conflated, enabling early irreversible deletion | Original design mixed Phase 2 unique claim path with Phase 7 cutover | Design and ledger distinguish Phase 2 code Gate, Phase 7A cutover/Golden, Phase 7B contract release | CONTROLLED in spec; implementation NOT RUN |
-| ARCH-005 | HIGH | Phase 1 mechanical move changes current business/API behavior and hides regressions | Large V2 package surface and two modules | Exact move map, current baseline tests, no state/API/schema behavior change in Phase 1 | OPEN; Phase 1 BLOCKER |
+| ARCH-005 | HIGH | Phase 1 mechanical move changes current business/API behavior and hides regressions | Root ordinary/race tests, route/handler tests, repository integration and API facade tests all pass; no `/api/v3` or state conversion was added | Exact move map, compatibility facades, immutable migrations and regression Gate | CONTROLLED locally in Phase 1; deployed traffic parity NOT RUN |
 | ARCH-006 | MEDIUM | Frontend root-path ownership is unclear and creates a second UI | Current UI is under `server-monitor/frontend`; target is root `frontend` | Keep current path through Phase 1; move once during Phase 6 Workbench adaptation | CONTROLLED in architecture |
 
 ## 3. Data Compatibility and Async Runtime
 
 | ID | Severity | Risk and trigger | Current evidence | Treatment / owner | Status |
 |---|---|---|---|---|---|
-| DATA-001 | CRITICAL | Editing 00001-00006 invalidates deployed schema history | Six tracked Goose files, hashes in migration ledger | Immutable blobs; CI checksum policy; forward migrations only | CONTROLLED in Phase 0; CI control OPEN |
-| DATA-002 | CRITICAL | Removing runtime AutoMigrate makes existing/fresh databases unreadable | `internal/infra/database/migrate.go:52`; ten legacy models | First forward unit explicitly owns/validates required legacy schema before removing AutoMigrate | OPEN; Phase 1 BLOCKER |
+| DATA-001 | CRITICAL | Editing 00001-00006 invalidates deployed schema history | Root `migrations/00001-00006` retain all six Phase 0 blobs and SHA-256 values byte-for-byte; immutable hash test is in root test set | Immutable blobs; CI checksum test; forward migrations only | CONTROLLED locally in Phase 1; external history audit remains separate |
+| DATA-002 | CRITICAL | Removing runtime AutoMigrate makes existing/fresh databases unreadable | `migrations/00007_expand_legacy_schema.sql`; MySQL 8.0.46 fresh/existing schema hash parity, unchanged ten-table data hash, repeat/concurrent/lock and DML-only runtime PASS | Explicit Goose ownership for all ten compatibility tables; production AutoMigrate call scan is empty; retain legacy data until later archive/contract Gates | CONTROLLED locally in Phase 1; existing deployed database inventory NOT RUN |
 | DATA-003 | CRITICAL | 11-to-7 state compression loses in-flight truth or falsely resolves an Incident | V2 has top-level FAILED and direct resolved-Signal path | Maintenance lock, deterministic mapping, child-priority rules, append migration Event | OPEN; Phase 7A BLOCKER |
 | DATA-004 | CRITICAL | Three legacy leases and new async tasks both claim the same logical work | Leases in AgentRun, ChangeRequest and VerificationRun | V3 code Gate disables old claim paths; cutover drains old leases; anti-join proves one Task | OPEN; Phase 2 and 7A BLOCKER |
 | DATA-005 | CRITICAL | Treating domain outbox rows as jobs creates duplicate work/external effects | Outbox only has Add/PendingCount and no claim/relay | Archive all outbox rows; tasks derive only from versioned child converters | CONTROLLED in spec; conversion NOT RUN |
@@ -102,8 +104,8 @@ Phase 0 `PASS` means the risk is evidenced, owned and gated. It does not mean an
 
 | ID | Severity | Risk and trigger | Current evidence | Treatment / owner | Status |
 |---|---|---|---|---|---|
-| CI-001 | HIGH | CI reports green while stale explicit test paths fail or root V3 files do not trigger | `ci.yaml:100-116` points at removed `internal/copilot`; paths cover `server-monitor/**` | Rebuild path matrix with root module and V3 Gates; run actionlint + actual commands | OPEN; Phase 1 BLOCKER |
-| CI-002 | HIGH | Static validators pass but real MySQL/concurrency/kind behavior is untested | Current Phase 0 ran unit/static checks only | Separate PR_INTEGRATION/MAIN/MANUAL_GOLDEN; literal NOT RUN on missing infra | OPEN; Phase 2+ BLOCKER |
+| CI-001 | HIGH | CI reports green while stale explicit test paths fail or root V3 files do not trigger | Root Go matrix/build paths cover `cmd/`, `internal/`, `migrations/`, Dockerfile and Makefile; stale `internal/copilot/*/eval` steps are removed; actionlint PASS | Keep root path matrix and run exact local commands; hosted execution remains separate | CONTROLLED locally in Phase 1; hosted run NOT RUN |
+| CI-002 | HIGH | Static validators pass but real MySQL/concurrency/kind behavior is untested | Disposable MySQL migration, repository and runtime checks PASS; kind/hosted behavior was intentionally not run | Keep PR integration and MANUAL_GOLDEN separate; literal NOT RUN for external systems | Phase 1 persistence CONTROLLED locally; Phase 2+/kind remains OPEN |
 | UI-001 | HIGH | viewer cannot inspect complete remediation, or browser computes/obscures verdict | Current viewer skips remediation and UI has no complete diff/commands | Server projection; viewer read access; operator-only commands; UI contract/a11y tests | OPEN; Phase 6 BLOCKER |
 | UI-002 | MEDIUM | SSE reconnect loses updates or exposes Bearer token | Current client has Authorization and no Last-Event-ID | Cookie auth, cursor/Last-Event-ID and refresh-only hints | OPEN; Phase 6 BLOCKER |
 | DOC-001 | HIGH | README or external V2 spec is treated as normative and reintroduces Kafka/Loki/Argo Rollouts/direct demo | README V2 language/broken links; external V2 spec calls itself authoritative | V3-only authority banner; architecture/ADR/evidence separation; docs-only path | CONTROLLED in Phase 0 after staged update |

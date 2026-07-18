@@ -121,8 +121,8 @@ check_required_files() {
     docker/fast-demo/prometheus.yml \
     docker/fast-demo/rbac.yaml \
     docker/fast-demo/workload.yaml \
-    server-web/migrations/00001_incident_foundation.sql \
-    server-web/migrations/00006_observability_verification_postmortem.sql; do
+    ../migrations/00001_incident_foundation.sql \
+    ../migrations/00007_expand_legacy_schema.sql; do
     [[ -f "${file}" ]] || fail "required file is missing: ${file}"
   done
 }
@@ -238,15 +238,15 @@ for ((attempt = 1; attempt <= 60; attempt++)); do
 done
 "${COMPOSE[@]}" exec -T mysql mysql -uroot -pserver-monitor-local-root -e "CREATE DATABASE IF NOT EXISTS \`${MYSQL_DATABASE}\`; GRANT ALL PRIVILEGES ON \`${MYSQL_DATABASE}\`.* TO 'server_monitor'@'%'; FLUSH PRIVILEGES;" >/dev/null
 (
-  cd server-web
+  cd ..
   MYSQL_HOST=127.0.0.1 MYSQL_PORT="${DEMO_MYSQL_HOST_PORT}" MYSQL_DATABASE="${MYSQL_DATABASE}" MYSQL_USER=server_monitor MYSQL_PASSWORD=server-monitor-local-mysql \
-    GOCACHE="${GOCACHE:-/tmp/cloudops-v2-demo-gocache}" go run ./cmd/migrate up
+    GOCACHE="${GOCACHE:-/tmp/cloudops-v2-demo-gocache}" go run ./cmd/cloudops-migrate up
 )
 "${COMPOSE[@]}" up -d prometheus alertmanager server-web
 wait_http "${DEMO_BASE_URL}/readyz" 90 || fail "server-web did not become ready"
 chmod 600 "${KUBECONFIG_FILE}"
 wait_http "${DEMO_BASE_URL}/incidents" 30 || fail "Incident Workbench is not accessible"
-pass "MySQL migrations 00001-00006 and CloudOps services are ready"
+pass "MySQL migrations 00001-00007 and CloudOps services are ready"
 
 stage 4 "Injecting workload failure"
 kubectl --context "${KIND_CONTEXT}" -n "${DEMO_NAMESPACE}" scale deployment/"${DEMO_WORKLOAD}" --replicas=0 >/dev/null
