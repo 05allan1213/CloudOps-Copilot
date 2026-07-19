@@ -20,6 +20,10 @@ RUN npm run build
 
 FROM ${GO_IMAGE} AS go-builder
 
+ARG VCS_REF=unknown
+ARG VCS_SOURCE=unknown
+ARG VERSION=dev
+
 WORKDIR /src
 
 ENV CGO_ENABLED=0 \
@@ -39,6 +43,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     go build -ldflags="-s -w" -o /out/cloudops-api ./cmd/cloudops-api && \
     go build -ldflags="-s -w" -o /out/cloudops-worker ./cmd/cloudops-worker && \
+    go build -ldflags="-s -w -X main.version=${VERSION} -X main.sourceRevision=${VCS_REF}" -o /out/cloudops-demo ./cmd/cloudops-demo && \
     go build -ldflags="-s -w" -o /out/cloudops-migrate ./cmd/cloudops-migrate
 
 FROM ${RUNTIME_IMAGE} AS runtime-base
@@ -95,6 +100,17 @@ FROM runtime-base AS cloudops-migrate
 COPY --from=go-builder /out/cloudops-migrate /app/cloudops-migrate
 
 CMD ["/app/cloudops-migrate"]
+
+FROM runtime-base AS cloudops-demo
+
+COPY --from=go-builder /out/cloudops-demo /app/cloudops-demo
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8080/livez || exit 1
+
+CMD ["/app/cloudops-demo"]
 
 # Transitional alias for the existing server-web image reference. It runs API only.
 FROM cloudops-api AS runtime

@@ -26,12 +26,12 @@ V3_KIND_SCRIPT := server-monitor/scripts/v3-kind.sh
 GO_FILES := $(shell find cmd internal migrations -type f -name '*.go' -print 2>/dev/null | sort)
 SHELL_FILES := $(shell git ls-files '*.sh' | sort)
 
-.PHONY: help build build-go build-api build-worker build-migrate build-frontend \
+.PHONY: help build build-go build-api build-worker build-migrate build-demo build-frontend \
 	test test-go test-race test-frontend frontend-lint frontend-typecheck frontend-unit \
 	vet lint lint-go check-gofmt check-goimports check-deps check-structure \
 	actionlint shellcheck helm-lint helm-template kubeconform kubeconform-chart \
 	kubeconform-raw promtool compose-config static-checks check docker-build \
-	docker-build-api docker-build-worker docker-build-migrate frontend-install \
+	docker-build-api docker-build-worker docker-build-migrate docker-build-demo frontend-install \
 	preflight demo-up demo-down kind-render kind-check
 
 define require_cmd
@@ -40,7 +40,7 @@ endef
 
 build: build-go build-frontend ## Build all local application artifacts.
 
-build-go: build-api build-worker build-migrate ## Build all three Go processes.
+build-go: build-api build-worker build-migrate build-demo ## Build all Go processes.
 
 build-api:
 	@mkdir -p $(BUILD_DIR)
@@ -53,6 +53,10 @@ build-worker:
 build-migrate:
 	@mkdir -p $(BUILD_DIR)
 	$(GO) build -trimpath -o $(BUILD_DIR)/cloudops-migrate ./cmd/cloudops-migrate
+
+build-demo:
+	@mkdir -p $(BUILD_DIR)
+	$(GO) build -trimpath -o $(BUILD_DIR)/cloudops-demo ./cmd/cloudops-demo
 
 build-frontend:
 	cd $(FRONTEND_DIR) && $(NPM) run build
@@ -179,7 +183,7 @@ static-checks: actionlint shellcheck helm-lint kubeconform promtool compose-conf
 
 check: check-gofmt check-goimports check-deps check-structure vet lint-go test-go test-race build-go test-frontend build-frontend static-checks kind-render
 
-docker-build: docker-build-api docker-build-worker docker-build-migrate
+docker-build: docker-build-api docker-build-worker docker-build-migrate docker-build-demo
 
 docker-build-api:
 	$(DOCKER) build --target cloudops-api -t cloudops-api:local .
@@ -189,6 +193,9 @@ docker-build-worker:
 
 docker-build-migrate:
 	$(DOCKER) build --target cloudops-migrate -t cloudops-migrate:local .
+
+docker-build-demo:
+	$(DOCKER) build --target cloudops-demo -t cloudops-demo:local .
 
 help:
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \

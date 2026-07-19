@@ -15,9 +15,16 @@ import (
 )
 
 type Config struct {
-	ServiceName  string
-	OTLPEndpoint string
-	SampleRate   float64
+	ServiceName    string
+	ServiceVersion string
+	Environment    string
+	Cluster        string
+	Namespace      string
+	WorkloadKind   string
+	WorkloadName   string
+	SourceRevision string
+	OTLPEndpoint   string
+	SampleRate     float64
 }
 
 func Init(ctx context.Context, cfg Config) (func(context.Context) error, error) {
@@ -34,12 +41,23 @@ func Init(ctx context.Context, cfg Config) (func(context.Context) error, error) 
 		return nil, fmt.Errorf("create OTLP trace exporter: %w", err)
 	}
 
+	attributes := []attribute.KeyValue{attribute.String("service.name", cfg.ServiceName)}
+	for _, item := range []struct{ key, value string }{
+		{"service.version", cfg.ServiceVersion},
+		{"deployment.environment.name", cfg.Environment},
+		{"k8s.cluster.name", cfg.Cluster},
+		{"k8s.namespace.name", cfg.Namespace},
+		{"k8s.workload.kind", cfg.WorkloadKind},
+		{"k8s.workload.name", cfg.WorkloadName},
+		{"cloudops.source.revision", cfg.SourceRevision},
+	} {
+		if strings.TrimSpace(item.value) != "" {
+			attributes = append(attributes, attribute.String(item.key, item.value))
+		}
+	}
 	res, err := resource.Merge(
 		resource.Default(),
-		resource.NewWithAttributes(
-			"",
-			attribute.String("service.name", cfg.ServiceName),
-		),
+		resource.NewWithAttributes("", attributes...),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create trace resource: %w", err)
