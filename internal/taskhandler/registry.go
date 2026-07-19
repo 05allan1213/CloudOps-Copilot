@@ -1,26 +1,74 @@
-// Package taskhandler maps the five frozen task types to bounded application
-// handlers. It never claims work; asyncjob.Runner is the sole claim owner.
+// Package taskhandler maps the frozen task dispatch identities to bounded
+// application operations. It never claims work; asyncjob.Runner is the sole
+// claim owner.
 package taskhandler
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/binary"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"strings"
-
-	"github.com/google/uuid"
 
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
 )
 
 type Operation func(context.Context, asyncjob.Execution) asyncjob.Result
 
+// DispatchKey is the complete runtime identity. A TaskType alone is not
+// sufficient because investigation.advance has distinct start and step modes,
+// and change.ensure_pr accepts two different durable subjects.
+type DispatchKey struct {
+	TaskType    asyncjob.TaskType
+	SubjectType string
+	Transition  string
+}
+
+var (
+	investigationStartKey = DispatchKey{
+		TaskType: asyncjob.TaskInvestigationAdvance, SubjectType: "incident", Transition: "investigation.start",
+	}
+	investigationStepKey = DispatchKey{
+		TaskType: asyncjob.TaskInvestigationAdvance, SubjectType: "agent_run", Transition: "investigation.step",
+	}
+	remediationPrepareKey = DispatchKey{
+		TaskType: asyncjob.TaskRemediationPrepare, SubjectType: "agent_run", Transition: "remediation.prepare",
+	}
+	changeEnsurePlanPRKey = DispatchKey{
+		TaskType: asyncjob.TaskChangeEnsurePR, SubjectType: "remediation_plan", Transition: "change.ensure_pr",
+	}
+	changeEnsureRequestPRKey = DispatchKey{
+		TaskType: asyncjob.TaskChangeEnsurePR, SubjectType: "change_request", Transition: "change.ensure_pr",
+	}
+	deliveryObserveKey = DispatchKey{
+		TaskType: asyncjob.TaskDeliveryObserve, SubjectType: "change_request", Transition: "delivery.observe",
+	}
+	verificationAdvanceKey = DispatchKey{
+		TaskType: asyncjob.TaskVerificationAdvance, SubjectType: "verification_run", Transition: "verification.advance",
+	}
+)
+
+var frozenDispatchKeys = [...]DispatchKey{
+	investigationStartKey,
+	investigationStepKey,
+	remediationPrepareKey,
+	changeEnsurePlanPRKey,
+	changeEnsureRequestPRKey,
+	deliveryObserveKey,
+	verificationAdvanceKey,
+}
+
+func (key DispatchKey) String() string {
+	return string(key.TaskType) + "/" + key.SubjectType + "/" + key.Transition
+}
+
+func dispatchKey(task asyncjob.Task) DispatchKey {
+	return DispatchKey{
+		TaskType: task.Type, SubjectType: strings.TrimSpace(task.SubjectType), Transition: strings.TrimSpace(task.Transition),
+	}
+}
+
 // Config injects the one-step application operations owned by later feature
-// phases. Phase 2 provides investigation.start itself because it is part of
-// Incident/Task convergence.
+// phases. Phase 2 provides investigation.start because it is part of the
+// Incident/Task convergence transaction.
 type Config struct {
 	InvestigationStep   Operation
 	RemediationPrepare  Operation
@@ -29,35 +77,36 @@ type Config struct {
 	VerificationAdvance Operation
 }
 
-// NewRuntime returns the production registry only when every subject-bound
-// one-step operation is explicitly provided. Missing operations are a startup
-// error; the worker must not claim a task merely to dead-letter it as disabled.
+// Registry dispatches only exact frozen identities. It adapts those identities
+// to the five TaskType handlers required by asyncjob.Runner without weakening
+// dispatch to a TaskType-only switch.
+type Registry struct {
+	operations map[DispatchKey]Operation
+}
+
+// NewRuntime returns production handlers only when every subject-bound
+// one-step operation is explicitly provided. Missing operations are rejected
+// before the Runner can claim a task.
 func NewRuntime(config Config) (map[asyncjob.TaskType]asyncjob.Handler, error) {
-	missing := make([]string, 0, 5)
-	if config.InvestigationStep == nil {
-		missing = append(missing, "investigation.step")
+	registry, err := NewRegistry(config)
+	if err != nil {
+		return nil, err
 	}
-	if config.RemediationPrepare == nil {
-		missing = append(missing, "remediation.prepare")
-	}
-	if config.ChangeEnsurePR == nil {
-		missing = append(missing, "change.ensure_pr")
-	}
-	if config.DeliveryObserve == nil {
-		missing = append(missing, "delivery.observe")
-	}
-	if config.VerificationAdvance == nil {
-		missing = append(missing, "verification.advance")
-	}
+	return registry.Handlers(), nil
+}
+
+// NewRegistry constructs the production exact-identity registry.
+func NewRegistry(config Config) (*Registry, error) {
+	missing := missingOperations(config)
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("async task operations are not migrated: %s", strings.Join(missing, ", "))
 	}
-	return New(config), nil
+	return registry(config), nil
 }
 
-// New is the controlled registry used by Incident start integration tests.
-// Production code must use NewRuntime. A missing operation returns an invalid
-// result, which the Runner deliberately leaves running for lease takeover.
+// New is the controlled registry used by operation-level integration tests.
+// Production code must use NewRuntime. A missing owning operation deliberately
+// returns ErrInvalidResult so a fixture cannot masquerade as migrated behavior.
 func New(config Config) map[asyncjob.TaskType]asyncjob.Handler {
 	notMigrated := func(context.Context, asyncjob.Execution) asyncjob.Result {
 		return asyncjob.Result{}
@@ -77,116 +126,76 @@ func New(config Config) map[asyncjob.TaskType]asyncjob.Handler {
 	if config.VerificationAdvance == nil {
 		config.VerificationAdvance = notMigrated
 	}
-	return map[asyncjob.TaskType]asyncjob.Handler{
-		asyncjob.TaskInvestigationAdvance: asyncjob.HandlerFunc(func(ctx context.Context, execution asyncjob.Execution) asyncjob.Result {
-			if execution.Task.SubjectType == "incident" && execution.Task.Transition == "investigation.start" {
-				return investigationStart(execution)
-			}
-			return config.InvestigationStep(ctx, execution)
-		}),
-		asyncjob.TaskRemediationPrepare:  asyncjob.HandlerFunc(config.RemediationPrepare),
-		asyncjob.TaskChangeEnsurePR:      asyncjob.HandlerFunc(config.ChangeEnsurePR),
-		asyncjob.TaskDeliveryObserve:     asyncjob.HandlerFunc(config.DeliveryObserve),
-		asyncjob.TaskVerificationAdvance: asyncjob.HandlerFunc(config.VerificationAdvance),
-	}
+	return registry(config).Handlers()
 }
 
-func investigationStart(execution asyncjob.Execution) asyncjob.Result {
-	task := execution.Task
-	if task.SubjectID != task.IncidentID || task.CycleNo == 0 || task.ExpectedSubjectVersion == 0 {
-		return asyncjob.Dead("invalid_task_subject", "investigation.start subject does not match its incident", nil)
+func missingOperations(config Config) []string {
+	missing := make([]string, 0, 5)
+	if config.InvestigationStep == nil {
+		missing = append(missing, "investigation.step")
 	}
-	return asyncjob.Succeeded(func(ctx context.Context, tx asyncjob.DBTX) error {
-		var cycle uint64
-		var status string
-		var version uint64
-		if err := tx.QueryRowContext(ctx, `
-SELECT cycle_no, v3_status, version
-FROM incidents
-WHERE id = ? AND domain_schema_version = 3
-FOR UPDATE`, task.IncidentID).Scan(&cycle, &status, &version); err != nil {
-			return fmt.Errorf("load investigation.start incident: %w", err)
-		}
-		if cycle != uint64(task.CycleNo) || version != task.ExpectedSubjectVersion {
-			return asyncjob.ErrSubjectVersionMismatch
-		}
-		if status != "detected" && status != "investigating" {
-			return fmt.Errorf("incident status %q cannot start investigation", status)
-		}
+	if config.RemediationPrepare == nil {
+		missing = append(missing, "remediation.prepare")
+	}
+	if config.ChangeEnsurePR == nil {
+		missing = append(missing, "change.ensure_pr")
+	}
+	if config.DeliveryObserve == nil {
+		missing = append(missing, "delivery.observe")
+	}
+	if config.VerificationAdvance == nil {
+		missing = append(missing, "verification.advance")
+	}
+	return missing
+}
 
-		runPublicID := uuid.NewString()
-		runKey := hashCanonical("agent-run", fmt.Sprint(task.IncidentID), fmt.Sprint(task.CycleNo), fmt.Sprint(task.ExpectedSubjectVersion))
-		result, err := tx.ExecContext(ctx, `
-INSERT INTO agent_runs
-    (public_id, incident_id, idempotency_key, status, model, prompt_version, max_steps,
-     failure_code, row_version, domain_schema_version, v3_status, cycle_no,
-     expected_incident_version, created_at, updated_at)
-VALUES (?, ?, ?, 'PENDING', 'phase2-compatibility', 'phase2-task-handler-v1', 1,
-        '', 1, 3, 'pending', ?, ?, NOW(6), NOW(6))
-ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
-			runPublicID, task.IncidentID, runKey, task.CycleNo, task.ExpectedSubjectVersion+1)
-		if err != nil {
-			return fmt.Errorf("create investigation AgentRun: %w", err)
-		}
-		runID, err := result.LastInsertId()
-		if err != nil || runID <= 0 {
-			return fmt.Errorf("read investigation AgentRun id: %w", err)
-		}
-		if err := tx.QueryRowContext(ctx, "SELECT public_id FROM agent_runs WHERE id = ?", runID).Scan(&runPublicID); err != nil {
-			return fmt.Errorf("load investigation AgentRun public id: %w", err)
-		}
+func registry(config Config) *Registry {
+	return &Registry{operations: map[DispatchKey]Operation{
+		investigationStartKey:    investigationStart,
+		investigationStepKey:     config.InvestigationStep,
+		remediationPrepareKey:    config.RemediationPrepare,
+		changeEnsurePlanPRKey:    config.ChangeEnsurePR,
+		changeEnsureRequestPRKey: config.ChangeEnsurePR,
+		deliveryObserveKey:       config.DeliveryObserve,
+		verificationAdvanceKey:   config.VerificationAdvance,
+	}}
+}
 
-		updated, err := tx.ExecContext(ctx, `
-UPDATE incidents
-SET v3_status = 'investigating', version = version + 1, updated_at = NOW(6)
-WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? AND version = ?
-  AND v3_status IN ('detected','investigating')`,
-			task.IncidentID, task.CycleNo, task.ExpectedSubjectVersion)
-		if err != nil {
-			return fmt.Errorf("advance investigation Incident: %w", err)
-		}
-		if affected, _ := updated.RowsAffected(); affected != 1 {
-			return asyncjob.ErrSubjectVersionMismatch
-		}
-
-		eventMetadata, _ := json.Marshal(map[string]any{"agent_run_id": runPublicID, "cycle_no": task.CycleNo})
-		if _, err := tx.ExecContext(ctx, `
-INSERT IGNORE INTO incident_events
-    (public_id, incident_id, domain_schema_version, cycle_no, event_schema_version,
-     event_type, idempotency_key, actor_type, actor_id, summary, metadata_json,
-     occurred_at, created_at)
-VALUES (?, ?, 3, ?, 1, 'agent_run_created', ?, 'system', 'async-task-handler',
-        'investigation AgentRun created', ?, NOW(6), NOW(6))`,
-			uuid.NewString(), task.IncidentID, task.CycleNo,
-			hashCanonical("event", runPublicID, "agent_run_created"), eventMetadata); err != nil {
-			return fmt.Errorf("append AgentRun event: %w", err)
-		}
-
-		payload, _ := json.Marshal(map[string]any{"mode": "step", "agent_run_id": runPublicID, "cycle_no": task.CycleNo})
-		dedupe := hashCanonical("task", runPublicID, "investigation.step", "1")
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO async_tasks
-    (public_id, incident_id, cycle_no, queue, task_type, subject_type, subject_id,
-     transition, expected_subject_version, payload_schema_version, payload_json,
-     dedupe_key, replay_generation, status, priority, available_at, attempt,
-     max_attempts, lease_generation, created_at, updated_at)
-VALUES (?, ?, ?, 'investigate', 'investigation.advance', 'agent_run', ?,
-        'investigation.step', 1, 1, ?, ?, 0, 'ready', 50, NOW(6), 0, 5, 0, NOW(6), NOW(6))
-ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
-			uuid.NewString(), task.IncidentID, task.CycleNo, runID, payload, dedupe); err != nil {
-			return fmt.Errorf("enqueue investigation.step: %w", err)
-		}
+// DispatchKeys returns a defensive copy of the frozen identities.
+func (r *Registry) DispatchKeys() []DispatchKey {
+	if r == nil {
 		return nil
-	})
+	}
+	keys := make([]DispatchKey, len(frozenDispatchKeys))
+	copy(keys, frozenDispatchKeys[:])
+	return keys
 }
 
-func hashCanonical(parts ...string) string {
-	hash := sha256.New()
-	for _, part := range parts {
-		var length [4]byte
-		binary.BigEndian.PutUint32(length[:], uint32(len(part)))
-		_, _ = hash.Write(length[:])
-		_, _ = hash.Write([]byte(strings.TrimSpace(part)))
+// Handlers returns exactly the five adapters required by asyncjob.Runner.
+func (r *Registry) Handlers() map[asyncjob.TaskType]asyncjob.Handler {
+	handlers := make(map[asyncjob.TaskType]asyncjob.Handler, len(asyncjob.TaskTypes()))
+	for _, taskType := range asyncjob.TaskTypes() {
+		current := taskType
+		handlers[current] = asyncjob.HandlerFunc(func(ctx context.Context, execution asyncjob.Execution) asyncjob.Result {
+			expectedQueue, queueErr := asyncjob.QueueForTaskType(current)
+			if execution.Task.Type != current || queueErr != nil || execution.Task.Queue != expectedQueue {
+				return invalidDispatch(execution.Task)
+			}
+			operation, ok := r.operations[dispatchKey(execution.Task)]
+			if !ok || operation == nil {
+				return invalidDispatch(execution.Task)
+			}
+			return operation(ctx, execution)
+		})
 	}
-	return hex.EncodeToString(hash.Sum(nil))
+	return handlers
+}
+
+func invalidDispatch(task asyncjob.Task) asyncjob.Result {
+	key := dispatchKey(task)
+	return asyncjob.Dead(
+		"invalid_task_dispatch",
+		fmt.Sprintf("unsupported async task dispatch identity %q", key.String()),
+		nil,
+	)
 }

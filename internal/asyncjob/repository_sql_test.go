@@ -1,6 +1,8 @@
 package asyncjob
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -56,5 +58,36 @@ func TestLeaseTimeWritesUseMySQLNow(t *testing.T) {
 		if !strings.Contains(query, "NOW(6)") {
 			t.Fatalf("SQL uses no MySQL NOW(6):\n%s", query)
 		}
+	}
+}
+
+func TestDeterministicMutationErrorsBecomeBoundedDeadResults(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		err     error
+		code    string
+		summary string
+	}{
+		{"subject version", fmt.Errorf("wrapped: %w", ErrSubjectVersionMismatch), "subject_version_mismatch", "task subject version or Incident cycle no longer matches"},
+		{"invalid", fmt.Errorf("wrapped: %w", ErrInvalidMutation), "invalid_mutation", "task domain mutation rejected invalid input"},
+		{"policy", fmt.Errorf("wrapped: %w", ErrPolicyViolation), "policy_violation", "task domain mutation was rejected by policy"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if !isDeterministicMutationError(test.err) {
+				t.Fatalf("error was not classified deterministic: %v", test.err)
+			}
+			result := deterministicMutationDead(test.err)
+			if result.Disposition != DispositionDead || result.ErrorCode != test.code || result.ErrorSummary != test.summary || result.Mutate != nil {
+				t.Fatalf("dead result=%+v", result)
+			}
+			if err := result.Validate(); err != nil {
+				t.Fatalf("dead result invalid: %v", err)
+			}
+		})
+	}
+	if isDeterministicMutationError(errors.New("database unavailable")) {
+		t.Fatal("transient/unknown error was classified deterministic")
 	}
 }

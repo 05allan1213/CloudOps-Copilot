@@ -106,6 +106,7 @@ WHERE id = ? AND domain_schema_version = 3 AND cycle_no = 1`, incidentID); err !
 	assertIncidentIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM incidents WHERE correlation_key = ?", 1, correlationKey)
 	assertIncidentIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM incident_signals WHERE incident_id = ? AND cycle_no = 2", 2, incidentID)
 	assertIncidentIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM async_tasks WHERE incident_id = ? AND cycle_no = 2 AND transition = 'investigation.start'", 1, incidentID)
+	assertIncidentIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM incidents WHERE id = ? AND current_agent_run_id IS NULL", 1, incidentID)
 
 	processOneIncidentStart(t, ctx, db, incidentID, 2)
 	for cycle := 1; cycle <= 2; cycle++ {
@@ -507,6 +508,34 @@ func processOneIncidentStart(t *testing.T, ctx context.Context, db *sql.DB, inci
 	}
 	if err := repository.Resolve(ctx, claimed.Lease, result); err != nil {
 		t.Fatalf("resolve investigation.start: %v", err)
+	}
+	var (
+		currentRunID, runID, runCycle, expectedIncidentVersion  uint64
+		maxSteps, maxToolCalls, maxModelCalls, maxEvidenceItems int
+		tokenBudget, maxRuntimeMS, maxCheckpointBytes           int64
+		deadlineMicros                                          int64
+	)
+	if err := db.QueryRowContext(ctx, `
+SELECT i.current_agent_run_id, r.id, r.cycle_no, r.expected_incident_version,
+       r.max_steps, r.max_tool_calls, r.max_model_calls, r.token_budget,
+       r.max_evidence_items, r.max_runtime_ms, r.max_checkpoint_bytes,
+       TIMESTAMPDIFF(MICROSECOND, r.created_at, r.deadline_at)
+FROM incidents i
+JOIN agent_runs r ON r.id = i.current_agent_run_id
+WHERE i.id = ? AND r.domain_schema_version = 3`, incidentID).Scan(
+		&currentRunID, &runID, &runCycle, &expectedIncidentVersion,
+		&maxSteps, &maxToolCalls, &maxModelCalls, &tokenBudget,
+		&maxEvidenceItems, &maxRuntimeMS, &maxCheckpointBytes, &deadlineMicros,
+	); err != nil {
+		t.Fatalf("load investigation.start runtime snapshot: %v", err)
+	}
+	if currentRunID != runID || runCycle != uint64(cycle) || expectedIncidentVersion != claimed.Task.ExpectedSubjectVersion+1 ||
+		maxSteps != 8 || maxToolCalls != 8 || maxModelCalls != 10 || tokenBudget != 16_000 ||
+		maxEvidenceItems != 20 || maxRuntimeMS != 180_000 || maxCheckpointBytes != 64*1024 ||
+		deadlineMicros != 180_000_000 {
+		t.Fatalf("unexpected investigation.start runtime snapshot run=%d/%d cycle=%d expected=%d budgets=%d/%d/%d/%d/%d/%d/%d deadline_us=%d",
+			currentRunID, runID, runCycle, expectedIncidentVersion, maxSteps, maxToolCalls,
+			maxModelCalls, tokenBudget, maxEvidenceItems, maxRuntimeMS, maxCheckpointBytes, deadlineMicros)
 	}
 }
 

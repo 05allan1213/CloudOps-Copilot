@@ -523,7 +523,7 @@ SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'reject async task dead event'`); err
 		assertIntegrationAttentionAndAttempt(t, ctx, db, incidentID, created.ID, "task_dead", "dead")
 	})
 
-	t.Run("checkpoint and domain mutation roll back on expected version conflict", func(t *testing.T) {
+	t.Run("stale running subject is fenced to dead before handler mutation", func(t *testing.T) {
 		incidentID := insertIntegrationIncident(t, ctx, db)
 		created, err := repository.Enqueue(ctx, integrationTask(incidentID, "checkpoint", 3))
 		if err != nil {
@@ -555,25 +555,39 @@ SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'reject async task dead event'`); err
 		if err := repository.Checkpoint(ctx, execution.Lease, integrationCheckpoint(2), nil); !errors.Is(err, ErrSubjectVersionMismatch) {
 			t.Fatalf("stale-subject checkpoint error=%v", err)
 		}
-		if err := repository.Resolve(ctx, execution.Lease, RetryAfter(time.Millisecond, "stale", "must not retry", nil)); !errors.Is(err, ErrSubjectVersionMismatch) {
-			t.Fatalf("stale-subject failure error=%v", err)
-		}
+		called := false
 		mutation := func(ctx context.Context, tx DBTX) error {
-			result, err := tx.ExecContext(ctx, `UPDATE incidents SET summary = 'must roll back', version = version + 1 WHERE id = ? AND version = ?`, incidentID, execution.Lease.ExpectedSubjectVersion)
-			if err != nil {
-				return err
-			}
-			rows, err := result.RowsAffected()
-			if err != nil {
-				return err
-			}
-			if rows != 1 {
-				return ErrSubjectVersionMismatch
-			}
+			called = true
 			return nil
 		}
-		if err := repository.Resolve(ctx, execution.Lease, Succeeded(mutation)); !errors.Is(err, ErrSubjectVersionMismatch) {
-			t.Fatalf("expected-version resolution error=%v", err)
+		if err := repository.Resolve(ctx, execution.Lease, Succeeded(mutation)); err != nil {
+			t.Fatalf("stale-subject resolution error=%v", err)
+		}
+		if called {
+			t.Fatal("stale subject invoked the domain mutation")
+		}
+		assertIntegrationTaskDead(t, ctx, db, created.ID, "subject_version_mismatch")
+		assertIntegrationAttentionAndAttempt(t, ctx, db, incidentID, created.ID, "task_subject_version_mismatch", "dead")
+	})
+
+	t.Run("deterministic mutation rejection rolls back domain writes", func(t *testing.T) {
+		incidentID := insertIntegrationIncident(t, ctx, db)
+		created, err := repository.Enqueue(ctx, integrationTask(incidentID, "mutation-rejection", 3))
+		if err != nil {
+			t.Fatal(err)
+		}
+		execution, err := repository.ClaimReady(ctx, ClaimRequest{Queue: QueueInvestigate, Owner: "mutation-rejection-worker", LeaseDuration: time.Second})
+		if err != nil {
+			t.Fatal(err)
+		}
+		mutation := func(ctx context.Context, tx DBTX) error {
+			if _, err := tx.ExecContext(ctx, `UPDATE incidents SET summary = 'must roll back' WHERE id = ?`, incidentID); err != nil {
+				return err
+			}
+			return fmt.Errorf("%w: rejected operation", ErrInvalidMutation)
+		}
+		if err := repository.Resolve(ctx, execution.Lease, Succeeded(mutation)); err != nil {
+			t.Fatalf("deterministic mutation resolution error=%v", err)
 		}
 		var taskStatus, summary string
 		if err := db.QueryRowContext(ctx, `SELECT status FROM async_tasks WHERE id = ?`, created.ID).Scan(&taskStatus); err != nil {
@@ -582,9 +596,11 @@ SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'reject async task dead event'`); err
 		if err := db.QueryRowContext(ctx, `SELECT summary FROM incidents WHERE id = ?`, incidentID).Scan(&summary); err != nil {
 			t.Fatal(err)
 		}
-		if taskStatus != "running" || summary == "must roll back" {
-			t.Fatalf("task status=%q summary=%q", taskStatus, summary)
+		if taskStatus != "dead" || summary == "must roll back" {
+			t.Fatalf("task status=%q summary=%q, want dead and original summary", taskStatus, summary)
 		}
+		assertIntegrationTaskDead(t, ctx, db, created.ID, "invalid_mutation")
+		assertIntegrationAttentionAndAttempt(t, ctx, db, incidentID, created.ID, "task_dead", "dead")
 	})
 
 	t.Run("stale ready and expired tasks become dead without execution", func(t *testing.T) {

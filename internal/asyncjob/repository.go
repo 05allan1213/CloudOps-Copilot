@@ -617,11 +617,27 @@ func (r *Repository) resolveOnce(ctx context.Context, lease Lease, resolution Re
 	defer rollback(tx)
 	task, err := lockExecutionState(ctx, tx, lease)
 	if err != nil {
-		return err
+		if !errors.Is(err, ErrSubjectVersionMismatch) || task.ID == 0 {
+			return err
+		}
+		resolution = deterministicMutationDead(err)
 	}
-	if resolution.Mutate != nil {
-		if err := resolution.Mutate(ctx, tx); err != nil {
-			return fmt.Errorf("resolve async task domain mutation: %w", err)
+	if err == nil && resolution.Mutate != nil {
+		if _, savepointErr := tx.ExecContext(ctx, "SAVEPOINT async_task_domain_mutation"); savepointErr != nil {
+			return fmt.Errorf("create async task domain mutation savepoint: %w", savepointErr)
+		}
+		mutationErr := resolution.Mutate(ctx, tx)
+		if mutationErr != nil {
+			if !isDeterministicMutationError(mutationErr) {
+				return fmt.Errorf("resolve async task domain mutation: %w", mutationErr)
+			}
+			if _, rollbackErr := tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT async_task_domain_mutation"); rollbackErr != nil {
+				return fmt.Errorf("roll back rejected async task domain mutation: %w", rollbackErr)
+			}
+			resolution = deterministicMutationDead(mutationErr)
+		}
+		if _, releaseErr := tx.ExecContext(ctx, "RELEASE SAVEPOINT async_task_domain_mutation"); releaseErr != nil {
+			return fmt.Errorf("release async task domain mutation savepoint: %w", releaseErr)
 		}
 	}
 
@@ -651,8 +667,11 @@ func (r *Repository) resolveOnce(ctx context.Context, lease Lease, resolution Re
 	}
 	if disposition == DispositionDead {
 		reason := attentionTaskDead
-		if resolution.Disposition == DispositionRetry {
+		switch {
+		case resolution.Disposition == DispositionRetry:
 			reason = attentionTaskAttemptsExhausted
+		case resolution.ErrorCode == "subject_version_mismatch":
+			reason = attentionTaskSubjectVersionMismatch
 		}
 		if err := markIncidentNeedsAttention(ctx, tx, task, reason, resolution.ErrorCode); err != nil {
 			return err
@@ -662,6 +681,23 @@ func (r *Repository) resolveOnce(ctx context.Context, lease Lease, resolution Re
 		return fmt.Errorf("commit async task resolution: %w", err)
 	}
 	return nil
+}
+
+func isDeterministicMutationError(err error) bool {
+	return errors.Is(err, ErrSubjectVersionMismatch) ||
+		errors.Is(err, ErrInvalidMutation) ||
+		errors.Is(err, ErrPolicyViolation)
+}
+
+func deterministicMutationDead(err error) Result {
+	switch {
+	case errors.Is(err, ErrSubjectVersionMismatch):
+		return Dead("subject_version_mismatch", "task subject version or Incident cycle no longer matches", nil)
+	case errors.Is(err, ErrPolicyViolation):
+		return Dead("policy_violation", "task domain mutation was rejected by policy", nil)
+	default:
+		return Dead("invalid_mutation", "task domain mutation rejected invalid input", nil)
+	}
 }
 
 func (r *Repository) begin(ctx context.Context) (*sql.Tx, error) {
@@ -706,7 +742,7 @@ func lockExecutionState(ctx context.Context, tx *sql.Tx, lease Lease) (Task, err
 		return Task{}, ErrLeaseLost
 	}
 	if subjectErr != nil {
-		return Task{}, subjectErr
+		return task, subjectErr
 	}
 	return task, nil
 }

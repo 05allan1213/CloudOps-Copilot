@@ -411,11 +411,12 @@ ORDER BY terminal_at DESC, id DESC LIMIT 1 FOR UPDATE`, input.CorrelationKey).
 	if err == nil && latest.status == domain.V3StatusResolved && withinWindow {
 		severity := input.Severity
 		result, updateErr := tx.ExecContext(ctx, `
-UPDATE incidents
-SET cycle_no = cycle_no + 1, version = version + 1, v3_status = 'investigating',
-    severity = ?, resolved_at = NULL, terminal_at = NULL, needs_attention = FALSE,
-    blocking_reason_code = NULL, blocked_at = NULL, last_seen_at = ?, updated_at = NOW(6)
-WHERE id = ? AND domain_schema_version = 3 AND version = ? AND v3_status = 'resolved'
+	UPDATE incidents
+	SET cycle_no = cycle_no + 1, version = version + 1, v3_status = 'investigating',
+	    severity = ?, resolved_at = NULL, terminal_at = NULL, needs_attention = FALSE,
+	    blocking_reason_code = NULL, blocked_at = NULL, current_agent_run_id = NULL,
+	    last_seen_at = ?, updated_at = NOW(6)
+	WHERE id = ? AND domain_schema_version = 3 AND version = ? AND v3_status = 'resolved'
   AND terminal_at >= TIMESTAMPADD(MINUTE, -30, NOW(6))`, severity, input.OccurredAt.UTC(), latest.id, latest.version)
 		if updateErr != nil {
 			return incidentRow{}, false, updateErr

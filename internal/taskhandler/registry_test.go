@@ -26,19 +26,58 @@ func TestRegistryContainsOnlyFrozenTaskTypes(t *testing.T) {
 	}
 }
 
-func TestRegistryDispatchesInjectedOperationsAndFailsClosed(t *testing.T) {
+func TestRegistryContainsOnlyFrozenDispatchIdentities(t *testing.T) {
+	operation := func(context.Context, asyncjob.Execution) asyncjob.Result { return asyncjob.Succeeded(nil) }
+	registry, err := NewRegistry(Config{
+		InvestigationStep: operation, RemediationPrepare: operation, ChangeEnsurePR: operation,
+		DeliveryObserve: operation, VerificationAdvance: operation,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys := registry.DispatchKeys()
+	if len(keys) != 7 {
+		t.Fatalf("dispatch identities=%d, want 7", len(keys))
+	}
+	seen := make(map[DispatchKey]struct{}, len(keys))
+	for _, key := range keys {
+		if _, duplicate := seen[key]; duplicate {
+			t.Fatalf("duplicate dispatch identity %s", key)
+		}
+		seen[key] = struct{}{}
+	}
+	keys[0] = DispatchKey{}
+	if registry.DispatchKeys()[0] == (DispatchKey{}) {
+		t.Fatal("DispatchKeys returned mutable registry storage")
+	}
+}
+
+func TestRegistryDispatchesOnlyExactInjectedOperationsAndFailsClosed(t *testing.T) {
 	called := false
 	handlers := New(Config{DeliveryObserve: func(context.Context, asyncjob.Execution) asyncjob.Result {
 		called = true
 		return asyncjob.Succeeded(nil)
 	}})
-	result := handlers[asyncjob.TaskDeliveryObserve].Handle(context.Background(), asyncjob.Execution{})
+	result := handlers[asyncjob.TaskDeliveryObserve].Handle(context.Background(), executionForKey(deliveryObserveKey))
 	if !called || result.Disposition != asyncjob.DispositionSucceeded {
 		t.Fatalf("injected handler result=%+v called=%v", result, called)
 	}
-	result = handlers[asyncjob.TaskChangeEnsurePR].Handle(context.Background(), asyncjob.Execution{})
+	result = handlers[asyncjob.TaskChangeEnsurePR].Handle(context.Background(), executionForKey(changeEnsurePlanPRKey))
 	if !errors.Is(result.Validate(), asyncjob.ErrInvalidResult) || result.Mutate != nil {
 		t.Fatalf("non-migrated handler fabricated a durable result=%+v", result)
+	}
+
+	called = false
+	malformed := executionForKey(investigationStepKey)
+	malformed.Task.SubjectType = "incident"
+	result = handlers[asyncjob.TaskInvestigationAdvance].Handle(context.Background(), malformed)
+	if called || result.Disposition != asyncjob.DispositionDead || result.ErrorCode != "invalid_task_dispatch" {
+		t.Fatalf("malformed dispatch result=%+v called=%v", result, called)
+	}
+
+	result = handlers[asyncjob.TaskDeliveryObserve].Handle(context.Background(), executionForKey(verificationAdvanceKey))
+	if result.Disposition != asyncjob.DispositionDead || result.ErrorCode != "invalid_task_dispatch" {
+		t.Fatalf("task-type adapter accepted a different task type: %+v", result)
 	}
 }
 
@@ -75,11 +114,38 @@ func TestNewRuntimeRequiresEveryOneStepOperation(t *testing.T) {
 
 func TestInvestigationStartValidatesSubjectBeforeMutation(t *testing.T) {
 	handler := New(Config{})[asyncjob.TaskInvestigationAdvance]
-	result := handler.Handle(context.Background(), asyncjob.Execution{Task: asyncjob.Task{
-		IncidentID: 1, SubjectID: 2, SubjectType: "incident", Transition: "investigation.start",
-		CycleNo: 1, ExpectedSubjectVersion: 1,
-	}})
+	execution := executionForKey(investigationStartKey)
+	execution.Task.IncidentID = 1
+	execution.Task.SubjectID = 2
+	result := handler.Handle(context.Background(), execution)
 	if result.Disposition != asyncjob.DispositionDead || result.Mutate != nil {
 		t.Fatalf("invalid start result=%+v", result)
 	}
+}
+
+func TestInvestigationStartUsesFrozenV3DefaultBudgets(t *testing.T) {
+	want := []int{
+		8, 8, 10, 16_000, 20, 180_000, 40_000, 16 * 1024, 64 * 1024, 1, 5,
+	}
+	got := []int{
+		defaultSemanticIterations, defaultToolCalls, defaultModelCalls,
+		defaultModelTokens, defaultEvidenceItems, defaultRuntimeMillis,
+		defaultToolTimeoutMillis, defaultEvidenceBytes, defaultCheckpointBytes,
+		defaultStepRetries, defaultStepMaxAttempts,
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("budget[%d]=%d, want %d", index, got[index], want[index])
+		}
+	}
+}
+
+func executionForKey(key DispatchKey) asyncjob.Execution {
+	queue, _ := asyncjob.QueueForTaskType(key.TaskType)
+	return asyncjob.Execution{Task: asyncjob.Task{
+		ID: 1, PublicID: "task-1", IncidentID: 1, CycleNo: 1,
+		Queue: queue, Type: key.TaskType,
+		SubjectType: key.SubjectType, SubjectID: 1, Transition: key.Transition,
+		ExpectedSubjectVersion: 1, PayloadSchemaVersion: 1,
+	}}
 }

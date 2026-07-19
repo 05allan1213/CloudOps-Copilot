@@ -16,6 +16,8 @@ var (
 	ErrNoTask                   = errors.New("no async task available")
 	ErrLeaseLost                = errors.New("async task lease lost")
 	ErrSubjectVersionMismatch   = errors.New("async task subject version mismatch")
+	ErrInvalidMutation          = errors.New("invalid async task domain mutation")
+	ErrPolicyViolation          = errors.New("async task domain policy violation")
 	ErrReplayValidationRequired = errors.New("async task replay subject validation is required")
 	ErrInvalidResult            = errors.New("invalid async task handler result")
 	ErrRunnerNotStarted         = errors.New("async task runner is not started")
