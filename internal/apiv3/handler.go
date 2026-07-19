@@ -144,7 +144,15 @@ func (h *Handler) listIncidents(c *gin.Context) {
 		h.writeProblem(c, http.StatusBadRequest, "INVALID_CURSOR", "cursor and limit parameters are invalid")
 		return
 	}
-	result, err := h.queries.Query(c.Request.Context(), QueryRequest{Kind: QueryIncidents, Cursor: cursor, AfterID: afterID, Limit: limit})
+	status, severity, service, err := parseIncidentFilters(c.Request)
+	if err != nil {
+		h.writeProblem(c, http.StatusBadRequest, "INVALID_FILTER", "status, severity, or service filter is invalid")
+		return
+	}
+	result, err := h.queries.Query(c.Request.Context(), QueryRequest{
+		Kind: QueryIncidents, Cursor: cursor, AfterID: afterID, Limit: limit,
+		Status: status, Severity: severity, Service: service,
+	})
 	if err != nil {
 		h.writeQueryError(c, err)
 		return
@@ -462,6 +470,8 @@ func (h *Handler) publicID(c *gin.Context) (string, bool) {
 
 func (h *Handler) writeQueryError(c *gin.Context, err error) {
 	switch {
+	case errors.Is(err, ErrInvalidArgument):
+		h.writeProblem(c, http.StatusBadRequest, "INVALID_QUERY", "query parameters are invalid")
 	case errors.Is(err, ErrNotFound):
 		h.writeProblem(c, http.StatusNotFound, "RESOURCE_NOT_FOUND", "resource was not found")
 	case errors.Is(err, ErrNotImplemented):
@@ -529,7 +539,7 @@ func (h *Handler) problemResponse(c *gin.Context, status int, code, detail strin
 
 func problemTitle(code string) string {
 	switch code {
-	case "INVALID_PUBLIC_ID", "INVALID_CURSOR", "INVALID_EVENT_CURSOR", "INVALID_REQUEST", "IDEMPOTENCY_KEY_REQUIRED", "EXPECTED_VERSION_REQUIRED", "EXPECTED_HASH_REQUIRED", "REQUEST_TOO_LARGE":
+	case "INVALID_PUBLIC_ID", "INVALID_CURSOR", "INVALID_EVENT_CURSOR", "INVALID_FILTER", "INVALID_QUERY", "INVALID_REQUEST", "IDEMPOTENCY_KEY_REQUIRED", "EXPECTED_VERSION_REQUIRED", "EXPECTED_HASH_REQUIRED", "REQUEST_TOO_LARGE":
 		return "Invalid request"
 	case "UNSUPPORTED_MEDIA_TYPE":
 		return "Unsupported media type"

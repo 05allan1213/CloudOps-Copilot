@@ -107,6 +107,9 @@ type QueryRequest struct {
 	AfterID     string
 	LastEventID string
 	Limit       int
+	Status      string
+	Severity    string
+	Service     string
 }
 
 type QueryResponse struct {

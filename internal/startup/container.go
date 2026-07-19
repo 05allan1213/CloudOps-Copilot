@@ -11,6 +11,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/05allan1213/CloudOps-Copilot/internal/alertmanageringress"
+	"github.com/05allan1213/CloudOps-Copilot/internal/apiv3"
 	commandapp "github.com/05allan1213/CloudOps-Copilot/internal/command"
 	"github.com/05allan1213/CloudOps-Copilot/internal/config"
 	"github.com/05allan1213/CloudOps-Copilot/internal/di"
@@ -71,6 +72,10 @@ func initContainer(cfg *config.Config, infra *di.Infra, initializeAuth bool) (*d
 	}
 	if infra.MySQL != nil && infra.MySQL.SQLDB() != nil {
 		var err error
+		container.V3Queries, err = apiv3.NewMySQLQueryPort(infra.MySQL.SQLDB())
+		if err != nil {
+			return nil, fmt.Errorf("V3 query port init failed: %w", err)
+		}
 		container.V3Commands, err = commandapp.NewPort(infra.MySQL.SQLDB())
 		if err != nil {
 			return nil, fmt.Errorf("V3 command port init failed: %w", err)

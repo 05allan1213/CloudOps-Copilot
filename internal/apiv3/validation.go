@@ -56,6 +56,26 @@ func parseListOptions(request *http.Request) (cursor, afterID string, limit int,
 	return cursor, afterID, limit, nil
 }
 
+func parseIncidentFilters(request *http.Request) (status, severity, service string, err error) {
+	if request == nil {
+		return "", "", "", fmt.Errorf("%w: request is required", ErrInvalidArgument)
+	}
+	values := request.URL.Query()
+	status = strings.TrimSpace(values.Get("status"))
+	severity = strings.TrimSpace(values.Get("severity"))
+	service = strings.TrimSpace(values.Get("service"))
+	if status != "" && !validIncidentStatus(status) {
+		return "", "", "", fmt.Errorf("%w: invalid Incident status filter", ErrInvalidArgument)
+	}
+	if severity != "" && !validSeverity(severity) {
+		return "", "", "", fmt.Errorf("%w: invalid Incident severity filter", ErrInvalidArgument)
+	}
+	if len(service) > 255 || containsControl(service) {
+		return "", "", "", fmt.Errorf("%w: invalid service filter", ErrInvalidArgument)
+	}
+	return status, severity, service, nil
+}
+
 func validateIdempotencyKey(value string) (string, error) {
 	if value == "" {
 		return "", fmt.Errorf("%w: Idempotency-Key is required", ErrInvalidArgument)
