@@ -18,11 +18,14 @@ import (
 )
 
 const (
-	V3HashSchemaVersion = 1
-	MaxV3PlanDiffBytes  = 64 * 1024
-	MaxV3PostImageBytes = 256 * 1024
-	MaxV3PolicyBytes    = 16 * 1024
-	MaxV3Evidence       = 40
+	V3DomainSchemaVersion      = 3
+	V3HashSchemaVersion        = 1
+	V3PlanContentSchemaVersion = 1
+	V3DecisionSchemaVersion    = 1
+	MaxV3PlanDiffBytes         = 64 * 1024
+	MaxV3PostImageBytes        = 256 * 1024
+	MaxV3PolicyBytes           = 16 * 1024
+	MaxV3Evidence              = 40
 )
 
 var (
@@ -171,7 +174,8 @@ func CompileRestoreRequiredEnv(request RestoreEnvCompileRequest) (RemediationPla
 		ValidationPlan: "Run golden-required-env/v1 deterministic checks after exact merged revision is observed.",
 		RowVersion:     1, CreatedAt: request.CreatedAt.UTC(), UpdatedAt: request.CreatedAt.UTC(),
 		CycleNo: request.CycleNo, IncidentVersion: request.IncidentVersion, CreatedByAgentRunID: request.CreatedByAgentRunID, DiagnosisHash: strings.ToLower(request.DiagnosisHash),
-		HashSchemaVersion: V3HashSchemaVersion, LastKnownGoodRevision: strings.ToLower(request.LastKnownGoodRevision), TargetBaseBranch: request.BaseBranch,
+		HashSchemaVersion: V3HashSchemaVersion, PlanContentSchemaVersion: V3PlanContentSchemaVersion,
+		LastKnownGoodRevision: strings.ToLower(request.LastKnownGoodRevision), TargetBaseBranch: request.BaseBranch,
 		BaseBlobSHA: strings.ToLower(request.BaseBlobSHA), FileMode: request.FileMode,
 		TargetFieldRef:        "spec.template.spec.containers[name=" + request.Target.Container + "].env[name=" + request.EnvKey + "]",
 		ExpectedPostImageHash: patch.PostImageHash, ExpectedTreeHash: strings.ToLower(request.ExpectedTreeHash),
@@ -247,7 +251,7 @@ func CanonicalV3PlanHash(plan RemediationPlan) (string, error) {
 		return evidence[i].ID < evidence[j].ID
 	})
 	fields := [][]byte{
-		[]byte(fmt.Sprint(plan.HashSchemaVersion)), []byte(plan.IncidentPublicID), []byte(fmt.Sprint(plan.IncidentVersion)), []byte(fmt.Sprint(plan.CycleNo)), []byte(fmt.Sprint(plan.PlanVersion)),
+		[]byte(fmt.Sprint(plan.HashSchemaVersion)), []byte(fmt.Sprint(plan.PlanContentSchemaVersion)), []byte(plan.IncidentPublicID), []byte(fmt.Sprint(plan.IncidentVersion)), []byte(fmt.Sprint(plan.CycleNo)), []byte(fmt.Sprint(plan.PlanVersion)),
 		[]byte(plan.CreatedByAgentRunID), []byte(plan.DiagnosisHash), []byte(string(plan.OperationType)),
 		[]byte(plan.TargetRepository), []byte(plan.TargetBaseBranch), []byte(plan.TargetBaseRevision), []byte(plan.LastKnownGoodRevision), []byte(plan.TargetPath),
 		[]byte(plan.BaseBlobSHA), []byte(plan.FileMode), []byte(plan.TargetFieldRef), []byte(plan.ExpectedBeforeHash),
@@ -260,17 +264,17 @@ func CanonicalV3PlanHash(plan RemediationPlan) (string, error) {
 }
 
 func NewV3Approval(plan RemediationPlan, provider, login, role, reason, requestID string, authenticatedAt, expiresAt time.Time) (Approval, error) {
-	if plan.OperationType != OperationRestoreRequiredEnv || plan.CanonicalPlanHash == "" || plan.HashSchemaVersion != V3HashSchemaVersion {
+	if plan.OperationType != OperationRestoreRequiredEnv || plan.CanonicalPlanHash == "" || plan.HashSchemaVersion != V3HashSchemaVersion || plan.PlanContentSchemaVersion != V3PlanContentSchemaVersion {
 		return Approval{}, fmt.Errorf("%w: plan is not an approvable V3 restore plan", ErrInvalidArgument)
 	}
 	if strings.TrimSpace(provider) != "github" || strings.TrimSpace(login) == "" || strings.TrimSpace(role) != "operator" && strings.TrimSpace(role) != "admin" || strings.TrimSpace(requestID) == "" || authenticatedAt.IsZero() || expiresAt.IsZero() || !expiresAt.After(authenticatedAt) {
 		return Approval{}, fmt.Errorf("%w: approval identity or expiry is invalid", ErrInvalidArgument)
 	}
-	return Approval{PublicID: uuid.NewString(), PlanID: plan.ID, Decision: DecisionApproved, Actor: login, CreatedAt: authenticatedAt.UTC(), ActorProvider: provider, Role: role, Reason: reason, RequestID: requestID, RequestAuthenticatedAt: authenticatedAt.UTC(), ExpiresAt: expiresAt.UTC(), ApprovedHashSchemaVersion: plan.HashSchemaVersion, ApprovedPlanHash: plan.CanonicalPlanHash, ApprovedPatchHash: plan.ProposedPatchHash, ApprovedBaseSHA: plan.TargetBaseRevision, ApprovedPostImageHash: plan.ExpectedPostImageHash, ApprovedTreeHash: plan.ExpectedTreeHash, ApprovedPolicyHash: plan.PolicySnapshotHash, ApprovedVerificationHash: plan.VerificationPlanHash, ApprovedEvidenceSetHash: plan.EvidenceSetHash}, nil
+	return Approval{PublicID: uuid.NewString(), PlanID: plan.ID, Decision: DecisionApproved, Actor: login, CreatedAt: authenticatedAt.UTC(), DomainSchemaVersion: V3DomainSchemaVersion, DecisionSchemaVersion: V3DecisionSchemaVersion, IncidentID: plan.IncidentID, CycleNo: plan.CycleNo, PlanVersion: plan.PlanVersion, ActorProvider: provider, Role: role, Reason: reason, RequestID: requestID, RequestAuthenticatedAt: authenticatedAt.UTC(), ExpiresAt: expiresAt.UTC(), ApprovedHashSchemaVersion: plan.HashSchemaVersion, ApprovedPlanHash: plan.CanonicalPlanHash, ApprovedPatchHash: plan.ProposedPatchHash, ApprovedBaseSHA: plan.TargetBaseRevision, ApprovedPostImageHash: plan.ExpectedPostImageHash, ApprovedTreeHash: plan.ExpectedTreeHash, ApprovedPolicyHash: plan.PolicySnapshotHash, ApprovedVerificationHash: plan.VerificationPlanHash, ApprovedEvidenceSetHash: plan.EvidenceSetHash}, nil
 }
 
 func ValidateV3ApprovalBinding(plan RemediationPlan, approval Approval, now time.Time) error {
-	if approval.Decision != DecisionApproved || approval.ApprovedHashSchemaVersion != plan.HashSchemaVersion || approval.ApprovedPlanHash != plan.CanonicalPlanHash || approval.ApprovedPatchHash != plan.ProposedPatchHash || approval.ApprovedBaseSHA != plan.TargetBaseRevision || approval.ApprovedPostImageHash != plan.ExpectedPostImageHash || approval.ApprovedTreeHash != plan.ExpectedTreeHash || approval.ApprovedPolicyHash != plan.PolicySnapshotHash || approval.ApprovedVerificationHash != plan.VerificationPlanHash || approval.ApprovedEvidenceSetHash != plan.EvidenceSetHash {
+	if approval.DomainSchemaVersion != V3DomainSchemaVersion || approval.DecisionSchemaVersion != V3DecisionSchemaVersion || approval.IncidentID != plan.IncidentID || approval.CycleNo != plan.CycleNo || approval.PlanID != plan.ID || approval.PlanVersion != plan.PlanVersion || approval.Decision != DecisionApproved || approval.ApprovedHashSchemaVersion != plan.HashSchemaVersion || approval.ApprovedPlanHash != plan.CanonicalPlanHash || approval.ApprovedPatchHash != plan.ProposedPatchHash || approval.ApprovedBaseSHA != plan.TargetBaseRevision || approval.ApprovedPostImageHash != plan.ExpectedPostImageHash || approval.ApprovedTreeHash != plan.ExpectedTreeHash || approval.ApprovedPolicyHash != plan.PolicySnapshotHash || approval.ApprovedVerificationHash != plan.VerificationPlanHash || approval.ApprovedEvidenceSetHash != plan.EvidenceSetHash {
 		return ErrApprovalMismatch
 	}
 	if !approval.ExpiresAt.IsZero() && !now.UTC().Before(approval.ExpiresAt) {

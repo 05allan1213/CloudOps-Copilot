@@ -73,7 +73,7 @@ func TestCompileRestoreRequiredEnvBindsCompletePlan(t *testing.T) {
 	if !strings.Contains(string(plan.PostImage), "name: REQUIRED_ENV") || !strings.Contains(string(plan.PostImage), "value: healthy") || !strings.Contains(plan.BoundedDiff, "+            - name: REQUIRED_ENV") {
 		t.Fatalf("post image or full diff missing restored node:\n%s\n%s", plan.PostImage, plan.BoundedDiff)
 	}
-	if plan.TargetBaseBranch != "main" || plan.IncidentVersion != 9 || plan.TargetFieldRef != "spec.template.spec.containers[name=demo].env[name=REQUIRED_ENV]" || len(plan.ExpectedPostImageHash) != 64 || len(plan.ProposedPatchHash) != 64 || len(plan.EvidenceSetHash) != 64 || len(plan.VerificationPlanHash) != 64 {
+	if plan.TargetBaseBranch != "main" || plan.IncidentVersion != 9 || plan.PlanContentSchemaVersion != V3PlanContentSchemaVersion || plan.TargetFieldRef != "spec.template.spec.containers[name=demo].env[name=REQUIRED_ENV]" || len(plan.ExpectedPostImageHash) != 64 || len(plan.ProposedPatchHash) != 64 || len(plan.EvidenceSetHash) != 64 || len(plan.VerificationPlanHash) != 64 {
 		t.Fatalf("plan bindings missing: %+v", plan)
 	}
 
@@ -89,6 +89,12 @@ func TestCompileRestoreRequiredEnvBindsCompletePlan(t *testing.T) {
 	changedHash, err := CanonicalV3PlanHash(changed)
 	if err != nil || changedHash == plan.CanonicalPlanHash {
 		t.Fatal("exact diff bytes are not bound by canonical plan hash")
+	}
+	changed = plan
+	changed.PlanContentSchemaVersion++
+	changedHash, err = CanonicalV3PlanHash(changed)
+	if err != nil || changedHash == plan.CanonicalPlanHash {
+		t.Fatal("plan content schema version is not bound by canonical plan hash")
 	}
 }
 
@@ -125,6 +131,9 @@ func TestV3ApprovalBindsEveryImmutableHash(t *testing.T) {
 	}
 	if err := ValidateV3ApprovalBinding(plan, approval, now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
+	}
+	if approval.DomainSchemaVersion != V3DomainSchemaVersion || approval.DecisionSchemaVersion != V3DecisionSchemaVersion || approval.IncidentID != plan.IncidentID || approval.CycleNo != plan.CycleNo || approval.PlanVersion != plan.PlanVersion {
+		t.Fatalf("decision ownership or schema binding missing: %+v", approval)
 	}
 	approval.ApprovedTreeHash = strings.Repeat("f", 40)
 	if err := ValidateV3ApprovalBinding(plan, approval, now.Add(time.Minute)); !errors.Is(err, ErrApprovalMismatch) {
