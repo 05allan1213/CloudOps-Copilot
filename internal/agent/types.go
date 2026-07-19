@@ -259,6 +259,10 @@ type GraphState struct {
 	DeadlineAt         time.Time       `json:"deadline_at"`
 	LastCompletedNode  Node            `json:"last_completed_node,omitempty"`
 	LastStepPublicID   string          `json:"last_step_id,omitempty"`
+
+	// Investigation is the V3 reducer-owned checkpoint. Legacy graph fields
+	// remain readable during the expand phase.
+	Investigation *InvestigationState `json:"investigation_state,omitempty"`
 }
 
 // ModelUsage is returned by provider adapters.

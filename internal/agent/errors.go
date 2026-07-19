@@ -28,6 +28,7 @@ var (
 	ErrInvalidArgument = errors.New("invalid agent argument")
 	ErrNotFound        = errors.New("agent object not found")
 	ErrConflict        = errors.New("agent conflict")
+	ErrPermission      = errors.New("agent permission denied")
 	ErrUnavailable     = errors.New("agent runtime unavailable")
 	ErrLeaseLost       = errors.New("agent lease lost")
 	ErrBudgetExceeded  = errors.New("agent budget exceeded")
