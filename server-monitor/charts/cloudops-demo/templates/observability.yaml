@@ -1,0 +1,65 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: cloudops-demo-workload
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "cloudops-demo.labels" . | nindent 4 }}
+    cloudops.io/monitoring: enabled
+    cloudops.io/signal-target: demo
+spec:
+  selector:
+    matchLabels:
+      {{- include "cloudops-demo.selectorLabels" . | nindent 6 }}
+      cloudops.io/monitoring: enabled
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace | quote }}
+  podMetricsEndpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.monitoring.interval | quote }}
+      scrapeTimeout: {{ .Values.monitoring.scrapeTimeout | quote }}
+      honorLabels: false
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cloudops-demo-workload
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "cloudops-demo.labels" . | nindent 4 }}
+    cloudops.io/monitoring: enabled
+    cloudops.io/signal-target: demo
+spec:
+  groups:
+    - name: cloudops.v3.demo
+      rules:
+        - alert: CloudOpsDemoRequiredEnvMissing
+          expr: max(cloudops_demo_workload_ready{namespace={{ .Release.Namespace | quote }}}) < 1
+          for: {{ .Values.monitoring.readinessAlertFor | quote }}
+          labels:
+            severity: critical
+            signal_target: cloudops-demo
+            cluster: {{ .Values.clusterName | quote }}
+            environment: {{ .Values.environment | quote }}
+            namespace: {{ .Release.Namespace | quote }}
+            service: cloudops-demo-workload
+            deployment: cloudops-demo-workload
+          annotations:
+            summary: Demo workload is missing REQUIRED_ENV
+            description: Both demo replicas remain live but are not ready because the required GitOps environment node is absent.
+        - alert: CloudOpsDemoErrorRateHigh
+          expr: sum(rate(cloudops_demo_http_errors_total{namespace={{ .Release.Namespace | quote }},route="/"}[1m])) / clamp_min(sum(rate(cloudops_demo_http_requests_total{namespace={{ .Release.Namespace | quote }},route="/"}[1m])), 0.001) > {{ .Values.monitoring.errorRateThreshold }}
+          for: {{ .Values.monitoring.errorAlertFor | quote }}
+          labels:
+            severity: critical
+            signal_target: cloudops-demo
+            cluster: {{ .Values.clusterName | quote }}
+            environment: {{ .Values.environment | quote }}
+            namespace: {{ .Release.Namespace | quote }}
+            service: cloudops-demo-workload
+            deployment: cloudops-demo-workload
+          annotations:
+            summary: Demo workload request error rate is high
+            description: The bounded diagnostics traffic is observing controlled server errors from the demo workload.

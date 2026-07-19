@@ -1,0 +1,6 @@
+apiVersion: v2
+name: cloudops-demo
+description: GitOps-owned workload and bounded observability fixtures for the V3 golden scenario.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

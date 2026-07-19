@@ -19,6 +19,7 @@ BUILD_DIR ?= $(TMPDIR)/cloudops-copilot-build
 FRONTEND_DIR := server-monitor/frontend
 CHART_DIR := server-monitor/charts/server-monitor
 PLATFORM_CHART_DIR := server-monitor/charts/cloudops-kind-platform
+DEMO_CHART_DIR := server-monitor/charts/cloudops-demo
 MANIFEST_DIR := server-monitor/k8s
 COMPOSE_FILE := server-monitor/docker-compose.yml
 COMPOSE_ENV := server-monitor/.env.example
@@ -138,10 +139,13 @@ helm-lint:
 	$(call require_cmd,$(HELM))
 	$(HELM) lint $(CHART_DIR)
 	$(HELM) lint $(PLATFORM_CHART_DIR)
+	$(HELM) lint $(DEMO_CHART_DIR)
 
 helm-template:
 	$(call require_cmd,$(HELM))
 	$(HELM) template cloudops $(CHART_DIR)
+	$(HELM) template cloudops-platform $(PLATFORM_CHART_DIR)
+	$(HELM) template cloudops-demo $(DEMO_CHART_DIR) --namespace cloudops-demo
 
 kind-render: ## Render and enforce the V3 phase3 kind/Helm profile.
 	bash $(V3_KIND_SCRIPT) render
@@ -165,6 +169,7 @@ kubeconform-chart:
 	$(call require_cmd,$(KUBECONFORM))
 	$(HELM) template cloudops $(CHART_DIR) | $(KUBECONFORM) -strict -summary -ignore-missing-schemas
 	$(HELM) template cloudops-platform $(PLATFORM_CHART_DIR) | $(KUBECONFORM) -strict -summary -ignore-missing-schemas
+	$(HELM) template cloudops-demo $(DEMO_CHART_DIR) --namespace cloudops-demo | $(KUBECONFORM) -strict -summary -ignore-missing-schemas
 
 kubeconform-raw:
 	$(call require_cmd,$(KUBECONFORM))

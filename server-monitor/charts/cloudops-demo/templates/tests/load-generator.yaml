@@ -1,0 +1,53 @@
+{{- if .Values.loadGenerator.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cloudops-demo-load-generator
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "cloudops-demo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: golden-load-generator
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded,hook-failed
+    cloudops.io/load-rate: {{ printf "%d-rps" (int .Values.loadGenerator.ratePerSecond) | quote }}
+    cloudops.io/request-timeout: {{ printf "%ds" (int .Values.loadGenerator.requestTimeoutSeconds) | quote }}
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 1800
+  ttlSecondsAfterFinished: 60
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cloudops-demo-load-generator
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: golden-load-generator
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: load-generator
+          image: {{ include "cloudops-demo.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | quote }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              iterations=$(({{ .Values.loadGenerator.ratePerSecond }} * {{ .Values.loadGenerator.maxDurationSeconds }}))
+              current=0
+              while [ "${current}" -lt "${iterations}" ]; do
+                wget --quiet --timeout={{ .Values.loadGenerator.requestTimeoutSeconds }} --output-document=/dev/null http://demo-diagnostics:8080/ || true
+                current=$((current + 1))
+                sleep 0.2
+              done
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.loadGeneratorResources | nindent 12 }}
+{{- end }}

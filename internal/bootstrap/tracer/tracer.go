@@ -20,6 +20,7 @@ type Config struct {
 	Environment    string
 	Cluster        string
 	Namespace      string
+	PodUID         string
 	WorkloadKind   string
 	WorkloadName   string
 	SourceRevision string
@@ -47,6 +48,7 @@ func Init(ctx context.Context, cfg Config) (func(context.Context) error, error) 
 		{"deployment.environment.name", cfg.Environment},
 		{"k8s.cluster.name", cfg.Cluster},
 		{"k8s.namespace.name", cfg.Namespace},
+		{"k8s.pod.uid", cfg.PodUID},
 		{"k8s.workload.kind", cfg.WorkloadKind},
 		{"k8s.workload.name", cfg.WorkloadName},
 		{"cloudops.source.revision", cfg.SourceRevision},

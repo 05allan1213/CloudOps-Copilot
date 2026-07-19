@@ -229,6 +229,7 @@ jobs:
           helm lint server-monitor/charts/server-monitor \
             --values server-monitor/charts/server-monitor/values-v3-phase3.yaml
           helm lint server-monitor/charts/cloudops-kind-platform
+          helm lint server-monitor/charts/cloudops-demo
 
       - name: Render charts and V3 phase profile
         run: |
@@ -240,13 +241,17 @@ jobs:
           helm template cloudops-platform server-monitor/charts/cloudops-kind-platform \
             --namespace cloudops-system \
             >/tmp/cloudops-platform-rendered.yaml
+          helm template cloudops-demo server-monitor/charts/cloudops-demo \
+            --namespace cloudops-demo \
+            >/tmp/cloudops-demo-rendered.yaml
 
       - name: Validate rendered Kubernetes schema
         run: |
           for manifest in \
             /tmp/cloudops-rendered.yaml \
             /tmp/cloudops-v3-phase3-rendered.yaml \
-            /tmp/cloudops-platform-rendered.yaml; do
+            /tmp/cloudops-platform-rendered.yaml \
+            /tmp/cloudops-demo-rendered.yaml; do
             docker run --rm -i \
               "${{ env.KUBECONFORM_IMAGE }}" \
               -strict -summary -ignore-missing-schemas \
@@ -259,6 +264,11 @@ jobs:
             "${{ env.YQ_IMAGE }}" eval -o=json 'select(.kind != null)' - \
             </tmp/cloudops-v3-phase3-rendered.yaml \
             >/tmp/cloudops-v3-phase3.jsonl
+          docker run --rm -i \
+            "${{ env.YQ_IMAGE }}" eval -o=json 'select(.kind != null)' - \
+            </tmp/cloudops-demo-rendered.yaml \
+            >/tmp/cloudops-demo.jsonl
+          cat /tmp/cloudops-demo.jsonl >>/tmp/cloudops-v3-phase3.jsonl
           jq -s -e '
             def count_resource($kind; $name):
               [.[] | select(.kind == $kind and .metadata.name == $name)] | length;
@@ -266,6 +276,14 @@ jobs:
             count_resource("Job"; "cloudops-migrate") == 1 and
             count_resource("ServiceMonitor"; "cloudops-api") == 1 and
             count_resource("PrometheusRule"; "cloudops-api") == 1 and
+            count_resource("Deployment"; "cloudops-demo-workload") == 1 and
+            count_resource("Service"; "cloudops-demo-workload") == 1 and
+            count_resource("Service"; "demo-diagnostics") == 1 and
+            count_resource("PodMonitor"; "cloudops-demo-workload") == 1 and
+            count_resource("PrometheusRule"; "cloudops-demo-workload") == 1 and
+            count_resource("Job"; "cloudops-demo-load-generator") == 1 and
+            ([.[] | select(.kind == "Service" and .metadata.namespace == "cloudops-demo") | .metadata.name] | sort) == ["cloudops-demo-workload", "demo-diagnostics"] and
+            ([.[] | select(.kind == "Deployment" and .metadata.name == "cloudops-demo-workload")][0].spec.replicas) == 2 and
             count_resource("Deployment"; "cloudops-worker") == 0 and
             ([.[] | select(.kind == "Secret")] | length) == 0 and
             ([.[] | select(.metadata.name as $name |
@@ -380,6 +398,10 @@ jobs:
             target: cloudops-migrate
             file: ./Dockerfile
             tag: cloudops-migrate:ci
+          - name: cloudops-demo
+            target: cloudops-demo
+            file: ./Dockerfile
+            tag: cloudops-demo:ci
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1

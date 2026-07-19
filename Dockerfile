@@ -62,20 +62,25 @@ RUN apk add --no-cache ca-certificates tzdata wget \
 
 WORKDIR /app
 
-# Keep the runtime validator patched while CI also checks rules against the deployed 2.51 line.
-COPY --from=prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893 /bin/promtool /usr/local/bin/promtool
-COPY --from=frontend-builder /src/frontend/dist /app/static
-COPY server-monitor/runbooks /app/runbooks
-
-ENV GIN_MODE=release \
-    RUNBOOK_DIR=/app/runbooks \
-    STATIC_DIR=/app/static
+ENV GIN_MODE=release
 
 USER app:app
 
-FROM runtime-base AS cloudops-api
+FROM runtime-base AS cloudops-control-base
+
+# Keep the runtime validator patched while CI also checks rules against the deployed 2.51 line.
+COPY --from=prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893 /bin/promtool /usr/local/bin/promtool
+COPY server-monitor/runbooks /app/runbooks
+
+ENV RUNBOOK_DIR=/app/runbooks
+
+FROM cloudops-control-base AS cloudops-api
+
+COPY --from=frontend-builder /src/frontend/dist /app/static
 
 COPY --from=go-builder /out/cloudops-api /app/cloudops-api
+
+ENV STATIC_DIR=/app/static
 
 EXPOSE 8080
 
@@ -84,7 +89,7 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 
 CMD ["/app/cloudops-api"]
 
-FROM runtime-base AS cloudops-worker
+FROM cloudops-control-base AS cloudops-worker
 
 COPY --from=go-builder /out/cloudops-worker /app/cloudops-worker
 

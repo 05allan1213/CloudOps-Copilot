@@ -38,6 +38,7 @@ type Server struct {
 	server    *http.Server
 	registry  *prometheus.Registry
 	requests  *prometheus.CounterVec
+	errors    *prometheus.CounterVec
 	durations *prometheus.HistogramVec
 	ready     prometheus.Gauge
 	closeOnce sync.Once
@@ -67,14 +68,15 @@ func New(cfg Config) (*Server, error) {
 	}
 	registry := prometheus.NewRegistry()
 	requests := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cloudops_demo_http_requests_total", Help: "Demo workload HTTP requests."}, []string{"route", "status"})
+	errors := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "cloudops_demo_http_errors_total", Help: "Demo workload HTTP error responses."}, []string{"route", "status"})
 	durations := prometheus.NewHistogramVec(prometheus.HistogramOpts{Name: "cloudops_demo_http_request_duration_seconds", Help: "Demo workload HTTP request duration."}, []string{"route"})
 	ready := prometheus.NewGauge(prometheus.GaugeOpts{Name: "cloudops_demo_workload_ready", Help: "Whether REQUIRED_ENV is present."})
-	for _, collector := range []prometheus.Collector{requests, durations, ready} {
+	for _, collector := range []prometheus.Collector{requests, errors, durations, ready} {
 		if err := registry.Register(collector); err != nil {
 			return nil, fmt.Errorf("register demo metrics: %w", err)
 		}
 	}
-	s := &Server{cfg: cfg, registry: registry, requests: requests, durations: durations, ready: ready}
+	s := &Server{cfg: cfg, registry: registry, requests: requests, errors: errors, durations: durations, ready: ready}
 	s.server = &http.Server{Addr: cfg.ListenAddr, Handler: s.Handler(), ReadTimeout: cfg.ReadTimeout, WriteTimeout: cfg.WriteTimeout, IdleTimeout: cfg.IdleTimeout}
 	s.updateReady()
 	return s, nil
@@ -93,6 +95,9 @@ func (s *Server) Handler() http.Handler {
 		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		mux.ServeHTTP(recorder, r)
 		s.requests.WithLabelValues(route, fmt.Sprint(recorder.status)).Inc()
+		if recorder.status >= http.StatusInternalServerError {
+			s.errors.WithLabelValues(route, fmt.Sprint(recorder.status)).Inc()
+		}
 		s.durations.WithLabelValues(route).Observe(time.Since(start).Seconds())
 	}), "cloudops-demo-http")
 }

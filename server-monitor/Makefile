@@ -16,6 +16,7 @@ ROOT_DIR := $(abspath $(PROJECT_DIR)/..)
 FRONTEND_DIR := frontend
 CHART_DIR := charts/server-monitor
 PLATFORM_CHART_DIR := charts/cloudops-kind-platform
+DEMO_CHART_DIR := charts/cloudops-demo
 MANIFEST_DIR := k8s
 
 COMPOSE_SERVICES ?=
@@ -43,7 +44,7 @@ LOCAL_RUNBOOK_DIR ?= $(PROJECT_DIR)/runbooks
 
 .PHONY: help demo-v2 demo-v2-check demo-v2-clean \
 	env-init frontend-install clean \
-	build build-go build-frontend build-api build-worker build-migrate build-server-web \
+	build build-go build-frontend build-api build-worker build-migrate build-demo build-server-web \
 	test test-go test-frontend test-server-web test-pkg test-k8s \
 	migrate-up \
 	vet vet-server-web vet-pkg \
@@ -85,7 +86,7 @@ frontend-install: ## 安装前端依赖
 
 build: build-go build-frontend ## 构建全部可执行产物
 
-build-go: build-api build-worker build-migrate ## 构建三个 root Go 进程
+build-go: build-api build-worker build-migrate build-demo ## 构建 root Go 进程
 
 build-api: ## 构建 cloudops-api
 	$(MAKE) -C $(ROOT_DIR) build-api
@@ -95,6 +96,9 @@ build-worker: ## 构建 cloudops-worker
 
 build-migrate: ## 构建 cloudops-migrate
 	$(MAKE) -C $(ROOT_DIR) build-migrate
+
+build-demo: ## 构建 cloudops-demo
+	$(MAKE) -C $(ROOT_DIR) build-demo
 
 build-server-web: build-api ## 兼容旧目标名；只构建 cloudops-api
 
@@ -167,6 +171,7 @@ helm-lint: ## 校验 Helm Chart
 	$(call require_cmd,$(HELM))
 	$(HELM) lint $(CHART_DIR)
 	$(HELM) lint $(PLATFORM_CHART_DIR)
+	$(HELM) lint $(DEMO_CHART_DIR)
 
 kind-render: ## 渲染并检查 V3 Phase 3 kind/Helm profile
 	$(MAKE) -C $(ROOT_DIR) kind-render

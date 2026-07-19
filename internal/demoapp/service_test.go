@@ -27,6 +27,7 @@ func TestMissingRequiredEnvStaysLiveAndEmitsBoundedFailureSignals(t *testing.T) 
 	for _, expected := range []string{
 		"cloudops_demo_workload_ready 0",
 		`cloudops_demo_http_requests_total{route="/",status="500"} 1`,
+		`cloudops_demo_http_errors_total{route="/",status="500"} 1`,
 		`cloudops_demo_http_requests_total{route="/readyz",status="503"} 1`,
 	} {
 		if !strings.Contains(metrics, expected) {

@@ -40,7 +40,7 @@ func main() {
 	shutdownTrace, err := tracer.Init(ctx, tracer.Config{
 		ServiceName: "cloudops-demo-workload", ServiceVersion: serviceVersion,
 		Environment: env("DEPLOYMENT_ENVIRONMENT", "local-demo"), Cluster: env("K8S_CLUSTER_NAME", "kind-cloudops-v3"),
-		Namespace: env("K8S_NAMESPACE_NAME", "cloudops-demo"), WorkloadKind: "Deployment", WorkloadName: "cloudops-demo-workload",
+		Namespace: env("K8S_NAMESPACE_NAME", "cloudops-demo"), PodUID: env("K8S_POD_UID", "unknown"), WorkloadKind: "Deployment", WorkloadName: "cloudops-demo-workload",
 		SourceRevision: revision, OTLPEndpoint: strings.TrimSpace(os.Getenv("TRACE_OTLP_ENDPOINT")), SampleRate: sampleRate,
 	})
 	if err != nil {
