@@ -1,0 +1,13 @@
+{{- if .Values.v3.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudops-v3-config
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+    app.kubernetes.io/component: v3-config
+data:
+  {{- range $name, $value := .Values.v3.commonEnv }}
+  {{ $name }}: {{ $value | quote }}
+  {{- end }}
+{{- end }}

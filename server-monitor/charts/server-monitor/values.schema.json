@@ -2,9 +2,82 @@
   "$schema": "https://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
-    "serverWeb": { "$ref": "#/definitions/workload" }
+    "serverWeb": { "$ref": "#/definitions/workload" },
+    "v3": { "$ref": "#/definitions/v3" }
   },
   "definitions": {
+    "v3": {
+      "type": "object",
+      "required": ["enabled", "profile", "commonEnv", "images", "database", "webhook", "api", "worker", "migrate", "observability"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "profile": { "type": "string", "enum": ["phase3", "phase4", "phase5", "phase6"] },
+        "commonEnv": { "type": "object", "additionalProperties": { "type": ["string", "number", "boolean"] } },
+        "images": {
+          "type": "object",
+          "required": ["api", "worker", "migrate"],
+          "properties": {
+            "api": { "$ref": "#/definitions/runtimeImage" },
+            "worker": { "$ref": "#/definitions/runtimeImage" },
+            "migrate": { "$ref": "#/definitions/runtimeImage" }
+          }
+        },
+        "database": {
+          "type": "object",
+          "required": ["secretName", "passwordKey"],
+          "properties": {
+            "secretName": { "type": "string", "minLength": 1 },
+            "passwordKey": { "type": "string", "minLength": 1 }
+          }
+        },
+        "webhook": {
+          "type": "object",
+          "required": ["secretName", "secretKey", "mountPath", "tokenFile"],
+          "properties": {
+            "secretName": { "type": "string", "minLength": 1 },
+            "secretKey": { "type": "string", "minLength": 1 },
+            "mountPath": { "type": "string", "pattern": "^/" },
+            "tokenFile": { "type": "string", "pattern": "^/" }
+          }
+        },
+        "api": { "$ref": "#/definitions/process" },
+        "worker": { "$ref": "#/definitions/process" },
+        "migrate": {
+          "type": "object",
+          "required": ["enabled", "backoffLimit", "activeDeadlineSeconds", "ttlSecondsAfterFinished"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "backoffLimit": { "type": "integer", "minimum": 0, "maximum": 10 },
+            "activeDeadlineSeconds": { "type": "integer", "minimum": 30, "maximum": 900 },
+            "ttlSecondsAfterFinished": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "observability": {
+          "type": "object",
+          "required": ["enabled", "serviceMonitor"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "serviceMonitor": {
+              "type": "object",
+              "required": ["interval", "scrapeTimeout"],
+              "properties": {
+                "interval": { "type": "string", "pattern": "^[1-9][0-9]*(ms|s|m)$" },
+                "scrapeTimeout": { "type": "string", "pattern": "^[1-9][0-9]*(ms|s|m)$" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "process": {
+      "type": "object",
+      "required": ["enabled", "replicas", "env", "resources"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "replicas": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "env": { "type": "object", "additionalProperties": { "type": ["string", "number", "boolean"] } }
+      }
+    },
     "workload": {
       "type": "object",
       "properties": {
@@ -22,6 +95,18 @@
           "pattern": "^(|sha256:[a-f0-9]{64})$"
         }
       }
+    },
+    "runtimeImage": {
+      "allOf": [
+        { "$ref": "#/definitions/image" },
+        {
+          "type": "object",
+          "required": ["pullPolicy"],
+          "properties": {
+            "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+          }
+        }
+      ]
     }
   }
 }

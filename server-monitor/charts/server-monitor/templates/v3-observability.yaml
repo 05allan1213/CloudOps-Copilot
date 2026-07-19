@@ -1,0 +1,70 @@
+{{- if and .Values.v3.enabled .Values.v3.observability.enabled .Values.v3.api.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cloudops-api
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+    cloudops.io/monitoring: enabled
+    cloudops.io/signal-target: control-plane
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: api-internal
+      cloudops.io/monitoring: enabled
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace | quote }}
+  endpoints:
+    - port: internal
+      path: /metrics
+      interval: {{ .Values.v3.observability.serviceMonitor.interval | quote }}
+      scrapeTimeout: {{ .Values.v3.observability.serviceMonitor.scrapeTimeout | quote }}
+      honorLabels: false
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cloudops-api
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+    cloudops.io/monitoring: enabled
+    cloudops.io/signal-target: control-plane
+spec:
+  groups:
+    - name: cloudops.v3.api
+      rules:
+        - alert: CloudOpsAPIAvailability
+          expr: max by (service, namespace) (up{service={{ printf "%q" .Values.v3.api.service.name }}}) < 1
+          for: 2m
+          labels:
+            severity: warning
+            signal_target: cloudops-control-plane
+          annotations:
+            summary: CloudOps API metrics target is unavailable
+            description: The V3 internal API Service has no healthy Prometheus target.
+{{- if .Values.v3.worker.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: cloudops-worker
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+    cloudops.io/monitoring: enabled
+    cloudops.io/signal-target: control-plane
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudops-worker
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace | quote }}
+  podMetricsEndpoints:
+    - port: management
+      path: /metrics
+      interval: {{ .Values.v3.observability.serviceMonitor.interval | quote }}
+      scrapeTimeout: {{ .Values.v3.observability.serviceMonitor.scrapeTimeout | quote }}
+{{- end }}
+{{- end }}

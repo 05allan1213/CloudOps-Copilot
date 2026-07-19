@@ -223,18 +223,55 @@ jobs:
         with:
           version: ${{ env.HELM_VERSION }}
 
-      - name: Lint chart
-        run: helm lint server-monitor/charts/server-monitor
+      - name: Lint charts
+        run: |
+          helm lint server-monitor/charts/server-monitor
+          helm lint server-monitor/charts/server-monitor \
+            --values server-monitor/charts/server-monitor/values-v3-phase3.yaml
+          helm lint server-monitor/charts/cloudops-kind-platform
 
-      - name: Render chart
-        run: helm template cloudops server-monitor/charts/server-monitor >/tmp/cloudops-rendered.yaml
+      - name: Render charts and V3 phase profile
+        run: |
+          helm template cloudops server-monitor/charts/server-monitor >/tmp/cloudops-rendered.yaml
+          helm template cloudops-v3 server-monitor/charts/server-monitor \
+            --namespace cloudops-system \
+            --values server-monitor/charts/server-monitor/values-v3-phase3.yaml \
+            >/tmp/cloudops-v3-phase3-rendered.yaml
+          helm template cloudops-platform server-monitor/charts/cloudops-kind-platform \
+            --namespace cloudops-system \
+            >/tmp/cloudops-platform-rendered.yaml
 
       - name: Validate rendered Kubernetes schema
         run: |
+          for manifest in \
+            /tmp/cloudops-rendered.yaml \
+            /tmp/cloudops-v3-phase3-rendered.yaml \
+            /tmp/cloudops-platform-rendered.yaml; do
+            docker run --rm -i \
+              "${{ env.KUBECONFORM_IMAGE }}" \
+              -strict -summary -ignore-missing-schemas \
+              <"${manifest}"
+          done
+
+      - name: Enforce V3 phase profile boundaries
+        run: |
           docker run --rm -i \
-            "${{ env.KUBECONFORM_IMAGE }}" \
-            -strict -summary -ignore-missing-schemas \
-            </tmp/cloudops-rendered.yaml
+            "${{ env.YQ_IMAGE }}" eval -o=json 'select(.kind != null)' - \
+            </tmp/cloudops-v3-phase3-rendered.yaml \
+            >/tmp/cloudops-v3-phase3.jsonl
+          jq -s -e '
+            def count_resource($kind; $name):
+              [.[] | select(.kind == $kind and .metadata.name == $name)] | length;
+            count_resource("Deployment"; "cloudops-api") == 1 and
+            count_resource("Job"; "cloudops-migrate") == 1 and
+            count_resource("ServiceMonitor"; "cloudops-api") == 1 and
+            count_resource("PrometheusRule"; "cloudops-api") == 1 and
+            count_resource("Deployment"; "cloudops-worker") == 0 and
+            ([.[] | select(.kind == "Secret")] | length) == 0 and
+            ([.[] | select(.metadata.name as $name |
+              ["server-web", "prometheus", "victoriametrics", "jaeger", "kafka", "redis", "elasticsearch", "kibana", "fluent-bit", "grafana"] |
+              index($name))] | length) == 0
+          ' /tmp/cloudops-v3-phase3.jsonl >/dev/null
 
   static-delivery:
     name: workflow and manifest checks
@@ -280,6 +317,15 @@ jobs:
       - name: Parse raw Kubernetes YAML
         run: |
           for manifest in server-monitor/k8s/*.yaml; do
+            docker run --rm \
+              -v "${{ github.workspace }}:/repo" \
+              -w /repo \
+              "${{ env.YQ_IMAGE }}" eval '.' "${manifest}" >/dev/null
+          done
+
+      - name: Parse V3 kind bootstrap YAML
+        run: |
+          for manifest in server-monitor/deploy/kind/*.yaml; do
             docker run --rm \
               -v "${{ github.workspace }}:/repo" \
               -w /repo \

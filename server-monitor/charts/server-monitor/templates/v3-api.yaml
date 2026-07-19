@@ -1,0 +1,116 @@
+{{- if and .Values.v3.enabled .Values.v3.api.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudops-api
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  replicas: {{ .Values.v3.api.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudops-api
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cloudops-api
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: api
+        cloudops.io/monitoring: enabled
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/v3-config.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: cloudops-api
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: cloudops-api
+          image: {{ include "server-monitor.image" .Values.v3.images.api | quote }}
+          imagePullPolicy: {{ .Values.v3.images.api.pullPolicy | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          envFrom:
+            - configMapRef:
+                name: cloudops-v3-config
+          env:
+            {{- range $name, $value := .Values.v3.api.env }}
+            - name: {{ $name }}
+              value: {{ $value | quote }}
+            {{- end }}
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.v3.database.secretName | quote }}
+                  key: {{ .Values.v3.database.passwordKey | quote }}
+            - name: ALERTMANAGER_WEBHOOK_BEARER_TOKEN_FILE
+              value: {{ .Values.v3.webhook.tokenFile | quote }}
+          ports:
+            - name: user
+              containerPort: 8080
+              protocol: TCP
+            - name: internal
+              containerPort: 8082
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: internal
+            failureThreshold: 30
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: internal
+            periodSeconds: 20
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: internal
+            periodSeconds: 10
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml .Values.v3.api.resources | nindent 12 }}
+          volumeMounts:
+            - name: webhook-token
+              mountPath: {{ .Values.v3.webhook.mountPath | quote }}
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: webhook-token
+          secret:
+            secretName: {{ .Values.v3.webhook.secretName | quote }}
+            items:
+              - key: {{ .Values.v3.webhook.secretKey | quote }}
+                path: token
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.v3.api.service.name | quote }}
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api-internal
+    cloudops.io/monitoring: enabled
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: cloudops-api
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: internal
+      port: {{ .Values.v3.api.service.port }}
+      targetPort: internal
+      protocol: TCP
+{{- end }}

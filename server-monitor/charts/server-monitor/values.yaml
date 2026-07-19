@@ -8,6 +8,105 @@ global:
       drop:
         - ALL
 
+# V3 profiles are opt-in while the legacy chart remains available for
+# compatibility. Use a checked values-v3-*.yaml overlay; do not enable this
+# switch alone because V3 and legacy workloads are mutually exclusive.
+v3:
+  enabled: false
+  profile: phase3
+  commonEnv:
+    APP_ENV: local-demo
+    LOG_LEVEL: info
+    GIN_MODE: release
+    PROMETHEUS_URL: http://cloudops-monitoring-kube-prometheus-prometheus.cloudops-monitoring.svc:9090
+    REDIS_ADDR: ""
+    KAFKA_BROKERS: ""
+    MYSQL_HOST: mysql
+    MYSQL_PORT: "3306"
+    MYSQL_USER: cloudops
+    MYSQL_DATABASE: cloudops
+    MYSQL_STARTUP_TIMEOUT_SECONDS: "30"
+    MYSQL_PING_TIMEOUT_SECONDS: "3"
+    AUTH_ENABLED: "false"
+    RATE_LIMIT_ENABLED: "false"
+    INCIDENT_AGENT_ENABLED: "false"
+    CHANGE_INTELLIGENCE_ENABLED: "false"
+    REMEDIATION_ENABLED: "false"
+    DELIVERY_TRACKING_ENABLED: "false"
+    VERIFICATION_ENABLED: "false"
+    K8S_ENABLED: "false"
+    K8S_WRITE_ENABLED: "false"
+    K8S_ALLOWED_NAMESPACES: cloudops-demo
+    K8S_DEFAULT_NAMESPACE: cloudops-demo
+    TRACE_OTLP_ENDPOINT: ""
+    TRACE_SAMPLE_RATE: "1.0"
+    STATIC_DIR: /app/static
+    ALERTMANAGER_WEBHOOK_REQUIRE_BEARER: "true"
+    SIGNAL_TARGET_ALLOWLIST_JSON: '[{"cluster_id":"kind-cloudops-v3-phase3","environment":"local-demo","namespace":"cloudops-demo","workload_kind":"Deployment","workload_name":"cloudops-demo-workload","service_name":"cloudops-demo-workload","match_labels":{"cluster":"kind-cloudops-v3-phase3","environment":"local-demo","namespace":"cloudops-demo","deployment":"cloudops-demo-workload"}}]'
+  images:
+    api:
+      repository: cloudops-api
+      tag: dev
+      digest: ""
+      pullPolicy: IfNotPresent
+    worker:
+      repository: cloudops-worker
+      tag: dev
+      digest: ""
+      pullPolicy: IfNotPresent
+    migrate:
+      repository: cloudops-migrate
+      tag: dev
+      digest: ""
+      pullPolicy: IfNotPresent
+  database:
+    secretName: cloudops-v3-database
+    passwordKey: MYSQL_PASSWORD
+  webhook:
+    secretName: cloudops-alertmanager-webhook
+    secretKey: token
+    mountPath: /var/run/secrets/cloudops/alertmanager
+    tokenFile: /var/run/secrets/cloudops/alertmanager/token
+  api:
+    enabled: true
+    replicas: 1
+    env:
+      LISTEN_ADDR: ":8080"
+      INTERNAL_LISTEN_ADDR: ":8082"
+    service:
+      name: cloudops-api-internal
+      port: 8082
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+  worker:
+    enabled: false
+    replicas: 1
+    env:
+      WORKER_MANAGEMENT_ADDR: ":8081"
+      ASYNC_WORKER_ID: cloudops-worker
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+  migrate:
+    enabled: true
+    backoffLimit: 6
+    activeDeadlineSeconds: 300
+    ttlSecondsAfterFinished: 300
+  observability:
+    enabled: true
+    serviceMonitor:
+      interval: 15s
+      scrapeTimeout: 5s
+
 config:
   appEnv: production
   logLevel: info

@@ -1,0 +1,21 @@
+{{- if .Values.v3.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cloudops-api
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+automountServiceAccountToken: false
+{{- if .Values.v3.worker.enabled }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cloudops-worker
+  labels:
+    {{- include "server-monitor.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+automountServiceAccountToken: false
+{{- end }}
+{{- end }}

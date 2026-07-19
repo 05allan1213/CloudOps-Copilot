@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["image", "database", "persistence", "resources"],
+  "properties": {
+    "image": {
+      "type": "object",
+      "required": ["repository", "tag", "digest", "pullPolicy"],
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "tag": {"type": "string", "minLength": 1},
+        "digest": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+        "pullPolicy": {"type": "string", "enum": ["Always", "IfNotPresent", "Never"]}
+      }
+    },
+    "database": {
+      "type": "object",
+      "required": ["name", "user", "secretName", "passwordKey", "rootPasswordKey"],
+      "properties": {
+        "name": {"type": "string", "pattern": "^[a-zA-Z0-9_]+$"},
+        "user": {"type": "string", "pattern": "^[a-zA-Z0-9_]+$"},
+        "secretName": {"type": "string", "minLength": 1},
+        "passwordKey": {"type": "string", "minLength": 1},
+        "rootPasswordKey": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

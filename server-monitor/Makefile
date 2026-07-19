@@ -15,6 +15,7 @@ PROJECT_DIR := $(CURDIR)
 ROOT_DIR := $(abspath $(PROJECT_DIR)/..)
 FRONTEND_DIR := frontend
 CHART_DIR := charts/server-monitor
+PLATFORM_CHART_DIR := charts/cloudops-kind-platform
 MANIFEST_DIR := k8s
 
 COMPOSE_SERVICES ?=
@@ -51,6 +52,7 @@ LOCAL_RUNBOOK_DIR ?= $(PROJECT_DIR)/runbooks
 	dev-deps dev-stop dev-web dev-frontend \
 	compose-config compose-build compose-migrate compose-up compose-down compose-logs compose-ps compose-clean \
 	helm-lint helm-template deploy-helm undeploy-helm deploy-k8s undeploy-k8s k8s-script-check k8s-setup k8s-teardown \
+	preflight demo-up demo-down kind-render kind-check \
 	docker docker-up docker-down docker-logs docker-clean ci-check dev-server-web
 
 define require_cmd
@@ -164,6 +166,22 @@ compose-config: ## 展开并检查 Compose 配置
 helm-lint: ## 校验 Helm Chart
 	$(call require_cmd,$(HELM))
 	$(HELM) lint $(CHART_DIR)
+	$(HELM) lint $(PLATFORM_CHART_DIR)
+
+kind-render: ## 渲染并检查 V3 Phase 3 kind/Helm profile
+	$(MAKE) -C $(ROOT_DIR) kind-render
+
+preflight: ## 检查 V3 disposable kind 前置条件
+	$(MAKE) -C $(ROOT_DIR) preflight
+
+demo-up: ## 启动 V3 Phase 3 kind + Helm 可观测性演示
+	$(MAKE) -C $(ROOT_DIR) demo-up
+
+kind-check: ## 校验运行中的 V3 Phase 3 metrics target/rule
+	$(MAKE) -C $(ROOT_DIR) kind-check
+
+demo-down: ## 仅删除 V3 Phase 3 disposable kind 集群
+	$(MAKE) -C $(ROOT_DIR) demo-down
 
 k8s-script-check: ## 检查 docker/setup-k8s.sh 语法
 	bash -n docker/setup-k8s.sh

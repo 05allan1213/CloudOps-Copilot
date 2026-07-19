@@ -18,9 +18,11 @@ TMPDIR ?= /tmp
 BUILD_DIR ?= $(TMPDIR)/cloudops-copilot-build
 FRONTEND_DIR := server-monitor/frontend
 CHART_DIR := server-monitor/charts/server-monitor
+PLATFORM_CHART_DIR := server-monitor/charts/cloudops-kind-platform
 MANIFEST_DIR := server-monitor/k8s
 COMPOSE_FILE := server-monitor/docker-compose.yml
 COMPOSE_ENV := server-monitor/.env.example
+V3_KIND_SCRIPT := server-monitor/scripts/v3-kind.sh
 GO_FILES := $(shell find cmd internal migrations -type f -name '*.go' -print 2>/dev/null | sort)
 SHELL_FILES := $(shell git ls-files '*.sh' | sort)
 
@@ -29,7 +31,8 @@ SHELL_FILES := $(shell git ls-files '*.sh' | sort)
 	vet lint lint-go check-gofmt check-goimports check-deps check-structure \
 	actionlint shellcheck helm-lint helm-template kubeconform kubeconform-chart \
 	kubeconform-raw promtool compose-config static-checks check docker-build \
-	docker-build-api docker-build-worker docker-build-migrate frontend-install
+	docker-build-api docker-build-worker docker-build-migrate frontend-install \
+	preflight demo-up demo-down kind-render kind-check
 
 define require_cmd
 	@command -v $(1) >/dev/null 2>&1 || { echo "missing command: $(1)" >&2; exit 1; }
@@ -130,10 +133,26 @@ shellcheck:
 helm-lint:
 	$(call require_cmd,$(HELM))
 	$(HELM) lint $(CHART_DIR)
+	$(HELM) lint $(PLATFORM_CHART_DIR)
 
 helm-template:
 	$(call require_cmd,$(HELM))
 	$(HELM) template cloudops $(CHART_DIR)
+
+kind-render: ## Render and enforce the V3 phase3 kind/Helm profile.
+	bash $(V3_KIND_SCRIPT) render
+
+preflight: ## Check disposable kind prerequisites without changing the cluster.
+	bash $(V3_KIND_SCRIPT) preflight
+
+demo-up: ## Start the V3 phase3 disposable kind + Helm observability demo.
+	bash $(V3_KIND_SCRIPT) up
+
+kind-check: ## Verify the running V3 phase3 kind metrics target and rule.
+	bash $(V3_KIND_SCRIPT) check
+
+demo-down: ## Delete only the V3 phase3 disposable kind cluster.
+	bash $(V3_KIND_SCRIPT) down
 
 kubeconform: kubeconform-chart kubeconform-raw
 
@@ -141,6 +160,7 @@ kubeconform-chart:
 	$(call require_cmd,$(HELM))
 	$(call require_cmd,$(KUBECONFORM))
 	$(HELM) template cloudops $(CHART_DIR) | $(KUBECONFORM) -strict -summary -ignore-missing-schemas
+	$(HELM) template cloudops-platform $(PLATFORM_CHART_DIR) | $(KUBECONFORM) -strict -summary -ignore-missing-schemas
 
 kubeconform-raw:
 	$(call require_cmd,$(KUBECONFORM))
@@ -157,7 +177,7 @@ compose-config:
 
 static-checks: actionlint shellcheck helm-lint kubeconform promtool compose-config
 
-check: check-gofmt check-goimports check-deps check-structure vet lint-go test-go test-race build-go test-frontend build-frontend static-checks
+check: check-gofmt check-goimports check-deps check-structure vet lint-go test-go test-race build-go test-frontend build-frontend static-checks kind-render
 
 docker-build: docker-build-api docker-build-worker docker-build-migrate
 

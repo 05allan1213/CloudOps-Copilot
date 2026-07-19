@@ -1,3 +1,4 @@
+{{- if not .Values.v3.enabled }}
 # ============================================
 # ConfigMap - 配置中心
 # ============================================
@@ -178,3 +179,4 @@ data:
   MYSQL_PING_TIMEOUT_SECONDS: {{ .Values.config.mysqlPingTimeoutSeconds | quote }}
   JWT_EXPIRE_HOURS: {{ .Values.auth.jwtExpireHours | quote }}
   AUTH_ENABLED: {{ .Values.auth.enabled | quote }}
+{{- end }}
