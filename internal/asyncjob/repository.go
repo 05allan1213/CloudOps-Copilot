@@ -672,6 +672,8 @@ func (r *Repository) resolveOnce(ctx context.Context, lease Lease, resolution Re
 			reason = attentionTaskAttemptsExhausted
 		case resolution.ErrorCode == "subject_version_mismatch":
 			reason = attentionTaskSubjectVersionMismatch
+		case resolution.ErrorCode == "business_budget_exceeded":
+			reason = attentionTaskBusinessBudget
 		}
 		if err := markIncidentNeedsAttention(ctx, tx, task, reason, resolution.ErrorCode); err != nil {
 			return err
@@ -686,7 +688,8 @@ func (r *Repository) resolveOnce(ctx context.Context, lease Lease, resolution Re
 func isDeterministicMutationError(err error) bool {
 	return errors.Is(err, ErrSubjectVersionMismatch) ||
 		errors.Is(err, ErrInvalidMutation) ||
-		errors.Is(err, ErrPolicyViolation)
+		errors.Is(err, ErrPolicyViolation) ||
+		errors.Is(err, ErrBusinessBudgetExceeded)
 }
 
 func deterministicMutationDead(err error) Result {
@@ -695,6 +698,8 @@ func deterministicMutationDead(err error) Result {
 		return Dead("subject_version_mismatch", "task subject version or Incident cycle no longer matches", nil)
 	case errors.Is(err, ErrPolicyViolation):
 		return Dead("policy_violation", "task domain mutation was rejected by policy", nil)
+	case errors.Is(err, ErrBusinessBudgetExceeded):
+		return Dead("business_budget_exceeded", "task business budget is exhausted", nil)
 	default:
 		return Dead("invalid_mutation", "task domain mutation rejected invalid input", nil)
 	}

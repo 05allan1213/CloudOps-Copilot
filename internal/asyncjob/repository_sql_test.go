@@ -72,6 +72,7 @@ func TestDeterministicMutationErrorsBecomeBoundedDeadResults(t *testing.T) {
 		{"subject version", fmt.Errorf("wrapped: %w", ErrSubjectVersionMismatch), "subject_version_mismatch", "task subject version or Incident cycle no longer matches"},
 		{"invalid", fmt.Errorf("wrapped: %w", ErrInvalidMutation), "invalid_mutation", "task domain mutation rejected invalid input"},
 		{"policy", fmt.Errorf("wrapped: %w", ErrPolicyViolation), "policy_violation", "task domain mutation was rejected by policy"},
+		{"business budget", fmt.Errorf("wrapped: %w", ErrBusinessBudgetExceeded), "business_budget_exceeded", "task business budget is exhausted"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

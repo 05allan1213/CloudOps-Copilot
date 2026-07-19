@@ -15,6 +15,12 @@ import (
 )
 
 const (
+	// DefaultAgentRunBudget is the per-cycle automatic investigation limit.
+	DefaultAgentRunBudget = 3
+	// HardAgentRunBudget is the maximum allowed by the frozen V3 contract. The
+	// Phase 2 start operation does not expose an operator override, so it stops
+	// at the default limit and records needs_attention.
+	HardAgentRunBudget        = 5
 	defaultSemanticIterations = 8
 	defaultToolCalls          = 8
 	defaultModelCalls         = 10
@@ -55,6 +61,9 @@ FOR UPDATE`, task.IncidentID).Scan(&cycle, &status, &version); err != nil {
 	}
 	if status != "detected" && status != "investigating" {
 		return fmt.Errorf("%w: incident status %q cannot start investigation", asyncjob.ErrInvalidMutation, status)
+	}
+	if err := enforceAgentRunBudget(ctx, tx, task); err != nil {
+		return err
 	}
 
 	runPublicID := uuid.NewString()
@@ -161,6 +170,32 @@ FOR UPDATE`, dedupe).Scan(
 		stepSubjectType != "agent_run" || stepSubjectID != uint64(runID) ||
 		stepTransition != "investigation.step" || stepExpectedVersion != 1 || stepStatus != "ready" {
 		return fmt.Errorf("%w: existing investigation.step task has a different identity", asyncjob.ErrInvalidMutation)
+	}
+	return nil
+}
+
+func enforceAgentRunBudget(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task) error {
+	rows, err := tx.QueryContext(ctx, `
+SELECT id
+FROM agent_runs
+WHERE incident_id = ? AND cycle_no = ? AND domain_schema_version = 3
+ORDER BY id
+LIMIT 6
+FOR UPDATE`, task.IncidentID, task.CycleNo)
+	if err != nil {
+		return fmt.Errorf("count investigation AgentRuns: %w", err)
+	}
+	defer rows.Close()
+	count := 0
+	for rows.Next() {
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate investigation AgentRuns: %w", err)
+	}
+	if count >= DefaultAgentRunBudget {
+		return fmt.Errorf("%w: cycle AgentRun budget exhausted (%d/%d, hard limit %d)",
+			asyncjob.ErrBusinessBudgetExceeded, count, DefaultAgentRunBudget, HardAgentRunBudget)
 	}
 	return nil
 }

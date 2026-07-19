@@ -16,6 +16,7 @@ const (
 	attentionTaskAttemptsExhausted      = "task_attempts_exhausted"
 	attentionTaskLeaseExpired           = "task_lease_expired"
 	attentionTaskSubjectVersionMismatch = "task_subject_version_mismatch"
+	attentionTaskBusinessBudget         = "agent_run_budget_exhausted"
 	attentionTaskDead                   = "task_dead"
 )
 

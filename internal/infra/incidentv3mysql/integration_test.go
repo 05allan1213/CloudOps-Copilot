@@ -115,6 +115,100 @@ WHERE id = ? AND domain_schema_version = 3 AND cycle_no = 1`, incidentID); err !
 	}
 }
 
+func TestMySQLIncidentV3AgentRunBudgetStopsConcurrentStarts(t *testing.T) {
+	db := openIncidentIntegrationDB(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	store, err := NewStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := asyncjob.NewRepository(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	correlationKey := "v2:" + strings.Repeat("c", 64)
+	result, err := store.IngestBatch(ctx, []SignalInput{incidentIntegrationSignal(40, correlationKey)})
+	if err != nil || len(result) != 1 {
+		t.Fatalf("initial budget ingest=%+v err=%v", result, err)
+	}
+	incidentID := incidentIntegrationIncidentID(t, ctx, db, result[0].IncidentPublicID)
+
+	// Consume the three automatic AgentRun slots in one cycle. Each terminal
+	// run advances the Incident version before the next start Task is enqueued.
+	for run := 1; run <= taskhandler.DefaultAgentRunBudget; run++ {
+		processOneIncidentStart(t, ctx, db, incidentID, 1)
+		if run == taskhandler.DefaultAgentRunBudget {
+			break
+		}
+		advanceFailedInvestigationRun(t, ctx, db, incidentID)
+		version := incidentVersion(t, ctx, db, incidentID)
+		task := budgetStartTask(incidentID, version, fmt.Sprintf("budget-%d", run))
+		if _, err := repository.Enqueue(ctx, task); err != nil {
+			t.Fatalf("enqueue budget start %d: %v", run+1, err)
+		}
+	}
+
+	version := incidentVersion(t, ctx, db, incidentID)
+	var tasks []*asyncjob.Task
+	for index := range 2 {
+		created, err := repository.Enqueue(ctx, budgetStartTask(incidentID, version, fmt.Sprintf("exhausted-%d", index)))
+		if err != nil {
+			t.Fatalf("enqueue concurrent exhausted start %d: %v", index, err)
+		}
+		tasks = append(tasks, created)
+	}
+
+	start := make(chan struct{})
+	executions := make([]*asyncjob.Execution, len(tasks))
+	errorsByWorker := make([]error, len(tasks))
+	var wait sync.WaitGroup
+	for index := range tasks {
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			<-start
+			executions[index], errorsByWorker[index] = claimIncidentStartEventually(ctx, repository, asyncjob.ClaimRequest{
+				Queue: asyncjob.QueueInvestigate, Owner: fmt.Sprintf("budget-worker-%d", index), LeaseDuration: 30 * time.Second,
+			})
+		}(index)
+	}
+	close(start)
+	wait.Wait()
+	for index, claimErr := range errorsByWorker {
+		if claimErr != nil {
+			t.Fatalf("concurrent exhausted claim %d: %v", index, claimErr)
+		}
+	}
+	for index, execution := range executions {
+		result := taskhandler.New(taskhandler.Config{})[asyncjob.TaskInvestigationAdvance].Handle(ctx, *execution)
+		if result.Disposition != asyncjob.DispositionSucceeded || result.Mutate == nil {
+			t.Fatalf("budget start handler %d result=%+v", index, result)
+		}
+		if err := repository.Resolve(ctx, execution.Lease, result); err != nil {
+			t.Fatalf("resolve exhausted start %d: %v", index, err)
+		}
+	}
+
+	assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*)
+FROM agent_runs WHERE incident_id = ? AND cycle_no = 1 AND domain_schema_version = 3`, taskhandler.DefaultAgentRunBudget, incidentID)
+	assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*)
+FROM async_tasks WHERE incident_id = ? AND cycle_no = 1 AND transition = 'investigation.step'`, taskhandler.DefaultAgentRunBudget, incidentID)
+	assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*)
+FROM async_tasks WHERE incident_id = ? AND transition = 'investigation.start' AND status = 'dead'`, 2, incidentID)
+	assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*)
+FROM incident_events
+WHERE incident_id = ? AND event_type = 'async_task_dead'
+  AND JSON_UNQUOTE(JSON_EXTRACT(metadata_json, '$.error_code')) = 'business_budget_exceeded'`, 1, incidentID)
+	var attention bool
+	if err := db.QueryRowContext(ctx, `SELECT needs_attention FROM incidents WHERE id = ?`, incidentID).Scan(&attention); err != nil {
+		t.Fatal(err)
+	}
+	if !attention {
+		t.Fatal("AgentRun budget exhaustion did not mark Incident needs_attention")
+	}
+}
+
 func TestMySQLIncidentV3ConcurrentCreate(t *testing.T) {
 	db := openIncidentIntegrationDB(t)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -536,6 +630,65 @@ WHERE i.id = ? AND r.domain_schema_version = 3`, incidentID).Scan(
 		t.Fatalf("unexpected investigation.start runtime snapshot run=%d/%d cycle=%d expected=%d budgets=%d/%d/%d/%d/%d/%d/%d deadline_us=%d",
 			currentRunID, runID, runCycle, expectedIncidentVersion, maxSteps, maxToolCalls,
 			maxModelCalls, tokenBudget, maxEvidenceItems, maxRuntimeMS, maxCheckpointBytes, deadlineMicros)
+	}
+}
+
+func advanceFailedInvestigationRun(t *testing.T, ctx context.Context, db *sql.DB, incidentID uint64) {
+	t.Helper()
+	var runID, version uint64
+	if err := db.QueryRowContext(ctx, `
+SELECT current_agent_run_id, version
+FROM incidents WHERE id = ? AND v3_status = 'investigating' FOR UPDATE`, incidentID).Scan(&runID, &version); err != nil {
+		t.Fatal(err)
+	}
+	if runID == 0 {
+		t.Fatalf("Incident %d has no current AgentRun", incidentID)
+	}
+	if _, err := db.ExecContext(ctx, `
+UPDATE agent_runs
+SET status = 'FAILED', v3_status = 'failed', completed_at = NOW(6),
+    row_version = row_version + 1, updated_at = NOW(6)
+WHERE id = ? AND domain_schema_version = 3 AND v3_status = 'pending'`, runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+UPDATE incidents
+SET version = version + 1, updated_at = NOW(6)
+WHERE id = ? AND domain_schema_version = 3 AND v3_status = 'investigating' AND version = ?`, incidentID, version); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func incidentVersion(t *testing.T, ctx context.Context, db *sql.DB, incidentID uint64) uint64 {
+	t.Helper()
+	var version uint64
+	if err := db.QueryRowContext(ctx, `SELECT version FROM incidents WHERE id = ?`, incidentID).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	return version
+}
+
+func budgetStartTask(incidentID, version uint64, identity string) asyncjob.NewTask {
+	return asyncjob.NewTask{
+		IncidentID: incidentID, CycleNo: 1, Type: asyncjob.TaskInvestigationAdvance,
+		SubjectType: "incident", SubjectID: incidentID, Transition: "investigation.start",
+		ExpectedSubjectVersion: version, PayloadSchemaVersion: 1,
+		Payload: []byte(`{"mode":"start"}`), DedupeKey: hashCanonical("budget-start", fmt.Sprint(incidentID), fmt.Sprint(version), identity),
+		Priority: 100, MaxAttempts: 3,
+	}
+}
+
+func claimIncidentStartEventually(ctx context.Context, repository *asyncjob.Repository, request asyncjob.ClaimRequest) (*asyncjob.Execution, error) {
+	deadline := time.Now().Add(time.Second)
+	for {
+		execution, err := repository.Claim(ctx, request)
+		if err == nil {
+			return execution, nil
+		}
+		if !errors.Is(err, asyncjob.ErrNoTask) || time.Now().After(deadline) {
+			return nil, err
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 

@@ -124,6 +124,9 @@ func TestInvestigationStartValidatesSubjectBeforeMutation(t *testing.T) {
 }
 
 func TestInvestigationStartUsesFrozenV3DefaultBudgets(t *testing.T) {
+	if DefaultAgentRunBudget != 3 || HardAgentRunBudget != 5 {
+		t.Fatalf("AgentRun business budgets=%d/%d, want 3/5", DefaultAgentRunBudget, HardAgentRunBudget)
+	}
 	want := []int{
 		8, 8, 10, 16_000, 20, 180_000, 40_000, 16 * 1024, 64 * 1024, 1, 5,
 	}
