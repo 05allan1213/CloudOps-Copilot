@@ -180,13 +180,26 @@ func TestMySQLIncidentV3AgentRunBudgetStopsConcurrentStarts(t *testing.T) {
 			t.Fatalf("concurrent exhausted claim %d: %v", index, claimErr)
 		}
 	}
+	resolveStart := make(chan struct{})
+	resolveErrors := make([]error, len(executions))
+	wait = sync.WaitGroup{}
 	for index, execution := range executions {
 		result := taskhandler.New(taskhandler.Config{})[asyncjob.TaskInvestigationAdvance].Handle(ctx, *execution)
 		if result.Disposition != asyncjob.DispositionSucceeded || result.Mutate == nil {
 			t.Fatalf("budget start handler %d result=%+v", index, result)
 		}
-		if err := repository.Resolve(ctx, execution.Lease, result); err != nil {
-			t.Fatalf("resolve exhausted start %d: %v", index, err)
+		wait.Add(1)
+		go func(index int, execution *asyncjob.Execution, result asyncjob.Result) {
+			defer wait.Done()
+			<-resolveStart
+			resolveErrors[index] = repository.Resolve(ctx, execution.Lease, result)
+		}(index, execution, result)
+	}
+	close(resolveStart)
+	wait.Wait()
+	for index, resolveErr := range resolveErrors {
+		if resolveErr != nil {
+			t.Fatalf("resolve exhausted start %d: %v", index, resolveErr)
 		}
 	}
 
