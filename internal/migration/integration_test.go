@@ -73,7 +73,7 @@ func TestPhase1MigrationFreshExistingParityAndLock(t *testing.T) {
 	freshRunner := newTestRunner(t, ctx, fresh, 5*time.Second)
 	results, err := freshRunner.Up(ctx)
 	if err != nil {
-		t.Fatalf("fresh 00001-00007: %v", err)
+		t.Fatalf("fresh current forward migrations: %v", err)
 	}
 	if len(results) != int(LatestVersion) {
 		t.Fatalf("fresh applied migrations=%d, want %d", len(results), LatestVersion)
@@ -94,7 +94,7 @@ func TestPhase1MigrationFreshExistingParityAndLock(t *testing.T) {
 	insertLegacySentinels(t, ctx, existing)
 	dataBefore := dataSnapshot(t, ctx, existing, legacyTables)
 	if _, err := existingRunner.Up(ctx); err != nil {
-		t.Fatalf("existing upgrade to 00007: %v", err)
+		t.Fatalf("existing upgrade through current forward migrations: %v", err)
 	}
 	assertVersion(t, ctx, existingRunner, LatestVersion)
 	dataAfter := dataSnapshot(t, ctx, existing, legacyTables)
@@ -149,7 +149,7 @@ func TestPhase1MigrationFreshExistingParityAndLock(t *testing.T) {
 			t.Fatal(err)
 		}
 		if applied != 1 {
-			t.Fatalf("version 7 applied rows=%d, want 1", applied)
+			t.Fatalf("latest migration applied rows=%d, want 1", applied)
 		}
 	})
 

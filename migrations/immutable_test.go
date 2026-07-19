@@ -17,6 +17,7 @@ func TestImmutableMigrationHistory(t *testing.T) {
 		"00005_delivery_verification.sql":                 "8168e75a60f18ba5b8818c82b6dda71131adc8b9cca1f52eb93abce111f4a61d",
 		"00006_observability_verification_postmortem.sql": "8e1a0b1f0a1125ffb54f8049be17617c1130cebbf446ecc371a281b4a7301fdb",
 		"00007_expand_legacy_schema.sql":                  "e254655698086f7ff3679fe615d0d7b6c2bd58158eb44501086ca37f44c54f45",
+		"00008_expand_v3_async_runtime.sql":               "a769354179532733b6216fbfde699cf756744f72dd75c98cf730feb2e093e96e",
 	}
 	for name, expectedHash := range expected {
 		contents, err := FS.ReadFile(name)
@@ -26,6 +27,53 @@ func TestImmutableMigrationHistory(t *testing.T) {
 		actualHash := fmt.Sprintf("%x", sha256.Sum256(contents))
 		if actualHash != expectedHash {
 			t.Errorf("immutable migration %s sha256=%s, want %s", name, actualHash, expectedHash)
+		}
+	}
+}
+
+func TestV3RemediationVerificationMigrationContract(t *testing.T) {
+	contents, err := FS.ReadFile("00009_expand_v3_remediation_verification.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlText := string(contents)
+	if !strings.HasPrefix(sqlText, "-- +goose Up") || !strings.Contains(sqlText, "-- +goose NO TRANSACTION") {
+		t.Fatal("00009 must be an explicit forward Goose migration")
+	}
+	forbidden := regexp.MustCompile(`(?im)^\s*(UPDATE|INSERT|DELETE|TRUNCATE|DROP\s+TABLE|DROP\s+COLUMN|RENAME\s+TABLE)\b`)
+	if match := forbidden.FindString(sqlText); match != "" {
+		t.Fatalf("00009 contains non-expand statement %q", strings.TrimSpace(match))
+	}
+	for _, required := range []string{
+		"plan_content_schema_version",
+		"created_by_agent_run_id",
+		"canonical_change_manifest_json",
+		"bounded_diff",
+		"evidence_set_hash",
+		"restore_required_env",
+		"CREATE TABLE remediation_decisions",
+		"approved_post_image_hash",
+		"approved_verification_hash",
+		"CREATE TABLE change_request_events",
+		"verification_contract_version",
+		"verification_profile_id",
+		"check_spec_schema_version",
+		"template_version",
+		"min_samples",
+		"failure_mode",
+		"CREATE TABLE verification_samples",
+		"CREATE TABLE resolution_reports",
+		"uk_resolution_reports_incident_cycle",
+		"recovered_before_diagnosis",
+		"recovered_without_change",
+	} {
+		if !strings.Contains(sqlText, required) {
+			t.Fatalf("00009 missing required V3 persistence contract %q", required)
+		}
+	}
+	for _, legacy := range []string{"ALTER TABLE remediation_approvals", "ALTER TABLE postmortems", "CUTOVER_V3", "-- +goose Down"} {
+		if strings.Contains(sqlText, legacy) {
+			t.Fatalf("00009 must preserve compatibility and avoid cutover marker %q", legacy)
 		}
 	}
 }

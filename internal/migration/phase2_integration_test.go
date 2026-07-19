@@ -30,7 +30,7 @@ func TestPhase2MigrationGeneratedKeysAndClaimIndexes(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	runner := newTestRunner(t, ctx, db, 5*time.Second)
 	if _, err := runner.Up(ctx); err != nil {
-		t.Fatalf("migrate fresh database through 00008: %v", err)
+		t.Fatalf("migrate fresh database through current forward schema: %v", err)
 	}
 	assertVersion(t, ctx, runner, LatestVersion)
 	t.Run("generated expressions match v3 active states", func(t *testing.T) {
@@ -160,12 +160,12 @@ func TestPhase2MigrationExistingPhase1RowsPreserved(t *testing.T) {
 	columns := phase2ColumnsBeforeExpand(t, ctx, db, tables)
 	before := phase2LegacyDomainSnapshot(t, ctx, db, tables, columns)
 	if _, err := runner.Up(ctx); err != nil {
-		t.Fatalf("upgrade existing Phase 1 database through 00008: %v", err)
+		t.Fatalf("upgrade existing Phase 1 database through current forward schema: %v", err)
 	}
 	assertVersion(t, ctx, runner, LatestVersion)
 	after := phase2LegacyDomainSnapshot(t, ctx, db, tables, columns)
 	if before != after {
-		t.Fatalf("pre-existing Phase 1 rows changed across 00008: before=%s after=%s", before, after)
+		t.Fatalf("pre-existing Phase 1 rows changed across forward expansions: before=%s after=%s", before, after)
 	}
 	t.Logf("legacy_domain_data_sha256=%s", after)
 }

@@ -189,8 +189,8 @@ func (r *Repository) Ready(ctx context.Context) error {
 	if err := r.db.QueryRowContext(ctx, "SELECT MAX(version_id) FROM goose_db_version WHERE is_applied = 1").Scan(&version); err != nil {
 		return fmt.Errorf("read async task schema version: %w", err)
 	}
-	if !version.Valid || version.Int64 != 8 {
-		return fmt.Errorf("unsupported async task schema version %d, want 8", version.Int64)
+	if !version.Valid || version.Int64 != 9 {
+		return fmt.Errorf("unsupported async task schema version %d, want 9", version.Int64)
 	}
 	const schemaSQL = `SELECT COUNT(*)
 FROM information_schema.tables
