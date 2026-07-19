@@ -8,12 +8,13 @@ import (
 type RunStatus string
 
 const (
-	RunPending   RunStatus = "pending"
-	RunRunning   RunStatus = "running"
-	RunPassed    RunStatus = "passed"
-	RunFailed    RunStatus = "failed"
-	RunTimedOut  RunStatus = "timed_out"
-	RunCancelled RunStatus = "cancelled"
+	RunPending      RunStatus = "pending"
+	RunRunning      RunStatus = "running"
+	RunPassed       RunStatus = "passed"
+	RunFailed       RunStatus = "failed"
+	RunTimedOut     RunStatus = "timed_out"
+	RunInconclusive RunStatus = "inconclusive"
+	RunCancelled    RunStatus = "cancelled"
 )
 
 type CheckStatus string
@@ -45,6 +46,13 @@ const (
 	CheckLogErrorRateBelow       CheckType = "log_error_rate_below"
 	CheckTraceErrorRateBelow     CheckType = "trace_error_rate_below"
 	CheckTraceLatencyP95Below    CheckType = "trace_latency_p95_below"
+	CheckArgoExactRevision       CheckType = "argocd_exact_revision"
+	CheckArgoSyncSucceeded       CheckType = "argocd_sync_succeeded"
+	CheckDeploymentObserved      CheckType = "deployment_observed_generation"
+	CheckDeploymentRolloutV3     CheckType = "deployment_rollout_complete"
+	CheckIncidentAlertsResolved  CheckType = "incident_alerts_resolved"
+	CheckDeploymentIdentity      CheckType = "deployment_identity_unchanged"
+	CheckLogRequiredEnvAbsent    CheckType = "log_required_env_error_absent"
 	// Legacy reserved identifiers remain compile-time compatible with Phase 5
 	// tests, but ValidatePlan never authorizes them for execution.
 	CheckMetricThreshold CheckType = "metric_threshold"
@@ -92,13 +100,33 @@ type CheckSpec struct {
 	Comparison      Comparison      `json:"comparison,omitempty"`
 	Threshold       float64         `json:"threshold,omitempty"`
 	Required        bool            `json:"required"`
+	InitialDelay    time.Duration   `json:"initial_delay"`
+	TemplateVersion string          `json:"template_version,omitempty"`
+	MinSamples      int             `json:"min_samples"`
+	SampleUnit      string          `json:"sample_unit"`
+	FailureMode     FailureMode     `json:"failure_mode"`
 }
 
 type Plan struct {
-	SchemaVersion  int         `json:"schema_version"`
-	TargetRevision string      `json:"target_revision"`
-	Checks         []CheckSpec `json:"checks"`
+	SchemaVersion  int           `json:"schema_version"`
+	TargetRevision string        `json:"target_revision"`
+	Checks         []CheckSpec   `json:"checks"`
+	ProfileID      string        `json:"profile_id,omitempty"`
+	ProfileVersion int           `json:"profile_version,omitempty"`
+	ProfileHash    string        `json:"profile_hash,omitempty"`
+	TriggerType    string        `json:"trigger_type,omitempty"`
+	SourceRevision string        `json:"source_revision,omitempty"`
+	ImageDigest    string        `json:"image_digest,omitempty"`
+	GitOpsRevision string        `json:"gitops_revision,omitempty"`
+	Deadline       time.Duration `json:"deadline,omitempty"`
 }
+
+type FailureMode string
+
+const (
+	FailureResets    FailureMode = "resets"
+	FailureImmediate FailureMode = "immediate"
+)
 
 type Delivery struct {
 	ID                      uint64
@@ -204,6 +232,11 @@ type Check struct {
 	TemplateID              string
 	Comparison              Comparison
 	Threshold               float64
+	InitialDelay            time.Duration
+	TemplateVersion         string
+	MinSamples              int
+	SampleUnit              string
+	FailureMode             FailureMode
 	CreatedAt               time.Time
 	UpdatedAt               time.Time
 }
@@ -251,6 +284,10 @@ type Observation struct {
 	RedactedExamples []string          `json:"redacted_examples,omitempty"`
 	SourceReference  string            `json:"source_reference,omitempty"`
 	ReasonCode       string            `json:"reason_code,omitempty"`
+	QueryValid       bool              `json:"query_valid,omitempty"`
+	SourceHealthy    bool              `json:"source_healthy,omitempty"`
+	RetentionCovered bool              `json:"retention_covered,omitempty"`
+	Truncated        bool              `json:"truncated,omitempty"`
 }
 
 type RunPage struct {

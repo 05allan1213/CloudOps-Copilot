@@ -41,14 +41,14 @@ func CanTransitionRun(from, to RunStatus) bool {
 	case RunPending:
 		return to == RunRunning || to == RunCancelled || to == RunTimedOut
 	case RunRunning:
-		return to == RunPassed || to == RunFailed || to == RunTimedOut || to == RunCancelled
+		return to == RunPassed || to == RunFailed || to == RunTimedOut || to == RunInconclusive || to == RunCancelled
 	default:
 		return false
 	}
 }
 
 func TerminalRun(status RunStatus) bool {
-	return status == RunPassed || status == RunFailed || status == RunTimedOut || status == RunCancelled
+	return status == RunPassed || status == RunFailed || status == RunTimedOut || status == RunInconclusive || status == RunCancelled
 }
 
 func CanTransitionCheck(from, to CheckStatus) bool {
@@ -127,6 +127,72 @@ func Aggregate(checks []Check) (RunStatus, string, bool) {
 		return RunPassed, "all_required_checks_passed", true
 	}
 	return RunRunning, "checks_pending", false
+}
+
+// CommonWindowResult evaluates the V3 shared stability window. Individual
+// checks remain running until the maximum of all required success starts has
+// stayed continuously valid; a single passed check cannot resolve a Run.
+func CommonWindowResult(checks []Check, now time.Time, deadline time.Time) (RunStatus, string, bool, *time.Time) {
+	if len(checks) == 0 {
+		return RunFailed, "verification_plan_empty", true, nil
+	}
+	now = now.UTC()
+	var commonStart time.Time
+	// Classify explicit terminal/unavailable states before checking freshness so
+	// the outcome is independent of slice order.
+	for _, check := range checks {
+		if !check.Required {
+			continue
+		}
+		switch check.Status {
+		case CheckFailed, CheckInvalid, CheckCancelled:
+			return RunFailed, "required_check_" + string(check.Status), true, nil
+		case CheckTimedOut:
+			return RunTimedOut, "required_check_timed_out", true, nil
+		case CheckUnavailable:
+			if !deadline.IsZero() && !now.Before(deadline) {
+				return RunInconclusive, "required_check_unavailable", true, nil
+			}
+			return RunRunning, "required_check_unavailable", false, nil
+		}
+	}
+	for _, check := range checks {
+		if !check.Required {
+			continue
+		}
+		if check.ConsecutiveSuccessSince == nil {
+			if !deadline.IsZero() && !now.Before(deadline) {
+				return RunTimedOut, "common_stability_window_not_met", true, nil
+			}
+			return RunRunning, "common_stability_window_pending", false, nil
+		}
+		if commonStart.IsZero() || check.ConsecutiveSuccessSince.After(commonStart) {
+			commonStart = *check.ConsecutiveSuccessSince
+		}
+		if check.LastCheckedAt == nil || now.Sub(check.LastCheckedAt.UTC()) > maxDuration(check.PollInterval*2, time.Second) {
+			if !deadline.IsZero() && !now.Before(deadline) {
+				return RunInconclusive, "required_check_revalidation_gap", true, nil
+			}
+			return RunRunning, "required_check_revalidation_pending", false, nil
+		}
+	}
+	if commonStart.IsZero() {
+		return RunRunning, "common_stability_window_pending", false, nil
+	}
+	if now.Sub(commonStart) < V3CommonStabilityWindow {
+		if !deadline.IsZero() && !now.Before(deadline) {
+			return RunTimedOut, "common_stability_window_not_met", true, &commonStart
+		}
+		return RunRunning, "common_stability_window_pending", false, &commonStart
+	}
+	return RunPassed, "all_required_checks_common_window_passed", true, &commonStart
+}
+
+func maxDuration(a, b time.Duration) time.Duration {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func bound(value string, max int) string {
