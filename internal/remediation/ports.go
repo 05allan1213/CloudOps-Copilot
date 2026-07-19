@@ -25,6 +25,24 @@ type GitHubWriter interface {
 	ReadCI(context.Context, string, string) (CIStatus, error)
 }
 
+// PhasedGitHubWriter is the V3 write surface. Each Ensure method reconciles
+// first and performs at most one mutating GitHub request.
+type PhasedGitHubWriter interface {
+	ReconcileDraftPR(context.Context, PhasedDeliveryRequest) (WriteObservation, error)
+	EnsureBranch(context.Context, PhasedDeliveryRequest) (WriteObservation, error)
+	EnsureCommit(context.Context, PhasedDeliveryRequest) (WriteObservation, error)
+	EnsureDraftPR(context.Context, PhasedDeliveryRequest) (WriteObservation, error)
+}
+
+type WritePhase string
+
+const (
+	WritePhaseEnsureBranch  WritePhase = "ensure_branch"
+	WritePhaseEnsureCommit  WritePhase = "ensure_commit"
+	WritePhaseEnsureDraftPR WritePhase = "ensure_draft_pr"
+	WritePhaseComplete      WritePhase = "complete"
+)
+
 type DeliveryRequest struct {
 	Repository   string
 	BaseRevision string
@@ -42,4 +60,24 @@ type DeliveryResult struct {
 	CommitSHA string
 	PRNumber  int64
 	PRURL     string
+}
+
+type PhasedDeliveryRequest struct {
+	DeliveryRequest
+	BaseBlobSHA           string
+	ExpectedBeforeHash    string
+	ExpectedPostImageHash string
+	ExpectedTreeHash      string
+	LogicalOperationKey   string
+}
+
+type WriteObservation struct {
+	Phase      WritePhase
+	BaseSHA    string
+	BranchSHA  string
+	CommitSHA  string
+	TreeSHA    string
+	PRNumber   int64
+	PRURL      string
+	Reconciled bool
 }

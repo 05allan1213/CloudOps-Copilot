@@ -22,6 +22,7 @@ import (
 var (
 	repositoryPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 	revisionPattern   = regexp.MustCompile(`^[a-fA-F0-9]{40,64}$`)
+	sha256Pattern     = regexp.MustCompile(`^[a-f0-9]{64}$`)
 	branchPattern     = regexp.MustCompile(`^cloudops/incident-[a-f0-9-]{36}/remediation-[a-f0-9-]{36}$`)
 )
 
@@ -56,6 +57,7 @@ type Client struct {
 }
 
 var _ remediation.GitHubWriter = (*Client)(nil)
+var _ remediation.PhasedGitHubWriter = (*Client)(nil)
 
 func New(cfg Config) (*Client, error) {
 	base, err := url.Parse(cfg.BaseURL)
@@ -138,6 +140,165 @@ func (c *Client) DeliverDraftPR(ctx context.Context, request remediation.Deliver
 		return remediation.DeliveryResult{}, err
 	}
 	return c.createDraftPR(ctx, request, commitSHA)
+}
+
+// ReconcileDraftPR performs only bounded reads and returns the next write
+// phase. It is safe to call after an ambiguous GitHub response.
+func (c *Client) ReconcileDraftPR(ctx context.Context, request remediation.PhasedDeliveryRequest) (remediation.WriteObservation, error) {
+	if err := c.validatePhasedRequest(request); err != nil {
+		return remediation.WriteObservation{}, err
+	}
+	if err := c.ensureBaseRevision(ctx, request.Repository, request.BaseBranch, request.BaseRevision); err != nil {
+		return remediation.WriteObservation{}, err
+	}
+	if existing, found, err := c.findMarkerPR(ctx, request.DeliveryRequest); err != nil {
+		return remediation.WriteObservation{}, err
+	} else if found {
+		treeSHA, verifyErr := c.verifyPhasedCommit(ctx, request, existing.CommitSHA)
+		if verifyErr != nil {
+			return remediation.WriteObservation{}, verifyErr
+		}
+		return remediation.WriteObservation{Phase: remediation.WritePhaseComplete, BaseSHA: request.BaseRevision, BranchSHA: existing.CommitSHA, CommitSHA: existing.CommitSHA, TreeSHA: treeSHA, PRNumber: existing.PRNumber, PRURL: existing.PRURL, Reconciled: true}, nil
+	}
+	branchSHA, found, err := c.findBranchCommit(ctx, request.Repository, request.Branch)
+	if err != nil {
+		return remediation.WriteObservation{}, err
+	}
+	if !found {
+		return remediation.WriteObservation{Phase: remediation.WritePhaseEnsureBranch, BaseSHA: request.BaseRevision, Reconciled: true}, nil
+	}
+	if strings.EqualFold(branchSHA, request.BaseRevision) {
+		return remediation.WriteObservation{Phase: remediation.WritePhaseEnsureCommit, BaseSHA: request.BaseRevision, BranchSHA: branchSHA, Reconciled: true}, nil
+	}
+	treeSHA, err := c.verifyPhasedCommit(ctx, request, branchSHA)
+	if err != nil {
+		return remediation.WriteObservation{}, err
+	}
+	return remediation.WriteObservation{Phase: remediation.WritePhaseEnsureDraftPR, BaseSHA: request.BaseRevision, BranchSHA: branchSHA, CommitSHA: branchSHA, TreeSHA: treeSHA, Reconciled: true}, nil
+}
+
+func (c *Client) EnsureBranch(ctx context.Context, request remediation.PhasedDeliveryRequest) (remediation.WriteObservation, error) {
+	observation, err := c.ReconcileDraftPR(ctx, request)
+	if err != nil || observation.Phase != remediation.WritePhaseEnsureBranch {
+		return observation, err
+	}
+	if err := c.requestJSON(ctx, http.MethodPost, c.repoEndpoint(request.Repository, "/git/refs"), map[string]any{"ref": "refs/heads/" + request.Branch, "sha": request.BaseRevision}, nil, http.StatusCreated, "ensure_branch"); err != nil {
+		return remediation.WriteObservation{}, err
+	}
+	return remediation.WriteObservation{Phase: remediation.WritePhaseEnsureCommit, BaseSHA: request.BaseRevision, BranchSHA: request.BaseRevision}, nil
+}
+
+func (c *Client) EnsureCommit(ctx context.Context, request remediation.PhasedDeliveryRequest) (remediation.WriteObservation, error) {
+	observation, err := c.ReconcileDraftPR(ctx, request)
+	if err != nil || observation.Phase != remediation.WritePhaseEnsureCommit {
+		return observation, err
+	}
+	baseFile, err := c.readFile(ctx, request.Repository, request.BaseRevision, request.Path)
+	if err != nil {
+		return remediation.WriteObservation{}, err
+	}
+	if !strings.EqualFold(baseFile.SHA, request.BaseBlobSHA) || remediation.HashBytes(baseFile.Content) != request.ExpectedBeforeHash {
+		return remediation.WriteObservation{}, remediation.ErrDrift
+	}
+	var result struct {
+		Commit struct {
+			SHA  string `json:"sha"`
+			Tree struct {
+				SHA string `json:"sha"`
+			} `json:"tree"`
+		} `json:"commit"`
+	}
+	body := map[string]any{
+		"message": request.CommitTitle,
+		"content": base64.StdEncoding.EncodeToString(request.Content),
+		"sha":     request.BaseBlobSHA,
+		"branch":  request.Branch,
+	}
+	endpoint := c.repoEndpoint(request.Repository, "/contents/"+escapePath(request.Path))
+	if err := c.requestJSON(ctx, http.MethodPut, endpoint, body, &result, http.StatusOK, "ensure_commit"); err != nil {
+		return remediation.WriteObservation{}, err
+	}
+	if !revisionPattern.MatchString(result.Commit.SHA) || !strings.EqualFold(result.Commit.Tree.SHA, request.ExpectedTreeHash) {
+		return remediation.WriteObservation{}, remediation.ErrDrift
+	}
+	return remediation.WriteObservation{Phase: remediation.WritePhaseEnsureDraftPR, BaseSHA: request.BaseRevision, BranchSHA: result.Commit.SHA, CommitSHA: result.Commit.SHA, TreeSHA: strings.ToLower(result.Commit.Tree.SHA)}, nil
+}
+
+func (c *Client) EnsureDraftPR(ctx context.Context, request remediation.PhasedDeliveryRequest) (remediation.WriteObservation, error) {
+	observation, err := c.ReconcileDraftPR(ctx, request)
+	if err != nil || observation.Phase != remediation.WritePhaseEnsureDraftPR {
+		return observation, err
+	}
+	result, err := c.createDraftPR(ctx, request.DeliveryRequest, observation.CommitSHA)
+	if err != nil {
+		return remediation.WriteObservation{}, err
+	}
+	return remediation.WriteObservation{Phase: remediation.WritePhaseComplete, BaseSHA: request.BaseRevision, BranchSHA: result.CommitSHA, CommitSHA: result.CommitSHA, TreeSHA: observation.TreeSHA, PRNumber: result.PRNumber, PRURL: result.PRURL}, nil
+}
+
+func (c *Client) validatePhasedRequest(request remediation.PhasedDeliveryRequest) error {
+	if err := c.authorize(request.Repository, request.BaseRevision, request.BaseBranch, request.Path); err != nil ||
+		!branchPattern.MatchString(request.Branch) || len(request.Content) == 0 || len(request.Content) > c.maxContentBytes ||
+		!revisionPattern.MatchString(request.BaseBlobSHA) || !revisionPattern.MatchString(request.ExpectedTreeHash) ||
+		!lowerSHA256(request.ExpectedBeforeHash) || !lowerSHA256(request.ExpectedPostImageHash) || !lowerSHA256(request.LogicalOperationKey) ||
+		remediation.HashBytes(request.Content) != request.ExpectedPostImageHash ||
+		!strings.HasPrefix(request.Marker, "<!-- cloudops-remediation:") || !strings.HasSuffix(request.Marker, " -->") || !strings.Contains(request.PRBody, request.Marker) {
+		return remediation.ErrForbidden
+	}
+	return nil
+}
+
+type fileAtRevision struct {
+	SHA     string
+	Content []byte
+}
+
+func (c *Client) readFile(ctx context.Context, repository, revision, filePath string) (fileAtRevision, error) {
+	if err := c.authorize(repository, revision, "", filePath); err != nil {
+		return fileAtRevision{}, err
+	}
+	var result struct {
+		Type, Encoding, Content, SHA string
+		Size                         int
+	}
+	endpoint := c.repoEndpoint(repository, "/contents/"+escapePath(filePath)) + "?ref=" + url.QueryEscape(revision)
+	if err := c.requestJSON(ctx, http.MethodGet, endpoint, nil, &result, http.StatusOK, "read_file"); err != nil {
+		return fileAtRevision{}, err
+	}
+	if result.Type != "file" || result.Encoding != "base64" || result.Size < 0 || result.Size > c.maxContentBytes || !revisionPattern.MatchString(result.SHA) {
+		return fileAtRevision{}, remediation.ErrForbidden
+	}
+	content, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(result.Content, "\n", ""))
+	if err != nil || len(content) > c.maxContentBytes {
+		return fileAtRevision{}, remediation.ErrForbidden
+	}
+	return fileAtRevision{SHA: strings.ToLower(result.SHA), Content: content}, nil
+}
+
+func (c *Client) verifyPhasedCommit(ctx context.Context, request remediation.PhasedDeliveryRequest, commitSHA string) (string, error) {
+	var commit struct {
+		Message string `json:"message"`
+		Tree    struct {
+			SHA string `json:"sha"`
+		} `json:"tree"`
+		Parents []struct {
+			SHA string `json:"sha"`
+		} `json:"parents"`
+	}
+	if err := c.requestJSON(ctx, http.MethodGet, c.repoEndpoint(request.Repository, "/git/commits/"+url.PathEscape(commitSHA)), nil, &commit, http.StatusOK, "verify_phased_commit"); err != nil {
+		return "", err
+	}
+	if commit.Message != request.CommitTitle || len(commit.Parents) != 1 || !strings.EqualFold(commit.Parents[0].SHA, request.BaseRevision) || !strings.EqualFold(commit.Tree.SHA, request.ExpectedTreeHash) {
+		return "", remediation.ErrConflict
+	}
+	content, err := c.ReadBaseFile(ctx, request.Repository, commitSHA, request.Path)
+	if err != nil {
+		return "", err
+	}
+	if !bytes.Equal(content, request.Content) || remediation.HashBytes(content) != request.ExpectedPostImageHash {
+		return "", remediation.ErrDrift
+	}
+	return strings.ToLower(commit.Tree.SHA), nil
 }
 
 func (c *Client) ensureBaseRevision(ctx context.Context, repository, branch, approvedRevision string) error {
@@ -389,3 +550,5 @@ func (c *Client) requestJSON(ctx context.Context, method, endpoint string, body,
 }
 
 func errorsIsNotFound(err error) bool { return err == remediation.ErrNotFound }
+
+func lowerSHA256(value string) bool { return sha256Pattern.MatchString(value) }
