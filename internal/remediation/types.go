@@ -31,8 +31,9 @@ const (
 type OperationType string
 
 const (
-	OperationRollbackImage OperationType = "rollback_image"
-	OperationSetReplicas   OperationType = "set_replicas"
+	OperationRollbackImage      OperationType = "rollback_image"
+	OperationSetReplicas        OperationType = "set_replicas"
+	OperationRestoreRequiredEnv OperationType = "restore_required_env"
 )
 
 type RiskLevel string
@@ -94,6 +95,32 @@ type RemediationPlan struct {
 	RowVersion         uint64
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
+
+	// V3 immutable approval bindings. Legacy rows leave these fields empty
+	// until the release-A conversion/cutover flow classifies them.
+	CycleNo                 uint64
+	IncidentVersion         uint64
+	CreatedByAgentRunID     string
+	DiagnosisHash           string
+	HashSchemaVersion       int
+	CanonicalPlanHash       string
+	LastKnownGoodRevision   string
+	TargetBaseBranch        string
+	BaseBlobSHA             string
+	FileMode                string
+	TargetFieldRef          string
+	ExpectedPostImageHash   string
+	ExpectedTreeHash        string
+	CanonicalChangeManifest json.RawMessage
+	BoundedDiff             string
+	PostImage               []byte
+	PolicyVersion           string
+	PolicySnapshot          json.RawMessage
+	VerificationPlan        json.RawMessage
+	VerificationPlanHash    string
+	EvidenceBindings        []EvidenceBinding
+	EvidenceSetHash         string
+	ExpiresAt               time.Time
 }
 
 type Decision string
@@ -112,6 +139,25 @@ type Approval struct {
 	ApprovedPlanHash  string
 	ApprovedPatchHash string
 	CreatedAt         time.Time
+
+	ActorProvider             string
+	Role                      string
+	Reason                    string
+	RequestID                 string
+	RequestAuthenticatedAt    time.Time
+	ExpiresAt                 time.Time
+	ApprovedHashSchemaVersion int
+	ApprovedBaseSHA           string
+	ApprovedPostImageHash     string
+	ApprovedTreeHash          string
+	ApprovedPolicyHash        string
+	ApprovedVerificationHash  string
+	ApprovedEvidenceSetHash   string
+}
+
+type EvidenceBinding struct {
+	ID          string `json:"id"`
+	ContentHash string `json:"content_hash"`
 }
 
 type ChangeRequestStatus string
