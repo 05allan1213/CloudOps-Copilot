@@ -289,7 +289,7 @@ SELECT p.id, p.public_id, p.incident_id, i.public_id, i.v3_status, i.version,
 FROM remediation_plans p
 JOIN incidents i ON i.id = p.incident_id AND i.domain_schema_version = 3 AND i.cycle_no = p.cycle_no
 JOIN remediation_decisions d ON d.plan_id = p.id AND d.incident_id = p.incident_id AND d.cycle_no = p.cycle_no
-WHERE p.id = ? AND p.domain_schema_version = 3 AND p.plan_content_schema_version = 1`
+WHERE p.id = ? AND p.domain_schema_version = 3 AND p.plan_content_schema_version = 2`
 	if err := queryer.QueryRowContext(ctx, query, planID).Scan(
 		&snapshot.Plan.ID, &snapshot.Plan.PublicID, &snapshot.Plan.IncidentID, &snapshot.Plan.IncidentPublicID,
 		&snapshot.IncidentStatus, &snapshot.IncidentVersion, &snapshot.Plan.CycleNo, &snapshot.Plan.IncidentVersion,
