@@ -1,11 +1,11 @@
 openapi: 3.1.0
 info:
   title: CloudOps Incident API v3
-  version: 0.2.0-phase2
+  version: 0.3.0-workbench
   description: >-
-    Phase 2 Command and Query skeleton. Queries are read-only MySQL projection
-    ports and return 501 until explicitly wired; they never fall back to fake
-    in-memory runtime state. Numeric database identifiers are never public.
+    V3 authenticated commands and bounded MySQL-only Workbench projections.
+    Numeric database identifiers, secrets, leases, checkpoints, and raw prompts
+    are never public.
 servers:
   - url: /
 security:
@@ -157,7 +157,7 @@ paths:
       operationId: listRemediationPlans
       parameters: [{ $ref: "#/components/parameters/Cursor" }, { $ref: "#/components/parameters/Limit" }]
       responses:
-        "200": { $ref: "#/components/responses/ResourcePage" }
+        "200": { $ref: "#/components/responses/RemediationPlanPage" }
         "501": { $ref: "#/components/responses/Problem" }
         default: { $ref: "#/components/responses/Problem" }
   /api/v3/incidents/{id}/delivery:
@@ -166,7 +166,7 @@ paths:
     get:
       operationId: getDelivery
       responses:
-        "200": { $ref: "#/components/responses/Resource" }
+        "200": { $ref: "#/components/responses/DeliveryProjection" }
         "501": { $ref: "#/components/responses/Problem" }
         default: { $ref: "#/components/responses/Problem" }
   /api/v3/incidents/{id}/verifications:
@@ -176,7 +176,7 @@ paths:
       operationId: listVerifications
       parameters: [{ $ref: "#/components/parameters/Cursor" }, { $ref: "#/components/parameters/Limit" }]
       responses:
-        "200": { $ref: "#/components/responses/ResourcePage" }
+        "200": { $ref: "#/components/responses/VerificationRunPage" }
         "501": { $ref: "#/components/responses/Problem" }
         default: { $ref: "#/components/responses/Problem" }
   /api/v3/incidents/{id}/resolution-report:
@@ -185,7 +185,7 @@ paths:
     get:
       operationId: getResolutionReport
       responses:
-        "200": { $ref: "#/components/responses/Resource" }
+        "200": { $ref: "#/components/responses/ResolutionReportProjection" }
         "501": { $ref: "#/components/responses/Problem" }
         default: { $ref: "#/components/responses/Problem" }
   /api/v3/incidents/{id}/events:
@@ -313,6 +313,494 @@ components:
         hash: { type: string, pattern: "^[0-9a-f]{64}$" }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+    RemediationPlan:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - kind
+        - cycle
+        - status
+        - version
+        - plan_version
+        - plan_content_schema_version
+        - incident_version
+        - created_by_agent_run_id
+        - operation_type
+        - risk_level
+        - patch_summary
+        - rollback_plan
+        - validation_plan
+        - target
+        - hash_schema_version
+        - diagnosis_hash
+        - canonical_plan_hash
+        - expected_before_hash
+        - expected_post_image_hash
+        - expected_tree_hash
+        - proposed_patch_hash
+        - canonical_manifest
+        - bounded_diff
+        - policy_version
+        - policy_hash
+        - policy_snapshot
+        - verification_plan
+        - verification_plan_hash
+        - evidence_bindings
+        - evidence_set_hash
+        - expires_at
+        - created_at
+        - updated_at
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, const: remediation_plan }
+        cycle: { type: integer, minimum: 1 }
+        status:
+          type: string
+          enum: [awaiting_approval, approved, rejected, superseded, cancelled, consumed, invalidated, policy_rejected]
+        version: { type: integer, minimum: 1 }
+        plan_version: { type: integer, minimum: 1 }
+        plan_content_schema_version: { type: integer, minimum: 1 }
+        incident_version: { type: integer, minimum: 1 }
+        created_by_agent_run_id: { type: string, format: uuid }
+        operation_type: { type: string, const: restore_required_env }
+        risk_level: { type: string, enum: [low, medium, high] }
+        patch_summary: { type: string, maxLength: 2048 }
+        rollback_plan: { type: string, maxLength: 4096 }
+        validation_plan: { type: string, maxLength: 4096 }
+        target: { $ref: "#/components/schemas/RemediationTarget" }
+        hash_schema_version: { type: integer, minimum: 1 }
+        diagnosis_hash: { $ref: "#/components/schemas/SHA256" }
+        canonical_plan_hash: { $ref: "#/components/schemas/SHA256" }
+        expected_before_hash: { $ref: "#/components/schemas/SHA256" }
+        expected_post_image_hash: { $ref: "#/components/schemas/SHA256" }
+        expected_tree_hash: { $ref: "#/components/schemas/GitObjectID" }
+        proposed_patch_hash: { $ref: "#/components/schemas/SHA256" }
+        canonical_manifest:
+          type: object
+          description: Canonical JSON object, runtime-bounded to 4096 bytes.
+        bounded_diff: { type: string, maxLength: 65536 }
+        policy_version: { type: string, maxLength: 64 }
+        policy_hash: { $ref: "#/components/schemas/SHA256" }
+        policy_snapshot:
+          type: object
+          description: Immutable canonical Policy snapshot, runtime-bounded to 16384 bytes.
+        verification_plan:
+          type: object
+          description: Immutable canonical VerificationPlan, runtime-bounded to 16384 bytes.
+        verification_plan_hash: { $ref: "#/components/schemas/SHA256" }
+        evidence_bindings:
+          type: array
+          minItems: 1
+          maxItems: 40
+          items: { $ref: "#/components/schemas/EvidenceBinding" }
+        evidence_set_hash: { $ref: "#/components/schemas/SHA256" }
+        expires_at: { type: string, format: date-time }
+        decision: { $ref: "#/components/schemas/RemediationDecision" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    RemediationTarget:
+      type: object
+      additionalProperties: false
+      required: [repository, base_branch, base_revision, last_known_good_revision, base_blob_sha, file_mode, path, field_ref, resource]
+      properties:
+        repository: { type: string, maxLength: 255 }
+        base_branch: { type: string, maxLength: 255 }
+        base_revision: { $ref: "#/components/schemas/GitObjectID" }
+        last_known_good_revision: { $ref: "#/components/schemas/GitObjectID" }
+        base_blob_sha: { $ref: "#/components/schemas/GitObjectID" }
+        file_mode: { type: string, maxLength: 16 }
+        path: { type: string, maxLength: 1024 }
+        field_ref: { type: string, maxLength: 1024 }
+        resource: { $ref: "#/components/schemas/RemediationTargetResource" }
+    RemediationTargetResource:
+      type: object
+      additionalProperties: false
+      required: [api_version, kind, namespace, name]
+      properties:
+        api_version: { type: string, maxLength: 64 }
+        kind: { type: string, maxLength: 64 }
+        namespace: { type: string, maxLength: 255 }
+        name: { type: string, maxLength: 255 }
+        container: { type: string, maxLength: 255 }
+    EvidenceBinding:
+      type: object
+      additionalProperties: false
+      required: [id, content_hash]
+      properties:
+        id: { type: string, format: uuid }
+        content_hash: { $ref: "#/components/schemas/SHA256" }
+    RemediationDecision:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - decision_schema_version
+        - plan_version
+        - decision
+        - actor
+        - reason
+        - request_id
+        - request_authenticated_at
+        - expires_at
+        - approved_hash_schema_version
+        - approved_plan_hash
+        - approved_base_sha
+        - approved_post_image_hash
+        - approved_tree_hash
+        - approved_patch_hash
+        - approved_policy_hash
+        - approved_verification_hash
+        - approved_evidence_set_hash
+        - created_at
+      properties:
+        id: { type: string, format: uuid }
+        decision_schema_version: { type: integer, minimum: 1 }
+        plan_version: { type: integer, minimum: 1 }
+        decision: { type: string, enum: [approved, rejected] }
+        actor: { $ref: "#/components/schemas/RemediationDecisionActor" }
+        reason: { type: string, minLength: 1, maxLength: 1024 }
+        request_id: { type: string, minLength: 1, maxLength: 128 }
+        request_authenticated_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        approved_hash_schema_version: { type: integer, minimum: 1 }
+        approved_plan_hash: { $ref: "#/components/schemas/SHA256" }
+        approved_base_sha: { $ref: "#/components/schemas/GitObjectID" }
+        approved_post_image_hash: { $ref: "#/components/schemas/SHA256" }
+        approved_tree_hash: { $ref: "#/components/schemas/GitObjectID" }
+        approved_patch_hash: { $ref: "#/components/schemas/SHA256" }
+        approved_policy_hash: { $ref: "#/components/schemas/SHA256" }
+        approved_verification_hash: { $ref: "#/components/schemas/SHA256" }
+        approved_evidence_set_hash: { $ref: "#/components/schemas/SHA256" }
+        created_at: { type: string, format: date-time }
+    RemediationDecisionActor:
+      type: object
+      additionalProperties: false
+      required: [provider, login, role]
+      properties:
+        provider: { type: string, const: github }
+        login: { type: string, maxLength: 128 }
+        role: { type: string, const: operator }
+    Delivery:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - kind
+        - cycle
+        - status
+        - version
+        - remediation_plan_id
+        - repository
+        - base_revision
+        - head_branch
+        - ci_status
+        - desired_replicas
+        - updated_replicas
+        - available_replicas
+        - unavailable_replicas
+        - created_at
+        - updated_at
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, const: delivery }
+        cycle: { type: integer, minimum: 1 }
+        status: { type: string, enum: [pending, pr_open, merged, syncing, rolling_out, delivered, failed, cancelled, superseded] }
+        version: { type: integer, minimum: 1 }
+        remediation_plan_id: { type: string, format: uuid }
+        repository: { type: string, maxLength: 255 }
+        base_revision: { $ref: "#/components/schemas/GitObjectID" }
+        head_branch: { type: string, maxLength: 255 }
+        commit_sha: { $ref: "#/components/schemas/GitObjectID" }
+        pr_number: { type: integer, minimum: 1 }
+        pr_url: { type: string, format: uri, maxLength: 1024 }
+        pr_state: { type: string, maxLength: 16 }
+        ci_status: { type: string, enum: [pending, passing, failing, cancelled] }
+        merged_commit_sha: { $ref: "#/components/schemas/GitObjectID" }
+        target_revision: { $ref: "#/components/schemas/GitObjectID" }
+        detected_revision: { $ref: "#/components/schemas/GitObjectID" }
+        argocd_application: { type: string, maxLength: 255 }
+        argocd_project: { type: string, maxLength: 255 }
+        argocd_sync_status: { type: string, maxLength: 32 }
+        argocd_operation_phase: { type: string, maxLength: 32 }
+        argocd_health_status: { type: string, maxLength: 32 }
+        resource_health:
+          description: Sanitized Argo resource health object or array, runtime-bounded to 16384 bytes.
+          oneOf:
+            - { type: object }
+            - { type: array }
+        cluster: { type: string, maxLength: 255 }
+        environment: { type: string, maxLength: 255 }
+        namespace: { type: string, maxLength: 255 }
+        workload_kind: { type: string, maxLength: 64 }
+        workload_name: { type: string, maxLength: 255 }
+        deployment_generation: { type: integer, minimum: 0 }
+        observed_generation: { type: integer, minimum: 0 }
+        rollout_revision: { $ref: "#/components/schemas/GitObjectID" }
+        desired_replicas: { type: integer, minimum: 0 }
+        updated_replicas: { type: integer, minimum: 0 }
+        available_replicas: { type: integer, minimum: 0 }
+        unavailable_replicas: { type: integer, minimum: 0 }
+        sync_started_at: { type: string, format: date-time }
+        sync_completed_at: { type: string, format: date-time }
+        delivery_started_at: { type: string, format: date-time }
+        delivery_deadline_at: { type: string, format: date-time }
+        delivery_completed_at: { type: string, format: date-time }
+        last_observed_at: { type: string, format: date-time }
+        failure_code: { type: string, maxLength: 64 }
+        failure_reason: { type: string, maxLength: 128 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    VerificationRun:
+      type: object
+      additionalProperties: false
+      required: [id, kind, cycle, status, version, trigger_type, attempt, profile, revisions, deadline_at, common_window, checks, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, const: verification }
+        cycle: { type: integer, minimum: 1 }
+        status: { type: string, enum: [pending, running, passed, failed, inconclusive, timed_out, cancelled] }
+        version: { type: integer, minimum: 1 }
+        trigger_type: { type: string, enum: [post_delivery, no_change_signal] }
+        remediation_plan_id: { type: string, format: uuid }
+        change_request_id: { type: string, format: uuid }
+        trigger_signal_id: { type: string, format: uuid }
+        attempt: { type: integer, minimum: 1 }
+        profile: { $ref: "#/components/schemas/VerificationProfile" }
+        revisions: { $ref: "#/components/schemas/VerificationRevisions" }
+        started_at: { type: string, format: date-time }
+        deadline_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        common_window: { $ref: "#/components/schemas/VerificationCommonWindow" }
+        result_summary: { type: string, maxLength: 2048 }
+        failure_reason: { type: string, maxLength: 128 }
+        checks:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items: { $ref: "#/components/schemas/VerificationCheck" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    VerificationProfile:
+      type: object
+      additionalProperties: false
+      required: [id, version, hash, contract_version]
+      properties:
+        id: { type: string, enum: [golden-required-env/v1, no-change/v1] }
+        version: { type: integer, minimum: 1 }
+        hash: { $ref: "#/components/schemas/SHA256" }
+        contract_version: { type: integer, minimum: 1 }
+    VerificationRevisions:
+      type: object
+      additionalProperties: false
+      required: [target_revision, source_revision, image_digest, gitops_revision]
+      properties:
+        target_revision: { $ref: "#/components/schemas/GitObjectID" }
+        source_revision: { $ref: "#/components/schemas/GitObjectID" }
+        image_digest: { type: string, pattern: "^sha256:[0-9a-f]{64}$" }
+        gitops_revision: { $ref: "#/components/schemas/GitObjectID" }
+    VerificationCommonWindow:
+      type: object
+      additionalProperties: false
+      required: [stability_window_ms]
+      properties:
+        stability_window_ms: { type: integer, const: 60000 }
+        success_since: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+    VerificationCheck:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - spec_schema_version
+        - type
+        - status
+        - required
+        - profile_id
+        - template_id
+        - template_version
+        - subject
+        - expected
+        - source_identity
+        - lookback_ms
+        - initial_delay_ms
+        - stability_window_ms
+        - timeout_ms
+        - poll_interval_ms
+        - min_samples
+        - sample_unit
+        - failure_mode
+        - attempt_count
+        - samples
+        - created_at
+        - updated_at
+      properties:
+        id: { type: string, format: uuid }
+        spec_schema_version: { type: integer, minimum: 1 }
+        type: { type: string, maxLength: 64 }
+        status: { type: string, enum: [pending, running, passed, failed, timed_out, unavailable, invalid, cancelled] }
+        required: { type: boolean }
+        profile_id: { type: string, maxLength: 128 }
+        template_id: { type: string, maxLength: 128 }
+        template_version: { type: string, maxLength: 64 }
+        subject: { $ref: "#/components/schemas/VerificationSubject" }
+        expected:
+          type: object
+          description: Sanitized expected fact, runtime-bounded to 16384 bytes.
+        observed:
+          type: object
+          description: Sanitized observed fact, runtime-bounded to 16384 bytes.
+        comparison: { type: string, enum: [lt, lte, gt, gte, absent] }
+        threshold: { type: number }
+        source_reference: { type: string, maxLength: 1024 }
+        source_identity: { type: string, maxLength: 255 }
+        lookback_ms: { type: integer, minimum: 0 }
+        initial_delay_ms: { type: integer, minimum: 0 }
+        stability_window_ms: { type: integer, minimum: 1 }
+        timeout_ms: { type: integer, minimum: 1 }
+        poll_interval_ms: { type: integer, minimum: 1 }
+        min_samples: { type: integer, minimum: 1 }
+        sample_unit: { type: string, maxLength: 32 }
+        failure_mode: { type: string, enum: [resets, immediate] }
+        first_checked_at: { type: string, format: date-time }
+        last_checked_at: { type: string, format: date-time }
+        passed_at: { type: string, format: date-time }
+        consecutive_success_since: { type: string, format: date-time }
+        attempt_count: { type: integer, minimum: 0 }
+        failure_reason: { type: string, maxLength: 128 }
+        samples:
+          type: array
+          maxItems: 2000
+          items: { $ref: "#/components/schemas/VerificationSample" }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    VerificationSubject:
+      type: object
+      additionalProperties: false
+      required: [revision]
+      properties:
+        repository: { type: string, maxLength: 255 }
+        pull_request: { type: integer, minimum: 1 }
+        revision: { $ref: "#/components/schemas/GitObjectID" }
+        argocd_application: { type: string, maxLength: 255 }
+        argocd_project: { type: string, maxLength: 255 }
+        cluster: { type: string, maxLength: 255 }
+        environment: { type: string, maxLength: 255 }
+        namespace: { type: string, maxLength: 255 }
+        service: { type: string, maxLength: 255 }
+        workload_kind: { type: string, maxLength: 64 }
+        workload_name: { type: string, maxLength: 255 }
+        alert_fingerprint: { type: string, maxLength: 128 }
+    VerificationSample:
+      type: object
+      additionalProperties: false
+      required: [id, schema_version, sequence, status, observed, sampled_at, content_hash, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        schema_version: { type: integer, minimum: 1 }
+        sequence: { type: integer, minimum: 1 }
+        status: { type: string, enum: [passed, failed, pending, unavailable, invalid, timed_out] }
+        observed:
+          type: object
+          description: Sanitized bounded sample fact, runtime-bounded to 16384 bytes.
+        source_reference: { type: string, maxLength: 1024 }
+        reason_code: { type: string, maxLength: 128 }
+        window_start_at: { type: string, format: date-time }
+        window_end_at: { type: string, format: date-time }
+        sampled_at: { type: string, format: date-time }
+        content_hash: { $ref: "#/components/schemas/SHA256" }
+        created_at: { type: string, format: date-time }
+    ResolutionReport:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - kind
+        - status
+        - cycle
+        - trigger_type
+        - resolution_reason
+        - service
+        - workload
+        - environment
+        - impact_summary
+        - summary
+        - hash
+        - cycle_started_at
+        - resolved_at
+        - measured_duration_ms
+        - generated_at
+        - revisions
+        - verification_profile
+        - stability
+        - trigger_signal
+        - diagnosis
+        - evidence
+        - remediation_plan
+        - remediation_decision
+        - delivery
+        - verification
+        - timeline
+        - agent_usage
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, const: resolution_report }
+        status: { type: string, const: resolved }
+        cycle: { type: integer, minimum: 1 }
+        trigger_type: { type: string, enum: [post_delivery, no_change_signal] }
+        resolution_reason: { type: string, maxLength: 64 }
+        service: { type: string, maxLength: 255 }
+        workload: { type: string, maxLength: 255 }
+        environment: { type: string, maxLength: 255 }
+        impact_summary: { type: string, maxLength: 2048 }
+        summary: { type: string, maxLength: 2048 }
+        hash: { $ref: "#/components/schemas/SHA256" }
+        cycle_started_at: { type: string, format: date-time }
+        resolved_at: { type: string, format: date-time }
+        measured_duration_ms: { type: integer, minimum: 0 }
+        generated_at: { type: string, format: date-time }
+        revisions: { $ref: "#/components/schemas/ResolutionRevisions" }
+        verification_profile: { $ref: "#/components/schemas/ResolutionVerificationProfile" }
+        stability: { $ref: "#/components/schemas/ResolutionStability" }
+        trigger_signal: { type: object }
+        diagnosis: { type: [object, "null"] }
+        evidence: { type: object }
+        remediation_plan: { type: [object, "null"] }
+        remediation_decision: { type: [object, "null"] }
+        delivery: { type: [object, "null"] }
+        verification: { type: object }
+        timeline: { type: object }
+        agent_usage: { type: object }
+    ResolutionRevisions:
+      type: object
+      additionalProperties: false
+      required: [source_revision, image_digest, gitops_revision]
+      properties:
+        bad_gitops_revision: { $ref: "#/components/schemas/GitObjectID" }
+        fix_gitops_revision: { $ref: "#/components/schemas/GitObjectID" }
+        source_revision: { $ref: "#/components/schemas/GitObjectID" }
+        image_digest: { type: string, pattern: "^sha256:[0-9a-f]{64}$" }
+        gitops_revision: { $ref: "#/components/schemas/GitObjectID" }
+    ResolutionVerificationProfile:
+      type: object
+      additionalProperties: false
+      required: [id, hash]
+      properties:
+        id: { type: string, maxLength: 128 }
+        hash: { $ref: "#/components/schemas/SHA256" }
+    ResolutionStability:
+      type: object
+      additionalProperties: false
+      required: [common_window_started_at, common_window_completed_at]
+      properties:
+        common_window_started_at: { type: string, format: date-time }
+        common_window_completed_at: { type: string, format: date-time }
+    SHA256:
+      type: string
+      pattern: "^[0-9a-f]{64}$"
+    GitObjectID:
+      type: string
+      pattern: "^[0-9a-f]{40}([0-9a-f]{24})?$"
     VersionedCommand:
       type: object
       additionalProperties: false
@@ -390,6 +878,50 @@ components:
             required: [resource]
             properties:
               resource: { $ref: "#/components/schemas/Resource" }
+    RemediationPlanPage:
+      description: Bounded current-cycle remediation plan page
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [items]
+            properties:
+              items:
+                type: array
+                maxItems: 100
+                items: { $ref: "#/components/schemas/RemediationPlan" }
+              next_cursor: { type: string, format: uuid }
+    DeliveryProjection:
+      description: Latest current-cycle delivery projection
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [resource]
+            properties:
+              resource: { $ref: "#/components/schemas/Delivery" }
+    VerificationRunPage:
+      description: Bounded current-cycle verification run page with nested checks and samples
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [items]
+            properties:
+              items:
+                type: array
+                maxItems: 100
+                items: { $ref: "#/components/schemas/VerificationRun" }
+              next_cursor: { type: string, format: uuid }
+    ResolutionReportProjection:
+      description: Immutable current-cycle ResolutionReport projection
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [resource]
+            properties:
+              resource: { $ref: "#/components/schemas/ResolutionReport" }
     CommandAccepted:
       description: Command persisted and queued
       headers:

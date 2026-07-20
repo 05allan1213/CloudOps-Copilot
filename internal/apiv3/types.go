@@ -172,8 +172,11 @@ type QueryResponse struct {
 	Incident         *IncidentView
 	Resource         *ResourceView
 	ResolutionReport *ResolutionReportView
+	Delivery         *DeliveryView
 	Incidents        []IncidentView
 	Items            []ResourceView
+	RemediationPlans []RemediationPlanView
+	Verifications    []VerificationRunView
 	Events           []RefreshEvent
 	NextCursor       string
 }

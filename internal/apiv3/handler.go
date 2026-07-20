@@ -125,9 +125,9 @@ func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	queries.GET("/incidents/:id/timeline", handler.listResources(QueryTimeline))
 	queries.GET("/incidents/:id/evidence", handler.listResources(QueryEvidence))
 	queries.GET("/incidents/:id/investigations", handler.listResources(QueryInvestigations))
-	queries.GET("/incidents/:id/remediation-plans", handler.listResources(QueryRemediationPlans))
-	queries.GET("/incidents/:id/delivery", handler.getResource(QueryDelivery))
-	queries.GET("/incidents/:id/verifications", handler.listResources(QueryVerifications))
+	queries.GET("/incidents/:id/remediation-plans", handler.listRemediationPlans)
+	queries.GET("/incidents/:id/delivery", handler.getDelivery)
+	queries.GET("/incidents/:id/verifications", handler.listVerifications)
 	queries.GET("/incidents/:id/resolution-report", handler.getResource(QueryResolutionReport))
 	queries.GET("/incidents/:id/events", handler.streamEvents)
 

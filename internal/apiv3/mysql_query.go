@@ -36,12 +36,16 @@ func (p *MySQLQueryPort) Query(ctx context.Context, request QueryRequest) (Query
 		return p.listIncidents(ctx, request)
 	case QueryIncident:
 		return p.getIncident(ctx, request.IncidentID)
-	case QuerySignals, QueryEvidence, QueryInvestigations, QueryRemediationPlans, QueryVerifications:
+	case QuerySignals, QueryEvidence, QueryInvestigations:
 		return p.listIncidentResources(ctx, request)
+	case QueryRemediationPlans:
+		return p.listRemediationPlans(ctx, request)
 	case QueryTimeline:
 		return p.listTimeline(ctx, request)
 	case QueryDelivery:
-		return p.getIncidentResource(ctx, request)
+		return p.getDeliveryProjection(ctx, request)
+	case QueryVerifications:
+		return p.listVerificationRuns(ctx, request)
 	case QueryResolutionReport:
 		return p.getResolutionReport(ctx, request)
 	case QueryEvents:
@@ -230,14 +234,6 @@ var mysqlResourceQueries = map[QueryKind]resourceQuerySpec{
 		Summary: "COALESCE(JSON_UNQUOTE(JSON_EXTRACT(final_diagnosis, '$.summary')), failure_summary, failure_code, '')",
 		Hash:    "NULL", CreatedAt: "created_at", UpdatedAt: "updated_at", SortColumn: "created_at",
 	},
-	QueryRemediationPlans: {
-		Kind: "remediation_plan", Table: "remediation_plans", Status: "v3_status", Version: "row_version",
-		Summary: "patch_summary", Hash: "canonical_plan_hash", CreatedAt: "created_at", UpdatedAt: "updated_at", SortColumn: "created_at",
-	},
-	QueryVerifications: {
-		Kind: "verification", Table: "verification_runs", Status: "v3_status", Version: "row_version",
-		Summary: "result_summary", Hash: "verification_profile_hash", CreatedAt: "created_at", UpdatedAt: "updated_at", SortColumn: "created_at",
-	},
 }
 
 func (p *MySQLQueryPort) listIncidentResources(ctx context.Context, request QueryRequest) (QueryResponse, error) {
@@ -318,42 +314,6 @@ LIMIT ?`, incident.ID, incident.CycleNo, afterNumeric, request.Limit+1)
 		next = items[len(items)-1].ID
 	}
 	return QueryResponse{Items: items, NextCursor: next}, nil
-}
-
-func (p *MySQLQueryPort) getIncidentResource(ctx context.Context, request QueryRequest) (QueryResponse, error) {
-	incident, err := p.incidentRef(ctx, request.IncidentID)
-	if err != nil {
-		return QueryResponse{}, err
-	}
-	var query, kind string
-	switch request.Kind {
-	case QueryDelivery:
-		kind = "delivery"
-		query = `
-SELECT id, public_id, cycle_no, v3_status, row_version,
-       COALESCE(NULLIF(failure_reason, ''), NULLIF(failure_code, ''), ''), NULL,
-       created_at, updated_at, created_at
-FROM change_requests
-WHERE incident_id = ? AND cycle_no = ? AND domain_schema_version = 3
-  AND public_id IS NOT NULL
-ORDER BY created_at DESC, id DESC
-LIMIT 1`
-	default:
-		return QueryResponse{}, ErrInvalidArgument
-	}
-	rows, err := p.db.QueryContext(ctx, query, incident.ID, incident.CycleNo)
-	if err != nil {
-		return QueryResponse{}, fmt.Errorf("get V3 %s resource: %w", kind, err)
-	}
-	defer func() { _ = rows.Close() }()
-	items, _, err := scanMySQLResourceRows(rows, kind, 1)
-	if err != nil {
-		return QueryResponse{}, err
-	}
-	if len(items) == 0 {
-		return QueryResponse{}, ErrNotFound
-	}
-	return QueryResponse{Resource: &items[0]}, nil
 }
 
 const resolutionReportQuery = `

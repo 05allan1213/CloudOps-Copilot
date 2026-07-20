@@ -14,6 +14,9 @@ type MemoryQueryPort struct {
 	mu        sync.RWMutex
 	incidents map[string]IncidentView
 	children  map[string]map[QueryKind][]ResourceView
+	plans     map[string][]RemediationPlanView
+	delivery  map[string]DeliveryView
+	verify    map[string][]VerificationRunView
 	reports   map[string]ResolutionReportView
 	events    map[string][]RefreshEvent
 }
@@ -22,6 +25,9 @@ func NewMemoryQueryPort() *MemoryQueryPort {
 	return &MemoryQueryPort{
 		incidents: make(map[string]IncidentView),
 		children:  make(map[string]map[QueryKind][]ResourceView),
+		plans:     make(map[string][]RemediationPlanView),
+		delivery:  make(map[string]DeliveryView),
+		verify:    make(map[string][]VerificationRunView),
 		reports:   make(map[string]ResolutionReportView),
 		events:    make(map[string][]RefreshEvent),
 	}
@@ -167,15 +173,22 @@ func (m *MemoryQueryPort) Query(_ context.Context, request QueryRequest) (QueryR
 		}
 		return QueryResponse{ResolutionReport: copyResolutionReport(&item)}, nil
 	}
+	if request.Kind == QueryRemediationPlans {
+		return QueryResponse{RemediationPlans: copyRemediationPlans(m.plans[request.IncidentID])}, nil
+	}
+	if request.Kind == QueryDelivery {
+		item, ok := m.delivery[request.IncidentID]
+		if !ok {
+			return QueryResponse{}, nil
+		}
+		return QueryResponse{Delivery: copyDelivery(&item)}, nil
+	}
+	if request.Kind == QueryVerifications {
+		return QueryResponse{Verifications: copyVerificationRuns(m.verify[request.IncidentID])}, nil
+	}
 
 	children := m.children[request.IncidentID]
 	items := append([]ResourceView(nil), children[request.Kind]...)
-	if request.Kind == QueryDelivery {
-		if len(items) > 0 {
-			resource := items[0]
-			return QueryResponse{Resource: &resource}, nil
-		}
-	}
 	return QueryResponse{Items: items}, nil
 }
 
@@ -266,7 +279,7 @@ const httpStatusAccepted = 202
 
 func isChildKind(kind QueryKind) bool {
 	switch kind {
-	case QuerySignals, QueryTimeline, QueryEvidence, QueryInvestigations, QueryRemediationPlans, QueryDelivery, QueryVerifications:
+	case QuerySignals, QueryTimeline, QueryEvidence, QueryInvestigations:
 		return true
 	default:
 		return false
