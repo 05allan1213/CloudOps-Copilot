@@ -152,18 +152,26 @@ func retryableTransactionError(err error) bool {
 }
 
 type insertedSignal struct {
-	input SignalInput
-	id    uint64
-	new   bool
+	input      SignalInput
+	id         uint64
+	incidentID uint64
+	cycleNo    uint64
+	new        bool
 }
 
 type incidentRow struct {
-	id       uint64
-	publicID string
-	cycleNo  uint64
-	severity domain.Severity
-	status   domain.V3Status
-	version  uint64
+	id          uint64
+	publicID    string
+	cycleNo     uint64
+	severity    domain.Severity
+	status      domain.V3Status
+	version     uint64
+	cluster     string
+	environment string
+	namespace   string
+	service     string
+	targetKind  string
+	targetName  string
 }
 
 func (s *Store) ingestGroup(ctx context.Context, correlationKey string, inputs []SignalInput) ([]IngestResult, error) {
@@ -244,6 +252,7 @@ func (s *Store) ingestGroup(ctx context.Context, correlationKey string, inputs [
 		if err := attachSignal(ctx, tx, inserted[index].id, incident); err != nil {
 			return nil, err
 		}
+		inserted[index].incidentID, inserted[index].cycleNo = incident.id, incident.cycleNo
 		if err := appendSignalEvent(ctx, tx, incident, inserted[index].input); err != nil {
 			return nil, err
 		}
@@ -269,6 +278,7 @@ func (s *Store) ingestGroup(ctx context.Context, correlationKey string, inputs [
 		if err := appendSignalEvent(ctx, tx, original, inserted[index].input); err != nil {
 			return nil, err
 		}
+		inserted[index].incidentID, inserted[index].cycleNo = original.id, original.cycleNo
 		results[index].IncidentPublicID = original.publicID
 		results[index].CycleNo = original.cycleNo
 	}
@@ -295,6 +305,13 @@ WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? AND version = ?`, in
 	firing, err := countFiringInstances(ctx, tx, incident)
 	if err != nil {
 		return nil, err
+	}
+	if firing == 0 {
+		if triggerSignalID, ok := noChangeTriggerSignal(inserted, incident); ok {
+			if _, err := startNoChangeVerification(ctx, tx, &incident, triggerSignalID); err != nil {
+				return nil, err
+			}
+		}
 	}
 	if createdOrReopened && firing > 0 {
 		created, err := enqueueInvestigationStart(ctx, tx, incident)
@@ -392,10 +409,12 @@ WHERE s.source = ? AND s.source_event_id = ?`, input.Source, input.SourceEventID
 func selectActiveIncident(ctx context.Context, tx *sql.Tx, key string) (incidentRow, error) {
 	var row incidentRow
 	err := tx.QueryRowContext(ctx, `
-SELECT id, public_id, cycle_no, severity, v3_status, version
+SELECT id, public_id, cycle_no, severity, v3_status, version,
+       cluster, environment, namespace, service_name, target_kind, target_name
 FROM incidents
 WHERE domain_schema_version = 3 AND active_correlation_key = CONVERT(? USING binary)
-FOR UPDATE`, key).Scan(&row.id, &row.publicID, &row.cycleNo, &row.severity, &row.status, &row.version)
+FOR UPDATE`, key).Scan(&row.id, &row.publicID, &row.cycleNo, &row.severity, &row.status, &row.version,
+		&row.cluster, &row.environment, &row.namespace, &row.service, &row.targetKind, &row.targetName)
 	return row, err
 }
 
@@ -410,6 +429,8 @@ WHERE domain_schema_version = 3 AND correlation_key = ? AND v3_status IN ('resol
 ORDER BY terminal_at DESC, id DESC LIMIT 1 FOR UPDATE`, input.CorrelationKey).
 		Scan(&latest.id, &latest.publicID, &latest.cycleNo, &latest.severity, &latest.status, &latest.version, &withinWindow)
 	if err == nil && latest.status == domain.V3StatusResolved && withinWindow {
+		latest.cluster, latest.environment, latest.namespace = input.Cluster, input.Environment, input.Namespace
+		latest.service, latest.targetKind, latest.targetName = input.ServiceName, input.TargetKind, input.TargetName
 		severity := input.Severity
 		result, updateErr := tx.ExecContext(ctx, `
 	UPDATE incidents
@@ -457,7 +478,11 @@ VALUES (?, ?, ?, 2, ?, ?, ?, ?, ?, ?, ?, 'DETECTED', ?, ?, ?, NULL, NULL, 1,
 	if err != nil {
 		return incidentRow{}, false, err
 	}
-	row := incidentRow{id: uint64(id), publicID: publicID, cycleNo: 1, severity: input.Severity, status: domain.V3StatusDetected, version: 1}
+	row := incidentRow{
+		id: uint64(id), publicID: publicID, cycleNo: 1, severity: input.Severity, status: domain.V3StatusDetected, version: 1,
+		cluster: input.Cluster, environment: input.Environment, namespace: input.Namespace,
+		service: input.ServiceName, targetKind: input.TargetKind, targetName: input.TargetName,
+	}
 	if err := appendLifecycleEvent(ctx, tx, row, "incident_created", "system", "v3-ingress", "incident created"); err != nil {
 		return incidentRow{}, false, err
 	}
