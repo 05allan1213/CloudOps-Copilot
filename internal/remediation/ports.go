@@ -2,6 +2,7 @@ package remediation
 
 import (
 	"context"
+	"database/sql"
 	"time"
 )
 
@@ -17,6 +18,27 @@ type Repository interface {
 	ReleaseDelivery(context.Context, uint64, uint64, string, string) error
 	MarkPRCreated(context.Context, uint64, uint64, string, string, int64, string) error
 	UpdateCI(context.Context, uint64, uint64, CIStatus) error
+}
+
+// PersistenceTX is the transaction surface shared with the durable async task
+// runner. V3 domain effects must be written through the runner-owned
+// transaction so task completion and business state cannot diverge.
+type PersistenceTX interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+// V3Repository is intentionally separate from the compatibility Repository.
+// In particular, V3 decisions are never stored as legacy approvals.
+type V3Repository interface {
+	CreatePlan(context.Context, *RemediationPlan) error
+	CreatePlanIn(context.Context, PersistenceTX, *RemediationPlan) error
+	GetPlan(context.Context, string) (*RemediationPlan, error)
+	ResolveAgentRunID(context.Context, PersistenceTX, string, uint64, uint64) (uint64, error)
+	RecordDecision(context.Context, string, uint64, *Approval) error
+	RecordDecisionIn(context.Context, PersistenceTX, string, uint64, *Approval) error
+	GetDecision(context.Context, string) (*Approval, error)
 }
 
 type GitHubWriter interface {

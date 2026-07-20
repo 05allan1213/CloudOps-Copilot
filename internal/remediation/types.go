@@ -26,6 +26,8 @@ const (
 	PlanRejected         PlanStatus = "rejected"
 	PlanCancelled        PlanStatus = "cancelled"
 	PlanSuperseded       PlanStatus = "superseded"
+	PlanConsumed         PlanStatus = "consumed"
+	PlanInvalidated      PlanStatus = "invalidated"
 )
 
 type OperationType string
@@ -98,6 +100,7 @@ type RemediationPlan struct {
 
 	// V3 immutable approval bindings. Legacy rows leave these fields empty
 	// until the release-A conversion/cutover flow classifies them.
+	DomainSchemaVersion      int
 	CycleNo                  uint64
 	IncidentVersion          uint64
 	CreatedByAgentRunID      string

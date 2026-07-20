@@ -20,7 +20,7 @@ import (
 const (
 	V3DomainSchemaVersion      = 3
 	V3HashSchemaVersion        = 1
-	V3PlanContentSchemaVersion = 1
+	V3PlanContentSchemaVersion = 2
 	V3DecisionSchemaVersion    = 1
 	MaxV3PlanDiffBytes         = 64 * 1024
 	MaxV3PostImageBytes        = 256 * 1024
@@ -162,6 +162,8 @@ func CompileRestoreRequiredEnv(request RestoreEnvCompileRequest) (RemediationPla
 	}
 	policyHash := hashBytes(policyBytes)
 	verificationHash := hashBytes(verificationBytes)
+	createdAt := normalizeV3Time(request.CreatedAt)
+	expiresAt := normalizeV3Time(request.ExpiresAt)
 	plan := RemediationPlan{
 		PublicID: uuid.NewString(), IncidentID: request.IncidentID, IncidentPublicID: request.IncidentPublicID,
 		PlanVersion: request.PlanVersion, PlanHash: "", Status: PlanAwaitingApproval,
@@ -172,8 +174,8 @@ func CompileRestoreRequiredEnv(request RestoreEnvCompileRequest) (RemediationPla
 		PolicySnapshotHash: policyHash, ExpectedBeforeHash: patch.BeforeHash, ProposedPatchHash: patchHash,
 		PatchSummary: patch.Summary, RollbackPlan: "No rollback operation is permitted; submit a new reviewed plan.",
 		ValidationPlan: "Run golden-required-env/v1 deterministic checks after exact merged revision is observed.",
-		RowVersion:     1, CreatedAt: request.CreatedAt.UTC(), UpdatedAt: request.CreatedAt.UTC(),
-		CycleNo: request.CycleNo, IncidentVersion: request.IncidentVersion, CreatedByAgentRunID: request.CreatedByAgentRunID, DiagnosisHash: strings.ToLower(request.DiagnosisHash),
+		RowVersion:     1, CreatedAt: createdAt, UpdatedAt: createdAt,
+		DomainSchemaVersion: V3DomainSchemaVersion, CycleNo: request.CycleNo, IncidentVersion: request.IncidentVersion, CreatedByAgentRunID: request.CreatedByAgentRunID, DiagnosisHash: strings.ToLower(request.DiagnosisHash),
 		HashSchemaVersion: V3HashSchemaVersion, PlanContentSchemaVersion: V3PlanContentSchemaVersion,
 		LastKnownGoodRevision: strings.ToLower(request.LastKnownGoodRevision), TargetBaseBranch: request.BaseBranch,
 		BaseBlobSHA: strings.ToLower(request.BaseBlobSHA), FileMode: request.FileMode,
@@ -182,7 +184,7 @@ func CompileRestoreRequiredEnv(request RestoreEnvCompileRequest) (RemediationPla
 		CanonicalChangeManifest: manifestBytes, BoundedDiff: patch.Diff, PostImage: patch.Content,
 		PolicyVersion: request.Policy.Version, PolicySnapshot: policyBytes, VerificationPlan: verificationBytes,
 		VerificationPlanHash: verificationHash, EvidenceBindings: evidence, EvidenceSetHash: evidenceSetHash,
-		ExpiresAt: request.ExpiresAt.UTC(),
+		ExpiresAt: expiresAt,
 	}
 	canonicalHash, err := CanonicalV3PlanHash(plan)
 	if err != nil {
@@ -263,24 +265,155 @@ func CanonicalV3PlanHash(plan RemediationPlan) (string, error) {
 	return lengthPrefixedHash(fields...)
 }
 
+// ValidateV3Plan verifies the complete immutable contract produced by the V3
+// compiler. Persistence adapters call this before accepting a row and again
+// after reading one back from durable storage.
+func ValidateV3Plan(plan RemediationPlan) error {
+	if plan.DomainSchemaVersion != V3DomainSchemaVersion || plan.PlanContentSchemaVersion != V3PlanContentSchemaVersion || plan.HashSchemaVersion != V3HashSchemaVersion {
+		return fmt.Errorf("%w: unsupported V3 plan schema", ErrInvalidArgument)
+	}
+	if _, err := uuid.Parse(plan.PublicID); err != nil {
+		return fmt.Errorf("%w: invalid plan public ID", ErrInvalidArgument)
+	}
+	if _, err := uuid.Parse(plan.IncidentPublicID); err != nil {
+		return fmt.Errorf("%w: invalid incident public ID", ErrInvalidArgument)
+	}
+	if _, err := uuid.Parse(plan.CreatedByAgentRunID); err != nil {
+		return fmt.Errorf("%w: invalid creating AgentRun public ID", ErrInvalidArgument)
+	}
+	if plan.IncidentID == 0 || plan.IncidentVersion == 0 || plan.CycleNo == 0 || plan.PlanVersion <= 0 || plan.RowVersion == 0 || plan.OperationType != OperationRestoreRequiredEnv {
+		return fmt.Errorf("%w: invalid V3 plan identity", ErrInvalidArgument)
+	}
+	switch plan.Status {
+	case PlanAwaitingApproval, PlanApproved, PlanRejected, PlanSuperseded, PlanCancelled, PlanConsumed, PlanInvalidated, PlanPolicyRejected:
+	default:
+		return fmt.Errorf("%w: invalid V3 plan status", ErrInvalidArgument)
+	}
+	if plan.RiskLevel != RiskLow || plan.TargetRepository == "" || plan.TargetBaseBranch == "" || plan.TargetPath == "" || plan.TargetFieldRef == "" || plan.FileMode != "100644" {
+		return fmt.Errorf("%w: invalid V3 plan target", ErrInvalidArgument)
+	}
+	for _, objectID := range []string{plan.TargetBaseRevision, plan.LastKnownGoodRevision, plan.BaseBlobSHA, plan.ExpectedTreeHash} {
+		if !validObjectID(objectID) {
+			return fmt.Errorf("%w: invalid V3 Git object identity", ErrInvalidArgument)
+		}
+	}
+	for _, digest := range []string{
+		plan.DiagnosisHash, plan.ExpectedBeforeHash, plan.ExpectedPostImageHash,
+		plan.ProposedPatchHash, plan.PolicySnapshotHash, plan.VerificationPlanHash,
+		plan.EvidenceSetHash, plan.CanonicalPlanHash, plan.PlanHash,
+	} {
+		if len(digest) != 64 || !isLowerHex(digest) {
+			return fmt.Errorf("%w: invalid V3 plan hash", ErrInvalidArgument)
+		}
+	}
+	if plan.CanonicalPlanHash != plan.PlanHash {
+		return fmt.Errorf("%w: canonical and compatibility plan hashes differ", ErrInvalidArgument)
+	}
+	if len(plan.PostImage) == 0 || len(plan.PostImage) > MaxV3PostImageBytes || hashBytes(plan.PostImage) != plan.ExpectedPostImageHash {
+		return fmt.Errorf("%w: post-image hash or size mismatch", ErrInvalidArgument)
+	}
+	if len(plan.BoundedDiff) == 0 || len(plan.BoundedDiff) > MaxV3PlanDiffBytes {
+		return fmt.Errorf("%w: bounded diff size", ErrInvalidArgument)
+	}
+	if len(plan.CanonicalChangeManifest) == 0 || len(plan.CanonicalChangeManifest) > 4096 || !json.Valid(plan.CanonicalChangeManifest) || hashBytes(plan.CanonicalChangeManifest) != plan.ProposedPatchHash {
+		return fmt.Errorf("%w: canonical change manifest", ErrInvalidArgument)
+	}
+	var manifest canonicalChangeManifest
+	if err := json.Unmarshal(plan.CanonicalChangeManifest, &manifest); err != nil || manifest.Path != plan.TargetPath || manifest.BaseBlobSHA != plan.BaseBlobSHA || manifest.FileMode != plan.FileMode || manifest.PostImageHash != plan.ExpectedPostImageHash {
+		return fmt.Errorf("%w: canonical change manifest binding", ErrInvalidArgument)
+	}
+	if len(plan.PolicySnapshot) == 0 || len(plan.PolicySnapshot) > MaxV3PolicyBytes || !json.Valid(plan.PolicySnapshot) || plan.PolicyVersion == "" || hashBytes(plan.PolicySnapshot) != plan.PolicySnapshotHash {
+		return fmt.Errorf("%w: policy snapshot binding", ErrInvalidArgument)
+	}
+	if len(plan.VerificationPlan) == 0 || len(plan.VerificationPlan) > 16*1024 || !json.Valid(plan.VerificationPlan) || hashBytes(plan.VerificationPlan) != plan.VerificationPlanHash {
+		return fmt.Errorf("%w: verification plan binding", ErrInvalidArgument)
+	}
+	if len(plan.EvidenceBindings) == 0 || len(plan.EvidenceBindings) > MaxV3Evidence || len(plan.EvidenceReferences) != len(plan.EvidenceBindings) {
+		return fmt.Errorf("%w: evidence binding count", ErrInvalidArgument)
+	}
+	evidence := append([]EvidenceBinding(nil), plan.EvidenceBindings...)
+	sort.Slice(evidence, func(i, j int) bool {
+		if evidence[i].ID == evidence[j].ID {
+			return evidence[i].ContentHash < evidence[j].ContentHash
+		}
+		return evidence[i].ID < evidence[j].ID
+	})
+	for index, binding := range evidence {
+		if _, err := uuid.Parse(binding.ID); err != nil || len(binding.ContentHash) != 64 || !isLowerHex(binding.ContentHash) {
+			return fmt.Errorf("%w: invalid evidence binding", ErrInvalidArgument)
+		}
+		if index > 0 && binding.ID == evidence[index-1].ID {
+			return fmt.Errorf("%w: duplicate evidence binding", ErrInvalidArgument)
+		}
+		if plan.EvidenceReferences[index] != binding.ID || plan.EvidenceBindings[index] != binding {
+			return fmt.Errorf("%w: evidence bindings are not canonical", ErrInvalidArgument)
+		}
+	}
+	evidenceHash, err := lengthPrefixedHash(evidenceBytes(evidence))
+	if err != nil || evidenceHash != plan.EvidenceSetHash {
+		return fmt.Errorf("%w: evidence set hash mismatch", ErrInvalidArgument)
+	}
+	if plan.Parameters.Target.APIVersion == "" || plan.Parameters.Target.Kind != "Deployment" || plan.Parameters.Target.Namespace == "" || plan.Parameters.Target.Name == "" || plan.Parameters.Target.Container == "" {
+		return fmt.Errorf("%w: target resource binding", ErrInvalidArgument)
+	}
+	if plan.CreatedAt.IsZero() || plan.ExpiresAt.IsZero() || !plan.ExpiresAt.After(plan.CreatedAt) || len(plan.PatchSummary) > 2048 || len(plan.RollbackPlan) > 4096 || len(plan.ValidationPlan) > 4096 {
+		return fmt.Errorf("%w: V3 plan time or summary bounds", ErrInvalidArgument)
+	}
+	canonicalHash, err := CanonicalV3PlanHash(plan)
+	if err != nil || canonicalHash != plan.CanonicalPlanHash {
+		return fmt.Errorf("%w: canonical plan hash mismatch", ErrInvalidArgument)
+	}
+	return nil
+}
+
 func NewV3Approval(plan RemediationPlan, provider, login, role, reason, requestID string, authenticatedAt, expiresAt time.Time) (Approval, error) {
+	return NewV3Decision(plan, DecisionApproved, provider, login, role, reason, requestID, authenticatedAt, expiresAt)
+}
+
+func NewV3Decision(plan RemediationPlan, decision Decision, provider, login, role, reason, requestID string, authenticatedAt, expiresAt time.Time) (Approval, error) {
 	if plan.OperationType != OperationRestoreRequiredEnv || plan.CanonicalPlanHash == "" || plan.HashSchemaVersion != V3HashSchemaVersion || plan.PlanContentSchemaVersion != V3PlanContentSchemaVersion {
 		return Approval{}, fmt.Errorf("%w: plan is not an approvable V3 restore plan", ErrInvalidArgument)
 	}
-	if strings.TrimSpace(provider) != "github" || strings.TrimSpace(login) == "" || strings.TrimSpace(role) != "operator" && strings.TrimSpace(role) != "admin" || strings.TrimSpace(requestID) == "" || authenticatedAt.IsZero() || expiresAt.IsZero() || !expiresAt.After(authenticatedAt) {
+	if decision != DecisionApproved && decision != DecisionRejected {
+		return Approval{}, fmt.Errorf("%w: invalid V3 decision", ErrInvalidArgument)
+	}
+	provider = strings.TrimSpace(provider)
+	login = strings.TrimSpace(login)
+	role = strings.TrimSpace(role)
+	reason = strings.TrimSpace(reason)
+	requestID = strings.TrimSpace(requestID)
+	authenticatedAt = normalizeV3Time(authenticatedAt)
+	expiresAt = normalizeV3Time(expiresAt)
+	if provider != "github" || login == "" || role != "operator" && role != "admin" || reason == "" || requestID == "" || authenticatedAt.IsZero() || expiresAt.IsZero() || !expiresAt.After(authenticatedAt) || !authenticatedAt.Before(plan.ExpiresAt) || expiresAt.After(plan.ExpiresAt) {
 		return Approval{}, fmt.Errorf("%w: approval identity or expiry is invalid", ErrInvalidArgument)
 	}
-	return Approval{PublicID: uuid.NewString(), PlanID: plan.ID, Decision: DecisionApproved, Actor: login, CreatedAt: authenticatedAt.UTC(), DomainSchemaVersion: V3DomainSchemaVersion, DecisionSchemaVersion: V3DecisionSchemaVersion, IncidentID: plan.IncidentID, CycleNo: plan.CycleNo, PlanVersion: plan.PlanVersion, ActorProvider: provider, Role: role, Reason: reason, RequestID: requestID, RequestAuthenticatedAt: authenticatedAt.UTC(), ExpiresAt: expiresAt.UTC(), ApprovedHashSchemaVersion: plan.HashSchemaVersion, ApprovedPlanHash: plan.CanonicalPlanHash, ApprovedPatchHash: plan.ProposedPatchHash, ApprovedBaseSHA: plan.TargetBaseRevision, ApprovedPostImageHash: plan.ExpectedPostImageHash, ApprovedTreeHash: plan.ExpectedTreeHash, ApprovedPolicyHash: plan.PolicySnapshotHash, ApprovedVerificationHash: plan.VerificationPlanHash, ApprovedEvidenceSetHash: plan.EvidenceSetHash}, nil
+	return Approval{PublicID: uuid.NewString(), PlanID: plan.ID, Decision: decision, Actor: login, CreatedAt: authenticatedAt, DomainSchemaVersion: V3DomainSchemaVersion, DecisionSchemaVersion: V3DecisionSchemaVersion, IncidentID: plan.IncidentID, CycleNo: plan.CycleNo, PlanVersion: plan.PlanVersion, ActorProvider: provider, Role: role, Reason: reason, RequestID: requestID, RequestAuthenticatedAt: authenticatedAt, ExpiresAt: expiresAt, ApprovedHashSchemaVersion: plan.HashSchemaVersion, ApprovedPlanHash: plan.CanonicalPlanHash, ApprovedPatchHash: plan.ProposedPatchHash, ApprovedBaseSHA: plan.TargetBaseRevision, ApprovedPostImageHash: plan.ExpectedPostImageHash, ApprovedTreeHash: plan.ExpectedTreeHash, ApprovedPolicyHash: plan.PolicySnapshotHash, ApprovedVerificationHash: plan.VerificationPlanHash, ApprovedEvidenceSetHash: plan.EvidenceSetHash}, nil
 }
 
 func ValidateV3ApprovalBinding(plan RemediationPlan, approval Approval, now time.Time) error {
-	if approval.DomainSchemaVersion != V3DomainSchemaVersion || approval.DecisionSchemaVersion != V3DecisionSchemaVersion || approval.IncidentID != plan.IncidentID || approval.CycleNo != plan.CycleNo || approval.PlanID != plan.ID || approval.PlanVersion != plan.PlanVersion || approval.Decision != DecisionApproved || approval.ApprovedHashSchemaVersion != plan.HashSchemaVersion || approval.ApprovedPlanHash != plan.CanonicalPlanHash || approval.ApprovedPatchHash != plan.ProposedPatchHash || approval.ApprovedBaseSHA != plan.TargetBaseRevision || approval.ApprovedPostImageHash != plan.ExpectedPostImageHash || approval.ApprovedTreeHash != plan.ExpectedTreeHash || approval.ApprovedPolicyHash != plan.PolicySnapshotHash || approval.ApprovedVerificationHash != plan.VerificationPlanHash || approval.ApprovedEvidenceSetHash != plan.EvidenceSetHash {
+	if approval.Decision != DecisionApproved {
 		return ErrApprovalMismatch
 	}
-	if !approval.ExpiresAt.IsZero() && !now.UTC().Before(approval.ExpiresAt) {
+	return ValidateV3DecisionBinding(plan, approval, now)
+}
+
+func ValidateV3DecisionBinding(plan RemediationPlan, decision Approval, now time.Time) error {
+	if decision.DomainSchemaVersion != V3DomainSchemaVersion || decision.DecisionSchemaVersion != V3DecisionSchemaVersion || decision.IncidentID != plan.IncidentID || decision.CycleNo != plan.CycleNo || decision.PlanID != plan.ID || decision.PlanVersion != plan.PlanVersion || decision.Decision != DecisionApproved && decision.Decision != DecisionRejected || decision.ApprovedHashSchemaVersion != plan.HashSchemaVersion || decision.ApprovedPlanHash != plan.CanonicalPlanHash || decision.ApprovedPatchHash != plan.ProposedPatchHash || decision.ApprovedBaseSHA != plan.TargetBaseRevision || decision.ApprovedPostImageHash != plan.ExpectedPostImageHash || decision.ApprovedTreeHash != plan.ExpectedTreeHash || decision.ApprovedPolicyHash != plan.PolicySnapshotHash || decision.ApprovedVerificationHash != plan.VerificationPlanHash || decision.ApprovedEvidenceSetHash != plan.EvidenceSetHash {
+		return ErrApprovalMismatch
+	}
+	if _, err := uuid.Parse(decision.PublicID); err != nil || decision.ActorProvider != "github" || strings.TrimSpace(decision.Actor) == "" || decision.Actor != strings.TrimSpace(decision.Actor) || decision.Role != "operator" && decision.Role != "admin" || strings.TrimSpace(decision.Reason) == "" || strings.TrimSpace(decision.RequestID) == "" || decision.RequestAuthenticatedAt.IsZero() || decision.CreatedAt.IsZero() || decision.ExpiresAt.IsZero() || decision.RequestAuthenticatedAt.After(decision.CreatedAt) || decision.ExpiresAt.After(plan.ExpiresAt) || !decision.ExpiresAt.After(decision.RequestAuthenticatedAt) || !now.UTC().Before(decision.ExpiresAt) || !now.UTC().Before(plan.ExpiresAt) {
+		return ErrApprovalMismatch
+	}
+	if len(decision.Actor) > 128 || len(decision.Reason) > 1024 || len(decision.RequestID) > 128 {
 		return ErrApprovalMismatch
 	}
 	return nil
+}
+
+// normalizeV3Time mirrors MySQL DATETIME(6) precision so canonical hashes and
+// idempotency comparisons remain stable after a round trip through storage.
+func normalizeV3Time(value time.Time) time.Time {
+	return value.UTC().Truncate(time.Microsecond)
 }
 
 func validObjectID(value string) bool {
@@ -305,22 +438,34 @@ func evidenceIDs(values []EvidenceBinding) []string {
 }
 
 func evidenceBytes(values []EvidenceBinding) []byte {
-	encoded, _ := json.Marshal(values)
+	// Marshal through maps so repository reads can canonicalize MySQL JSON back
+	// to exactly the same representation after a database round trip.
+	canonical := make([]map[string]string, 0, len(values))
+	for _, value := range values {
+		canonical = append(canonical, map[string]string{
+			"content_hash": value.ContentHash,
+			"id":           value.ID,
+		})
+	}
+	encoded, _ := json.Marshal(canonical)
 	return encoded
 }
 
 func canonicalJSON(value any) ([]byte, error) {
-	if raw, ok := value.(json.RawMessage); ok {
-		if len(raw) == 0 || !json.Valid(raw) {
-			return nil, fmt.Errorf("%w: invalid JSON", ErrInvalidArgument)
-		}
-		var decoded any
-		if err := json.Unmarshal(raw, &decoded); err != nil {
-			return nil, err
-		}
-		return json.Marshal(decoded)
+	if raw, ok := value.(json.RawMessage); ok && (len(raw) == 0 || !json.Valid(raw)) {
+		return nil, fmt.Errorf("%w: invalid JSON", ErrInvalidArgument)
 	}
-	return json.Marshal(value)
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var decoded any
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		return nil, err
+	}
+	// Re-encoding the decoded value sorts map keys, providing one representation
+	// independent of the object ordering chosen by MySQL JSON storage.
+	return json.Marshal(decoded)
 }
 
 func lengthPrefixedHash(fields ...[]byte) (string, error) {

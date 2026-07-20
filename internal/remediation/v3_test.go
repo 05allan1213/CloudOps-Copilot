@@ -73,8 +73,11 @@ func TestCompileRestoreRequiredEnvBindsCompletePlan(t *testing.T) {
 	if !strings.Contains(string(plan.PostImage), "name: REQUIRED_ENV") || !strings.Contains(string(plan.PostImage), "value: healthy") || !strings.Contains(plan.BoundedDiff, "+            - name: REQUIRED_ENV") {
 		t.Fatalf("post image or full diff missing restored node:\n%s\n%s", plan.PostImage, plan.BoundedDiff)
 	}
-	if plan.TargetBaseBranch != "main" || plan.IncidentVersion != 9 || plan.PlanContentSchemaVersion != V3PlanContentSchemaVersion || plan.TargetFieldRef != "spec.template.spec.containers[name=demo].env[name=REQUIRED_ENV]" || len(plan.ExpectedPostImageHash) != 64 || len(plan.ProposedPatchHash) != 64 || len(plan.EvidenceSetHash) != 64 || len(plan.VerificationPlanHash) != 64 {
+	if plan.DomainSchemaVersion != V3DomainSchemaVersion || plan.TargetBaseBranch != "main" || plan.IncidentVersion != 9 || plan.PlanContentSchemaVersion != V3PlanContentSchemaVersion || plan.TargetFieldRef != "spec.template.spec.containers[name=demo].env[name=REQUIRED_ENV]" || len(plan.ExpectedPostImageHash) != 64 || len(plan.ProposedPatchHash) != 64 || len(plan.EvidenceSetHash) != 64 || len(plan.VerificationPlanHash) != 64 {
 		t.Fatalf("plan bindings missing: %+v", plan)
+	}
+	if err := ValidateV3Plan(plan); err != nil {
+		t.Fatalf("compiled Plan failed its persistence contract: %v", err)
 	}
 
 	second := request
@@ -95,6 +98,22 @@ func TestCompileRestoreRequiredEnvBindsCompletePlan(t *testing.T) {
 	changedHash, err = CanonicalV3PlanHash(changed)
 	if err != nil || changedHash == plan.CanonicalPlanHash {
 		t.Fatal("plan content schema version is not bound by canonical plan hash")
+	}
+}
+
+func TestCompileRestoreRequiredEnvUsesMySQLTimePrecision(t *testing.T) {
+	request := validRestoreRequest()
+	request.CreatedAt = request.CreatedAt.Add(987654321 * time.Nanosecond)
+	request.ExpiresAt = request.CreatedAt.Add(30*time.Minute + 123*time.Nanosecond)
+	plan, err := CompileRestoreRequiredEnv(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.CreatedAt.Nanosecond()%1000 != 0 || plan.ExpiresAt.Nanosecond()%1000 != 0 {
+		t.Fatalf("Plan times exceed MySQL DATETIME(6) precision: created=%s expires=%s", plan.CreatedAt, plan.ExpiresAt)
+	}
+	if err := ValidateV3Plan(plan); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -124,7 +143,7 @@ func TestV3ApprovalBindsEveryImmutableHash(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	now := time.Date(2026, 7, 19, 4, 0, 0, 0, time.UTC)
+	now := plan.CreatedAt.Add(10 * time.Minute)
 	approval, err := NewV3Approval(plan, "github", "operator-login", "operator", "reviewed exact diff", "request-1", now, now.Add(10*time.Minute))
 	if err != nil {
 		t.Fatal(err)
