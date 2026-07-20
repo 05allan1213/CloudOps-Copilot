@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/05allan1213/CloudOps-Copilot/internal/agent"
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
 	"github.com/05allan1213/CloudOps-Copilot/internal/remediation"
 )
@@ -29,16 +30,21 @@ type ChangeEnsurePRConfig struct {
 	DB                *sql.DB
 	Tasks             ChangeEnsurePRTaskStore
 	Writer            remediation.PhasedGitHubWriter
+	Git               remediation.ExactGitReader
+	ClaimPolicy       agent.ClaimPolicy
 	CurrentPolicyHash string
 	Now               func() time.Time
 }
 
 func NewChangeEnsurePR(config ChangeEnsurePRConfig) (Operation, error) {
-	if config.DB == nil || config.Tasks == nil || config.Writer == nil {
-		return nil, errors.New("change.ensure_pr requires MySQL, task store, and phased GitHub writer")
+	if config.DB == nil || config.Tasks == nil || config.Writer == nil || config.Git == nil {
+		return nil, errors.New("change.ensure_pr requires MySQL, task store, exact Git reader, and phased GitHub writer")
 	}
-	if len(config.CurrentPolicyHash) != 64 || strings.ToLower(config.CurrentPolicyHash) != config.CurrentPolicyHash {
+	if !validSHA256Text(config.CurrentPolicyHash) {
 		return nil, errors.New("change.ensure_pr requires the current lowercase policy hash")
+	}
+	if _, err := agent.EvaluateSufficiency(agent.SufficiencyInput{IncidentID: "change.ensure_pr", CycleNo: 1, Policy: config.ClaimPolicy}); err != nil {
+		return nil, fmt.Errorf("change.ensure_pr requires a valid current claim policy: %w", err)
 	}
 	if config.Now == nil {
 		config.Now = func() time.Time { return time.Now().UTC() }
@@ -47,6 +53,7 @@ func NewChangeEnsurePR(config ChangeEnsurePRConfig) (Operation, error) {
 		cfg: config,
 		store: &mysqlChangeEnsurePRStore{
 			db: config.DB, tasks: config.Tasks,
+			git: config.Git, claimPolicy: config.ClaimPolicy,
 			currentPolicyHash: config.CurrentPolicyHash, now: config.Now,
 		},
 	}
@@ -54,22 +61,27 @@ func NewChangeEnsurePR(config ChangeEnsurePRConfig) (Operation, error) {
 }
 
 type changeEnsurePROperation struct {
-	cfg   ChangeEnsurePRConfig
-	store changeEnsurePRStore
+	cfg             ChangeEnsurePRConfig
+	store           changeEnsurePRStore
+	externalContext func(context.Context) (context.Context, context.CancelFunc, error)
 }
 
 type changeEnsurePRStore interface {
 	LoadApprovedPlan(context.Context, asyncjob.Task, time.Time, string) (changePlanSnapshot, error)
+	SupersedeApprovedPlanIn(context.Context, asyncjob.DBTX, asyncjob.Task, string) error
 	CreateChangeRequestIn(context.Context, asyncjob.DBTX, asyncjob.Task, changePlanSnapshot) error
-	LoadChange(context.Context, asyncjob.Task, time.Time, string) (changeSnapshot, error)
+	LoadChange(context.Context, asyncjob.Task) (changeSnapshot, error)
+	ValidateChangePreflight(context.Context, changeSnapshot, time.Time, string) error
 	MarkWriteIntent(context.Context, asyncjob.Task, changeSnapshot, string) error
 	ApplyObservationIn(context.Context, asyncjob.DBTX, asyncjob.Task, changeSnapshot, remediation.WriteObservation) error
-	InvalidateIn(context.Context, asyncjob.DBTX, asyncjob.Task, changeSnapshot, string) error
+	BlockReconciliationIn(context.Context, asyncjob.DBTX, asyncjob.Task, changeSnapshot, string) error
+	InvalidateIn(context.Context, asyncjob.DBTX, asyncjob.Task, changeSnapshot, string, bool) error
 }
 
 type changePlanSnapshot struct {
 	Plan                  remediation.RemediationPlan
 	Decision              remediation.Approval
+	LegacyPlanStatus      string
 	IncidentStatus        string
 	IncidentVersion       uint64
 	Request               remediation.PhasedDeliveryRequest
@@ -78,14 +90,16 @@ type changePlanSnapshot struct {
 }
 
 type changeSnapshot struct {
-	PlanSnapshot     changePlanSnapshot
-	ChangeRequestID  uint64
-	ChangePublicID   string
-	ChangeVersion    uint64
-	ChangeStatus     string
-	WritePhase       remediation.WritePhase
-	LogicalOperation string
-	ExternalMarker   string
+	PlanSnapshot         changePlanSnapshot
+	ChangeRequestID      uint64
+	ChangePublicID       string
+	ChangeVersion        uint64
+	ChangeStatus         string
+	WritePhase           remediation.WritePhase
+	LogicalOperation     string
+	ExternalMarker       string
+	ExternalWriteStarted bool
+	PreflightRejected    bool
 }
 
 type changeEnsurePayload struct {
@@ -93,6 +107,21 @@ type changeEnsurePayload struct {
 	ChangeRequestID string                 `json:"change_request_id,omitempty"`
 	WritePhase      remediation.WritePhase `json:"write_phase,omitempty"`
 }
+
+type changeReconciliationAction uint8
+
+type changeInvalidationDecision struct {
+	Terminal bool
+	V3Status string
+	Event    string
+}
+
+const (
+	changeReconciliationInvalid changeReconciliationAction = iota
+	changeReconciliationAdvance
+	changeReconciliationAbsent
+	changeReconciliationPending
+)
 
 func (o *changeEnsurePROperation) handle(ctx context.Context, execution asyncjob.Execution) asyncjob.Result {
 	task := execution.Task
@@ -110,6 +139,11 @@ func (o *changeEnsurePROperation) handle(ctx context.Context, execution asyncjob
 	if key == changeEnsurePlanPRKey {
 		snapshot, loadErr := o.store.LoadApprovedPlan(ctx, task, now, o.cfg.CurrentPolicyHash)
 		if loadErr != nil {
+			if isTerminalChangePreflight(loadErr) {
+				return asyncjob.Dead("change_preflight_rejected", boundChange(loadErr.Error(), 2048), func(ctx context.Context, tx asyncjob.DBTX) error {
+					return o.store.SupersedeApprovedPlanIn(ctx, tx, task, "change_preflight_rejected")
+				})
+			}
 			return changeLoadFailure(loadErr)
 		}
 		if payload.PlanID != snapshot.Plan.PublicID || payload.ChangeRequestID != "" || payload.WritePhase != "" {
@@ -120,36 +154,141 @@ func (o *changeEnsurePROperation) handle(ctx context.Context, execution asyncjob
 		})
 	}
 
-	snapshot, err := o.store.LoadChange(ctx, task, now, o.cfg.CurrentPolicyHash)
+	snapshot, err := o.store.LoadChange(ctx, task)
 	if err != nil {
+		if isTerminalChangePreflight(err) && snapshot.ChangeRequestID != 0 && snapshot.PlanSnapshot.Plan.ID != 0 {
+			return asyncjob.Dead("change_preflight_rejected", boundChange(err.Error(), 2048), func(ctx context.Context, tx asyncjob.DBTX) error {
+				return o.store.InvalidateIn(ctx, tx, task, snapshot, "change_preflight_rejected", false)
+			})
+		}
 		return changeLoadFailure(err)
 	}
 	if payload.PlanID != snapshot.PlanSnapshot.Plan.PublicID || payload.ChangeRequestID != snapshot.ChangePublicID || payload.WritePhase != snapshot.WritePhase {
 		return asyncjob.Dead("invalid_change_payload", "change task payload does not match its durable subject", nil)
 	}
-	marker := hashCanonical("external-write", snapshot.LogicalOperation, string(snapshot.WritePhase), fmt.Sprint(task.ExpectedSubjectVersion))
-	if err := o.store.MarkWriteIntent(ctx, task, snapshot, marker); err != nil {
-		return changeLoadFailure(err)
+	if snapshot.ExternalMarker != "" {
+		if snapshot.PlanSnapshot.Plan.Status == remediation.PlanInvalidated {
+			snapshot.PreflightRejected = true
+			return o.reconcileRejected(ctx, execution, snapshot)
+		}
+		if err := o.store.ValidateChangePreflight(ctx, snapshot, now, o.cfg.CurrentPolicyHash); err != nil {
+			if isTerminalChangePreflight(err) {
+				if errors.Is(err, errChangeApprovalExpired) {
+					return o.reconcileExpiredApproval(ctx, execution, snapshot)
+				}
+				snapshot.PreflightRejected = true
+				return o.reconcileRejected(ctx, execution, snapshot)
+			}
+			return changeLoadFailure(err)
+		}
+		if err := o.store.MarkWriteIntent(ctx, task, snapshot, snapshot.ExternalMarker); err != nil {
+			if isTerminalChangePreflight(err) {
+				if errors.Is(err, errChangeApprovalExpired) {
+					return o.reconcileExpiredApproval(ctx, execution, snapshot)
+				}
+				snapshot.PreflightRejected = true
+				return o.reconcileRejected(ctx, execution, snapshot)
+			}
+			return changeLoadFailure(err)
+		}
+		return o.executePhaseWriter(ctx, task, snapshot)
 	}
-
-	externalCtx, cancel, err := asyncjob.ExternalCallContext(ctx)
-	if err != nil {
-		return asyncjob.RetryAfter(0, "external_deadline_missing", "GitHub external-call deadline is unavailable", nil)
-	}
-	observation, callErr := o.callWriter(externalCtx, snapshot)
-	cancel()
-	if callErr != nil {
-		if errors.Is(callErr, remediation.ErrDrift) || errors.Is(callErr, remediation.ErrConflict) ||
-			errors.Is(callErr, remediation.ErrForbidden) || errors.Is(callErr, remediation.ErrApprovalMismatch) {
-			return asyncjob.Dead("github_write_rejected", boundChange(callErr.Error(), 2048), func(ctx context.Context, tx asyncjob.DBTX) error {
-				return o.store.InvalidateIn(ctx, tx, task, snapshot, "github_write_rejected")
+	if err := o.store.ValidateChangePreflight(ctx, snapshot, now, o.cfg.CurrentPolicyHash); err != nil {
+		if isTerminalChangePreflight(err) {
+			return asyncjob.Dead("change_preflight_rejected", boundChange(err.Error(), 2048), func(ctx context.Context, tx asyncjob.DBTX) error {
+				return o.store.InvalidateIn(ctx, tx, task, snapshot, "change_preflight_rejected", false)
 			})
 		}
-		return asyncjob.RetryAfter(0, "github_write_unavailable", boundChange(callErr.Error(), 2048), nil)
+		return changeLoadFailure(err)
 	}
-	if !validWriteAdvance(snapshot.WritePhase, observation.Phase) {
-		return asyncjob.Dead("github_write_phase_mismatch", "GitHub reconciliation returned an invalid phase transition", func(ctx context.Context, tx asyncjob.DBTX) error {
-			return o.store.InvalidateIn(ctx, tx, task, snapshot, "github_write_phase_mismatch")
+	marker := expectedExternalWriteMarker(snapshot, task.ExpectedSubjectVersion)
+	if err := o.store.MarkWriteIntent(ctx, task, snapshot, marker); err != nil {
+		if isTerminalChangePreflight(err) {
+			return asyncjob.Dead("change_preflight_rejected", boundChange(err.Error(), 2048), func(ctx context.Context, tx asyncjob.DBTX) error {
+				return o.store.InvalidateIn(ctx, tx, task, snapshot, "change_preflight_rejected", false)
+			})
+		}
+		return changeLoadFailure(err)
+	}
+	snapshot.ExternalMarker = marker
+	snapshot.ExternalWriteStarted = true
+
+	return o.executePhaseWriter(ctx, task, snapshot)
+}
+
+func expectedExternalWriteMarker(snapshot changeSnapshot, subjectVersion uint64) string {
+	return hashCanonical("external-write", snapshot.LogicalOperation, string(snapshot.WritePhase), fmt.Sprint(subjectVersion))
+}
+
+func (o *changeEnsurePROperation) reconcileExpiredApproval(ctx context.Context, execution asyncjob.Execution, snapshot changeSnapshot) asyncjob.Result {
+	externalCtx, cancel, err := o.newExternalContext(ctx)
+	if err != nil {
+		return asyncjob.RetryAfter(0, "external_deadline_missing", "GitHub external-call deadline is unavailable", func(ctx context.Context, tx asyncjob.DBTX) error {
+			return o.store.BlockReconciliationIn(ctx, tx, execution.Task, snapshot, "github_reconciliation_unavailable")
+		})
+	}
+	observation, callErr := o.callReconciler(externalCtx, snapshot)
+	cancel()
+	if callErr != nil {
+		if isTerminalChangePreflight(callErr) {
+			return asyncjob.Dead("github_reconciliation_rejected", boundChange(callErr.Error(), 2048), func(ctx context.Context, tx asyncjob.DBTX) error {
+				return o.store.InvalidateIn(ctx, tx, execution.Task, snapshot, "github_reconciliation_rejected", false)
+			})
+		}
+		return asyncjob.RetryAfter(0, "github_reconciliation_unavailable", boundChange(callErr.Error(), 2048), func(ctx context.Context, tx asyncjob.DBTX) error {
+			return o.store.BlockReconciliationIn(ctx, tx, execution.Task, snapshot, "github_reconciliation_unavailable")
+		})
+	}
+	switch classifyChangeReconciliation(snapshot.WritePhase, observation) {
+	case changeReconciliationInvalid:
+		return asyncjob.Dead("github_reconciliation_invalid", "GitHub reconciliation returned incomplete state", func(ctx context.Context, tx asyncjob.DBTX) error {
+			return o.store.InvalidateIn(ctx, tx, execution.Task, snapshot, "github_reconciliation_invalid", false)
+		})
+	case changeReconciliationAbsent:
+		return asyncjob.Dead("github_write_absent", "reconciliation proved that no external branch, commit, or PR remains", func(ctx context.Context, tx asyncjob.DBTX) error {
+			return o.store.InvalidateIn(ctx, tx, execution.Task, snapshot, "github_write_absent", true)
+		})
+	case changeReconciliationAdvance:
+		if err := validateChangeWriteObservation(snapshot, observation); err != nil {
+			return asyncjob.Dead("github_reconciliation_invalid", boundChange(err.Error(), 2048), func(ctx context.Context, tx asyncjob.DBTX) error {
+				return o.store.InvalidateIn(ctx, tx, execution.Task, snapshot, "github_reconciliation_invalid", false)
+			})
+		}
+		if observation.Phase != remediation.WritePhaseComplete {
+			snapshot.PreflightRejected = true
+		}
+		return asyncjob.Succeeded(func(ctx context.Context, tx asyncjob.DBTX) error {
+			return o.store.ApplyObservationIn(ctx, tx, execution.Task, snapshot, observation)
+		})
+	default:
+		return asyncjob.RetryAfter(0, "github_reconciliation_pending", "Approval expired before a complete Draft PR was observed", func(ctx context.Context, tx asyncjob.DBTX) error {
+			return o.store.BlockReconciliationIn(ctx, tx, execution.Task, snapshot, "change_approval_expired")
+		})
+	}
+}
+
+func (o *changeEnsurePROperation) executePhaseWriter(ctx context.Context, task asyncjob.Task, snapshot changeSnapshot) asyncjob.Result {
+	externalCtx, cancel, err := o.newExternalContext(ctx)
+	if err != nil {
+		return asyncjob.RetryAfter(0, "external_deadline_missing", "GitHub external-call deadline is unavailable", func(ctx context.Context, tx asyncjob.DBTX) error {
+			return o.store.BlockReconciliationIn(ctx, tx, task, snapshot, "github_reconciliation_unavailable")
+		})
+	}
+	observation, callErr := o.callPhaseWriter(externalCtx, snapshot)
+	cancel()
+	if callErr != nil {
+		if isTerminalChangePreflight(callErr) {
+			return asyncjob.Dead("github_write_rejected", boundChange(callErr.Error(), 2048), func(ctx context.Context, tx asyncjob.DBTX) error {
+				return o.store.InvalidateIn(ctx, tx, task, snapshot, "github_write_rejected", false)
+			})
+		}
+		return asyncjob.RetryAfter(0, "github_write_unavailable", boundChange(callErr.Error(), 2048), func(ctx context.Context, tx asyncjob.DBTX) error {
+			return o.store.BlockReconciliationIn(ctx, tx, task, snapshot, "github_reconciliation_unavailable")
+		})
+	}
+	if err := validateChangeWriteObservation(snapshot, observation); err != nil {
+		return asyncjob.Dead("github_write_phase_mismatch", boundChange(err.Error(), 2048), func(ctx context.Context, tx asyncjob.DBTX) error {
+			return o.store.InvalidateIn(ctx, tx, task, snapshot, "github_write_phase_mismatch", false)
 		})
 	}
 	return asyncjob.Succeeded(func(ctx context.Context, tx asyncjob.DBTX) error {
@@ -157,7 +296,94 @@ func (o *changeEnsurePROperation) handle(ctx context.Context, execution asyncjob
 	})
 }
 
-func (o *changeEnsurePROperation) callWriter(ctx context.Context, snapshot changeSnapshot) (remediation.WriteObservation, error) {
+func (o *changeEnsurePROperation) reconcileRejected(ctx context.Context, execution asyncjob.Execution, snapshot changeSnapshot) asyncjob.Result {
+	externalCtx, cancel, err := o.newExternalContext(ctx)
+	if err != nil {
+		return asyncjob.RetryAfter(0, "external_deadline_missing", "GitHub external-call deadline is unavailable", func(ctx context.Context, tx asyncjob.DBTX) error {
+			return o.store.InvalidateIn(ctx, tx, execution.Task, snapshot, "change_preflight_rejected", false)
+		})
+	}
+	observation, callErr := o.callReconciler(externalCtx, snapshot)
+	cancel()
+	if callErr != nil {
+		if isTerminalChangePreflight(callErr) {
+			return asyncjob.Dead("github_reconciliation_rejected", boundChange(callErr.Error(), 2048), func(ctx context.Context, tx asyncjob.DBTX) error {
+				return o.store.InvalidateIn(ctx, tx, execution.Task, snapshot, "github_reconciliation_rejected", false)
+			})
+		}
+		return asyncjob.RetryAfter(0, "github_reconciliation_unavailable", boundChange(callErr.Error(), 2048), func(ctx context.Context, tx asyncjob.DBTX) error {
+			return o.store.InvalidateIn(ctx, tx, execution.Task, snapshot, "change_preflight_rejected", false)
+		})
+	}
+	switch classifyChangeReconciliation(snapshot.WritePhase, observation) {
+	case changeReconciliationInvalid:
+		return asyncjob.Dead("github_reconciliation_invalid", "GitHub reconciliation returned incomplete state", func(ctx context.Context, tx asyncjob.DBTX) error {
+			return o.store.InvalidateIn(ctx, tx, execution.Task, snapshot, "github_reconciliation_invalid", false)
+		})
+	case changeReconciliationAbsent:
+		return asyncjob.Dead("github_write_absent", "reconciliation proved that no external branch, commit, or PR remains", func(ctx context.Context, tx asyncjob.DBTX) error {
+			return o.store.InvalidateIn(ctx, tx, execution.Task, snapshot, "github_write_absent", true)
+		})
+	case changeReconciliationAdvance:
+		if err := validateChangeWriteObservation(snapshot, observation); err != nil {
+			return asyncjob.Dead("github_reconciliation_invalid", boundChange(err.Error(), 2048), func(ctx context.Context, tx asyncjob.DBTX) error {
+				return o.store.InvalidateIn(ctx, tx, execution.Task, snapshot, "github_reconciliation_invalid", false)
+			})
+		}
+		return asyncjob.Succeeded(func(ctx context.Context, tx asyncjob.DBTX) error {
+			return o.store.ApplyObservationIn(ctx, tx, execution.Task, snapshot, observation)
+		})
+	default:
+		return asyncjob.RetryAfter(0, "github_reconciliation_pending", "external GitHub state remains present or ambiguous; reconciliation only", func(ctx context.Context, tx asyncjob.DBTX) error {
+			return o.store.InvalidateIn(ctx, tx, execution.Task, snapshot, "change_preflight_rejected", false)
+		})
+	}
+}
+
+func (o *changeEnsurePROperation) newExternalContext(ctx context.Context) (context.Context, context.CancelFunc, error) {
+	if o.externalContext != nil {
+		return o.externalContext(ctx)
+	}
+	return asyncjob.ExternalCallContext(ctx)
+}
+
+func classifyChangeReconciliation(current remediation.WritePhase, observation remediation.WriteObservation) changeReconciliationAction {
+	if !observation.Reconciled || observation.Phase == "" || !validWritePhase(observation.Phase) {
+		return changeReconciliationInvalid
+	}
+	if observation.Phase == remediation.WritePhaseEnsureBranch {
+		return changeReconciliationAbsent
+	}
+	if validWriteAdvance(current, observation.Phase) {
+		return changeReconciliationAdvance
+	}
+	return changeReconciliationPending
+}
+
+func classifyChangeInvalidation(externalStarted, safeTerminal bool) changeInvalidationDecision {
+	if safeTerminal && externalStarted {
+		return changeInvalidationDecision{Terminal: true, V3Status: "failed", Event: "external_write_reconciled_absent"}
+	}
+	if !externalStarted {
+		return changeInvalidationDecision{Terminal: true, V3Status: "superseded", Event: "change_preflight_superseded"}
+	}
+	return changeInvalidationDecision{}
+}
+
+func validWritePhase(phase remediation.WritePhase) bool {
+	switch phase {
+	case remediation.WritePhaseEnsureBranch, remediation.WritePhaseEnsureCommit, remediation.WritePhaseEnsureDraftPR, remediation.WritePhaseComplete:
+		return true
+	default:
+		return false
+	}
+}
+
+func (o *changeEnsurePROperation) callReconciler(ctx context.Context, snapshot changeSnapshot) (remediation.WriteObservation, error) {
+	return o.cfg.Writer.ReconcileDraftPR(ctx, snapshot.PlanSnapshot.Request)
+}
+
+func (o *changeEnsurePROperation) callPhaseWriter(ctx context.Context, snapshot changeSnapshot) (remediation.WriteObservation, error) {
 	switch snapshot.WritePhase {
 	case remediation.WritePhaseEnsureBranch:
 		return o.cfg.Writer.EnsureBranch(ctx, snapshot.PlanSnapshot.Request)
@@ -197,6 +423,30 @@ func validWriteAdvance(current, next remediation.WritePhase) bool {
 	}
 }
 
+func validateChangeWriteObservation(snapshot changeSnapshot, observation remediation.WriteObservation) error {
+	plan := snapshot.PlanSnapshot.Plan
+	if !validWriteAdvance(snapshot.WritePhase, observation.Phase) || observation.BaseSHA != plan.TargetBaseRevision {
+		return fmt.Errorf("%w: GitHub observation does not advance the approved base", remediation.ErrDrift)
+	}
+	switch observation.Phase {
+	case remediation.WritePhaseEnsureCommit:
+		if observation.BranchSHA != plan.TargetBaseRevision || observation.CommitSHA != "" || observation.TreeSHA != "" || observation.PRNumber != 0 || observation.PRURL != "" {
+			return fmt.Errorf("%w: branch observation is not bound to the approved base", remediation.ErrDrift)
+		}
+	case remediation.WritePhaseEnsureDraftPR:
+		if observation.CommitSHA == "" || observation.BranchSHA != observation.CommitSHA || observation.TreeSHA != plan.ExpectedTreeHash || observation.PRNumber != 0 || observation.PRURL != "" {
+			return fmt.Errorf("%w: commit observation is not bound to the approved tree", remediation.ErrDrift)
+		}
+	case remediation.WritePhaseComplete:
+		if observation.CommitSHA == "" || observation.BranchSHA != observation.CommitSHA || observation.TreeSHA != plan.ExpectedTreeHash || observation.PRNumber <= 0 || strings.TrimSpace(observation.PRURL) == "" {
+			return fmt.Errorf("%w: Draft PR observation is not bound to the approved commit and tree", remediation.ErrDrift)
+		}
+	default:
+		return fmt.Errorf("%w: GitHub observation has an invalid next phase", remediation.ErrDrift)
+	}
+	return nil
+}
+
 func changeLoadFailure(err error) asyncjob.Result {
 	switch {
 	case errors.Is(err, asyncjob.ErrSubjectVersionMismatch):
@@ -215,6 +465,8 @@ func changeLoadFailure(err error) asyncjob.Result {
 type mysqlChangeEnsurePRStore struct {
 	db                *sql.DB
 	tasks             ChangeEnsurePRTaskStore
+	git               remediation.ExactGitReader
+	claimPolicy       agent.ClaimPolicy
 	currentPolicyHash string
 	now               func() time.Time
 }
@@ -224,14 +476,17 @@ type changeQueryer interface {
 }
 
 func (s *mysqlChangeEnsurePRStore) LoadApprovedPlan(ctx context.Context, task asyncjob.Task, now time.Time, policyHash string) (changePlanSnapshot, error) {
-	snapshot, err := s.loadPlan(ctx, s.db, task.SubjectID)
+	snapshot, err := s.loadPlan(ctx, s.db, task.SubjectID, false)
 	if err != nil {
 		return changePlanSnapshot{}, err
 	}
 	if snapshot.Plan.CycleNo != uint64(task.CycleNo) || snapshot.Plan.RowVersion != task.ExpectedSubjectVersion || snapshot.Plan.IncidentID != task.IncidentID {
 		return changePlanSnapshot{}, asyncjob.ErrSubjectVersionMismatch
 	}
-	if err := s.validatePreflight(ctx, s.db, snapshot, now, policyHash, false); err != nil {
+	if err := s.validateDurablePreflight(ctx, s.db, snapshot, now, policyHash, false, remediation.PlanApproved, "awaiting_approval"); err != nil {
+		return changePlanSnapshot{}, err
+	}
+	if err := s.validateGitPreflight(ctx, snapshot.Plan); err != nil {
 		return changePlanSnapshot{}, err
 	}
 	snapshot.ChangeRequestPublicID = uuid.NewString()
@@ -240,116 +495,108 @@ func (s *mysqlChangeEnsurePRStore) LoadApprovedPlan(ctx context.Context, task as
 	return snapshot, nil
 }
 
-func (s *mysqlChangeEnsurePRStore) LoadChange(ctx context.Context, task asyncjob.Task, now time.Time, policyHash string) (changeSnapshot, error) {
+func (s *mysqlChangeEnsurePRStore) LoadChange(ctx context.Context, task asyncjob.Task) (changeSnapshot, error) {
 	var snapshot changeSnapshot
-	var writePhase string
+	var writePhase, repository, baseRevision, headBranch, idempotencyKey string
+	var expectedSubjectVersion uint64
 	if err := s.db.QueryRowContext(ctx, `
 SELECT id, public_id, plan_id, row_version, COALESCE(v3_status,''), COALESCE(write_phase,''),
-       COALESCE(logical_operation_key,''), COALESCE(external_write_marker,'')
+       COALESCE(logical_operation_key,''), COALESCE(external_write_marker,''),
+       repository, base_revision, head_branch, idempotency_key, expected_subject_version,
+       EXISTS (
+           SELECT 1 FROM change_request_events e
+           WHERE e.change_request_id = change_requests.id
+             AND e.incident_id = change_requests.incident_id
+             AND e.cycle_no = change_requests.cycle_no
+             AND e.domain_schema_version = 3
+             AND e.external_write_started = TRUE
+       )
 FROM change_requests
 WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3`,
 		task.SubjectID, task.IncidentID, task.CycleNo).
 		Scan(&snapshot.ChangeRequestID, &snapshot.ChangePublicID, &snapshot.PlanSnapshot.Plan.ID,
-			&snapshot.ChangeVersion, &snapshot.ChangeStatus, &writePhase, &snapshot.LogicalOperation, &snapshot.ExternalMarker); err != nil {
+			&snapshot.ChangeVersion, &snapshot.ChangeStatus, &writePhase, &snapshot.LogicalOperation,
+			&snapshot.ExternalMarker, &repository, &baseRevision, &headBranch, &idempotencyKey,
+			&expectedSubjectVersion, &snapshot.ExternalWriteStarted); err != nil {
 		return changeSnapshot{}, err
 	}
 	if snapshot.ChangeVersion != task.ExpectedSubjectVersion {
 		return changeSnapshot{}, asyncjob.ErrSubjectVersionMismatch
 	}
 	snapshot.WritePhase = remediation.WritePhase(writePhase)
-	plan, err := s.loadPlan(ctx, s.db, snapshot.PlanSnapshot.Plan.ID)
-	if err != nil {
-		return changeSnapshot{}, err
-	}
+	plan, err := s.loadPlan(ctx, s.db, snapshot.PlanSnapshot.Plan.ID, false)
 	snapshot.PlanSnapshot = plan
-	if err := s.validatePreflight(ctx, s.db, plan, now, policyHash, false); err != nil {
-		return changeSnapshot{}, err
+	if err != nil {
+		return snapshot, err
 	}
-	if snapshot.ChangeStatus != "pending" || snapshot.LogicalOperation == "" || snapshot.WritePhase == "" {
+	if snapshot.PlanSnapshot.Plan.IncidentID != task.IncidentID || snapshot.PlanSnapshot.Plan.CycleNo != uint64(task.CycleNo) ||
+		snapshot.ChangeStatus != "pending" || expectedSubjectVersion != snapshot.ChangeVersion ||
+		!validWritePhase(snapshot.WritePhase) || snapshot.WritePhase == remediation.WritePhaseComplete {
 		return changeSnapshot{}, fmt.Errorf("%w: ChangeRequest is not writable", asyncjob.ErrInvalidMutation)
 	}
-	snapshot.PlanSnapshot.LogicalOperationKey = snapshot.LogicalOperation
-	snapshot.PlanSnapshot.Request = buildPhasedDeliveryRequest(snapshot.PlanSnapshot.Plan, snapshot.LogicalOperation)
+	expectedLogicalOperation := hashCanonical("change.ensure_pr", snapshot.PlanSnapshot.Plan.PublicID, snapshot.PlanSnapshot.Plan.CanonicalPlanHash)
+	expectedRequest := buildPhasedDeliveryRequest(snapshot.PlanSnapshot.Plan, expectedLogicalOperation)
+	expectedMarker := expectedExternalWriteMarker(changeSnapshot{LogicalOperation: expectedLogicalOperation, WritePhase: snapshot.WritePhase}, task.ExpectedSubjectVersion)
+	if _, err := uuid.Parse(snapshot.ChangePublicID); err != nil || snapshot.LogicalOperation != expectedLogicalOperation ||
+		idempotencyKey != expectedLogicalOperation || repository != snapshot.PlanSnapshot.Plan.TargetRepository ||
+		baseRevision != snapshot.PlanSnapshot.Plan.TargetBaseRevision || headBranch != expectedRequest.Branch ||
+		(snapshot.ExternalMarker != "" && (snapshot.ExternalMarker != expectedMarker || !validSHA256Text(snapshot.ExternalMarker))) {
+		return snapshot, fmt.Errorf("%w: ChangeRequest immutable delivery binding is invalid", asyncjob.ErrPolicyViolation)
+	}
+	if snapshot.ExternalMarker != "" {
+		snapshot.ExternalWriteStarted = true
+	}
+	if snapshot.PlanSnapshot.IncidentStatus != "delivering" ||
+		snapshot.PlanSnapshot.LegacyPlanStatus != string(remediation.PlanApproved) ||
+		(snapshot.PlanSnapshot.Plan.Status != remediation.PlanConsumed && snapshot.PlanSnapshot.Plan.Status != remediation.PlanInvalidated) {
+		return changeSnapshot{}, fmt.Errorf("%w: ChangeRequest no longer belongs to active delivery", asyncjob.ErrInvalidMutation)
+	}
+	snapshot.PlanSnapshot.LogicalOperationKey = expectedLogicalOperation
+	snapshot.PlanSnapshot.Request = expectedRequest
 	return snapshot, nil
 }
 
-func (s *mysqlChangeEnsurePRStore) loadPlan(ctx context.Context, queryer changeQueryer, planID uint64) (changePlanSnapshot, error) {
-	var snapshot changePlanSnapshot
-	var evidenceJSON []byte
-	var decision, operation, planStatus string
-	const query = `
-SELECT p.id, p.public_id, p.incident_id, i.public_id, i.v3_status, i.version,
-       p.cycle_no, p.incident_version, p.plan_version, p.row_version, p.v3_status,
-       p.operation_type, p.target_repository, p.target_base_branch, p.target_base_revision,
-       p.target_path, p.base_blob_sha, p.expected_before_hash, p.expected_post_image_hash,
-       p.expected_tree_hash, p.post_image, p.canonical_plan_hash, p.hash_schema_version,
-       p.plan_content_schema_version, p.proposed_patch_hash, p.policy_snapshot_hash,
-       p.verification_plan_hash, p.evidence_set_hash, p.evidence_bindings_json, p.expires_at,
-       d.id, d.public_id, d.domain_schema_version, d.decision_schema_version,
-       d.plan_version, d.decision, d.actor_provider, d.actor_login, d.actor_role, d.reason,
-       d.request_id, d.request_authenticated_at, d.expires_at, d.approved_hash_schema_version,
-       d.approved_plan_hash, d.approved_base_sha, d.approved_post_image_hash,
-       d.approved_tree_hash, d.approved_patch_hash, d.approved_policy_hash,
-       d.approved_verification_hash, d.approved_evidence_set_hash, d.created_at
-FROM remediation_plans p
-JOIN incidents i ON i.id = p.incident_id AND i.domain_schema_version = 3 AND i.cycle_no = p.cycle_no
-JOIN remediation_decisions d ON d.plan_id = p.id AND d.incident_id = p.incident_id AND d.cycle_no = p.cycle_no
-WHERE p.id = ? AND p.domain_schema_version = 3 AND p.plan_content_schema_version = 2`
-	if err := queryer.QueryRowContext(ctx, query, planID).Scan(
-		&snapshot.Plan.ID, &snapshot.Plan.PublicID, &snapshot.Plan.IncidentID, &snapshot.Plan.IncidentPublicID,
-		&snapshot.IncidentStatus, &snapshot.IncidentVersion, &snapshot.Plan.CycleNo, &snapshot.Plan.IncidentVersion,
-		&snapshot.Plan.PlanVersion, &snapshot.Plan.RowVersion, &planStatus, &operation,
-		&snapshot.Plan.TargetRepository, &snapshot.Plan.TargetBaseBranch, &snapshot.Plan.TargetBaseRevision,
-		&snapshot.Plan.TargetPath, &snapshot.Plan.BaseBlobSHA, &snapshot.Plan.ExpectedBeforeHash,
-		&snapshot.Plan.ExpectedPostImageHash, &snapshot.Plan.ExpectedTreeHash, &snapshot.Plan.PostImage,
-		&snapshot.Plan.CanonicalPlanHash, &snapshot.Plan.HashSchemaVersion, &snapshot.Plan.PlanContentSchemaVersion,
-		&snapshot.Plan.ProposedPatchHash, &snapshot.Plan.PolicySnapshotHash, &snapshot.Plan.VerificationPlanHash,
-		&snapshot.Plan.EvidenceSetHash, &evidenceJSON, &snapshot.Plan.ExpiresAt,
-		&snapshot.Decision.ID, &snapshot.Decision.PublicID, &snapshot.Decision.DomainSchemaVersion,
-		&snapshot.Decision.DecisionSchemaVersion, &snapshot.Decision.PlanVersion, &decision,
-		&snapshot.Decision.ActorProvider, &snapshot.Decision.Actor, &snapshot.Decision.Role, &snapshot.Decision.Reason,
-		&snapshot.Decision.RequestID, &snapshot.Decision.RequestAuthenticatedAt, &snapshot.Decision.ExpiresAt,
-		&snapshot.Decision.ApprovedHashSchemaVersion, &snapshot.Decision.ApprovedPlanHash,
-		&snapshot.Decision.ApprovedBaseSHA, &snapshot.Decision.ApprovedPostImageHash,
-		&snapshot.Decision.ApprovedTreeHash, &snapshot.Decision.ApprovedPatchHash,
-		&snapshot.Decision.ApprovedPolicyHash, &snapshot.Decision.ApprovedVerificationHash,
-		&snapshot.Decision.ApprovedEvidenceSetHash, &snapshot.Decision.CreatedAt,
-	); err != nil {
-		return changePlanSnapshot{}, err
+func (s *mysqlChangeEnsurePRStore) ValidateChangePreflight(ctx context.Context, snapshot changeSnapshot, now time.Time, policyHash string) error {
+	if snapshot.PlanSnapshot.Plan.Status != remediation.PlanConsumed {
+		return fmt.Errorf("%w: ChangeRequest no longer has a writable approved Plan", asyncjob.ErrInvalidMutation)
 	}
-	snapshot.Decision.PlanID = snapshot.Plan.ID
-	snapshot.Decision.IncidentID = snapshot.Plan.IncidentID
-	snapshot.Decision.CycleNo = snapshot.Plan.CycleNo
-	snapshot.Decision.Decision = remediation.Decision(decision)
-	snapshot.Plan.Status = remediation.PlanStatus(planStatus)
-	snapshot.Plan.OperationType = remediation.OperationType(operation)
-	if err := json.Unmarshal(evidenceJSON, &snapshot.Plan.EvidenceBindings); err != nil {
-		return changePlanSnapshot{}, fmt.Errorf("decode plan evidence bindings: %w", err)
-	}
-	return snapshot, nil
-}
-
-func (s *mysqlChangeEnsurePRStore) validatePreflight(ctx context.Context, queryer changeQueryer, snapshot changePlanSnapshot, now time.Time, policyHash string, lockEvidence bool) error {
-	plan := snapshot.Plan
-	if snapshot.IncidentStatus != "awaiting_approval" && snapshot.IncidentStatus != "delivering" {
-		return fmt.Errorf("%w: Incident is outside approval/delivery", asyncjob.ErrPolicyViolation)
-	}
-	if plan.OperationType != remediation.OperationRestoreRequiredEnv ||
-		(plan.Status != remediation.PlanApproved && plan.Status != remediation.PlanStatus("consumed")) ||
-		!now.Before(plan.ExpiresAt.UTC()) || !now.Before(snapshot.Decision.ExpiresAt.UTC()) ||
-		plan.PolicySnapshotHash != policyHash {
-		return fmt.Errorf("%w: Plan is expired, stale, or policy-drifted", asyncjob.ErrPolicyViolation)
-	}
-	if err := remediation.ValidateV3ApprovalBinding(plan, snapshot.Decision, now); err != nil {
+	if err := s.validateDurablePreflight(ctx, s.db, snapshot.PlanSnapshot, now, policyHash, false, remediation.PlanConsumed, "delivering"); err != nil {
 		return err
 	}
-	if len(plan.PostImage) == 0 || remediation.HashBytes(plan.PostImage) != plan.ExpectedPostImageHash {
-		return fmt.Errorf("%w: persisted post-image does not match the approved hash", remediation.ErrDrift)
+	return s.validateGitPreflight(ctx, snapshot.PlanSnapshot.Plan)
+}
+
+func (s *mysqlChangeEnsurePRStore) SupersedeApprovedPlanIn(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, reason string) error {
+	var cycleNo, rowVersion uint64
+	var publicID, status string
+	if err := tx.QueryRowContext(ctx, `SELECT public_id, cycle_no, row_version, v3_status
+FROM remediation_plans
+WHERE id = ? AND incident_id = ? AND domain_schema_version = 3 FOR UPDATE`, task.SubjectID, task.IncidentID).
+		Scan(&publicID, &cycleNo, &rowVersion, &status); err != nil {
+		return err
 	}
-	if lockEvidence {
-		return validateApprovedEvidenceCurrentForUpdate(ctx, queryer, plan.IncidentID, plan.CycleNo, plan.EvidenceBindings)
+	if cycleNo != uint64(task.CycleNo) || rowVersion != task.ExpectedSubjectVersion || status != string(remediation.PlanApproved) {
+		return asyncjob.ErrSubjectVersionMismatch
 	}
-	return validateApprovedEvidenceCurrent(ctx, queryer, plan.IncidentID, plan.CycleNo, plan.EvidenceBindings)
+	result, err := tx.ExecContext(ctx, `UPDATE remediation_plans
+SET status = 'superseded', v3_status = 'superseded', row_version = row_version + 1, updated_at = NOW(6)
+WHERE id = ? AND incident_id = ? AND cycle_no = ? AND row_version = ?
+  AND domain_schema_version = 3 AND v3_status = 'approved'`,
+		task.SubjectID, task.IncidentID, task.CycleNo, task.ExpectedSubjectVersion)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return asyncjob.ErrSubjectVersionMismatch
+	}
+	incidentVersion, err := s.returnIncidentToInvestigating(ctx, tx, task, reason)
+	if err != nil {
+		return err
+	}
+	if err := appendChangeIncidentEvent(ctx, tx, task.IncidentID, task.CycleNo, "remediation_plan_superseded", publicID, reason); err != nil {
+		return err
+	}
+	return s.enqueueChangeInvestigation(ctx, tx, task, incidentVersion, reason)
 }
 
 func (s *mysqlChangeEnsurePRStore) CreateChangeRequestIn(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, snapshot changePlanSnapshot) error {
@@ -371,11 +618,17 @@ WHERE id = ? AND incident_id = ? AND domain_schema_version = 3 FOR UPDATE`,
 	if incidentStatus != "awaiting_approval" {
 		return asyncjob.ErrInvalidMutation
 	}
-	current, err := s.loadPlan(ctx, tx, snapshot.Plan.ID)
+	current, err := s.loadPlan(ctx, tx, snapshot.Plan.ID, true)
 	if err != nil {
+		if isTerminalChangePreflight(err) {
+			return s.SupersedeApprovedPlanIn(ctx, tx, task, "change_preflight_rejected")
+		}
 		return err
 	}
-	if err := s.validatePreflight(ctx, tx, current, s.now().UTC(), s.currentPolicyHash, true); err != nil {
+	if err := s.validateDurablePreflight(ctx, tx, current, s.now().UTC(), s.currentPolicyHash, true, remediation.PlanApproved, "awaiting_approval"); err != nil {
+		if isTerminalChangePreflight(err) {
+			return s.SupersedeApprovedPlanIn(ctx, tx, task, "change_preflight_rejected")
+		}
 		return err
 	}
 	current.ChangeRequestPublicID = snapshot.ChangeRequestPublicID
@@ -436,6 +689,9 @@ WHERE id = ? AND cycle_no = ? AND domain_schema_version = 3 AND v3_status = 'awa
 }
 
 func (s *mysqlChangeEnsurePRStore) MarkWriteIntent(ctx context.Context, task asyncjob.Task, snapshot changeSnapshot, marker string) error {
+	if marker != expectedExternalWriteMarker(snapshot, task.ExpectedSubjectVersion) {
+		return fmt.Errorf("%w: external write marker is not bound to the current phase", asyncjob.ErrPolicyViolation)
+	}
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return err
@@ -453,11 +709,11 @@ FOR UPDATE`, task.SubjectID, task.IncidentID, task.CycleNo).Scan(&version, &phas
 	if version != task.ExpectedSubjectVersion || remediation.WritePhase(phase) != snapshot.WritePhase {
 		return asyncjob.ErrSubjectVersionMismatch
 	}
-	current, err := s.loadPlan(ctx, tx, snapshot.PlanSnapshot.Plan.ID)
+	current, err := s.loadPlan(ctx, tx, snapshot.PlanSnapshot.Plan.ID, true)
 	if err != nil {
 		return err
 	}
-	if err := s.validatePreflight(ctx, tx, current, s.now().UTC(), s.currentPolicyHash, true); err != nil {
+	if err := s.validateDurablePreflight(ctx, tx, current, s.now().UTC(), s.currentPolicyHash, true, remediation.PlanConsumed, "delivering"); err != nil {
 		return err
 	}
 	if current.Plan.CanonicalPlanHash != snapshot.PlanSnapshot.Plan.CanonicalPlanHash ||
@@ -468,7 +724,7 @@ FOR UPDATE`, task.SubjectID, task.IncidentID, task.CycleNo).Scan(&version, &phas
 	}
 	if existingMarker != "" {
 		if existingMarker != marker {
-			return asyncjob.ErrInvalidMutation
+			return fmt.Errorf("%w: external write marker does not match the current phase", asyncjob.ErrPolicyViolation)
 		}
 		return tx.Commit()
 	}
@@ -495,16 +751,82 @@ WHERE id = ? AND row_version = ? AND external_write_marker IS NULL`, marker, tas
 }
 
 func (s *mysqlChangeEnsurePRStore) ApplyObservationIn(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, snapshot changeSnapshot, observation remediation.WriteObservation) error {
-	var version uint64
-	var marker string
-	if err := tx.QueryRowContext(ctx, `
-SELECT row_version, COALESCE(external_write_marker,'') FROM change_requests
-WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3 FOR UPDATE`,
-		task.SubjectID, task.IncidentID, task.CycleNo).Scan(&version, &marker); err != nil {
+	if err := validateChangeWriteObservation(snapshot, observation); err != nil {
 		return err
 	}
-	if version != task.ExpectedSubjectVersion || marker == "" {
+	var version uint64
+	var marker, phase string
+	if err := tx.QueryRowContext(ctx, `
+SELECT row_version, write_phase, COALESCE(external_write_marker,'') FROM change_requests
+WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3 FOR UPDATE`,
+		task.SubjectID, task.IncidentID, task.CycleNo).Scan(&version, &phase, &marker); err != nil {
+		return err
+	}
+	if version != task.ExpectedSubjectVersion || remediation.WritePhase(phase) != snapshot.WritePhase || marker == "" {
 		return asyncjob.ErrSubjectVersionMismatch
+	}
+	var planStatus string
+	if err := tx.QueryRowContext(ctx, `SELECT v3_status FROM remediation_plans
+WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3 FOR UPDATE`,
+		snapshot.PlanSnapshot.Plan.ID, task.IncidentID, task.CycleNo).Scan(&planStatus); err != nil {
+		return err
+	}
+	if planStatus != string(remediation.PlanConsumed) && planStatus != string(remediation.PlanInvalidated) {
+		return asyncjob.ErrInvalidMutation
+	}
+	if snapshot.PreflightRejected && planStatus == string(remediation.PlanConsumed) {
+		result, err := tx.ExecContext(ctx, `UPDATE remediation_plans
+SET v3_status = 'invalidated', row_version = row_version + 1, updated_at = NOW(6)
+WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3 AND v3_status = 'consumed'`,
+			snapshot.PlanSnapshot.Plan.ID, task.IncidentID, task.CycleNo)
+		if err != nil {
+			return err
+		}
+		if affected, _ := result.RowsAffected(); affected != 1 {
+			return asyncjob.ErrSubjectVersionMismatch
+		}
+		planStatus = string(remediation.PlanInvalidated)
+	}
+	if planStatus == string(remediation.PlanInvalidated) {
+		result, err := tx.ExecContext(ctx, `UPDATE change_requests
+SET expected_subject_version = ?, commit_sha = ?, pr_number = ?, pr_url = ?,
+    failure_code = 'change_preflight_rejected', failure_reason = 'change_preflight_rejected',
+    external_write_started_at = NULL, external_write_marker = NULL,
+    row_version = row_version + 1, updated_at = NOW(6)
+WHERE id = ? AND row_version = ? AND external_write_marker = ?`,
+			version+1, observation.CommitSHA, observation.PRNumber, observation.PRURL,
+			task.SubjectID, version, marker)
+		if err != nil {
+			return err
+		}
+		if affected, _ := result.RowsAffected(); affected != 1 {
+			return asyncjob.ErrSubjectVersionMismatch
+		}
+		sequence, err := nextChangeSequence(ctx, tx, task.SubjectID)
+		if err != nil {
+			return err
+		}
+		if err := appendChangeEvent(ctx, tx, task.SubjectID, task.IncidentID, task.CycleNo, sequence, "external_write_observed_after_invalidation", "github", snapshot.WritePhase, true, marker, observation); err != nil {
+			return err
+		}
+		var incidentVersion uint64
+		if err := tx.QueryRowContext(ctx, `SELECT version FROM incidents
+WHERE id = ? AND cycle_no = ? AND domain_schema_version = 3 AND v3_status = 'delivering' FOR UPDATE`,
+			task.IncidentID, task.CycleNo).Scan(&incidentVersion); err != nil {
+			return err
+		}
+		result, err = tx.ExecContext(ctx, `UPDATE incidents
+SET needs_attention = TRUE, blocking_reason_code = 'approved_change_invalidated',
+    blocked_at = COALESCE(blocked_at, NOW(6)), version = version + 1, updated_at = NOW(6)
+WHERE id = ? AND cycle_no = ? AND domain_schema_version = 3 AND version = ? AND v3_status = 'delivering'`,
+			task.IncidentID, task.CycleNo, incidentVersion)
+		if err != nil {
+			return err
+		}
+		if affected, _ := result.RowsAffected(); affected != 1 {
+			return asyncjob.ErrSubjectVersionMismatch
+		}
+		return appendChangeIncidentEvent(ctx, tx, task.IncidentID, task.CycleNo, "approved_change_invalidated", snapshot.ChangePublicID, "change_preflight_rejected")
 	}
 	nextPhase := observation.Phase
 	updates := `write_phase = ?, expected_subject_version = ?, commit_sha = ?, pr_number = ?, pr_url = ?,
@@ -531,6 +853,11 @@ WHERE id = ? AND row_version = ? AND external_write_marker = ?`,
 	if err := appendChangeEvent(ctx, tx, task.SubjectID, task.IncidentID, task.CycleNo, sequence, "external_write_observed", "github", snapshot.WritePhase, true, marker, observation); err != nil {
 		return err
 	}
+	_, _ = tx.ExecContext(ctx, `UPDATE incidents
+SET needs_attention = FALSE, blocking_reason_code = NULL, blocked_at = NULL, updated_at = NOW(6)
+WHERE id = ? AND cycle_no = ? AND domain_schema_version = 3 AND v3_status = 'delivering'
+  AND blocking_reason_code IN ('github_reconciliation_pending','github_reconciliation_unavailable')`,
+		task.IncidentID, task.CycleNo)
 	if nextPhase == remediation.WritePhaseComplete {
 		payload, _ := json.Marshal(map[string]any{"change_request_id": snapshot.ChangePublicID, "phase": "observe"})
 		_, err = s.tasks.EnqueueIn(ctx, tx, asyncjob.NewTask{
@@ -553,22 +880,208 @@ WHERE id = ? AND row_version = ? AND external_write_marker = ?`,
 	return err
 }
 
-func (s *mysqlChangeEnsurePRStore) InvalidateIn(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, snapshot changeSnapshot, reason string) error {
-	result, err := tx.ExecContext(ctx, `
-UPDATE change_requests
-SET status = 'failed', v3_status = 'failed', failure_code = ?, failure_reason = ?,
+func (s *mysqlChangeEnsurePRStore) BlockReconciliationIn(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, snapshot changeSnapshot, reason string) error {
+	var version uint64
+	var marker string
+	if err := tx.QueryRowContext(ctx, `SELECT row_version, COALESCE(external_write_marker,'')
+FROM change_requests WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3 FOR UPDATE`,
+		task.SubjectID, task.IncidentID, task.CycleNo).Scan(&version, &marker); err != nil {
+		return err
+	}
+	if version != task.ExpectedSubjectVersion || marker == "" || marker != snapshot.ExternalMarker {
+		return asyncjob.ErrSubjectVersionMismatch
+	}
+	var incidentVersion uint64
+	var incidentStatus, blockingReason string
+	var needsAttention bool
+	if err := tx.QueryRowContext(ctx, `SELECT version, v3_status, needs_attention, COALESCE(blocking_reason_code,'')
+FROM incidents WHERE id = ? AND cycle_no = ? AND domain_schema_version = 3 FOR UPDATE`,
+		task.IncidentID, task.CycleNo).Scan(&incidentVersion, &incidentStatus, &needsAttention, &blockingReason); err != nil {
+		return err
+	}
+	if incidentStatus != "delivering" {
+		return asyncjob.ErrSubjectVersionMismatch
+	}
+	if !needsAttention || blockingReason != reason {
+		result, err := tx.ExecContext(ctx, `UPDATE incidents
+SET needs_attention = TRUE, blocking_reason_code = ?, blocked_at = COALESCE(blocked_at, NOW(6)),
+    version = version + 1, updated_at = NOW(6)
+WHERE id = ? AND cycle_no = ? AND domain_schema_version = 3 AND version = ? AND v3_status = 'delivering'`,
+			reason, task.IncidentID, task.CycleNo, incidentVersion)
+		if err != nil {
+			return err
+		}
+		if affected, _ := result.RowsAffected(); affected != 1 {
+			return asyncjob.ErrSubjectVersionMismatch
+		}
+	}
+	return appendChangeIncidentEvent(ctx, tx, task.IncidentID, task.CycleNo, "change_reconciliation_blocked", snapshot.ChangePublicID, reason)
+}
+
+func (s *mysqlChangeEnsurePRStore) InvalidateIn(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, snapshot changeSnapshot, reason string, safeTerminal bool) error {
+	var version, planID uint64
+	var changeStatus, phase, marker string
+	var externalStarted bool
+	if err := tx.QueryRowContext(ctx, `SELECT row_version, plan_id, v3_status, COALESCE(write_phase,''),
+       COALESCE(external_write_marker,''),
+       EXISTS (
+           SELECT 1 FROM change_request_events e
+           WHERE e.change_request_id = change_requests.id
+             AND e.incident_id = change_requests.incident_id
+             AND e.cycle_no = change_requests.cycle_no
+             AND e.domain_schema_version = 3
+             AND e.external_write_started = TRUE
+       )
+FROM change_requests
+WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3 FOR UPDATE`,
+		task.SubjectID, task.IncidentID, task.CycleNo).
+		Scan(&version, &planID, &changeStatus, &phase, &marker, &externalStarted); err != nil {
+		return err
+	}
+	if version != task.ExpectedSubjectVersion || planID != snapshot.PlanSnapshot.Plan.ID || changeStatus != "pending" {
+		return asyncjob.ErrSubjectVersionMismatch
+	}
+	externalStarted = externalStarted || marker != ""
+	var planStatus string
+	if err := tx.QueryRowContext(ctx, `SELECT v3_status FROM remediation_plans
+WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3 FOR UPDATE`,
+		planID, task.IncidentID, task.CycleNo).Scan(&planStatus); err != nil {
+		return err
+	}
+	if planStatus != string(remediation.PlanConsumed) && planStatus != string(remediation.PlanInvalidated) {
+		return asyncjob.ErrInvalidMutation
+	}
+	if planStatus != string(remediation.PlanInvalidated) {
+		result, err := tx.ExecContext(ctx, `UPDATE remediation_plans
+SET v3_status = 'invalidated', row_version = row_version + 1, updated_at = NOW(6)
+WHERE id = ? AND v3_status = 'consumed' AND domain_schema_version = 3`, planID)
+		if err != nil {
+			return err
+		}
+		if affected, _ := result.RowsAffected(); affected != 1 {
+			return asyncjob.ErrSubjectVersionMismatch
+		}
+	}
+
+	decision := classifyChangeInvalidation(externalStarted, safeTerminal)
+	if decision.Terminal {
+		result, err := tx.ExecContext(ctx, `UPDATE change_requests
+SET status = 'failed', v3_status = ?, failure_code = ?, failure_reason = ?,
+    external_write_started_at = NULL, external_write_marker = NULL,
     row_version = row_version + 1, updated_at = NOW(6)
 WHERE id = ? AND row_version = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3`,
-		reason, reason, task.SubjectID, task.ExpectedSubjectVersion, task.IncidentID, task.CycleNo)
+			decision.V3Status, reason, reason, task.SubjectID, version, task.IncidentID, task.CycleNo)
+		if err != nil {
+			return err
+		}
+		if affected, _ := result.RowsAffected(); affected != 1 {
+			return asyncjob.ErrSubjectVersionMismatch
+		}
+		sequence, err := nextChangeSequence(ctx, tx, task.SubjectID)
+		if err != nil {
+			return err
+		}
+		externalEvent := externalStarted && marker != ""
+		if err := appendChangeEvent(ctx, tx, task.SubjectID, task.IncidentID, task.CycleNo, sequence, decision.Event, "worker", remediation.WritePhase(phase), externalEvent, marker, map[string]any{
+			"reason": reason, "external_state_safe": safeTerminal,
+		}); err != nil {
+			return err
+		}
+		incidentVersion, err := s.returnIncidentToInvestigating(ctx, tx, task, reason)
+		if err != nil {
+			return err
+		}
+		return s.enqueueChangeInvestigation(ctx, tx, task, incidentVersion, reason)
+	}
+
+	if _, err := tx.ExecContext(ctx, `UPDATE change_requests
+SET failure_code = ?, failure_reason = ?, updated_at = NOW(6)
+WHERE id = ? AND row_version = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3`,
+		reason, reason, task.SubjectID, version, task.IncidentID, task.CycleNo); err != nil {
+		return err
+	}
+	var incidentVersion uint64
+	var incidentStatus string
+	if err := tx.QueryRowContext(ctx, `SELECT version, v3_status FROM incidents
+WHERE id = ? AND cycle_no = ? AND domain_schema_version = 3 FOR UPDATE`, task.IncidentID, task.CycleNo).
+		Scan(&incidentVersion, &incidentStatus); err != nil {
+		return err
+	}
+	if incidentStatus != "delivering" {
+		return asyncjob.ErrSubjectVersionMismatch
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE incidents
+SET needs_attention = TRUE, blocking_reason_code = ?, blocked_at = COALESCE(blocked_at, NOW(6)),
+    version = version + 1, updated_at = NOW(6)
+WHERE id = ? AND cycle_no = ? AND domain_schema_version = 3 AND version = ? AND v3_status = 'delivering'`,
+		reason, task.IncidentID, task.CycleNo, incidentVersion)
 	if err != nil {
 		return err
 	}
 	if affected, _ := result.RowsAffected(); affected != 1 {
 		return asyncjob.ErrSubjectVersionMismatch
 	}
-	_, _ = tx.ExecContext(ctx, `UPDATE remediation_plans SET v3_status = 'invalidated', row_version = row_version + 1, updated_at = NOW(6) WHERE id = ? AND domain_schema_version = 3`, snapshot.PlanSnapshot.Plan.ID)
-	_, _ = tx.ExecContext(ctx, `UPDATE incidents SET needs_attention = TRUE, blocking_reason_code = ?, blocked_at = NOW(6), updated_at = NOW(6) WHERE id = ? AND cycle_no = ? AND domain_schema_version = 3`, reason, task.IncidentID, task.CycleNo)
-	return nil
+	return appendChangeIncidentEvent(ctx, tx, task.IncidentID, task.CycleNo, "approved_change_invalidated", snapshot.ChangePublicID, reason)
+}
+
+func (s *mysqlChangeEnsurePRStore) returnIncidentToInvestigating(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, reason string) (uint64, error) {
+	var version uint64
+	var status string
+	if err := tx.QueryRowContext(ctx, `SELECT version, v3_status FROM incidents
+WHERE id = ? AND cycle_no = ? AND domain_schema_version = 3 FOR UPDATE`, task.IncidentID, task.CycleNo).
+		Scan(&version, &status); err != nil {
+		return 0, err
+	}
+	if status != "awaiting_approval" && status != "delivering" {
+		return 0, asyncjob.ErrSubjectVersionMismatch
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE incidents
+SET status = 'DIAGNOSING', v3_status = 'investigating', current_agent_run_id = NULL,
+    version = version + 1, needs_attention = FALSE, blocking_reason_code = NULL,
+    blocked_at = NULL, updated_at = NOW(6)
+WHERE id = ? AND cycle_no = ? AND domain_schema_version = 3 AND version = ? AND v3_status = ?`,
+		task.IncidentID, task.CycleNo, version, status)
+	if err != nil {
+		return 0, err
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return 0, asyncjob.ErrSubjectVersionMismatch
+	}
+	if err := appendChangeIncidentEvent(ctx, tx, task.IncidentID, task.CycleNo, "incident_returned_to_investigating", fmt.Sprint(task.SubjectID), reason); err != nil {
+		return 0, err
+	}
+	return version + 1, nil
+}
+
+func (s *mysqlChangeEnsurePRStore) enqueueChangeInvestigation(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, incidentVersion uint64, reason string) error {
+	payload := json.RawMessage(`{"mode":"start"}`)
+	_, err := s.tasks.EnqueueIn(ctx, tx, asyncjob.NewTask{
+		IncidentID: task.IncidentID, CycleNo: task.CycleNo, Type: asyncjob.TaskInvestigationAdvance,
+		SubjectType: "incident", SubjectID: task.IncidentID, Transition: "investigation.start",
+		ExpectedSubjectVersion: incidentVersion, PayloadSchemaVersion: 1, Payload: payload,
+		DedupeKey: hashCanonical("change.ensure_pr", fmt.Sprint(task.IncidentID), fmt.Sprint(task.CycleNo),
+			"investigation.start", fmt.Sprint(incidentVersion), reason),
+		Priority: 80, MaxAttempts: 3,
+	})
+	return err
+}
+
+func appendChangeIncidentEvent(ctx context.Context, tx asyncjob.DBTX, incidentID uint64, cycleNo uint32, eventType, subject, reason string) error {
+	metadata, err := json.Marshal(map[string]any{
+		"source": "change.ensure_pr", "subject": subject, "reason": reason,
+	})
+	if err != nil || len(metadata) > 8192 {
+		return asyncjob.ErrInvalidMutation
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO incident_events
+ (public_id, incident_id, domain_schema_version, cycle_no, event_schema_version,
+  event_type, idempotency_key, actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
+ VALUES (?, ?, 3, ?, 1, ?, ?, 'system', 'change.ensure_pr', ?, ?, NOW(6), NOW(6))
+ ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
+		uuid.NewString(), incidentID, cycleNo, eventType,
+		hashCanonical("change.ensure_pr.event", fmt.Sprint(incidentID), fmt.Sprint(cycleNo), eventType, subject, reason),
+		boundChange(reason, 2048), metadata)
+	return err
 }
 
 func buildPhasedDeliveryRequest(plan remediation.RemediationPlan, logicalOperationKey string) remediation.PhasedDeliveryRequest {

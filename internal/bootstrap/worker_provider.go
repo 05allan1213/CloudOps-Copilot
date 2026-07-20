@@ -376,7 +376,8 @@ func (f ProductionTaskOperationFactory) Build(ctx context.Context, db *sql.DB, t
 		DeliveryPollInterval: c.DeliveryPollInterval, DeliveryTimeout: c.DeliveryTimeout, MaxAgentRuns: taskhandler.DefaultAgentRunBudget,
 	}, WorkerOperationDependencies{
 		InvestigationModel: model, InvestigationTools: investigationTools,
-		RemediationLoader: remediationLoader, RemediationStore: remediationStore, GitHubWriter: githubWriter,
+		RemediationLoader: remediationLoader, RemediationStore: remediationStore,
+		GitHubReader: githubClient, GitHubWriter: githubWriter,
 		DeliveryObserver: deliveryObserver, VerificationObservations: verificationSource,
 		ResolutionReports: taskhandler.NewMySQLResolutionReportWriter(),
 	})

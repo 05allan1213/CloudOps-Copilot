@@ -47,6 +47,7 @@ func TestAssembleWorkerTaskOperationsFailsClosedForEveryMissingDependency(t *tes
 		{"investigation read tools", func(value *WorkerOperationDependencies) { value.InvestigationTools = nil }},
 		{"remediation loader", func(value *WorkerOperationDependencies) { value.RemediationLoader = nil }},
 		{"remediation store", func(value *WorkerOperationDependencies) { value.RemediationStore = nil }},
+		{"GitHub reader", func(value *WorkerOperationDependencies) { value.GitHubReader = nil }},
 		{"GitHub writer", func(value *WorkerOperationDependencies) { value.GitHubWriter = nil }},
 		{"delivery observer", func(value *WorkerOperationDependencies) { value.DeliveryObserver = nil }},
 		{"verification observations", func(value *WorkerOperationDependencies) { value.VerificationObservations = nil }},
@@ -109,6 +110,7 @@ func completeWorkerOperationDependencies() WorkerOperationDependencies {
 		InvestigationTools:       workerToolStub{},
 		RemediationLoader:        workerRemediationLoaderStub{},
 		RemediationStore:         workerRemediationStoreStub{},
+		GitHubReader:             workerExactGitReaderStub{},
 		GitHubWriter:             workerGitHubWriterStub{},
 		DeliveryObserver:         workerDeliveryObserverStub{},
 		VerificationObservations: workerVerificationObservationStub{},
@@ -144,6 +146,12 @@ func (workerRemediationStoreStub) PersistIn(context.Context, asyncjob.DBTX, asyn
 }
 
 type workerGitHubWriterStub struct{}
+
+type workerExactGitReaderStub struct{}
+
+func (workerExactGitReaderStub) ReadRestoreFacts(context.Context, remediation.ExactGitRestoreQuery) (remediation.ExactGitRestoreFacts, error) {
+	return remediation.ExactGitRestoreFacts{}, nil
+}
 
 func (workerGitHubWriterStub) ReconcileDraftPR(context.Context, remediation.PhasedDeliveryRequest) (remediation.WriteObservation, error) {
 	return remediation.WriteObservation{}, nil

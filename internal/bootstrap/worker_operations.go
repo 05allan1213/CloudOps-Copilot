@@ -25,6 +25,7 @@ type WorkerOperationDependencies struct {
 
 	RemediationLoader taskhandler.RemediationPrepareLoader
 	RemediationStore  taskhandler.RemediationPrepareStore
+	GitHubReader      remediation.ExactGitReader
 	GitHubWriter      remediation.PhasedGitHubWriter
 
 	DeliveryObserver         taskhandler.DeliveryObserver
@@ -86,7 +87,8 @@ func AssembleWorkerTaskOperations(
 		return taskhandler.Config{}, fmt.Errorf("assemble remediation.prepare: %w", err)
 	}
 	changeEnsurePR, err := taskhandler.NewChangeEnsurePR(taskhandler.ChangeEnsurePRConfig{
-		DB: db, Tasks: tasks, Writer: dependencies.GitHubWriter,
+		DB: db, Tasks: tasks, Git: dependencies.GitHubReader, Writer: dependencies.GitHubWriter,
+		ClaimPolicy:       config.ClaimPolicy,
 		CurrentPolicyHash: config.CurrentPolicyHash, Now: config.Now,
 	})
 	if err != nil {
@@ -194,6 +196,9 @@ func validateWorkerOperationDependencies(dependencies WorkerOperationDependencie
 	}
 	if dependencies.RemediationStore == nil {
 		missing = append(missing, "remediation store")
+	}
+	if dependencies.GitHubReader == nil {
+		missing = append(missing, "GitHub reader")
 	}
 	if dependencies.GitHubWriter == nil {
 		missing = append(missing, "GitHub writer")
