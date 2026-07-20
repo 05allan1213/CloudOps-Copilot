@@ -167,6 +167,16 @@ func TestCommandHeadersExpectedVersionHashAndNotImplemented(t *testing.T) {
 	}
 	assertProblem(t, missingHash, "EXPECTED_HASH_REQUIRED")
 
+	missingReason := httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodPost, "/api/v3/remediation-plans/"+contractIncidentID+"/decisions", strings.NewReader(`{"decision":"approved","expected_version":1,"expected_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`))
+	request.Header.Set("Content-Type", JSONMediaType)
+	request.Header.Set(IdempotencyHeader, "contract-key-reason")
+	engine.ServeHTTP(missingReason, request)
+	if missingReason.Code != http.StatusBadRequest {
+		t.Fatalf("missing reason status=%d want 400", missingReason.Code)
+	}
+	assertProblem(t, missingReason, "INVALID_REQUEST")
+
 	invalidTransition := httptest.NewRecorder()
 	request = httptest.NewRequest(http.MethodPost, "/api/v3/remediation-plans/"+contractIncidentID+"/decisions", strings.NewReader(`{"decision":"hold","expected_version":1,"expected_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`))
 	request.Header.Set("Content-Type", JSONMediaType)

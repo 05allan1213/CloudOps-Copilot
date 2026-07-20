@@ -325,6 +325,7 @@ func (h *Handler) decideRemediation(c *gin.Context) {
 		return
 	}
 	body.Decision = strings.ToLower(strings.TrimSpace(body.Decision))
+	body.Reason = strings.TrimSpace(body.Reason)
 	if body.Decision != "approved" && body.Decision != "rejected" {
 		h.writeProblem(c, http.StatusUnprocessableEntity, "INVALID_TRANSITION", "decision must be approved or rejected")
 		return
@@ -337,8 +338,8 @@ func (h *Handler) decideRemediation(c *gin.Context) {
 		h.writeProblem(c, http.StatusBadRequest, "EXPECTED_HASH_REQUIRED", "expected_hash must be a lowercase SHA-256 digest")
 		return
 	}
-	if len(body.Reason) > 2048 {
-		h.writeProblem(c, http.StatusBadRequest, "INVALID_REQUEST", "reason exceeds the maximum length")
+	if body.Reason == "" || len(body.Reason) > 1024 {
+		h.writeProblem(c, http.StatusBadRequest, "INVALID_REQUEST", "reason is required and must not exceed 1024 bytes")
 		return
 	}
 	h.executeCommand(c, CommandDecideRemediation, body.ExpectedVersion, body.ExpectedHash, body)
@@ -495,6 +496,8 @@ func commandProblem(err error) (int, string, string) {
 		return http.StatusNotFound, "RESOURCE_NOT_FOUND", "resource was not found"
 	case errors.Is(err, ErrInvalidArgument):
 		return http.StatusBadRequest, "INVALID_REQUEST", "command request is invalid"
+	case errors.Is(err, ErrForbidden):
+		return http.StatusForbidden, "COMMAND_FORBIDDEN", "authenticated identity is not allowed to execute this command"
 	case errors.Is(err, ErrUnavailable):
 		return http.StatusServiceUnavailable, "COMMAND_UNAVAILABLE", "command service is unavailable"
 	default:
@@ -545,7 +548,7 @@ func problemTitle(code string) string {
 		return "Unsupported media type"
 	case "AUTHENTICATION_REQUIRED", "AUTHENTICATION_REVOKED":
 		return "Authentication required"
-	case "ROLE_FORBIDDEN", "CSRF_REQUIRED", "CSRF_INVALID", "ORIGIN_REQUIRED", "ORIGIN_FORBIDDEN":
+	case "ROLE_FORBIDDEN", "COMMAND_FORBIDDEN", "CSRF_REQUIRED", "CSRF_INVALID", "ORIGIN_REQUIRED", "ORIGIN_FORBIDDEN":
 		return "Forbidden"
 	case "RESOURCE_NOT_FOUND", "ROUTE_NOT_FOUND":
 		return "Resource not found"

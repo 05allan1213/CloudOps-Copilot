@@ -103,7 +103,7 @@ export function useIncidentDetail(incidentID: string) {
       decision,
       expected_version: plan.version!,
       expected_hash: plan.hash!,
-      reason: reason || undefined,
+      reason,
     }, csrfToken));
   }
 

@@ -1,6 +1,7 @@
 package command
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -9,20 +10,34 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"math"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/05allan1213/CloudOps-Copilot/internal/apiv3"
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
+	"github.com/05allan1213/CloudOps-Copilot/internal/infra/remediationmysql"
+	"github.com/05allan1213/CloudOps-Copilot/internal/remediation"
 )
 
-// Port implements the Phase 2 domain-owned V3 commands. Remediation decisions
-// stay explicitly unimplemented until their owning phase.
+const remediationDecisionTTL = 10 * time.Minute
+
+type remediationDecisionRepository interface {
+	LockPlanIn(context.Context, remediation.PersistenceTX, string) (*remediation.RemediationPlan, error)
+	RecordDecisionIn(context.Context, remediation.PersistenceTX, string, uint64, *remediation.Approval) error
+}
+
+// Port implements the domain-owned V3 command transitions. Every durable
+// effect, task enqueue, Timeline event, and idempotent response shares one
+// MySQL transaction.
 type Port struct {
-	idempotency *Store
-	tasks       *asyncjob.Repository
+	idempotency  *Store
+	tasks        *asyncjob.Repository
+	remediations remediationDecisionRepository
 }
 
 func NewPort(db *sql.DB) (*Port, error) {
@@ -34,14 +49,21 @@ func NewPort(db *sql.DB) (*Port, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Port{idempotency: idempotency, tasks: tasks}, nil
+	remediations, err := remediationmysql.NewV3RemediationRepository(db)
+	if err != nil {
+		return nil, err
+	}
+	return &Port{idempotency: idempotency, tasks: tasks, remediations: remediations}, nil
 }
 
 func (p *Port) Execute(ctx context.Context, request apiv3.CommandRequest) (apiv3.CommandResult, error) {
-	if p == nil || p.idempotency == nil || p.tasks == nil {
+	if p == nil || p.idempotency == nil || p.tasks == nil || p.remediations == nil {
 		return apiv3.CommandResult{}, apiv3.ErrUnavailable
 	}
 	if request.ResourceID == "" || request.IdempotencyKey == "" || request.ExpectedVersion == 0 || len(request.CanonicalBody) == 0 {
+		return apiv3.CommandResult{}, apiv3.ErrInvalidArgument
+	}
+	if _, err := uuid.Parse(request.ResourceID); err != nil {
 		return apiv3.CommandResult{}, apiv3.ErrInvalidArgument
 	}
 	actorHash := canonicalHash("actor", request.Actor.Provider, request.Actor.Login, request.Actor.Subject)
@@ -61,11 +83,11 @@ func (p *Port) Execute(ctx context.Context, request apiv3.CommandRequest) (apiv3
 		case apiv3.CommandCloseIncident:
 			result, commandErr = p.closeIncident(ctx, tx, request)
 		case apiv3.CommandDecideRemediation:
-			commandErr = apiv3.ErrNotImplemented
+			result, commandErr = p.decideRemediation(ctx, tx, request)
 		default:
 			commandErr = apiv3.ErrInvalidArgument
 		}
-		return storedResponse(request.ResourceID, result, commandErr)
+		return storedResponse(commandResourceType(request.Kind), request.ResourceID, result, commandErr)
 	})
 	if errors.Is(err, ErrPayloadConflict) {
 		return apiv3.CommandResult{}, apiv3.ErrConflict
@@ -228,6 +250,181 @@ WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? AND version = ?
 	return apiv3.CommandResult{HTTPStatus: http.StatusAccepted, ResourceID: incident.PublicID, Status: "closed", Version: incident.Version, Cycle: uint64(incident.CycleNo)}, nil
 }
 
+type remediationDecisionCommandBody struct {
+	Decision        string `json:"decision"`
+	ExpectedVersion uint64 `json:"expected_version"`
+	ExpectedHash    string `json:"expected_hash"`
+	Reason          string `json:"reason"`
+}
+
+func (p *Port) decideRemediation(ctx context.Context, tx *sql.Tx, request apiv3.CommandRequest) (apiv3.CommandResult, error) {
+	body, err := decodeRemediationDecisionCommand(request)
+	if err != nil {
+		return apiv3.CommandResult{}, err
+	}
+	if request.Actor.Provider != "github" || request.Actor.Role != "operator" ||
+		request.Actor.Login == "" || request.Actor.Login != strings.TrimSpace(request.Actor.Login) ||
+		len(request.Actor.Login) > 128 {
+		return apiv3.CommandResult{}, apiv3.ErrForbidden
+	}
+	if request.RequestID == "" || request.RequestID != strings.TrimSpace(request.RequestID) || len(request.RequestID) > 128 {
+		return apiv3.CommandResult{}, apiv3.ErrInvalidArgument
+	}
+
+	plan, err := p.remediations.LockPlanIn(ctx, tx, request.ResourceID)
+	if errors.Is(err, remediation.ErrNotFound) {
+		return apiv3.CommandResult{}, apiv3.ErrNotFound
+	}
+	if err != nil {
+		return apiv3.CommandResult{}, err
+	}
+	if plan.RowVersion != request.ExpectedVersion || plan.CanonicalPlanHash != request.ExpectedHash {
+		return apiv3.CommandResult{}, apiv3.ErrStaleVersion
+	}
+	if plan.Status != remediation.PlanAwaitingApproval {
+		return apiv3.CommandResult{}, apiv3.ErrInvalidTransition
+	}
+	if plan.CycleNo == 0 || plan.CycleNo > math.MaxUint32 || plan.RowVersion == math.MaxUint64 {
+		return apiv3.CommandResult{}, apiv3.ErrInvalidArgument
+	}
+	incident, err := loadIncident(ctx, tx, plan.IncidentPublicID)
+	if err != nil {
+		return apiv3.CommandResult{}, err
+	}
+	if incident.ID != plan.IncidentID || uint64(incident.CycleNo) != plan.CycleNo ||
+		incident.Version != plan.IncidentVersion+1 {
+		return apiv3.CommandResult{}, apiv3.ErrConflict
+	}
+	if incident.Status != "awaiting_approval" {
+		return apiv3.CommandResult{}, apiv3.ErrInvalidTransition
+	}
+	var databaseNow time.Time
+	if err := tx.QueryRowContext(ctx, "SELECT NOW(6)").Scan(&databaseNow); err != nil {
+		return apiv3.CommandResult{}, err
+	}
+	databaseNow = databaseNow.UTC()
+	if !databaseNow.Before(plan.ExpiresAt) {
+		return apiv3.CommandResult{}, apiv3.ErrConflict
+	}
+	decisionExpiresAt := databaseNow.Add(remediationDecisionTTL)
+	if plan.ExpiresAt.Before(decisionExpiresAt) {
+		decisionExpiresAt = plan.ExpiresAt
+	}
+	decision, err := remediation.NewV3Decision(
+		*plan,
+		remediation.Decision(body.Decision),
+		request.Actor.Provider,
+		request.Actor.Login,
+		request.Actor.Role,
+		body.Reason,
+		request.RequestID,
+		databaseNow,
+		decisionExpiresAt,
+	)
+	if err != nil {
+		return apiv3.CommandResult{}, apiv3.ErrInvalidArgument
+	}
+	if err := p.remediations.RecordDecisionIn(ctx, tx, plan.PublicID, plan.RowVersion, &decision); err != nil {
+		// The repository can fail after its first write. Returning the original
+		// error forces the owning command transaction to roll back instead of
+		// durably recording a partial Decision without its Plan/task effects.
+		return apiv3.CommandResult{}, err
+	}
+
+	nextPlanVersion := plan.RowVersion + 1
+	metadata := map[string]any{
+		"decision":    body.Decision,
+		"decision_id": decision.PublicID,
+		"plan_hash":   plan.CanonicalPlanHash,
+		"plan_id":     plan.PublicID,
+		"request_id":  request.RequestID,
+	}
+	eventType := "remediation_plan_" + body.Decision
+	if decision.Decision == remediation.DecisionApproved {
+		payload, err := json.Marshal(struct {
+			PlanID string `json:"plan_id"`
+		}{PlanID: plan.PublicID})
+		if err != nil {
+			return apiv3.CommandResult{}, err
+		}
+		task, err := p.tasks.EnqueueIn(ctx, tx, asyncjob.NewTask{
+			IncidentID: plan.IncidentID, CycleNo: uint32(plan.CycleNo),
+			Type: asyncjob.TaskChangeEnsurePR, SubjectType: "remediation_plan", SubjectID: plan.ID,
+			Transition: "change.ensure_pr", ExpectedSubjectVersion: nextPlanVersion,
+			PayloadSchemaVersion: 1, Payload: payload,
+			DedupeKey: canonicalHash("change.ensure_pr", plan.PublicID, plan.CanonicalPlanHash, fmt.Sprint(nextPlanVersion)),
+			Priority:  90, MaxAttempts: 5,
+		})
+		if err != nil {
+			return apiv3.CommandResult{}, err
+		}
+		metadata["task_id"] = task.PublicID
+	} else {
+		updated, err := tx.ExecContext(ctx, `UPDATE incidents
+SET status = 'DIAGNOSING', v3_status = 'investigating', version = version + 1,
+    needs_attention = FALSE, blocking_reason_code = NULL, blocked_at = NULL,
+    updated_at = NOW(6)
+WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? AND version = ?
+  AND v3_status = 'awaiting_approval'`, incident.ID, incident.CycleNo, incident.Version)
+		if err != nil {
+			return apiv3.CommandResult{}, err
+		}
+		if affected, _ := updated.RowsAffected(); affected != 1 {
+			return apiv3.CommandResult{}, errors.New("remediation rejection lost the locked Incident transition")
+		}
+		incident.Status = "investigating"
+		incident.Version++
+	}
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil || len(metadataJSON) > 8192 {
+		return apiv3.CommandResult{}, errors.New("remediation Decision Timeline metadata is invalid")
+	}
+	if err := appendCommandEvent(ctx, tx, incident, eventType, request.Actor, metadataJSON); err != nil {
+		return apiv3.CommandResult{}, err
+	}
+	return apiv3.CommandResult{
+		HTTPStatus: http.StatusAccepted,
+		ResourceID: plan.PublicID,
+		Status:     body.Decision,
+		Version:    nextPlanVersion,
+		Cycle:      plan.CycleNo,
+	}, nil
+}
+
+func decodeRemediationDecisionCommand(request apiv3.CommandRequest) (remediationDecisionCommandBody, error) {
+	if len(request.CanonicalBody) == 0 || len(request.CanonicalBody) > 4096 {
+		return remediationDecisionCommandBody{}, apiv3.ErrInvalidArgument
+	}
+	decoder := json.NewDecoder(bytes.NewReader(request.CanonicalBody))
+	decoder.DisallowUnknownFields()
+	var body remediationDecisionCommandBody
+	if err := decoder.Decode(&body); err != nil {
+		return remediationDecisionCommandBody{}, apiv3.ErrInvalidArgument
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return remediationDecisionCommandBody{}, apiv3.ErrInvalidArgument
+	}
+	if body.Decision != string(remediation.DecisionApproved) && body.Decision != string(remediation.DecisionRejected) {
+		return remediationDecisionCommandBody{}, apiv3.ErrInvalidTransition
+	}
+	body.Reason = strings.TrimSpace(body.Reason)
+	if body.ExpectedVersion == 0 || body.ExpectedVersion != request.ExpectedVersion ||
+		body.ExpectedHash != request.ExpectedHash || !validCommandSHA256(body.ExpectedHash) ||
+		body.Reason == "" || len(body.Reason) > 1024 {
+		return remediationDecisionCommandBody{}, apiv3.ErrInvalidArgument
+	}
+	return body, nil
+}
+
+func validCommandSHA256(value string) bool {
+	if len(value) != 64 || value != strings.ToLower(value) {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
+}
+
 func appendCommandEvent(ctx context.Context, tx *sql.Tx, incident lockedIncident, eventType string, actor apiv3.Identity, metadata []byte) error {
 	idempotency := canonicalHash("event", incident.PublicID, fmt.Sprint(incident.CycleNo), eventType, string(metadata))
 	_, err := tx.ExecContext(ctx, `
@@ -241,7 +438,7 @@ VALUES (?, ?, 3, ?, 1, ?, ?, 'user', ?, ?, ?, NOW(6), NOW(6))`,
 	return err
 }
 
-func storedResponse(resourceID string, result apiv3.CommandResult, commandErr error) (Response, error) {
+func storedResponse(resourceType, resourceID string, result apiv3.CommandResult, commandErr error) (Response, error) {
 	status := http.StatusAccepted
 	code := ""
 	if commandErr != nil {
@@ -258,6 +455,8 @@ func storedResponse(resourceID string, result apiv3.CommandResult, commandErr er
 			status, code = http.StatusNotImplemented, "not_implemented"
 		case errors.Is(commandErr, apiv3.ErrInvalidArgument):
 			status, code = http.StatusBadRequest, "invalid_argument"
+		case errors.Is(commandErr, apiv3.ErrForbidden):
+			status, code = http.StatusForbidden, "forbidden"
 		default:
 			return Response{}, commandErr
 		}
@@ -269,7 +468,7 @@ func storedResponse(resourceID string, result apiv3.CommandResult, commandErr er
 	if err != nil {
 		return Response{}, err
 	}
-	return Response{HTTPStatus: status, Body: body, ResourceType: "incident", ResourcePublicID: resourceID}, nil
+	return Response{HTTPStatus: status, Body: body, ResourceType: resourceType, ResourcePublicID: resourceID}, nil
 }
 
 func errorFromCode(code string) error {
@@ -286,9 +485,18 @@ func errorFromCode(code string) error {
 		return apiv3.ErrNotImplemented
 	case "invalid_argument":
 		return apiv3.ErrInvalidArgument
+	case "forbidden":
+		return apiv3.ErrForbidden
 	default:
 		return apiv3.ErrUnavailable
 	}
+}
+
+func commandResourceType(kind apiv3.CommandKind) string {
+	if kind == apiv3.CommandDecideRemediation {
+		return "remediation_plan"
+	}
+	return "incident"
 }
 
 func canonicalHash(parts ...string) string {

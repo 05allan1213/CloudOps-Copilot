@@ -191,6 +191,27 @@ func (r *V3RemediationRepository) GetPlan(ctx context.Context, publicID string) 
 	return loadV3Plan(ctx, r.db, "p.public_id = ?", false, publicID)
 }
 
+// LockPlanIn loads the immutable V3 Plan through an owning transaction and
+// holds its row lock until that transaction completes. Command workflows use
+// it to bind the human Decision to the exact version/hash they inspected.
+func (r *V3RemediationRepository) LockPlanIn(ctx context.Context, executor remediation.PersistenceTX, publicID string) (*remediation.RemediationPlan, error) {
+	if r == nil || r.db == nil || executor == nil {
+		return nil, remediation.ErrInvalidArgument
+	}
+	publicID = strings.TrimSpace(publicID)
+	if _, err := uuid.Parse(publicID); err != nil {
+		return nil, remediation.ErrInvalidArgument
+	}
+	owner, err := loadV3Plan(ctx, executor, "p.public_id = ?", false, publicID)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := lockV3RemediationIncident(ctx, executor, owner.IncidentID); err != nil {
+		return nil, err
+	}
+	return loadV3Plan(ctx, executor, "p.public_id = ?", true, publicID)
+}
+
 func (r *V3RemediationRepository) ResolveAgentRunID(ctx context.Context, executor remediation.PersistenceTX, publicID string, incidentID, cycleNo uint64) (uint64, error) {
 	publicID = strings.TrimSpace(publicID)
 	if executor == nil || incidentID == 0 || cycleNo == 0 {

@@ -25,7 +25,7 @@ onMounted(async () => {
   if (detail.pageState.value === "ready") realtime.start();
 });
 
-async function promptReason(title: string, required: boolean): Promise<string | null> {
+async function promptReason(title: string, required: boolean, maxLength = 2048): Promise<string | null> {
   try {
     const result = await ElMessageBox.prompt("This reason is persisted with the V3 command.", title, {
       confirmButtonText: "Submit",
@@ -35,7 +35,7 @@ async function promptReason(title: string, required: boolean): Promise<string | 
       inputValidator: (value) => {
         const text = value.trim();
         if (required && !text) return "A reason is required";
-        if (text.length > 2048) return "Reason must be at most 2048 characters";
+        if (text.length > maxLength) return `Reason must be at most ${maxLength} characters`;
         return true;
       },
     });
@@ -58,7 +58,7 @@ async function runClose() {
 }
 
 async function runDecision(plan: ResourceView, decision: "approved" | "rejected") {
-  const reason = await promptReason(`${decision === "approved" ? "Approve" : "Reject"} exact plan`, true);
+  const reason = await promptReason(`${decision === "approved" ? "Approve" : "Reject"} exact plan`, true, 1024);
   if (reason === null) return;
   await runCommand(async () => detail.decide(plan, decision, reason, await auth.commandToken()), `Plan ${decision}`);
 }

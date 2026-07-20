@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -17,7 +18,9 @@ import (
 
 	"github.com/05allan1213/CloudOps-Copilot/internal/apiv3"
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
+	"github.com/05allan1213/CloudOps-Copilot/internal/infra/remediationmysql"
 	migrationrunner "github.com/05allan1213/CloudOps-Copilot/internal/migration"
+	"github.com/05allan1213/CloudOps-Copilot/internal/remediation"
 )
 
 func TestMySQLCommandIdempotencyConcurrentSameAndDifferentPayload(t *testing.T) {
@@ -285,6 +288,335 @@ v3_status, write_phase, expected_subject_version, logical_operation_key
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incidents
 WHERE id = ? AND v3_status = 'investigating' AND version = 1`, 1, incidentID)
 	})
+}
+
+func TestMySQLRemediationDecisionCommandIsAtomicAndFenced(t *testing.T) {
+	db := openCommandIntegrationDB(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	port, err := NewPort(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operator := apiv3.Identity{Subject: "github:operator", Provider: "github", Login: "operator", Role: "operator"}
+
+	t.Run("approval and delivery task commit atomically", func(t *testing.T) {
+		fixture := insertCommandRemediationFixture(t, ctx, db)
+		request := newRemediationDecisionRequest(fixture, remediation.DecisionApproved, "approve-atomic", operator, fixture.plan.RowVersion, fixture.plan.CanonicalPlanHash)
+		if _, err := db.ExecContext(ctx, `CREATE TRIGGER command_fail_change_enqueue
+BEFORE INSERT ON async_tasks FOR EACH ROW
+SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'forced change enqueue failure'`); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _, _ = db.Exec("DROP TRIGGER IF EXISTS command_fail_change_enqueue") })
+
+		if _, err := port.Execute(ctx, request); !errors.Is(err, apiv3.ErrUnavailable) {
+			t.Fatalf("approval with failed enqueue error=%v", err)
+		}
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM remediation_decisions WHERE plan_id = ?`, 0, fixture.plan.ID)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks WHERE subject_type = 'remediation_plan' AND subject_id = ?`, 0, fixture.plan.ID)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM remediation_plans WHERE id = ? AND v3_status = 'awaiting_approval' AND row_version = ?`, 1, fixture.plan.ID, fixture.plan.RowVersion)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM command_idempotency_records WHERE command_scope = ? AND idempotency_key = ?`, 0, string(apiv3.CommandDecideRemediation)+":"+fixture.plan.PublicID, request.IdempotencyKey)
+
+		if _, err := db.ExecContext(ctx, "DROP TRIGGER command_fail_change_enqueue"); err != nil {
+			t.Fatal(err)
+		}
+		approved, err := port.Execute(ctx, request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if approved.Status != string(remediation.DecisionApproved) || approved.Version != fixture.plan.RowVersion+1 || approved.Cycle != fixture.plan.CycleNo || approved.Replayed {
+			t.Fatalf("approval result=%+v", approved)
+		}
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM remediation_decisions WHERE plan_id = ? AND decision = 'approved'`, 1, fixture.plan.ID)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM remediation_plans WHERE id = ? AND v3_status = 'approved' AND row_version = ?`, 1, fixture.plan.ID, fixture.plan.RowVersion+1)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_events WHERE incident_id = ? AND cycle_no = ? AND event_type = 'remediation_plan_approved'`, 1, fixture.incidentID, fixture.plan.CycleNo)
+
+		var taskType, subjectType, transition, status, payloadPlanID string
+		var subjectID, expectedVersion uint64
+		if err := db.QueryRowContext(ctx, `SELECT task_type, subject_type, subject_id, transition,
+expected_subject_version, status, JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.plan_id'))
+FROM async_tasks WHERE incident_id = ? AND cycle_no = ? AND subject_type = 'remediation_plan' AND subject_id = ?`,
+			fixture.incidentID, fixture.plan.CycleNo, fixture.plan.ID).
+			Scan(&taskType, &subjectType, &subjectID, &transition, &expectedVersion, &status, &payloadPlanID); err != nil {
+			t.Fatal(err)
+		}
+		if taskType != string(asyncjob.TaskChangeEnsurePR) || subjectType != "remediation_plan" || subjectID != fixture.plan.ID || transition != "change.ensure_pr" || expectedVersion != fixture.plan.RowVersion+1 || status != string(asyncjob.StatusReady) || payloadPlanID != fixture.plan.PublicID {
+			t.Fatalf("approval task=%q/%q/%d/%q version=%d status=%q plan=%q", taskType, subjectType, subjectID, transition, expectedVersion, status, payloadPlanID)
+		}
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incidents WHERE id = ? AND v3_status = 'awaiting_approval' AND version = ?`, 1, fixture.incidentID, fixture.plan.IncidentVersion+1)
+
+		var authenticatedAt, createdAt, decisionExpiresAt, planExpiresAt time.Time
+		if err := db.QueryRowContext(ctx, `SELECT d.request_authenticated_at, d.created_at, d.expires_at, p.expires_at
+FROM remediation_decisions d JOIN remediation_plans p ON p.id = d.plan_id WHERE d.plan_id = ?`, fixture.plan.ID).
+			Scan(&authenticatedAt, &createdAt, &decisionExpiresAt, &planExpiresAt); err != nil {
+			t.Fatal(err)
+		}
+		if !authenticatedAt.Equal(createdAt) || !decisionExpiresAt.After(createdAt) || decisionExpiresAt.After(planExpiresAt) || decisionExpiresAt.Sub(createdAt) > remediationDecisionTTL {
+			t.Fatalf("decision times authenticated=%s created=%s decision_expiry=%s plan_expiry=%s", authenticatedAt, createdAt, decisionExpiresAt, planExpiresAt)
+		}
+
+		replayed, err := port.Execute(ctx, request)
+		if err != nil || !replayed.Replayed || replayed.Status != approved.Status || replayed.Version != approved.Version {
+			t.Fatalf("approval replay=%+v err=%v", replayed, err)
+		}
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM remediation_decisions WHERE plan_id = ?`, 1, fixture.plan.ID)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks WHERE subject_type = 'remediation_plan' AND subject_id = ?`, 1, fixture.plan.ID)
+	})
+
+	t.Run("rejection persists decision without delivery work", func(t *testing.T) {
+		fixture := insertCommandRemediationFixture(t, ctx, db)
+		request := newRemediationDecisionRequest(fixture, remediation.DecisionRejected, "reject-no-delivery", operator, fixture.plan.RowVersion, fixture.plan.CanonicalPlanHash)
+		rejected, err := port.Execute(ctx, request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rejected.Status != string(remediation.DecisionRejected) || rejected.Version != fixture.plan.RowVersion+1 || rejected.Cycle != fixture.plan.CycleNo {
+			t.Fatalf("rejection result=%+v", rejected)
+		}
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM remediation_decisions WHERE plan_id = ? AND decision = 'rejected'`, 1, fixture.plan.ID)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM remediation_plans WHERE id = ? AND v3_status = 'rejected' AND row_version = ?`, 1, fixture.plan.ID, fixture.plan.RowVersion+1)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks WHERE subject_type = 'remediation_plan' AND subject_id = ?`, 0, fixture.plan.ID)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incidents WHERE id = ? AND status = 'DIAGNOSING' AND v3_status = 'investigating' AND version = ?`, 1, fixture.incidentID, fixture.plan.IncidentVersion+2)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_events WHERE incident_id = ? AND cycle_no = ? AND event_type = 'remediation_plan_rejected'`, 1, fixture.incidentID, fixture.plan.CycleNo)
+	})
+
+	t.Run("stale version and hash fail closed", func(t *testing.T) {
+		for _, test := range []struct {
+			name            string
+			expectedVersion uint64
+			expectedHash    string
+		}{
+			{name: "version", expectedVersion: 2},
+			{name: "hash", expectedVersion: 1, expectedHash: strings.Repeat("f", 64)},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				fixture := insertCommandRemediationFixture(t, ctx, db)
+				expectedVersion := test.expectedVersion
+				if expectedVersion == 0 {
+					expectedVersion = fixture.plan.RowVersion
+				}
+				expectedHash := test.expectedHash
+				if expectedHash == "" {
+					expectedHash = fixture.plan.CanonicalPlanHash
+				}
+				request := newRemediationDecisionRequest(fixture, remediation.DecisionApproved, "stale-"+test.name, operator, expectedVersion, expectedHash)
+				if _, err := port.Execute(ctx, request); !errors.Is(err, apiv3.ErrStaleVersion) {
+					t.Fatalf("stale %s error=%v", test.name, err)
+				}
+				assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM remediation_decisions WHERE plan_id = ?`, 0, fixture.plan.ID)
+				assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks WHERE subject_type = 'remediation_plan' AND subject_id = ?`, 0, fixture.plan.ID)
+			})
+		}
+	})
+
+	t.Run("expired plan and non github identity fail closed", func(t *testing.T) {
+		t.Run("expired", func(t *testing.T) {
+			fixture := insertCommandRemediationFixture(t, ctx, db)
+			expireCommandRemediationPlan(t, ctx, db, &fixture)
+			request := newRemediationDecisionRequest(fixture, remediation.DecisionApproved, "expired-plan", operator, fixture.plan.RowVersion, fixture.plan.CanonicalPlanHash)
+			if _, err := port.Execute(ctx, request); !errors.Is(err, apiv3.ErrConflict) {
+				t.Fatalf("expired plan error=%v", err)
+			}
+			assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM remediation_decisions WHERE plan_id = ?`, 0, fixture.plan.ID)
+			assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks WHERE subject_type = 'remediation_plan' AND subject_id = ?`, 0, fixture.plan.ID)
+		})
+
+		t.Run("identity", func(t *testing.T) {
+			fixture := insertCommandRemediationFixture(t, ctx, db)
+			untrusted := apiv3.Identity{Subject: "local:operator", Provider: "local", Login: "operator", Role: "operator"}
+			request := newRemediationDecisionRequest(fixture, remediation.DecisionApproved, "non-github", untrusted, fixture.plan.RowVersion, fixture.plan.CanonicalPlanHash)
+			if _, err := port.Execute(ctx, request); !errors.Is(err, apiv3.ErrForbidden) {
+				t.Fatalf("non-GitHub identity error=%v", err)
+			}
+			assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM remediation_decisions WHERE plan_id = ?`, 0, fixture.plan.ID)
+			assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks WHERE subject_type = 'remediation_plan' AND subject_id = ?`, 0, fixture.plan.ID)
+		})
+	})
+
+	t.Run("concurrent approval creates one decision and one task", func(t *testing.T) {
+		fixture := insertCommandRemediationFixture(t, ctx, db)
+		const workers = 8
+		start := make(chan struct{})
+		results := make([]apiv3.CommandResult, workers)
+		errorsByWorker := make([]error, workers)
+		var wait sync.WaitGroup
+		for index := 0; index < workers; index++ {
+			wait.Add(1)
+			go func() {
+				defer wait.Done()
+				<-start
+				request := newRemediationDecisionRequest(fixture, remediation.DecisionApproved, fmt.Sprintf("concurrent-approve-%d", index), operator, fixture.plan.RowVersion, fixture.plan.CanonicalPlanHash)
+				results[index], errorsByWorker[index] = port.Execute(ctx, request)
+			}()
+		}
+		close(start)
+		wait.Wait()
+		successes, stale := 0, 0
+		for index, workerErr := range errorsByWorker {
+			switch {
+			case workerErr == nil:
+				successes++
+				if results[index].Status != string(remediation.DecisionApproved) {
+					t.Fatalf("winner result=%+v", results[index])
+				}
+			case errors.Is(workerErr, apiv3.ErrStaleVersion):
+				stale++
+			default:
+				t.Fatalf("concurrent worker %d error=%v", index, workerErr)
+			}
+		}
+		if successes != 1 || stale != workers-1 {
+			t.Fatalf("concurrent approvals successes=%d stale=%d", successes, stale)
+		}
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM remediation_decisions WHERE plan_id = ?`, 1, fixture.plan.ID)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks WHERE subject_type = 'remediation_plan' AND subject_id = ?`, 1, fixture.plan.ID)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_events WHERE incident_id = ? AND cycle_no = ? AND event_type = 'remediation_plan_approved'`, 1, fixture.incidentID, fixture.plan.CycleNo)
+	})
+}
+
+type commandRemediationFixture struct {
+	incidentID uint64
+	plan       remediation.RemediationPlan
+}
+
+func insertCommandRemediationFixture(t *testing.T, ctx context.Context, db *sql.DB) commandRemediationFixture {
+	t.Helper()
+	var databaseNow time.Time
+	if err := db.QueryRowContext(ctx, "SELECT NOW(6)").Scan(&databaseNow); err != nil {
+		t.Fatal(err)
+	}
+	incidentPublicID := uuid.NewString()
+	result, err := db.ExecContext(ctx, `INSERT INTO incidents (
+public_id, fingerprint, correlation_key, correlation_key_version, cluster, namespace,
+service_name, environment, target_kind, target_name, severity, status, summary,
+first_seen_at, last_seen_at, version, domain_schema_version, v3_status, cycle_no
+) VALUES (?, ?, ?, 2, 'kind', 'cloudops-demo', 'demo', 'development', 'Deployment',
+          'demo', 'warning', 'DIAGNOSING', 'command remediation fixture', NOW(6),
+          NOW(6), 2, 3, 'investigating', 1)`, incidentPublicID,
+		"command-remediation-"+incidentPublicID, "v2:"+canonicalHash("command-remediation", incidentPublicID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	incidentID, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentRunPublicID := uuid.NewString()
+	diagnosisHash := strings.Repeat("d", 64)
+	diagnosisJSON, _ := json.Marshal(map[string]any{"diagnosis_hash": diagnosisHash})
+	result, err = db.ExecContext(ctx, `INSERT INTO agent_runs (
+public_id, incident_id, status, model, prompt_version, max_steps, final_diagnosis,
+failure_code, completed_at, domain_schema_version, v3_status, cycle_no,
+expected_incident_version
+) VALUES (?, ?, 'COMPLETED', 'fixture-model', 'incident-agent-v3', 1, ?, '',
+          NOW(6), 3, 'completed', 1, 2)`, agentRunPublicID, incidentID, diagnosisJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentRunID, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidencePublicID := uuid.NewString()
+	evidenceHash := strings.Repeat("1", 64)
+	if _, err := db.ExecContext(ctx, `INSERT INTO evidence_items (
+public_id, incident_id, agent_run_id, type, source, producer_type,
+producer_dedupe_key, resource_ref, query_text, summary, facts_json, result_hash,
+content_hash, raw_ref, truncated, valid, collected_at, domain_schema_version, cycle_no
+) VALUES (?, ?, ?, 'configuration', 'github', 'agent_step', ?,
+          'github://acme/gitops/apps/demo.yaml', 'exact blob', 'verified baseline node',
+          JSON_OBJECT('required_env','healthy'), ?, ?, '', FALSE, TRUE, NOW(6), 3, 1)`,
+		evidencePublicID, incidentID, agentRunID, "command-evidence-"+evidencePublicID, evidenceHash, evidenceHash); err != nil {
+		t.Fatal(err)
+	}
+	current := []byte(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: cloudops-demo
+spec:
+  template:
+    spec:
+      containers:
+        - name: demo
+          image: example/demo@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+`)
+	baseline := append(append([]byte(nil), current...), []byte("          env:\n            - name: REQUIRED_ENV\n              value: healthy\n")...)
+	policy := remediation.RestoreEnvPolicy{
+		Version: "restore-required-env-policy/v1", Repository: "acme/gitops", BaseBranch: "main",
+		AllowedPath: "apps/demo.yaml", APIVersion: "apps/v1", Namespace: "cloudops-demo",
+		Workload: "demo", Container: "demo", EnvKey: "REQUIRED_ENV",
+		MaxDiffBytes: remediation.MaxV3PlanDiffBytes, MaxPostImageBytes: remediation.MaxV3PostImageBytes,
+		VerificationVersion: "golden-required-env/v1",
+	}
+	createdAt := databaseNow.UTC().Add(-time.Minute)
+	plan, err := remediation.CompileRestoreRequiredEnv(remediation.RestoreEnvCompileRequest{
+		IncidentPublicID: incidentPublicID, IncidentID: uint64(incidentID), CycleNo: 1, IncidentVersion: 2,
+		CreatedByAgentRunID: agentRunPublicID, DiagnosisHash: diagnosisHash,
+		Repository: policy.Repository, BaseBranch: policy.BaseBranch, BaseRevision: strings.Repeat("a", 40),
+		LastKnownGoodRevision: strings.Repeat("b", 40), TargetPath: policy.AllowedPath,
+		BaseBlobSHA: strings.Repeat("c", 40), ExpectedTreeHash: strings.Repeat("e", 40), FileMode: "100644",
+		Target: remediation.TargetResource{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "cloudops-demo", Name: "demo", Container: "demo"},
+		EnvKey: "REQUIRED_ENV", CurrentContent: current, BaselineContent: baseline, Policy: policy,
+		VerificationPlan:   json.RawMessage(`{"profile":"golden-required-env/v1","stability_window_seconds":60}`),
+		Evidence:           []remediation.EvidenceBinding{{ID: evidencePublicID, ContentHash: evidenceHash}},
+		BaselineIsAncestor: true, CreatedAt: createdAt, ExpiresAt: createdAt.Add(30 * time.Minute), PlanVersion: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := remediationmysql.NewV3RemediationRepository(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.CreatePlan(ctx, &plan); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := db.ExecContext(ctx, `UPDATE incidents
+SET status = 'AWAITING_APPROVAL', v3_status = 'awaiting_approval', version = version + 1, updated_at = NOW(6)
+WHERE id = ? AND domain_schema_version = 3 AND cycle_no = 1 AND version = 2 AND v3_status = 'investigating'`, incidentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if affected, _ := updated.RowsAffected(); affected != 1 {
+		t.Fatalf("approval fixture Incident transition affected=%d", affected)
+	}
+	return commandRemediationFixture{incidentID: uint64(incidentID), plan: plan}
+}
+
+func newRemediationDecisionRequest(fixture commandRemediationFixture, decision remediation.Decision, key string, actor apiv3.Identity, expectedVersion uint64, expectedHash string) apiv3.CommandRequest {
+	reason := "reviewed exact immutable plan"
+	if decision == remediation.DecisionRejected {
+		reason = "rejected after exact plan review"
+	}
+	body, _ := json.Marshal(struct {
+		Decision        string `json:"decision"`
+		ExpectedVersion uint64 `json:"expected_version"`
+		ExpectedHash    string `json:"expected_hash"`
+		Reason          string `json:"reason"`
+	}{Decision: string(decision), ExpectedVersion: expectedVersion, ExpectedHash: expectedHash, Reason: reason})
+	return apiv3.CommandRequest{
+		Kind: apiv3.CommandDecideRemediation, ResourceID: fixture.plan.PublicID,
+		Actor: actor, IdempotencyKey: key, ExpectedVersion: expectedVersion,
+		ExpectedHash: expectedHash, CanonicalBody: body, RequestID: uuid.NewString(),
+	}
+}
+
+func expireCommandRemediationPlan(t *testing.T, ctx context.Context, db *sql.DB, fixture *commandRemediationFixture) {
+	t.Helper()
+	fixture.plan.ExpiresAt = fixture.plan.CreatedAt.Add(30 * time.Second)
+	hash, err := remediation.CanonicalV3PlanHash(fixture.plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.plan.PlanHash = hash
+	fixture.plan.CanonicalPlanHash = hash
+	if _, err := db.ExecContext(ctx, `UPDATE remediation_plans
+SET expires_at = ?, plan_hash = ?, canonical_plan_hash = ?, updated_at = NOW(6)
+WHERE id = ? AND v3_status = 'awaiting_approval'`, fixture.plan.ExpiresAt, hash, hash, fixture.plan.ID); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func commandIntegrationResponse(body string) Response {

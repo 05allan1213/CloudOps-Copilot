@@ -323,12 +323,12 @@ components:
     DecisionCommand:
       type: object
       additionalProperties: false
-      required: [decision, expected_version, expected_hash]
+      required: [decision, expected_version, expected_hash, reason]
       properties:
         decision: { type: string, enum: [approved, rejected] }
         expected_version: { type: integer, minimum: 1 }
         expected_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
-        reason: { type: string, maxLength: 2048 }
+        reason: { type: string, minLength: 1, maxLength: 1024 }
     CommandResult:
       type: object
       additionalProperties: false

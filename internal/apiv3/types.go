@@ -27,6 +27,7 @@ var (
 	ErrConflict          = errors.New("v3 command conflict")
 	ErrStaleVersion      = errors.New("v3 expected version or hash is stale")
 	ErrInvalidTransition = errors.New("v3 business transition is invalid")
+	ErrForbidden         = errors.New("v3 command forbidden")
 	ErrUnavailable       = errors.New("v3 dependency unavailable")
 )
 

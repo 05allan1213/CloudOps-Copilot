@@ -63,6 +63,7 @@ export interface VersionedCommand {
 export interface DecisionCommand extends VersionedCommand {
   decision: "approved" | "rejected";
   expected_hash: string;
+  reason: string;
 }
 
 export interface IncidentRealtimeEvent {
