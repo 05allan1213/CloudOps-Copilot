@@ -31,6 +31,9 @@ func TestInvestigationStepRunsOneModelDecisionThroughUnifiedRegistryAndCheckpoin
 	if model.proposeCalls != 1 || model.synthesisCalls != 0 {
 		t.Fatalf("model calls propose=%d synthesize=%d", model.proposeCalls, model.synthesisCalls)
 	}
+	if len(model.lastView.AllowedActions) != 1 || model.lastView.AllowedActions[0].Tool != "inspect_workload" {
+		t.Fatalf("model did not receive the bounded action contract: %+v", model.lastView.AllowedActions)
+	}
 	checkpoint := taskStore.singleCheckpoint(t)
 	var durable investigationStepCheckpoint
 	if err := json.Unmarshal(checkpoint.Payload, &durable); err != nil {
@@ -41,6 +44,57 @@ func TestInvestigationStepRunsOneModelDecisionThroughUnifiedRegistryAndCheckpoin
 	}
 	if durable.State.CheckpointVersion != 1 || durable.State.Usage.ModelCalls != 1 || durable.State.Usage.Steps != 1 {
 		t.Fatalf("unexpected durable state: %+v", durable.State)
+	}
+}
+
+func TestInvestigationStepReservesSingleRepairBeforeCallingTypedModel(t *testing.T) {
+	action := testInvestigationAction()
+	model := &twoCallStepModel{stepTestModel: stepTestModel{delta: agent.StateDelta{
+		SchemaVersion: agent.InvestigationStateSchemaVersion, BasisCheckpointVersion: 0,
+		ProposedStop: agent.StopContinue, ProposedAction: &action,
+	}}}
+	snapshot := testInvestigationSnapshot(t, stepModeDecide, nil)
+	snapshot.State.Limits.MaxModelCalls = 1
+	store := &stepTestTaskStore{}
+	operation := testInvestigationOperation(snapshot, model, &stepTestTool{}, store)
+
+	result := runInvestigationOperation(t, snapshot.Task, operation.handle)
+	if result.Disposition != asyncjob.DispositionSucceeded || result.Mutate == nil {
+		t.Fatalf("result=%+v", result)
+	}
+	if model.proposeCalls != 0 {
+		t.Fatalf("provider was called without repair capacity: %d", model.proposeCalls)
+	}
+	var checkpoint investigationStepCheckpoint
+	if err := json.Unmarshal(store.singleCheckpoint(t).Payload, &checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	if checkpoint.TerminalOutcome != "insufficient_evidence" || !slices.Contains(checkpoint.Sufficiency.ReasonCodes, "decision_budget_exhausted") {
+		t.Fatalf("checkpoint=%+v", checkpoint)
+	}
+}
+
+func TestInvestigationStepDoesNotRetryAfterTypedModelRepairFails(t *testing.T) {
+	model := &twoCallStepModel{stepTestModel: stepTestModel{proposeErr: agent.NewRuntimeError(
+		agent.ErrorMalformedModel, "initial output and one repair were invalid", agent.ErrInvalidArgument,
+	)}}
+	snapshot := testInvestigationSnapshot(t, stepModeDecide, nil)
+	store := &stepTestTaskStore{}
+	operation := testInvestigationOperation(snapshot, model, &stepTestTool{}, store)
+
+	result := runInvestigationOperation(t, snapshot.Task, operation.handle)
+	if result.Disposition != asyncjob.DispositionSucceeded || result.Mutate == nil {
+		t.Fatalf("result=%+v", result)
+	}
+	if model.proposeCalls != 1 {
+		t.Fatalf("typed model invocations=%d, want exactly 1", model.proposeCalls)
+	}
+	var checkpoint investigationStepCheckpoint
+	if err := json.Unmarshal(store.singleCheckpoint(t).Payload, &checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	if checkpoint.TerminalOutcome != "insufficient_evidence" || !slices.Contains(checkpoint.Sufficiency.ReasonCodes, "step_execution_unavailable") {
+		t.Fatalf("checkpoint=%+v", checkpoint)
 	}
 }
 
@@ -417,10 +471,16 @@ type stepTestModel struct {
 	proposeErr     error
 	proposeCalls   int
 	synthesisCalls int
+	lastView       agent.ModelView
 }
 
-func (m *stepTestModel) ProposeDelta(context.Context, agent.ModelView) (agent.StateDelta, agent.ModelUsage, error) {
+type twoCallStepModel struct{ stepTestModel }
+
+func (*twoCallStepModel) MaxProviderCallsPerInvocation() int { return 2 }
+
+func (m *stepTestModel) ProposeDelta(_ context.Context, view agent.ModelView) (agent.StateDelta, agent.ModelUsage, error) {
 	m.proposeCalls++
+	m.lastView = view
 	return m.delta, m.usage, m.proposeErr
 }
 

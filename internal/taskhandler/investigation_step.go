@@ -681,9 +681,12 @@ func (o *investigationStepOperation) executeOne(ctx context.Context, execution a
 }
 
 func (o *investigationStepOperation) executeDecision(ctx context.Context, execution asyncjob.Execution, snapshot investigationSnapshot) (preparedInvestigationStep, error) {
-	view := agent.ModelView{State: snapshot.State, Facts: slices.Clone(snapshot.Facts), ScopeRef: snapshot.ScopeRef}
+	view := agent.ModelView{
+		State: snapshot.State, Facts: slices.Clone(snapshot.Facts), ScopeRef: snapshot.ScopeRef,
+		AllowedActions: modelActionSchemas(o.cfg.ActionPolicies),
+	}
 	input, _ := json.Marshal(view)
-	reservation := agent.Usage{Steps: 1, ModelCalls: 1, InputTokens: estimatedTokens(input), OutputTokens: 1}
+	reservation := agent.Usage{Steps: 1, ModelCalls: reservedModelCalls(o.cfg.Model), InputTokens: estimatedTokens(input), OutputTokens: 1}
 	if err := snapshot.State.Usage.CanCharge(reservation, snapshot.State.Limits); err != nil {
 		return o.prepareInsufficient(snapshot, investigationStepPayload{Mode: stepModeDecide}, "decision_budget_exhausted", o.cfg.Now())
 	}
@@ -840,7 +843,7 @@ func (o *investigationStepOperation) executeSynthesis(ctx context.Context, execu
 	}
 	view := agent.DiagnosisView{State: snapshot.State, Facts: slices.Clone(snapshot.Facts), Sufficiency: sufficiency}
 	input, _ := json.Marshal(view)
-	reservation := agent.Usage{Steps: 1, ModelCalls: 1, InputTokens: estimatedTokens(input), OutputTokens: 1}
+	reservation := agent.Usage{Steps: 1, ModelCalls: reservedModelCalls(o.cfg.Model), InputTokens: estimatedTokens(input), OutputTokens: 1}
 	if err := snapshot.State.Usage.CanCharge(reservation, snapshot.State.Limits); err != nil {
 		return o.prepareInsufficient(snapshot, investigationStepPayload{Mode: stepModeSynthesize}, "diagnosis_budget_exhausted", o.cfg.Now())
 	}
@@ -998,8 +1001,13 @@ func (o *investigationStepOperation) executionFailure(ctx context.Context, snaps
 	if payload.Mode == stepModeTool && retryLimit > 2 {
 		retryLimit = 2
 	}
-	if malformed && retryLimit > 2 {
-		retryLimit = 2
+	if malformed {
+		if reservedModelCalls(o.cfg.Model) > 1 {
+			// The typed Eino invocation already performed its single repair.
+			retryLimit = 1
+		} else if retryLimit > 2 {
+			retryLimit = 2
+		}
 	}
 	if (retryable || malformed) && execution.Lease.Attempt < retryLimit {
 		code := "investigation_dependency_error"
@@ -1020,13 +1028,26 @@ func (o *investigationStepOperation) executionFailure(ctx context.Context, snaps
 
 func normalizedModelUsage(value agent.ModelUsage, input, output []byte) agent.Usage {
 	inputTokens, outputTokens := value.InputTokens, value.OutputTokens
+	modelCalls := value.Calls
+	if modelCalls <= 0 {
+		modelCalls = 1
+	}
 	if inputTokens <= 0 {
 		inputTokens = estimatedTokens(input)
 	}
 	if outputTokens <= 0 {
 		outputTokens = estimatedTokens(output)
 	}
-	return agent.Usage{Steps: 1, ModelCalls: 1, InputTokens: inputTokens, OutputTokens: outputTokens}
+	return agent.Usage{Steps: 1, ModelCalls: modelCalls, InputTokens: inputTokens, OutputTokens: outputTokens}
+}
+
+func reservedModelCalls(model agent.InvestigationModel) int {
+	if budgeted, ok := model.(agent.InvestigationModelCallBudget); ok {
+		if calls := budgeted.MaxProviderCallsPerInvocation(); calls > 0 && calls <= 2 {
+			return calls
+		}
+	}
+	return 1
 }
 
 func estimatedTokens(value []byte) int64 {
@@ -1324,6 +1345,25 @@ func cloneActionPolicies(values map[string]agent.ToolActionPolicy) map[string]ag
 			TemplateIDs: slices.Clone(policy.TemplateIDs), ParameterKeys: slices.Clone(policy.ParameterKeys),
 			ExpectedFactTypes: slices.Clone(policy.ExpectedFactTypes),
 		}
+	}
+	return result
+}
+
+func modelActionSchemas(values map[string]agent.ToolActionPolicy) []agent.ModelActionSchema {
+	names := make([]string, 0, len(values))
+	for name := range values {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	result := make([]agent.ModelActionSchema, 0, len(names))
+	for _, name := range names {
+		policy := values[name]
+		templates := stableUniqueInvestigation(policy.TemplateIDs)
+		parameters := stableUniqueInvestigation(policy.ParameterKeys)
+		facts := stableUniqueInvestigation(policy.ExpectedFactTypes)
+		result = append(result, agent.ModelActionSchema{
+			Tool: name, TemplateIDs: templates, ParameterKeys: parameters, ExpectedFactTypes: facts,
+		})
 	}
 	return result
 }

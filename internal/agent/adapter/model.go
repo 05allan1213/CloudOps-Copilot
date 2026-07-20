@@ -8,16 +8,37 @@ import (
 	"strings"
 
 	"github.com/05allan1213/CloudOps-Copilot/internal/agent"
+	agentgraph "github.com/05allan1213/CloudOps-Copilot/internal/agent/graph"
 	"github.com/05allan1213/CloudOps-Copilot/internal/agent/llm"
 )
 
-type LLMModel struct{ client *llm.Client }
+type LLMModel struct {
+	client          *llm.Client
+	structured      *agentgraph.StructuredModel
+	deltaSchema     []byte
+	diagnosisSchema []byte
+}
 
 func NewLLMModel(client *llm.Client) (*LLMModel, error) {
 	if client == nil {
 		return nil, agent.ErrInvalidArgument
 	}
-	return &LLMModel{client: client}, nil
+	structured, err := agentgraph.NewStructuredModel(context.Background(), client)
+	if err != nil {
+		return nil, err
+	}
+	deltaSchema, err := agentgraph.JSONSchemaFor[agent.StateDelta]()
+	if err != nil {
+		return nil, err
+	}
+	diagnosisSchema, err := agentgraph.JSONSchemaFor[agent.DiagnosisCandidate]()
+	if err != nil {
+		return nil, err
+	}
+	return &LLMModel{
+		client: client, structured: structured,
+		deltaSchema: deltaSchema, diagnosisSchema: diagnosisSchema,
+	}, nil
 }
 
 func (m *LLMModel) Plan(ctx context.Context, incident agent.IncidentContext, objective string) (agent.Plan, agent.ModelUsage, error) {
@@ -65,7 +86,7 @@ func callJSON[T any](ctx context.Context, client *llm.Client, system string, inp
 		return zero, agent.ModelUsage{}, agent.NewRuntimeError(agent.ErrorInvariant, "marshal model input", err)
 	}
 	content, usage, err := client.Chat(ctx, []llm.ChatMessage{{Role: "system", Content: system}, {Role: "user", Content: string(payload)}})
-	modelUsage := agent.ModelUsage{}
+	modelUsage := agent.ModelUsage{Calls: 1}
 	if usage != nil {
 		modelUsage.InputTokens, modelUsage.OutputTokens = int64(usage.PromptTokens), int64(usage.CompletionTokens)
 	}

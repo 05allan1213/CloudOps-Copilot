@@ -111,7 +111,7 @@ const (
 )
 
 type HypothesisOp struct {
-	Operation   HypothesisOperation `json:"operation"`
+	Operation   HypothesisOperation `json:"operation" jsonschema:"enum=add,enum=support,enum=weaken,enum=reject"`
 	ID          string              `json:"id"`
 	Statement   string              `json:"statement,omitempty"`
 	EvidenceIDs []string            `json:"evidence_ids,omitempty"`
@@ -126,7 +126,7 @@ const (
 )
 
 type QuestionOp struct {
-	Operation   QuestionOperation `json:"operation"`
+	Operation   QuestionOperation `json:"operation" jsonschema:"enum=add,enum=answer,enum=close"`
 	ID          string            `json:"id"`
 	Question    string            `json:"question,omitempty"`
 	Answer      string            `json:"answer,omitempty"`
@@ -151,12 +151,12 @@ type ProposedAction struct {
 }
 
 type StateDelta struct {
-	SchemaVersion          int             `json:"schema_version"`
+	SchemaVersion          int             `json:"schema_version" jsonschema:"enum=1"`
 	BasisCheckpointVersion uint64          `json:"basis_checkpoint_version"`
 	HypothesisOps          []HypothesisOp  `json:"hypothesis_ops,omitempty"`
 	QuestionOps            []QuestionOp    `json:"question_ops,omitempty"`
 	ProposedAction         *ProposedAction `json:"proposed_action,omitempty"`
-	ProposedStop           StopProposal    `json:"proposed_stop"`
+	ProposedStop           StopProposal    `json:"proposed_stop" jsonschema:"enum=continue,enum=diagnose,enum=insufficient"`
 }
 
 type ToolActionPolicy struct {

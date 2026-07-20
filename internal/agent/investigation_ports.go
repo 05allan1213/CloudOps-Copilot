@@ -5,9 +5,20 @@ import "context"
 // ModelView is the bounded, provider-neutral input for one V3 investigation
 // decision. Provider prompts and raw responses never cross this port.
 type ModelView struct {
-	State    InvestigationState `json:"state"`
-	Facts    []EvidenceFact     `json:"facts"`
-	ScopeRef string             `json:"scope_ref"`
+	State          InvestigationState  `json:"state"`
+	Facts          []EvidenceFact      `json:"facts"`
+	ScopeRef       string              `json:"scope_ref"`
+	AllowedActions []ModelActionSchema `json:"allowed_actions"`
+}
+
+// ModelActionSchema is the provider-visible projection of a fixed Go-owned
+// action policy. It contains no endpoint, credential, query language, or
+// provider-specific authorization data.
+type ModelActionSchema struct {
+	Tool              string   `json:"tool"`
+	TemplateIDs       []string `json:"template_ids"`
+	ParameterKeys     []string `json:"parameter_keys"`
+	ExpectedFactTypes []string `json:"expected_fact_types"`
 }
 
 // DiagnosisView is the bounded input for a diagnosis synthesis step.
@@ -23,6 +34,13 @@ type DiagnosisView struct {
 type InvestigationModel interface {
 	ProposeDelta(context.Context, ModelView) (StateDelta, ModelUsage, error)
 	SynthesizeDiagnosis(context.Context, DiagnosisView) (DiagnosisCandidate, ModelUsage, error)
+}
+
+// InvestigationModelCallBudget is an optional capability used to reserve the
+// maximum provider calls before an invocation. Typed structured models return
+// two because one repair is allowed; fixture models default to one.
+type InvestigationModelCallBudget interface {
+	MaxProviderCallsPerInvocation() int
 }
 
 type DiagnosisConfidence string
@@ -46,10 +64,10 @@ const (
 type DiagnosisCandidate struct {
 	ClaimType       string              `json:"claim_type"`
 	Summary         string              `json:"summary"`
-	Confidence      DiagnosisConfidence `json:"confidence"`
+	Confidence      DiagnosisConfidence `json:"confidence" jsonschema:"enum=confirmed,enum=likely,enum=unknown"`
 	EvidenceFactIDs []string            `json:"evidence_fact_ids"`
 	Unknowns        []string            `json:"unknowns,omitempty"`
-	RemediationHint RemediationHint     `json:"remediation_hint"`
+	RemediationHint RemediationHint     `json:"remediation_hint" jsonschema:"enum=restore_required_env,enum=collect_more_evidence,enum=none"`
 }
 
 // DiagnosisRecord is the immutable, policy-bound result persisted by the

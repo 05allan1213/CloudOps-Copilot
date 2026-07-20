@@ -267,6 +267,7 @@ type GraphState struct {
 
 // ModelUsage is returned by provider adapters.
 type ModelUsage struct {
+	Calls        int
 	InputTokens  int64
 	OutputTokens int64
 }
