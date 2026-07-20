@@ -1,5 +1,5 @@
-// Command cloudops-migrate applies forward-only Goose migrations under a
-// MySQL advisory lock.
+// Command cloudops-migrate applies forward-only Goose migrations or performs
+// the read-only runtime-generation cutover check.
 package main
 
 import (

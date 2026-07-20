@@ -43,6 +43,7 @@ type Config struct {
 	MaxBodyBytes   int64
 	RequestTimeout time.Duration
 	BearerToken    []byte
+	RuntimeReady   func(context.Context) error
 }
 
 // Store is the complete durable ingress contract. Rejections are durable

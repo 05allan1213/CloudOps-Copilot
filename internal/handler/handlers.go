@@ -32,6 +32,8 @@ type mysqlClient interface {
 	Ready(ctx context.Context) error
 }
 
+type RuntimeReadiness func(context.Context) error
+
 type Handler struct {
 	promClient           *promclient.Client
 	cacheClient          cacheClient
@@ -44,18 +46,20 @@ type Handler struct {
 	fastDemoActor        string
 	k8sReader            k8sread.Reader
 	mysqlClient          mysqlClient
+	runtimeReadiness     RuntimeReadiness
 	authService          AuthService
 	readyTimeout         time.Duration
 	requestTimeout       time.Duration
 }
 
 type Config struct {
-	ReadyTimeout    time.Duration
-	RequestTimeout  time.Duration
-	IncidentService IncidentApplication
-	ChangeService   ChangeApplication
-	MySQLClient     mysqlClient
-	AuthService     AuthService
+	ReadyTimeout     time.Duration
+	RequestTimeout   time.Duration
+	IncidentService  IncidentApplication
+	ChangeService    ChangeApplication
+	MySQLClient      mysqlClient
+	RuntimeReadiness RuntimeReadiness
+	AuthService      AuthService
 }
 
 func NewHandler(promClient *promclient.Client, cache cacheClient, cfg Config) (*Handler, error) {
@@ -63,14 +67,15 @@ func NewHandler(promClient *promclient.Client, cache cacheClient, cfg Config) (*
 		return nil, errors.New("prometheus client is required")
 	}
 	return &Handler{
-		promClient:      promClient,
-		cacheClient:     cache,
-		incidentService: cfg.IncidentService,
-		changeService:   cfg.ChangeService,
-		mysqlClient:     cfg.MySQLClient,
-		authService:     cfg.AuthService,
-		readyTimeout:    cfg.ReadyTimeout,
-		requestTimeout:  cfg.RequestTimeout,
+		promClient:       promClient,
+		cacheClient:      cache,
+		incidentService:  cfg.IncidentService,
+		changeService:    cfg.ChangeService,
+		mysqlClient:      cfg.MySQLClient,
+		runtimeReadiness: cfg.RuntimeReadiness,
+		authService:      cfg.AuthService,
+		readyTimeout:     cfg.ReadyTimeout,
+		requestTimeout:   cfg.RequestTimeout,
 	}, nil
 }
 
@@ -91,8 +96,8 @@ func (h *Handler) Healthz(c *gin.Context) {
 func (h *Handler) Readyz(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), h.readyTimeout)
 	defer cancel()
-	dependencies := gin.H{"mysql": "unavailable"}
-	failures := make([]string, 0, 1)
+	dependencies := gin.H{"mysql": "unavailable", "runtime_generation": "unavailable"}
+	failures := make([]string, 0, 2)
 	if h.mysqlClient == nil || !h.mysqlClient.Enabled() {
 		failures = append(failures, "mysql is not initialized")
 	} else {
@@ -101,6 +106,14 @@ func (h *Handler) Readyz(c *gin.Context) {
 			failures = append(failures, err.Error())
 		} else {
 			dependencies["mysql"] = "ok"
+			if h.runtimeReadiness == nil {
+				failures = append(failures, "runtime generation guard is not initialized")
+			} else if err := h.runtimeReadiness(ctx); err != nil {
+				dependencies["runtime_generation"] = "refused"
+				failures = append(failures, err.Error())
+			} else {
+				dependencies["runtime_generation"] = "ok"
+			}
 		}
 	}
 	writeReadiness(c, dependencies, failures)

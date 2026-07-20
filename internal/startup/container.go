@@ -24,15 +24,15 @@ import (
 	appincident "github.com/05allan1213/CloudOps-Copilot/internal/service/incident"
 )
 
-func InitAPIContainer(cfg *config.Config, infra *di.Infra) (*di.Container, error) {
-	return initContainer(cfg, infra, true)
+func InitAPIContainer(cfg *config.Config, infra *di.Infra, runtimeReadiness handler.RuntimeReadiness) (*di.Container, error) {
+	return initContainer(cfg, infra, true, runtimeReadiness)
 }
 
 func InitWorkerContainer(cfg *config.Config, infra *di.Infra) (*di.Container, error) {
-	return initContainer(cfg, infra, false)
+	return initContainer(cfg, infra, false, nil)
 }
 
-func initContainer(cfg *config.Config, infra *di.Infra, initializeAuth bool) (*di.Container, error) {
+func initContainer(cfg *config.Config, infra *di.Infra, initializeAuth bool, runtimeReadiness handler.RuntimeReadiness) (*di.Container, error) {
 	container := di.NewContainer(infra)
 
 	var authService *authpkg.Service
@@ -81,7 +81,7 @@ func initContainer(cfg *config.Config, infra *di.Infra, initializeAuth bool) (*d
 			return nil, fmt.Errorf("V3 command port init failed: %w", err)
 		}
 		if initializeAuth {
-			container.V3Alertmanager, err = initV3AlertmanagerIngress(cfg, infra.MySQL.SQLDB())
+			container.V3Alertmanager, err = initV3AlertmanagerIngress(cfg, infra.MySQL.SQLDB(), runtimeReadiness)
 			if err != nil {
 				return nil, fmt.Errorf("V3 Alertmanager ingress init failed: %w", err)
 			}
@@ -96,11 +96,12 @@ func initContainer(cfg *config.Config, infra *di.Infra, initializeAuth bool) (*d
 	container.AlertService = alertService
 
 	h, err := handler.NewHandler(infra.PromClient, infra.RedisClient, handler.Config{
-		ReadyTimeout:    cfg.ReadyTimeout,
-		RequestTimeout:  cfg.RequestTimeout,
-		IncidentService: container.IncidentService,
-		MySQLClient:     infra.MySQL,
-		AuthService:     authService,
+		ReadyTimeout:     cfg.ReadyTimeout,
+		RequestTimeout:   cfg.RequestTimeout,
+		IncidentService:  container.IncidentService,
+		MySQLClient:      infra.MySQL,
+		RuntimeReadiness: runtimeReadiness,
+		AuthService:      authService,
 	})
 	if err != nil {
 		return nil, err
@@ -110,7 +111,7 @@ func initContainer(cfg *config.Config, infra *di.Infra, initializeAuth bool) (*d
 	return container, nil
 }
 
-func initV3AlertmanagerIngress(cfg *config.Config, db *sql.DB) (*alertmanageringress.Handler, error) {
+func initV3AlertmanagerIngress(cfg *config.Config, db *sql.DB, runtimeReadiness handler.RuntimeReadiness) (*alertmanageringress.Handler, error) {
 	incidentStore, err := incidentv3mysql.NewStore(db)
 	if err != nil {
 		return nil, fmt.Errorf("incident store: %w", err)
@@ -129,6 +130,6 @@ func initV3AlertmanagerIngress(cfg *config.Config, db *sql.DB) (*alertmanagering
 	return alertmanageringress.NewHandler(alertmanageringress.Config{
 		Store: incidentStore, Targets: targets,
 		MaxBodyBytes: cfg.AlertmanagerWebhookMaxBodyBytes, RequestTimeout: cfg.RequestTimeout,
-		BearerToken: bearerToken,
+		BearerToken: bearerToken, RuntimeReady: runtimeReadiness,
 	})
 }

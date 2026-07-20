@@ -9,6 +9,7 @@ import (
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
 	"github.com/05allan1213/CloudOps-Copilot/internal/bootstrap/configutil"
 	appconfig "github.com/05allan1213/CloudOps-Copilot/internal/config"
+	"github.com/05allan1213/CloudOps-Copilot/internal/cutover"
 	"github.com/05allan1213/CloudOps-Copilot/internal/taskhandler"
 )
 
@@ -36,6 +37,7 @@ type WorkerConfig struct {
 	Async                AsyncWorkerConfig
 	TaskOperations       taskhandler.Config
 	TaskOperationFactory TaskOperationFactory
+	RuntimeGeneration    cutover.RuntimeGeneration
 	ManagementAddr       string
 	ReadHeaderTimeout    time.Duration
 	ReadTimeout          time.Duration
@@ -52,6 +54,7 @@ func LoadWorkerConfig() (WorkerConfig, error) {
 	result := WorkerConfig{
 		Application:       application,
 		Async:             asyncConfig,
+		RuntimeGeneration: cutover.CurrentRuntimeGeneration,
 		ManagementAddr:    configutil.String("WORKER_MANAGEMENT_ADDR", ":8081"),
 		ReadHeaderTimeout: application.HTTPReadHeaderTimeout,
 		ReadTimeout:       application.HTTPReadTimeout,
@@ -89,6 +92,9 @@ func (c WorkerConfig) Validate() error {
 	if err := c.Async.Validate(); err != nil {
 		return fmt.Errorf("invalid async worker config: %w", err)
 	}
+	if err := c.RuntimeGeneration.Validate(); err != nil {
+		return fmt.Errorf("invalid cloudops-worker runtime generation: %w", err)
+	}
 	if validator, ok := c.TaskOperationFactory.(taskOperationFactoryValidator); ok {
 		if err := validator.Validate(); err != nil {
 			return fmt.Errorf("invalid production task operation config: %w", err)
@@ -100,6 +106,9 @@ func (c WorkerConfig) Validate() error {
 func (c WorkerConfig) normalized() WorkerConfig {
 	if c.Async.WorkerID == "" {
 		c.Async = DefaultAsyncWorkerConfig()
+	}
+	if c.RuntimeGeneration == "" {
+		c.RuntimeGeneration = cutover.CurrentRuntimeGeneration
 	}
 	return c
 }

@@ -1,6 +1,7 @@
 package alertmanageringress
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -47,9 +48,18 @@ func TestReadBearerTokenUsesBoundedCredentialFile(t *testing.T) {
 		t.Fatal("constant-time bearer verifier accepted the wrong credential boundary")
 	}
 	for _, token := range [][]byte{[]byte("short"), []byte("0123456789abcde 0123456789abcdef")} {
-		if _, err := NewHandler(Config{Store: &fakeStore{}, Targets: mustTargets(t), MaxBodyBytes: 1024, BearerToken: token}); err == nil {
+		if _, err := NewHandler(Config{
+			Store: &fakeStore{}, Targets: mustTargets(t), MaxBodyBytes: 1024, BearerToken: token,
+			RuntimeReady: func(context.Context) error { return nil },
+		}); err == nil {
 			t.Fatalf("invalid bearer token %q was accepted", token)
 		}
+	}
+}
+
+func TestHandlerRequiresRuntimeGenerationGuard(t *testing.T) {
+	if _, err := NewHandler(Config{Store: &fakeStore{}, Targets: mustTargets(t), MaxBodyBytes: 1024}); err == nil {
+		t.Fatal("handler accepted a missing runtime generation guard")
 	}
 }
 

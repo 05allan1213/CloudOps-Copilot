@@ -51,6 +51,9 @@ func TestLoadAPIConfig(t *testing.T) {
 	if config.InternalListenAddr == "" || config.InternalListenAddr == config.Application.ListenAddr {
 		t.Fatalf("invalid INTERNAL listen address %q", config.InternalListenAddr)
 	}
+	if string(config.RuntimeGeneration) != "compatibility" {
+		t.Fatalf("runtime generation=%q", config.RuntimeGeneration)
+	}
 }
 
 func TestAPIConfigRejectsSharedUserAndInternalAddress(t *testing.T) {

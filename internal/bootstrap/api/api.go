@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/05allan1213/CloudOps-Copilot/internal/bootstrap/logger"
+	"github.com/05allan1213/CloudOps-Copilot/internal/cutover"
 	"github.com/05allan1213/CloudOps-Copilot/internal/di"
 	"github.com/05allan1213/CloudOps-Copilot/internal/router"
 	"github.com/05allan1213/CloudOps-Copilot/internal/startup"
@@ -35,7 +36,32 @@ func NewAPI(ctx context.Context, cfg APIConfig) (*API, error) {
 		defer cancel()
 		return nil, errors.Join(cause, closeInfra(cleanupCtx, infra))
 	}
-	container, err := startup.InitAPIContainer(&application, infra)
+	var runtimeGuard *cutover.RuntimeGuard
+	if infra.MySQL != nil && infra.MySQL.Enabled() && infra.MySQL.SQLDB() != nil {
+		runtimeGuard, err = cutover.NewSQLRuntimeGuard(infra.MySQL.SQLDB(), cfg.RuntimeGeneration)
+		if err != nil {
+			return fail(fmt.Errorf("initialize API runtime generation guard: %w", err))
+		}
+		// Preserve the existing unready-but-non-mutating behavior for an empty or
+		// old schema. Once the schema is current, marker ambiguity is a startup
+		// refusal before either listener is created.
+		guardCtx, guardCancel := context.WithTimeout(ctx, application.MySQLStartupTimeout)
+		schemaReadyErr := infra.MySQL.Ready(guardCtx)
+		if schemaReadyErr == nil {
+			err = runtimeGuard.Check(guardCtx)
+		}
+		guardCancel()
+		if err != nil {
+			return fail(fmt.Errorf("enforce API runtime generation: %w", err))
+		}
+	}
+	runtimeReadiness := func(ctx context.Context) error {
+		if runtimeGuard == nil {
+			return errors.New("runtime generation guard requires MySQL")
+		}
+		return runtimeGuard.Check(ctx)
+	}
+	container, err := startup.InitAPIContainer(&application, infra, runtimeReadiness)
 	if err != nil {
 		return fail(err)
 	}

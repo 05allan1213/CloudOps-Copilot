@@ -1,6 +1,7 @@
 package startup
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -14,7 +15,7 @@ func TestV3AlertmanagerIngressRequiredBearerFailsClosedAtStartup(t *testing.T) {
 	cfg := config.Load()
 	cfg.AlertmanagerWebhookRequireBearer = true
 	cfg.AlertmanagerWebhookBearerTokenFile = ""
-	if _, err := initV3AlertmanagerIngress(&cfg, new(sql.DB)); err == nil || !strings.Contains(err.Error(), "bearer is required") {
+	if _, err := initV3AlertmanagerIngress(&cfg, new(sql.DB), runtimeReady); err == nil || !strings.Contains(err.Error(), "bearer is required") {
 		t.Fatalf("required empty bearer startup err=%v", err)
 	}
 
@@ -23,7 +24,7 @@ func TestV3AlertmanagerIngressRequiredBearerFailsClosedAtStartup(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg.AlertmanagerWebhookBearerTokenFile = path
-	if handler, err := initV3AlertmanagerIngress(&cfg, new(sql.DB)); err != nil || handler == nil {
+	if handler, err := initV3AlertmanagerIngress(&cfg, new(sql.DB), runtimeReady); err != nil || handler == nil {
 		t.Fatalf("required file-backed bearer handler=%v err=%v", handler, err)
 	}
 }
@@ -31,7 +32,9 @@ func TestV3AlertmanagerIngressRequiredBearerFailsClosedAtStartup(t *testing.T) {
 func TestV3AlertmanagerIngressInvalidTargetAllowlistFailsStartup(t *testing.T) {
 	cfg := config.Load()
 	cfg.SignalTargetAllowlistJSON = `[{"cluster_id":"unknown"}]`
-	if _, err := initV3AlertmanagerIngress(&cfg, new(sql.DB)); err == nil || !strings.Contains(err.Error(), "target allowlist") {
+	if _, err := initV3AlertmanagerIngress(&cfg, new(sql.DB), runtimeReady); err == nil || !strings.Contains(err.Error(), "target allowlist") {
 		t.Fatalf("invalid target allowlist startup err=%v", err)
 	}
 }
+
+func runtimeReady(context.Context) error { return nil }

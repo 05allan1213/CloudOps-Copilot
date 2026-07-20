@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
 	"github.com/05allan1213/CloudOps-Copilot/internal/bootstrap/health"
 )
 
@@ -35,6 +36,44 @@ func (r *testTaskRunner) Shutdown(ctx context.Context) error {
 	return nil
 }
 func (r *testTaskRunner) Ready(context.Context) error { return r.readyErr }
+
+type readinessOnlyTaskStore struct {
+	asyncjob.Store
+	readyErr   error
+	readyCalls int
+}
+
+func (s *readinessOnlyTaskStore) Ready(context.Context) error {
+	s.readyCalls++
+	return s.readyErr
+}
+
+func TestRuntimeGuardedTaskStoreChecksGenerationAfterSchema(t *testing.T) {
+	underlying := &readinessOnlyTaskStore{}
+	guardCalls := 0
+	refused := errors.New("compatibility runtime refused after CUTOVER-V3")
+	store := runtimeGuardedTaskStore{
+		Store: underlying,
+		runtimeReady: func(context.Context) error {
+			guardCalls++
+			return refused
+		},
+	}
+	if err := store.Ready(context.Background()); !errors.Is(err, refused) {
+		t.Fatalf("guarded store readiness err=%v", err)
+	}
+	if underlying.readyCalls != 1 || guardCalls != 1 {
+		t.Fatalf("ready calls schema=%d generation=%d", underlying.readyCalls, guardCalls)
+	}
+
+	underlying.readyErr = errors.New("unsupported async task schema")
+	if err := store.Ready(context.Background()); !errors.Is(err, underlying.readyErr) {
+		t.Fatalf("schema readiness err=%v", err)
+	}
+	if guardCalls != 1 {
+		t.Fatalf("generation guard ran before schema readiness: calls=%d", guardCalls)
+	}
+}
 
 func TestWorkerOwnsAsyncRunnerAndShutsDown(t *testing.T) {
 	runner := &testTaskRunner{}

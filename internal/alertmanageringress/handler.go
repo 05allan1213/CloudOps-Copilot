@@ -19,6 +19,7 @@ type Handler struct {
 	maxBodyBytes   int64
 	requestTimeout time.Duration
 	bearer         bearerVerifier
+	runtimeReady   func(context.Context) error
 }
 
 func NewHandler(config Config) (*Handler, error) {
@@ -51,6 +52,9 @@ func NewHandler(config Config) (*Handler, error) {
 	if config.RequestTimeout <= 0 {
 		config.RequestTimeout = defaultRequestTimeout
 	}
+	if config.RuntimeReady == nil {
+		return nil, errors.New("V3 Alertmanager ingress runtime generation guard is required")
+	}
 	if len(config.BearerToken) > 0 {
 		if err := validateBearerToken(config.BearerToken); err != nil {
 			return nil, err
@@ -59,7 +63,7 @@ func NewHandler(config Config) (*Handler, error) {
 	return &Handler{
 		store: config.Store, targets: targets,
 		maxBodyBytes: config.MaxBodyBytes, requestTimeout: config.RequestTimeout,
-		bearer: newBearerVerifier(config.BearerToken),
+		bearer: newBearerVerifier(config.BearerToken), runtimeReady: config.RuntimeReady,
 	}, nil
 }
 
@@ -75,6 +79,13 @@ func (h *Handler) Webhook(w http.ResponseWriter, request *http.Request) {
 	if !h.bearer.verify(request.Header.Get("Authorization")) {
 		w.Header().Set("WWW-Authenticate", `Bearer realm="cloudops-alertmanager"`)
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"status": "error", "code": "unauthorized"})
+		return
+	}
+	runtimeCtx, runtimeCancel := context.WithTimeout(request.Context(), h.requestTimeout)
+	runtimeErr := h.runtimeReady(runtimeCtx)
+	runtimeCancel()
+	if runtimeErr != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "error", "code": "runtime_generation_refused"})
 		return
 	}
 	mediaType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
@@ -144,6 +155,10 @@ func (h *Handler) Livez(w http.ResponseWriter, _ *http.Request) {
 func (h *Handler) Readyz(w http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
 	defer cancel()
+	if err := h.runtimeReady(ctx); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "not_ready"})
+		return
+	}
 	if err := h.store.Ready(ctx); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "not_ready"})
 		return

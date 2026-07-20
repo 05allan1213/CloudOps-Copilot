@@ -15,6 +15,9 @@ func TestLoadProcessSpecificConfig(t *testing.T) {
 	if workerConfig.ManagementAddr != "127.0.0.1:18081" {
 		t.Fatalf("management address=%q", workerConfig.ManagementAddr)
 	}
+	if string(workerConfig.RuntimeGeneration) != "compatibility" {
+		t.Fatalf("runtime generation=%q", workerConfig.RuntimeGeneration)
+	}
 }
 
 func TestWorkerConfigRejectsInvalidManagementAddress(t *testing.T) {

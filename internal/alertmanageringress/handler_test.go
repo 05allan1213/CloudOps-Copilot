@@ -117,6 +117,30 @@ func TestInternalProbesAreRedacted(t *testing.T) {
 	}
 }
 
+func TestRuntimeGenerationRefusalBlocksReadinessAndWebhookBeforeStore(t *testing.T) {
+	store := &fakeStore{}
+	handler, err := NewHandler(Config{
+		Store: store, Targets: mustTargets(t), MaxBodyBytes: 4096, RequestTimeout: time.Second,
+		RuntimeReady: func(context.Context) error { return errors.New("compatibility runtime refused after CUTOVER-V3") },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready := httptest.NewRecorder()
+	handler.Readyz(ready, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if ready.Code != http.StatusServiceUnavailable || ready.Body.String() != "{\"status\":\"not_ready\"}\n" {
+		t.Fatalf("ready response=%d %s", ready.Code, ready.Body.String())
+	}
+	body := marshalEnvelope(t, testEnvelope(testAlert("firing", "abc123", "WorkloadNotReady", "critical")))
+	response := serveWebhook(handler, body, "application/json", "")
+	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), `"code":"runtime_generation_refused"`) {
+		t.Fatalf("webhook response=%d %s", response.Code, response.Body.String())
+	}
+	if store.ingestCalls != 0 || store.rejectionCalls != 0 {
+		t.Fatalf("refused runtime reached store: calls=%d/%d", store.ingestCalls, store.rejectionCalls)
+	}
+}
+
 type fakeStore struct {
 	readyErr       error
 	ingestErr      error
@@ -157,6 +181,7 @@ func mustHandler(t *testing.T, store Store, token []byte, maxBody int64) *Handle
 	handler, err := NewHandler(Config{
 		Store: store, Targets: mustTargets(t), MaxBodyBytes: maxBody,
 		RequestTimeout: time.Second, BearerToken: token,
+		RuntimeReady: func(context.Context) error { return nil },
 	})
 	if err != nil {
 		t.Fatal(err)
