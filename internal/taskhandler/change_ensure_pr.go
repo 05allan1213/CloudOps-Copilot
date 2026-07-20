@@ -44,8 +44,11 @@ func NewChangeEnsurePR(config ChangeEnsurePRConfig) (Operation, error) {
 		config.Now = func() time.Time { return time.Now().UTC() }
 	}
 	operation := &changeEnsurePROperation{
-		cfg:   config,
-		store: &mysqlChangeEnsurePRStore{db: config.DB, tasks: config.Tasks},
+		cfg: config,
+		store: &mysqlChangeEnsurePRStore{
+			db: config.DB, tasks: config.Tasks,
+			currentPolicyHash: config.CurrentPolicyHash, now: config.Now,
+		},
 	}
 	return operation.handle, nil
 }
@@ -210,8 +213,10 @@ func changeLoadFailure(err error) asyncjob.Result {
 }
 
 type mysqlChangeEnsurePRStore struct {
-	db    *sql.DB
-	tasks ChangeEnsurePRTaskStore
+	db                *sql.DB
+	tasks             ChangeEnsurePRTaskStore
+	currentPolicyHash string
+	now               func() time.Time
 }
 
 type changeQueryer interface {
@@ -226,7 +231,7 @@ func (s *mysqlChangeEnsurePRStore) LoadApprovedPlan(ctx context.Context, task as
 	if snapshot.Plan.CycleNo != uint64(task.CycleNo) || snapshot.Plan.RowVersion != task.ExpectedSubjectVersion || snapshot.Plan.IncidentID != task.IncidentID {
 		return changePlanSnapshot{}, asyncjob.ErrSubjectVersionMismatch
 	}
-	if err := s.validatePreflight(ctx, s.db, snapshot, now, policyHash); err != nil {
+	if err := s.validatePreflight(ctx, s.db, snapshot, now, policyHash, false); err != nil {
 		return changePlanSnapshot{}, err
 	}
 	snapshot.ChangeRequestPublicID = uuid.NewString()
@@ -257,7 +262,7 @@ WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3`
 		return changeSnapshot{}, err
 	}
 	snapshot.PlanSnapshot = plan
-	if err := s.validatePreflight(ctx, s.db, plan, now, policyHash); err != nil {
+	if err := s.validatePreflight(ctx, s.db, plan, now, policyHash, false); err != nil {
 		return changeSnapshot{}, err
 	}
 	if snapshot.ChangeStatus != "pending" || snapshot.LogicalOperation == "" || snapshot.WritePhase == "" {
@@ -324,7 +329,7 @@ WHERE p.id = ? AND p.domain_schema_version = 3 AND p.plan_content_schema_version
 	return snapshot, nil
 }
 
-func (s *mysqlChangeEnsurePRStore) validatePreflight(ctx context.Context, queryer changeQueryer, snapshot changePlanSnapshot, now time.Time, policyHash string) error {
+func (s *mysqlChangeEnsurePRStore) validatePreflight(ctx context.Context, queryer changeQueryer, snapshot changePlanSnapshot, now time.Time, policyHash string, lockEvidence bool) error {
 	plan := snapshot.Plan
 	if snapshot.IncidentStatus != "awaiting_approval" && snapshot.IncidentStatus != "delivering" {
 		return fmt.Errorf("%w: Incident is outside approval/delivery", asyncjob.ErrPolicyViolation)
@@ -341,21 +346,10 @@ func (s *mysqlChangeEnsurePRStore) validatePreflight(ctx context.Context, querye
 	if len(plan.PostImage) == 0 || remediation.HashBytes(plan.PostImage) != plan.ExpectedPostImageHash {
 		return fmt.Errorf("%w: persisted post-image does not match the approved hash", remediation.ErrDrift)
 	}
-	for _, binding := range plan.EvidenceBindings {
-		var contentHash string
-		var valid, truncated bool
-		if err := queryer.QueryRowContext(ctx, `
-SELECT content_hash, valid, truncated
-FROM evidence_items
-WHERE public_id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3`,
-			binding.ID, plan.IncidentID, plan.CycleNo).Scan(&contentHash, &valid, &truncated); err != nil {
-			return err
-		}
-		if contentHash != binding.ContentHash || !valid || truncated {
-			return fmt.Errorf("%w: approved Evidence is stale or unusable", asyncjob.ErrPolicyViolation)
-		}
+	if lockEvidence {
+		return validateApprovedEvidenceCurrentForUpdate(ctx, queryer, plan.IncidentID, plan.CycleNo, plan.EvidenceBindings)
 	}
-	return nil
+	return validateApprovedEvidenceCurrent(ctx, queryer, plan.IncidentID, plan.CycleNo, plan.EvidenceBindings)
 }
 
 func (s *mysqlChangeEnsurePRStore) CreateChangeRequestIn(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, snapshot changePlanSnapshot) error {
@@ -377,6 +371,17 @@ WHERE id = ? AND incident_id = ? AND domain_schema_version = 3 FOR UPDATE`,
 	if incidentStatus != "awaiting_approval" {
 		return asyncjob.ErrInvalidMutation
 	}
+	current, err := s.loadPlan(ctx, tx, snapshot.Plan.ID)
+	if err != nil {
+		return err
+	}
+	if err := s.validatePreflight(ctx, tx, current, s.now().UTC(), s.currentPolicyHash, true); err != nil {
+		return err
+	}
+	current.ChangeRequestPublicID = snapshot.ChangeRequestPublicID
+	current.LogicalOperationKey = hashCanonical("change.ensure_pr", current.Plan.PublicID, current.Plan.CanonicalPlanHash)
+	current.Request = buildPhasedDeliveryRequest(current.Plan, current.LogicalOperationKey)
+	snapshot = current
 	result, err := tx.ExecContext(ctx, `
 INSERT INTO change_requests
   (public_id, plan_id, repository, base_revision, head_branch, status, ci_status,
@@ -447,6 +452,19 @@ FOR UPDATE`, task.SubjectID, task.IncidentID, task.CycleNo).Scan(&version, &phas
 	}
 	if version != task.ExpectedSubjectVersion || remediation.WritePhase(phase) != snapshot.WritePhase {
 		return asyncjob.ErrSubjectVersionMismatch
+	}
+	current, err := s.loadPlan(ctx, tx, snapshot.PlanSnapshot.Plan.ID)
+	if err != nil {
+		return err
+	}
+	if err := s.validatePreflight(ctx, tx, current, s.now().UTC(), s.currentPolicyHash, true); err != nil {
+		return err
+	}
+	if current.Plan.CanonicalPlanHash != snapshot.PlanSnapshot.Plan.CanonicalPlanHash ||
+		current.Plan.EvidenceSetHash != snapshot.PlanSnapshot.Plan.EvidenceSetHash ||
+		current.Plan.ExpectedTreeHash != snapshot.PlanSnapshot.Plan.ExpectedTreeHash ||
+		current.Plan.ExpectedPostImageHash != snapshot.PlanSnapshot.Plan.ExpectedPostImageHash {
+		return fmt.Errorf("%w: approved Plan changed before the external write marker", asyncjob.ErrPolicyViolation)
 	}
 	if existingMarker != "" {
 		if existingMarker != marker {

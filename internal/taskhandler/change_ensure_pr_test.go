@@ -56,23 +56,120 @@ func TestBuildPhasedDeliveryRequestBindsApprovedPlan(t *testing.T) {
 	}
 }
 
+func TestChangeEnsurePRRejectsSupersededEvidenceBeforeWritePhase(t *testing.T) {
+	plan := changeTestPlan()
+	store := &changeTestStore{loadChangeErr: errApprovedEvidenceSuperseded}
+	operation := &changeEnsurePROperation{
+		cfg: ChangeEnsurePRConfig{
+			CurrentPolicyHash: plan.PolicySnapshotHash,
+			Now:               func() time.Time { return plan.CreatedAt.Add(time.Minute) },
+		},
+		store: store,
+	}
+	task := asyncjob.Task{
+		ID: 12, IncidentID: plan.IncidentID, CycleNo: uint32(plan.CycleNo), Queue: asyncjob.QueueDeliver,
+		Type: asyncjob.TaskChangeEnsurePR, SubjectType: "change_request", SubjectID: 31,
+		Transition: "change.ensure_pr", ExpectedSubjectVersion: 4, PayloadSchemaVersion: changeEnsurePayloadSchema,
+		Payload: []byte(`{"plan_id":"` + plan.PublicID + `","change_request_id":"44444444-4444-4444-8444-444444444444","write_phase":"ensure_commit"}`),
+	}
+	result := operation.handle(context.Background(), asyncjob.Execution{
+		Task:  task,
+		Lease: asyncjob.Lease{TaskID: task.ID, Owner: "worker", Generation: 1, ExpectedSubjectVersion: task.ExpectedSubjectVersion, Attempt: 1, MaxAttempts: 5},
+	})
+	if result.Disposition != asyncjob.DispositionDead || result.ErrorCode != "change_preflight_rejected" || store.marked {
+		t.Fatalf("result=%+v marked=%t", result, store.marked)
+	}
+}
+
+func TestChangeEnsurePRRejectsSupersededEvidenceBeforeCreatingChangeRequest(t *testing.T) {
+	plan := changeTestPlan()
+	store := &changeTestStore{loadApprovedErr: errApprovedEvidenceSuperseded}
+	operation := &changeEnsurePROperation{
+		cfg: ChangeEnsurePRConfig{
+			CurrentPolicyHash: plan.PolicySnapshotHash,
+			Now:               func() time.Time { return plan.CreatedAt.Add(time.Minute) },
+		},
+		store: store,
+	}
+	task := asyncjob.Task{
+		ID: 13, IncidentID: plan.IncidentID, CycleNo: uint32(plan.CycleNo), Queue: asyncjob.QueueDeliver,
+		Type: asyncjob.TaskChangeEnsurePR, SubjectType: "remediation_plan", SubjectID: plan.ID,
+		Transition: "change.ensure_pr", ExpectedSubjectVersion: plan.RowVersion,
+		PayloadSchemaVersion: changeEnsurePayloadSchema, Payload: []byte(`{"plan_id":"` + plan.PublicID + `"}`),
+	}
+	result := operation.handle(context.Background(), asyncjob.Execution{
+		Task:  task,
+		Lease: asyncjob.Lease{TaskID: task.ID, Owner: "worker", Generation: 1, ExpectedSubjectVersion: task.ExpectedSubjectVersion, Attempt: 1, MaxAttempts: 5},
+	})
+	if result.Disposition != asyncjob.DispositionDead || result.ErrorCode != "change_preflight_rejected" || store.created {
+		t.Fatalf("result=%+v created=%t", result, store.created)
+	}
+}
+
+func TestChangeEnsurePRRevalidatesEvidenceBeforeEveryWriteMarker(t *testing.T) {
+	plan := changeTestPlan()
+	for _, phase := range []remediation.WritePhase{
+		remediation.WritePhaseEnsureBranch,
+		remediation.WritePhaseEnsureCommit,
+		remediation.WritePhaseEnsureDraftPR,
+	} {
+		t.Run(string(phase), func(t *testing.T) {
+			changeID := "44444444-4444-4444-8444-444444444444"
+			store := &changeTestStore{
+				change: changeSnapshot{
+					PlanSnapshot:    changePlanSnapshot{Plan: plan},
+					ChangeRequestID: 31, ChangePublicID: changeID, ChangeVersion: 4,
+					WritePhase: phase, LogicalOperation: strings.Repeat("9", 64),
+				},
+				markErr: errApprovedEvidenceSuperseded,
+			}
+			operation := &changeEnsurePROperation{
+				cfg: ChangeEnsurePRConfig{
+					CurrentPolicyHash: plan.PolicySnapshotHash,
+					Now:               func() time.Time { return plan.CreatedAt.Add(time.Minute) },
+				},
+				store: store,
+			}
+			task := asyncjob.Task{
+				ID: 14, IncidentID: plan.IncidentID, CycleNo: uint32(plan.CycleNo), Queue: asyncjob.QueueDeliver,
+				Type: asyncjob.TaskChangeEnsurePR, SubjectType: "change_request", SubjectID: 31,
+				Transition: "change.ensure_pr", ExpectedSubjectVersion: 4, PayloadSchemaVersion: changeEnsurePayloadSchema,
+				Payload: []byte(`{"plan_id":"` + plan.PublicID + `","change_request_id":"` + changeID + `","write_phase":"` + string(phase) + `"}`),
+			}
+			result := operation.handle(context.Background(), asyncjob.Execution{
+				Task:  task,
+				Lease: asyncjob.Lease{TaskID: task.ID, Owner: "worker", Generation: 1, ExpectedSubjectVersion: task.ExpectedSubjectVersion, Attempt: 1, MaxAttempts: 5},
+			})
+			if result.Disposition != asyncjob.DispositionDead || result.ErrorCode != "change_preflight_rejected" || !store.marked {
+				t.Fatalf("result=%+v marked=%t", result, store.marked)
+			}
+		})
+	}
+}
+
 type changeTestStore struct {
-	plan    changePlanSnapshot
-	created bool
+	plan            changePlanSnapshot
+	change          changeSnapshot
+	loadApprovedErr error
+	loadChangeErr   error
+	markErr         error
+	created         bool
+	marked          bool
 }
 
 func (s *changeTestStore) LoadApprovedPlan(context.Context, asyncjob.Task, time.Time, string) (changePlanSnapshot, error) {
-	return s.plan, nil
+	return s.plan, s.loadApprovedErr
 }
 func (s *changeTestStore) CreateChangeRequestIn(context.Context, asyncjob.DBTX, asyncjob.Task, changePlanSnapshot) error {
 	s.created = true
 	return nil
 }
-func (*changeTestStore) LoadChange(context.Context, asyncjob.Task, time.Time, string) (changeSnapshot, error) {
-	return changeSnapshot{}, nil
+func (s *changeTestStore) LoadChange(context.Context, asyncjob.Task, time.Time, string) (changeSnapshot, error) {
+	return s.change, s.loadChangeErr
 }
-func (*changeTestStore) MarkWriteIntent(context.Context, asyncjob.Task, changeSnapshot, string) error {
-	return nil
+func (s *changeTestStore) MarkWriteIntent(context.Context, asyncjob.Task, changeSnapshot, string) error {
+	s.marked = true
+	return s.markErr
 }
 func (*changeTestStore) ApplyObservationIn(context.Context, asyncjob.DBTX, asyncjob.Task, changeSnapshot, remediation.WriteObservation) error {
 	return nil

@@ -89,10 +89,64 @@ WHERE id = ?`, agentRunID, hash, hash, hash, hash, hash, hash, hash, hash, hash,
 	}
 
 	if _, err := runner.Up(ctx); err != nil {
-		t.Fatalf("upgrade complete V1 Plan through 00010: %v", err)
+		t.Fatalf("upgrade complete V1 Plan through current forward migrations: %v", err)
 	}
 	assertVersion(t, ctx, runner, LatestVersion)
 	assertV3PersistenceSchema(t, ctx, db)
+	insertEvidence := func(publicID string, cycleNo uint64, producerKey, contentHash string) uint64 {
+		t.Helper()
+		result, err := db.ExecContext(ctx, `INSERT INTO evidence_items (
+public_id, incident_id, domain_schema_version, cycle_no, agent_run_id,
+type, source, producer_type, producer_dedupe_key, tool_name, resource_ref,
+time_range_json, query_text, summary, facts_json, result_hash, content_hash,
+raw_ref, redaction_json, truncated, valid, idempotency_key, collected_at, created_at
+) VALUES (?, ?, 3, ?, NULL, 'system_fact', 'system', 'system_enrichment', ?, '',
+          'incident:test', NULL, '', 'bounded deterministic fact', JSON_OBJECT('status','available'),
+          ?, ?, '', JSON_OBJECT('policy','v3-test'), FALSE, TRUE, ?, NOW(6), NOW(6))`,
+			publicID, incidentID, cycleNo, producerKey, contentHash, contentHash, contentHash)
+		if err != nil {
+			t.Fatalf("insert V3 Evidence %s: %v", publicID, err)
+		}
+		id, err := result.LastInsertId()
+		if err != nil || id <= 0 {
+			t.Fatalf("read V3 Evidence id %s: id=%d err=%v", publicID, id, err)
+		}
+		return uint64(id)
+	}
+	oldEvidenceID := insertEvidence("00000000-0000-4000-8000-000000000020", 1, "evidence-old", strings.Repeat("1", 64))
+	newEvidenceID := insertEvidence("00000000-0000-4000-8000-000000000021", 1, "evidence-new", strings.Repeat("2", 64))
+	otherCycleEvidenceID := insertEvidence("00000000-0000-4000-8000-000000000022", 2, "evidence-other-cycle", strings.Repeat("3", 64))
+	if _, err := db.ExecContext(ctx, `INSERT INTO evidence_supersessions
+(public_id, domain_schema_version, relation_schema_version, incident_id, cycle_no,
+ superseded_evidence_id, superseding_evidence_id, reason_code)
+VALUES ('00000000-0000-4000-8000-000000000024', 3, 1, ?, 1, ?, ?, 'cross_cycle')`,
+		incidentID, oldEvidenceID, otherCycleEvidenceID); err == nil {
+		t.Fatal("cross-cycle Evidence supersession unexpectedly accepted")
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO evidence_supersessions
+(public_id, domain_schema_version, relation_schema_version, incident_id, cycle_no,
+ superseded_evidence_id, superseding_evidence_id, reason_code)
+VALUES ('00000000-0000-4000-8000-000000000025', 3, 1, ?, 1, ?, ?, 'reverse_cycle')`,
+		incidentID, newEvidenceID, oldEvidenceID); err == nil {
+		t.Fatal("reverse or cyclic Evidence supersession unexpectedly accepted")
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO evidence_supersessions
+(public_id, domain_schema_version, relation_schema_version, incident_id, cycle_no,
+ superseded_evidence_id, superseding_evidence_id, reason_code)
+VALUES ('00000000-0000-4000-8000-000000000023', 3, 1, ?, 1, ?, ?, 'corrected_fact')`,
+		incidentID, oldEvidenceID, newEvidenceID); err != nil {
+		t.Fatalf("insert same-cycle Evidence supersession: %v", err)
+	}
+	var oldSuperseded, newSuperseded bool
+	if err := db.QueryRowContext(ctx, `SELECT
+EXISTS(SELECT 1 FROM evidence_supersessions WHERE superseded_evidence_id = ? AND incident_id = ? AND cycle_no = 1),
+EXISTS(SELECT 1 FROM evidence_supersessions WHERE superseded_evidence_id = ? AND incident_id = ? AND cycle_no = 1)`,
+		oldEvidenceID, incidentID, newEvidenceID, incidentID).Scan(&oldSuperseded, &newSuperseded); err != nil {
+		t.Fatal(err)
+	}
+	if !oldSuperseded || newSuperseded {
+		t.Fatalf("current Evidence authority old_superseded=%t new_superseded=%t", oldSuperseded, newSuperseded)
+	}
 	var upgradedPlanVersion int
 	var upgradedPostImage []byte
 	if err := db.QueryRowContext(ctx, "SELECT plan_content_schema_version, post_image FROM remediation_plans WHERE id = ?", planID).Scan(&upgradedPlanVersion, &upgradedPostImage); err != nil {
@@ -209,11 +263,12 @@ timeline_json, agent_usage_json, summary, content_hash, generated_at
 func assertV3PersistenceSchema(t *testing.T, ctx context.Context, db *sql.DB) {
 	t.Helper()
 	required := map[string][]string{
-		"remediation_plans":     {"plan_content_schema_version", "created_by_agent_run_id", "diagnosis_hash", "expected_post_image_hash", "expected_tree_hash", "bounded_diff", "post_image", "verification_plan_hash", "evidence_set_hash", "expires_at"},
-		"remediation_decisions": {"approved_plan_hash", "approved_base_sha", "approved_post_image_hash", "approved_tree_hash", "approved_patch_hash", "approved_policy_hash", "approved_verification_hash", "approved_evidence_set_hash"},
-		"deployment_baselines":  {"target_identity_hash", "source_revision", "image_digest", "gitops_revision", "config_hash", "active_target_key"},
-		"baseline_observations": {"baseline_id", "observation_type", "observed_json", "content_hash", "dedupe_key"},
-		"change_candidates":     {"agent_run_id", "change_ref", "source_type", "gitops_revision", "supporting_evidence_json", "content_hash"},
+		"evidence_supersessions": {"incident_id", "cycle_no", "superseded_evidence_id", "superseding_evidence_id", "reason_code"},
+		"remediation_plans":      {"plan_content_schema_version", "created_by_agent_run_id", "diagnosis_hash", "expected_post_image_hash", "expected_tree_hash", "bounded_diff", "post_image", "verification_plan_hash", "evidence_set_hash", "expires_at"},
+		"remediation_decisions":  {"approved_plan_hash", "approved_base_sha", "approved_post_image_hash", "approved_tree_hash", "approved_patch_hash", "approved_policy_hash", "approved_verification_hash", "approved_evidence_set_hash"},
+		"deployment_baselines":   {"target_identity_hash", "source_revision", "image_digest", "gitops_revision", "config_hash", "active_target_key"},
+		"baseline_observations":  {"baseline_id", "observation_type", "observed_json", "content_hash", "dedupe_key"},
+		"change_candidates":      {"agent_run_id", "change_ref", "source_type", "gitops_revision", "supporting_evidence_json", "content_hash"},
 		"change_candidate_assessments": {
 			"candidate_id", "status", "supporting_evidence_json", "contradicting_evidence_json", "validator_version", "policy_hash", "supersedes_assessment_id",
 		},

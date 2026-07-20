@@ -896,15 +896,8 @@ LIMIT 2`, snapshot.Cluster, snapshot.Environment, snapshot.Namespace, snapshot.W
 		return DeliveryObserveSnapshot{}, fmt.Errorf("%w: approved Evidence bindings are malformed", asyncjob.ErrPolicyViolation)
 	}
 	snapshot.EvidenceBindings = append([]remediation.EvidenceBinding(nil), bindings...)
-	for _, binding := range bindings {
-		var contentHash string
-		var valid, truncated bool
-		if err := s.cfg.DB.QueryRowContext(ctx, `SELECT content_hash, valid, truncated FROM evidence_items WHERE public_id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3`, binding.ID, snapshot.IncidentID, snapshot.CycleNo).Scan(&contentHash, &valid, &truncated); err != nil {
-			return DeliveryObserveSnapshot{}, err
-		}
-		if contentHash != binding.ContentHash || !valid || truncated {
-			return DeliveryObserveSnapshot{}, fmt.Errorf("%w: approved Evidence is stale or unusable", asyncjob.ErrPolicyViolation)
-		}
+	if err := validateApprovedEvidenceCurrent(ctx, s.cfg.DB, snapshot.IncidentID, uint64(snapshot.CycleNo), bindings); err != nil {
+		return DeliveryObserveSnapshot{}, err
 	}
 	// An existing projection may have been written by a prior V3 worker. The
 	// fixed config remains authoritative; persisted values are only accepted if
@@ -1026,17 +1019,7 @@ func (s *mysqlDeliveryObserveStore) validateApprovalIn(ctx context.Context, tx a
 	if decision != "approved" || approvedBase != snapshot.BaseRevision || approvedPost != snapshot.ExpectedPostImageHash || approvedTree != snapshot.ExpectedTreeSHA || approvedPolicy != snapshot.PolicyHash || approvedVerification != snapshot.VerificationHash || approvedEvidence != snapshot.EvidenceSetHash {
 		return fmt.Errorf("%w: approval is no longer valid", asyncjob.ErrPolicyViolation)
 	}
-	for _, binding := range snapshot.EvidenceBindings {
-		var contentHash string
-		var valid, truncated bool
-		if err := tx.QueryRowContext(ctx, `SELECT content_hash, valid, truncated FROM evidence_items WHERE public_id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3`, binding.ID, snapshot.IncidentID, snapshot.CycleNo).Scan(&contentHash, &valid, &truncated); err != nil {
-			return err
-		}
-		if contentHash != binding.ContentHash || !valid || truncated {
-			return fmt.Errorf("%w: approved Evidence changed before delivery observation", asyncjob.ErrPolicyViolation)
-		}
-	}
-	return nil
+	return validateApprovedEvidenceCurrentForUpdate(ctx, tx, snapshot.IncidentID, uint64(snapshot.CycleNo), snapshot.EvidenceBindings)
 }
 
 func (s *mysqlDeliveryObserveStore) enqueueObserve(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, snapshot DeliveryObserveSnapshot, version uint64, next time.Time) error {

@@ -113,6 +113,21 @@ func TestDeliveryObserveRejectsInvalidLeaseBeforeReads(t *testing.T) {
 	}
 }
 
+func TestDeliveryObserveRejectsSupersededApprovalBeforeProviderRead(t *testing.T) {
+	store := &deliveryTestStore{loadErr: errApprovedEvidenceSuperseded}
+	observer := &deliveryTestObserver{}
+	operation := &deliveryObserveOperation{cfg: DeliveryObserveConfig{Store: store, Observer: observer, PollInterval: 5 * time.Second, Now: time.Now}}
+	task := asyncjob.Task{
+		ID: 92, IncidentID: 11, CycleNo: 2, Queue: asyncjob.QueueObserve, Type: asyncjob.TaskDeliveryObserve,
+		SubjectType: "change_request", SubjectID: 21, Transition: "delivery.observe", ExpectedSubjectVersion: 4,
+		PayloadSchemaVersion: deliveryObservePayloadSchema, Payload: json.RawMessage(`{"change_request_id":"22222222-2222-4222-8222-222222222222","phase":"observe"}`),
+	}
+	result := operation.handle(context.Background(), asyncjob.Execution{Task: task, Lease: asyncjob.Lease{TaskID: task.ID, Owner: "worker", Generation: 1, ExpectedSubjectVersion: task.ExpectedSubjectVersion, Attempt: 1, MaxAttempts: 8}})
+	if result.Disposition != asyncjob.DispositionDead || result.ErrorCode != "delivery_preflight_rejected" || store.loads != 1 || observer.calls != 0 {
+		t.Fatalf("result=%+v loads=%d calls=%d", result, store.loads, observer.calls)
+	}
+}
+
 func deliveryTestSnapshot(now time.Time) DeliveryObserveSnapshot {
 	deadline := now.Add(20 * time.Minute)
 	return DeliveryObserveSnapshot{
@@ -133,11 +148,14 @@ func deliveryTestSnapshot(now time.Time) DeliveryObserveSnapshot {
 	}
 }
 
-type deliveryTestStore struct{ loads int }
+type deliveryTestStore struct {
+	loads   int
+	loadErr error
+}
 
 func (s *deliveryTestStore) Load(context.Context, asyncjob.Task) (DeliveryObserveSnapshot, error) {
 	s.loads++
-	return DeliveryObserveSnapshot{}, nil
+	return DeliveryObserveSnapshot{}, s.loadErr
 }
 
 func (*deliveryTestStore) PersistIn(context.Context, asyncjob.DBTX, asyncjob.Task, DeliveryObserveSnapshot, DeliveryObserveOutcome) error {
