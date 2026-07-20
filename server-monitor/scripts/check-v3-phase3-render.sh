@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-app_manifest="${1:-}"
-demo_manifest="${2:-}"
-if [[ -z "${app_manifest}" || ! -s "${app_manifest}" || -z "${demo_manifest}" || ! -s "${demo_manifest}" ]]; then
-  printf 'usage: %s APP_RENDERED_MANIFEST DEMO_RENDERED_MANIFEST\n' "$0" >&2
+platform_manifest="${1:-}"
+app_manifest="${2:-}"
+demo_manifest="${3:-}"
+if [[ -z "${platform_manifest}" || ! -s "${platform_manifest}" || -z "${app_manifest}" || ! -s "${app_manifest}" || -z "${demo_manifest}" || ! -s "${demo_manifest}" ]]; then
+  printf 'usage: %s PLATFORM_RENDERED_MANIFEST APP_RENDERED_MANIFEST DEMO_RENDERED_MANIFEST\n' "$0" >&2
   exit 2
 fi
 
@@ -15,7 +16,9 @@ for command_name in jq yq; do
   }
 done
 
-documents="$(yq -o=json 'select(.kind != null)' "${app_manifest}" "${demo_manifest}" | jq -s '.')"
+platform_documents="$(yq -o=json 'select(.kind != null)' "${platform_manifest}" | jq -s '.')"
+application_documents="$(yq -o=json 'select(.kind != null)' "${app_manifest}" "${demo_manifest}" | jq -s '.')"
+documents="$(yq -o=json 'select(.kind != null)' "${platform_manifest}" "${app_manifest}" "${demo_manifest}" | jq -s '.')"
 
 has_resource() {
   local kind="$1"
@@ -37,10 +40,133 @@ has_resource PodMonitor cloudops-demo-workload
 has_resource PrometheusRule cloudops-demo-workload
 has_resource Job cloudops-demo-load-generator
 
+for platform_resource in \
+  "Elasticsearch cloudops-elasticsearch" \
+  "Kibana cloudops-kibana" \
+  "Beat cloudops-filebeat" \
+  "Deployment cloudops-otel-collector" \
+  "Service cloudops-otel-collector" \
+  "ServiceMonitor cloudops-otel-collector" \
+  "StatefulSet cloudops-tempo" \
+  "Service cloudops-tempo" \
+  "ServiceMonitor cloudops-tempo"; do
+  read -r platform_kind platform_name <<<"${platform_resource}"
+  jq -e --arg kind "${platform_kind}" --arg name "${platform_name}" \
+    '[.[] | select(.kind == $kind and .metadata.name == $name)] | length == 1' \
+    <<<"${platform_documents}" >/dev/null || {
+    printf 'missing observability platform resource: %s %s\n' "${platform_kind}" "${platform_name}" >&2
+    exit 1
+  }
+done
+
+jq -e '
+  ([.[] | .. | objects | .image? | select(type == "string")]) as $images
+  | ($images | length) >= 6
+  and all($images[]; test("@sha256:[a-f0-9]{64}$"))
+' <<<"${platform_documents}" >/dev/null || {
+  printf 'observability platform images must all be immutable digest references\n' >&2
+  exit 1
+}
+
+jq -e '
+  ([.[] | select(.kind == "ClusterRole" or .kind == "ClusterRoleBinding")] | length) == 0
+  and ([.[] | select(.kind == "Role" and .metadata.name == "cloudops-filebeat-discovery")] | length) == 2
+  and ([.[] | select(.kind == "Role" and .metadata.name == "cloudops-otel-k8sattributes")] | length) == 2
+  and all([.[] | select(.kind == "Role" and .metadata.name == "cloudops-filebeat-discovery")][];
+    (.rules | length == 1) and .rules[0].resources == ["pods"] and (.rules[0].verbs | sort) == ["get", "list", "watch"]
+  )
+  and all([.[] | select(.kind == "Role" and .metadata.name == "cloudops-otel-k8sattributes")][];
+    (.rules | length == 2) and
+    ([.rules[].resources[]] | sort) == ["pods", "replicasets"] and
+    all(.rules[]; (.verbs | sort) == ["get", "list", "watch"])
+  )
+' <<<"${platform_documents}" >/dev/null || {
+  printf 'observability RBAC is broader than the namespace-bounded read contract\n' >&2
+  exit 1
+}
+
+jq -e '
+  [.[] | select(.kind == "Role" and (.metadata.name == "cloudops-filebeat-discovery" or .metadata.name == "cloudops-otel-k8sattributes")) | .metadata.namespace] | sort | unique == ["cloudops-demo", "cloudops-system"]
+' <<<"${platform_documents}" >/dev/null || {
+  printf 'observability Roles must exist only in the CloudOps and Demo namespaces\n' >&2
+  exit 1
+}
+
+jq -e '
+  [.[] | select(.kind == "Beat" and .metadata.name == "cloudops-filebeat")][0] as $beat
+  | $beat.spec.type == "filebeat"
+  and ($beat.spec.config["filebeat.autodiscover"].providers | length == 2)
+  and (($beat.spec.config["filebeat.autodiscover"].providers | map(.scope) | unique) == ["namespace"])
+  and (($beat.spec.config["filebeat.autodiscover"].providers | map(.namespace) | sort) == ["cloudops-demo", "cloudops-system"])
+  and all($beat.spec.config["filebeat.autodiscover"].providers[];
+    (.["hints.enabled"] == false) and
+    all(.templates[].config[];
+      .type == "filestream" and
+      (.id | contains("${data.kubernetes.pod.uid}")) and
+      (.id | contains("${data.kubernetes.container.id}")) and
+      .["prospector.scanner"].symlinks == true and
+      .["prospector.scanner"]["fingerprint.enabled"] == true and
+      (.["file_identity.fingerprint"] | type == "object") and
+      (.parsers | map(keys) | flatten | index("container") != null)
+    )
+  )
+  and ($beat.spec.config["output.elasticsearch"] | has("index"))
+  and ($beat.spec.config["queue.mem"].events > 0)
+' <<<"${platform_documents}" >/dev/null || {
+  printf 'Filebeat did not render the two bounded filestream providers\n' >&2
+  exit 1
+}
+
+collector_config="$(jq -r '[.[] | select(.kind == "ConfigMap" and .metadata.name == "cloudops-otel-collector")][0].data["collector.yaml"]' <<<"${platform_documents}")"
+tempo_config="$(jq -r '[.[] | select(.kind == "ConfigMap" and .metadata.name == "cloudops-tempo")][0].data["tempo.yaml"]' <<<"${platform_documents}")"
+collector_json="$(yq -o=json '.' <<<"${collector_config}")"
+tempo_json="$(yq -o=json '.' <<<"${tempo_config}")"
+jq -e '
+  (.receivers | keys) == ["otlp"] and
+  (.service.pipelines | keys) == ["traces"] and
+  .service.pipelines.traces.receivers == ["otlp"] and
+  (.service.pipelines.traces.processors | index("k8sattributes/cloudops") != null) and
+  (.service.pipelines.traces.processors | index("k8sattributes/demo") != null) and
+  (.service.pipelines.traces.processors | index("transform/sanitize_k8s_identity") != null) and
+  (.service.pipelines.traces.processors | index("filter/allowed_namespaces") != null) and
+  .processors."k8sattributes/cloudops".filter.namespace == "cloudops-system" and
+  .processors."k8sattributes/demo".filter.namespace == "cloudops-demo" and
+  (.processors."transform/sanitize_k8s_identity".trace_statements[0].statements | index("delete_key(attributes, \"k8s.namespace.name\")") != null) and
+  (.processors."transform/sanitize_k8s_identity".trace_statements[0].statements | index("delete_key(attributes, \"k8s.workload.name\")") != null) and
+  (.processors."filter/allowed_namespaces".trace_conditions | length == 1) and
+  (.processors."k8sattributes/cloudops".extract.metadata | index("container.image.repo_digests") != null) and
+  (.processors."k8sattributes/demo".extract.metadata | index("container.image.repo_digests") != null)
+' <<<"${collector_json}" >/dev/null || {
+  printf 'OTel Collector must be traces-only with both namespace-filtered k8sattributes processors\n' >&2
+  exit 1
+}
+if grep -Eiq 'filelog|kubeletstats' <<<"${collector_config}"; then
+  printf 'OTel Collector rendered a duplicate log/metric receiver\n' >&2
+  exit 1
+fi
+jq -e '
+  .target == "all" and
+  .storage.trace.backend == "local" and
+  (.ingest == null) and
+  .usage_report.reporting_enabled == false
+' <<<"${tempo_json}" >/dev/null || {
+  printf 'Tempo must render the target=all local monolith without Kafka ingest\n' >&2
+  exit 1
+}
+if grep -Eiq 'kafka|tempo-distributed' <<<"${tempo_config}"; then
+  printf 'Tempo rendered a forbidden Kafka or distributed dependency\n' >&2
+  exit 1
+fi
+
 jq -e '
   [.[] | select(.kind == "Deployment" and .metadata.name == "cloudops-api")][0]
   | .spec.template.spec.automountServiceAccountToken == false
   and .spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem == true
+' <<<"${documents}" >/dev/null
+
+jq -e '
+  [.[] | select(.kind == "ConfigMap" and .metadata.name == "cloudops-v3-config")][0]
+  | .data.TRACE_OTLP_ENDPOINT == "cloudops-otel-collector.cloudops-system.svc.cluster.local:4317"
 ' <<<"${documents}" >/dev/null
 
 jq -e '
@@ -68,6 +194,7 @@ jq -e '
   and .spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem == true
   and any(.spec.template.spec.containers[0].env[]; .name == "REQUIRED_ENV" and (.value | length > 0))
   and any(.spec.template.spec.containers[0].env[]; .name == "K8S_POD_UID" and .valueFrom.fieldRef.fieldPath == "metadata.uid")
+  and any(.spec.template.spec.containers[0].env[]; .name == "TRACE_OTLP_ENDPOINT" and .value == "cloudops-otel-collector.cloudops-system.svc.cluster.local:4317")
   and any(.spec.template.spec.containers[0].env[]; .name == "TRACE_SAMPLE_RATE" and .value == "1")
   and .spec.template.spec.containers[0].livenessProbe.httpGet.path == "/livez"
   and .spec.template.spec.containers[0].readinessProbe.httpGet.path == "/readyz"
@@ -120,7 +247,7 @@ jq -e '
   and (.spec.template.spec.containers[0].args[0] | contains("http://demo-diagnostics:8080/") and contains("sleep 0.2"))
 ' <<<"${documents}" >/dev/null
 
-if jq -e 'any(.[]; .metadata.namespace == "cloudops-demo" and (.kind == "Ingress" or .kind == "ServiceAccount" or .kind == "Role" or .kind == "RoleBinding"))' <<<"${documents}" >/dev/null; then
+if jq -e 'any(.[]; .metadata.namespace == "cloudops-demo" and (.kind == "Ingress" or .kind == "ServiceAccount" or .kind == "Role" or .kind == "RoleBinding"))' <<<"${application_documents}" >/dev/null; then
   printf 'demo profile rendered a forbidden ingress or RBAC resource\n' >&2
   exit 1
 fi
@@ -137,4 +264,4 @@ if jq -e 'any(.[]; .kind == "Secret")' <<<"${documents}" >/dev/null; then
   exit 1
 fi
 
-printf 'PASS: V3 phase3 profile rendered the API and two-replica Demo with only fixed ClusterIP Services, monitored alerts and a Golden-only load-generator hook.\n'
+printf 'PASS: V3 phase3 rendered pinned ECK/Filebeat and traces-only OTel/Tempo plus the API and two-replica Demo with fixed ClusterIP Services and Golden-only load.\n'

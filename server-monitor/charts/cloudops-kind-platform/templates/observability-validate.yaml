@@ -1,0 +1,25 @@
+{{- if .Values.observability.enabled }}
+{{- if eq .Values.observability.namespaces.cloudops .Values.observability.namespaces.demo }}
+{{- fail "observability CloudOps and Demo namespaces must be distinct" }}
+{{- end }}
+{{- if ne .Values.observability.elastic.version .Values.observability.elastic.elasticsearch.image.tag }}
+{{- fail "Elasticsearch image tag must match the Elastic Stack version" }}
+{{- end }}
+{{- if ne .Values.observability.elastic.version .Values.observability.elastic.kibana.image.tag }}
+{{- fail "Kibana image tag must match the Elastic Stack version" }}
+{{- end }}
+{{- if ne .Values.observability.elastic.version .Values.observability.elastic.filebeat.image.tag }}
+{{- fail "Filebeat image tag must match the Elastic Stack version" }}
+{{- end }}
+{{- if ne .Values.observability.tempo.target "all" }}
+{{- fail "Tempo must run as the target=all monolith" }}
+{{- end }}
+{{- range $image := list .Values.observability.elastic.elasticsearch.image .Values.observability.elastic.kibana.image .Values.observability.elastic.filebeat.image .Values.observability.otelCollector.image .Values.observability.tempo.image }}
+{{- if eq $image.tag "latest" }}
+{{- fail "observability images must not use latest" }}
+{{- end }}
+{{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $image.digest) }}
+{{- fail "observability images must use immutable sha256 digests" }}
+{{- end }}
+{{- end }}
+{{- end }}

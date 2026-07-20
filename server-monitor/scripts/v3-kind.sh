@@ -15,18 +15,25 @@ CLUSTER_NAME="${CLOUDOPS_KIND_CLUSTER:-cloudops-v3-phase3}"
 APP_NAMESPACE="${CLOUDOPS_APP_NAMESPACE:-cloudops-system}"
 DEMO_NAMESPACE="${CLOUDOPS_DEMO_NAMESPACE:-cloudops-demo}"
 MONITORING_NAMESPACE="${CLOUDOPS_MONITORING_NAMESPACE:-cloudops-monitoring}"
+ECK_OPERATOR_NAMESPACE="${CLOUDOPS_ECK_OPERATOR_NAMESPACE:-elastic-system}"
 MONITORING_RELEASE="${CLOUDOPS_MONITORING_RELEASE:-cloudops-monitoring}"
+ECK_OPERATOR_RELEASE="${CLOUDOPS_ECK_OPERATOR_RELEASE:-cloudops-eck}"
 PLATFORM_RELEASE="${CLOUDOPS_PLATFORM_RELEASE:-cloudops-platform}"
 APP_RELEASE="${CLOUDOPS_APP_RELEASE:-cloudops-v3}"
 DEMO_RELEASE="${CLOUDOPS_DEMO_RELEASE:-cloudops-demo}"
-KPS_CACHE_DIR="${XDG_CACHE_HOME:-${HOME}/.cache}/cloudops-v3/charts"
+CHART_CACHE_DIR="${XDG_CACHE_HOME:-${HOME}/.cache}/cloudops-v3/charts"
 KPS_PACKAGE=""
+ECK_PACKAGE=""
 RENDERED_FILE="${TMPDIR:-/tmp}/cloudops-v3-phase3-${CLUSTER_NAME}.yaml"
 RENDERED_DEMO_FILE="${TMPDIR:-/tmp}/cloudops-v3-phase3-demo-${CLUSTER_NAME}.yaml"
 PORT_FORWARD_LOG="${TMPDIR:-/tmp}/cloudops-v3-prometheus-${CLUSTER_NAME}.log"
 DEMO_PORT_FORWARD_LOG="${TMPDIR:-/tmp}/cloudops-v3-demo-${CLUSTER_NAME}.log"
+TEMPO_PORT_FORWARD_LOG="${TMPDIR:-/tmp}/cloudops-v3-tempo-${CLUSTER_NAME}.log"
+ELASTICSEARCH_PORT_FORWARD_LOG="${TMPDIR:-/tmp}/cloudops-v3-elasticsearch-${CLUSTER_NAME}.log"
 port_forward_pid=""
 demo_port_forward_pid=""
+tempo_port_forward_pid=""
+elasticsearch_port_forward_pid=""
 secret_dir=""
 MIN_AVAILABLE_MEMORY_MIB="${CLOUDOPS_MIN_AVAILABLE_MEMORY_MIB:-5120}"
 
@@ -36,7 +43,9 @@ MIN_AVAILABLE_MEMORY_MIB="${CLOUDOPS_MIN_AVAILABLE_MEMORY_MIB:-5120}"
 # shellcheck source=../deploy/kind/versions.env
 # shellcheck disable=SC1091
 source "${VERSIONS_FILE}"
-KPS_PACKAGE="${KPS_CACHE_DIR}/kube-prometheus-stack-${KUBE_PROMETHEUS_STACK_VERSION}.tgz"
+KPS_PACKAGE="${CHART_CACHE_DIR}/kube-prometheus-stack-${KUBE_PROMETHEUS_STACK_VERSION}.tgz"
+ECK_PACKAGE="${CHART_CACHE_DIR}/eck-operator-${ECK_OPERATOR_VERSION}.tgz"
+OTEL_GRPC_ENDPOINT="cloudops-otel-collector.${APP_NAMESPACE}.svc.cluster.local:4317"
 
 die() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -57,6 +66,12 @@ cleanup() {
   fi
   if [[ -n "${demo_port_forward_pid}" ]]; then
     kill "${demo_port_forward_pid}" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${tempo_port_forward_pid}" ]]; then
+    kill "${tempo_port_forward_pid}" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${elasticsearch_port_forward_pid}" ]]; then
+    kill "${elasticsearch_port_forward_pid}" >/dev/null 2>&1 || true
   fi
   if [[ -n "${secret_dir}" && -d "${secret_dir}" ]]; then
     rm -rf "${secret_dir}"
@@ -83,22 +98,65 @@ preflight() {
   printf 'PASS: preflight profile=phase3 cluster=%s available_memory_mib=%s cpu=%s\n' "${CLUSTER_NAME}" "${available_mib}" "$(nproc)"
 }
 
+validate_version_lock() {
+  local actual
+  [[ "${TEMPO_DEPLOYMENT_MODE}" == "monolithic" && "${TEMPO_TARGET}" == "all" ]] || die "Tempo lock must be monolithic target=all"
+  [[ "${ECK_OPERATOR_URL}" == *"/eck-operator-${ECK_OPERATOR_VERSION}.tgz" ]] || die "ECK package URL/version mismatch"
+  for digest in \
+    "${ECK_OPERATOR_IMAGE_DIGEST}" \
+    "${ELASTICSEARCH_IMAGE_DIGEST}" \
+    "${KIBANA_IMAGE_DIGEST}" \
+    "${FILEBEAT_IMAGE_DIGEST}" \
+    "${OTEL_COLLECTOR_IMAGE_DIGEST}" \
+    "${TEMPO_IMAGE_DIGEST}"; do
+    [[ "${digest}" =~ ^sha256:[a-f0-9]{64}$ ]] || die "observability lock contains an invalid image digest"
+  done
+
+  actual="$(yq -r '.observability.elastic.version' "${PLATFORM_VALUES}")"
+  [[ "${actual}" == "${ELASTIC_STACK_VERSION}" ]] || die "Elastic Stack values/version lock mismatch"
+  actual="$(yq -r '.observability.otelCollector.image.tag' "${PLATFORM_VALUES}")"
+  [[ "${actual}" == "${OTEL_COLLECTOR_VERSION}" ]] || die "OTel Collector values/version lock mismatch"
+  actual="$(yq -r '.observability.tempo.image.tag' "${PLATFORM_VALUES}")"
+  [[ "${actual}" == "${TEMPO_VERSION}" ]] || die "Tempo values/version lock mismatch"
+
+  local pair
+  # shellcheck disable=SC2153 # TEMPO_IMAGE_REPOSITORY is sourced from the version lock.
+  for pair in \
+    ".observability.elastic.elasticsearch.image.repository=${ELASTICSEARCH_IMAGE_REPOSITORY}" \
+    ".observability.elastic.elasticsearch.image.digest=${ELASTICSEARCH_IMAGE_DIGEST}" \
+    ".observability.elastic.kibana.image.repository=${KIBANA_IMAGE_REPOSITORY}" \
+    ".observability.elastic.kibana.image.digest=${KIBANA_IMAGE_DIGEST}" \
+    ".observability.elastic.filebeat.image.repository=${FILEBEAT_IMAGE_REPOSITORY}" \
+    ".observability.elastic.filebeat.image.digest=${FILEBEAT_IMAGE_DIGEST}" \
+    ".observability.otelCollector.image.repository=${OTEL_COLLECTOR_IMAGE_REPOSITORY}" \
+    ".observability.otelCollector.image.digest=${OTEL_COLLECTOR_IMAGE_DIGEST}" \
+    ".observability.tempo.image.repository=${TEMPO_IMAGE_REPOSITORY}" \
+    ".observability.tempo.image.digest=${TEMPO_IMAGE_DIGEST}" \
+    ".observability.tempo.target=${TEMPO_TARGET}"; do
+    actual="$(yq -r "${pair%%=*}" "${PLATFORM_VALUES}")"
+    [[ "${actual}" == "${pair#*=}" ]] || die "platform values/version lock mismatch at ${pair%%=*}"
+  done
+}
+
 render_profile() {
   local platform_render
   platform_render="${RENDERED_FILE}.platform"
+  validate_version_lock
   helm lint "${PLATFORM_CHART_DIR}"
   helm lint "${CHART_DIR}" --values "${PROFILE_FILE}"
   helm lint "${DEMO_CHART_DIR}"
   helm template "${PLATFORM_RELEASE}" "${PLATFORM_CHART_DIR}" --namespace "${APP_NAMESPACE}" --values "${PLATFORM_VALUES}" >"${platform_render}"
-  helm template "${APP_RELEASE}" "${CHART_DIR}" --namespace "${APP_NAMESPACE}" --values "${PROFILE_FILE}" >"${RENDERED_FILE}"
-  helm template "${DEMO_RELEASE}" "${DEMO_CHART_DIR}" --namespace "${DEMO_NAMESPACE}" >"${RENDERED_DEMO_FILE}"
-  bash "${ROOT_DIR}/server-monitor/scripts/check-v3-phase3-render.sh" "${RENDERED_FILE}" "${RENDERED_DEMO_FILE}"
+  helm template "${APP_RELEASE}" "${CHART_DIR}" --namespace "${APP_NAMESPACE}" --values "${PROFILE_FILE}" \
+    --set-string "v3.commonEnv.TRACE_OTLP_ENDPOINT=${OTEL_GRPC_ENDPOINT}" >"${RENDERED_FILE}"
+  helm template "${DEMO_RELEASE}" "${DEMO_CHART_DIR}" --namespace "${DEMO_NAMESPACE}" \
+    --set-string "trace.otlpEndpoint=${OTEL_GRPC_ENDPOINT}" >"${RENDERED_DEMO_FILE}"
+  bash "${ROOT_DIR}/server-monitor/scripts/check-v3-phase3-render.sh" "${platform_render}" "${RENDERED_FILE}" "${RENDERED_DEMO_FILE}"
   printf 'PASS: Helm profile rendered at %s (platform: %s demo: %s)\n' "${RENDERED_FILE}" "${platform_render}" "${RENDERED_DEMO_FILE}"
 }
 
 ensure_monitoring_package() {
   local actual_sha
-  mkdir -p "${KPS_CACHE_DIR}"
+  mkdir -p "${CHART_CACHE_DIR}"
   if [[ ! -s "${KPS_PACKAGE}" ]]; then
     curl --fail --location --retry 3 --connect-timeout 15 \
       "${KUBE_PROMETHEUS_STACK_URL}" --output "${KPS_PACKAGE}.part"
@@ -108,10 +166,23 @@ ensure_monitoring_package() {
   [[ "${actual_sha}" == "${KUBE_PROMETHEUS_STACK_SHA256}" ]] || die "kube-prometheus-stack checksum mismatch"
 }
 
+ensure_eck_package() {
+  local actual_sha
+  mkdir -p "${CHART_CACHE_DIR}"
+  if [[ ! -s "${ECK_PACKAGE}" ]]; then
+    curl --fail --location --retry 3 --connect-timeout 15 \
+      "${ECK_OPERATOR_URL}" --output "${ECK_PACKAGE}.part"
+    mv "${ECK_PACKAGE}.part" "${ECK_PACKAGE}"
+  fi
+  actual_sha="$(sha256sum "${ECK_PACKAGE}" | awk '{print $1}')"
+  [[ "${actual_sha}" == "${ECK_OPERATOR_SHA256}" ]] || die "ECK operator checksum mismatch"
+}
+
 create_namespaces() {
   kubectl create namespace "${APP_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
   kubectl create namespace "${DEMO_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
   kubectl create namespace "${MONITORING_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  kubectl create namespace "${ECK_OPERATOR_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 }
 
 create_secrets() {
@@ -124,6 +195,13 @@ create_secrets() {
   printf '%s' "${database_password}" >"${secret_dir}/mysql-password"
   printf '%s' "${root_password}" >"${secret_dir}/mysql-root-password"
   printf '%s' "${webhook_token}" >"${secret_dir}/webhook-token"
+  printf '%s\n' \
+    'cloudops_reader:' \
+    '  cluster: [ "monitor" ]' \
+    '  indices:' \
+    '    - names: [ "logs-cloudops-*" ]' \
+    '      privileges: [ "read", "view_index_metadata" ]' \
+    >"${secret_dir}/elasticsearch-roles.yml"
   jq -cn \
     --arg cluster "${CLUSTER_NAME}" \
     --arg environment "local-demo" \
@@ -141,6 +219,9 @@ create_secrets() {
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null
   kubectl -n "${MONITORING_NAMESPACE}" create secret generic cloudops-alertmanager-webhook \
     --from-file=token="${secret_dir}/webhook-token" \
+    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  kubectl -n "${APP_NAMESPACE}" create secret generic cloudops-elasticsearch-roles \
+    --from-file=roles.yml="${secret_dir}/elasticsearch-roles.yml" \
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 }
 
@@ -176,10 +257,33 @@ install_monitoring() {
   kubectl wait --for=condition=Established --timeout=120s crd/prometheusrules.monitoring.coreos.com
 }
 
+install_eck() {
+  ensure_eck_package
+  helm upgrade --install "${ECK_OPERATOR_RELEASE}" "${ECK_PACKAGE}" \
+    --namespace "${ECK_OPERATOR_NAMESPACE}" --create-namespace \
+    --set installCRDs=true \
+    --set createClusterScopedResources=false \
+    --set webhook.enabled=false \
+    --set config.validateStorageClass=false \
+    --set telemetry.disabled=true \
+    --set-string "image.repository=${ECK_OPERATOR_IMAGE_REPOSITORY}" \
+    --set-string "image.tag=${ECK_OPERATOR_VERSION}" \
+    --set-string "image.digest=${ECK_OPERATOR_IMAGE_DIGEST}" \
+    --set-string "managedNamespaces[0]=${APP_NAMESPACE}" \
+    --wait --timeout 10m
+  for crd in \
+    elasticsearches.elasticsearch.k8s.elastic.co \
+    kibanas.kibana.k8s.elastic.co \
+    beats.beat.k8s.elastic.co; do
+    kubectl wait --for=condition=Established --timeout=120s "crd/${crd}"
+  done
+  kubectl -n "${ECK_OPERATOR_NAMESPACE}" rollout status statefulset/elastic-operator --timeout=180s
+}
+
 install_platform() {
   helm upgrade --install "${PLATFORM_RELEASE}" "${PLATFORM_CHART_DIR}" \
     --namespace "${APP_NAMESPACE}" --values "${PLATFORM_VALUES}" \
-    --wait --timeout 5m
+    --wait --timeout 15m
 }
 
 install_application() {
@@ -189,6 +293,7 @@ install_application() {
     --set "v3.images.migrate.tag=${MIGRATE_IMAGE_TAG}" \
     --set "v3.images.api.repository=${API_IMAGE_REPOSITORY}" \
     --set "v3.images.migrate.repository=${MIGRATE_IMAGE_REPOSITORY}" \
+    --set-string "v3.commonEnv.TRACE_OTLP_ENDPOINT=${OTEL_GRPC_ENDPOINT}" \
     --set-file "v3.commonEnv.SIGNAL_TARGET_ALLOWLIST_JSON=${secret_dir}/signal-target-allowlist.json" \
     --wait --wait-for-jobs --timeout 10m
 }
@@ -200,12 +305,119 @@ install_demo() {
     --set "image.tag=${DEMO_IMAGE_TAG}" \
     --set "sourceRevision=${DEMO_IMAGE_TAG}" \
     --set "clusterName=${CLUSTER_NAME}" \
+    --set-string "trace.otlpEndpoint=${OTEL_GRPC_ENDPOINT}" \
+    --set-string "trace.sampleRate=1" \
     --wait --timeout 5m
 }
 
 prometheus_service() {
   kubectl -n "${MONITORING_NAMESPACE}" get svc -o json | jq -r --arg instance "${MONITORING_RELEASE}" \
     '[.items[] | select(.metadata.labels["app.kubernetes.io/name"] == "prometheus" and .metadata.labels["app.kubernetes.io/instance"] == $instance) | .metadata.name][0] // empty'
+}
+
+auth_can_i() {
+  kubectl auth can-i "$@" 2>/dev/null || true
+}
+
+check_namespace_rbac() {
+  local filebeat_identity otel_identity operator_identity
+  filebeat_identity="system:serviceaccount:${APP_NAMESPACE}:cloudops-filebeat"
+  otel_identity="system:serviceaccount:${APP_NAMESPACE}:cloudops-otel-collector"
+  operator_identity="system:serviceaccount:${ECK_OPERATOR_NAMESPACE}:elastic-operator"
+
+  for namespace in "${APP_NAMESPACE}" "${DEMO_NAMESPACE}"; do
+    [[ "$(auth_can_i --as="${filebeat_identity}" list pods --namespace "${namespace}")" == "yes" ]] || die "Filebeat cannot discover pods in ${namespace}"
+    [[ "$(auth_can_i --as="${otel_identity}" list pods --namespace "${namespace}")" == "yes" ]] || die "OTel Collector cannot discover pods in ${namespace}"
+    [[ "$(auth_can_i --as="${otel_identity}" list replicasets.apps --namespace "${namespace}")" == "yes" ]] || die "OTel Collector cannot discover ReplicaSets in ${namespace}"
+  done
+  [[ "$(auth_can_i --as="${filebeat_identity}" list pods --all-namespaces)" == "no" ]] || die "Filebeat unexpectedly has cluster-wide pod discovery"
+  [[ "$(auth_can_i --as="${otel_identity}" list pods --all-namespaces)" == "no" ]] || die "OTel Collector unexpectedly has cluster-wide pod discovery"
+  [[ "$(auth_can_i --as="${filebeat_identity}" get secrets --namespace "${APP_NAMESPACE}")" == "no" ]] || die "Filebeat unexpectedly has Secret access"
+  [[ "$(auth_can_i --as="${otel_identity}" get secrets --namespace "${APP_NAMESPACE}")" == "no" ]] || die "OTel Collector unexpectedly has Secret access"
+  [[ "$(auth_can_i --as="${otel_identity}" create deployments.apps --namespace "${APP_NAMESPACE}")" == "no" ]] || die "OTel Collector unexpectedly has workload write access"
+  [[ "$(auth_can_i --as="${operator_identity}" list secrets --namespace "${APP_NAMESPACE}")" == "yes" ]] || die "ECK operator cannot reconcile the managed namespace"
+  [[ "$(auth_can_i --as="${operator_identity}" list secrets --namespace "${DEMO_NAMESPACE}")" == "no" ]] || die "ECK operator unexpectedly manages the Demo namespace"
+  [[ "$(auth_can_i --as="${operator_identity}" list secrets --namespace default)" == "no" ]] || die "ECK operator unexpectedly manages namespaces outside the allowlist"
+}
+
+check_platform_observability() {
+  local elasticsearch_name kibana_name filebeat_name otel_name tempo_name
+  local collector_config tempo_config collector_json tempo_json elastic_password elastic_result trace_result
+  elasticsearch_name="$(yq -r '.observability.elastic.elasticsearch.name' "${PLATFORM_VALUES}")"
+  kibana_name="$(yq -r '.observability.elastic.kibana.name' "${PLATFORM_VALUES}")"
+  filebeat_name="$(yq -r '.observability.elastic.filebeat.name' "${PLATFORM_VALUES}")"
+  otel_name="$(yq -r '.observability.otelCollector.name' "${PLATFORM_VALUES}")"
+  tempo_name="$(yq -r '.observability.tempo.name' "${PLATFORM_VALUES}")"
+
+  kubectl -n "${APP_NAMESPACE}" wait --for="jsonpath={.status.health}=green" --timeout=15m "elasticsearch/${elasticsearch_name}"
+  kubectl -n "${APP_NAMESPACE}" wait --for="jsonpath={.status.health}=green" --timeout=15m "kibana/${kibana_name}"
+  kubectl -n "${APP_NAMESPACE}" wait --for="jsonpath={.status.health}=green" --timeout=15m "beat/${filebeat_name}"
+  kubectl -n "${APP_NAMESPACE}" rollout status "deployment/${otel_name}" --timeout=180s
+  kubectl -n "${APP_NAMESPACE}" rollout status "statefulset/${tempo_name}" --timeout=180s
+
+  collector_config="$(kubectl -n "${APP_NAMESPACE}" get configmap "${otel_name}" -o jsonpath='{.data.collector\.yaml}')"
+  collector_json="$(yq -o=json '.' <<<"${collector_config}")"
+  jq -e '.receivers | keys == ["otlp"]' <<<"${collector_json}" >/dev/null || die "OTel Collector enabled a non-OTLP receiver"
+  jq -e '.service.pipelines | keys == ["traces"]' <<<"${collector_json}" >/dev/null || die "OTel Collector enabled a non-trace pipeline"
+  jq -e --arg cloudops "${APP_NAMESPACE}" --arg demo "${DEMO_NAMESPACE}" '
+    .processors."k8sattributes/cloudops".filter.namespace == $cloudops and
+    .processors."k8sattributes/demo".filter.namespace == $demo
+  ' <<<"${collector_json}" >/dev/null || die "OTel k8sattributes namespace filters drifted"
+
+  tempo_config="$(kubectl -n "${APP_NAMESPACE}" get configmap "${tempo_name}" -o jsonpath='{.data.tempo\.yaml}')"
+  tempo_json="$(yq -o=json '.' <<<"${tempo_config}")"
+  jq -e '.target == "all" and .storage.trace.backend == "local"' <<<"${tempo_json}" >/dev/null || die "Tempo is not the local target=all monolith"
+  if grep -Eiq 'kafka|tempo-distributed' <<<"${tempo_config}"; then
+    die "Tempo rendered a forbidden Kafka or distributed dependency"
+  fi
+  check_namespace_rbac
+
+  if [[ -z "${secret_dir}" || ! -d "${secret_dir}" ]]; then
+    secret_dir="$(mktemp -d "${TMPDIR:-/tmp}/cloudops-v3-check.XXXXXX")"
+    chmod 700 "${secret_dir}"
+  fi
+  kubectl -n "${APP_NAMESPACE}" get secret "${elasticsearch_name}-es-http-certs-public" \
+    -o go-template='{{ index .data "tls.crt" | base64decode }}' >"${secret_dir}/elasticsearch-ca.crt"
+  elastic_password="$(kubectl -n "${APP_NAMESPACE}" get secret "${elasticsearch_name}-es-elastic-user" -o go-template='{{ index .data "elastic" | base64decode }}')"
+  chmod 600 "${secret_dir}/elasticsearch-ca.crt"
+  kubectl -n "${APP_NAMESPACE}" port-forward "svc/${elasticsearch_name}-es-http" 19200:9200 >"${ELASTICSEARCH_PORT_FORWARD_LOG}" 2>&1 &
+  elasticsearch_port_forward_pid="$!"
+  for _ in $(seq 1 60); do
+    elastic_result="$(curl --fail --silent --cacert "${secret_dir}/elasticsearch-ca.crt" --user "elastic:${elastic_password}" \
+      "https://127.0.0.1:19200/_cluster/health" 2>/dev/null || true)"
+    if jq -e '.status == "green"' <<<"${elastic_result}" >/dev/null 2>&1; then break; fi
+    sleep 2
+  done
+  jq -e '.status == "green"' <<<"${elastic_result}" >/dev/null || die "Elasticsearch query path is not healthy"
+  elastic_result="$(curl --fail --silent --cacert "${secret_dir}/elasticsearch-ca.crt" --user "elastic:${elastic_password}" \
+    "https://127.0.0.1:19200/_security/role/cloudops_reader")"
+  jq -e '.cloudops_reader.cluster == ["monitor"] and (.cloudops_reader.indices | length == 1) and .cloudops_reader.indices[0].names == ["logs-cloudops-*"] and (.cloudops_reader.indices[0].privileges | sort) == ["read", "view_index_metadata"]' \
+    <<<"${elastic_result}" >/dev/null || die "CloudOps Elasticsearch read role drifted"
+  for _ in $(seq 1 60); do
+    elastic_result="$(curl --fail --silent --cacert "${secret_dir}/elasticsearch-ca.crt" --user "elastic:${elastic_password}" \
+      "https://127.0.0.1:19200/_data_stream/logs-cloudops-*" 2>/dev/null || true)"
+    if jq -e '.data_streams | length > 0' <<<"${elastic_result}" >/dev/null 2>&1; then break; fi
+    sleep 2
+  done
+  jq -e '.data_streams | length > 0' <<<"${elastic_result}" >/dev/null || die "Filebeat did not create the bounded CloudOps data stream"
+  elastic_password=""
+
+  kubectl -n "${APP_NAMESPACE}" port-forward "svc/${tempo_name}" 13200:3200 >"${TEMPO_PORT_FORWARD_LOG}" 2>&1 &
+  tempo_port_forward_pid="$!"
+  for _ in $(seq 1 60); do
+    if curl --fail --silent http://127.0.0.1:13200/ready >/dev/null 2>&1; then break; fi
+    sleep 2
+  done
+  curl --fail --silent http://127.0.0.1:13200/ready >/dev/null || die "Tempo query path is not healthy"
+  for _ in $(seq 1 60); do
+    trace_result="$(curl --fail --silent --get \
+      --data-urlencode 'q={ resource.service.name = "cloudops-demo-workload" }' \
+      --data-urlencode 'limit=20' \
+      http://127.0.0.1:13200/api/search 2>/dev/null || true)"
+    if jq -e '.traces | length > 0' <<<"${trace_result}" >/dev/null 2>&1; then break; fi
+    sleep 2
+  done
+  jq -e '.traces | length > 0' <<<"${trace_result}" >/dev/null || die "Demo trace did not traverse OTel Collector into Tempo"
 }
 
 check_observability() {
@@ -225,6 +437,7 @@ check_observability() {
   version_result="$(curl --fail --silent http://127.0.0.1:18081/version)"
   jq -e --arg revision "${revision}" '.source_revision == $revision and .version == $revision' <<<"${version_result}" >/dev/null || die "Demo /version does not match the built source revision"
   curl --fail --silent http://127.0.0.1:18081/ >/dev/null || die "Demo baseline business request failed"
+  check_platform_observability
   service_name="$(prometheus_service)"
   [[ -n "${service_name}" ]] || die "Prometheus service was not found"
   kubectl -n "${MONITORING_NAMESPACE}" port-forward "svc/${service_name}" 19090:9090 >"${PORT_FORWARD_LOG}" 2>&1 &
@@ -261,6 +474,7 @@ up() {
   create_namespaces
   create_secrets
   install_monitoring
+  install_eck
   install_platform
   build_and_load_images
   install_application

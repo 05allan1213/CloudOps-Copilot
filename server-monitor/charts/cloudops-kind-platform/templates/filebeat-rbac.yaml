@@ -1,0 +1,44 @@
+{{- if .Values.observability.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.observability.elastic.filebeat.serviceAccountName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cloudops-kind-platform.labels" . | nindent 4 }}
+    app.kubernetes.io/component: log-collector
+automountServiceAccountToken: true
+---
+{{- range $namespace := list .Values.observability.namespaces.cloudops .Values.observability.namespaces.demo }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cloudops-filebeat-discovery
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "cloudops-kind-platform.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: log-collector
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cloudops-filebeat-discovery
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "cloudops-kind-platform.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: log-collector
+subjects:
+  - kind: ServiceAccount
+    name: {{ $.Values.observability.elastic.filebeat.serviceAccountName }}
+    namespace: {{ $.Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cloudops-filebeat-discovery
+---
+{{- end }}
+{{- end }}
