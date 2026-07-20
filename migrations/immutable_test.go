@@ -18,7 +18,7 @@ func TestImmutableMigrationHistory(t *testing.T) {
 		"00006_observability_verification_postmortem.sql": "8e1a0b1f0a1125ffb54f8049be17617c1130cebbf446ecc371a281b4a7301fdb",
 		"00007_expand_legacy_schema.sql":                  "e254655698086f7ff3679fe615d0d7b6c2bd58158eb44501086ca37f44c54f45",
 		"00008_expand_v3_async_runtime.sql":               "a769354179532733b6216fbfde699cf756744f72dd75c98cf730feb2e093e96e",
-		"00009_expand_v3_remediation_verification.sql":     "944ca629c190fe82a77e36ac7b35bfff4017fb8b59f3fb4db333918337d9c927",
+		"00009_expand_v3_remediation_verification.sql":    "944ca629c190fe82a77e36ac7b35bfff4017fb8b59f3fb4db333918337d9c927",
 	}
 	for name, expectedHash := range expected {
 		contents, err := FS.ReadFile(name)
