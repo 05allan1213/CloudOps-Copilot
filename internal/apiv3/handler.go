@@ -228,6 +228,18 @@ func (h *Handler) getResource(kind QueryKind) gin.HandlerFunc {
 			h.writeQueryError(c, err)
 			return
 		}
+		if kind == QueryResolutionReport {
+			if result.ResolutionReport == nil {
+				h.writeProblem(c, http.StatusNotFound, "RESOURCE_NOT_FOUND", "resource was not found")
+				return
+			}
+			if err := validateResolutionReportView(result.ResolutionReport); err != nil {
+				h.writeProblem(c, http.StatusInternalServerError, "INVALID_PROJECTION", "query projection violated the public identifier contract")
+				return
+			}
+			h.writeJSON(c, http.StatusOK, resolutionReportResponse{Resource: *result.ResolutionReport})
+			return
+		}
 		if result.Resource == nil {
 			h.writeProblem(c, http.StatusNotFound, "RESOURCE_NOT_FOUND", "resource was not found")
 			return

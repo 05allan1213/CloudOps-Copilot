@@ -14,6 +14,7 @@ type MemoryQueryPort struct {
 	mu        sync.RWMutex
 	incidents map[string]IncidentView
 	children  map[string]map[QueryKind][]ResourceView
+	reports   map[string]ResolutionReportView
 	events    map[string][]RefreshEvent
 }
 
@@ -21,6 +22,7 @@ func NewMemoryQueryPort() *MemoryQueryPort {
 	return &MemoryQueryPort{
 		incidents: make(map[string]IncidentView),
 		children:  make(map[string]map[QueryKind][]ResourceView),
+		reports:   make(map[string]ResolutionReportView),
 		events:    make(map[string][]RefreshEvent),
 	}
 }
@@ -111,6 +113,26 @@ func (m *MemoryQueryPort) PutEvents(incidentID string, events []RefreshEvent) er
 	return nil
 }
 
+func (m *MemoryQueryPort) PutResolutionReport(incidentID string, item ResolutionReportView) error {
+	if m == nil {
+		return ErrUnavailable
+	}
+	id, err := ParsePublicUUID(incidentID)
+	if err != nil {
+		return err
+	}
+	if err := validateResolutionReportView(&item); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	if m.reports == nil {
+		m.reports = make(map[string]ResolutionReportView)
+	}
+	m.reports[id] = *copyResolutionReport(&item)
+	m.mu.Unlock()
+	return nil
+}
+
 func (m *MemoryQueryPort) Query(_ context.Context, request QueryRequest) (QueryResponse, error) {
 	if m == nil {
 		return QueryResponse{}, ErrUnavailable
@@ -138,10 +160,17 @@ func (m *MemoryQueryPort) Query(_ context.Context, request QueryRequest) (QueryR
 		events := append([]RefreshEvent(nil), m.events[request.IncidentID]...)
 		return QueryResponse{Events: events}, nil
 	}
+	if request.Kind == QueryResolutionReport {
+		item, ok := m.reports[request.IncidentID]
+		if !ok {
+			return QueryResponse{}, nil
+		}
+		return QueryResponse{ResolutionReport: copyResolutionReport(&item)}, nil
+	}
 
 	children := m.children[request.IncidentID]
 	items := append([]ResourceView(nil), children[request.Kind]...)
-	if request.Kind == QueryDelivery || request.Kind == QueryResolutionReport {
+	if request.Kind == QueryDelivery {
 		if len(items) > 0 {
 			resource := items[0]
 			return QueryResponse{Resource: &resource}, nil
@@ -155,6 +184,23 @@ func copyIncident(item *IncidentView) *IncidentView {
 		return nil
 	}
 	copyItem := *item
+	return &copyItem
+}
+
+func copyResolutionReport(item *ResolutionReportView) *ResolutionReportView {
+	if item == nil {
+		return nil
+	}
+	copyItem := *item
+	copyItem.TriggerSignal = append([]byte(nil), item.TriggerSignal...)
+	copyItem.Diagnosis = append([]byte(nil), item.Diagnosis...)
+	copyItem.Evidence = append([]byte(nil), item.Evidence...)
+	copyItem.RemediationPlan = append([]byte(nil), item.RemediationPlan...)
+	copyItem.RemediationDecision = append([]byte(nil), item.RemediationDecision...)
+	copyItem.Delivery = append([]byte(nil), item.Delivery...)
+	copyItem.Verification = append([]byte(nil), item.Verification...)
+	copyItem.Timeline = append([]byte(nil), item.Timeline...)
+	copyItem.AgentUsage = append([]byte(nil), item.AgentUsage...)
 	return &copyItem
 }
 
@@ -220,7 +266,7 @@ const httpStatusAccepted = 202
 
 func isChildKind(kind QueryKind) bool {
 	switch kind {
-	case QuerySignals, QueryTimeline, QueryEvidence, QueryInvestigations, QueryRemediationPlans, QueryDelivery, QueryVerifications, QueryResolutionReport:
+	case QuerySignals, QueryTimeline, QueryEvidence, QueryInvestigations, QueryRemediationPlans, QueryDelivery, QueryVerifications:
 		return true
 	default:
 		return false

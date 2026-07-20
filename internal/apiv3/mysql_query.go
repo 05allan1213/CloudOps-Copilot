@@ -40,8 +40,10 @@ func (p *MySQLQueryPort) Query(ctx context.Context, request QueryRequest) (Query
 		return p.listIncidentResources(ctx, request)
 	case QueryTimeline:
 		return p.listTimeline(ctx, request)
-	case QueryDelivery, QueryResolutionReport:
+	case QueryDelivery:
 		return p.getIncidentResource(ctx, request)
+	case QueryResolutionReport:
+		return p.getResolutionReport(ctx, request)
 	case QueryEvents:
 		return p.listEvents(ctx, request)
 	default:
@@ -336,18 +338,6 @@ WHERE incident_id = ? AND cycle_no = ? AND domain_schema_version = 3
   AND public_id IS NOT NULL
 ORDER BY created_at DESC, id DESC
 LIMIT 1`
-	case QueryResolutionReport:
-		kind = "resolution_report"
-		query = `
-SELECT p.id, p.public_id, v.cycle_no, 'resolved', NULL,
-       p.verification_summary, v.verification_profile_hash,
-       p.created_at, p.updated_at, p.generated_at
-FROM postmortems p
-JOIN verification_runs v ON v.id = p.verification_run_id
-WHERE p.incident_id = ? AND v.cycle_no = ? AND v.domain_schema_version = 3
-  AND v.v3_status = 'passed'
-ORDER BY p.generated_at DESC, p.id DESC
-LIMIT 1`
 	default:
 		return QueryResponse{}, ErrInvalidArgument
 	}
@@ -364,6 +354,156 @@ LIMIT 1`
 		return QueryResponse{}, ErrNotFound
 	}
 	return QueryResponse{Resource: &items[0]}, nil
+}
+
+const resolutionReportQuery = `
+SELECT r.public_id, r.report_schema_version, r.cycle_no, r.trigger_type,
+       r.resolution_reason, r.service, r.workload, r.environment,
+       r.impact_summary, r.cycle_started_at, r.resolved_at,
+       r.measured_duration_ms, r.bad_gitops_revision, r.fix_gitops_revision,
+       r.source_revision, r.image_digest, r.gitops_revision,
+       r.verification_profile_id, r.verification_profile_hash,
+       r.common_window_started_at, r.common_window_completed_at,
+       r.trigger_signal_json, r.diagnosis_json, r.evidence_json,
+       r.remediation_plan_json, r.remediation_decision_json, r.delivery_json,
+       r.verification_json, r.timeline_json, r.agent_usage_json,
+       r.summary, r.content_hash, r.generated_at
+FROM resolution_reports r
+JOIN incidents i
+  ON i.id = r.incident_id
+ AND i.domain_schema_version = 3
+ AND i.cycle_no = r.cycle_no
+WHERE i.public_id = ?
+  AND r.domain_schema_version = 3
+  AND r.cycle_no = i.cycle_no
+LIMIT 1`
+
+type resolutionReportScanner interface {
+	Scan(...any) error
+}
+
+type mysqlResolutionReportRow struct {
+	PublicID                string
+	ReportSchemaVersion     uint64
+	Cycle                   uint64
+	TriggerType             string
+	ResolutionReason        string
+	Service                 string
+	Workload                string
+	Environment             string
+	ImpactSummary           string
+	CycleStartedAt          time.Time
+	ResolvedAt              time.Time
+	MeasuredDurationMS      uint64
+	BadGitOpsRevision       sql.NullString
+	FixGitOpsRevision       sql.NullString
+	SourceRevision          string
+	ImageDigest             string
+	GitOpsRevision          string
+	VerificationProfileID   string
+	VerificationProfileHash string
+	CommonWindowStartedAt   time.Time
+	CommonWindowCompletedAt time.Time
+	TriggerSignalJSON       []byte
+	DiagnosisJSON           []byte
+	EvidenceJSON            []byte
+	RemediationPlanJSON     []byte
+	RemediationDecisionJSON []byte
+	DeliveryJSON            []byte
+	VerificationJSON        []byte
+	TimelineJSON            []byte
+	AgentUsageJSON          []byte
+	Summary                 string
+	ContentHash             string
+	GeneratedAt             time.Time
+}
+
+func (p *MySQLQueryPort) getResolutionReport(ctx context.Context, request QueryRequest) (QueryResponse, error) {
+	id, err := ParsePublicUUID(request.IncidentID)
+	if err != nil {
+		return QueryResponse{}, err
+	}
+	item, err := scanResolutionReport(p.db.QueryRowContext(ctx, resolutionReportQuery, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return QueryResponse{}, ErrNotFound
+	}
+	if err != nil {
+		return QueryResponse{}, fmt.Errorf("get V3 ResolutionReport: %w", err)
+	}
+	return QueryResponse{ResolutionReport: item}, nil
+}
+
+func scanResolutionReport(scanner resolutionReportScanner) (*ResolutionReportView, error) {
+	if scanner == nil {
+		return nil, ErrUnavailable
+	}
+	var row mysqlResolutionReportRow
+	if err := scanner.Scan(
+		&row.PublicID, &row.ReportSchemaVersion, &row.Cycle, &row.TriggerType,
+		&row.ResolutionReason, &row.Service, &row.Workload, &row.Environment,
+		&row.ImpactSummary, &row.CycleStartedAt, &row.ResolvedAt,
+		&row.MeasuredDurationMS, &row.BadGitOpsRevision, &row.FixGitOpsRevision,
+		&row.SourceRevision, &row.ImageDigest, &row.GitOpsRevision,
+		&row.VerificationProfileID, &row.VerificationProfileHash,
+		&row.CommonWindowStartedAt, &row.CommonWindowCompletedAt,
+		&row.TriggerSignalJSON, &row.DiagnosisJSON, &row.EvidenceJSON,
+		&row.RemediationPlanJSON, &row.RemediationDecisionJSON, &row.DeliveryJSON,
+		&row.VerificationJSON, &row.TimelineJSON, &row.AgentUsageJSON,
+		&row.Summary, &row.ContentHash, &row.GeneratedAt,
+	); err != nil {
+		return nil, err
+	}
+	if row.ReportSchemaVersion == 0 {
+		return nil, fmt.Errorf("invalid V3 ResolutionReport schema version: %w", ErrInvalidArgument)
+	}
+	item := &ResolutionReportView{
+		ID:                 row.PublicID,
+		Kind:               string(QueryResolutionReport),
+		Status:             "resolved",
+		Cycle:              row.Cycle,
+		TriggerType:        row.TriggerType,
+		ResolutionReason:   row.ResolutionReason,
+		Service:            row.Service,
+		Workload:           row.Workload,
+		Environment:        row.Environment,
+		ImpactSummary:      row.ImpactSummary,
+		Summary:            row.Summary,
+		Hash:               row.ContentHash,
+		CycleStartedAt:     row.CycleStartedAt,
+		ResolvedAt:         row.ResolvedAt,
+		MeasuredDurationMS: row.MeasuredDurationMS,
+		GeneratedAt:        row.GeneratedAt,
+		Revisions: ResolutionRevisionsView{
+			SourceRevision: row.SourceRevision,
+			ImageDigest:    row.ImageDigest,
+			GitOpsRevision: row.GitOpsRevision,
+		},
+		VerificationProfile: ResolutionVerificationProfileView{
+			ID: row.VerificationProfileID, Hash: row.VerificationProfileHash,
+		},
+		Stability: ResolutionStabilityView{
+			CommonWindowStartedAt: row.CommonWindowStartedAt, CommonWindowCompletedAt: row.CommonWindowCompletedAt,
+		},
+		TriggerSignal:       append([]byte(nil), row.TriggerSignalJSON...),
+		Diagnosis:           append([]byte(nil), row.DiagnosisJSON...),
+		Evidence:            append([]byte(nil), row.EvidenceJSON...),
+		RemediationPlan:     append([]byte(nil), row.RemediationPlanJSON...),
+		RemediationDecision: append([]byte(nil), row.RemediationDecisionJSON...),
+		Delivery:            append([]byte(nil), row.DeliveryJSON...),
+		Verification:        append([]byte(nil), row.VerificationJSON...),
+		Timeline:            append([]byte(nil), row.TimelineJSON...),
+		AgentUsage:          append([]byte(nil), row.AgentUsageJSON...),
+	}
+	if row.BadGitOpsRevision.Valid {
+		item.Revisions.BadGitOpsRevision = row.BadGitOpsRevision.String
+	}
+	if row.FixGitOpsRevision.Valid {
+		item.Revisions.FixGitOpsRevision = row.FixGitOpsRevision.String
+	}
+	if err := validateResolutionReportView(item); err != nil {
+		return nil, fmt.Errorf("invalid V3 ResolutionReport projection: %w", err)
+	}
+	return item, nil
 }
 
 func (p *MySQLQueryPort) listEvents(ctx context.Context, request QueryRequest) (QueryResponse, error) {

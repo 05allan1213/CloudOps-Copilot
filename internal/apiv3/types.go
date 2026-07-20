@@ -80,6 +80,58 @@ type ResourceView struct {
 	UpdatedAt time.Time `json:"updated_at,omitempty"`
 }
 
+// ResolutionReportView is the immutable, current-cycle recovery projection.
+// Its identifier-bearing fields are public UUIDs only; the bounded JSON
+// sections are sanitized before they cross the Query port boundary.
+type ResolutionReportView struct {
+	ID                  string                            `json:"id"`
+	Kind                string                            `json:"kind"`
+	Status              string                            `json:"status"`
+	Cycle               uint64                            `json:"cycle"`
+	TriggerType         string                            `json:"trigger_type"`
+	ResolutionReason    string                            `json:"resolution_reason"`
+	Service             string                            `json:"service"`
+	Workload            string                            `json:"workload"`
+	Environment         string                            `json:"environment"`
+	ImpactSummary       string                            `json:"impact_summary"`
+	Summary             string                            `json:"summary"`
+	Hash                string                            `json:"hash"`
+	CycleStartedAt      time.Time                         `json:"cycle_started_at"`
+	ResolvedAt          time.Time                         `json:"resolved_at"`
+	MeasuredDurationMS  uint64                            `json:"measured_duration_ms"`
+	GeneratedAt         time.Time                         `json:"generated_at"`
+	Revisions           ResolutionRevisionsView           `json:"revisions"`
+	VerificationProfile ResolutionVerificationProfileView `json:"verification_profile"`
+	Stability           ResolutionStabilityView           `json:"stability"`
+	TriggerSignal       json.RawMessage                   `json:"trigger_signal"`
+	Diagnosis           json.RawMessage                   `json:"diagnosis"`
+	Evidence            json.RawMessage                   `json:"evidence"`
+	RemediationPlan     json.RawMessage                   `json:"remediation_plan"`
+	RemediationDecision json.RawMessage                   `json:"remediation_decision"`
+	Delivery            json.RawMessage                   `json:"delivery"`
+	Verification        json.RawMessage                   `json:"verification"`
+	Timeline            json.RawMessage                   `json:"timeline"`
+	AgentUsage          json.RawMessage                   `json:"agent_usage"`
+}
+
+type ResolutionRevisionsView struct {
+	BadGitOpsRevision string `json:"bad_gitops_revision,omitempty"`
+	FixGitOpsRevision string `json:"fix_gitops_revision,omitempty"`
+	SourceRevision    string `json:"source_revision"`
+	ImageDigest       string `json:"image_digest"`
+	GitOpsRevision    string `json:"gitops_revision"`
+}
+
+type ResolutionVerificationProfileView struct {
+	ID   string `json:"id"`
+	Hash string `json:"hash"`
+}
+
+type ResolutionStabilityView struct {
+	CommonWindowStartedAt   time.Time `json:"common_window_started_at"`
+	CommonWindowCompletedAt time.Time `json:"common_window_completed_at"`
+}
+
 // RefreshEvent is the only SSE payload kind exposed by this skeleton. Cursor
 // is opaque and is emitted as the SSE id for Last-Event-ID resumption.
 type RefreshEvent struct {
@@ -117,12 +169,13 @@ type QueryRequest struct {
 }
 
 type QueryResponse struct {
-	Incident   *IncidentView
-	Resource   *ResourceView
-	Incidents  []IncidentView
-	Items      []ResourceView
-	Events     []RefreshEvent
-	NextCursor string
+	Incident         *IncidentView
+	Resource         *ResourceView
+	ResolutionReport *ResolutionReportView
+	Incidents        []IncidentView
+	Items            []ResourceView
+	Events           []RefreshEvent
+	NextCursor       string
 }
 
 // QueryPort reads a durable projection only. Implementations must not call
@@ -197,6 +250,10 @@ type incidentResponse struct {
 
 type resourceResponse struct {
 	Resource ResourceView `json:"resource"`
+}
+
+type resolutionReportResponse struct {
+	Resource ResolutionReportView `json:"resource"`
 }
 
 // SessionActor is the bounded identity projection exposed to the browser. The
