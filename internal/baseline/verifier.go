@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -31,6 +32,10 @@ type GitFileReader interface {
 	GetFileContent(context.Context, change.RepositoryRef, string, string) (change.FileContent, error)
 }
 
+type SourceCommitReader interface {
+	GetCommit(context.Context, change.RepositoryRef, string) (change.Commit, error)
+}
+
 type RolloutReader interface {
 	ObserveDeployment(context.Context, string, string, string) (verification.RolloutObservation, error)
 }
@@ -48,18 +53,23 @@ type TraceReader interface {
 }
 
 type VerifierConfig struct {
-	Target          Target
-	Service         string
-	ArgoApplication string
-	ArgoProject     string
-	AlertNames      []string
-	Lookback        time.Duration
-	Now             func() time.Time
+	Target                Target
+	Service               string
+	ArgoApplication       string
+	ArgoProject           string
+	ArgoPath              string
+	ArgoDestinationServer string
+	SourceRepository      change.RepositoryRef
+	AllowedOCISources     []string
+	AlertNames            []string
+	Lookback              time.Duration
+	Now                   func() time.Time
 
 	Argo       ArgoReader
 	Runtime    RuntimeReader
 	Registry   RegistryReader
 	Git        GitFileReader
+	SourceGit  SourceCommitReader
 	Rollout    RolloutReader
 	Prometheus PrometheusReader
 	Logs       LogReader
@@ -76,8 +86,13 @@ func NewVerifier(cfg VerifierConfig) (*Verifier, error) {
 	if err := cfg.Target.Validate(); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(cfg.Service) == "" || strings.TrimSpace(cfg.ArgoApplication) == "" || strings.TrimSpace(cfg.ArgoProject) == "" {
+	if strings.TrimSpace(cfg.Service) == "" || strings.TrimSpace(cfg.ArgoApplication) == "" || strings.TrimSpace(cfg.ArgoProject) == "" ||
+		strings.TrimSpace(cfg.ArgoDestinationServer) == "" ||
+		!validRelativePath(cfg.ArgoPath) {
 		return nil, fmt.Errorf("%w: baseline provider target is incomplete", change.ErrInvalidArgument)
+	}
+	if _, err := repositoryRef(cfg.SourceRepository.FullName()); err != nil || len(cfg.AllowedOCISources) == 0 {
+		return nil, fmt.Errorf("%w: baseline source identity is incomplete", change.ErrInvalidArgument)
 	}
 	if len(cfg.AlertNames) == 0 || len(cfg.AlertNames) > 20 {
 		return nil, fmt.Errorf("%w: baseline alert allowlist is required", change.ErrInvalidArgument)
@@ -86,7 +101,7 @@ func NewVerifier(cfg VerifierConfig) (*Verifier, error) {
 		return nil, fmt.Errorf("%w: baseline lookback must be 30m-24h", change.ErrInvalidArgument)
 	}
 	for name, provider := range map[string]any{
-		"Argo": cfg.Argo, "Runtime": cfg.Runtime, "Registry": cfg.Registry, "Git": cfg.Git,
+		"Argo": cfg.Argo, "Runtime": cfg.Runtime, "Registry": cfg.Registry, "Git": cfg.Git, "SourceGit": cfg.SourceGit,
 		"Rollout": cfg.Rollout, "Prometheus": cfg.Prometheus, "Logs": cfg.Logs, "Traces": cfg.Traces, "Store": cfg.Store,
 	} {
 		if provider == nil {
@@ -121,7 +136,7 @@ func (v *Verifier) Verify(ctx context.Context) (ActivationResult, error) {
 		return ActivationResult{}, err
 	}
 	gitopsRevision := strings.ToLower(strings.TrimSpace(application.DeployedRevision))
-	if !change.ValidCommitSHA(gitopsRevision) {
+	if !change.ValidExactGitObjectID(gitopsRevision) {
 		return ActivationResult{}, fmt.Errorf("%w: Argo deployed revision is not exact", change.ErrConflict)
 	}
 
@@ -146,10 +161,25 @@ func (v *Verifier) Verify(ctx context.Context) (ActivationResult, error) {
 		return ActivationResult{}, unavailable("registry", err)
 	}
 	sourceRevision := strings.ToLower(strings.TrimSpace(metadata.Revision))
-	if !metadata.Valid || metadata.Integrity != change.RegistryIntegrityVerified ||
-		metadata.Degraded || metadata.Truncated || !strings.EqualFold(metadata.ManifestDigest, imageDigest) ||
-		!change.ValidCommitSHA(sourceRevision) {
+	labels := change.ValidateOCILabels(map[string]string{
+		"org.opencontainers.image.revision": metadata.Revision,
+		"org.opencontainers.image.source":   metadata.Source,
+		"org.opencontainers.image.version":  metadata.Version,
+	}, v.cfg.AllowedOCISources)
+	if !metadata.Valid || metadata.Integrity != change.RegistryIntegrityVerified || !labels.Valid ||
+		metadata.Degraded || metadata.Truncated || !strings.EqualFold(metadata.Repository, repository) ||
+		!strings.EqualFold(metadata.ManifestDigest, imageDigest) || !digestPattern.MatchString(strings.ToLower(metadata.ConfigDigest)) ||
+		!change.ValidExactGitObjectID(sourceRevision) || !repositoryURLMatches(metadata.Source, v.cfg.SourceRepository) {
 		return ActivationResult{}, fmt.Errorf("%w: registry identity is not verified", change.ErrConflict)
+	}
+	sourceCommit, err := v.cfg.SourceGit.GetCommit(ctx, v.cfg.SourceRepository, sourceRevision)
+	if err != nil {
+		return ActivationResult{}, unavailable("github-source", err)
+	}
+	if !strings.EqualFold(sourceCommit.Repository, v.cfg.SourceRepository.FullName()) ||
+		!strings.EqualFold(sourceCommit.SHA, sourceRevision) ||
+		!change.ValidExactGitObjectID(strings.ToLower(strings.TrimSpace(sourceCommit.TreeSHA))) {
+		return ActivationResult{}, fmt.Errorf("%w: OCI source revision is not an exact GitHub commit", change.ErrConflict)
 	}
 
 	repositoryRef, err := repositoryRef(target.Repository)
@@ -163,7 +193,9 @@ func (v *Verifier) Verify(ctx context.Context) (ActivationResult, error) {
 	if file.Revision != "" && !strings.EqualFold(file.Revision, gitopsRevision) {
 		return ActivationResult{}, fmt.Errorf("%w: config blob revision mismatch", change.ErrConflict)
 	}
-	if len(file.Content) == 0 || len(file.Content) > 256*1024 {
+	if !strings.EqualFold(file.Repository, target.Repository) || file.Path != target.TargetPath ||
+		!change.ValidExactGitObjectID(strings.ToLower(strings.TrimSpace(file.BlobSHA))) ||
+		len(file.Content) == 0 || len(file.Content) > 256*1024 {
 		return ActivationResult{}, fmt.Errorf("%w: config blob is empty or oversized", change.ErrConflict)
 	}
 	configHash := hashBytes(file.Content)
@@ -188,6 +220,9 @@ func (v *Verifier) Verify(ctx context.Context) (ActivationResult, error) {
 		"ready_replicas": rollout.ReadyReplicas, "available_replicas": rollout.AvailableReplicas,
 		"unavailable_replicas": rollout.UnavailableReplicas, "pods_ready": rollout.PodsReady,
 		"pods_total": rollout.PodsTotal, "progressing": rollout.Progressing, "available": rollout.Available,
+		"image_digest": imageDigest, "source_revision": sourceRevision,
+		"oci_source": metadata.Source, "oci_version": metadata.Version,
+		"registry_result_hash": metadata.ResultHash, "source_commit_tree": sourceCommit.TreeSHA,
 	}
 
 	alerts, err := v.cfg.Prometheus.ObserveV3(ctx, observabilityread.V3MetricQuery{
@@ -274,15 +309,20 @@ func (v *Verifier) Verify(ctx context.Context) (ActivationResult, error) {
 }
 
 func validateArgo(target Target, cfg VerifierConfig, application change.ArgoApplication) error {
+	targetRepository, err := repositoryRef(target.Repository)
+	if err != nil {
+		return err
+	}
 	if !strings.EqualFold(application.Name, cfg.ArgoApplication) ||
 		!strings.EqualFold(application.Project, cfg.ArgoProject) ||
-		!sameRepositoryURL(application.Repository, target.Repository) ||
-		(application.Path != "" && application.Path != target.TargetPath) ||
+		!repositoryURLMatches(application.Repository, targetRepository) ||
+		application.Path != strings.Trim(strings.TrimSpace(cfg.ArgoPath), "/") ||
+		application.DestinationServer != cfg.ArgoDestinationServer || application.Namespace != target.Namespace ||
 		!strings.EqualFold(application.SyncStatus, "Synced") ||
 		!strings.EqualFold(application.HealthStatus, "Healthy") ||
 		!strings.EqualFold(application.OperationPhase, "Succeeded") ||
 		application.Degraded || application.Truncated ||
-		!change.ValidCommitSHA(application.DeployedRevision) {
+		!change.ValidExactGitObjectID(strings.ToLower(strings.TrimSpace(application.DeployedRevision))) {
 		return fmt.Errorf("%w: Argo application is not an exact healthy deployment", change.ErrConflict)
 	}
 	return nil
@@ -376,9 +416,19 @@ func imageRepository(image string) (string, error) {
 	return strings.Join(parts[1:], "/"), nil
 }
 
-func sameRepositoryURL(raw, repository string) bool {
-	value := strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(raw), "/"), ".git")
-	return strings.HasSuffix(strings.ToLower(value), "/"+strings.ToLower(strings.Trim(repository, "/")))
+func repositoryURLMatches(raw string, repository change.RepositoryRef) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || !strings.EqualFold(parsed.Scheme, "https") || !strings.EqualFold(parsed.Hostname(), "github.com") ||
+		parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return false
+	}
+	path := strings.Trim(strings.TrimSuffix(parsed.Path, ".git"), "/")
+	return strings.EqualFold(path, repository.FullName())
+}
+
+func validRelativePath(value string) bool {
+	value = strings.Trim(strings.TrimSpace(value), "/")
+	return value != "" && value != "." && !strings.Contains(value, "..")
 }
 
 func hashBytes(value []byte) string {

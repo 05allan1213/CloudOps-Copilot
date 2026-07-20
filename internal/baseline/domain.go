@@ -40,7 +40,6 @@ const (
 )
 
 var (
-	commitPattern = regexp.MustCompile("^[0-9a-f]{40,64}$")
 	hashPattern   = regexp.MustCompile("^[0-9a-f]{64}$")
 	digestPattern = regexp.MustCompile("^sha256:[0-9a-f]{64}$")
 )
@@ -182,7 +181,7 @@ func (s *Snapshot) Finalize() error {
 	s.ImageDigest = strings.ToLower(strings.TrimSpace(s.ImageDigest))
 	s.ConfigHash = strings.ToLower(strings.TrimSpace(s.ConfigHash))
 	s.VerificationPolicyVersion = strings.TrimSpace(s.VerificationPolicyVersion)
-	if !commitPattern.MatchString(s.SourceRevision) || !commitPattern.MatchString(s.GitOpsRevision) ||
+	if !change.ValidExactGitObjectID(s.SourceRevision) || !change.ValidExactGitObjectID(s.GitOpsRevision) ||
 		!digestPattern.MatchString(s.ImageDigest) || !hashPattern.MatchString(s.ConfigHash) {
 		return fmt.Errorf("%w: baseline revision or digest identity", change.ErrInvalidArgument)
 	}
@@ -251,7 +250,7 @@ func (s Snapshot) PublicID() string {
 func (s Snapshot) computeVerificationHash() string {
 	type observationHash struct {
 		Type, Source, Content, Dedupe, Payload string
-		At                                      time.Time
+		At                                     time.Time
 	}
 	observations := make([]observationHash, 0, len(s.Observations))
 	for _, item := range s.Observations {

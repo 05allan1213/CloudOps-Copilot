@@ -45,6 +45,15 @@ type verifierGitStub struct {
 	err  error
 }
 
+type verifierSourceGitStub struct {
+	commit change.Commit
+	err    error
+}
+
+func (s verifierSourceGitStub) GetCommit(context.Context, change.RepositoryRef, string) (change.Commit, error) {
+	return s.commit, s.err
+}
+
 func (s verifierGitStub) GetFileContent(context.Context, change.RepositoryRef, string, string) (change.FileContent, error) {
 	return s.file, s.err
 }
@@ -110,6 +119,7 @@ func newVerifierFixture(t *testing.T) (*Verifier, *verifierStoreStub) {
 	t.Helper()
 	now := time.Date(2026, 7, 20, 13, 0, 0, 0, time.UTC)
 	gitopsRevision := strings.Repeat("a", 40)
+	sourceRevision := strings.Repeat("d", 40)
 	imageDigest := "sha256:" + strings.Repeat("b", 64)
 	content := []byte("apiVersion: apps/v1\nkind: Deployment\n")
 	store := &verifierStoreStub{}
@@ -129,19 +139,28 @@ func newVerifierFixture(t *testing.T) (*Verifier, *verifierStoreStub) {
 			WorkloadKind: "Deployment", WorkloadName: "demo", ContainerName: "demo",
 			Repository: "acme/gitops", BaseBranch: "main", TargetPath: "apps/demo.yaml",
 		},
-		Service: "demo", ArgoApplication: "demo", ArgoProject: "demo-project",
-		AlertNames: []string{"DemoErrorRateHigh"}, Lookback: 30 * time.Minute, Now: func() time.Time { return now },
+		Service: "demo", ArgoApplication: "demo", ArgoProject: "demo-project", ArgoPath: "apps",
+		ArgoDestinationServer: "https://kubernetes.default.svc",
+		SourceRepository:      change.RepositoryRef{Owner: "acme", Name: "source"},
+		AllowedOCISources:     []string{"https://github.com/acme/source"},
+		AlertNames:            []string{"DemoErrorRateHigh"}, Lookback: 30 * time.Minute, Now: func() time.Time { return now },
 		Argo: verifierArgoStub{application: change.ArgoApplication{
 			Name: "demo", Project: "demo-project", Repository: "https://github.com/acme/gitops",
-			Path: "apps/demo.yaml", DeployedRevision: gitopsRevision, SyncStatus: "Synced",
+			Path: "apps", DeployedRevision: gitopsRevision, SyncStatus: "Synced",
+			DestinationServer: "https://kubernetes.default.svc", Namespace: "cloudops-demo",
 			HealthStatus: "Healthy", OperationPhase: "Succeeded", ResultHash: strings.Repeat("c", 64),
 		}},
 		Runtime: verifierRuntimeStub{runtimes: []change.ContainerRuntime{{
 			ContainerName: "demo", Image: "ghcr.io/acme/demo@" + imageDigest, ImageDigest: imageDigest,
 		}}},
 		Registry: verifierRegistryStub{metadata: change.RegistryMetadata{
-			Repository: "acme/demo", ManifestDigest: imageDigest, Revision: strings.Repeat("d", 40),
-			Integrity: change.RegistryIntegrityVerified, Valid: true,
+			Repository: "acme/demo", ManifestDigest: imageDigest, Revision: sourceRevision,
+			ConfigDigest: "sha256:" + strings.Repeat("2", 64),
+			Source:       "https://github.com/acme/source", Version: sourceRevision,
+			Integrity: change.RegistryIntegrityVerified, Valid: true, ResultHash: strings.Repeat("f", 64),
+		}},
+		SourceGit: verifierSourceGitStub{commit: change.Commit{
+			Repository: "acme/source", SHA: sourceRevision, TreeSHA: strings.Repeat("1", 40),
 		}},
 		Git: verifierGitStub{file: change.FileContent{
 			Repository: "acme/gitops", Revision: gitopsRevision, Path: "apps/demo.yaml",
@@ -195,10 +214,36 @@ func TestVerifierRejectsRegistryDegradation(t *testing.T) {
 	verifier, store := newVerifierFixture(t)
 	verifier.cfg.Registry = verifierRegistryStub{metadata: change.RegistryMetadata{
 		ManifestDigest: "sha256:" + strings.Repeat("b", 64), Revision: strings.Repeat("d", 40),
+		ConfigDigest: "sha256:" + strings.Repeat("2", 64),
+		Source:       "https://github.com/acme/source", Version: strings.Repeat("d", 40),
 		Integrity: change.RegistryIntegrityUnknown, Valid: false, Degraded: true,
 	}}
 	if _, err := verifier.Verify(context.Background()); err == nil {
 		t.Fatal("degraded registry metadata was accepted")
+	}
+	if store.calls != 0 {
+		t.Fatalf("store calls=%d, want 0", store.calls)
+	}
+}
+
+func TestVerifierRejectsUnboundSourceIdentityAndArgoPath(t *testing.T) {
+	verifier, store := newVerifierFixture(t)
+	metadata := verifier.cfg.Registry.(verifierRegistryStub).metadata
+	metadata.Source = "https://github.com/other/source"
+	verifier.cfg.Registry = verifierRegistryStub{metadata: metadata}
+	if _, err := verifier.Verify(context.Background()); err == nil {
+		t.Fatal("unbound OCI source was accepted")
+	}
+	if store.calls != 0 {
+		t.Fatalf("store calls=%d, want 0", store.calls)
+	}
+
+	verifier, store = newVerifierFixture(t)
+	argo := verifier.cfg.Argo.(verifierArgoStub).application
+	argo.Path = "apps/other"
+	verifier.cfg.Argo = verifierArgoStub{application: argo}
+	if _, err := verifier.Verify(context.Background()); err == nil {
+		t.Fatal("mismatched Argo application path was accepted")
 	}
 	if store.calls != 0 {
 		t.Fatalf("store calls=%d, want 0", store.calls)
