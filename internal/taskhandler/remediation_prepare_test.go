@@ -16,7 +16,15 @@ func TestRemediationPrepareCompilesBeforeAtomicPersistence(t *testing.T) {
 	store := &prepareTestStore{}
 	operation, err := NewRemediationPrepare(RemediationPrepareConfig{
 		Loader: RemediationPrepareLoaderFunc(func(context.Context, asyncjob.Task) (RemediationPrepareInput, error) {
-			return RemediationPrepareInput{Request: request}, nil
+			return RemediationPrepareInput{
+				AgentRunID: 30, PlanPublicID: "44444444-4444-4444-8444-444444444444",
+				Baseline: RemediationPrepareBaselineFence{
+					ID: 50, PublicID: "55555555-5555-4555-8555-555555555555", RowVersion: 1,
+					GitOpsRevision: request.LastKnownGoodRevision, ConfigHash: strings.Repeat("6", 64),
+					ObservationID: 60, ObservationHash: strings.Repeat("6", 64),
+				},
+				Request: request,
+			}, nil
 		}),
 		Store: store,
 	})
@@ -43,11 +51,38 @@ func TestRemediationPrepareCompilesBeforeAtomicPersistence(t *testing.T) {
 	}
 }
 
+func TestRemediationPrepareRejectsTaskSuppliedGitQueryBeforeLoader(t *testing.T) {
+	called := false
+	operation, err := NewRemediationPrepare(RemediationPrepareConfig{
+		Loader: RemediationPrepareLoaderFunc(func(context.Context, asyncjob.Task) (RemediationPrepareInput, error) {
+			called = true
+			return RemediationPrepareInput{}, nil
+		}),
+		Store: &prepareTestStore{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := asyncjob.Task{
+		ID: 40, IncidentID: 11, CycleNo: 2, Queue: asyncjob.QueueInvestigate,
+		Type: asyncjob.TaskRemediationPrepare, SubjectType: "agent_run", SubjectID: 30,
+		Transition: "remediation.prepare", ExpectedSubjectVersion: 7,
+		PayloadSchemaVersion: remediationPreparePayloadSchema,
+		Payload:              json.RawMessage(`{"agent_run_id":"22222222-2222-4222-8222-222222222222","cycle_no":2,"repository":"attacker/controlled"}`),
+	}
+	result := operation(context.Background(), asyncjob.Execution{
+		Task: task, Lease: asyncjob.Lease{TaskID: task.ID, Owner: "worker", Generation: 1, ExpectedSubjectVersion: task.ExpectedSubjectVersion, Attempt: 1, MaxAttempts: 3},
+	})
+	if result.Disposition != asyncjob.DispositionDead || result.ErrorCode != "invalid_remediation_payload" || called {
+		t.Fatalf("result=%+v loader_called=%v", result, called)
+	}
+}
+
 type prepareTestStore struct {
 	plan *remediation.RemediationPlan
 }
 
-func (s *prepareTestStore) PersistIn(_ context.Context, _ asyncjob.DBTX, _ asyncjob.Task, plan *remediation.RemediationPlan) error {
+func (s *prepareTestStore) PersistIn(_ context.Context, _ asyncjob.DBTX, _ asyncjob.Task, _ RemediationPrepareInput, plan *remediation.RemediationPlan) error {
 	copyPlan := *plan
 	s.plan = &copyPlan
 	return nil
