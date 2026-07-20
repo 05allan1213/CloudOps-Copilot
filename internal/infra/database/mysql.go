@@ -13,7 +13,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const SupportedSchemaVersion int64 = 9
+const SupportedSchemaVersion int64 = 10
 
 type MySQLConfig struct {
 	Host        string

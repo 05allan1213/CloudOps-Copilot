@@ -84,8 +84,8 @@ func (s *Store) Ready(ctx context.Context) error {
 	if err := s.db.QueryRowContext(ctx, "SELECT MAX(version_id) FROM goose_db_version WHERE is_applied = 1").Scan(&version); err != nil {
 		return fmt.Errorf("read goose version: %w", err)
 	}
-	if !version.Valid || version.Int64 != 9 {
-		return fmt.Errorf("unsupported schema version %d, want 9", version.Int64)
+	if !version.Valid || version.Int64 != 10 {
+		return fmt.Errorf("unsupported schema version %d, want 10", version.Int64)
 	}
 	for _, table := range []string{"async_tasks", "async_task_attempts", "signal_rejections", "command_idempotency_records", "migration_ledger"} {
 		var count int

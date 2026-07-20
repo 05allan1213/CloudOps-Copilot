@@ -42,11 +42,10 @@ func TestV3RemediationVerificationExpansion(t *testing.T) {
 	signalID := insertPhase2Signal(t, ctx, db, incidentID, 900)
 	insertPhase2Verification(t, ctx, db, incidentID, signalID, 1, "passed", 900)
 
-	if _, err := runner.Up(ctx); err != nil {
+	if _, err := runner.provider.UpTo(ctx, 9); err != nil {
 		t.Fatalf("upgrade partial V3 rows through 00009: %v", err)
 	}
-	assertVersion(t, ctx, runner, LatestVersion)
-	assertV3PersistenceSchema(t, ctx, db)
+	assertVersion(t, ctx, runner, 9)
 
 	var planContract, verificationContract sql.NullInt64
 	if err := db.QueryRowContext(ctx, "SELECT plan_content_schema_version FROM remediation_plans WHERE id = ?", planID).Scan(&planContract); err != nil {
@@ -56,7 +55,7 @@ func TestV3RemediationVerificationExpansion(t *testing.T) {
 		t.Fatal(err)
 	}
 	if planContract.Valid || verificationContract.Valid {
-		t.Fatalf("00008 partial row unexpectedly opted into 00009 contract: plan=%v verification=%v", planContract, verificationContract)
+		t.Fatalf("00008 partial row unexpectedly opted into the complete contract: plan=%v verification=%v", planContract, verificationContract)
 	}
 	if _, err := db.ExecContext(ctx, "UPDATE remediation_plans SET plan_content_schema_version = 1 WHERE id = ?", planID); err == nil {
 		t.Fatal("partial immutable Plan contract unexpectedly accepted")
@@ -77,8 +76,8 @@ SET plan_content_schema_version = 1,
     target_field_ref = 'spec.template.spec.containers[name=demo].env[name=REQUIRED_ENV]',
     expected_post_image_hash = ?,
     expected_tree_hash = ?,
-    canonical_change_manifest_json = JSON_OBJECT('path',target_path,'base_blob_sha',?,'file_mode','100644','post_image_hash',?),
-    bounded_diff = '--- a/deploy/demo.yaml\n+++ b/deploy/demo.yaml\n',
+	    canonical_change_manifest_json = JSON_OBJECT('path',target_path,'base_blob_sha',?,'file_mode','100644','post_image_hash',?),
+	    bounded_diff = '--- a/deploy/demo.yaml\n+++ b/deploy/demo.yaml\n',
     policy_version = 'restore-required-env/v1',
     policy_snapshot_json = JSON_OBJECT('version','restore-required-env/v1'),
     verification_plan_hash = ?,
@@ -87,6 +86,26 @@ SET plan_content_schema_version = 1,
     expires_at = TIMESTAMPADD(HOUR, 1, created_at)
 WHERE id = ?`, agentRunID, hash, hash, hash, hash, hash, hash, hash, hash, hash, hash, planID); err != nil {
 		t.Fatalf("complete immutable Plan opt-in: %v", err)
+	}
+
+	if _, err := runner.Up(ctx); err != nil {
+		t.Fatalf("upgrade complete V1 Plan through 00010: %v", err)
+	}
+	assertVersion(t, ctx, runner, LatestVersion)
+	assertV3PersistenceSchema(t, ctx, db)
+	var upgradedPlanVersion int
+	var upgradedPostImage []byte
+	if err := db.QueryRowContext(ctx, "SELECT plan_content_schema_version, post_image FROM remediation_plans WHERE id = ?", planID).Scan(&upgradedPlanVersion, &upgradedPostImage); err != nil {
+		t.Fatal(err)
+	}
+	if upgradedPlanVersion != 1 || upgradedPostImage != nil {
+		t.Fatalf("00010 changed V1 Plan compatibility row: version=%d post_image=%q", upgradedPlanVersion, upgradedPostImage)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE remediation_plans
+SET plan_content_schema_version = 2,
+    post_image = 'apiVersion: apps/v1\nkind: Deployment\n'
+WHERE id = ?`, planID); err != nil {
+		t.Fatalf("opt complete Plan into post-image contract V2: %v", err)
 	}
 
 	if _, err := db.ExecContext(ctx, `INSERT INTO remediation_decisions (
@@ -130,6 +149,15 @@ threshold, source_identity, initial_delay_ms, min_samples, sample_unit, failure_
 	}
 	checkID, err := checkResult.LastInsertId()
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, "UPDATE verification_checks SET status = 'timed_out' WHERE id = ?", checkID); err != nil {
+		t.Fatalf("V3 timed_out CheckSpec status rejected: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, "UPDATE verification_checks SET status = 'not-a-check-status' WHERE id = ?", checkID); err == nil {
+		t.Fatal("invalid VerificationCheck status unexpectedly accepted")
+	}
+	if _, err := db.ExecContext(ctx, "UPDATE verification_checks SET status = 'running' WHERE id = ?", checkID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO verification_samples (
@@ -181,12 +209,18 @@ timeline_json, agent_usage_json, summary, content_hash, generated_at
 func assertV3PersistenceSchema(t *testing.T, ctx context.Context, db *sql.DB) {
 	t.Helper()
 	required := map[string][]string{
-		"remediation_plans":     {"plan_content_schema_version", "created_by_agent_run_id", "diagnosis_hash", "expected_post_image_hash", "expected_tree_hash", "bounded_diff", "verification_plan_hash", "evidence_set_hash", "expires_at"},
+		"remediation_plans":     {"plan_content_schema_version", "created_by_agent_run_id", "diagnosis_hash", "expected_post_image_hash", "expected_tree_hash", "bounded_diff", "post_image", "verification_plan_hash", "evidence_set_hash", "expires_at"},
 		"remediation_decisions": {"approved_plan_hash", "approved_base_sha", "approved_post_image_hash", "approved_tree_hash", "approved_patch_hash", "approved_policy_hash", "approved_verification_hash", "approved_evidence_set_hash"},
-		"verification_runs":     {"verification_contract_version", "verification_profile_id", "common_stability_window_ms", "common_success_since"},
-		"verification_checks":   {"check_spec_schema_version", "template_id", "template_version", "initial_delay_ms", "min_samples", "sample_unit", "failure_mode", "source_identity"},
-		"verification_samples":  {"verification_check_id", "sample_sequence", "observed_json", "content_hash"},
-		"resolution_reports":    {"resolution_reason", "trigger_signal_json", "verification_json", "agent_usage_json", "content_hash"},
+		"deployment_baselines":  {"target_identity_hash", "source_revision", "image_digest", "gitops_revision", "config_hash", "active_target_key"},
+		"baseline_observations": {"baseline_id", "observation_type", "observed_json", "content_hash", "dedupe_key"},
+		"change_candidates":     {"agent_run_id", "change_ref", "source_type", "gitops_revision", "supporting_evidence_json", "content_hash"},
+		"change_candidate_assessments": {
+			"candidate_id", "status", "supporting_evidence_json", "contradicting_evidence_json", "validator_version", "policy_hash", "supersedes_assessment_id",
+		},
+		"verification_runs":    {"verification_contract_version", "verification_profile_id", "common_stability_window_ms", "common_success_since"},
+		"verification_checks":  {"check_spec_schema_version", "template_id", "template_version", "initial_delay_ms", "min_samples", "sample_unit", "failure_mode", "source_identity"},
+		"verification_samples": {"verification_check_id", "sample_sequence", "observed_json", "content_hash"},
+		"resolution_reports":   {"resolution_reason", "trigger_signal_json", "verification_json", "agent_usage_json", "content_hash"},
 	}
 	for table, columns := range required {
 		for _, column := range columns {

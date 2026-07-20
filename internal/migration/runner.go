@@ -16,7 +16,7 @@ import (
 	"github.com/05allan1213/CloudOps-Copilot/migrations"
 )
 
-const LatestVersion int64 = 9
+const LatestVersion int64 = 10
 
 type Runner struct {
 	provider *goose.Provider

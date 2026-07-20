@@ -18,6 +18,7 @@ func TestImmutableMigrationHistory(t *testing.T) {
 		"00006_observability_verification_postmortem.sql": "8e1a0b1f0a1125ffb54f8049be17617c1130cebbf446ecc371a281b4a7301fdb",
 		"00007_expand_legacy_schema.sql":                  "e254655698086f7ff3679fe615d0d7b6c2bd58158eb44501086ca37f44c54f45",
 		"00008_expand_v3_async_runtime.sql":               "a769354179532733b6216fbfde699cf756744f72dd75c98cf730feb2e093e96e",
+		"00009_expand_v3_remediation_verification.sql":     "944ca629c190fe82a77e36ac7b35bfff4017fb8b59f3fb4db333918337d9c927",
 	}
 	for name, expectedHash := range expected {
 		contents, err := FS.ReadFile(name)
@@ -27,6 +28,46 @@ func TestImmutableMigrationHistory(t *testing.T) {
 		actualHash := fmt.Sprintf("%x", sha256.Sum256(contents))
 		if actualHash != expectedHash {
 			t.Errorf("immutable migration %s sha256=%s, want %s", name, actualHash, expectedHash)
+		}
+	}
+}
+
+func TestPhase5ChangeBaselineMigrationContract(t *testing.T) {
+	contents, err := FS.ReadFile("00010_phase5_change_baselines.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlText := string(contents)
+	if !strings.HasPrefix(sqlText, "-- +goose Up") || !strings.Contains(sqlText, "-- +goose NO TRANSACTION") {
+		t.Fatal("00010 must be an explicit forward Goose migration")
+	}
+	forbidden := regexp.MustCompile(`(?im)^\s*(UPDATE|INSERT|DELETE|TRUNCATE|DROP\s+TABLE|DROP\s+COLUMN|RENAME\s+TABLE)\b`)
+	if match := forbidden.FindString(sqlText); match != "" {
+		t.Fatalf("00010 contains non-expand statement %q", strings.TrimSpace(match))
+	}
+	for _, required := range []string{
+		"ADD COLUMN post_image MEDIUMBLOB",
+		"plan_content_schema_version = 1 AND post_image IS NULL",
+		"plan_content_schema_version = 2",
+		"OCTET_LENGTH(post_image) BETWEEN 1 AND 262144",
+		"DROP CHECK chk_remediation_plans_v3_complete",
+		"CREATE TABLE deployment_baselines",
+		"active_target_key",
+		"CREATE TABLE baseline_observations",
+		"CREATE TABLE change_candidates",
+		"CREATE TABLE change_candidate_assessments",
+		"DROP CHECK chk_verification_checks_status",
+		"status IN ('pending','running','passed','failed','timed_out','unavailable','invalid','cancelled')",
+		"fk_change_candidates_agent_owner",
+		"fk_change_candidate_assessments_supersedes",
+	} {
+		if !strings.Contains(sqlText, required) {
+			t.Fatalf("00010 missing Phase 5 persistence contract %q", required)
+		}
+	}
+	for _, forbiddenMarker := range []string{"CUTOVER_V3", "-- +goose Down", "ALTER TABLE remediation_approvals", "ALTER TABLE changes"} {
+		if strings.Contains(sqlText, forbiddenMarker) {
+			t.Fatalf("00010 must preserve compatibility and avoid %q", forbiddenMarker)
 		}
 	}
 }
