@@ -3,6 +3,7 @@ package githubread
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/05allan1213/CloudOps-Copilot/internal/change"
+	"github.com/05allan1213/CloudOps-Copilot/internal/remediation"
 )
 
 type ErrorCode string
@@ -186,7 +188,51 @@ func (c *Client) GetCommit(ctx context.Context, repo change.RepositoryRef, ref s
 		parents = append(parents, parent.SHA)
 	}
 	message, _ := change.RedactText(payload.Commit.Message, 4096)
-	return change.Commit{Repository: repo.FullName(), SHA: payload.SHA, Parents: parents, Message: message, AuthorAt: payload.Commit.Author.Date.UTC(), CommitterAt: payload.Commit.Committer.Date.UTC(), HTMLURL: payload.HTMLURL}, nil
+	return change.Commit{Repository: repo.FullName(), SHA: payload.SHA, TreeSHA: payload.Commit.Tree.SHA, Parents: parents, Message: message, AuthorAt: payload.Commit.Author.Date.UTC(), CommitterAt: payload.Commit.Committer.Date.UTC(), HTMLURL: payload.HTMLURL}, nil
+}
+
+// GetFileContent reads one allowlisted file at an exact commit. It is an
+// additive V3 delivery port and intentionally is not part of the broader
+// change.GitHubReader interface used by legacy correlation.
+func (c *Client) GetFileContent(ctx context.Context, repo change.RepositoryRef, revision, filePath string) (change.FileContent, error) {
+	if err := c.authorize(repo); err != nil {
+		return change.FileContent{}, err
+	}
+	revision = strings.ToLower(strings.TrimSpace(revision))
+	if err := c.authorizeRef(revision); err != nil || !change.ValidExactGitObjectID(revision) {
+		return change.FileContent{}, change.ErrInvalidArgument
+	}
+	filePath = strings.TrimPrefix(path.Clean(strings.TrimSpace(filePath)), "./")
+	if filePath == "" || filePath == "." || strings.HasPrefix(filePath, "../") || !c.pathAllowed(filePath) || change.SensitivePath(filePath, c.deniedPaths) {
+		return change.FileContent{}, change.ErrNotAllowed
+	}
+	var payload struct {
+		Type     string `json:"type"`
+		Path     string `json:"path"`
+		Encoding string `json:"encoding"`
+		Content  string `json:"content"`
+		SHA      string `json:"sha"`
+		Size     int    `json:"size"`
+	}
+	apiPath := c.repoPath(repo, "/contents/"+escapeGitHubFilePath(filePath)) + "?ref=" + url.QueryEscape(revision)
+	if err := c.getJSON(ctx, apiPath, &payload); err != nil {
+		return change.FileContent{}, err
+	}
+	payload.SHA = strings.ToLower(strings.TrimSpace(payload.SHA))
+	if payload.Type != "file" || payload.Path != filePath || payload.Encoding != "base64" ||
+		!change.ValidExactGitObjectID(payload.SHA) || payload.Size <= 0 || payload.Size > remediation.MaxV3PostImageBytes {
+		return change.FileContent{}, change.ErrInvalidArgument
+	}
+	encoded := strings.NewReplacer("\n", "", "\r", "").Replace(payload.Content)
+	contents, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil || len(contents) != payload.Size || len(contents) > remediation.MaxV3PostImageBytes {
+		return change.FileContent{}, change.ErrInvalidArgument
+	}
+	computedBlob, err := change.GitBlobObjectID(contents, len(payload.SHA))
+	if err != nil || computedBlob != payload.SHA {
+		return change.FileContent{}, change.ErrInvalidArgument
+	}
+	return change.FileContent{Repository: repo.FullName(), Revision: revision, Path: filePath, BlobSHA: payload.SHA, Content: contents}, nil
 }
 
 func (c *Client) GetCommitDiff(ctx context.Context, repo change.RepositoryRef, ref string) (change.DiffSummary, error) {
@@ -228,7 +274,7 @@ func (c *Client) GetPullRequest(ctx context.Context, repo change.RepositoryRef, 
 	}
 	title, _ := change.RedactText(payload.Title, 1024)
 	body, _ := change.RedactText(payload.Body, 4096)
-	return change.PullRequest{Repository: repo.FullName(), Number: payload.Number, Title: title, Body: body, State: payload.State, Merged: payload.Merged, MergeCommitSHA: payload.MergeCommitSHA, BaseSHA: payload.Base.SHA, HeadSHA: payload.Head.SHA, MergedAt: payload.MergedAt, HTMLURL: payload.HTMLURL}, nil
+	return change.PullRequest{Repository: repo.FullName(), Number: payload.Number, Title: title, Body: body, State: payload.State, Merged: payload.Merged, MergeCommitSHA: payload.MergeCommitSHA, BaseSHA: payload.Base.SHA, HeadSHA: payload.Head.SHA, MergedBy: payload.MergedBy.Login, MergedByType: payload.MergedBy.Type, MergedAt: payload.MergedAt, HTMLURL: payload.HTMLURL}, nil
 }
 
 func (c *Client) ListPullRequestsForCommit(ctx context.Context, repo change.RepositoryRef, sha string) ([]change.PullRequest, error) {
@@ -246,7 +292,7 @@ func (c *Client) ListPullRequestsForCommit(ctx context.Context, repo change.Repo
 	for _, item := range payload {
 		title, _ := change.RedactText(item.Title, 1024)
 		body, _ := change.RedactText(item.Body, 4096)
-		result = append(result, change.PullRequest{Repository: repo.FullName(), Number: item.Number, Title: title, Body: body, State: item.State, Merged: item.Merged || item.MergedAt != nil, MergeCommitSHA: item.MergeCommitSHA, BaseSHA: item.Base.SHA, HeadSHA: item.Head.SHA, MergedAt: item.MergedAt, HTMLURL: item.HTMLURL})
+		result = append(result, change.PullRequest{Repository: repo.FullName(), Number: item.Number, Title: title, Body: body, State: item.State, Merged: item.Merged || item.MergedAt != nil, MergeCommitSHA: item.MergeCommitSHA, BaseSHA: item.Base.SHA, HeadSHA: item.Head.SHA, MergedBy: item.MergedBy.Login, MergedByType: item.MergedBy.Type, MergedAt: item.MergedAt, HTMLURL: item.HTMLURL})
 	}
 	return result, nil
 }
@@ -289,6 +335,9 @@ func (c *Client) GetCIStatus(ctx context.Context, repo change.RepositoryRef, sha
 				Status     string `json:"status"`
 				Conclusion string `json:"conclusion"`
 				HTMLURL    string `json:"html_url"`
+				App        struct {
+					ID int64 `json:"id"`
+				} `json:"app"`
 			} `json:"check_runs"`
 		}
 		path := c.repoPath(repo, "/commits/"+url.PathEscape(sha)+"/check-runs") + "?per_page=100&page=" + strconv.Itoa(page)
@@ -296,7 +345,7 @@ func (c *Client) GetCIStatus(ctx context.Context, repo change.RepositoryRef, sha
 			return change.CIStatus{}, err
 		}
 		for _, item := range checks.CheckRuns {
-			result.CheckRuns = append(result.CheckRuns, change.CheckRun{ID: item.ID, Name: change.BoundUTF8(item.Name, 255), Status: item.Status, Conclusion: item.Conclusion, HTMLURL: item.HTMLURL})
+			result.CheckRuns = append(result.CheckRuns, change.CheckRun{ID: item.ID, Name: change.BoundUTF8(item.Name, 255), Status: item.Status, Conclusion: item.Conclusion, AppID: item.App.ID, HTMLURL: item.HTMLURL})
 			result.Conclusion = combineConclusion(result.Conclusion, item.Status, item.Conclusion)
 		}
 		if len(checks.CheckRuns) < 100 {
@@ -318,7 +367,7 @@ func (c *Client) GetCIStatus(ctx context.Context, repo change.RepositoryRef, sha
 					continue
 				}
 			}
-			result.WorkflowRuns = append(result.WorkflowRuns, change.WorkflowRun{ID: item.ID, Name: change.BoundUTF8(item.Name, 255), HeadSHA: item.HeadSHA, HeadBranch: item.HeadBranch, Status: item.Status, Conclusion: item.Conclusion, CreatedAt: item.CreatedAt.UTC(), UpdatedAt: item.UpdatedAt.UTC(), HTMLURL: item.HTMLURL})
+			result.WorkflowRuns = append(result.WorkflowRuns, change.WorkflowRun{ID: item.ID, WorkflowID: item.WorkflowID, Name: change.BoundUTF8(item.Name, 255), Path: change.BoundUTF8(item.Path, 512), HeadSHA: item.HeadSHA, HeadBranch: item.HeadBranch, Status: item.Status, Conclusion: item.Conclusion, CreatedAt: item.CreatedAt.UTC(), UpdatedAt: item.UpdatedAt.UTC(), HTMLURL: item.HTMLURL})
 			result.Conclusion = combineConclusion(result.Conclusion, item.Status, item.Conclusion)
 		}
 		if len(workflows.WorkflowRuns) < 100 {
@@ -549,6 +598,14 @@ func (c *Client) pathAllowed(filename string) bool {
 	return false
 }
 
+func escapeGitHubFilePath(value string) string {
+	parts := strings.Split(strings.Trim(value, "/"), "/")
+	for index := range parts {
+		parts[index] = url.PathEscape(parts[index])
+	}
+	return strings.Join(parts, "/")
+}
+
 func githubOperation(apiPath string) string {
 	switch {
 	case strings.Contains(apiPath, "/check-runs"):
@@ -644,7 +701,10 @@ type commitResponse struct {
 	} `json:"parents"`
 	Commit struct {
 		Message string `json:"message"`
-		Author  struct {
+		Tree    struct {
+			SHA string `json:"sha"`
+		} `json:"tree"`
+		Author struct {
 			Date time.Time `json:"date"`
 		} `json:"author"`
 		Committer struct {
@@ -670,12 +730,18 @@ type pullResponse struct {
 	Head struct {
 		SHA string `json:"sha"`
 	} `json:"head"`
+	MergedBy struct {
+		Login string `json:"login"`
+		Type  string `json:"type"`
+	} `json:"merged_by"`
 	MergedAt *time.Time `json:"merged_at"`
 	HTMLURL  string     `json:"html_url"`
 }
 type workflowResponse struct {
 	ID         int64     `json:"id"`
+	WorkflowID int64     `json:"workflow_id"`
 	Name       string    `json:"name"`
+	Path       string    `json:"path"`
 	HeadSHA    string    `json:"head_sha"`
 	HeadBranch string    `json:"head_branch"`
 	Status     string    `json:"status"`

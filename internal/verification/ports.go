@@ -96,6 +96,7 @@ type RolloutObservation struct {
 	RolloutRevision          string
 	DesiredReplicas          int32
 	UpdatedReplicas          int32
+	ReadyReplicas            int32
 	AvailableReplicas        int32
 	UnavailableReplicas      int32
 	Progressing              bool

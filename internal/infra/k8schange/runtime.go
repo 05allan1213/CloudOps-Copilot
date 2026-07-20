@@ -103,7 +103,7 @@ func (r *Reader) ObserveDeployment(ctx context.Context, cluster, namespace, name
 	if deployment.Spec.Replicas != nil {
 		desired = *deployment.Spec.Replicas
 	}
-	return verification.RolloutObservation{Generation: deployment.Generation, ObservedGeneration: deployment.Status.ObservedGeneration, RolloutRevision: deployment.Annotations["deployment.kubernetes.io/revision"], DesiredReplicas: desired, UpdatedReplicas: deployment.Status.UpdatedReplicas, AvailableReplicas: deployment.Status.AvailableReplicas, UnavailableReplicas: deployment.Status.UnavailableReplicas, Progressing: progressing, Available: available, ProgressDeadline: deadline, ProgressDeadlineExceeded: progressDeadlineExceeded, PodsReady: ready, PodsTotal: int32(len(pods.Items))}, nil
+	return verification.RolloutObservation{Generation: deployment.Generation, ObservedGeneration: deployment.Status.ObservedGeneration, RolloutRevision: deployment.Annotations["deployment.kubernetes.io/revision"], DesiredReplicas: desired, UpdatedReplicas: deployment.Status.UpdatedReplicas, ReadyReplicas: deployment.Status.ReadyReplicas, AvailableReplicas: deployment.Status.AvailableReplicas, UnavailableReplicas: deployment.Status.UnavailableReplicas, Progressing: progressing, Available: available, ProgressDeadline: deadline, ProgressDeadlineExceeded: progressDeadlineExceeded, PodsReady: ready, PodsTotal: int32(len(pods.Items))}, nil
 }
 
 func (r *Reader) ResolveRuntime(ctx context.Context, namespace, kind, name string) ([]change.ContainerRuntime, error) {

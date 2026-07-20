@@ -15,11 +15,20 @@ func (r RepositoryRef) FullName() string { return r.Owner + "/" + r.Name }
 type Commit struct {
 	Repository  string    `json:"repository"`
 	SHA         string    `json:"sha"`
+	TreeSHA     string    `json:"tree_sha"`
 	Parents     []string  `json:"parents"`
 	Message     string    `json:"message"`
 	AuthorAt    time.Time `json:"author_at"`
 	CommitterAt time.Time `json:"committer_at"`
 	HTMLURL     string    `json:"html_url"`
+}
+
+type FileContent struct {
+	Repository string `json:"repository"`
+	Revision   string `json:"revision"`
+	Path       string `json:"path"`
+	BlobSHA    string `json:"blob_sha"`
+	Content    []byte `json:"-"`
 }
 
 type FileChange struct {
@@ -57,6 +66,8 @@ type PullRequest struct {
 	MergeCommitSHA string     `json:"merge_commit_sha"`
 	BaseSHA        string     `json:"base_sha"`
 	HeadSHA        string     `json:"head_sha"`
+	MergedBy       string     `json:"merged_by,omitempty"`
+	MergedByType   string     `json:"merged_by_type,omitempty"`
 	MergedAt       *time.Time `json:"merged_at"`
 	HTMLURL        string     `json:"html_url"`
 }
@@ -66,12 +77,15 @@ type CheckRun struct {
 	Name       string `json:"name"`
 	Status     string `json:"status"`
 	Conclusion string `json:"conclusion"`
+	AppID      int64  `json:"app_id"`
 	HTMLURL    string `json:"html_url"`
 }
 
 type WorkflowRun struct {
 	ID         int64     `json:"id"`
+	WorkflowID int64     `json:"workflow_id"`
 	Name       string    `json:"name"`
+	Path       string    `json:"path"`
 	HeadSHA    string    `json:"head_sha"`
 	HeadBranch string    `json:"head_branch"`
 	Status     string    `json:"status"`
