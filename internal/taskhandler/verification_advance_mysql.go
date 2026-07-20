@@ -23,6 +23,7 @@ import (
 
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
 	"github.com/05allan1213/CloudOps-Copilot/internal/baseline"
+	"github.com/05allan1213/CloudOps-Copilot/internal/businessbudget"
 	"github.com/05allan1213/CloudOps-Copilot/internal/verification"
 )
 
@@ -603,7 +604,7 @@ func enqueueVerificationAdvance(ctx context.Context, tx asyncjob.DBTX, tasks Ver
 	return err
 }
 
-func requeueInvestigation(ctx context.Context, tx asyncjob.DBTX, tasks VerificationAdvanceTaskStore, task asyncjob.Task, status verification.RunStatus, reason string, maxRuns int) error {
+func requeueInvestigation(ctx context.Context, tx asyncjob.DBTX, tasks VerificationAdvanceTaskStore, task asyncjob.Task, status verification.RunStatus, reason string, _ int) error {
 	var incidentVersion uint64
 	var incidentStatus string
 	if err := tx.QueryRowContext(ctx, `
@@ -639,13 +640,15 @@ VALUES (?, ?, 3, ?, 1, 'verification_failed', ?, 'system', 'verification.advance
 		"Verification did not establish recovery; investigation resumed", metadata); err != nil {
 		return err
 	}
-	var runCount int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM agent_runs WHERE incident_id = ? AND cycle_no = ? AND domain_schema_version = 3`, task.IncidentID, task.CycleNo).Scan(&runCount); err != nil {
+	budget, err := businessbudget.GuardAutomatic(ctx, tx, businessbudget.KindAgentRun, task.IncidentID, task.CycleNo)
+	if err != nil {
 		return err
 	}
-	if runCount >= maxRuns {
-		_, err := tx.ExecContext(ctx, `UPDATE incidents SET needs_attention = TRUE, blocking_reason_code = 'agent_run_budget_exhausted', updated_at = NOW(6) WHERE id = ? AND cycle_no = ?`, task.IncidentID, task.CycleNo)
-		return err
+	if budget.IncidentVersion != newIncidentVersion {
+		return asyncjob.ErrSubjectVersionMismatch
+	}
+	if !budget.Allowed() {
+		return businessbudget.MarkExhausted(ctx, tx, budget, task.IncidentID, task.CycleNo, "verification.advance")
 	}
 	if tasks == nil {
 		return asyncjob.ErrInvalidMutation

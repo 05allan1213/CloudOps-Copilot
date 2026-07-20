@@ -3,24 +3,26 @@ package taskhandler
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/google/uuid"
 
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
+	"github.com/05allan1213/CloudOps-Copilot/internal/businessbudget"
 )
 
 const (
-	// DefaultAgentRunBudget is the per-cycle automatic investigation limit.
-	DefaultAgentRunBudget = 3
-	// HardAgentRunBudget is the maximum allowed by the frozen V3 contract. The
-	// Phase 2 start operation does not expose an operator override, so it stops
-	// at the default limit and records needs_attention.
-	HardAgentRunBudget        = 5
+	// DefaultAgentRunBudget and HardAgentRunBudget retain the public taskhandler
+	// names while sharing the frozen V3 budget contract with every child kind.
+	DefaultAgentRunBudget     = businessbudget.DefaultLimit
+	HardAgentRunBudget        = businessbudget.HardLimit
 	defaultSemanticIterations = 8
 	defaultToolCalls          = 8
 	defaultModelCalls         = 10
@@ -40,12 +42,19 @@ func investigationStart(_ context.Context, execution asyncjob.Execution) asyncjo
 		task.CycleNo == 0 || task.ExpectedSubjectVersion == 0 || task.PayloadSchemaVersion != 1 {
 		return asyncjob.Dead("invalid_task_subject", "investigation.start task identity is invalid", nil)
 	}
+	if _, err := decodeInvestigationStartPayload(task); err != nil {
+		return asyncjob.Dead("invalid_task_payload", err.Error(), nil)
+	}
 	return asyncjob.Succeeded(func(ctx context.Context, tx asyncjob.DBTX) error {
 		return startInvestigation(ctx, tx, task)
 	})
 }
 
 func startInvestigation(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task) error {
+	startPayload, err := decodeInvestigationStartPayload(task)
+	if err != nil {
+		return fmt.Errorf("%w: %v", asyncjob.ErrInvalidMutation, err)
+	}
 	var cycle uint64
 	var status string
 	var version uint64
@@ -62,28 +71,36 @@ FOR UPDATE`, task.IncidentID).Scan(&cycle, &status, &version); err != nil {
 	if status != "detected" && status != "investigating" {
 		return fmt.Errorf("%w: incident status %q cannot start investigation", asyncjob.ErrInvalidMutation, status)
 	}
-	if err := enforceAgentRunBudget(ctx, tx, task); err != nil {
-		return err
+	budget, err := businessbudget.GuardAgentRun(ctx, tx, task.IncidentID, task.CycleNo, startPayload.AuthorizationPublicID)
+	if err != nil {
+		return fmt.Errorf("%w: investigation.start authorization rejected: %v", asyncjob.ErrPolicyViolation, err)
+	}
+	if !budget.Allowed() {
+		return businessbudget.MarkExhausted(ctx, tx, budget, task.IncidentID, task.CycleNo, "investigation.start")
 	}
 
 	runPublicID := uuid.NewString()
 	runKey := hashCanonical("agent-run", fmt.Sprint(task.IncidentID), fmt.Sprint(task.CycleNo), fmt.Sprint(task.ExpectedSubjectVersion))
+	var authorizationValue any
+	if budget.AuthorizationID != 0 {
+		authorizationValue = budget.AuthorizationID
+	}
 	result, err := tx.ExecContext(ctx, `
 INSERT INTO agent_runs
     (public_id, incident_id, idempotency_key, status, objective, model, prompt_version,
      max_steps, max_tool_calls, max_model_calls, token_budget, max_evidence_items,
      max_runtime_ms, tool_timeout_ms, max_evidence_bytes, max_checkpoint_bytes,
      max_step_retries, failure_code, row_version, domain_schema_version, v3_status,
-     cycle_no, expected_incident_version, deadline_at, created_at, updated_at)
+     cycle_no, expected_incident_version, business_budget_authorization_id, deadline_at, created_at, updated_at)
 VALUES (?, ?, ?, 'PENDING', 'Investigate the current Incident using bounded read-only evidence.',
         'configured', 'incident-agent-v3', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 1, 3,
-        'pending', ?, ?, TIMESTAMPADD(MICROSECOND, ?, NOW(6)), NOW(6), NOW(6))
+        'pending', ?, ?, ?, TIMESTAMPADD(MICROSECOND, ?, NOW(6)), NOW(6), NOW(6))
 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
 		runPublicID, task.IncidentID, runKey,
 		defaultSemanticIterations, defaultToolCalls, defaultModelCalls, defaultModelTokens,
 		defaultEvidenceItems, defaultRuntimeMillis, defaultToolTimeoutMillis,
 		defaultEvidenceBytes, defaultCheckpointBytes, defaultStepRetries,
-		task.CycleNo, task.ExpectedSubjectVersion+1, int64(defaultRuntimeMillis)*1000)
+		task.CycleNo, task.ExpectedSubjectVersion+1, authorizationValue, int64(defaultRuntimeMillis)*1000)
 	if err != nil {
 		return fmt.Errorf("create investigation AgentRun: %w", err)
 	}
@@ -94,16 +111,21 @@ ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
 
 	var runIncidentID, runCycle, runExpectedVersion uint64
 	var runKeyFound, runStatus string
+	var runAuthorization sql.NullInt64
 	if err := tx.QueryRowContext(ctx, `
 SELECT public_id, incident_id, COALESCE(cycle_no, 0), COALESCE(expected_incident_version, 0),
-       COALESCE(idempotency_key, ''), COALESCE(v3_status, '')
+       COALESCE(idempotency_key, ''), COALESCE(v3_status, ''), business_budget_authorization_id
 FROM agent_runs WHERE id = ? FOR UPDATE`, runID).
-		Scan(&runPublicID, &runIncidentID, &runCycle, &runExpectedVersion, &runKeyFound, &runStatus); err != nil {
+		Scan(&runPublicID, &runIncidentID, &runCycle, &runExpectedVersion, &runKeyFound, &runStatus, &runAuthorization); err != nil {
 		return fmt.Errorf("load investigation AgentRun identity: %w", err)
 	}
 	if runIncidentID != task.IncidentID || runCycle != uint64(task.CycleNo) ||
 		runExpectedVersion != task.ExpectedSubjectVersion+1 || runKeyFound != runKey || runStatus != "pending" {
 		return fmt.Errorf("%w: active AgentRun does not match investigation.start", asyncjob.ErrInvalidMutation)
+	}
+	if (budget.AuthorizationID == 0 && runAuthorization.Valid) ||
+		(budget.AuthorizationID != 0 && (!runAuthorization.Valid || uint64(runAuthorization.Int64) != budget.AuthorizationID)) {
+		return fmt.Errorf("%w: AgentRun authorization lineage does not match investigation.start", asyncjob.ErrInvalidMutation)
 	}
 
 	updated, err := tx.ExecContext(ctx, `
@@ -119,7 +141,12 @@ WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? AND version = ?
 		return asyncjob.ErrSubjectVersionMismatch
 	}
 
-	eventMetadata, err := json.Marshal(map[string]any{"agent_run_id": runPublicID, "cycle_no": task.CycleNo})
+	eventValues := map[string]any{"agent_run_id": runPublicID, "cycle_no": task.CycleNo}
+	if budget.AuthorizationPublicID != "" {
+		eventValues["business_budget_authorization_id"] = budget.AuthorizationPublicID
+		eventValues["authorization_slot"] = budget.AuthorizationSlot
+	}
+	eventMetadata, err := json.Marshal(eventValues)
 	if err != nil {
 		return fmt.Errorf("encode AgentRun event: %w", err)
 	}
@@ -174,30 +201,35 @@ FOR UPDATE`, dedupe).Scan(
 	return nil
 }
 
-func enforceAgentRunBudget(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task) error {
-	rows, err := tx.QueryContext(ctx, `
-SELECT id
-FROM agent_runs
-WHERE incident_id = ? AND cycle_no = ? AND domain_schema_version = 3
-ORDER BY id
-LIMIT 6
-FOR UPDATE`, task.IncidentID, task.CycleNo)
-	if err != nil {
-		return fmt.Errorf("count investigation AgentRuns: %w", err)
+type investigationStartPayload struct {
+	Mode                  string `json:"mode"`
+	IncidentID            string `json:"incident_id,omitempty"`
+	IncidentPublicID      string `json:"incident_public_id,omitempty"`
+	CycleNo               uint32 `json:"cycle_no"`
+	AuthorizationPublicID string `json:"business_budget_authorization_id,omitempty"`
+}
+
+func decodeInvestigationStartPayload(task asyncjob.Task) (investigationStartPayload, error) {
+	if len(task.Payload) == 0 || len(task.Payload) > 8192 {
+		return investigationStartPayload{}, errors.New("investigation.start payload is empty or too large")
 	}
-	defer rows.Close()
-	count := 0
-	for rows.Next() {
-		count++
+	decoder := json.NewDecoder(strings.NewReader(string(task.Payload)))
+	decoder.DisallowUnknownFields()
+	var payload investigationStartPayload
+	if err := decoder.Decode(&payload); err != nil {
+		return investigationStartPayload{}, errors.New("investigation.start payload is malformed")
 	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate investigation AgentRuns: %w", err)
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return investigationStartPayload{}, errors.New("investigation.start payload has multiple JSON values")
 	}
-	if count >= DefaultAgentRunBudget {
-		return fmt.Errorf("%w: cycle AgentRun budget exhausted (%d/%d, hard limit %d)",
-			asyncjob.ErrBusinessBudgetExceeded, count, DefaultAgentRunBudget, HardAgentRunBudget)
+	if payload.Mode != "start" || payload.CycleNo != 0 && payload.CycleNo != task.CycleNo ||
+		len(payload.IncidentID) > 64 || len(payload.IncidentPublicID) > 64 ||
+		payload.AuthorizationPublicID != "" && len(payload.AuthorizationPublicID) > 64 {
+		return investigationStartPayload{}, errors.New("investigation.start payload identity is invalid")
 	}
-	return nil
+	payload.AuthorizationPublicID = strings.TrimSpace(payload.AuthorizationPublicID)
+	return payload, nil
 }
 
 func hashCanonical(parts ...string) string {

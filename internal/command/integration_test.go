@@ -290,6 +290,110 @@ WHERE id = ? AND v3_status = 'investigating' AND version = 1`, 1, incidentID)
 	})
 }
 
+func TestMySQLInvestigationRetryAuthorizationIsDurableConcurrentAndHardBounded(t *testing.T) {
+	db := openCommandIntegrationDB(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	port, err := NewPort(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actor := apiv3.Identity{Subject: "github:operator", Provider: "github", Login: "operator", Role: "operator"}
+
+	t.Run("ordinary slots keep optional reason", func(t *testing.T) {
+		incidentID, publicID := insertCommandBudgetIncident(t, ctx, db, 0)
+		request := newInvestigationStartRequest(publicID, 1, "ordinary-start", actor, "")
+		if _, err := port.Execute(ctx, request); err != nil {
+			t.Fatal(err)
+		}
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_cycle_budget_authorizations WHERE incident_id = ?`, 0, incidentID)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks WHERE incident_id = ? AND transition = 'investigation.start'`, 1, incidentID)
+	})
+
+	t.Run("concurrent slot four creates one Decision and one task", func(t *testing.T) {
+		incidentID, publicID := insertCommandBudgetIncident(t, ctx, db, 3)
+		requests := []apiv3.CommandRequest{
+			newInvestigationStartRequest(publicID, 1, "retry-slot-four-a", actor, "operator reviewed failed cycle evidence"),
+			newInvestigationStartRequest(publicID, 1, "retry-slot-four-b", actor, "operator approved one bounded retry"),
+		}
+		start := make(chan struct{})
+		errs := make([]error, len(requests))
+		results := make([]apiv3.CommandResult, len(requests))
+		var wait sync.WaitGroup
+		for index := range requests {
+			wait.Add(1)
+			go func(index int) {
+				defer wait.Done()
+				<-start
+				results[index], errs[index] = port.Execute(ctx, requests[index])
+			}(index)
+		}
+		close(start)
+		wait.Wait()
+		successes, conflicts := 0, 0
+		successfulRequest := -1
+		for index, commandErr := range errs {
+			switch {
+			case commandErr == nil:
+				successes++
+				successfulRequest = index
+			case errors.Is(commandErr, apiv3.ErrConflict):
+				conflicts++
+			default:
+				t.Fatalf("unexpected concurrent retry error: %v", commandErr)
+			}
+		}
+		if successes != 1 || conflicts != 1 {
+			t.Fatalf("successes=%d conflicts=%d results=%+v", successes, conflicts, results)
+		}
+		replayed, err := port.Execute(ctx, requests[successfulRequest])
+		if err != nil || !replayed.Replayed {
+			t.Fatalf("authorization command replay=%+v err=%v", replayed, err)
+		}
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_cycle_budget_authorizations WHERE incident_id = ? AND cycle_no = 1 AND slot_no = 4`, 1, incidentID)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks WHERE incident_id = ? AND transition = 'investigation.start' AND status = 'ready'`, 1, incidentID)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_events WHERE incident_id = ? AND event_type = 'agent_run_retry_authorized'`, 1, incidentID)
+		var reason, authorizationPublicID string
+		if err := db.QueryRowContext(ctx, `SELECT reason, public_id FROM incident_cycle_budget_authorizations WHERE incident_id = ?`, incidentID).Scan(&reason, &authorizationPublicID); err != nil {
+			t.Fatal(err)
+		}
+		if strings.TrimSpace(reason) == "" {
+			t.Fatal("retry authorization reason is empty")
+		}
+		var payload []byte
+		if err := db.QueryRowContext(ctx, `SELECT payload_json FROM async_tasks WHERE incident_id = ? AND transition = 'investigation.start'`, incidentID).Scan(&payload); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(payload), authorizationPublicID) {
+			t.Fatalf("task payload does not reference durable authorization: %s", payload)
+		}
+
+		missing := newInvestigationStartRequest(publicID, 1, "retry-slot-four-missing-reason", actor, "")
+		if _, err := port.Execute(ctx, missing); !errors.Is(err, apiv3.ErrInvalidArgument) {
+			t.Fatalf("missing retry reason error=%v", err)
+		}
+	})
+
+	t.Run("slot six rejects and writes no task", func(t *testing.T) {
+		incidentID, publicID := insertCommandBudgetIncident(t, ctx, db, 5)
+		request := newInvestigationStartRequest(publicID, 1, "retry-slot-six", actor, "operator requested another bounded retry")
+		if _, err := port.Execute(ctx, request); !errors.Is(err, apiv3.ErrInvalidTransition) {
+			t.Fatalf("slot six error=%v", err)
+		}
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_cycle_budget_authorizations WHERE incident_id = ?`, 0, incidentID)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks WHERE incident_id = ? AND transition = 'investigation.start'`, 0, incidentID)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_events WHERE incident_id = ? AND event_type = 'agent_run_hard_limit_exhausted'`, 1, incidentID)
+		var attention bool
+		var version uint64
+		if err := db.QueryRowContext(ctx, `SELECT needs_attention, version FROM incidents WHERE id = ?`, incidentID).Scan(&attention, &version); err != nil {
+			t.Fatal(err)
+		}
+		if !attention || version != 2 {
+			t.Fatalf("hard exhaustion attention=%v version=%d", attention, version)
+		}
+	})
+}
+
 func TestMySQLRemediationDecisionCommandIsAtomicAndFenced(t *testing.T) {
 	db := openCommandIntegrationDB(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -687,5 +791,46 @@ func assertCommandIntegrationCount(t *testing.T, ctx context.Context, db *sql.DB
 	}
 	if count != expected {
 		t.Fatalf("count=%d want=%d query=%s", count, expected, query)
+	}
+}
+
+func insertCommandBudgetIncident(t *testing.T, ctx context.Context, db *sql.DB, agentRuns int) (uint64, string) {
+	t.Helper()
+	publicID := uuid.NewString()
+	result, err := db.ExecContext(ctx, `INSERT INTO incidents (
+public_id, fingerprint, correlation_key, correlation_key_version, cluster, namespace,
+service_name, environment, target_kind, target_name, severity, status, summary,
+first_seen_at, last_seen_at, version, domain_schema_version, v3_status, cycle_no
+) VALUES (?, ?, ?, 2, 'kind', 'demo', 'checkout', 'demo', 'Deployment', 'checkout',
+          'warning', 'DIAGNOSING', 'business budget command fixture', NOW(6), NOW(6), 1, 3,
+          'investigating', 1)`, publicID, "budget-command-"+publicID, "v2:"+canonicalHash("budget-command", publicID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	incidentID, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < agentRuns; index++ {
+		if _, err := db.ExecContext(ctx, `INSERT INTO agent_runs
+ (public_id, incident_id, status, model, prompt_version, max_steps, failure_code,
+  completed_at, row_version, domain_schema_version, v3_status, cycle_no, expected_incident_version)
+VALUES (?, ?, 'COMPLETED', 'fixture-model', 'incident-agent-v3', 1, '', NOW(6), 1, 3, 'completed', 1, 1)`,
+			uuid.NewString(), incidentID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return uint64(incidentID), publicID
+}
+
+func newInvestigationStartRequest(publicID string, expectedVersion uint64, key string, actor apiv3.Identity, reason string) apiv3.CommandRequest {
+	body, _ := json.Marshal(struct {
+		ExpectedVersion uint64 `json:"expected_version"`
+		Reason          string `json:"reason,omitempty"`
+	}{ExpectedVersion: expectedVersion, Reason: reason})
+	return apiv3.CommandRequest{
+		Kind: apiv3.CommandStartInvestigation, ResourceID: publicID, Actor: actor,
+		IdempotencyKey: key, ExpectedVersion: expectedVersion, CanonicalBody: body,
+		RequestID: uuid.NewString(),
 	}
 }

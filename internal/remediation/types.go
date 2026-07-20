@@ -100,31 +100,32 @@ type RemediationPlan struct {
 
 	// V3 immutable approval bindings. Legacy rows leave these fields empty
 	// until the release-A conversion/cutover flow classifies them.
-	DomainSchemaVersion      int
-	CycleNo                  uint64
-	IncidentVersion          uint64
-	CreatedByAgentRunID      string
-	DiagnosisHash            string
-	HashSchemaVersion        int
-	CanonicalPlanHash        string
-	PlanContentSchemaVersion int
-	LastKnownGoodRevision    string
-	TargetBaseBranch         string
-	BaseBlobSHA              string
-	FileMode                 string
-	TargetFieldRef           string
-	ExpectedPostImageHash    string
-	ExpectedTreeHash         string
-	CanonicalChangeManifest  json.RawMessage
-	BoundedDiff              string
-	PostImage                []byte
-	PolicyVersion            string
-	PolicySnapshot           json.RawMessage
-	VerificationPlan         json.RawMessage
-	VerificationPlanHash     string
-	EvidenceBindings         []EvidenceBinding
-	EvidenceSetHash          string
-	ExpiresAt                time.Time
+	DomainSchemaVersion           int
+	CycleNo                       uint64
+	IncidentVersion               uint64
+	CreatedByAgentRunID           string
+	BusinessBudgetAuthorizationID uint64
+	DiagnosisHash                 string
+	HashSchemaVersion             int
+	CanonicalPlanHash             string
+	PlanContentSchemaVersion      int
+	LastKnownGoodRevision         string
+	TargetBaseBranch              string
+	BaseBlobSHA                   string
+	FileMode                      string
+	TargetFieldRef                string
+	ExpectedPostImageHash         string
+	ExpectedTreeHash              string
+	CanonicalChangeManifest       json.RawMessage
+	BoundedDiff                   string
+	PostImage                     []byte
+	PolicyVersion                 string
+	PolicySnapshot                json.RawMessage
+	VerificationPlan              json.RawMessage
+	VerificationPlanHash          string
+	EvidenceBindings              []EvidenceBinding
+	EvidenceSetHash               string
+	ExpiresAt                     time.Time
 }
 
 type Decision string

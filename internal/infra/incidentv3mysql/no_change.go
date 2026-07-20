@@ -11,13 +11,14 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/05allan1213/CloudOps-Copilot/internal/businessbudget"
 	domain "github.com/05allan1213/CloudOps-Copilot/internal/incident"
 	"github.com/05allan1213/CloudOps-Copilot/internal/verification"
 )
 
 const (
-	defaultVerificationRunBudget = 3
-	hardVerificationRunBudget    = 5
+	defaultVerificationRunBudget = businessbudget.DefaultLimit
+	hardVerificationRunBudget    = businessbudget.HardLimit
 	verificationTaskMaxAttempts  = 8
 )
 
@@ -161,12 +162,10 @@ func startNoChangeVerification(ctx context.Context, tx *sql.Tx, incident *incide
 	if identityErr != nil && !errors.Is(identityErr, errNoChangeIdentityUnavailable) {
 		return false, identityErr
 	}
-	verificationCount, err := countVerificationRuns(ctx, tx, *incident)
+	originatingAgentRunID, err := businessbudget.CurrentOriginatingAgentRun(ctx, tx, incident.id, uint32(incident.cycleNo))
 	if err != nil {
 		return false, err
 	}
-	budgetExceeded := verificationCount >= defaultVerificationRunBudget
-
 	cancelled, err := cancelNoChangeWorkflow(ctx, tx, *incident, decision)
 	if err != nil {
 		return false, err
@@ -182,10 +181,21 @@ func startNoChangeVerification(ctx context.Context, tx *sql.Tx, incident *incide
 	if identityErr != nil {
 		return false, blockNoChangeVerification(ctx, tx, incident, triggerSignalPublicID, "no_change_identity_unavailable")
 	}
-	if budgetExceeded {
-		return false, blockNoChangeVerification(ctx, tx, incident, triggerSignalPublicID, "verification_budget_exhausted")
+	budget, err := businessbudget.GuardChild(ctx, tx, businessbudget.KindVerificationRun, incident.id, uint32(incident.cycleNo), originatingAgentRunID)
+	if err != nil {
+		return false, fmt.Errorf("no-change Verification authorization rejected: %w", err)
 	}
-	return insertNoChangeVerification(ctx, tx, incident, triggerSignalID, verificationCount+1, snapshot)
+	if !budget.Allowed() {
+		if budget.IncidentVersion != incident.version {
+			return false, errors.New("Incident changed before no-change budget block")
+		}
+		if err := businessbudget.MarkExhausted(ctx, tx, budget, incident.id, uint32(incident.cycleNo), "v3-ingress.no-change"); err != nil {
+			return false, err
+		}
+		incident.version++
+		return false, nil
+	}
+	return insertNoChangeVerification(ctx, tx, incident, triggerSignalID, budget.Count+1, snapshot, budget)
 }
 
 func loadNoChangeWorkflowState(ctx context.Context, tx *sql.Tx, incident incidentRow) (noChangeWorkflowState, error) {
@@ -393,13 +403,6 @@ ORDER BY category LIMIT 21 FOR SHARE`, incident.id, incident.cycleNo)
 	return trigger, nil
 }
 
-func countVerificationRuns(ctx context.Context, tx *sql.Tx, incident incidentRow) (int, error) {
-	var count int
-	err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM verification_runs
-WHERE incident_id = ? AND cycle_no = ? AND domain_schema_version = 3`, incident.id, incident.cycleNo).Scan(&count)
-	return count, err
-}
-
 func cancelNoChangeWorkflow(ctx context.Context, tx *sql.Tx, incident incidentRow, decision noChangeDecision) (noChangeCancellation, error) {
 	var summary noChangeCancellation
 	result, err := tx.ExecContext(ctx, `UPDATE agent_runs
@@ -516,7 +519,7 @@ WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? AND version = ? AND 
 		hashCanonical("no-change", incident.publicID, fmt.Sprint(incident.cycleNo), triggerSignalPublicID, "blocked", reason))
 }
 
-func insertNoChangeVerification(ctx context.Context, tx *sql.Tx, incident *incidentRow, triggerSignalID uint64, attempt int, snapshot noChangeVerificationSnapshot) (bool, error) {
+func insertNoChangeVerification(ctx context.Context, tx *sql.Tx, incident *incidentRow, triggerSignalID uint64, attempt int, snapshot noChangeVerificationSnapshot, budget businessbudget.Result) (bool, error) {
 	planJSON, err := json.Marshal(snapshot.Plan)
 	if err != nil || len(planJSON) > 16*1024 {
 		return false, errors.New("no-change VerificationPlan exceeds its durable bound")
@@ -526,16 +529,25 @@ func insertNoChangeVerification(ctx context.Context, tx *sql.Tx, incident *incid
 		return false, err
 	}
 	now = now.UTC()
+	var originatingAgentRunValue any
+	if budget.OriginatingAgentRunID != 0 {
+		originatingAgentRunValue = budget.OriginatingAgentRunID
+	}
+	var authorizationValue any
+	if budget.AuthorizationID != 0 {
+		authorizationValue = budget.AuthorizationID
+	}
 	runPublicID := uuid.NewString()
 	result, err := tx.ExecContext(ctx, `INSERT INTO verification_runs
- (public_id, incident_id, domain_schema_version, cycle_no, remediation_plan_id, change_request_id,
+ (public_id, incident_id, domain_schema_version, cycle_no, originating_agent_run_id,
+  business_budget_authorization_id, remediation_plan_id, change_request_id,
   status, v3_status, trigger_type, trigger_signal_id, target_revision, source_revision, image_digest,
   gitops_revision, plan_json, verification_profile_version, verification_profile_hash,
   verification_contract_version, verification_profile_id, common_stability_window_ms,
   deadline_at, attempt, row_version, expected_subject_version, created_at, updated_at)
-VALUES (?, ?, 3, ?, NULL, NULL, 'pending', 'pending', 'no_change_signal', ?, ?, ?, ?, ?, ?, ?, ?,
+VALUES (?, ?, 3, ?, ?, ?, NULL, NULL, 'pending', 'pending', 'no_change_signal', ?, ?, ?, ?, ?, ?, ?, ?,
         1, ?, 60000, ?, ?, 1, 1, ?, ?)`,
-		runPublicID, incident.id, incident.cycleNo, triggerSignalID,
+		runPublicID, incident.id, incident.cycleNo, originatingAgentRunValue, authorizationValue, triggerSignalID,
 		snapshot.Plan.TargetRevision, snapshot.Plan.SourceRevision, snapshot.Plan.ImageDigest, snapshot.Plan.GitOpsRevision,
 		planJSON, snapshot.Plan.ProfileVersion, snapshot.Plan.ProfileHash, snapshot.Plan.ProfileID,
 		now.Add(snapshot.Plan.Deadline), attempt, now, now)
@@ -589,6 +601,9 @@ WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? AND version = ? AND 
 		"trigger_type": "no_change_signal", "baseline_id": snapshot.BaselinePublicID,
 		"baseline_verification_hash": snapshot.BaselineVerificationHash,
 		"profile_id":                 snapshot.Plan.ProfileID, "profile_hash": snapshot.Plan.ProfileHash, "attempt": attempt,
+		"business_budget_authorization_id": budget.AuthorizationPublicID,
+		"authorization_slot":               budget.AuthorizationSlot,
+		"originating_agent_run_id":         budget.OriginatingAgentRunPublicID,
 	})
 	if err := appendEvent(ctx, tx, *incident, "verification_started", "system", "v3-ingress",
 		"resolved Signal started no-change verification", now, metadata,

@@ -20,7 +20,7 @@ import (
 
 const v3PlanSelect = `SELECT
     p.id, p.public_id, p.incident_id, i.public_id, p.domain_schema_version,
-    p.cycle_no, p.incident_version, ar.public_id, p.diagnosis_hash,
+    p.cycle_no, p.incident_version, ar.public_id, p.business_budget_authorization_id, p.diagnosis_hash,
     p.plan_version, p.plan_hash, p.status, p.v3_status, p.operation_type,
     p.target_repository, p.target_base_revision, p.target_base_branch,
     p.last_known_good_sha, p.base_blob_sha, p.file_mode, p.target_path,
@@ -102,7 +102,8 @@ func (r *V3RemediationRepository) CreatePlanIn(ctx context.Context, executor rem
 	if err != nil {
 		return err
 	}
-	if agentRun.status != "completed" || agentRun.expectedIncidentVersion != plan.IncidentVersion || agentRun.diagnosisHash != plan.DiagnosisHash {
+	if agentRun.status != "completed" || agentRun.expectedIncidentVersion != plan.IncidentVersion || agentRun.diagnosisHash != plan.DiagnosisHash ||
+		agentRun.budgetAuthorizationID != plan.BusinessBudgetAuthorizationID {
 		return fmt.Errorf("%w: V3 plan is not bound to the completed diagnosis", remediation.ErrConflict)
 	}
 	if err := validateV3PlanEvidence(ctx, executor, plan); err != nil {
@@ -128,7 +129,7 @@ func (r *V3RemediationRepository) CreatePlanIn(ctx context.Context, executor rem
 
 	result, err := executor.ExecContext(ctx, `INSERT INTO remediation_plans (
     public_id, incident_id, domain_schema_version, cycle_no, incident_version,
-    created_by_agent_run_id, diagnosis_hash, plan_version, plan_hash, status,
+    created_by_agent_run_id, business_budget_authorization_id, diagnosis_hash, plan_version, plan_hash, status,
     v3_status, operation_type, target_repository, target_base_revision,
     target_base_branch, last_known_good_sha, base_blob_sha, file_mode, target_path,
     target_resource_json, target_field_ref, parameters_json, evidence_references_json,
@@ -140,12 +141,12 @@ func (r *V3RemediationRepository) CreatePlanIn(ctx context.Context, executor rem
     evidence_set_hash, hash_schema_version, canonical_plan_hash,
     plan_content_schema_version, row_version, created_at, updated_at, expires_at
 ) VALUES (
-    ?, ?, 3, ?, ?, ?, ?, ?, ?, 'awaiting_approval', 'awaiting_approval',
+    ?, ?, 3, ?, ?, ?, ?, ?, ?, ?, 'awaiting_approval', 'awaiting_approval',
     'restore_required_env', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'low', ?, ?, ?, ?,
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )`,
 		plan.PublicID, plan.IncidentID, plan.CycleNo, plan.IncidentVersion,
-		agentRun.id, plan.DiagnosisHash, plan.PlanVersion, plan.PlanHash,
+		agentRun.id, nullableBudgetAuthorization(plan.BusinessBudgetAuthorizationID), plan.DiagnosisHash, plan.PlanVersion, plan.PlanHash,
 		plan.TargetRepository, plan.TargetBaseRevision, plan.TargetBaseBranch,
 		plan.LastKnownGoodRevision, plan.BaseBlobSHA, plan.FileMode, plan.TargetPath,
 		targetJSON, plan.TargetFieldRef, parametersJSON, evidenceReferencesJSON,
@@ -392,20 +393,22 @@ type v3AgentRunFence struct {
 	id                      uint64
 	status                  string
 	expectedIncidentVersion uint64
+	budgetAuthorizationID   uint64
 	diagnosisHash           string
 }
 
 func resolveV3AgentRun(ctx context.Context, executor remediation.PersistenceTX, publicID string, incidentID, cycleNo uint64, lock bool) (v3AgentRunFence, error) {
-	query := `SELECT id, v3_status, expected_incident_version, final_diagnosis
+	query := `SELECT id, v3_status, expected_incident_version, business_budget_authorization_id, final_diagnosis
 FROM agent_runs
 WHERE public_id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3`
 	if lock {
 		query += " FOR UPDATE"
 	}
 	var result v3AgentRunFence
+	var budgetAuthorization sql.NullInt64
 	var diagnosisJSON []byte
 	err := executor.QueryRowContext(ctx, query, publicID, incidentID, cycleNo).
-		Scan(&result.id, &result.status, &result.expectedIncidentVersion, &diagnosisJSON)
+		Scan(&result.id, &result.status, &result.expectedIncidentVersion, &budgetAuthorization, &diagnosisJSON)
 	if err != nil {
 		return result, classifyV3RemediationError(err)
 	}
@@ -416,6 +419,9 @@ WHERE public_id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_versi
 		return result, fmt.Errorf("%w: AgentRun has no valid final diagnosis", remediation.ErrConflict)
 	}
 	result.diagnosisHash = diagnosis.DiagnosisHash
+	if budgetAuthorization.Valid {
+		result.budgetAuthorizationID = uint64(budgetAuthorization.Int64)
+	}
 	return result, nil
 }
 
@@ -457,13 +463,14 @@ ORDER BY (p.public_id = ?) DESC, p.id DESC LIMIT 1`
 		query += " FOR UPDATE"
 	}
 	var plan remediation.RemediationPlan
+	var budgetAuthorization sql.NullInt64
 	var legacyStatus, v3Status string
 	var targetJSON, parametersJSON, evidenceReferencesJSON []byte
 	var manifestJSON, policyJSON, verificationJSON, evidenceBindingsJSON []byte
 	err := executor.QueryRowContext(ctx, query, args...).Scan(
 		&plan.ID, &plan.PublicID, &plan.IncidentID, &plan.IncidentPublicID,
 		&plan.DomainSchemaVersion, &plan.CycleNo, &plan.IncidentVersion,
-		&plan.CreatedByAgentRunID, &plan.DiagnosisHash, &plan.PlanVersion,
+		&plan.CreatedByAgentRunID, &budgetAuthorization, &plan.DiagnosisHash, &plan.PlanVersion,
 		&plan.PlanHash, &legacyStatus, &v3Status, &plan.OperationType,
 		&plan.TargetRepository, &plan.TargetBaseRevision, &plan.TargetBaseBranch,
 		&plan.LastKnownGoodRevision, &plan.BaseBlobSHA, &plan.FileMode,
@@ -480,6 +487,9 @@ ORDER BY (p.public_id = ?) DESC, p.id DESC LIMIT 1`
 	)
 	if err != nil {
 		return nil, classifyV3RemediationError(err)
+	}
+	if budgetAuthorization.Valid {
+		plan.BusinessBudgetAuthorizationID = uint64(budgetAuthorization.Int64)
 	}
 	plan.Status = remediation.PlanStatus(v3Status)
 	plan.CanonicalChangeManifest, err = canonicalizeStoredV3JSON(manifestJSON)
@@ -520,7 +530,15 @@ func sameV3PlanContent(left, right remediation.RemediationPlan) bool {
 	return left.IncidentID == right.IncidentID && left.IncidentPublicID == right.IncidentPublicID &&
 		left.CycleNo == right.CycleNo && left.IncidentVersion == right.IncidentVersion &&
 		left.PlanVersion == right.PlanVersion && left.CanonicalPlanHash == right.CanonicalPlanHash &&
-		left.ExpectedPostImageHash == right.ExpectedPostImageHash && left.CreatedByAgentRunID == right.CreatedByAgentRunID
+		left.ExpectedPostImageHash == right.ExpectedPostImageHash && left.CreatedByAgentRunID == right.CreatedByAgentRunID &&
+		left.BusinessBudgetAuthorizationID == right.BusinessBudgetAuthorizationID
+}
+
+func nullableBudgetAuthorization(id uint64) any {
+	if id == 0 {
+		return nil
+	}
+	return id
 }
 
 const v3DecisionSelect = `SELECT id, public_id, domain_schema_version,

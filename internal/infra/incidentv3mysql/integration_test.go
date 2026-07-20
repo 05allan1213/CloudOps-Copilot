@@ -3,6 +3,7 @@ package incidentv3mysql
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
+	"github.com/05allan1213/CloudOps-Copilot/internal/businessbudget"
 	domain "github.com/05allan1213/CloudOps-Copilot/internal/incident"
 	migrationrunner "github.com/05allan1213/CloudOps-Copilot/internal/migration"
 	"github.com/05allan1213/CloudOps-Copilot/internal/taskhandler"
@@ -208,17 +210,340 @@ FROM agent_runs WHERE incident_id = ? AND cycle_no = 1 AND domain_schema_version
 	assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*)
 FROM async_tasks WHERE incident_id = ? AND cycle_no = 1 AND transition = 'investigation.step'`, taskhandler.DefaultAgentRunBudget, incidentID)
 	assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*)
-FROM async_tasks WHERE incident_id = ? AND transition = 'investigation.start' AND status = 'dead'`, 2, incidentID)
+FROM async_tasks WHERE incident_id = ? AND transition = 'investigation.start' AND status = 'succeeded'`, 4, incidentID)
+	assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*)
+FROM async_tasks WHERE incident_id = ? AND transition = 'investigation.start' AND status = 'dead'`, 1, incidentID)
 	assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*)
 FROM incident_events
-WHERE incident_id = ? AND event_type = 'async_task_dead'
-  AND JSON_UNQUOTE(JSON_EXTRACT(metadata_json, '$.error_code')) = 'business_budget_exceeded'`, 1, incidentID)
+WHERE incident_id = ? AND event_type = 'agent_run_budget_exhausted'`, 1, incidentID)
 	var attention bool
 	if err := db.QueryRowContext(ctx, `SELECT needs_attention FROM incidents WHERE id = ?`, incidentID).Scan(&attention); err != nil {
 		t.Fatal(err)
 	}
 	if !attention {
 		t.Fatal("AgentRun budget exhaustion did not mark Incident needs_attention")
+	}
+}
+
+func TestMySQLIncidentV3AuthorizedAgentRunSlotsFourAndFiveAreConcurrentAndIdempotent(t *testing.T) {
+	db := openIncidentIntegrationDB(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	store, err := NewStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := asyncjob.NewRepository(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	correlationKey := "v2:" + strings.Repeat("b", 64)
+	created, err := store.IngestBatch(ctx, []SignalInput{incidentIntegrationSignal(45, correlationKey)})
+	if err != nil || len(created) != 1 {
+		t.Fatalf("authorized budget ingest=%+v err=%v", created, err)
+	}
+	incidentID := incidentIntegrationIncidentID(t, ctx, db, created[0].IncidentPublicID)
+	for run := 1; run <= businessbudget.DefaultLimit; run++ {
+		processOneIncidentStart(t, ctx, db, incidentID, 1)
+		advanceFailedInvestigationRun(t, ctx, db, incidentID)
+		if run < businessbudget.DefaultLimit {
+			version := incidentVersion(t, ctx, db, incidentID)
+			if _, err := repository.Enqueue(ctx, budgetStartTask(incidentID, version, fmt.Sprintf("authorized-primer-%d", run))); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for slot := businessbudget.DefaultLimit + 1; slot <= businessbudget.HardLimit; slot++ {
+		authorization, version := authorizeBudgetAgentRun(t, ctx, db, incidentID, fmt.Sprintf("operator authorized slot %d after reviewing durable evidence", slot))
+		if authorization.Slot != slot {
+			t.Fatalf("authorization slot=%d want=%d", authorization.Slot, slot)
+		}
+		firstTask := authorizedBudgetStartTask(incidentID, version, authorization.PublicID, fmt.Sprintf("slot-%d-replay", slot))
+		first, err := repository.Enqueue(ctx, firstTask)
+		if err != nil {
+			t.Fatal(err)
+		}
+		duplicate, err := repository.Enqueue(ctx, firstTask)
+		if err != nil || duplicate.ID != first.ID {
+			t.Fatalf("duplicate authorized task first=%+v duplicate=%+v err=%v", first, duplicate, err)
+		}
+		if _, err := repository.Enqueue(ctx, authorizedBudgetStartTask(incidentID, version, authorization.PublicID, fmt.Sprintf("slot-%d-concurrent", slot))); err != nil {
+			t.Fatal(err)
+		}
+		resolveConcurrentBudgetStarts(t, ctx, repository, 2, fmt.Sprintf("slot-%d", slot))
+		assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM agent_runs
+WHERE incident_id = ? AND cycle_no = 1 AND domain_schema_version = 3`, slot, incidentID)
+		assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM agent_runs
+WHERE incident_id = ? AND cycle_no = 1 AND business_budget_authorization_id = ?`, 1, incidentID, authorization.ID)
+		assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_events
+WHERE incident_id = ? AND event_type = 'agent_run_created'
+  AND JSON_UNQUOTE(JSON_EXTRACT(metadata_json, '$.business_budget_authorization_id')) = ?`, 1, incidentID, authorization.PublicID)
+
+		var originatingRunID uint64
+		if err := db.QueryRowContext(ctx, `SELECT id FROM agent_runs WHERE business_budget_authorization_id = ?`, authorization.ID).Scan(&originatingRunID); err != nil {
+			t.Fatal(err)
+		}
+		for _, kind := range []businessbudget.Kind{businessbudget.KindRemediationPlan, businessbudget.KindVerificationRun} {
+			tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+			if err != nil {
+				t.Fatal(err)
+			}
+			lineage, guardErr := businessbudget.GuardChild(ctx, tx, kind, incidentID, 1, originatingRunID)
+			_ = tx.Rollback()
+			if guardErr != nil || !lineage.Allowed() || lineage.AuthorizationID != authorization.ID ||
+				lineage.OriginatingAgentRunPublicID == "" {
+				t.Fatalf("kind=%s lineage=%+v err=%v", kind, lineage, guardErr)
+			}
+		}
+		if slot < businessbudget.HardLimit {
+			advanceFailedInvestigationRun(t, ctx, db, incidentID)
+		}
+	}
+
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, hard, err := businessbudget.AuthorizeAgentRun(ctx, tx, incidentID, 1, businessbudget.Actor{
+		Provider: "github", Login: "operator", Role: "operator", Reason: "slot six must reject", RequestID: uuid.NewString(),
+	})
+	if err != nil || hard.Outcome != businessbudget.OutcomeHardExhausted {
+		_ = tx.Rollback()
+		t.Fatalf("hard authorization result=%+v err=%v", hard, err)
+	}
+	if err := businessbudget.MarkExhausted(ctx, tx, hard, incidentID, 1, "integration.operator"); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM agent_runs WHERE incident_id = ? AND cycle_no = 1`, businessbudget.HardLimit, incidentID)
+	assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_cycle_budget_authorizations WHERE incident_id = ?`, 2, incidentID)
+}
+
+func TestMySQLIncidentV3AutomaticStartProducersCreateNoOrphanAtDefaultBudget(t *testing.T) {
+	db := openIncidentIntegrationDB(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	store, err := NewStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := asyncjob.NewRepository(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := store.IngestBatch(ctx, []SignalInput{incidentIntegrationSignal(46, "v2:"+strings.Repeat("d", 64))})
+	if err != nil || len(created) != 1 {
+		t.Fatalf("automatic producer fixture=%+v err=%v", created, err)
+	}
+	incidentID := incidentIntegrationIncidentID(t, ctx, db, created[0].IncidentPublicID)
+	for run := 1; run <= businessbudget.DefaultLimit; run++ {
+		processOneIncidentStart(t, ctx, db, incidentID, 1)
+		advanceFailedInvestigationRun(t, ctx, db, incidentID)
+		if run < businessbudget.DefaultLimit {
+			if _, err := repository.Enqueue(ctx, budgetStartTask(incidentID, incidentVersion(t, ctx, db, incidentID), fmt.Sprintf("producer-primer-%d", run))); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	versionBeforeBlock := incidentVersion(t, ctx, db, incidentID)
+
+	start := make(chan struct{})
+	errs := make([]error, 2)
+	blocked := make([]bool, 2)
+	var wait sync.WaitGroup
+	for index := range errs {
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			<-start
+			tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+			if err != nil {
+				errs[index] = err
+				return
+			}
+			defer func() { _ = tx.Rollback() }()
+			_, blocked[index], err = enqueueInvestigationStart(ctx, tx, incidentRow{
+				id: incidentID, publicID: created[0].IncidentPublicID, cycleNo: 1,
+			})
+			if err == nil {
+				err = tx.Commit()
+			}
+			errs[index] = err
+		}(index)
+	}
+	close(start)
+	wait.Wait()
+	for index := range errs {
+		if errs[index] != nil || !blocked[index] {
+			t.Fatalf("producer %d blocked=%v err=%v", index, blocked[index], errs[index])
+		}
+	}
+	assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM agent_runs WHERE incident_id = ? AND cycle_no = 1`, businessbudget.DefaultLimit, incidentID)
+	assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks WHERE incident_id = ? AND transition = 'investigation.start'`, businessbudget.DefaultLimit, incidentID)
+	assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks WHERE incident_id = ? AND transition = 'investigation.start' AND status IN ('ready','running')`, 0, incidentID)
+	assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_events WHERE incident_id = ? AND event_type = 'agent_run_budget_exhausted'`, 1, incidentID)
+	var versionAfterBlock uint64
+	if err := db.QueryRowContext(ctx, `SELECT version FROM incidents WHERE id = ?`, incidentID).Scan(&versionAfterBlock); err != nil {
+		t.Fatal(err)
+	}
+	if versionAfterBlock != versionBeforeBlock+1 {
+		t.Fatalf("repeated budget block version=%d want=%d", versionAfterBlock, versionBeforeBlock+1)
+	}
+}
+
+func TestMySQLIncidentV3BudgetAuthorizationRejectsMissingWrongCycleAndWrongLineage(t *testing.T) {
+	db := openIncidentIntegrationDB(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	incidentID, _ := insertSimpleBudgetIncident(t, ctx, db, 3)
+	foreignIncidentID, foreignRunID := insertSimpleBudgetIncident(t, ctx, db, 1)
+
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = businessbudget.AuthorizeAgentRun(ctx, tx, incidentID, 1, businessbudget.Actor{
+		Provider: "github", Login: "operator", Role: "operator", RequestID: uuid.NewString(),
+	})
+	_ = tx.Rollback()
+	if !errors.Is(err, businessbudget.ErrInvalidAuthorization) {
+		t.Fatalf("empty authorization reason error=%v", err)
+	}
+
+	authorization, _ := authorizeBudgetAgentRun(t, ctx, db, incidentID, "operator approved slot four with durable evidence")
+	for name, guard := range map[string]func(*sql.Tx) error{
+		"missing authorization": func(tx *sql.Tx) error {
+			result, err := businessbudget.GuardAgentRun(ctx, tx, incidentID, 1, "")
+			if err != nil {
+				return err
+			}
+			if result.Outcome != businessbudget.OutcomeDefaultExhausted {
+				return fmt.Errorf("outcome=%s", result.Outcome)
+			}
+			return nil
+		},
+		"unknown authorization": func(tx *sql.Tx) error {
+			_, err := businessbudget.GuardAgentRun(ctx, tx, incidentID, 1, uuid.NewString())
+			if !errors.Is(err, businessbudget.ErrInvalidAuthorization) {
+				return fmt.Errorf("error=%v", err)
+			}
+			return nil
+		},
+		"wrong cycle": func(tx *sql.Tx) error {
+			_, err := businessbudget.GuardAgentRun(ctx, tx, incidentID, 2, authorization.PublicID)
+			if err == nil {
+				return errors.New("wrong-cycle authorization was accepted")
+			}
+			return nil
+		},
+		"wrong lineage": func(tx *sql.Tx) error {
+			_, err := businessbudget.GuardChild(ctx, tx, businessbudget.KindRemediationPlan, incidentID, 1, foreignRunID)
+			if !errors.Is(err, businessbudget.ErrInvalidAuthorization) {
+				return fmt.Errorf("error=%v foreign_incident=%d", err, foreignIncidentID)
+			}
+			return nil
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = tx.Rollback() }()
+			if err := guard(tx); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestMySQLIncidentV3PlanAndBothVerificationPathsShareDurableAuthorizedLineage(t *testing.T) {
+	db := openIncidentIntegrationDB(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	incidentID, automaticRunID := insertSimpleBudgetIncident(t, ctx, db, businessbudget.DefaultLimit)
+	authorization, _ := authorizeBudgetAgentRun(t, ctx, db, incidentID, "operator authorized a bounded child-producing investigation retry")
+	foreignIncidentID, _ := insertSimpleBudgetIncident(t, ctx, db, 0)
+
+	if _, err := db.ExecContext(ctx, `INSERT INTO agent_runs
+ (public_id, incident_id, status, model, prompt_version, max_steps, failure_code,
+  completed_at, row_version, domain_schema_version, v3_status, cycle_no,
+  expected_incident_version, business_budget_authorization_id)
+VALUES (?, ?, 'COMPLETED', 'fixture-model', 'incident-agent-v3', 1, '', NOW(6), 1, 3,
+        'completed', 1, 1, ?)`, uuid.NewString(), foreignIncidentID, authorization.ID); err == nil {
+		t.Fatal("cross-Incident authorization lineage insert unexpectedly succeeded")
+	}
+
+	result, err := db.ExecContext(ctx, `INSERT INTO agent_runs
+ (public_id, incident_id, status, model, prompt_version, max_steps, failure_code,
+  completed_at, row_version, domain_schema_version, v3_status, cycle_no,
+  expected_incident_version, business_budget_authorization_id)
+VALUES (?, ?, 'COMPLETED', 'fixture-model', 'incident-agent-v3', 1, '', NOW(6), 1, 3,
+        'completed', 1, 1, ?)`, uuid.NewString(), incidentID, authorization.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorizedRunID, _ := result.LastInsertId()
+	insertPartialBudgetPlans(t, ctx, db, incidentID, businessbudget.DefaultLimit)
+	insertPartialBudgetVerifications(t, ctx, db, incidentID, businessbudget.DefaultLimit)
+
+	for _, test := range []struct {
+		name, source string
+		kind         businessbudget.Kind
+	}{
+		{name: "remediation prepare", source: "remediation.prepare", kind: businessbudget.KindRemediationPlan},
+		{name: "post delivery verification", source: "delivery.observe", kind: businessbudget.KindVerificationRun},
+		{name: "no change verification", source: "v3-ingress.no-change", kind: businessbudget.KindVerificationRun},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+			if err != nil {
+				t.Fatal(err)
+			}
+			blocked, err := businessbudget.GuardChild(ctx, tx, test.kind, incidentID, 1, automaticRunID)
+			if err != nil || blocked.Outcome != businessbudget.OutcomeDefaultExhausted {
+				_ = tx.Rollback()
+				t.Fatalf("automatic guard=%+v err=%v", blocked, err)
+			}
+			if err := businessbudget.MarkExhausted(ctx, tx, blocked, incidentID, 1, test.source); err != nil {
+				_ = tx.Rollback()
+				t.Fatal(err)
+			}
+			if err := tx.Commit(); err != nil {
+				t.Fatal(err)
+			}
+
+			tx, err = db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+			if err != nil {
+				t.Fatal(err)
+			}
+			authorized, err := businessbudget.GuardChild(ctx, tx, test.kind, incidentID, 1, uint64(authorizedRunID))
+			_ = tx.Rollback()
+			if err != nil || !authorized.Allowed() || authorized.AuthorizationID != authorization.ID ||
+				authorized.OriginatingAgentRunPublicID == "" {
+				t.Fatalf("authorized guard=%+v err=%v", authorized, err)
+			}
+		})
+	}
+	assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks WHERE incident_id = ?`, 0, incidentID)
+	assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_events WHERE incident_id = ? AND event_type = 'remediation_plan_budget_exhausted'`, 1, incidentID)
+	assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_events WHERE incident_id = ? AND event_type = 'verification_run_budget_exhausted'`, 2, incidentID)
+
+	insertPartialBudgetPlans(t, ctx, db, incidentID, businessbudget.HardLimit-businessbudget.DefaultLimit)
+	insertPartialBudgetVerifications(t, ctx, db, incidentID, businessbudget.HardLimit-businessbudget.DefaultLimit)
+	for _, kind := range []businessbudget.Kind{businessbudget.KindRemediationPlan, businessbudget.KindVerificationRun} {
+		tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+		if err != nil {
+			t.Fatal(err)
+		}
+		hard, err := businessbudget.GuardChild(ctx, tx, kind, incidentID, 1, uint64(authorizedRunID))
+		_ = tx.Rollback()
+		if err != nil || hard.Outcome != businessbudget.OutcomeHardExhausted {
+			t.Fatalf("kind=%s hard guard=%+v err=%v", kind, hard, err)
+		}
 	}
 }
 
@@ -386,6 +711,82 @@ WHERE incident_id = ? AND transition = 'investigation.start' AND status = 'ready
 WHERE task_id = ? AND status = 'cancelled'`, 1, stale.Task.ID)
 	processOneIncidentStart(t, ctx, db, incidentID, 1)
 	assertIncidentIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM agent_runs WHERE incident_id = ? AND cycle_no = 1", 1, incidentID)
+}
+
+func TestMySQLIncidentV3SequentialSeverityPreservesRunningAuthorizedStart(t *testing.T) {
+	db := openIncidentIntegrationDB(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	store, err := NewStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := asyncjob.NewRepository(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	correlationKey := "v2:" + strings.Repeat("e", 64)
+	created, err := store.IngestBatch(ctx, []SignalInput{incidentIntegrationSignal(83, correlationKey)})
+	if err != nil || len(created) != 1 {
+		t.Fatalf("authorized replacement fixture=%+v err=%v", created, err)
+	}
+	incidentID := incidentIntegrationIncidentID(t, ctx, db, created[0].IncidentPublicID)
+	for run := 1; run <= businessbudget.DefaultLimit; run++ {
+		processOneIncidentStart(t, ctx, db, incidentID, 1)
+		advanceFailedInvestigationRun(t, ctx, db, incidentID)
+		if run < businessbudget.DefaultLimit {
+			if _, err := repository.Enqueue(ctx, budgetStartTask(incidentID, incidentVersion(t, ctx, db, incidentID), fmt.Sprintf("authorized-refresh-primer-%d", run))); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	authorization, authorizedVersion := authorizeBudgetAgentRun(t, ctx, db, incidentID, "operator approved retry despite a concurrent severity refresh")
+	if _, err := repository.Enqueue(ctx, authorizedBudgetStartTask(incidentID, authorizedVersion, authorization.PublicID, "authorized-refresh")); err != nil {
+		t.Fatal(err)
+	}
+	stale, err := claimIncidentStartEventually(ctx, repository, asyncjob.ClaimRequest{
+		Queue: asyncjob.QueueInvestigate, Owner: "stale-authorized-start", LeaseDuration: time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stale.Task.Transition != "investigation.start" || !strings.Contains(string(stale.Task.Payload), authorization.PublicID) {
+		t.Fatalf("claimed authorized start=%+v", stale.Task)
+	}
+
+	critical := incidentIntegrationSignal(84, correlationKey)
+	critical.Severity = domain.SeverityCritical
+	if _, err := store.IngestBatch(ctx, []SignalInput{critical}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Heartbeat(ctx, stale.Lease, time.Minute); !errors.Is(err, asyncjob.ErrLeaseLost) {
+		t.Fatalf("stale authorized start heartbeat error=%v", err)
+	}
+	assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks
+WHERE incident_id = ? AND transition = 'investigation.start' AND status = 'cancelled'`, 1, incidentID)
+	var replacementVersion uint64
+	var replacementAuthorization string
+	if err := db.QueryRowContext(ctx, `SELECT expected_subject_version,
+       JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.business_budget_authorization_id'))
+FROM async_tasks
+WHERE incident_id = ? AND transition = 'investigation.start' AND status = 'ready'`, incidentID).
+		Scan(&replacementVersion, &replacementAuthorization); err != nil {
+		t.Fatal(err)
+	}
+	if replacementVersion != authorizedVersion+1 || replacementAuthorization != authorization.PublicID {
+		t.Fatalf("replacement version=%d authorization=%q", replacementVersion, replacementAuthorization)
+	}
+	assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_events
+WHERE incident_id = ? AND event_type IN ('agent_run_budget_exhausted','agent_run_hard_limit_exhausted')`, 0, incidentID)
+	assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incidents
+WHERE id = ? AND needs_attention = FALSE`, 1, incidentID)
+
+	processOneIncidentStart(t, ctx, db, incidentID, 1)
+	assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM agent_runs
+WHERE incident_id = ? AND cycle_no = 1`, businessbudget.DefaultLimit+1, incidentID)
+	assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM agent_runs
+WHERE incident_id = ? AND cycle_no = 1 AND business_budget_authorization_id = ?`, 1, incidentID, authorization.ID)
 }
 
 func TestMySQLIncidentV3ResolvedWithoutActiveIncidentAttachesToOriginalFiring(t *testing.T) {
@@ -688,6 +1089,167 @@ func budgetStartTask(incidentID, version uint64, identity string) asyncjob.NewTa
 		ExpectedSubjectVersion: version, PayloadSchemaVersion: 1,
 		Payload: []byte(`{"mode":"start"}`), DedupeKey: hashCanonical("budget-start", fmt.Sprint(incidentID), fmt.Sprint(version), identity),
 		Priority: 100, MaxAttempts: 3,
+	}
+}
+
+func authorizedBudgetStartTask(incidentID, version uint64, authorizationPublicID, identity string) asyncjob.NewTask {
+	payload, _ := json.Marshal(map[string]any{
+		"mode": "start", "cycle_no": 1,
+		"business_budget_authorization_id": authorizationPublicID,
+	})
+	task := budgetStartTask(incidentID, version, identity)
+	task.Payload = payload
+	return task
+}
+
+func insertSimpleBudgetIncident(t *testing.T, ctx context.Context, db *sql.DB, agentRuns int) (uint64, uint64) {
+	t.Helper()
+	publicID := uuid.NewString()
+	result, err := db.ExecContext(ctx, `INSERT INTO incidents
+ (public_id, fingerprint, correlation_key, correlation_key_version, cluster, namespace,
+  service_name, environment, target_kind, target_name, severity, status, summary,
+  first_seen_at, last_seen_at, version, domain_schema_version, v3_status, cycle_no)
+VALUES (?, ?, ?, 2, 'kind', 'demo', 'checkout', 'demo', 'Deployment', 'checkout',
+        'warning', 'DIAGNOSING', 'simple business budget fixture', NOW(6), NOW(6), 1, 3, 'investigating', 1)`,
+		publicID, "simple-budget-"+publicID, "v2:"+hashCanonical("simple-budget", publicID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	incidentID, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lastRunID uint64
+	for index := 0; index < agentRuns; index++ {
+		result, err := db.ExecContext(ctx, `INSERT INTO agent_runs
+ (public_id, incident_id, status, model, prompt_version, max_steps, failure_code,
+  completed_at, row_version, domain_schema_version, v3_status, cycle_no, expected_incident_version)
+VALUES (?, ?, 'COMPLETED', 'fixture-model', 'incident-agent-v3', 1, '', NOW(6), 1, 3, 'completed', 1, 1)`,
+			uuid.NewString(), incidentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		runID, err := result.LastInsertId()
+		if err != nil {
+			t.Fatal(err)
+		}
+		lastRunID = uint64(runID)
+	}
+	return uint64(incidentID), lastRunID
+}
+
+func insertPartialBudgetPlans(t *testing.T, ctx context.Context, db *sql.DB, incidentID uint64, count int) {
+	t.Helper()
+	var start int
+	if err := db.QueryRowContext(ctx, `SELECT COALESCE(MAX(plan_version), 0) FROM remediation_plans WHERE incident_id = ?`, incidentID).Scan(&start); err != nil {
+		t.Fatal(err)
+	}
+	for index := 1; index <= count; index++ {
+		version := start + index
+		if _, err := db.ExecContext(ctx, `INSERT INTO remediation_plans
+ (public_id, incident_id, plan_version, plan_hash, status, operation_type,
+  target_repository, target_base_revision, target_path, parameters_json,
+  evidence_references_json, risk_level, policy_snapshot_hash, expected_before_hash,
+  proposed_patch_hash, patch_summary, rollback_plan, validation_plan, row_version,
+  domain_schema_version, cycle_no, v3_status, hash_schema_version, canonical_plan_hash)
+VALUES (?, ?, ?, ?, 'cancelled', 'restore_required_env', 'acme/gitops', ?, 'apps/demo.yaml',
+        JSON_OBJECT(), JSON_ARRAY(), 'low', ?, ?, ?, 'budget fixture', 'manual rollback',
+        'manual validation', 1, 3, 1, 'cancelled', 1, ?)`,
+			uuid.NewString(), incidentID, version, strings.Repeat("a", 64), strings.Repeat("b", 40),
+			strings.Repeat("c", 64), strings.Repeat("d", 64), strings.Repeat("e", 64), strings.Repeat("f", 64)); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func insertPartialBudgetVerifications(t *testing.T, ctx context.Context, db *sql.DB, incidentID uint64, count int) {
+	t.Helper()
+	var start int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM verification_runs WHERE incident_id = ? AND cycle_no = 1`, incidentID).Scan(&start); err != nil {
+		t.Fatal(err)
+	}
+	for index := 1; index <= count; index++ {
+		sequence := start + index
+		signalPublicID := uuid.NewString()
+		result, err := db.ExecContext(ctx, `INSERT INTO incident_signals
+ (public_id, incident_id, source, source_event_id, fingerprint, status, severity,
+  cluster, namespace, service_name, environment, target_kind, target_name, category,
+  occurred_at, received_at, summary, labels_json, annotations_json, domain_schema_version,
+  cycle_no, canonical_schema_version, correlation_key_version, alert_instance_key, starts_at, ends_at)
+VALUES (?, ?, 'alertmanager', ?, ?, 'resolved', 'warning', 'kind', 'demo', 'checkout',
+        'demo', 'Deployment', 'checkout', 'readiness', NOW(6), NOW(6), 'budget signal',
+        JSON_OBJECT(), JSON_OBJECT(), 3, 1, 2, 2, ?, NOW(6), NOW(6))`,
+			signalPublicID, incidentID, fmt.Sprintf("v2:%064x", sequence), fmt.Sprintf("budget-fingerprint-%d", sequence), fmt.Sprintf("%064x", sequence))
+		if err != nil {
+			t.Fatal(err)
+		}
+		signalID, _ := result.LastInsertId()
+		if _, err := db.ExecContext(ctx, `INSERT INTO verification_runs
+ (public_id, incident_id, remediation_plan_id, change_request_id, status, target_revision,
+  plan_json, deadline_at, attempt, row_version, domain_schema_version, cycle_no, v3_status,
+  trigger_type, trigger_signal_id, source_revision, image_digest, gitops_revision,
+  verification_profile_version, verification_profile_hash, expected_subject_version)
+VALUES (?, ?, NULL, NULL, 'cancelled', ?, JSON_OBJECT(), NOW(6), 1, 1, 3, 1, 'cancelled',
+        'no_change_signal', ?, ?, ?, ?, 1, ?, 1)`,
+			uuid.NewString(), incidentID, strings.Repeat("1", 40), signalID, strings.Repeat("2", 40),
+			"sha256:"+strings.Repeat("3", 64), strings.Repeat("4", 40), strings.Repeat("5", 64)); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func authorizeBudgetAgentRun(t *testing.T, ctx context.Context, db *sql.DB, incidentID uint64, reason string) (businessbudget.Authorization, uint64) {
+	t.Helper()
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	authorization, result, err := businessbudget.AuthorizeAgentRun(ctx, tx, incidentID, 1, businessbudget.Actor{
+		Provider: "github", Login: "operator", Role: "operator", Reason: reason, RequestID: uuid.NewString(),
+	})
+	if err != nil || authorization.ID == 0 || !result.Allowed() {
+		t.Fatalf("authorize AgentRun result=%+v authorization=%+v err=%v", result, authorization, err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	return authorization, result.IncidentVersion
+}
+
+func resolveConcurrentBudgetStarts(t *testing.T, ctx context.Context, repository *asyncjob.Repository, count int, ownerPrefix string) {
+	t.Helper()
+	executions := make([]*asyncjob.Execution, count)
+	for index := range count {
+		execution, err := claimIncidentStartEventually(ctx, repository, asyncjob.ClaimRequest{
+			Queue: asyncjob.QueueInvestigate, Owner: fmt.Sprintf("%s-worker-%d", ownerPrefix, index), LeaseDuration: 30 * time.Second,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		executions[index] = execution
+	}
+	start := make(chan struct{})
+	errs := make([]error, count)
+	var wait sync.WaitGroup
+	for index := range executions {
+		result := taskhandler.New(taskhandler.Config{})[asyncjob.TaskInvestigationAdvance].Handle(ctx, *executions[index])
+		if result.Disposition != asyncjob.DispositionSucceeded || result.Mutate == nil {
+			t.Fatalf("authorized start result=%+v", result)
+		}
+		wait.Add(1)
+		go func(index int, result asyncjob.Result) {
+			defer wait.Done()
+			<-start
+			errs[index] = repository.Resolve(ctx, executions[index].Lease, result)
+		}(index, result)
+	}
+	close(start)
+	wait.Wait()
+	for _, err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

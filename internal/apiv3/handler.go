@@ -308,7 +308,8 @@ func (h *Handler) startInvestigation(c *gin.Context) {
 		h.writeProblem(c, http.StatusBadRequest, "EXPECTED_VERSION_REQUIRED", "expected_version must be positive")
 		return
 	}
-	if len(body.Reason) > 2048 {
+	body.Reason = strings.TrimSpace(body.Reason)
+	if len(body.Reason) > 1024 {
 		h.writeProblem(c, http.StatusBadRequest, "INVALID_REQUEST", "reason exceeds the maximum length")
 		return
 	}

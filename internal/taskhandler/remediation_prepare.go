@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
+	"github.com/05allan1213/CloudOps-Copilot/internal/businessbudget"
 	"github.com/05allan1213/CloudOps-Copilot/internal/remediation"
 	"github.com/google/uuid"
 )
@@ -192,6 +193,35 @@ FOR SHARE`, input.Baseline.ObservationID).Scan(&observationBaselineID, &observat
 	if observationBaselineID != input.Baseline.ID || observationHash != input.Baseline.ObservationHash || observationHash != input.Baseline.ConfigHash {
 		return asyncjob.ErrPolicyViolation
 	}
+	var existingPlanID uint64
+	var existingAuthorization sql.NullInt64
+	existingErr := tx.QueryRowContext(ctx, `SELECT id, business_budget_authorization_id
+FROM remediation_plans
+WHERE public_id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3
+FOR UPDATE`, plan.PublicID, plan.IncidentID, plan.CycleNo).Scan(&existingPlanID, &existingAuthorization)
+	if existingErr == nil {
+		if existingPlanID == 0 {
+			return asyncjob.ErrInvalidMutation
+		}
+		if existingAuthorization.Valid {
+			plan.BusinessBudgetAuthorizationID = uint64(existingAuthorization.Int64)
+		}
+		return s.repository.CreatePlanIn(ctx, tx, plan)
+	}
+	if !errors.Is(existingErr, sql.ErrNoRows) {
+		return existingErr
+	}
+	budget, err := businessbudget.GuardChild(ctx, tx, businessbudget.KindRemediationPlan, task.IncidentID, task.CycleNo, task.SubjectID)
+	if err != nil {
+		return fmt.Errorf("%w: remediation Plan authorization rejected: %v", asyncjob.ErrPolicyViolation, err)
+	}
+	if budget.IncidentVersion != plan.IncidentVersion {
+		return asyncjob.ErrSubjectVersionMismatch
+	}
+	if !budget.Allowed() {
+		return businessbudget.MarkExhausted(ctx, tx, budget, task.IncidentID, task.CycleNo, "remediation.prepare")
+	}
+	plan.BusinessBudgetAuthorizationID = budget.AuthorizationID
 	if err := s.repository.CreatePlanIn(ctx, tx, plan); err != nil {
 		return err
 	}
@@ -217,6 +247,8 @@ WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? AND version = ? AND 
 		}
 		return appendPrepareIncidentEvent(ctx, tx, plan, "remediation_plan_created", map[string]any{
 			"plan_id": plan.PublicID, "plan_hash": plan.CanonicalPlanHash, "operation": plan.OperationType,
+			"business_budget_authorization_id": budget.AuthorizationPublicID,
+			"authorization_slot":               budget.AuthorizationSlot,
 		})
 	case "awaiting_approval":
 		// A task replay after a committed plan must be idempotent. The V3
@@ -235,10 +267,11 @@ func appendPrepareIncidentEvent(ctx context.Context, tx asyncjob.DBTX, plan *rem
 	idempotency := hashCanonical("remediation.prepare", plan.PublicID, eventType)
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO incident_events
-  (incident_id, event_type, idempotency_key, actor_type, actor_id, summary, metadata_json, occurred_at)
-VALUES (?, ?, ?, 'agent', ?, ?, ?, NOW(6))
+ (public_id, incident_id, domain_schema_version, cycle_no, event_schema_version,
+  event_type, idempotency_key, actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
+VALUES (?, ?, 3, ?, 1, ?, ?, 'agent', ?, ?, ?, NOW(6), NOW(6))
 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
-		plan.IncidentID, eventType, idempotency, plan.CreatedByAgentRunID,
+		uuid.NewString(), plan.IncidentID, plan.CycleNo, eventType, idempotency, plan.CreatedByAgentRunID,
 		"Evidence-backed remediation plan awaits human approval", payload)
 	return err
 }

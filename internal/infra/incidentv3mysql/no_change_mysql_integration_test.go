@@ -82,13 +82,16 @@ WHERE task_id = ? AND status = 'cancelled' AND error_code = 'resolved_signal'`, 
 	var sourceRevision, imageDigest, gitopsRevision string
 	var planJSON []byte
 	var remediationPlanID, changeRequestID sql.NullInt64
+	var originatingAgentRunID, budgetAuthorizationID sql.NullInt64
 	var attempt int
 	if err := db.QueryRowContext(ctx, `SELECT id, public_id, trigger_signal_id, trigger_type,
  verification_profile_id, verification_profile_hash, source_revision, image_digest,
- gitops_revision, plan_json, remediation_plan_id, change_request_id, attempt
+ gitops_revision, plan_json, remediation_plan_id, change_request_id, attempt,
+ originating_agent_run_id, business_budget_authorization_id
 FROM verification_runs WHERE incident_id = ? AND cycle_no = 1`, incidentID).Scan(
 		&runID, &runPublicID, &triggerSignalID, &triggerType, &profileID, &profileHash,
-		&sourceRevision, &imageDigest, &gitopsRevision, &planJSON, &remediationPlanID, &changeRequestID, &attempt); err != nil {
+		&sourceRevision, &imageDigest, &gitopsRevision, &planJSON, &remediationPlanID, &changeRequestID, &attempt,
+		&originatingAgentRunID, &budgetAuthorizationID); err != nil {
 		t.Fatal(err)
 	}
 	var plan verification.Plan
@@ -96,9 +99,12 @@ FROM verification_runs WHERE incident_id = ? AND cycle_no = 1`, incidentID).Scan
 		triggerType != "no_change_signal" || profileID != verification.NoChangeProfileID || profileHash != plan.ProfileHash ||
 		sourceRevision != identity.sourceRevision || imageDigest != identity.imageDigest || gitopsRevision != identity.gitopsRevision ||
 		plan.TriggerType != "no_change" || plan.TargetRevision != identity.gitopsRevision || len(plan.Checks) != 8 ||
-		remediationPlanID.Valid || changeRequestID.Valid || attempt != 1 {
+		remediationPlanID.Valid || changeRequestID.Valid || attempt != 1 ||
+		!originatingAgentRunID.Valid || budgetAuthorizationID.Valid {
 		t.Fatalf("verification run trigger=%s profile=%s plan=%+v", triggerType, profileID, plan)
 	}
+	assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM agent_runs
+WHERE id = ? AND incident_id = ? AND cycle_no = 1 AND v3_status = 'cancelled'`, 1, originatingAgentRunID.Int64, incidentID)
 	var resolvedSignalID uint64
 	if err := db.QueryRowContext(ctx, `SELECT id FROM incident_signals
 WHERE source = ? AND source_event_id = ?`, resolved.Source, resolved.SourceEventID).Scan(&resolvedSignalID); err != nil {

@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
+	"github.com/05allan1213/CloudOps-Copilot/internal/businessbudget"
 	"github.com/05allan1213/CloudOps-Copilot/internal/change"
 	"github.com/05allan1213/CloudOps-Copilot/internal/remediation"
 	"github.com/05allan1213/CloudOps-Copilot/internal/verification"
@@ -1045,6 +1046,16 @@ func (s *mysqlDeliveryObserveStore) persistDeliveryFailure(ctx context.Context, 
 	if err := appendDeliveryIncidentEvent(ctx, tx, snapshot, "delivery_failed", outcome.FailureCode, outcome.ObservedAt); err != nil {
 		return err
 	}
+	budget, err := businessbudget.GuardAutomatic(ctx, tx, businessbudget.KindAgentRun, task.IncidentID, task.CycleNo)
+	if err != nil {
+		return err
+	}
+	if budget.IncidentVersion != incidentVersion+1 {
+		return asyncjob.ErrSubjectVersionMismatch
+	}
+	if !budget.Allowed() {
+		return businessbudget.MarkExhausted(ctx, tx, budget, task.IncidentID, task.CycleNo, "delivery.observe")
+	}
 	// A failed delivery starts a fresh bounded investigation only after the
 	// ChangeRequest and Incident transitions are in the same transaction.
 	payload := json.RawMessage(`{"mode":"start"}`)
@@ -1068,13 +1079,40 @@ func (s *mysqlDeliveryObserveStore) persistDelivered(ctx context.Context, tx asy
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
+		var originatingAgentRunID uint64
+		var planAuthorization sql.NullInt64
+		if err := tx.QueryRowContext(ctx, `SELECT created_by_agent_run_id, business_budget_authorization_id
+FROM remediation_plans
+WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3
+FOR UPDATE`, snapshot.PlanID, task.IncidentID, task.CycleNo).Scan(&originatingAgentRunID, &planAuthorization); err != nil {
+			return err
+		}
+		budget, budgetErr := businessbudget.GuardChild(ctx, tx, businessbudget.KindVerificationRun, task.IncidentID, task.CycleNo, originatingAgentRunID)
+		if budgetErr != nil {
+			return fmt.Errorf("%w: post-delivery Verification authorization rejected: %v", asyncjob.ErrPolicyViolation, budgetErr)
+		}
+		if budget.IncidentVersion != incidentVersion {
+			return asyncjob.ErrSubjectVersionMismatch
+		}
+		if !budget.Allowed() {
+			return businessbudget.MarkExhausted(ctx, tx, budget, task.IncidentID, task.CycleNo, "delivery.observe")
+		}
+		if (budget.AuthorizationID == 0 && planAuthorization.Valid) ||
+			(budget.AuthorizationID != 0 && (!planAuthorization.Valid || uint64(planAuthorization.Int64) != budget.AuthorizationID)) {
+			return fmt.Errorf("%w: post-delivery Verification escaped Plan authorization lineage", asyncjob.ErrPolicyViolation)
+		}
+		var authorizationValue any
+		if budget.AuthorizationID != 0 {
+			authorizationValue = budget.AuthorizationID
+		}
 		runPublicID = uuid.NewString()
 		result, insertErr := tx.ExecContext(ctx, `INSERT INTO verification_runs
- (public_id, incident_id, domain_schema_version, cycle_no, remediation_plan_id, change_request_id, status, v3_status, trigger_type,
+ (public_id, incident_id, domain_schema_version, cycle_no, originating_agent_run_id, business_budget_authorization_id,
+  remediation_plan_id, change_request_id, status, v3_status, trigger_type,
   target_revision, source_revision, image_digest, gitops_revision, plan_json, verification_profile_version, verification_profile_hash,
   verification_contract_version, verification_profile_id, common_stability_window_ms, deadline_at, attempt, row_version, expected_subject_version, created_at, updated_at)
- VALUES (?, ?, 3, ?, ?, ?, 'pending', 'pending', 'post_delivery', ?, ?, ?, ?, ?, ?, ?, 1, ?, 60000, ?, 1, 1, 1, ?, ?)`,
-			runPublicID, task.IncidentID, task.CycleNo, snapshot.PlanID, task.SubjectID, plan.TargetRevision, plan.SourceRevision, plan.ImageDigest, plan.GitOpsRevision,
+ VALUES (?, ?, 3, ?, ?, ?, ?, ?, 'pending', 'pending', 'post_delivery', ?, ?, ?, ?, ?, ?, ?, 1, ?, 60000, ?, 1, 1, 1, ?, ?)`,
+			runPublicID, task.IncidentID, task.CycleNo, originatingAgentRunID, authorizationValue, snapshot.PlanID, task.SubjectID, plan.TargetRevision, plan.SourceRevision, plan.ImageDigest, plan.GitOpsRevision,
 			planJSON, plan.ProfileVersion, planHash, plan.ProfileID, deadline, outcome.ObservedAt.UTC(), outcome.ObservedAt.UTC())
 		if insertErr != nil {
 			return insertErr
@@ -1086,6 +1124,11 @@ func (s *mysqlDeliveryObserveStore) persistDelivered(ctx context.Context, tx asy
 		}
 		runID = uint64(insertedID)
 		runVersion = 1
+		if budget.AuthorizationID != 0 {
+			if err := appendDeliveryBudgetLineageEvent(ctx, tx, snapshot, runPublicID, budget, outcome.ObservedAt); err != nil {
+				return err
+			}
+		}
 		for _, spec := range plan.Checks {
 			subjectJSON, _ := json.Marshal(spec.Subject)
 			var comparison any = nil
@@ -1123,6 +1166,27 @@ func (s *mysqlDeliveryObserveStore) persistDelivered(ctx context.Context, tx asy
 	}
 	payload, _ := json.Marshal(map[string]any{"verification_run_id": runPublicID, "cycle_no": task.CycleNo})
 	_, err = s.cfg.Tasks.EnqueueIn(ctx, tx, asyncjob.NewTask{IncidentID: task.IncidentID, CycleNo: task.CycleNo, Type: asyncjob.TaskVerificationAdvance, SubjectType: "verification_run", SubjectID: runID, Transition: "verification.advance", ExpectedSubjectVersion: runVersion, PayloadSchemaVersion: 1, Payload: payload, DedupeKey: hashCanonical("verification.advance", fmt.Sprint(runID), fmt.Sprint(runVersion)), Priority: 60, MaxAttempts: 8})
+	return err
+}
+
+func appendDeliveryBudgetLineageEvent(ctx context.Context, tx asyncjob.DBTX, snapshot DeliveryObserveSnapshot, runPublicID string, budget businessbudget.Result, at time.Time) error {
+	metadata, err := json.Marshal(map[string]any{
+		"verification_run_id":              runPublicID,
+		"business_budget_authorization_id": budget.AuthorizationPublicID,
+		"authorization_slot":               budget.AuthorizationSlot,
+		"originating_agent_run_id":         budget.OriginatingAgentRunPublicID,
+		"source":                           "delivery.observe",
+	})
+	if err != nil || len(metadata) > 8192 {
+		return asyncjob.ErrInvalidMutation
+	}
+	_, err = tx.ExecContext(ctx, `INSERT IGNORE INTO incident_events
+ (public_id, incident_id, domain_schema_version, cycle_no, event_schema_version,
+  event_type, idempotency_key, actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
+VALUES (?, ?, 3, ?, 1, 'verification_budget_lineage_bound', ?, 'system', 'delivery.observe',
+        'post-delivery Verification bound to operator retry authorization', ?, ?, ?)`,
+		uuid.NewString(), snapshot.IncidentID, snapshot.CycleNo,
+		hashCanonical("delivery-budget-lineage", runPublicID, budget.AuthorizationPublicID), metadata, at.UTC(), at.UTC())
 	return err
 }
 

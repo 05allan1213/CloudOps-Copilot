@@ -8,8 +8,8 @@ import (
 )
 
 func TestEvidenceSupersessionMigrationIsForwardOnlyAndCycleBound(t *testing.T) {
-	if LatestVersion != 11 {
-		t.Fatalf("latest migration=%d, want 11", LatestVersion)
+	if LatestVersion != 12 {
+		t.Fatalf("latest migration=%d, want 12", LatestVersion)
 	}
 	contents, err := migrations.FS.ReadFile("00011_evidence_supersessions.sql")
 	if err != nil {

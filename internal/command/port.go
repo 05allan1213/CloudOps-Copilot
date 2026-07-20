@@ -20,6 +20,7 @@ import (
 
 	"github.com/05allan1213/CloudOps-Copilot/internal/apiv3"
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
+	"github.com/05allan1213/CloudOps-Copilot/internal/businessbudget"
 	"github.com/05allan1213/CloudOps-Copilot/internal/infra/remediationmysql"
 	"github.com/05allan1213/CloudOps-Copilot/internal/remediation"
 )
@@ -131,6 +132,10 @@ FOR UPDATE`, publicID).Scan(&incident.ID, &incident.PublicID, &incident.CycleNo,
 }
 
 func (p *Port) startInvestigation(ctx context.Context, tx *sql.Tx, request apiv3.CommandRequest) (apiv3.CommandResult, error) {
+	body, err := decodeStartInvestigationCommand(request)
+	if err != nil {
+		return apiv3.CommandResult{}, err
+	}
 	incident, err := loadIncident(ctx, tx, request.ResourceID)
 	if err != nil {
 		return apiv3.CommandResult{}, err
@@ -141,8 +146,40 @@ func (p *Port) startInvestigation(ctx context.Context, tx *sql.Tx, request apiv3
 	if incident.Status != "detected" && incident.Status != "investigating" {
 		return apiv3.CommandResult{}, apiv3.ErrInvalidTransition
 	}
-	dedupe := canonicalHash("task", incident.PublicID, fmt.Sprint(incident.CycleNo), "investigation.start", fmt.Sprint(incident.Version))
-	payload, _ := json.Marshal(map[string]any{"mode": "start", "incident_id": incident.PublicID, "cycle_no": incident.CycleNo})
+	authorization, budget, err := businessbudget.AuthorizeAgentRun(ctx, tx, incident.ID, incident.CycleNo, businessbudget.Actor{
+		Provider: request.Actor.Provider, Login: request.Actor.Login, Role: request.Actor.Role,
+		Reason: body.Reason, RequestID: request.RequestID,
+	})
+	if errors.Is(err, businessbudget.ErrInvalidAuthorization) {
+		return apiv3.CommandResult{}, apiv3.ErrInvalidArgument
+	}
+	if errors.Is(err, businessbudget.ErrAuthorizationConflict) {
+		return apiv3.CommandResult{}, apiv3.ErrConflict
+	}
+	if err != nil {
+		return apiv3.CommandResult{}, err
+	}
+	if budget.Outcome == businessbudget.OutcomeHardExhausted {
+		if err := businessbudget.MarkExhausted(ctx, tx, budget, incident.ID, incident.CycleNo, "operator.investigation.start"); err != nil {
+			return apiv3.CommandResult{}, err
+		}
+		return apiv3.CommandResult{}, apiv3.ErrInvalidTransition
+	}
+	dedupeParts := []string{"task", incident.PublicID, fmt.Sprint(incident.CycleNo), "investigation.start", fmt.Sprint(incident.Version)}
+	payloadBody := map[string]any{"mode": "start", "incident_id": incident.PublicID, "cycle_no": incident.CycleNo}
+	if authorization.ID != 0 {
+		dedupeParts = append(dedupeParts, authorization.PublicID)
+		payloadBody["business_budget_authorization_id"] = authorization.PublicID
+		metadata, _ := json.Marshal(map[string]any{
+			"authorization_id": authorization.PublicID, "slot": authorization.Slot,
+			"reason": body.Reason, "request_id": request.RequestID,
+		})
+		if err := appendCommandEvent(ctx, tx, incident, "agent_run_retry_authorized", request.Actor, metadata); err != nil {
+			return apiv3.CommandResult{}, err
+		}
+	}
+	dedupe := canonicalHash(dedupeParts...)
+	payload, _ := json.Marshal(payloadBody)
 	task, err := p.tasks.EnqueueIn(ctx, tx, asyncjob.NewTask{
 		IncidentID: incident.ID, CycleNo: incident.CycleNo,
 		Type: asyncjob.TaskInvestigationAdvance, SubjectType: "incident", SubjectID: incident.ID,
@@ -152,11 +189,42 @@ func (p *Port) startInvestigation(ctx context.Context, tx *sql.Tx, request apiv3
 	if err != nil {
 		return apiv3.CommandResult{}, err
 	}
-	metadata, _ := json.Marshal(map[string]any{"task_id": task.PublicID, "request_id": request.RequestID})
+	metadataBody := map[string]any{"task_id": task.PublicID, "request_id": request.RequestID}
+	if authorization.ID != 0 {
+		metadataBody["authorization_id"] = authorization.PublicID
+		metadataBody["authorization_slot"] = authorization.Slot
+	}
+	metadata, _ := json.Marshal(metadataBody)
 	if err := appendCommandEvent(ctx, tx, incident, "investigation_requested", request.Actor, metadata); err != nil {
 		return apiv3.CommandResult{}, err
 	}
 	return apiv3.CommandResult{HTTPStatus: http.StatusAccepted, ResourceID: incident.PublicID, Status: "accepted", Version: incident.Version, Cycle: uint64(incident.CycleNo)}, nil
+}
+
+type startInvestigationCommandBody struct {
+	ExpectedVersion uint64 `json:"expected_version"`
+	Reason          string `json:"reason,omitempty"`
+}
+
+func decodeStartInvestigationCommand(request apiv3.CommandRequest) (startInvestigationCommandBody, error) {
+	if len(request.CanonicalBody) == 0 || len(request.CanonicalBody) > 4096 {
+		return startInvestigationCommandBody{}, apiv3.ErrInvalidArgument
+	}
+	decoder := json.NewDecoder(bytes.NewReader(request.CanonicalBody))
+	decoder.DisallowUnknownFields()
+	var body startInvestigationCommandBody
+	if err := decoder.Decode(&body); err != nil {
+		return startInvestigationCommandBody{}, apiv3.ErrInvalidArgument
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return startInvestigationCommandBody{}, apiv3.ErrInvalidArgument
+	}
+	body.Reason = strings.TrimSpace(body.Reason)
+	if body.ExpectedVersion == 0 || body.ExpectedVersion != request.ExpectedVersion || len(body.Reason) > 1024 {
+		return startInvestigationCommandBody{}, apiv3.ErrInvalidArgument
+	}
+	return body, nil
 }
 
 func (p *Port) closeIncident(ctx context.Context, tx *sql.Tx, request apiv3.CommandRequest) (apiv3.CommandResult, error) {

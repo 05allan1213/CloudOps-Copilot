@@ -19,6 +19,7 @@ import (
 	drivermysql "github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 
+	"github.com/05allan1213/CloudOps-Copilot/internal/businessbudget"
 	domain "github.com/05allan1213/CloudOps-Copilot/internal/incident"
 )
 
@@ -314,7 +315,7 @@ WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? AND version = ?`, in
 		}
 	}
 	if createdOrReopened && firing > 0 {
-		created, err := enqueueInvestigationStart(ctx, tx, incident)
+		created, _, err := enqueueInvestigationStart(ctx, tx, incident)
 		if err != nil {
 			return nil, err
 		}
@@ -528,9 +529,35 @@ VALUES (?, ?, 3, ?, 1, ?, ?, ?, ?, ?, ?, COALESCE(?, NOW(6)), NOW(6))`,
 	return err
 }
 
-func enqueueInvestigationStart(ctx context.Context, tx *sql.Tx, incident incidentRow) (bool, error) {
-	payload, _ := json.Marshal(map[string]any{"mode": "start", "incident_public_id": incident.publicID, "cycle_no": incident.cycleNo})
-	dedupe := hashCanonical("task", incident.publicID, fmt.Sprint(incident.cycleNo), "investigation.start", fmt.Sprint(incident.version))
+func enqueueInvestigationStart(ctx context.Context, tx *sql.Tx, incident incidentRow) (bool, bool, error) {
+	return enqueueInvestigationStartWithAuthorization(ctx, tx, incident, "")
+}
+
+func enqueueInvestigationStartWithAuthorization(ctx context.Context, tx *sql.Tx, incident incidentRow, authorizationPublicID string) (bool, bool, error) {
+	var budget businessbudget.Result
+	var err error
+	if authorizationPublicID == "" {
+		budget, err = businessbudget.GuardAutomatic(ctx, tx, businessbudget.KindAgentRun, incident.id, uint32(incident.cycleNo))
+	} else {
+		budget, err = businessbudget.GuardAgentRun(ctx, tx, incident.id, uint32(incident.cycleNo), authorizationPublicID)
+	}
+	if err != nil {
+		return false, false, err
+	}
+	if !budget.Allowed() {
+		if err := businessbudget.MarkExhausted(ctx, tx, budget, incident.id, uint32(incident.cycleNo), "v3-ingress"); err != nil {
+			return false, false, err
+		}
+		return false, true, nil
+	}
+	payloadBody := map[string]any{"mode": "start", "incident_public_id": incident.publicID, "cycle_no": incident.cycleNo}
+	dedupeParts := []string{"task", incident.publicID, fmt.Sprint(incident.cycleNo), "investigation.start", fmt.Sprint(incident.version)}
+	if authorizationPublicID != "" {
+		payloadBody["business_budget_authorization_id"] = authorizationPublicID
+		dedupeParts = append(dedupeParts, authorizationPublicID)
+	}
+	payload, _ := json.Marshal(payloadBody)
+	dedupe := hashCanonical(dedupeParts...)
 	result, err := tx.ExecContext(ctx, `
 INSERT IGNORE INTO async_tasks
     (public_id, incident_id, cycle_no, queue, task_type, subject_type, subject_id, transition,
@@ -540,10 +567,10 @@ VALUES (?, ?, ?, 'investigate', 'investigation.advance', 'incident', ?, 'investi
         ?, 1, ?, ?, 0, 'ready', 100, NOW(6), 0, ?, 0)`,
 		uuid.NewString(), incident.id, incident.cycleNo, incident.id, incident.version, payload, dedupe, startTaskMaxAttempts)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	affected, err := result.RowsAffected()
-	return affected == 1, err
+	return affected == 1, false, err
 }
 
 // refreshInvestigationStartVersion keeps the single live start transition
@@ -568,14 +595,15 @@ WHERE incident_id = ? AND cycle_no = ? AND task_type = 'investigation.advance'
 	var taskID, leaseGeneration, attempt, expectedVersion uint64
 	var status string
 	var leaseOwner sql.NullString
+	var payload []byte
 	if err := tx.QueryRowContext(ctx, `
-SELECT id, status, lease_owner, lease_generation, attempt, expected_subject_version
+SELECT id, status, lease_owner, lease_generation, attempt, expected_subject_version, payload_json
 FROM async_tasks
 WHERE incident_id = ? AND cycle_no = ? AND task_type = 'investigation.advance'
   AND subject_type = 'incident' AND subject_id = ? AND transition = 'investigation.start'
   AND status IN ('ready','running')
 FOR UPDATE`, incident.id, incident.cycleNo, incident.id).
-		Scan(&taskID, &status, &leaseOwner, &leaseGeneration, &attempt, &expectedVersion); err != nil {
+		Scan(&taskID, &status, &leaseOwner, &leaseGeneration, &attempt, &expectedVersion, &payload); err != nil {
 		return false, err
 	}
 	if expectedVersion == incident.version {
@@ -586,8 +614,16 @@ FOR UPDATE`, incident.id, incident.cycleNo, incident.id).
 		"task_id": taskID, "old_expected_version": expectedVersion,
 		"new_expected_version": incident.version, "old_status": status,
 	})
+	authorizationPublicID, err := investigationStartAuthorization(payload)
+	if err != nil {
+		return false, err
+	}
 	if status == "ready" {
-		dedupe := hashCanonical("task", incident.publicID, fmt.Sprint(incident.cycleNo), "investigation.start", fmt.Sprint(incident.version))
+		dedupeParts := []string{"task", incident.publicID, fmt.Sprint(incident.cycleNo), "investigation.start", fmt.Sprint(incident.version)}
+		if authorizationPublicID != "" {
+			dedupeParts = append(dedupeParts, authorizationPublicID)
+		}
+		dedupe := hashCanonical(dedupeParts...)
 		result, err := tx.ExecContext(ctx, `
 UPDATE async_tasks
 SET expected_subject_version = ?, dedupe_key = ?, updated_at = NOW(6)
@@ -635,9 +671,12 @@ WHERE id = ? AND status = 'running' AND lease_owner = ? AND lease_generation = ?
 	if affected, _ := result.RowsAffected(); affected != 1 {
 		return false, domain.ErrConflict
 	}
-	created, err := enqueueInvestigationStart(ctx, tx, incident)
+	created, blocked, err := enqueueInvestigationStartWithAuthorization(ctx, tx, incident, authorizationPublicID)
 	if err != nil {
 		return false, err
+	}
+	if blocked {
+		return false, nil
 	}
 	if !created {
 		return false, errors.New("replacement investigation.start task was not created")
@@ -648,6 +687,21 @@ WHERE id = ? AND status = 'running' AND lease_owner = ? AND lease_generation = ?
 		return false, err
 	}
 	return true, nil
+}
+
+func investigationStartAuthorization(payload []byte) (string, error) {
+	var envelope struct {
+		Mode                  string `json:"mode"`
+		AuthorizationPublicID string `json:"business_budget_authorization_id"`
+	}
+	if len(payload) == 0 || json.Unmarshal(payload, &envelope) != nil || envelope.Mode != "start" {
+		return "", errors.New("investigation.start payload is malformed")
+	}
+	authorizationPublicID := strings.TrimSpace(envelope.AuthorizationPublicID)
+	if len(authorizationPublicID) > 64 {
+		return "", errors.New("investigation.start authorization identity is invalid")
+	}
+	return authorizationPublicID, nil
 }
 
 func countFiringInstances(ctx context.Context, tx *sql.Tx, incident incidentRow) (int, error) {

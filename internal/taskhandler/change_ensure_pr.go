@@ -14,6 +14,7 @@ import (
 
 	"github.com/05allan1213/CloudOps-Copilot/internal/agent"
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
+	"github.com/05allan1213/CloudOps-Copilot/internal/businessbudget"
 	"github.com/05allan1213/CloudOps-Copilot/internal/remediation"
 )
 
@@ -1054,8 +1055,18 @@ WHERE id = ? AND cycle_no = ? AND domain_schema_version = 3 AND version = ? AND 
 }
 
 func (s *mysqlChangeEnsurePRStore) enqueueChangeInvestigation(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, incidentVersion uint64, reason string) error {
+	budget, err := businessbudget.GuardAutomatic(ctx, tx, businessbudget.KindAgentRun, task.IncidentID, task.CycleNo)
+	if err != nil {
+		return err
+	}
+	if budget.IncidentVersion != incidentVersion {
+		return asyncjob.ErrSubjectVersionMismatch
+	}
+	if !budget.Allowed() {
+		return businessbudget.MarkExhausted(ctx, tx, budget, task.IncidentID, task.CycleNo, "change.ensure_pr")
+	}
 	payload := json.RawMessage(`{"mode":"start"}`)
-	_, err := s.tasks.EnqueueIn(ctx, tx, asyncjob.NewTask{
+	_, err = s.tasks.EnqueueIn(ctx, tx, asyncjob.NewTask{
 		IncidentID: task.IncidentID, CycleNo: task.CycleNo, Type: asyncjob.TaskInvestigationAdvance,
 		SubjectType: "incident", SubjectID: task.IncidentID, Transition: "investigation.start",
 		ExpectedSubjectVersion: incidentVersion, PayloadSchemaVersion: 1, Payload: payload,
