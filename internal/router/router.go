@@ -49,7 +49,9 @@ func NewRouter(cfg config.Config, deps Dependencies) (*gin.Engine, error) {
 
 	registerCoreRoutes(router, cfg, deps)
 	registerRemediationRoutes(router, cfg, deps)
-	registerV3Routes(router, cfg, deps)
+	if err := registerV3Routes(router, cfg, deps); err != nil {
+		return nil, err
+	}
 	if err := registerStaticRoutes(router, cfg.StaticDir); err != nil {
 		return nil, err
 	}
@@ -63,6 +65,9 @@ func registerCoreRoutes(router *gin.Engine, cfg config.Config, deps Dependencies
 	router.GET("/healthz", handler.Healthz)
 	router.GET("/readyz", handler.Readyz)
 	router.GET("/readyz/full", handler.ReadyzFull)
+	if cfg.V3ProxyAuthEnabled {
+		return
+	}
 	router.POST("/api/v1/auth/login", handler.Login)
 	router.POST("/api/v2/webhook/alertmanager", limitRequestBody(cfg.AlertmanagerWebhookMaxBodyBytes), handler.IncidentAlertmanagerWebhook)
 
@@ -103,6 +108,9 @@ func registerCoreRoutes(router *gin.Engine, cfg config.Config, deps Dependencies
 }
 
 func registerRemediationRoutes(router *gin.Engine, cfg config.Config, deps Dependencies) {
+	if cfg.V3ProxyAuthEnabled {
+		return
+	}
 	handler := deps.Handler
 	remediationAdmin := router.Group("/api/v2")
 	if cfg.AuthEnabled {

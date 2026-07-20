@@ -1,10 +1,13 @@
 package router
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
@@ -15,18 +18,35 @@ import (
 	authpkg "github.com/05allan1213/CloudOps-Copilot/internal/service/auth"
 )
 
-func registerV3Routes(engine *gin.Engine, cfg config.Config, deps Dependencies) {
+func registerV3Routes(engine *gin.Engine, cfg config.Config, deps Dependencies) error {
 	var authenticator apiv3.Authenticator
-	if deps.AuthService != nil {
+	requireAuth := cfg.AuthEnabled
+	requireCSRF := cfg.AuthEnabled
+	csrfSecret := deriveV3CSRFSecret(cfg.JWTSecret)
+	if cfg.V3ProxyAuthEnabled {
+		proxyAuthenticator, err := apiv3.NewOAuthProxyAuthenticator(apiv3.OAuthProxyAuthConfig{
+			ViewerLogins: cfg.V3OAuthViewerLogins, OperatorLogins: cfg.V3OAuthOperatorLogins,
+		})
+		if err != nil {
+			return fmt.Errorf("configure V3 oauth2-proxy authentication: %w", err)
+		}
+		csrfSecret, err = readV3CSRFSecret(cfg.V3CSRFSecretFile)
+		if err != nil {
+			return err
+		}
+		authenticator = proxyAuthenticator
+		requireAuth = true
+		requireCSRF = true
+	} else if deps.AuthService != nil {
 		authenticator = v3CompatibilityAuth{service: deps.AuthService}
 	}
 	handler := apiv3.NewHandler(apiv3.Config{
 		Queries:        deps.V3Queries,
 		Commands:       deps.V3Commands,
 		Authenticator:  authenticator,
-		RequireAuth:    cfg.AuthEnabled,
-		RequireCSRF:    cfg.AuthEnabled,
-		CSRFSecret:     deriveV3CSRFSecret(cfg.JWTSecret),
+		RequireAuth:    requireAuth,
+		RequireCSRF:    requireCSRF,
+		CSRFSecret:     csrfSecret,
 		AllowedOrigins: cfg.CORSOrigins,
 	})
 	apiv3.RegisterRoutes(engine.Group("/api/v3"), handler)
@@ -39,6 +59,7 @@ func registerV3Routes(engine *gin.Engine, cfg config.Config, deps Dependencies) 
 		c.Status(404)
 		_, _ = c.Writer.Write([]byte("404 page not found"))
 	})
+	return nil
 }
 
 func deriveV3CSRFSecret(jwtSecret string) []byte {
@@ -47,6 +68,18 @@ func deriveV3CSRFSecret(jwtSecret string) []byte {
 	}
 	digest := sha256.Sum256([]byte("cloudops:v3:csrf:v1\x00" + jwtSecret))
 	return digest[:]
+}
+
+func readV3CSRFSecret(path string) ([]byte, error) {
+	raw, err := os.ReadFile(strings.TrimSpace(path))
+	if err != nil {
+		return nil, fmt.Errorf("read V3 CSRF signing secret: %w", err)
+	}
+	secret := bytes.TrimSpace(raw)
+	if len(secret) < sha256.Size {
+		return nil, errors.New("V3 CSRF signing secret must contain at least 32 bytes")
+	}
+	return append([]byte(nil), secret...), nil
 }
 
 func selectV3Middleware(v3, legacy gin.HandlerFunc) gin.HandlerFunc {
@@ -72,11 +105,14 @@ type v3CompatibilityAuth struct {
 	}
 }
 
-func (a v3CompatibilityAuth) AuthenticateBearer(_ context.Context, authorization string) (apiv3.Identity, error) {
+func (a v3CompatibilityAuth) Authenticate(_ context.Context, request *http.Request) (apiv3.Identity, error) {
 	if a.service == nil {
 		return apiv3.Identity{}, errors.New("compatibility auth is unavailable")
 	}
-	identity, err := a.service.AuthenticateBearer(authorization)
+	if request == nil {
+		return apiv3.Identity{}, errors.New("compatibility request is unavailable")
+	}
+	identity, err := a.service.AuthenticateBearer(request.Header.Get("Authorization"))
 	if err != nil {
 		return apiv3.Identity{}, err
 	}

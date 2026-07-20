@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -46,7 +48,9 @@ func TestRootRouterMountsV3WithoutChangingV2Surface(t *testing.T) {
 func TestV3CompatibilityAuthMapsRolesWithoutExposingNumericID(t *testing.T) {
 	service := &v3AuthFake{identity: authpkg.Identity{ID: 42, Username: "alice", Role: "admin", TokenVersion: 3}}
 	adapter := v3CompatibilityAuth{service: service}
-	identity, err := adapter.AuthenticateBearer(context.Background(), "Bearer token")
+	request := httptest.NewRequest(http.MethodGet, "/api/v3/incidents", nil)
+	request.Header.Set("Authorization", "Bearer token")
+	identity, err := adapter.Authenticate(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,6 +62,74 @@ func TestV3CompatibilityAuthMapsRolesWithoutExposingNumericID(t *testing.T) {
 	}
 	if !service.verified || service.verifyIdentity.ID != 42 || service.verifyIdentity.TokenVersion != 3 {
 		t.Fatalf("verified=%v identity=%+v", service.verified, service.verifyIdentity)
+	}
+}
+
+func TestV3ProxyProfileUsesIndependentSecretAndRemovesLocalAuthSurface(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	secretPath := filepath.Join(t.TempDir(), "csrf-signing-key")
+	if err := os.WriteFile(secretPath, []byte("0123456789abcdef0123456789abcdef"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Load()
+	cfg.JWTSecret = ""
+	cfg.V3ProxyAuthEnabled = true
+	cfg.V3CSRFSecretFile = secretPath
+	cfg.V3OAuthViewerLogins = []string{"viewer"}
+	cfg.V3OAuthOperatorLogins = []string{"operator"}
+	cfg.CORSOrigins = []string{"https://console.example"}
+	cfg.RateLimit.Enabled = false
+	cfg.StaticDir = ""
+	engine, err := NewRouter(cfg, Dependencies{Metrics: middleware.NewMetrics(), Handler: &handler.Handler{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	present := make(map[string]bool)
+	for _, route := range engine.Routes() {
+		present[route.Method+" "+route.Path] = true
+	}
+	for _, forbidden := range []string{
+		"POST /api/v1/auth/login", "GET /api/v1/auth/me", "GET /api/v2/incidents",
+		"POST /api/v2/remediations/:id/approve", "POST /api/v2/webhook/alertmanager",
+	} {
+		if present[forbidden] {
+			t.Fatalf("proxy profile exposed legacy route %s", forbidden)
+		}
+	}
+
+	unauthorized := httptest.NewRecorder()
+	engine.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/v3/incidents", nil))
+	if unauthorized.Code != http.StatusUnauthorized || !strings.Contains(unauthorized.Body.String(), `"code":"AUTHENTICATION_REQUIRED"`) {
+		t.Fatalf("missing proxy identity response=%d %s", unauthorized.Code, unauthorized.Body.String())
+	}
+
+	query := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v3/incidents", nil)
+	request.Header.Set(apiv3.OAuthProxyUserHeader, "viewer")
+	engine.ServeHTTP(query, request)
+	if query.Code != http.StatusNotImplemented {
+		t.Fatalf("trusted proxy query response=%d %s", query.Code, query.Body.String())
+	}
+
+	leaked := httptest.NewRecorder()
+	request = httptest.NewRequest(http.MethodGet, "/api/v3/incidents", nil)
+	request.Header.Set(apiv3.OAuthProxyUserHeader, "viewer")
+	request.Header.Set("Authorization", "Bearer must-not-reach-api")
+	engine.ServeHTTP(leaked, request)
+	if leaked.Code != http.StatusUnauthorized {
+		t.Fatalf("leaked OAuth credential response=%d %s", leaked.Code, leaked.Body.String())
+	}
+}
+
+func TestV3ProxyProfileFailsClosedWithoutReadableCSRFSecret(t *testing.T) {
+	cfg := config.Load()
+	cfg.V3ProxyAuthEnabled = true
+	cfg.V3CSRFSecretFile = filepath.Join(t.TempDir(), "missing")
+	cfg.V3OAuthOperatorLogins = []string{"operator"}
+	cfg.RateLimit.Enabled = false
+	cfg.StaticDir = ""
+	if _, err := NewRouter(cfg, Dependencies{Metrics: middleware.NewMetrics(), Handler: &handler.Handler{}}); err == nil {
+		t.Fatal("proxy profile started without its CSRF signing secret")
 	}
 }
 

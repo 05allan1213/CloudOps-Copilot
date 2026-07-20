@@ -36,10 +36,13 @@ func (c APIConfig) Validate() error {
 	if strings.TrimSpace(c.Application.ListenAddr) == strings.TrimSpace(c.InternalListenAddr) {
 		return fmt.Errorf("LISTEN_ADDR and INTERNAL_LISTEN_ADDR must be different")
 	}
-	_, userPort, _ := net.SplitHostPort(c.Application.ListenAddr)
+	userHost, userPort, _ := net.SplitHostPort(c.Application.ListenAddr)
 	_, internalPort, _ := net.SplitHostPort(c.InternalListenAddr)
 	if userPort == internalPort {
 		return fmt.Errorf("LISTEN_ADDR and INTERNAL_LISTEN_ADDR must use different ports")
+	}
+	if c.Application.V3ProxyAuthEnabled && userHost != "127.0.0.1" {
+		return fmt.Errorf("LISTEN_ADDR must bind 127.0.0.1 when V3_PROXY_AUTH_ENABLED is true")
 	}
 	return nil
 }

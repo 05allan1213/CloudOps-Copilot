@@ -397,8 +397,8 @@ type contractAuthenticator struct {
 	identity Identity
 }
 
-func (a *contractAuthenticator) AuthenticateBearer(_ context.Context, header string) (Identity, error) {
-	if header != "Bearer test" {
+func (a *contractAuthenticator) Authenticate(_ context.Context, request *http.Request) (Identity, error) {
+	if request == nil || request.Header.Get("Authorization") != "Bearer test" {
 		return Identity{}, errors.New("invalid bearer")
 	}
 	return a.identity, nil

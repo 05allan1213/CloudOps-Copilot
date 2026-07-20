@@ -41,9 +41,12 @@ type Identity struct {
 }
 
 // Authenticator is implemented by the API bootstrap. Authentication and token
-// revocation checks stay outside the Query and Command ports.
+// revocation checks stay outside the Query and Command ports. The complete
+// request is passed to the authenticator so a trusted reverse-proxy adapter can
+// fail closed when OAuth credentials or untrusted identity headers leak across
+// the proxy boundary.
 type Authenticator interface {
-	AuthenticateBearer(context.Context, string) (Identity, error)
+	Authenticate(context.Context, *http.Request) (Identity, error)
 	Verify(context.Context, Identity) error
 }
 

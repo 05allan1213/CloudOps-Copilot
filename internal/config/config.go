@@ -404,6 +404,14 @@ type Config struct {
 	// 默认值：true
 	AuthEnabled bool
 
+	// V3ProxyAuthEnabled switches the V3 user surface to the trusted
+	// oauth2-proxy header contract. In this profile the local JWT/login product
+	// surface is disabled and the API user listener must bind loopback.
+	V3ProxyAuthEnabled    bool
+	V3OAuthViewerLogins   []string
+	V3OAuthOperatorLogins []string
+	V3CSRFSecretFile      string
+
 	// AdminPassword 初始管理员密码，仅在首次启动且无用户时自动创建 admin 账户
 	// 默认值：空（不创建初始管理员）
 	// 敏感：是
@@ -686,6 +694,10 @@ func Load() Config {
 		JWTSecret:                  configutil.String("JWT_SECRET", ""),
 		JWTExpireHours:             configutil.PositiveInt("JWT_EXPIRE_HOURS", 24),
 		AuthEnabled:                configutil.Bool("AUTH_ENABLED", true),
+		V3ProxyAuthEnabled:         configutil.Bool("V3_PROXY_AUTH_ENABLED", false),
+		V3OAuthViewerLogins:        configutil.List("V3_OAUTH_VIEWER_LOGINS"),
+		V3OAuthOperatorLogins:      configutil.List("V3_OAUTH_OPERATOR_LOGINS"),
+		V3CSRFSecretFile:           configutil.String("V3_CSRF_SECRET_FILE", ""),
 		AdminPassword:              configutil.String("ADMIN_PASSWORD", ""),
 		StaticDir:                  configutil.String("STATIC_DIR", ""),
 		TraceOTLPEndpoint:          configutil.NonEmptyString("TRACE_OTLP_ENDPOINT", ""),
@@ -702,8 +714,22 @@ func (c *Config) Validate() error {
 	if appEnv := strings.TrimSpace(c.AppEnv); appEnv == "" || len(appEnv) > 64 || !regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`).MatchString(appEnv) {
 		return fmt.Errorf("APP_ENV must contain 1-64 lowercase letters, digits or hyphens")
 	}
-	if c.AuthEnabled && len(strings.TrimSpace(c.JWTSecret)) < 32 {
+	if c.AuthEnabled && !c.V3ProxyAuthEnabled && len(strings.TrimSpace(c.JWTSecret)) < 32 {
 		return fmt.Errorf("JWT_SECRET must be at least 32 bytes when auth is enabled, got %d", len(strings.TrimSpace(c.JWTSecret)))
+	}
+	if c.V3ProxyAuthEnabled {
+		if strings.TrimSpace(c.V3CSRFSecretFile) == "" {
+			return fmt.Errorf("V3_CSRF_SECRET_FILE is required when V3_PROXY_AUTH_ENABLED is true")
+		}
+		if len(c.V3OAuthViewerLogins)+len(c.V3OAuthOperatorLogins) == 0 {
+			return fmt.Errorf("V3 OAuth viewer or operator login allowlist is required when V3_PROXY_AUTH_ENABLED is true")
+		}
+		if err := validateGitHubLoginAllowlist("V3_OAUTH_VIEWER_LOGINS", c.V3OAuthViewerLogins); err != nil {
+			return err
+		}
+		if err := validateGitHubLoginAllowlist("V3_OAUTH_OPERATOR_LOGINS", c.V3OAuthOperatorLogins); err != nil {
+			return err
+		}
 	}
 	if c.ListenAddr == "" {
 		return fmt.Errorf("LISTEN_ADDR is required")
@@ -1051,7 +1077,26 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-var k8sNamespacePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
+var (
+	k8sNamespacePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
+	githubLoginPattern  = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$`)
+)
+
+func validateGitHubLoginAllowlist(name string, values []string) error {
+	seen := make(map[string]struct{}, len(values))
+	for _, raw := range values {
+		login := strings.TrimSpace(raw)
+		if !githubLoginPattern.MatchString(login) {
+			return fmt.Errorf("%s contains invalid GitHub login %q", name, raw)
+		}
+		canonical := strings.ToLower(login)
+		if _, exists := seen[canonical]; exists {
+			return fmt.Errorf("%s contains duplicate GitHub login %q", name, raw)
+		}
+		seen[canonical] = struct{}{}
+	}
+	return nil
+}
 
 func checkK8SNamespace(name, namespace string) error {
 	if strings.TrimSpace(namespace) == "" {

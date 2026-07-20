@@ -36,7 +36,7 @@ func initContainer(cfg *config.Config, infra *di.Infra, initializeAuth bool) (*d
 	container := di.NewContainer(infra)
 
 	var authService *authpkg.Service
-	if initializeAuth && infra.DB != nil && len(strings.TrimSpace(cfg.JWTSecret)) >= 32 {
+	if initializeAuth && !cfg.V3ProxyAuthEnabled && infra.DB != nil && len(strings.TrimSpace(cfg.JWTSecret)) >= 32 {
 		var err error
 		authService, err = authpkg.NewService(infra.DB, cfg.JWTSecret, time.Duration(cfg.JWTExpireHours)*time.Hour)
 		if err != nil {

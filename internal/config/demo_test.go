@@ -59,6 +59,28 @@ func TestFormalKubernetesWriteFailsClosed(t *testing.T) {
 	}
 }
 
+func TestV3ProxyAuthRequiresIndependentCSRFSecretAndGitHubAllowlist(t *testing.T) {
+	cfg := Load()
+	cfg.V3ProxyAuthEnabled = true
+	cfg.JWTSecret = ""
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "V3_CSRF_SECRET_FILE") {
+		t.Fatalf("proxy auth without CSRF secret file accepted: %v", err)
+	}
+	cfg.V3CSRFSecretFile = "/var/run/secrets/cloudops/csrf-signing-key"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "allowlist") {
+		t.Fatalf("proxy auth without login allowlist accepted: %v", err)
+	}
+	cfg.V3OAuthViewerLogins = []string{"viewer-user"}
+	cfg.V3OAuthOperatorLogins = []string{"operator-user"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid proxy auth config rejected: %v", err)
+	}
+	cfg.V3OAuthViewerLogins = []string{"invalid login"}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "invalid GitHub login") {
+		t.Fatalf("invalid GitHub login accepted: %v", err)
+	}
+}
+
 func TestAgentToolLegacyAliasesAndNewNamePriority(t *testing.T) {
 	unsetForTest(t, "AGENT_TOOL_REGISTRY_ENABLED")
 	unsetForTest(t, "AGENT_TOOL_DEFAULT_TIMEOUT_SECONDS")

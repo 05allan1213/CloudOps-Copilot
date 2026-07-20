@@ -74,9 +74,9 @@ func (h *Handler) authenticate(c *gin.Context) {
 		c.Abort()
 		return
 	}
-	identity, err := h.authenticator.AuthenticateBearer(c.Request.Context(), c.GetHeader("Authorization"))
+	identity, err := h.authenticator.Authenticate(c.Request.Context(), c.Request)
 	if err != nil || !validIdentity(identity) {
-		h.writeProblem(c, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "valid bearer authentication is required")
+		h.writeProblem(c, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "a trusted authenticated session is required")
 		c.Abort()
 		return
 	}

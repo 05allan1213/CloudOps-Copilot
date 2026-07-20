@@ -71,6 +71,22 @@ func TestAPIConfigRejectsSharedUserAndInternalPortAcrossHosts(t *testing.T) {
 	}
 }
 
+func TestAPIConfigRequiresLoopbackUserListenerForProxyAuth(t *testing.T) {
+	cfg := APIConfig{Application: appconfig.Load(), InternalListenAddr: "0.0.0.0:18082"}
+	cfg.Application.AuthEnabled = false
+	cfg.Application.V3ProxyAuthEnabled = true
+	cfg.Application.V3CSRFSecretFile = "/tmp/csrf-secret"
+	cfg.Application.V3OAuthOperatorLogins = []string{"operator"}
+	cfg.Application.ListenAddr = "0.0.0.0:18080"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("non-loopback proxy user listener was accepted")
+	}
+	cfg.Application.ListenAddr = "127.0.0.1:18080"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("loopback proxy user listener rejected: %v", err)
+	}
+}
+
 func TestAPIServerFailureStopsBothListeners(t *testing.T) {
 	api := &API{
 		cfg: APIConfig{Application: appconfig.Config{ShutdownTimeout: time.Second}},
