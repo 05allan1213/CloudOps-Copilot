@@ -43,9 +43,15 @@ func NewWorker(ctx context.Context, cfg WorkerConfig) (*Worker, error) {
 		return nil, err
 	}
 	application := cfg.Application
-	handlers, err := taskhandler.NewRuntime(cfg.TaskOperations)
-	if err != nil {
-		return nil, fmt.Errorf("initialize async task handlers: %w", err)
+	var handlers map[asyncjob.TaskType]asyncjob.Handler
+	if hasTaskOperations(cfg.TaskOperations) {
+		var err error
+		handlers, err = taskhandler.NewRuntime(cfg.TaskOperations)
+		if err != nil {
+			return nil, fmt.Errorf("initialize async task handlers: %w", err)
+		}
+	} else if cfg.TaskOperationFactory == nil {
+		return nil, errors.New("initialize async task handlers: operations are not migrated and production task operation factory is required")
 	}
 	mysqlCtx, cancelMySQL := context.WithTimeout(ctx, application.MySQLStartupTimeout)
 	mysql, err := database.OpenMySQL(mysqlCtx, database.MySQLConfig{
@@ -64,6 +70,18 @@ func NewWorker(ctx context.Context, cfg WorkerConfig) (*Worker, error) {
 	if err != nil {
 		_ = mysql.Close()
 		return nil, err
+	}
+	if handlers == nil {
+		operations, buildErr := cfg.TaskOperationFactory.Build(ctx, mysql.SQLDB(), repository)
+		if buildErr != nil {
+			_ = mysql.Close()
+			return nil, fmt.Errorf("assemble production async task operations: %w", buildErr)
+		}
+		handlers, buildErr = taskhandler.NewRuntime(operations)
+		if buildErr != nil {
+			_ = mysql.Close()
+			return nil, fmt.Errorf("initialize production async task handlers: %w", buildErr)
+		}
 	}
 	runner, err := asyncjob.NewRunner(asyncjob.RunnerConfig{
 		Owner:        cfg.Async.WorkerID,
