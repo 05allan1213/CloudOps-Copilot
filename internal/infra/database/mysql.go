@@ -8,12 +8,11 @@ import (
 	"net"
 	"time"
 
+	"github.com/05allan1213/CloudOps-Copilot/internal/schemaversion"
 	drivermysql "github.com/go-sql-driver/mysql"
 	gormmysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
 )
-
-const SupportedSchemaVersion int64 = 10
 
 type MySQLConfig struct {
 	Host        string
@@ -132,8 +131,8 @@ func (m *MySQL) Ready(ctx context.Context) error {
 	if err := m.sqlDB.QueryRowContext(ctx, "SELECT MAX(version_id) FROM goose_db_version WHERE is_applied = 1").Scan(&version); err != nil {
 		return fmt.Errorf("read schema version: %w", err)
 	}
-	if !version.Valid || version.Int64 != SupportedSchemaVersion {
-		return fmt.Errorf("unsupported schema version %d, want %d", version.Int64, SupportedSchemaVersion)
+	if !version.Valid || version.Int64 != schemaversion.Latest {
+		return fmt.Errorf("unsupported schema version %d, want %d", version.Int64, schemaversion.Latest)
 	}
 	return nil
 }
