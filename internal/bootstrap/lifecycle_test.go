@@ -66,8 +66,8 @@ func TestWorkerReadinessRequiresClaimLoopsMySQLAndQueue(t *testing.T) {
 	if err := worker.readiness(context.Background()); err == nil || !strings.Contains(err.Error(), "mysql") {
 		t.Fatalf("missing MySQL readiness err=%v", err)
 	}
-	worker.mysqlReady = func(context.Context) error { return errors.New("unsupported schema version 8, want 9") }
-	if err := worker.readiness(context.Background()); err == nil || !strings.Contains(err.Error(), "schema version 8") {
+	worker.mysqlReady = func(context.Context) error { return errors.New("unsupported schema version 9, want 10") }
+	if err := worker.readiness(context.Background()); err == nil || !strings.Contains(err.Error(), "schema version 9") {
 		t.Fatalf("schema mismatch readiness err=%v", err)
 	}
 	worker.mysqlReady = func(context.Context) error { return nil }
