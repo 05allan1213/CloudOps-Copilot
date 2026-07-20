@@ -16,30 +16,39 @@ import {
   startInvestigation,
 } from "../../api/incidents";
 import { isCurrentRequest, loadStateForStatus } from "../../models/incidents";
-import type { CommandResponse, IncidentView, LoadState, ResourceView } from "../../types/incidents";
+import type {
+  CommandResponse,
+  DeliveryView,
+  IncidentView,
+  LoadState,
+  RemediationPlanView,
+  ResolutionReportView,
+  ResourceView,
+  VerificationRunView,
+} from "../../types/incidents";
 
-interface Section<T> {
+export interface Section<T> {
   state: LoadState;
   error: string;
   data: T;
   nextCursor: string;
 }
 
-type CollectionLoader = (cursor: string, signal?: AbortSignal) => Promise<{ items: ResourceView[]; next_cursor?: string }>;
+type CollectionLoader<T> = (cursor: string, signal?: AbortSignal) => Promise<{ items: T[]; next_cursor?: string }>;
 
 export function useIncidentDetail(incidentID: string) {
   const incident = ref<IncidentView | null>(null);
   const pageState = ref<LoadState>("loading");
   const pageError = ref("");
   const commandPending = ref(false);
-  const signals = collectionSection();
-  const timeline = collectionSection();
-  const evidence = collectionSection();
-  const investigations = collectionSection();
-  const remediationPlans = collectionSection();
-  const verifications = collectionSection();
-  const delivery = resourceSection();
-  const resolutionReport = resourceSection();
+  const signals = collectionSection<ResourceView>();
+  const timeline = collectionSection<ResourceView>();
+  const evidence = collectionSection<ResourceView>();
+  const investigations = collectionSection<ResourceView>();
+  const remediationPlans = collectionSection<RemediationPlanView>();
+  const verifications = collectionSection<VerificationRunView>();
+  const delivery = resourceSection<DeliveryView>();
+  const resolutionReport = resourceSection<ResolutionReportView>();
   let requestIdentity = 0;
   let controller: AbortController | null = null;
 
@@ -70,7 +79,7 @@ export function useIncidentDetail(incidentID: string) {
     }
   }
 
-  async function loadMore(section: Section<ResourceView[]>, loader: CollectionLoader) {
+  async function loadMore<T>(section: Section<T[]>, loader: CollectionLoader<T>) {
     if (!section.nextCursor || commandPending.value) return;
     const identity = requestIdentity;
     await loadCollection(identity, section, loader, true);
@@ -97,20 +106,20 @@ export function useIncidentDetail(incidentID: string) {
     return runCommand(() => closeIncident(incidentID, { expected_version: incident.value!.version, reason: reason || undefined }, csrfToken));
   }
 
-  function decide(plan: ResourceView, decision: "approved" | "rejected", reason: string, csrfToken: string) {
-    if (!plan.version || !plan.hash) throw new Error("Plan version and canonical hash are required");
+  function decide(plan: RemediationPlanView, decision: "approved" | "rejected", reason: string, csrfToken: string) {
+    if (!plan.version || !plan.canonical_plan_hash) throw new Error("Plan version and canonical hash are required");
     return runCommand(() => decideRemediation(plan.id, {
       decision,
       expected_version: plan.version!,
-      expected_hash: plan.hash!,
+      expected_hash: plan.canonical_plan_hash,
       reason,
     }, csrfToken));
   }
 
-  async function loadCollection(
+  async function loadCollection<T>(
     identity: number,
-    section: Section<ResourceView[]>,
-    loader: CollectionLoader,
+    section: Section<T[]>,
+    loader: CollectionLoader<T>,
     append = false,
   ) {
     section.state = "loading";
@@ -128,7 +137,7 @@ export function useIncidentDetail(incidentID: string) {
     }
   }
 
-  async function loadResource(identity: number, section: Section<ResourceView | null>, loader: () => Promise<ResourceView>) {
+  async function loadResource<T>(identity: number, section: Section<T | null>, loader: () => Promise<T>) {
     section.state = "loading";
     section.error = "";
     try {
@@ -179,10 +188,10 @@ export function useIncidentDetail(incidentID: string) {
   };
 }
 
-function collectionSection(): Section<ResourceView[]> {
-  return reactive({ state: "loading", error: "", data: [], nextCursor: "" });
+function collectionSection<T>(): Section<T[]> {
+  return reactive({ state: "loading", error: "", data: [], nextCursor: "" }) as Section<T[]>;
 }
 
-function resourceSection(): Section<ResourceView | null> {
-  return reactive({ state: "loading", error: "", data: null, nextCursor: "" });
+function resourceSection<T>(): Section<T | null> {
+  return reactive({ state: "loading", error: "", data: null, nextCursor: "" }) as Section<T | null>;
 }

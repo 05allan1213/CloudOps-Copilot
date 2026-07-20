@@ -4,12 +4,16 @@ import { getJSON, postJSON } from "./client";
 import type {
   CollectionResponse,
   CommandResponse,
+  DeliveryView,
   DecisionCommand,
   IncidentListQuery,
   IncidentResponse,
   IncidentView,
+  RemediationPlanView,
+  ResolutionReportView,
   ResourceResponse,
   ResourceView,
+  VerificationRunView,
   VersionedCommand,
 } from "../types/incidents";
 
@@ -40,20 +44,28 @@ export function listIncidentInvestigations(incidentID: string, cursor = "", sign
   return listResources(incidentID, "investigations", cursor, false, signal);
 }
 
-export function listIncidentRemediationPlans(incidentID: string, cursor = "", signal?: AbortSignal) {
-  return listResources(incidentID, "remediation-plans", cursor, false, signal);
+export function listIncidentRemediationPlans(
+  incidentID: string,
+  cursor = "",
+  signal?: AbortSignal,
+): Promise<CollectionResponse<RemediationPlanView>> {
+  return listTypedResources<RemediationPlanView>(incidentID, "remediation-plans", cursor, signal);
 }
 
-export function listIncidentVerifications(incidentID: string, cursor = "", signal?: AbortSignal) {
-  return listResources(incidentID, "verifications", cursor, false, signal);
+export function listIncidentVerifications(
+  incidentID: string,
+  cursor = "",
+  signal?: AbortSignal,
+): Promise<CollectionResponse<VerificationRunView>> {
+  return listTypedResources<VerificationRunView>(incidentID, "verifications", cursor, signal);
 }
 
-export async function getIncidentDelivery(incidentID: string, signal?: AbortSignal): Promise<ResourceView> {
-  return getResource(incidentID, "delivery", signal);
+export async function getIncidentDelivery(incidentID: string, signal?: AbortSignal): Promise<DeliveryView> {
+  return getTypedResource<DeliveryView>(incidentID, "delivery", signal);
 }
 
-export async function getIncidentResolutionReport(incidentID: string, signal?: AbortSignal): Promise<ResourceView> {
-  return getResource(incidentID, "resolution-report", signal);
+export async function getIncidentResolutionReport(incidentID: string, signal?: AbortSignal): Promise<ResolutionReportView> {
+  return getTypedResource<ResolutionReportView>(incidentID, "resolution-report", signal);
 }
 
 export function startInvestigation(incidentID: string, body: VersionedCommand, csrfToken: string): Promise<CommandResponse> {
@@ -88,8 +100,22 @@ async function listResources(
   );
 }
 
-async function getResource(incidentID: string, resource: string, signal?: AbortSignal): Promise<ResourceView> {
-  const response = await getJSON<ResourceResponse>(`${base}/${encodeURIComponent(incidentID)}/${resource}`, { signal });
+function listTypedResources<T>(
+  incidentID: string,
+  resource: string,
+  cursor: string,
+  signal?: AbortSignal,
+): Promise<CollectionResponse<T>> {
+  const params: Record<string, string | number> = { limit: 100 };
+  if (cursor) params.cursor = cursor;
+  return getJSON<CollectionResponse<T>>(
+    `${base}/${encodeURIComponent(incidentID)}/${resource}`,
+    { params, signal },
+  );
+}
+
+async function getTypedResource<T>(incidentID: string, resource: string, signal?: AbortSignal): Promise<T> {
+  const response = await getJSON<ResourceResponse<T>>(`${base}/${encodeURIComponent(incidentID)}/${resource}`, { signal });
   return response.resource;
 }
 

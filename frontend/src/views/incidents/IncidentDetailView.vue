@@ -1,24 +1,25 @@
 <script setup lang="ts">
-import { computed, onMounted } from "vue";
+import { onMounted } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useRoute } from "vue-router";
 
+import IncidentDeliveryPanel from "../../components/incidents/IncidentDeliveryPanel.vue";
 import IncidentHeader from "../../components/incidents/IncidentHeader.vue";
+import IncidentRemediationPanel from "../../components/incidents/IncidentRemediationPanel.vue";
 import IncidentResourceList from "../../components/incidents/IncidentResourceList.vue";
+import IncidentResolutionReport from "../../components/incidents/IncidentResolutionReport.vue";
 import IncidentSectionShell from "../../components/incidents/IncidentSectionShell.vue";
+import IncidentVerificationPanel from "../../components/incidents/IncidentVerificationPanel.vue";
 import { useIncidentDetail } from "../../composables/incidents/useIncidentDetail";
 import { useIncidentRealtime } from "../../composables/incidents/useIncidentRealtime";
 import { useAuthStore } from "../../stores/auth";
-import type { ResourceView } from "../../types/incidents";
+import type { RemediationPlanView } from "../../types/incidents";
 
 const route = useRoute();
 const auth = useAuthStore();
 const incidentID = String(route.params.incidentId ?? "");
 const detail = useIncidentDetail(incidentID);
 const realtime = useIncidentRealtime(incidentID, async () => detail.load());
-
-const deliveryItems = computed<ResourceView[]>(() => detail.delivery.data ? [detail.delivery.data] : []);
-const reportItems = computed<ResourceView[]>(() => detail.resolutionReport.data ? [detail.resolutionReport.data] : []);
 
 onMounted(async () => {
   await detail.load();
@@ -46,7 +47,7 @@ async function promptReason(title: string, required: boolean, maxLength = 2048):
 }
 
 async function runInvestigation() {
-  const reason = await promptReason("Start a bounded re-investigation", false);
+  const reason = await promptReason("Start a bounded re-investigation", false, 1024);
   if (reason === null) return;
   await runCommand(async () => detail.investigate(reason, await auth.commandToken()), "Investigation command accepted");
 }
@@ -57,7 +58,7 @@ async function runClose() {
   await runCommand(async () => detail.close(reason, await auth.commandToken()), "Close command accepted");
 }
 
-async function runDecision(plan: ResourceView, decision: "approved" | "rejected") {
+async function runDecision(plan: RemediationPlanView, decision: "approved" | "rejected") {
   const reason = await promptReason(`${decision === "approved" ? "Approve" : "Reject"} exact plan`, true, 1024);
   if (reason === null) return;
   await runCommand(async () => detail.decide(plan, decision, reason, await auth.commandToken()), `Plan ${decision}`);
@@ -205,47 +206,20 @@ async function runCommand(request: () => Promise<unknown>, success: string) {
           class="zone"
         >
           <header><span>03</span><div><h2>Remediation &amp; Delivery</h2><p>Viewer sees the persisted canonical Plan hash and Decision state; only operator can submit Approve/Reject.</p></div></header>
-          <IncidentResourceList
-            id="remediation-plans"
-            title="Remediation plans"
+          <IncidentRemediationPanel
             :state="detail.remediationPlans.state"
             :error="detail.remediationPlans.error"
-            :items="detail.remediationPlans.data"
+            :plans="detail.remediationPlans.data"
             :next-cursor="detail.remediationPlans.nextCursor"
+            :is-operator="auth.isOperator"
+            :command-pending="detail.commandPending.value"
             @load-more="detail.moreRemediationPlans"
-          >
-            <template #actions="{ item }">
-              <div
-                v-if="auth.isOperator && item.status === 'awaiting_approval'"
-                class="plan-actions"
-              >
-                <el-button
-                  type="success"
-                  :disabled="!item.version || !item.hash"
-                  :loading="detail.commandPending.value"
-                  @click="runDecision(item, 'approved')"
-                >
-                  Approve exact hash
-                </el-button>
-                <el-button
-                  type="danger"
-                  plain
-                  :disabled="!item.version || !item.hash"
-                  :loading="detail.commandPending.value"
-                  @click="runDecision(item, 'rejected')"
-                >
-                  Reject
-                </el-button>
-              </div>
-            </template>
-          </IncidentResourceList>
-          <IncidentResourceList
-            id="delivery"
-            title="Delivery"
+            @decide="runDecision"
+          />
+          <IncidentDeliveryPanel
             :state="detail.delivery.state"
             :error="detail.delivery.error"
-            :items="deliveryItems"
-            empty-text="No ChangeRequest has been projected."
+            :delivery="detail.delivery.data"
           />
         </section>
         <section
@@ -253,22 +227,17 @@ async function runCommand(request: () => Promise<unknown>, success: string) {
           class="zone"
         >
           <header><span>04</span><div><h2>Recovery</h2><p>Verification verdicts and the immutable ResolutionReport are displayed without browser recomputation.</p></div></header>
-          <IncidentResourceList
-            id="verifications"
-            title="Verification runs"
+          <IncidentVerificationPanel
             :state="detail.verifications.state"
             :error="detail.verifications.error"
-            :items="detail.verifications.data"
+            :runs="detail.verifications.data"
             :next-cursor="detail.verifications.nextCursor"
             @load-more="detail.moreVerifications"
           />
-          <IncidentResourceList
-            id="resolution-report"
-            title="Resolution report"
+          <IncidentResolutionReport
             :state="detail.resolutionReport.state"
             :error="detail.resolutionReport.error"
-            :items="reportItems"
-            empty-text="No immutable ResolutionReport exists for the active cycle."
+            :report="detail.resolutionReport.data"
           />
         </section>
       </div>
@@ -301,7 +270,6 @@ async function runCommand(request: () => Promise<unknown>, success: string) {
 .zone > header > span { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; color: white; background: var(--el-color-primary); font-size: 12px; font-weight: 700; }
 .zone h2, .zone p { margin: 0; }
 .zone p { margin-top: 4px; color: var(--el-text-color-secondary); }
-.plan-actions { display: flex; gap: 8px; margin-top: 14px; }
 .authority-note { margin: 0; color: var(--el-text-color-secondary); }
 @media (max-width: 760px) { .command-bar { align-items: stretch; flex-direction: column; } .command-bar > div { margin-right: 0; } }
 </style>
