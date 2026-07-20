@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
+	"github.com/05allan1213/CloudOps-Copilot/internal/baseline"
 	"github.com/05allan1213/CloudOps-Copilot/internal/verification"
 )
 
@@ -52,11 +53,20 @@ type ResolutionReportWriter interface {
 	PersistIn(context.Context, asyncjob.DBTX, asyncjob.Task, VerificationAdvanceSnapshot, []verification.Check, *time.Time, time.Time) error
 }
 
+// VerificationBaselineStore is deliberately transaction-bound: a passing
+// post-delivery VerificationRun, its promoted DeploymentBaseline, the resolved
+// Incident projection, and the ResolutionReport must commit or roll back as a
+// single durable state transition.
+type VerificationBaselineStore interface {
+	ActivateIn(context.Context, baseline.Transaction, baseline.Snapshot) (baseline.ActivationResult, error)
+}
+
 type MySQLVerificationAdvanceConfig struct {
 	DB           *sql.DB
 	Tasks        VerificationAdvanceTaskStore
 	Observations VerificationObservationSource
 	Reports      ResolutionReportWriter
+	Baselines    VerificationBaselineStore
 	Now          func() time.Time
 	MaxAgentRuns int
 }
@@ -64,8 +74,8 @@ type MySQLVerificationAdvanceConfig struct {
 // NewMySQLVerificationAdvance creates the production verification operation.
 // All dependencies are required; nil adapters are not replaced by a no-op.
 func NewMySQLVerificationAdvance(config MySQLVerificationAdvanceConfig) (Operation, error) {
-	if config.DB == nil || config.Tasks == nil || config.Observations == nil || config.Reports == nil {
-		return nil, errors.New("verification.advance requires MySQL, task, observation, and resolution-report adapters")
+	if config.DB == nil || config.Tasks == nil || config.Observations == nil || config.Reports == nil || config.Baselines == nil {
+		return nil, errors.New("verification.advance requires MySQL, task, observation, resolution-report, and baseline adapters")
 	}
 	if config.Now == nil {
 		config.Now = func() time.Time { return time.Now().UTC() }
@@ -77,7 +87,7 @@ func NewMySQLVerificationAdvance(config MySQLVerificationAdvanceConfig) (Operati
 		return nil, errors.New("verification.advance agent-run limit must match the fixed investigation.start budget")
 	}
 	reader := &mysqlVerificationAdvanceReader{db: config.DB, observations: config.Observations}
-	store := &mysqlVerificationAdvanceStore{tasks: config.Tasks, reports: config.Reports, now: config.Now, maxAgentRuns: config.MaxAgentRuns}
+	store := &mysqlVerificationAdvanceStore{tasks: config.Tasks, reports: config.Reports, baselines: config.Baselines, now: config.Now, maxAgentRuns: config.MaxAgentRuns}
 	return NewVerificationAdvance(VerificationAdvanceConfig{Reader: reader, Store: store, Now: config.Now})
 }
 
@@ -398,6 +408,7 @@ func msDuration(value int64) time.Duration {
 type mysqlVerificationAdvanceStore struct {
 	tasks        VerificationAdvanceTaskStore
 	reports      ResolutionReportWriter
+	baselines    VerificationBaselineStore
 	now          func() time.Time
 	maxAgentRuns int
 }
@@ -418,14 +429,27 @@ func (s *mysqlVerificationAdvanceStore) PersistIn(ctx context.Context, tx asyncj
 	}
 	var rowVersion uint64
 	var currentStatus string
+	var storedPlanID, storedChangeID nullableUint64
+	var storedTrigger, storedSource, storedImage, storedGitOps string
+	var storedProfileID, storedProfileHash string
 	if err := tx.QueryRowContext(ctx, `
-SELECT row_version, COALESCE(v3_status, status)
+SELECT row_version, COALESCE(v3_status, status), remediation_plan_id, change_request_id,
+       COALESCE(trigger_type,''), COALESCE(source_revision,''), COALESCE(image_digest,''),
+       COALESCE(gitops_revision,''), COALESCE(verification_profile_id,''),
+       COALESCE(verification_profile_hash,'')
 FROM verification_runs
 WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3
-FOR UPDATE`, task.SubjectID, task.IncidentID, task.CycleNo).Scan(&rowVersion, &currentStatus); err != nil {
+FOR UPDATE`, task.SubjectID, task.IncidentID, task.CycleNo).Scan(
+		&rowVersion, &currentStatus, &storedPlanID, &storedChangeID, &storedTrigger,
+		&storedSource, &storedImage, &storedGitOps, &storedProfileID, &storedProfileHash); err != nil {
 		return err
 	}
 	if rowVersion != task.ExpectedSubjectVersion || (currentStatus != string(verification.RunPending) && currentStatus != string(verification.RunRunning)) {
+		return asyncjob.ErrSubjectVersionMismatch
+	}
+	if storedPlanID.value() != snapshot.RemediationPlanID || storedChangeID.value() != snapshot.ChangeRequestID ||
+		storedTrigger != snapshot.TriggerType || storedSource != snapshot.SourceRevision || storedImage != snapshot.ImageDigest ||
+		storedGitOps != snapshot.GitOpsRevision || storedProfileID != snapshot.ProfileID || storedProfileHash != snapshot.ProfileHash {
 		return asyncjob.ErrSubjectVersionMismatch
 	}
 	var storedAttempt int
@@ -479,6 +503,9 @@ WHERE id = ? AND incident_id = ? AND cycle_no = ? AND row_version = ?`,
 	if status == verification.RunPassed {
 		if err := markRemainingChecksPassed(ctx, tx, task, now); err != nil {
 			return err
+		}
+		if err := promotePassingDeploymentBaseline(ctx, tx, s.baselines, task, snapshot, commonStart, now); err != nil {
+			return fmt.Errorf("promote passing DeploymentBaseline: %w", err)
 		}
 		if err := resolveIncident(ctx, tx, task, snapshot, now); err != nil {
 			return err

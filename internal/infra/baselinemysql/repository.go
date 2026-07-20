@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/05allan1213/CloudOps-Copilot/internal/baseline"
@@ -27,6 +26,7 @@ type Repository struct {
 }
 
 var _ baseline.Store = (*Repository)(nil)
+var _ baseline.TransactionalStore = (*Repository)(nil)
 
 func NewRepository(db *sql.DB) (*Repository, error) {
 	if db == nil {
@@ -39,10 +39,7 @@ func (r *Repository) Activate(ctx context.Context, snapshot baseline.Snapshot) (
 	if r == nil || r.db == nil {
 		return baseline.ActivationResult{}, errors.New("baseline repository is not initialized")
 	}
-	if err := snapshot.Validate(); err != nil {
-		return baseline.ActivationResult{}, err
-	}
-	if err := snapshot.Finalize(); err != nil {
+	if err := prepareSnapshot(&snapshot); err != nil {
 		return baseline.ActivationResult{}, err
 	}
 	conn, err := r.db.Conn(ctx)
@@ -63,36 +60,63 @@ func (r *Repository) Activate(ctx context.Context, snapshot baseline.Snapshot) (
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	activation, err := r.activateIn(ctx, tx, snapshot)
+	if err != nil {
+		return baseline.ActivationResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return baseline.ActivationResult{}, fmt.Errorf("commit baseline activation: %w", err)
+	}
+	return activation, nil
+}
+
+// ActivateIn performs the complete immutable activation using a caller-owned
+// transaction. The caller is responsible for commit/rollback. Workflows that
+// call this method must already have a durable target to serialize on; the
+// generated active-target key remains the final database uniqueness guard.
+func (r *Repository) ActivateIn(ctx context.Context, tx baseline.Transaction, snapshot baseline.Snapshot) (baseline.ActivationResult, error) {
+	if r == nil || tx == nil {
+		return baseline.ActivationResult{}, errors.New("baseline transactional repository is not initialized")
+	}
+	if err := prepareSnapshot(&snapshot); err != nil {
+		return baseline.ActivationResult{}, err
+	}
+	return r.activateIn(ctx, tx, snapshot)
+}
+
+func prepareSnapshot(snapshot *baseline.Snapshot) error {
+	if snapshot == nil {
+		return errors.New("baseline snapshot is required")
+	}
+	if err := snapshot.Validate(); err != nil {
+		return err
+	}
+	return snapshot.Finalize()
+}
+
+func (r *Repository) activateIn(ctx context.Context, tx baseline.Transaction, snapshot baseline.Snapshot) (baseline.ActivationResult, error) {
 	exact, err := loadExact(ctx, tx, snapshot)
 	if err != nil {
 		return baseline.ActivationResult{}, err
 	}
 	if exact != nil {
-		switch exact.Status {
-		case "active":
-			if err := compareExisting(*exact, snapshot); err != nil {
-				return baseline.ActivationResult{}, err
-			}
-			observations, err := loadObservationIDs(ctx, tx, exact.ID, snapshot)
-			if err != nil {
-				return baseline.ActivationResult{}, err
-			}
-			if err := tx.Commit(); err != nil {
-				return baseline.ActivationResult{}, fmt.Errorf("commit idempotent baseline activation: %w", err)
-			}
-			return baseline.ActivationResult{
-				BaselineID: exact.ID, PublicID: exact.PublicID, Created: false, ObservationIDs: observations,
-			}, nil
-		case "superseded":
-			return baseline.ActivationResult{}, fmt.Errorf("%w: %s", baseline.ErrSuperseded, exact.PublicID)
-		default:
-			return baseline.ActivationResult{}, fmt.Errorf("%w: unknown baseline status %q", baseline.ErrConflict, exact.Status)
-		}
+		return replayActivation(ctx, tx, exact, snapshot)
 	}
 
 	active, err := loadActive(ctx, tx, snapshot.TargetIdentityHash)
 	if err != nil {
 		return baseline.ActivationResult{}, err
+	}
+	// A concurrent transaction can create the same exact baseline while this
+	// transaction waits for the prior active row. Re-read after taking that
+	// serialization lock so replay remains idempotent instead of superseding the
+	// just-created row and colliding with the immutable revision key.
+	exact, err = loadExact(ctx, tx, snapshot)
+	if err != nil {
+		return baseline.ActivationResult{}, err
+	}
+	if exact != nil {
+		return replayActivation(ctx, tx, exact, snapshot)
 	}
 	if active != nil {
 		if err := supersede(ctx, tx, active); err != nil {
@@ -154,37 +178,67 @@ INSERT INTO baseline_observations (
 		}
 		observationIDs = append(observationIDs, uint64(id))
 	}
-	if err := tx.Commit(); err != nil {
-		return baseline.ActivationResult{}, fmt.Errorf("commit baseline activation: %w", err)
-	}
 	return baseline.ActivationResult{
 		BaselineID: uint64(baselineID), PublicID: publicID, Created: true,
 		SupersededBaselineID: activeID(active), ObservationIDs: observationIDs,
 	}, nil
 }
 
-type baselineRow struct {
-	ID, RowVersion              uint64
-	PublicID, Status            string
-	SourceRevision              string
-	ImageDigest, GitOpsRevision string
-	ConfigHash, PolicyVersion   string
-	VerificationHash            string
+func replayActivation(ctx context.Context, tx baseline.Transaction, exact *baselineRow, snapshot baseline.Snapshot) (baseline.ActivationResult, error) {
+	if exact == nil {
+		return baseline.ActivationResult{}, baseline.ErrConflict
+	}
+	switch exact.Status {
+	case "active":
+		if err := compareExisting(*exact, snapshot); err != nil {
+			return baseline.ActivationResult{}, err
+		}
+		observations, err := loadObservationIDs(ctx, tx, exact.ID, snapshot)
+		if err != nil {
+			return baseline.ActivationResult{}, err
+		}
+		return baseline.ActivationResult{
+			BaselineID: exact.ID, PublicID: exact.PublicID, Created: false, ObservationIDs: observations,
+		}, nil
+	case "superseded":
+		return baseline.ActivationResult{}, fmt.Errorf("%w: %s", baseline.ErrSuperseded, exact.PublicID)
+	default:
+		return baseline.ActivationResult{}, fmt.Errorf("%w: unknown baseline status %q", baseline.ErrConflict, exact.Status)
+	}
 }
 
-func loadExact(ctx context.Context, tx *sql.Tx, snapshot baseline.Snapshot) (*baselineRow, error) {
+type baselineRow struct {
+	ID, RowVersion                             uint64
+	DomainSchemaVersion, BaselineSchemaVersion uint16
+	PublicID, Status                           string
+	TargetIdentityHash                         string
+	Target                                     baseline.Target
+	SourceRevision                             string
+	ImageDigest, GitOpsRevision                string
+	ConfigHash, PolicyVersion                  string
+	VerificationHash                           string
+	VerifiedAt                                 time.Time
+}
+
+func loadExact(ctx context.Context, tx baseline.Transaction, snapshot baseline.Snapshot) (*baselineRow, error) {
 	row := &baselineRow{}
 	err := tx.QueryRowContext(ctx, `
-SELECT id, public_id, status, row_version, source_revision, image_digest,
-       gitops_revision, config_hash, verification_policy_version, verification_hash
+SELECT id, public_id, domain_schema_version, baseline_schema_version, status, row_version,
+       target_identity_hash, cluster, environment, namespace, workload_kind, workload_name,
+       container_name, repository, base_branch, target_path, source_revision, image_digest,
+       gitops_revision, config_hash, verification_policy_version, verification_hash, verified_at
 FROM deployment_baselines
 WHERE domain_schema_version = 3
   AND target_identity_hash = ? AND gitops_revision = ? AND config_hash = ?
 LIMIT 1 FOR UPDATE`,
 		snapshot.TargetIdentityHash, snapshot.GitOpsRevision, snapshot.ConfigHash,
-	).Scan(&row.ID, &row.PublicID, &row.Status, &row.RowVersion, &row.SourceRevision,
+	).Scan(&row.ID, &row.PublicID, &row.DomainSchemaVersion, &row.BaselineSchemaVersion,
+		&row.Status, &row.RowVersion, &row.TargetIdentityHash, &row.Target.Cluster,
+		&row.Target.Environment, &row.Target.Namespace, &row.Target.WorkloadKind,
+		&row.Target.WorkloadName, &row.Target.ContainerName, &row.Target.Repository,
+		&row.Target.BaseBranch, &row.Target.TargetPath, &row.SourceRevision,
 		&row.ImageDigest, &row.GitOpsRevision, &row.ConfigHash, &row.PolicyVersion,
-		&row.VerificationHash)
+		&row.VerificationHash, &row.VerifiedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -194,17 +248,23 @@ LIMIT 1 FOR UPDATE`,
 	return row, nil
 }
 
-func loadActive(ctx context.Context, tx *sql.Tx, targetHash string) (*baselineRow, error) {
+func loadActive(ctx context.Context, tx baseline.Transaction, targetHash string) (*baselineRow, error) {
 	row := &baselineRow{}
 	err := tx.QueryRowContext(ctx, `
-SELECT id, public_id, status, row_version, source_revision, image_digest,
-       gitops_revision, config_hash, verification_policy_version, verification_hash
+SELECT id, public_id, domain_schema_version, baseline_schema_version, status, row_version,
+       target_identity_hash, cluster, environment, namespace, workload_kind, workload_name,
+       container_name, repository, base_branch, target_path, source_revision, image_digest,
+       gitops_revision, config_hash, verification_policy_version, verification_hash, verified_at
 FROM deployment_baselines
 WHERE domain_schema_version = 3 AND target_identity_hash = ? AND status = 'active'
 LIMIT 1 FOR UPDATE`, targetHash).Scan(
-		&row.ID, &row.PublicID, &row.Status, &row.RowVersion, &row.SourceRevision,
+		&row.ID, &row.PublicID, &row.DomainSchemaVersion, &row.BaselineSchemaVersion,
+		&row.Status, &row.RowVersion, &row.TargetIdentityHash, &row.Target.Cluster,
+		&row.Target.Environment, &row.Target.Namespace, &row.Target.WorkloadKind,
+		&row.Target.WorkloadName, &row.Target.ContainerName, &row.Target.Repository,
+		&row.Target.BaseBranch, &row.Target.TargetPath, &row.SourceRevision,
 		&row.ImageDigest, &row.GitOpsRevision, &row.ConfigHash, &row.PolicyVersion,
-		&row.VerificationHash)
+		&row.VerificationHash, &row.VerifiedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -214,7 +274,7 @@ LIMIT 1 FOR UPDATE`, targetHash).Scan(
 	return row, nil
 }
 
-func supersede(ctx context.Context, tx *sql.Tx, row *baselineRow) error {
+func supersede(ctx context.Context, tx baseline.Transaction, row *baselineRow) error {
 	result, err := tx.ExecContext(ctx, `
 UPDATE deployment_baselines
 SET status = 'superseded', row_version = row_version + 1,
@@ -232,19 +292,23 @@ WHERE id = ? AND status = 'active' AND row_version = ?`,
 }
 
 func compareExisting(row baselineRow, snapshot baseline.Snapshot) error {
-	if row.Status != "active" || !strings.EqualFold(row.SourceRevision, snapshot.SourceRevision) ||
-		!strings.EqualFold(row.ImageDigest, snapshot.ImageDigest) ||
-		!strings.EqualFold(row.GitOpsRevision, snapshot.GitOpsRevision) ||
-		!strings.EqualFold(row.ConfigHash, snapshot.ConfigHash) ||
-		row.PolicyVersion != snapshot.VerificationPolicyVersion {
+	if row.Status != "active" || row.DomainSchemaVersion != baseline.DomainSchemaVersion ||
+		row.BaselineSchemaVersion != baseline.BaselineSchemaVersion || row.RowVersion != 1 || row.PublicID != snapshot.PublicID() ||
+		row.TargetIdentityHash != snapshot.TargetIdentityHash || row.Target != snapshot.Target ||
+		row.SourceRevision != snapshot.SourceRevision || row.ImageDigest != snapshot.ImageDigest ||
+		row.GitOpsRevision != snapshot.GitOpsRevision || row.ConfigHash != snapshot.ConfigHash ||
+		row.PolicyVersion != snapshot.VerificationPolicyVersion || row.VerificationHash != snapshot.VerificationHash ||
+		!sameMySQLTime(row.VerifiedAt, snapshot.VerifiedAt) {
 		return fmt.Errorf("%w: exact baseline identity differs from the existing row", baseline.ErrConflict)
 	}
 	return nil
 }
 
-func loadObservationIDs(ctx context.Context, tx *sql.Tx, rowID uint64, snapshot baseline.Snapshot) ([]uint64, error) {
+func loadObservationIDs(ctx context.Context, tx baseline.Transaction, rowID uint64, snapshot baseline.Snapshot) ([]uint64, error) {
 	rows, err := tx.QueryContext(ctx, `
-SELECT id, observation_type
+SELECT id, public_id, domain_schema_version, observation_schema_version, sequence_no,
+       observation_type, source_identity, CAST(observed_json AS CHAR), content_hash,
+       dedupe_key, observed_at
 FROM baseline_observations
 WHERE baseline_id = ?
 ORDER BY sequence_no`, rowID)
@@ -255,17 +319,27 @@ ORDER BY sequence_no`, rowID)
 	ids := make([]uint64, 0, len(snapshot.Observations))
 	index := 0
 	for rows.Next() {
-		var id uint64
-		var typ string
-		if err := rows.Scan(&id, &typ); err != nil {
+		var (
+			id, sequence                            uint64
+			domainVersion, observationSchemaVersion uint16
+			publicID, typ, source                   string
+			observed                                []byte
+			contentHash, dedupeKey                  string
+			observedAt                              time.Time
+		)
+		if err := rows.Scan(&id, &publicID, &domainVersion, &observationSchemaVersion,
+			&sequence, &typ, &source, &observed, &contentHash, &dedupeKey, &observedAt); err != nil {
 			return nil, fmt.Errorf("scan existing baseline observation: %w", err)
 		}
 		if index >= len(snapshot.Observations) {
 			return nil, fmt.Errorf("%w: existing baseline has extra observations", baseline.ErrConflict)
 		}
 		expected := snapshot.Observations[index]
-		if typ != string(expected.Type) {
-			return nil, fmt.Errorf("%w: existing baseline observation type differs", baseline.ErrConflict)
+		if domainVersion != baseline.DomainSchemaVersion || observationSchemaVersion != baseline.ObservationSchemaVersion ||
+			sequence != uint64(index+1) || publicID != observationPublicID(snapshot.PublicID(), expected) ||
+			typ != string(expected.Type) || source != expected.SourceIdentity || !sameJSON(observed, expected.ObservedJSON) ||
+			contentHash != expected.ContentHash || dedupeKey != expected.DedupeKey || !sameMySQLTime(observedAt, expected.ObservedAt) {
+			return nil, fmt.Errorf("%w: existing baseline observation %s differs", baseline.ErrConflict, expected.Type)
 		}
 		ids = append(ids, id)
 		index++
@@ -277,6 +351,10 @@ ORDER BY sequence_no`, rowID)
 		return nil, fmt.Errorf("%w: existing baseline observation count differs", baseline.ErrConflict)
 	}
 	return ids, nil
+}
+
+func sameMySQLTime(left, right time.Time) bool {
+	return left.UTC().Truncate(time.Microsecond).Equal(right.UTC().Truncate(time.Microsecond))
 }
 
 func observationPublicID(baselinePublicID string, observation baseline.Observation) string {

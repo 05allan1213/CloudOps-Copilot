@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -75,6 +76,7 @@ func TestMySQLBaselineActivationIsAtomicIdempotentAndUnique(t *testing.T) {
 		t.Fatalf("concurrent activation results are not idempotent: first=%+v second=%+v", first.result, second.result)
 	}
 	assertBaselineCounts(t, ctx, db, 1, 1, 0, 7)
+	assertStrictBaselineReplay(t, ctx, db, repository, snapshots[0], first.result.BaselineID, first.result.ObservationIDs[0])
 
 	if _, err := db.ExecContext(ctx, `CREATE TRIGGER fail_baseline_observation
 BEFORE INSERT ON baseline_observations FOR EACH ROW
@@ -99,6 +101,115 @@ SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'forced baseline rollback'`); err != 
 		t.Fatalf("idempotent replay result=%+v err=%v", replayed, err)
 	}
 	assertBaselineCounts(t, ctx, db, 2, 1, 1, 14)
+
+	transactional := []baseline.Snapshot{
+		mysqlBaselineSnapshot(t, "c", "healthy-v3", time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)),
+		mysqlBaselineSnapshot(t, "d", "healthy-v4", time.Date(2026, 7, 20, 13, 0, 0, 0, time.UTC)),
+	}
+	transactionalResults := make(chan activation, len(transactional))
+	start = make(chan struct{})
+	for _, snapshot := range transactional {
+		go func(snapshot baseline.Snapshot) {
+			<-start
+			tx, beginErr := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+			if beginErr != nil {
+				transactionalResults <- activation{err: beginErr}
+				return
+			}
+			result, activateErr := repository.ActivateIn(ctx, tx, snapshot)
+			if activateErr == nil {
+				activateErr = tx.Commit()
+			} else {
+				_ = tx.Rollback()
+			}
+			transactionalResults <- activation{result: result, err: activateErr}
+		}(snapshot)
+	}
+	close(start)
+	for range transactional {
+		result := <-transactionalResults
+		if result.err != nil || !result.result.Created || result.result.SupersededBaselineID == 0 {
+			t.Fatalf("transaction-bound concurrent activation result=%+v err=%v", result.result, result.err)
+		}
+	}
+	assertBaselineCounts(t, ctx, db, 4, 1, 3, 28)
+}
+
+func assertStrictBaselineReplay(t *testing.T, ctx context.Context, db *sql.DB, repository *Repository, snapshot baseline.Snapshot, baselineID, observationID uint64) {
+	t.Helper()
+	assertConflict := func(name string) {
+		t.Helper()
+		if _, err := repository.Activate(ctx, snapshot); !errors.Is(err, baseline.ErrConflict) {
+			t.Fatalf("%s drift replay err=%v", name, err)
+		}
+	}
+	if _, err := db.ExecContext(ctx, "UPDATE deployment_baselines SET verification_hash = ? WHERE id = ?", strings.Repeat("0", 64), baselineID); err != nil {
+		t.Fatal(err)
+	}
+	assertConflict("verification_hash")
+	if _, err := db.ExecContext(ctx, "UPDATE deployment_baselines SET verification_hash = ? WHERE id = ?", snapshot.VerificationHash, baselineID); err != nil {
+		t.Fatal(err)
+	}
+
+	var source, contentHash, dedupeKey string
+	var observed []byte
+	var observedAt time.Time
+	if err := db.QueryRowContext(ctx, `SELECT source_identity, CAST(observed_json AS CHAR), content_hash, dedupe_key, observed_at FROM baseline_observations WHERE id = ?`, observationID).Scan(&source, &observed, &contentHash, &dedupeKey, &observedAt); err != nil {
+		t.Fatal(err)
+	}
+	mutations := []struct {
+		name    string
+		mutate  func() error
+		restore func() error
+	}{
+		{"source_identity", func() error {
+			_, err := db.ExecContext(ctx, "UPDATE baseline_observations SET source_identity = ? WHERE id = ?", source+"-drift", observationID)
+			return err
+		}, func() error {
+			_, err := db.ExecContext(ctx, "UPDATE baseline_observations SET source_identity = ? WHERE id = ?", source, observationID)
+			return err
+		}},
+		{"observed_json", func() error {
+			_, err := db.ExecContext(ctx, "UPDATE baseline_observations SET observed_json = JSON_OBJECT('drift', TRUE) WHERE id = ?", observationID)
+			return err
+		}, func() error {
+			_, err := db.ExecContext(ctx, "UPDATE baseline_observations SET observed_json = ? WHERE id = ?", observed, observationID)
+			return err
+		}},
+		{"content_hash", func() error {
+			_, err := db.ExecContext(ctx, "UPDATE baseline_observations SET content_hash = ? WHERE id = ?", strings.Repeat("0", 64), observationID)
+			return err
+		}, func() error {
+			_, err := db.ExecContext(ctx, "UPDATE baseline_observations SET content_hash = ? WHERE id = ?", contentHash, observationID)
+			return err
+		}},
+		{"dedupe_key", func() error {
+			_, err := db.ExecContext(ctx, "UPDATE baseline_observations SET dedupe_key = ? WHERE id = ?", strings.Repeat("0", 64), observationID)
+			return err
+		}, func() error {
+			_, err := db.ExecContext(ctx, "UPDATE baseline_observations SET dedupe_key = ? WHERE id = ?", dedupeKey, observationID)
+			return err
+		}},
+		{"observed_at", func() error {
+			_, err := db.ExecContext(ctx, "UPDATE baseline_observations SET observed_at = DATE_ADD(observed_at, INTERVAL 1 MICROSECOND) WHERE id = ?", observationID)
+			return err
+		}, func() error {
+			_, err := db.ExecContext(ctx, "UPDATE baseline_observations SET observed_at = ? WHERE id = ?", observedAt, observationID)
+			return err
+		}},
+	}
+	for _, mutation := range mutations {
+		if err := mutation.mutate(); err != nil {
+			t.Fatal(err)
+		}
+		assertConflict(mutation.name)
+		if err := mutation.restore(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if replay, err := repository.Activate(ctx, snapshot); err != nil || replay.Created {
+		t.Fatalf("strict replay did not recover after restoring immutable rows: result=%+v err=%v", replay, err)
+	}
 }
 
 func mysqlBaselineSnapshot(t *testing.T, revisionSeed, config string, observedAt time.Time) baseline.Snapshot {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/05allan1213/CloudOps-Copilot/internal/agent"
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
+	"github.com/05allan1213/CloudOps-Copilot/internal/infra/baselinemysql"
 	"github.com/05allan1213/CloudOps-Copilot/internal/remediation"
 	"github.com/05allan1213/CloudOps-Copilot/internal/taskhandler"
 )
@@ -105,9 +106,14 @@ func AssembleWorkerTaskOperations(
 	if err != nil {
 		return taskhandler.Config{}, fmt.Errorf("assemble delivery.observe: %w", err)
 	}
+	baselineStore, err := baselinemysql.NewRepository(db)
+	if err != nil {
+		return taskhandler.Config{}, fmt.Errorf("assemble DeploymentBaseline store: %w", err)
+	}
 	verificationAdvance, err := taskhandler.NewMySQLVerificationAdvance(taskhandler.MySQLVerificationAdvanceConfig{
 		DB: db, Tasks: tasks, Observations: dependencies.VerificationObservations,
-		Reports: dependencies.ResolutionReports, Now: config.Now, MaxAgentRuns: config.MaxAgentRuns,
+		Reports: dependencies.ResolutionReports, Baselines: baselineStore,
+		Now: config.Now, MaxAgentRuns: config.MaxAgentRuns,
 	})
 	if err != nil {
 		return taskhandler.Config{}, fmt.Errorf("assemble verification.advance: %w", err)

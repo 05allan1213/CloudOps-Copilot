@@ -15,6 +15,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
+	baselinepkg "github.com/05allan1213/CloudOps-Copilot/internal/baseline"
+	"github.com/05allan1213/CloudOps-Copilot/internal/infra/baselinemysql"
 	incidentmysql "github.com/05allan1213/CloudOps-Copilot/internal/infra/incidentmysql"
 	"github.com/05allan1213/CloudOps-Copilot/internal/migration"
 	"github.com/05allan1213/CloudOps-Copilot/internal/remediation"
@@ -76,7 +78,7 @@ func TestMySQLVerificationAdvanceTimeoutRequeuesInvestigation(t *testing.T) {
 	}
 	operation, err := NewMySQLVerificationAdvance(MySQLVerificationAdvanceConfig{
 		DB: db, Tasks: tasks, Observations: verificationIntegrationObservation{},
-		Reports: verificationIntegrationReport{},
+		Reports: verificationIntegrationReport{}, Baselines: mustVerificationBaselineStore(t, db),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -166,6 +168,12 @@ VALUES (?, ?, 3, 1, 1, 'verification_fixture', ?, 'system', 'integration-test', 
 	if err != nil {
 		t.Fatal(err)
 	}
+	activateVerificationBaselineFixture(t, ctx, db, baselinepkg.Target{
+		Cluster: "kind-local", Environment: "local", Namespace: "cloudops-demo", WorkloadKind: "Deployment",
+		WorkloadName: "cloudops-demo", ContainerName: "cloudops-demo", Repository: "acme/gitops",
+		BaseBranch: "main", TargetPath: "apps/cloudops-demo.yaml",
+	}, plan.SourceRevision, plan.ImageDigest, plan.GitOpsRevision, strings.Repeat("e", 64), now.Add(-3*time.Minute))
+	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM deployment_baselines WHERE status = 'active'", 1)
 	task := asyncjob.Task{IncidentID: incidentID, CycleNo: 1, SubjectID: runID, ExpectedSubjectVersion: 1}
 	checks, err := loadVerificationChecks(ctx, db, task)
 	if err != nil {
@@ -212,7 +220,7 @@ VALUES (?, ?, 3, 1, 1, 'verification_fixture', ?, 'system', 'integration-test', 
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := &mysqlVerificationAdvanceStore{tasks: tasks, reports: NewMySQLResolutionReportWriter(), now: func() time.Time { return now }, maxAgentRuns: DefaultAgentRunBudget}
+	store := &mysqlVerificationAdvanceStore{tasks: tasks, reports: NewMySQLResolutionReportWriter(), baselines: mustVerificationBaselineStore(t, db), now: func() time.Time { return now }, maxAgentRuns: DefaultAgentRunBudget}
 	if err := store.PersistIn(ctx, tx, task, snapshot, check, sample, verification.RunPassed, "all_required_checks_common_window_passed", &commonStart); err != nil {
 		_ = tx.Rollback()
 		t.Fatal(err)
@@ -268,6 +276,9 @@ VALUES (?, ?, 3, 1, 1, 'verification_fixture', ?, 'system', 'integration-test', 
 	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM resolution_reports WHERE incident_id = ? AND verification_run_id = ? AND trigger_signal_id = ?", 1, incidentID, runID, signalID)
 	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM resolution_reports WHERE incident_id = ? AND diagnosis_json IS NULL AND remediation_plan_json IS NULL AND delivery_json IS NULL AND JSON_EXTRACT(evidence_json, '$.evidence_count') = 0 AND JSON_EXTRACT(timeline_json, '$.event_count') = 51 AND JSON_SEARCH(timeline_json, 'one', 'incident_resolved') IS NOT NULL AND CHAR_LENGTH(content_hash) = 64", 1, incidentID)
 	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM verification_runs WHERE id = ? AND completed_at IS NOT NULL AND common_success_since IS NOT NULL AND common_window_completed_at IS NOT NULL", 1, runID)
+	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM deployment_baselines", 1)
+	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM deployment_baselines WHERE status = 'active'", 1)
+	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM baseline_observations", 7)
 }
 
 func TestMySQLVerificationAdvancePersistsBoundPostDeliveryReport(t *testing.T) {
@@ -369,6 +380,12 @@ VALUES (?, ?, ?, 'configuration', 'github', 'agent_step', ?,
 	if err := remediationRepository.CreatePlan(ctx, &remediationPlan); err != nil {
 		t.Fatal(err)
 	}
+	oldBaseline := activateVerificationBaselineFixture(t, ctx, db, baselinepkg.Target{
+		Cluster: "kind-local", Environment: "local", Namespace: "cloudops-demo", WorkloadKind: "Deployment",
+		WorkloadName: "cloudops-demo", ContainerName: "cloudops-demo", Repository: "acme/gitops",
+		BaseBranch: remediationPlan.TargetBaseBranch, TargetPath: remediationPlan.TargetPath,
+	}, verificationPlan.SourceRevision, verificationPlan.ImageDigest, remediationPlan.LastKnownGoodRevision,
+		remediationPlan.ExpectedPostImageHash, now.Add(-3*time.Minute))
 	if _, err := db.ExecContext(ctx, "UPDATE incidents SET status = 'AWAITING_APPROVAL', v3_status = 'awaiting_approval', version = 3 WHERE id = ?", incidentID); err != nil {
 		t.Fatal(err)
 	}
@@ -440,12 +457,7 @@ WHERE id = ?`, remediationPlan.ID, changeID, verificationPlan.TargetRevision,
 		t.Fatal(err)
 	}
 	insertVerificationIntegrationChecks(t, ctx, db, incidentID, runID, verificationPlan, now)
-	if _, err := db.ExecContext(ctx, `UPDATE verification_checks SET status = 'running', first_checked_at = ?, last_checked_at = ?, consecutive_success_since = ?, attempt_count = 1 WHERE verification_run_id = ?`, now.Add(-70*time.Second), now, now.Add(-70*time.Second), runID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ExecContext(ctx, `UPDATE verification_checks SET last_checked_at = ? WHERE verification_run_id = ? AND check_type = 'metric_error_rate_below'`, now.Add(-11*time.Second), runID); err != nil {
-		t.Fatal(err)
-	}
+	primePassingVerificationSamples(t, ctx, db, incidentID, runID, verificationPlan, verification.CheckMetricErrorRateBelow, now)
 	if _, err := db.ExecContext(ctx, "UPDATE incidents SET status = 'VERIFYING', v3_status = 'verifying', version = 4 WHERE id = ?", incidentID); err != nil {
 		t.Fatal(err)
 	}
@@ -477,11 +489,58 @@ WHERE id = ?`, remediationPlan.ID, changeID, verificationPlan.TargetRevision,
 	if err != nil {
 		t.Fatal(err)
 	}
-	tx, err := db.BeginTx(ctx, nil)
+	store := &mysqlVerificationAdvanceStore{tasks: tasks, reports: NewMySQLResolutionReportWriter(), baselines: mustVerificationBaselineStore(t, db), now: func() time.Time { return now }, maxAgentRuns: DefaultAgentRunBudget}
+	assertPromotionRolledBack := func() {
+		t.Helper()
+		assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM deployment_baselines WHERE status = 'active' AND id = ?", 1, oldBaseline.BaselineID)
+		assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM deployment_baselines", 1)
+		assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM baseline_observations", 7)
+		assertVerificationIntegrationValue(t, ctx, db, "SELECT v3_status FROM verification_runs WHERE id = ?", "running", runID)
+		assertVerificationIntegrationValue(t, ctx, db, "SELECT v3_status FROM incidents WHERE id = ?", "verifying", incidentID)
+		assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM resolution_reports WHERE incident_id = ?", 0, incidentID)
+	}
+	if _, err := db.ExecContext(ctx, `CREATE TRIGGER fail_promoted_baseline_observation
+BEFORE INSERT ON baseline_observations FOR EACH ROW
+SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'forced promoted baseline observation rollback'`); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := &mysqlVerificationAdvanceStore{tasks: tasks, reports: NewMySQLResolutionReportWriter(), now: func() time.Time { return now }, maxAgentRuns: DefaultAgentRunBudget}
+	if err := store.PersistIn(ctx, tx, task, snapshot, check, sample, verification.RunPassed, "all_required_checks_common_window_passed", &commonStart); err == nil {
+		_ = tx.Rollback()
+		t.Fatal("forced BaselineObservation failure unexpectedly committed")
+	}
+	_ = tx.Rollback()
+	assertPromotionRolledBack()
+	if _, err := db.ExecContext(ctx, "DROP TRIGGER fail_promoted_baseline_observation"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := db.ExecContext(ctx, `CREATE TRIGGER fail_resolution_report
+BEFORE INSERT ON resolution_reports FOR EACH ROW
+SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'forced resolution report rollback'`); err != nil {
+		t.Fatal(err)
+	}
+	tx, err = db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PersistIn(ctx, tx, task, snapshot, check, sample, verification.RunPassed, "all_required_checks_common_window_passed", &commonStart); err == nil {
+		_ = tx.Rollback()
+		t.Fatal("forced ResolutionReport failure unexpectedly committed")
+	}
+	_ = tx.Rollback()
+	assertPromotionRolledBack()
+	if _, err := db.ExecContext(ctx, "DROP TRIGGER fail_resolution_report"); err != nil {
+		t.Fatal(err)
+	}
+
+	tx, err = db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := store.PersistIn(ctx, tx, task, snapshot, check, sample, verification.RunPassed, "all_required_checks_common_window_passed", &commonStart); err != nil {
 		_ = tx.Rollback()
 		t.Fatal(err)
@@ -493,6 +552,18 @@ WHERE id = ?`, remediationPlan.ID, changeID, verificationPlan.TargetRevision,
 	assertVerificationIntegrationValue(t, ctx, db, "SELECT v3_status FROM verification_runs WHERE id = ?", "passed", runID)
 	assertVerificationIntegrationValue(t, ctx, db, "SELECT v3_status FROM incidents WHERE id = ?", "resolved", incidentID)
 	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM verification_checks WHERE verification_run_id = ? AND status = 'passed'", 10, runID)
+	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM deployment_baselines", 2)
+	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM deployment_baselines WHERE id = ? AND status = 'superseded'", 1, oldBaseline.BaselineID)
+	assertVerificationIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM deployment_baselines
+WHERE status = 'active' AND source_revision = ? AND image_digest = ? AND gitops_revision = ?
+  AND config_hash = ? AND verification_policy_version = ? AND CHAR_LENGTH(verification_hash) = 64`,
+		1, verificationPlan.SourceRevision, verificationPlan.ImageDigest, verificationPlan.GitOpsRevision,
+		remediationPlan.ExpectedPostImageHash, baselinepkg.PostDeliveryPolicyVersion)
+	assertVerificationIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM baseline_observations o
+JOIN deployment_baselines b ON b.id = o.baseline_id
+WHERE b.status = 'active' AND o.observation_type = 'config_blob'
+  AND o.content_hash = b.config_hash`, 1)
+	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM baseline_observations", 14)
 	assertVerificationIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM resolution_reports
 WHERE incident_id = ? AND verification_run_id = ? AND remediation_plan_id = ?
   AND remediation_decision_id = ? AND change_request_id = ?
@@ -503,6 +574,20 @@ WHERE incident_id = ? AND verification_run_id = ? AND remediation_plan_id = ?
   AND JSON_EXTRACT(evidence_json, '$.evidence_count') = 6
   AND CHAR_LENGTH(content_hash) = 64`, 1, incidentID, runID, remediationPlan.ID,
 		decision.ID, changeID, remediationPlan.TargetBaseRevision, targetRevision)
+
+	replayTx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := promotePassingDeploymentBaseline(ctx, replayTx, mustVerificationBaselineStore(t, db), task, snapshot, &commonStart, now); err != nil {
+		_ = replayTx.Rollback()
+		t.Fatalf("idempotent post-delivery baseline promotion replay: %v", err)
+	}
+	if err := replayTx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM deployment_baselines", 2)
+	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM baseline_observations", 14)
 }
 
 type verificationIntegrationObservation struct{}
@@ -710,6 +795,99 @@ VALUES (?, ?, 3, ?, 1, ?, 'pending', ?, ?, ?, '', ?, ?, ?, ?, 1,
 	}
 }
 
+func activateVerificationBaselineFixture(t *testing.T, ctx context.Context, db *sql.DB, target baselinepkg.Target, sourceRevision, imageDigest, gitopsRevision, configHash string, verifiedAt time.Time) baselinepkg.ActivationResult {
+	t.Helper()
+	snapshot := baselinepkg.Snapshot{
+		Target: target, SourceRevision: sourceRevision, ImageDigest: imageDigest,
+		GitOpsRevision: gitopsRevision, ConfigHash: configHash, VerifiedAt: verifiedAt,
+	}
+	payloads := map[baselinepkg.ObservationType]any{
+		baselinepkg.ObservationArgoRevision:        map[string]any{"revision": gitopsRevision, "healthy": true},
+		baselinepkg.ObservationKubernetesReadiness: map[string]any{"desired": 2, "ready": 2, "image_digest": imageDigest},
+		baselinepkg.ObservationAlertState:          map[string]any{"firing": 0},
+		baselinepkg.ObservationMetric:              map[string]any{"error_rate": .001, "availability": .999, "sample_count": 100},
+		baselinepkg.ObservationLog:                 map[string]any{"required_env_missing": 0},
+		baselinepkg.ObservationTrace:               map[string]any{"error_rate": .001, "sample_count": 20},
+		baselinepkg.ObservationConfigBlob:          map[string]any{"revision": gitopsRevision, "path": target.TargetPath, "content_hash": configHash},
+	}
+	for typ, payload := range payloads {
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		contentHash := sha256Hex(raw)
+		if typ == baselinepkg.ObservationConfigBlob {
+			contentHash = configHash
+		}
+		snapshot.Observations = append(snapshot.Observations, baselinepkg.Observation{
+			Type: typ, SourceIdentity: "integration-baseline/" + string(typ),
+			ObservedJSON: raw, ContentHash: contentHash, ObservedAt: verifiedAt,
+		})
+	}
+	if err := snapshot.Finalize(); err != nil {
+		t.Fatal(err)
+	}
+	result, err := mustVerificationBaselineStore(t, db).Activate(ctx, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+func primePassingVerificationSamples(t *testing.T, ctx context.Context, db *sql.DB, incidentID, runID uint64, plan verification.Plan, selected verification.CheckType, now time.Time) {
+	t.Helper()
+	checks, err := loadVerificationChecks(ctx, db, asyncjob.Task{IncidentID: incidentID, CycleNo: 1, SubjectID: runID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(checks) != len(plan.Checks) {
+		t.Fatalf("durable checks=%d plan checks=%d", len(checks), len(plan.Checks))
+	}
+	for _, check := range checks {
+		successSince := now.Add(-70 * time.Second)
+		sampledAt := now.Add(-time.Second)
+		if check.Type == selected {
+			successSince = now.Add(-80 * time.Second)
+			sampledAt = now.Add(-11 * time.Second)
+		}
+		value := 1.0
+		switch check.Type {
+		case verification.CheckMetricErrorRateBelow, verification.CheckTraceErrorRateBelow:
+			value = .001
+		case verification.CheckMetricAvailabilityAbove:
+			value = .999
+		}
+		observation := verification.Observation{
+			Status: verification.ObservationAvailable, Value: value, Denominator: 100,
+			SampleCount: 100, SeriesCount: 2, SampledAt: sampledAt,
+			QueryValid: true, SourceHealthy: true, RetentionCovered: true,
+			SourceReference: "integration://verification/" + string(check.Type),
+		}
+		sample := verification.EvaluateV3Observation(check, observation, sampledAt)
+		if sample.Status != verification.SamplePassed {
+			t.Fatalf("prime check %s sample=%+v", check.Type, sample)
+		}
+		contentHash := hashVerificationSample(sample, check, 1)
+		if _, err := db.ExecContext(ctx, `INSERT INTO verification_samples
+ (public_id, domain_schema_version, sample_schema_version, incident_id, cycle_no,
+  verification_run_id, verification_check_id, sample_sequence, status, observed_json,
+  source_reference, reason_code, window_start_at, window_end_at, sampled_at, content_hash)
+VALUES (?, 3, 1, ?, 1, ?, ?, 1, 'passed', ?, ?, ?, ?, ?, ?, ?)`,
+			uuid.NewString(), incidentID, runID, check.ID, sample.Observed, sample.SourceReference,
+			sample.ReasonCode, successSince, sampledAt, sampledAt, contentHash); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(ctx, `UPDATE verification_checks
+SET status = 'running', observed_json = ?, source_reference = ?, failure_reason = ?,
+    first_checked_at = ?, last_checked_at = ?, consecutive_success_since = ?,
+    attempt_count = 1, updated_at = ?
+WHERE id = ? AND verification_run_id = ?`, sample.Observed, sample.SourceReference,
+			sample.ReasonCode, successSince, sampledAt, successSince, sampledAt, check.ID, runID); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func verificationCheckIndex(checks []verification.Check, checkType verification.CheckType) int {
 	for index := range checks {
 		if checks[index].Type == checkType {
@@ -730,6 +908,15 @@ func openVerificationIntegrationDB(t *testing.T, dsn string) *sql.DB {
 		t.Fatal(err)
 	}
 	return db
+}
+
+func mustVerificationBaselineStore(t *testing.T, db *sql.DB) *baselinemysql.Repository {
+	t.Helper()
+	store, err := baselinemysql.NewRepository(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
 }
 
 func verificationDatabaseDSN(t *testing.T, adminDSN, databaseName string) string {

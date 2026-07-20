@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
+	"github.com/05allan1213/CloudOps-Copilot/internal/baseline"
 	"github.com/05allan1213/CloudOps-Copilot/internal/verification"
 )
 
@@ -190,14 +191,21 @@ func TestVerificationReaderWakesAtDeadlineBeforeNextPoll(t *testing.T) {
 
 func TestMySQLVerificationAdvanceRequiresReportWriter(t *testing.T) {
 	_, err := NewMySQLVerificationAdvance(MySQLVerificationAdvanceConfig{
-		DB: new(sql.DB), Tasks: verificationTaskStoreStub{}, Observations: verificationObservationStub{},
+		DB: new(sql.DB), Tasks: verificationTaskStoreStub{}, Observations: verificationObservationStub{}, Baselines: verificationBaselineStoreStub{},
 	})
 	if err == nil || !strings.Contains(err.Error(), "resolution-report") {
 		t.Fatalf("err=%v", err)
 	}
 	_, err = NewMySQLVerificationAdvance(MySQLVerificationAdvanceConfig{
 		DB: new(sql.DB), Tasks: verificationTaskStoreStub{}, Observations: verificationObservationStub{},
-		Reports: NewMySQLResolutionReportWriter(), MaxAgentRuns: HardAgentRunBudget,
+		Reports: NewMySQLResolutionReportWriter(),
+	})
+	if err == nil || !strings.Contains(err.Error(), "baseline") {
+		t.Fatalf("missing baseline adapter err=%v", err)
+	}
+	_, err = NewMySQLVerificationAdvance(MySQLVerificationAdvanceConfig{
+		DB: new(sql.DB), Tasks: verificationTaskStoreStub{}, Observations: verificationObservationStub{},
+		Reports: NewMySQLResolutionReportWriter(), Baselines: verificationBaselineStoreStub{}, MaxAgentRuns: HardAgentRunBudget,
 	})
 	if err == nil || !strings.Contains(err.Error(), "fixed investigation.start budget") {
 		t.Fatalf("err=%v", err)
@@ -293,6 +301,12 @@ type verificationObservationStub struct{}
 
 func (verificationObservationStub) Observe(context.Context, verification.Run, verification.Check) (verification.Observation, error) {
 	return verification.Observation{}, errors.New("not used")
+}
+
+type verificationBaselineStoreStub struct{}
+
+func (verificationBaselineStoreStub) ActivateIn(context.Context, baseline.Transaction, baseline.Snapshot) (baseline.ActivationResult, error) {
+	return baseline.ActivationResult{}, errors.New("not used")
 }
 
 func verificationTask(t *testing.T, runID, incidentID, version uint64, runPublicID, checkID string) asyncjob.Task {

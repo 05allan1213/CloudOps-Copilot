@@ -23,6 +23,7 @@ const (
 	ObservationSchemaVersion uint16 = 1
 
 	VerificationPolicyVersion = "golden-required-env-baseline/v1"
+	PostDeliveryPolicyVersion = "post-delivery-baseline/v1"
 	MaxObservationBytes       = 16 * 1024
 	MaxObservationCount       = 16
 )
