@@ -52,9 +52,12 @@ type QueryWindow struct {
 }
 
 type CoverageRequirements struct {
-	ClaimType       string   `json:"claim_type"`
-	RequiredFacets  []string `json:"required_facets"`
-	RequiredSources []string `json:"required_sources,omitempty"`
+	ClaimType          string   `json:"claim_type"`
+	ClaimPolicyVersion string   `json:"claim_policy_version"`
+	ClaimPolicyHash    string   `json:"claim_policy_hash"`
+	ActionPolicyHash   string   `json:"action_policy_hash"`
+	RequiredFacets     []string `json:"required_facets"`
+	RequiredSources    []string `json:"required_sources,omitempty"`
 }
 
 type HypothesisStatus string
@@ -437,6 +440,20 @@ func actionSignature(tool, template, scope string, params []byte) string {
 	data := strings.Join([]string{tool, template, scope, string(params)}, "\x00")
 	sum := sha256.Sum256([]byte(data))
 	return hex.EncodeToString(sum[:])
+}
+
+// ActionSignature returns the canonical signature used by the reducer and the
+// durable tool-execution task. Exporting the single implementation prevents a
+// task payload from being interpreted with a different signing rule.
+func ActionSignature(action ProposedAction) (string, error) {
+	if len(action.BoundedParameters) == 0 || !json.Valid(action.BoundedParameters) {
+		return "", fmt.Errorf("%w: action parameters must be valid JSON", ErrInvalidArgument)
+	}
+	params, err := canonicalJSON(action.BoundedParameters)
+	if err != nil {
+		return "", fmt.Errorf("%w: action parameters must be valid JSON", ErrInvalidArgument)
+	}
+	return actionSignature(action.Tool, action.TemplateID, action.ScopeRef, params), nil
 }
 
 func hashBytes(value []byte) string {
