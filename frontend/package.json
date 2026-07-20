@@ -1,5 +1,5 @@
 {
-  "name": "server-monitor-frontend",
+  "name": "cloudops-workbench",
   "private": true,
   "version": "0.1.0",
   "type": "module",

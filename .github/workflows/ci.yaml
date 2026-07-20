@@ -112,7 +112,7 @@ jobs:
       contents: read
     defaults:
       run:
-        working-directory: server-monitor/frontend
+        working-directory: frontend
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -122,7 +122,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-          cache-dependency-path: server-monitor/frontend/package-lock.json
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
         run: npm ci --no-audit --prefer-offline

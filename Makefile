@@ -16,7 +16,7 @@ PROMTOOL ?= promtool
 
 TMPDIR ?= /tmp
 BUILD_DIR ?= $(TMPDIR)/cloudops-copilot-build
-FRONTEND_DIR := server-monitor/frontend
+FRONTEND_DIR := frontend
 CHART_DIR := server-monitor/charts/server-monitor
 PLATFORM_CHART_DIR := server-monitor/charts/cloudops-kind-platform
 DEMO_CHART_DIR := server-monitor/charts/cloudops-demo

@@ -11,8 +11,8 @@ server-monitor/k8s/
 server-monitor/scripts/
 server-monitor/server-web/
 server-monitor/pkg/
-server-monitor/frontend/node_modules/
-server-monitor/frontend/dist/
+frontend/node_modules/
+frontend/dist/
 *.out
 coverage.*
 profile.cov

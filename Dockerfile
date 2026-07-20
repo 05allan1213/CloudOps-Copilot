@@ -11,11 +11,11 @@ FROM ${NODE_IMAGE} AS frontend-builder
 
 WORKDIR /src/frontend
 
-COPY server-monitor/frontend/package.json server-monitor/frontend/package-lock.json ./
+COPY frontend/package.json frontend/package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm \
     npm ci --no-audit --prefer-offline
 
-COPY server-monitor/frontend/ ./
+COPY frontend/ ./
 RUN npm run build
 
 FROM ${GO_IMAGE} AS go-builder
