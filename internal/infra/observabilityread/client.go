@@ -122,6 +122,7 @@ func (p *Prometheus) ObserveMetric(ctx context.Context, q verification.SignalQue
 		return malformedResult(err)
 	}
 	obs.SourceReference = p.c.safeReference("prometheus")
+	obs.QueryValid, obs.SourceHealthy, obs.RetentionCovered = true, true, true
 	return verification.SignalResult{Value: obs.Value, SampleCount: obs.SampleCount, SeriesCount: obs.SeriesCount, Observation: obs}, nil
 }
 
@@ -144,6 +145,7 @@ func (l *Loki) ObserveLogErrorRate(ctx context.Context, q verification.SignalQue
 		return malformedResult(err)
 	}
 	obs.SourceReference = l.c.safeReference("loki")
+	obs.QueryValid, obs.SourceHealthy, obs.RetentionCovered = true, true, true
 	return verification.SignalResult{Value: obs.Value, SampleCount: obs.SampleCount, SeriesCount: obs.SeriesCount, Observation: obs}, nil
 }
 
@@ -187,6 +189,7 @@ func (t *Tempo) ObserveTraceErrorRate(ctx context.Context, q verification.Signal
 		}
 	}
 	obs.SourceReference = t.c.safeReference("tempo")
+	obs.QueryValid, obs.SourceHealthy, obs.RetentionCovered = true, true, true
 	return verification.SignalResult{Value: obs.Value, SampleCount: obs.SampleCount, Observation: obs}, nil
 }
 

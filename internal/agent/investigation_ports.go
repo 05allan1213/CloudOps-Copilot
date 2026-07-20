@@ -78,8 +78,21 @@ type ToolObservation struct {
 	ContentHash     string            `json:"content_hash"`
 }
 
+// InvestigationToolRequest carries the server-resolved Incident scope for one
+// approved action. The model sees only Action.ScopeRef; cluster, namespace and
+// workload identity are injected by the task-fenced operation after it has
+// validated that opaque reference against the current Incident cycle.
+type InvestigationToolRequest struct {
+	Action           ProposedAction      `json:"action"`
+	IncidentPublicID string              `json:"incident_id"`
+	CycleNo          uint64              `json:"cycle_no"`
+	Correlation      CorrelationSnapshot `json:"correlation"`
+	Window           QueryWindow         `json:"window"`
+}
+
 // InvestigationReadTool is the fixed read-only tool boundary used by one
-// investigation step. The action has already passed the reducer allowlist.
+// investigation step. The action has already passed the reducer allowlist and
+// the request contains only server-owned, current-cycle scope.
 type InvestigationReadTool interface {
-	Execute(context.Context, ProposedAction) (ToolObservation, error)
+	Execute(context.Context, InvestigationToolRequest) (ToolObservation, error)
 }

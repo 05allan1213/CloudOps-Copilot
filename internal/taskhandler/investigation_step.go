@@ -764,7 +764,14 @@ func (o *investigationStepOperation) executeTool(ctx context.Context, execution 
 		defer toolCancel()
 	}
 	started := o.cfg.Now()
-	observation, err := o.cfg.Tools.Execute(externalCtx, action)
+	observation, err := o.cfg.Tools.Execute(externalCtx, agent.InvestigationToolRequest{
+		Action: action, IncidentPublicID: snapshot.IncidentPublicID, CycleNo: uint64(snapshot.Task.CycleNo),
+		Correlation: agent.CorrelationSnapshot{
+			Cluster: snapshot.Cluster, Environment: snapshot.Environment, Namespace: snapshot.Namespace,
+			Workload: snapshot.TargetName, TargetKind: snapshot.TargetKind,
+		},
+		Window: snapshot.State.Window,
+	})
 	cancel()
 	captured := o.cfg.Now()
 	if err != nil {
@@ -1141,6 +1148,21 @@ func normalizeObservation(value agent.ToolObservation, snapshot investigationSna
 		if fact.CollectionStatus != value.Status || strings.TrimSpace(fact.Authority) == "" || strings.TrimSpace(fact.Integrity) == "" ||
 			strings.TrimSpace(fact.Freshness) == "" || strings.TrimSpace(fact.Completeness) == "" || strings.TrimSpace(fact.ClaimUse) == "" {
 			return agent.ToolObservation{}, fmt.Errorf("%w: observation fact trust axes are incomplete", agent.ErrInvalidArgument)
+		}
+		if len(fact.Attributes) > 24 {
+			return agent.ToolObservation{}, fmt.Errorf("%w: observation fact attributes exceed bounds", agent.ErrInvalidArgument)
+		}
+		attributeBytes := 0
+		for key, item := range fact.Attributes {
+			key = strings.TrimSpace(key)
+			item = strings.TrimSpace(item)
+			if key == "" || len(key) > 64 || len(item) > 1024 || strings.ContainsAny(key, "\r\n\t") || strings.ContainsAny(item, "\x00\r") {
+				return agent.ToolObservation{}, fmt.Errorf("%w: observation fact attribute is invalid", agent.ErrInvalidArgument)
+			}
+			attributeBytes += len(key) + len(item)
+		}
+		if attributeBytes > 4096 {
+			return agent.ToolObservation{}, fmt.Errorf("%w: observation fact attributes exceed size bound", agent.ErrInvalidArgument)
 		}
 	}
 	if value.SafeDeepLink != "" {

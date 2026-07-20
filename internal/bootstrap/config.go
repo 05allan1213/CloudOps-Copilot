@@ -58,6 +58,17 @@ func LoadWorkerConfig() (WorkerConfig, error) {
 		WriteTimeout:      application.HTTPWriteTimeout,
 		IdleTimeout:       application.HTTPIdleTimeout,
 	}
+	providersEnabled, err := strictProviderFlag()
+	if err != nil {
+		return WorkerConfig{}, err
+	}
+	if providersEnabled {
+		providerConfig, providerErr := LoadV3WorkerProviderConfig(application)
+		if providerErr != nil {
+			return WorkerConfig{}, fmt.Errorf("load V3 production providers: %w", providerErr)
+		}
+		result.TaskOperationFactory = ProductionTaskOperationFactory{Config: providerConfig}
+	}
 	if err := result.Validate(); err != nil {
 		return WorkerConfig{}, err
 	}

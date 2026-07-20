@@ -17,23 +17,24 @@ const (
 )
 
 type EvidenceFact struct {
-	ID                 string           `json:"fact_id"`
-	EvidenceID         string           `json:"evidence_id"`
-	IncidentID         string           `json:"incident_id"`
-	CycleNo            uint64           `json:"cycle_no"`
-	Type               string           `json:"type"`
-	SourceSystem       string           `json:"source_system"`
-	CollectionPath     string           `json:"collection_path"`
-	CorroborationGroup string           `json:"corroboration_group"`
-	Authority          string           `json:"authority"`
-	Integrity          string           `json:"integrity"`
-	Freshness          string           `json:"freshness"`
-	Completeness       string           `json:"completeness"`
-	ClaimUse           string           `json:"claim_use"`
-	CollectionStatus   CollectionStatus `json:"collection_status"`
-	Direct             bool             `json:"direct"`
-	Truncated          bool             `json:"truncated"`
-	DerivedFrom        []string         `json:"derived_from,omitempty"`
+	ID                 string            `json:"fact_id"`
+	EvidenceID         string            `json:"evidence_id"`
+	IncidentID         string            `json:"incident_id"`
+	CycleNo            uint64            `json:"cycle_no"`
+	Type               string            `json:"type"`
+	SourceSystem       string            `json:"source_system"`
+	CollectionPath     string            `json:"collection_path"`
+	CorroborationGroup string            `json:"corroboration_group"`
+	Authority          string            `json:"authority"`
+	Integrity          string            `json:"integrity"`
+	Freshness          string            `json:"freshness"`
+	Completeness       string            `json:"completeness"`
+	ClaimUse           string            `json:"claim_use"`
+	CollectionStatus   CollectionStatus  `json:"collection_status"`
+	Direct             bool              `json:"direct"`
+	Truncated          bool              `json:"truncated"`
+	DerivedFrom        []string          `json:"derived_from,omitempty"`
+	Attributes         map[string]string `json:"attributes,omitempty"`
 }
 
 type FactRequirement struct {

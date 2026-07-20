@@ -127,7 +127,7 @@ func (workerModelStub) SynthesizeDiagnosis(context.Context, agent.DiagnosisView)
 
 type workerToolStub struct{}
 
-func (workerToolStub) Execute(context.Context, agent.ProposedAction) (agent.ToolObservation, error) {
+func (workerToolStub) Execute(context.Context, agent.InvestigationToolRequest) (agent.ToolObservation, error) {
 	return agent.ToolObservation{}, nil
 }
 

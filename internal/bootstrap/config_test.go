@@ -24,3 +24,11 @@ func TestWorkerConfigRejectsInvalidManagementAddress(t *testing.T) {
 		t.Fatal("expected invalid worker management address to fail")
 	}
 }
+
+func TestWorkerConfigRejectsMalformedProductionProviderFlag(t *testing.T) {
+	t.Setenv("AUTH_ENABLED", "false")
+	t.Setenv("V3_WORKER_PROVIDERS_ENABLED", "sometimes")
+	if _, err := LoadWorkerConfig(); err == nil {
+		t.Fatal("expected malformed V3 provider flag to fail closed")
+	}
+}

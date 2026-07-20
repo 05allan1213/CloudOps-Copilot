@@ -272,7 +272,7 @@ type stepTestTool struct {
 	calls       int
 }
 
-func (t *stepTestTool) Execute(context.Context, agent.ProposedAction) (agent.ToolObservation, error) {
+func (t *stepTestTool) Execute(context.Context, agent.InvestigationToolRequest) (agent.ToolObservation, error) {
 	t.calls++
 	return t.observation, t.err
 }
