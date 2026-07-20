@@ -12,6 +12,7 @@ ACTIONLINT ?= actionlint
 SHELLCHECK ?= shellcheck
 HELM ?= helm
 YQ ?= yq
+JQ ?= jq
 KUBECONFORM ?= kubeconform
 PROMTOOL ?= promtool
 
@@ -26,6 +27,12 @@ COMPOSE_FILE := server-monitor/docker-compose.yml
 COMPOSE_ENV := server-monitor/.env.example
 V3_KIND_SCRIPT := server-monitor/scripts/v3-kind.sh
 PROFILE_CONTRACT_SCRIPT := server-monitor/scripts/check-cloudops-profile-render.sh
+ARGO_GITOPS_CONTRACT_SCRIPT := server-monitor/scripts/check-argocd-gitops-contract.sh
+ARGO_PROJECT_MANIFEST := deploy/platform/argocd/appproject.yaml
+ARGO_APPLICATION_MANIFEST := deploy/platform/argocd/application.yaml
+GITOPS_HEALTHY_DIR := deploy/contracts/gitops-demo/healthy/apps/demo
+GITOPS_REGRESSION_DIR := deploy/contracts/gitops-demo/regression/apps/demo
+VERSION_LOCK_FILE := server-monitor/deploy/kind/versions.env
 GO_FILES := $(shell find cmd internal migrations -type f -name '*.go' -print 2>/dev/null | sort)
 SHELL_FILES := $(shell git ls-files '*.sh' | sort)
 
@@ -35,7 +42,7 @@ SHELL_FILES := $(shell git ls-files '*.sh' | sort)
 	actionlint shellcheck helm-lint helm-template kubeconform kubeconform-chart \
 	kubeconform-raw promtool compose-config static-checks check docker-build \
 	docker-build-api docker-build-worker docker-build-migrate docker-build-demo frontend-install \
-	preflight demo-up demo-down kind-render kind-check helm-contracts
+	preflight demo-up demo-down kind-render kind-check helm-contracts argocd-contracts
 
 define require_cmd
 	@command -v $(1) >/dev/null 2>&1 || { echo "missing command: $(1)" >&2; exit 1; }
@@ -168,6 +175,29 @@ helm-contracts:
 			"$$tmp_dir/phase3.json" "$$tmp_dir/phase4.json" \
 			"$$tmp_dir/phase5.json" "$$tmp_dir/phase6.json" $(CHART_DIR)
 
+argocd-contracts: ## Validate canonical Argo objects and contract-only GitOps fixtures.
+	$(call require_cmd,$(firstword $(YQ)))
+	$(call require_cmd,$(firstword $(JQ)))
+	$(call require_cmd,$(firstword $(KUBECONFORM)))
+	@tmp_dir="$$(mktemp -d "$(TMPDIR)/cloudops-argocd-contracts.XXXXXX")"; \
+		trap 'rm -rf "$$tmp_dir"' EXIT; \
+		$(YQ) -o=json -I=0 '.' $(ARGO_PROJECT_MANIFEST) >"$$tmp_dir/appproject.json"; \
+		$(YQ) -o=json -I=0 '.' $(ARGO_APPLICATION_MANIFEST) >"$$tmp_dir/application.json"; \
+		$(YQ) -o=json -I=0 '.' $(CHART_DIR)/values.yaml >"$$tmp_dir/values.json"; \
+		for manifest in $(GITOPS_HEALTHY_DIR)/*.yaml; do \
+			$(YQ) -o=json -I=0 'select(.kind != null)' "$$manifest"; \
+		done | $(JQ) -s '.' >"$$tmp_dir/healthy.json"; \
+		for manifest in $(GITOPS_REGRESSION_DIR)/*.yaml; do \
+			$(YQ) -o=json -I=0 'select(.kind != null)' "$$manifest"; \
+		done | $(JQ) -s '.' >"$$tmp_dir/regression.json"; \
+		bash $(ARGO_GITOPS_CONTRACT_SCRIPT) \
+			"$$tmp_dir/appproject.json" "$$tmp_dir/application.json" \
+			"$$tmp_dir/values.json" "$$tmp_dir/healthy.json" \
+			"$$tmp_dir/regression.json" $(VERSION_LOCK_FILE); \
+		$(KUBECONFORM) -strict -summary -ignore-missing-schemas \
+			$(ARGO_PROJECT_MANIFEST) $(ARGO_APPLICATION_MANIFEST) \
+			$(GITOPS_HEALTHY_DIR)/*.yaml $(GITOPS_REGRESSION_DIR)/*.yaml
+
 kind-render: ## Render and enforce the V3 phase3 kind/Helm profile.
 	bash $(V3_KIND_SCRIPT) render
 
@@ -209,7 +239,7 @@ promtool:
 compose-config:
 	$(DOCKER_COMPOSE) --env-file $(COMPOSE_ENV) -f $(COMPOSE_FILE) config --quiet
 
-static-checks: actionlint shellcheck helm-lint helm-contracts kubeconform promtool compose-config
+static-checks: actionlint shellcheck helm-lint helm-contracts argocd-contracts kubeconform promtool compose-config
 
 check: check-gofmt check-goimports check-deps check-structure vet lint-go test-go test-race build-go test-frontend build-frontend static-checks kind-render
 

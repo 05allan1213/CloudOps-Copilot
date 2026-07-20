@@ -8,6 +8,7 @@ on:
       - Dockerfile
       - Makefile
       - charts/**
+      - deploy/**
       - go.mod
       - go.sum
       - cmd/**
@@ -25,6 +26,7 @@ on:
       - Dockerfile
       - Makefile
       - charts/**
+      - deploy/**
       - go.mod
       - go.sum
       - cmd/**
@@ -306,6 +308,12 @@ jobs:
               ["server-web", "prometheus", "victoriametrics", "jaeger", "kafka", "redis", "elasticsearch", "kibana", "fluent-bit", "grafana"] |
               index($name))] | length) == 0
           ' /tmp/cloudops-phase3.jsonl >/dev/null
+
+      - name: Enforce canonical Argo and GitOps fixture contracts
+        run: |
+          make argocd-contracts \
+            YQ="docker run --rm -v ${GITHUB_WORKSPACE}:/workdir -w /workdir ${YQ_IMAGE}" \
+            KUBECONFORM="docker run --rm -v ${GITHUB_WORKSPACE}:/workdir -w /workdir ${KUBECONFORM_IMAGE}"
 
   static-delivery:
     name: workflow and manifest checks

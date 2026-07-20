@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudops-demo-workload
+  namespace: cloudops-demo
+  labels:
+    app.kubernetes.io/name: cloudops-demo-workload
+    app.kubernetes.io/instance: cloudops-demo
+    app.kubernetes.io/component: workload
+spec:
+  replicas: 2
+  revisionHistoryLimit: 2
+  progressDeadlineSeconds: 120
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudops-demo-workload
+      app.kubernetes.io/instance: cloudops-demo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cloudops-demo-workload
+        app.kubernetes.io/instance: cloudops-demo
+        app.kubernetes.io/component: workload
+        cloudops.io/monitoring: enabled
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 10
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: cloudops-demo
+          image: ghcr.io/05allan1213/cloudops-demo:contract-fixture
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: SERVICE_VERSION
+              value: contract-fixture
+            - name: SOURCE_REVISION
+              value: contract-fixture
+            - name: DEPLOYMENT_ENVIRONMENT
+              value: local-demo
+            - name: K8S_CLUSTER_NAME
+              value: kind-cloudops-v3
+            - name: K8S_NAMESPACE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: K8S_POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            - name: TRACE_OTLP_ENDPOINT
+              value: cloudops-otel-collector.cloudops-system.svc.cluster.local:4317
+            - name: TRACE_SAMPLE_RATE
+              value: "1"
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: http
+            failureThreshold: 30
+            periodSeconds: 2
+            timeoutSeconds: 1
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 2
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi

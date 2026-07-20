@@ -1,0 +1,28 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cloudops-demo
+  namespace: cloudops-argocd
+spec:
+  project: cloudops-demo
+  source:
+    repoURL: https://github.com/05allan1213/cloudops-gitops-demo.git
+    targetRevision: main
+    path: apps/demo
+    directory:
+      recurse: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cloudops-demo
+  syncPolicy:
+    automated:
+      enabled: true
+      prune: false
+      selfHeal: true
+      allowEmpty: false
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
