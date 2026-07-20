@@ -33,6 +33,7 @@ spec:
         - name: cloudops-migrate
           image: {{ include "cloudops.image" .Values.images.migrate | quote }}
           imagePullPolicy: {{ .Values.images.migrate.pullPolicy }}
+          command: ["/app/cloudops-migrate"]
           args: ["up"]
           securityContext:
             allowPrivilegeEscalation: false

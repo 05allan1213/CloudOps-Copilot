@@ -18,6 +18,9 @@
   {{- if .Values.worker.enabled -}}
   {{- fail (printf "%s requires worker.enabled=false" $profile) -}}
   {{- end -}}
+  {{- if .Values.baselineVerifier.enabled -}}
+  {{- fail (printf "%s requires baselineVerifier.enabled=false" $profile) -}}
+  {{- end -}}
 {{- else if eq $profile "phase5" -}}
   {{- if not .Values.oauth.enabled -}}
   {{- fail "phase5 requires oauth.enabled=true" -}}
@@ -25,12 +28,38 @@
   {{- if .Values.worker.enabled -}}
   {{- fail "phase5 requires worker.enabled=false" -}}
   {{- end -}}
+  {{- if not .Values.baselineVerifier.enabled -}}
+  {{- fail "phase5 requires baselineVerifier.enabled=true" -}}
+  {{- end -}}
 {{- else if eq $profile "phase6" -}}
   {{- if not .Values.oauth.enabled -}}
   {{- fail "phase6 requires oauth.enabled=true" -}}
   {{- end -}}
   {{- if not .Values.worker.enabled -}}
   {{- fail "phase6 requires worker.enabled=true" -}}
+  {{- end -}}
+  {{- if not .Values.baselineVerifier.enabled -}}
+  {{- fail "phase6 requires baselineVerifier.enabled=true" -}}
+  {{- end -}}
+{{- end -}}
+
+{{- if .Values.baselineVerifier.enabled -}}
+  {{- if eq .Values.baselineVerifier.database.user (index .Values.commonEnv "MYSQL_USER" | toString) -}}
+  {{- fail "baseline verifier and runtime must use different MySQL users" -}}
+  {{- end -}}
+  {{- if eq .Values.baselineVerifier.database.secretName .Values.database.secretName -}}
+  {{- fail "baseline verifier and runtime must use different MySQL credential Secrets" -}}
+  {{- end -}}
+  {{- if ne (index .Values.baselineVerifier.env "K8S_WRITE_ENABLED" | toString) "false" -}}
+  {{- fail "baseline verifier Kubernetes access must remain read-only" -}}
+  {{- end -}}
+  {{- if ne (index .Values.baselineVerifier.env "K8S_DEFAULT_NAMESPACE" | toString) .Values.baselineVerifier.demoNamespace -}}
+  {{- fail "baselineVerifier.demoNamespace and K8S_DEFAULT_NAMESPACE must match" -}}
+  {{- end -}}
+  {{- range $name := list "LLM_API_KEY" "V3_LLM_API_KEY_FILE" "GITHUB_APP_ID" "GITHUB_INSTALLATION_ID" "GITHUB_PRIVATE_KEY_FILE" "GITHUB_TOKEN_FILE" "GITHUB_WRITE_APP_ID" "GITHUB_WRITE_INSTALLATION_ID" "GITHUB_WRITE_PRIVATE_KEY_FILE" "GITHUB_WRITE_TOKEN_FILE" -}}
+    {{- if or (hasKey $.Values.baselineVerifier.env $name) (hasKey $.Values.baselineVerifier.credentials.files $name) -}}
+    {{- fail (printf "baseline verifier must not receive %s" $name) -}}
+    {{- end -}}
   {{- end -}}
 {{- end -}}
 

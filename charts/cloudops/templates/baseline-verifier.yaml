@@ -1,0 +1,86 @@
+{{- if .Values.baselineVerifier.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cloudops-baseline-verifier
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cloudops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: baseline-verifier
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "20"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: {{ .Values.baselineVerifier.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.baselineVerifier.activeDeadlineSeconds }}
+  ttlSecondsAfterFinished: {{ .Values.baselineVerifier.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cloudops-baseline-verifier
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: baseline-verifier
+    spec:
+      serviceAccountName: cloudops-baseline-verifier
+      automountServiceAccountToken: true
+      enableServiceLinks: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: cloudops-baseline-verifier
+          image: {{ include "cloudops.image" .Values.images.worker | quote }}
+          imagePullPolicy: {{ .Values.images.worker.pullPolicy }}
+          command: ["/app/cloudops-worker"]
+          args: ["baseline-verify"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            {{- range $name := list "APP_ENV" "LOG_LEVEL" "MYSQL_HOST" "MYSQL_PORT" "MYSQL_DATABASE" "MYSQL_STARTUP_TIMEOUT_SECONDS" "MYSQL_PING_TIMEOUT_SECONDS" }}
+            - name: {{ $name }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "cloudops.configMapName" $ }}
+                  key: {{ $name }}
+            {{- end }}
+            - name: MYSQL_USER
+              value: {{ .Values.baselineVerifier.database.user | quote }}
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.baselineVerifier.database.secretName }}
+                  key: {{ .Values.baselineVerifier.database.passwordKey }}
+            {{- range $name, $value := .Values.baselineVerifier.env }}
+            - name: {{ $name }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- range $name, $filename := .Values.baselineVerifier.credentials.files }}
+            - name: {{ $name }}
+              value: {{ printf "%s/%s" $.Values.baselineVerifier.credentials.mountPath $filename | quote }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.baselineVerifier.resources | nindent 12 }}
+          volumeMounts:
+            - name: baseline-credentials
+              mountPath: {{ .Values.baselineVerifier.credentials.mountPath }}
+              readOnly: true
+            - name: baseline-tmp
+              mountPath: /tmp
+      volumes:
+        - name: baseline-credentials
+          secret:
+            secretName: {{ .Values.baselineVerifier.credentials.secretName }}
+            items:
+              {{- range $name, $filename := .Values.baselineVerifier.credentials.files }}
+              - key: {{ $filename }}
+                path: {{ $filename }}
+              {{- end }}
+        - name: baseline-tmp
+          emptyDir: {}
+{{- end }}

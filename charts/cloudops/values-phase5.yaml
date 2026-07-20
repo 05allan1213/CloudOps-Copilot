@@ -7,5 +7,7 @@ oauth:
   enabled: true
 worker:
   enabled: false
+baselineVerifier:
+  enabled: true
 observability:
   enabled: true

@@ -28,11 +28,13 @@ check_profile() {
   local profile="$2"
   local oauth_enabled="$3"
   local worker_enabled="$4"
+  local baseline_enabled="$5"
 
   jq -s -e \
     --arg profile "${profile}" \
     --arg oauth_enabled "${oauth_enabled}" \
-    --arg worker_enabled "${worker_enabled}" '
+    --arg worker_enabled "${worker_enabled}" \
+    --arg baseline_enabled "${baseline_enabled}" '
     . as $documents |
     def rs($kind; $name): [$documents[] | select(.kind == $kind and .metadata.name == $name)];
     def count($kind; $name): rs($kind; $name) | length;
@@ -48,6 +50,7 @@ check_profile() {
       oauth_config | contains("- name: " + $name + "\n    preserveRequestValue: false");
     def oauth: $oauth_enabled == "true";
     def worker: $worker_enabled == "true";
+    def baseline: $baseline_enabled == "true";
 
     count("ConfigMap"; "cloudops-config") == 1 and
     count("Deployment"; "cloudops-api") == 1 and
@@ -77,6 +80,47 @@ check_profile() {
     rs("ServiceMonitor"; "cloudops-api")[0].spec.endpoints[0].path == "/metrics" and
     any(rs("PrometheusRule"; "cloudops-api")[0].spec.groups[].rules[];
       .alert == "CloudOpsAPIAvailability") and
+
+    (if baseline then
+      count("Job"; "cloudops-baseline-verifier") == 1 and
+      count("ServiceAccount"; "cloudops-baseline-verifier") == 1 and
+      count("Role"; "cloudops-baseline-verifier-readonly") == 1 and
+      count("RoleBinding"; "cloudops-baseline-verifier-readonly") == 1 and
+      rs("Job"; "cloudops-baseline-verifier")[0].spec.template.spec.serviceAccountName == "cloudops-baseline-verifier" and
+      rs("Job"; "cloudops-baseline-verifier")[0].spec.template.spec.automountServiceAccountToken == true and
+      rs("Job"; "cloudops-baseline-verifier")[0].spec.template.spec.enableServiceLinks == false and
+      rs("ServiceAccount"; "cloudops-baseline-verifier")[0].automountServiceAccountToken == true and
+      rs("Job"; "cloudops-baseline-verifier")[0].spec.template.spec.containers[0].command == ["/app/cloudops-worker"] and
+      rs("Job"; "cloudops-baseline-verifier")[0].spec.template.spec.containers[0].args == ["baseline-verify"] and
+      (rs("Job"; "cloudops-baseline-verifier")[0].spec.template.spec.containers[0] | has("envFrom") | not) and
+      (rs("Job"; "cloudops-baseline-verifier")[0].spec.template.spec.containers[0].env | map(.name) |
+        any(. == "MYSQL_USER")) and
+      ([rs("Job"; "cloudops-baseline-verifier")[0].spec.template.spec.containers[0].env[] |
+        select(.name == "MYSQL_USER")][0].value != config.data.MYSQL_USER) and
+      ([rs("Job"; "cloudops-baseline-verifier")[0].spec.template.spec.containers[0].env[] |
+        select(.name == "MYSQL_PASSWORD")][0].valueFrom.secretKeyRef.name != "cloudops-database") and
+      all([
+        "LLM_API_KEY","V3_LLM_API_KEY_FILE","GITHUB_APP_ID","GITHUB_INSTALLATION_ID",
+        "GITHUB_PRIVATE_KEY_FILE","GITHUB_TOKEN_FILE","GITHUB_WRITE_APP_ID",
+        "GITHUB_WRITE_INSTALLATION_ID","GITHUB_WRITE_PRIVATE_KEY_FILE","GITHUB_WRITE_TOKEN_FILE"
+      ][]; . as $forbidden |
+        (rs("Job"; "cloudops-baseline-verifier")[0].spec.template.spec.containers[0].env |
+          map(.name) | index($forbidden)) == null) and
+      (rs("Job"; "cloudops-baseline-verifier")[0].spec.template.spec.volumes |
+        [ .[] | select(.name == "baseline-credentials") ][0].secret.items | length) == 4 and
+      rs("Role"; "cloudops-baseline-verifier-readonly")[0].metadata.namespace == "cloudops-demo" and
+      ([rs("Role"; "cloudops-baseline-verifier-readonly")[0].rules[].resources[]] | sort) ==
+        ["deployments","pods"] and
+      all(rs("Role"; "cloudops-baseline-verifier-readonly")[0].rules[];
+        all(.verbs[]; . == "get" or . == "list")) and
+      rs("RoleBinding"; "cloudops-baseline-verifier-readonly")[0].subjects ==
+        [{"kind":"ServiceAccount","name":"cloudops-baseline-verifier","namespace":"cloudops-system"}]
+    else
+      count("Job"; "cloudops-baseline-verifier") == 0 and
+      count("ServiceAccount"; "cloudops-baseline-verifier") == 0 and
+      count("Role"; "cloudops-baseline-verifier-readonly") == 0 and
+      count("RoleBinding"; "cloudops-baseline-verifier-readonly") == 0
+    end) and
 
     (if oauth then
       count("Service"; "cloudops-api-user") == 1 and
@@ -176,22 +220,28 @@ expect_template_failure() {
   fi
 }
 
-check_profile "${phase3_manifest}" phase3 false false
-check_profile "${phase4_manifest}" phase4 false false
-check_profile "${phase5_manifest}" phase5 true false
-check_profile "${phase6_manifest}" phase6 true true
+check_profile "${phase3_manifest}" phase3 false false false
+check_profile "${phase4_manifest}" phase4 false false false
+check_profile "${phase5_manifest}" phase5 true false true
+check_profile "${phase6_manifest}" phase6 true true true
 
 expect_template_failure "phase3 oauth enablement" "${chart_dir}/values-phase3.yaml" --set oauth.enabled=true
 expect_template_failure "phase4 worker enablement" "${chart_dir}/values-phase4.yaml" --set worker.enabled=true
 expect_template_failure "phase5 oauth disablement" "${chart_dir}/values-phase5.yaml" --set oauth.enabled=false
 expect_template_failure "phase5 worker enablement" "${chart_dir}/values-phase5.yaml" --set worker.enabled=true
+expect_template_failure "phase5 baseline verifier disablement" "${chart_dir}/values-phase5.yaml" --set baselineVerifier.enabled=false
 expect_template_failure "phase6 oauth disablement" "${chart_dir}/values-phase6.yaml" --set oauth.enabled=false
 expect_template_failure "phase6 worker disablement" "${chart_dir}/values-phase6.yaml" --set worker.enabled=false
 expect_template_failure "phase6 Kubernetes writes" "${chart_dir}/values-phase6.yaml" --set-string worker.env.K8S_WRITE_ENABLED=true
 expect_template_failure "phase6 namespace drift" "${chart_dir}/values-phase6.yaml" --set-string worker.env.K8S_DEFAULT_NAMESPACE=other
+expect_template_failure "baseline Kubernetes writes" "${chart_dir}/values-phase5.yaml" --set-string baselineVerifier.env.K8S_WRITE_ENABLED=true
+expect_template_failure "baseline namespace drift" "${chart_dir}/values-phase5.yaml" --set-string baselineVerifier.env.K8S_DEFAULT_NAMESPACE=other
+expect_template_failure "baseline runtime database reuse" "${chart_dir}/values-phase5.yaml" --set-string baselineVerifier.database.user=cloudops
+expect_template_failure "baseline runtime database Secret reuse" "${chart_dir}/values-phase5.yaml" --set-string baselineVerifier.database.secretName=cloudops-database
+expect_template_failure "baseline LLM credential" "${chart_dir}/values-phase5.yaml" --set-string baselineVerifier.credentials.files.V3_LLM_API_KEY_FILE=llm-api-key
 expect_template_failure "oauth and csrf Secret reuse" "${chart_dir}/values-phase5.yaml" --set-string oauth.secret.name=cloudops-csrf
 expect_template_failure "duplicate OAuth role mapping" "${chart_dir}/values-phase5.yaml" --set-string 'oauth.operatorLogins[0]=cloudops-viewer'
 expect_template_failure "oauth2-proxy version drift" "${chart_dir}/values-phase5.yaml" --set-string images.oauth2Proxy.tag=v7.15.2
 expect_template_failure "mutable latest image" "${chart_dir}/values-phase3.yaml" --set-string images.api.tag=latest
 
-printf 'PASS: CloudOps phase3-6 rendered ownership, OAuth header stripping, Secret references, Service exposure, and SA/RBAC boundaries.\n'
+printf 'PASS: CloudOps phase3-6 rendered ownership, OAuth header stripping, baseline verifier isolation, Secret references, Service exposure, and SA/RBAC boundaries.\n'

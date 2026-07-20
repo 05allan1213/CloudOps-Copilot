@@ -7,6 +7,8 @@ oauth:
   enabled: true
 worker:
   enabled: true
+baselineVerifier:
+  enabled: true
 # Before installing phase6, pre-create the Worker provider-config and
 # credential Secrets named in values.yaml. The chart references them only.
 observability:

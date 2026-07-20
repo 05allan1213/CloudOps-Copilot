@@ -1,0 +1,193 @@
+package baselinemysql
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	drivermysql "github.com/go-sql-driver/mysql"
+
+	"github.com/05allan1213/CloudOps-Copilot/internal/baseline"
+	migrationrunner "github.com/05allan1213/CloudOps-Copilot/internal/migration"
+)
+
+func TestMySQLBaselineActivationIsAtomicIdempotentAndUnique(t *testing.T) {
+	adminDSN := os.Getenv("CLOUDOPS_TEST_MYSQL_ADMIN_DSN")
+	if adminDSN == "" {
+		t.Skip("CLOUDOPS_TEST_MYSQL_ADMIN_DSN is not set; requires disposable MySQL 8 admin scope")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	admin := openBaselineSQL(t, adminDSN)
+	databaseName := fmt.Sprintf("cloudops_v3_baseline_%d", time.Now().UnixNano())
+	if _, err := admin.ExecContext(ctx, "CREATE DATABASE `"+databaseName+"`"); err != nil {
+		_ = admin.Close()
+		t.Fatal(err)
+	}
+	db := openBaselineSQL(t, baselineDatabaseDSN(t, adminDSN, databaseName))
+	defer func() {
+		_ = db.Close()
+		_, _ = admin.Exec("DROP DATABASE IF EXISTS `" + databaseName + "`")
+		_ = admin.Close()
+	}()
+	runner, err := migrationrunner.NewRunner(ctx, db, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runner.Up(ctx); err != nil {
+		t.Fatalf("migrate baseline database: %v", err)
+	}
+	repository, err := NewRepository(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	type activation struct {
+		result baseline.ActivationResult
+		err    error
+	}
+	start := make(chan struct{})
+	results := make(chan activation, 2)
+	snapshots := []baseline.Snapshot{
+		mysqlBaselineSnapshot(t, "a", "healthy-v1", time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC)),
+		mysqlBaselineSnapshot(t, "a", "healthy-v1", time.Date(2026, 7, 20, 10, 0, 0, 0, time.UTC)),
+	}
+	for _, snapshot := range snapshots {
+		go func(snapshot baseline.Snapshot) {
+			<-start
+			result, activateErr := repository.Activate(ctx, snapshot)
+			results <- activation{result: result, err: activateErr}
+		}(snapshot)
+	}
+	close(start)
+	first, second := <-results, <-results
+	if first.err != nil || second.err != nil {
+		t.Fatalf("concurrent activation errors: first=%v second=%v", first.err, second.err)
+	}
+	if first.result.BaselineID == 0 || first.result.BaselineID != second.result.BaselineID || first.result.Created == second.result.Created {
+		t.Fatalf("concurrent activation results are not idempotent: first=%+v second=%+v", first.result, second.result)
+	}
+	assertBaselineCounts(t, ctx, db, 1, 1, 0, 7)
+
+	if _, err := db.ExecContext(ctx, `CREATE TRIGGER fail_baseline_observation
+BEFORE INSERT ON baseline_observations FOR EACH ROW
+SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'forced baseline rollback'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.Activate(ctx, mysqlBaselineSnapshot(t, "b", "healthy-v2", time.Date(2026, 7, 20, 11, 0, 0, 0, time.UTC))); err == nil {
+		t.Fatal("forced observation failure unexpectedly committed")
+	}
+	assertBaselineCounts(t, ctx, db, 1, 1, 0, 7)
+	if _, err := db.ExecContext(ctx, "DROP TRIGGER fail_baseline_observation"); err != nil {
+		t.Fatal(err)
+	}
+
+	newResult, err := repository.Activate(ctx, mysqlBaselineSnapshot(t, "b", "healthy-v2", time.Date(2026, 7, 20, 11, 0, 0, 0, time.UTC)))
+	if err != nil || !newResult.Created || newResult.SupersededBaselineID != first.result.BaselineID {
+		t.Fatalf("superseding activation result=%+v err=%v", newResult, err)
+	}
+	assertBaselineCounts(t, ctx, db, 2, 1, 1, 14)
+	replayed, err := repository.Activate(ctx, mysqlBaselineSnapshot(t, "b", "healthy-v2", time.Date(2026, 7, 20, 11, 0, 0, 0, time.UTC)))
+	if err != nil || replayed.Created || replayed.BaselineID != newResult.BaselineID || len(replayed.ObservationIDs) != 7 {
+		t.Fatalf("idempotent replay result=%+v err=%v", replayed, err)
+	}
+	assertBaselineCounts(t, ctx, db, 2, 1, 1, 14)
+}
+
+func mysqlBaselineSnapshot(t *testing.T, revisionSeed, config string, observedAt time.Time) baseline.Snapshot {
+	t.Helper()
+	revision := strings.Repeat(revisionSeed, 40)
+	configBytes := []byte(config)
+	configHash := mysqlBaselineHash(configBytes)
+	snapshot := baseline.Snapshot{
+		Target: baseline.Target{
+			Cluster: "kind-cloudops-v3", Environment: "local-demo", Namespace: "cloudops-demo", WorkloadKind: "Deployment",
+			WorkloadName: "cloudops-demo-workload", ContainerName: "cloudops-demo", Repository: "acme/gitops",
+			BaseBranch: "main", TargetPath: "apps/demo/deployment.yaml",
+		},
+		SourceRevision: strings.Repeat("c", 40), ImageDigest: "sha256:" + strings.Repeat("d", 64),
+		GitOpsRevision: revision, ConfigHash: configHash, VerifiedAt: observedAt,
+	}
+	payloads := map[baseline.ObservationType]any{
+		baseline.ObservationArgoRevision:        map[string]any{"revision": revision},
+		baseline.ObservationKubernetesReadiness: map[string]any{"ready": 2, "desired": 2},
+		baseline.ObservationAlertState:          map[string]any{"firing": 0},
+		baseline.ObservationMetric:              map[string]any{"error_rate": 0.001, "availability": 0.999},
+		baseline.ObservationLog:                 map[string]any{"required_env_missing": 0},
+		baseline.ObservationTrace:               map[string]any{"error_rate": 0.001},
+		baseline.ObservationConfigBlob:          map[string]any{"content_hash": configHash},
+	}
+	for typ, payload := range payloads {
+		raw, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		contentHash := mysqlBaselineHash(raw)
+		if typ == baseline.ObservationConfigBlob {
+			contentHash = configHash
+		}
+		snapshot.Observations = append(snapshot.Observations, baseline.Observation{
+			Type: typ, SourceIdentity: "mysql-test/" + string(typ), ObservedJSON: raw,
+			ContentHash: contentHash, ObservedAt: observedAt,
+		})
+	}
+	if err := snapshot.Finalize(); err != nil {
+		t.Fatal(err)
+	}
+	return snapshot
+}
+
+func assertBaselineCounts(t *testing.T, ctx context.Context, db *sql.DB, total, active, superseded, observations int) {
+	t.Helper()
+	var gotTotal, gotActive, gotSuperseded, gotObservations int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*),
+  COALESCE(SUM(status = 'active'), 0), COALESCE(SUM(status = 'superseded'), 0)
+FROM deployment_baselines`).Scan(&gotTotal, &gotActive, &gotSuperseded); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM baseline_observations").Scan(&gotObservations); err != nil {
+		t.Fatal(err)
+	}
+	if gotTotal != total || gotActive != active || gotSuperseded != superseded || gotObservations != observations {
+		t.Fatalf("baseline counts total=%d active=%d superseded=%d observations=%d, want %d/%d/%d/%d",
+			gotTotal, gotActive, gotSuperseded, gotObservations, total, active, superseded, observations)
+	}
+}
+
+func mysqlBaselineHash(value []byte) string {
+	sum := sha256.Sum256(value)
+	return hex.EncodeToString(sum[:])
+}
+
+func openBaselineSQL(t *testing.T, dsn string) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Ping(); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	return db
+}
+
+func baselineDatabaseDSN(t *testing.T, adminDSN, databaseName string) string {
+	t.Helper()
+	config, err := drivermysql.ParseDSN(adminDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.DBName = databaseName
+	config.ParseTime = true
+	config.MultiStatements = true
+	config.Loc = time.UTC
+	return config.FormatDSN()
+}

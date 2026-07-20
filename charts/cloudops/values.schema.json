@@ -13,6 +13,7 @@
     "migrate",
     "oauth",
     "worker",
+    "baselineVerifier",
     "observability"
   ],
   "properties": {
@@ -162,6 +163,55 @@
         "managementPort": { "type": "integer", "enum": [8081] },
         "demoNamespace": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
         "providerConfigSecretName": { "$ref": "#/definitions/nonEmptyString" },
+        "credentials": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["secretName", "mountPath", "files"],
+          "properties": {
+            "secretName": { "$ref": "#/definitions/nonEmptyString" },
+            "mountPath": { "$ref": "#/definitions/absolutePath" },
+            "files": {
+              "type": "object",
+              "minProperties": 1,
+              "propertyNames": { "pattern": "^[A-Z_][A-Z0-9_]*_FILE$" },
+              "additionalProperties": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" }
+            }
+          }
+        },
+        "env": { "$ref": "#/definitions/envMap" },
+        "resources": { "$ref": "#/definitions/resources" }
+      }
+    },
+    "baselineVerifier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "demoNamespace",
+        "backoffLimit",
+        "activeDeadlineSeconds",
+        "ttlSecondsAfterFinished",
+        "database",
+        "credentials",
+        "env",
+        "resources"
+      ],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "demoNamespace": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+        "backoffLimit": { "type": "integer", "minimum": 0, "maximum": 5 },
+        "activeDeadlineSeconds": { "type": "integer", "minimum": 30, "maximum": 600 },
+        "ttlSecondsAfterFinished": { "type": "integer", "minimum": 0 },
+        "database": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["user", "secretName", "passwordKey"],
+          "properties": {
+            "user": { "$ref": "#/definitions/nonEmptyString" },
+            "secretName": { "$ref": "#/definitions/nonEmptyString" },
+            "passwordKey": { "$ref": "#/definitions/nonEmptyString" }
+          }
+        },
         "credentials": {
           "type": "object",
           "additionalProperties": false,

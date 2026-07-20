@@ -167,6 +167,69 @@ worker:
       cpu: 500m
       memory: 256Mi
 
+baselineVerifier:
+  enabled: false
+  demoNamespace: cloudops-demo
+  backoffLimit: 2
+  activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 600
+  database:
+    user: cloudops-baseline
+    secretName: cloudops-baseline-database
+    passwordKey: MYSQL_PASSWORD
+  credentials:
+    secretName: cloudops-baseline-credentials
+    mountPath: /var/run/secrets/cloudops/baseline
+    files:
+      ARGOCD_TOKEN_FILE: argocd-token
+      OBSERVABILITY_ELASTICSEARCH_USERNAME_FILE: elasticsearch-username
+      OBSERVABILITY_ELASTICSEARCH_PASSWORD_FILE: elasticsearch-password
+      OBSERVABILITY_ELASTICSEARCH_CA_FILE: elasticsearch-ca.crt
+  env:
+    K8S_ENABLED: "true"
+    K8S_WRITE_ENABLED: "false"
+    K8S_IN_CLUSTER: "true"
+    K8S_ALLOWED_NAMESPACES: cloudops-demo
+    K8S_DEFAULT_NAMESPACE: cloudops-demo
+    V3_TARGET_CLUSTER: kind-cloudops-v3
+    V3_TARGET_ENVIRONMENT: local-demo
+    V3_TARGET_NAMESPACE: cloudops-demo
+    V3_TARGET_SERVICE: cloudops-demo-workload
+    V3_TARGET_WORKLOAD: cloudops-demo-workload
+    V3_TARGET_CONTAINER: cloudops-demo
+    V3_TARGET_REPOSITORY: 05allan1213/cloudops-gitops-demo
+    V3_SOURCE_REPOSITORY: 05allan1213/CloudOps-Copilot
+    V3_TARGET_BASE_BRANCH: main
+    V3_TARGET_GITOPS_PATH: apps/demo/deployment.yaml
+    V3_TARGET_ARGO_PATH: apps/demo
+    V3_TARGET_ARGO_APPLICATION: cloudops-demo
+    V3_TARGET_ARGO_PROJECT: cloudops-demo
+    V3_TARGET_ARGO_DESTINATION_SERVER: https://kubernetes.default.svc
+    V3_BASELINE_ALERT_NAMES: CloudOpsDemoRequiredEnvMissing,CloudOpsDemoErrorRateHigh
+    V3_BASELINE_LOOKBACK_SECONDS: "1800"
+    V3_BASELINE_TIMEOUT_SECONDS: "180"
+    GITHUB_API_BASE_URL: https://api.github.com
+    ARGOCD_SERVER: https://argocd-server.cloudops-argocd.svc
+    ARGOCD_ALLOWED_APPLICATIONS: cloudops-demo
+    ARGOCD_ALLOWED_PROJECTS: cloudops-demo
+    REGISTRY_BASE_URL: https://ghcr.io
+    REGISTRY_ALLOWED_HOSTS: ghcr.io
+    REGISTRY_ALLOWED_REPOSITORIES: 05allan1213/cloudops-demo
+    REGISTRY_ALLOWED_AUTH_REALM_HOSTS: ghcr.io
+    OCI_ALLOWED_SOURCE_REPOSITORIES: https://github.com/05allan1213/CloudOps-Copilot
+    OBSERVABILITY_PROMETHEUS_URL: http://cloudops-monitoring-kube-prometheus-prometheus.cloudops-monitoring.svc:9090
+    OBSERVABILITY_TEMPO_URL: http://tempo.cloudops-tracing.svc:3200
+    OBSERVABILITY_ELASTICSEARCH_URL: https://cloudops-elasticsearch-es-http.cloudops-logging.svc:9200
+    OBSERVABILITY_ELASTICSEARCH_INDEX: logs-cloudops-*
+    OBSERVABILITY_MAX_LOOKBACK_SECONDS: "3600"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
 observability:
   enabled: true
   serviceMonitor:

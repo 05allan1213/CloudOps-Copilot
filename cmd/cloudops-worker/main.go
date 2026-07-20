@@ -14,7 +14,16 @@ import (
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	if err := bootstrap.RunWorker(ctx); err != nil {
+	var err error
+	switch {
+	case len(os.Args) == 1:
+		err = bootstrap.RunWorker(ctx)
+	case len(os.Args) == 2 && os.Args[1] == "baseline-verify":
+		err = bootstrap.RunBaselineVerifier(ctx)
+	default:
+		err = fmt.Errorf("usage: cloudops-worker [baseline-verify]")
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "cloudops-worker failed:", err)
 		os.Exit(1)
 	}
