@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/05allan1213/CloudOps-Copilot/migrations"
+	"github.com/05allan1213/CloudOps-Copilot/internal/schemaversion"
 	drivermysql "github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 
@@ -85,8 +85,8 @@ func (s *Store) Ready(ctx context.Context) error {
 	if err := s.db.QueryRowContext(ctx, "SELECT MAX(version_id) FROM goose_db_version WHERE is_applied = 1").Scan(&version); err != nil {
 		return fmt.Errorf("read goose version: %w", err)
 	}
-	if !version.Valid || version.Int64 != migrations.LatestVersion {
-		return fmt.Errorf("unsupported schema version %d, want %d", version.Int64, migrations.LatestVersion)
+	if !version.Valid || version.Int64 != schemaversion.Latest {
+		return fmt.Errorf("unsupported schema version %d, want %d", version.Int64, schemaversion.Latest)
 	}
 	for _, table := range []string{"async_tasks", "async_task_attempts", "signal_rejections", "command_idempotency_records", "migration_ledger"} {
 		var count int

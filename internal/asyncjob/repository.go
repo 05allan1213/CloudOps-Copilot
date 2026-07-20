@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/05allan1213/CloudOps-Copilot/migrations"
+	"github.com/05allan1213/CloudOps-Copilot/internal/schemaversion"
 	"github.com/google/uuid"
 )
 
@@ -190,8 +190,8 @@ func (r *Repository) Ready(ctx context.Context) error {
 	if err := r.db.QueryRowContext(ctx, "SELECT MAX(version_id) FROM goose_db_version WHERE is_applied = 1").Scan(&version); err != nil {
 		return fmt.Errorf("read async task schema version: %w", err)
 	}
-	if !version.Valid || version.Int64 != migrations.LatestVersion {
-		return fmt.Errorf("unsupported async task schema version %d, want %d", version.Int64, migrations.LatestVersion)
+	if !version.Valid || version.Int64 != schemaversion.Latest {
+		return fmt.Errorf("unsupported async task schema version %d, want %d", version.Int64, schemaversion.Latest)
 	}
 	const schemaSQL = `SELECT COUNT(*)
 FROM information_schema.tables

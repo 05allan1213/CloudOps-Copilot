@@ -13,10 +13,11 @@ import (
 	"github.com/pressly/goose/v3"
 	"github.com/pressly/goose/v3/lock"
 
+	"github.com/05allan1213/CloudOps-Copilot/internal/schemaversion"
 	"github.com/05allan1213/CloudOps-Copilot/migrations"
 )
 
-const LatestVersion = migrations.LatestVersion
+const LatestVersion = schemaversion.Latest
 
 type Runner struct {
 	provider *goose.Provider
