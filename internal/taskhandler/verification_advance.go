@@ -20,6 +20,30 @@ type VerificationAdvanceSnapshot struct {
 	Observation verification.Observation
 	CheckID     string
 	Now         time.Time
+	// NextDueAt is populated by durable readers when no check is ready. It is the
+	// earliest selected-check due/deadline boundary, so a poll cannot sleep past
+	// a timeout while waiting for its normal interval.
+	NextDueAt time.Time
+	// CheckDeadlineAt lets the handler turn a due check into an explicit timeout
+	// sample without treating an absent provider response as a passing value.
+	CheckDeadlineAt time.Time
+
+	// Durable identity copied from verification_runs. These fields are kept out
+	// of verification.Run for compatibility with the legacy repository model.
+	CycleNo               uint32
+	IncidentVersion       uint64
+	IncidentStatus        string
+	TriggerType           string
+	TriggerSignalID       uint64
+	RemediationPlanID     uint64
+	ChangeRequestID       uint64
+	SourceRevision        string
+	ImageDigest           string
+	GitOpsRevision        string
+	ProfileID             string
+	ProfileHash           string
+	ContractVersion       int
+	CommonStabilityWindow time.Duration
 }
 
 type VerificationAdvanceReader interface {
@@ -90,7 +114,23 @@ func (o *verificationAdvanceOperation) handle(ctx context.Context, execution asy
 	if now.IsZero() {
 		now = o.cfg.Now().UTC()
 	}
+	if !snapshot.NextDueAt.IsZero() && now.Before(snapshot.NextDueAt) {
+		return asyncjob.RetryAfter(
+			snapshot.NextDueAt.Sub(now),
+			"verification_check_not_due",
+			"verification check is scheduled for a later poll",
+			nil,
+		)
+	}
 	sample := verification.EvaluateV3Observation(check, snapshot.Observation, now)
+	if !snapshot.CheckDeadlineAt.IsZero() && !now.Before(snapshot.CheckDeadlineAt) {
+		sample = verification.Sample{
+			Status:          verification.SampleTimedOut,
+			Observed:        json.RawMessage(`{"status":"timed_out"}`),
+			SourceReference: snapshot.Observation.SourceReference,
+			ReasonCode:      "check_deadline_exceeded",
+		}
+	}
 	if err := verification.ApplyV3Sample(&check, sample, now); err != nil {
 		return asyncjob.Dead("verification_sample_rejected", boundChange(err.Error(), 2048), nil)
 	}

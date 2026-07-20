@@ -211,6 +211,7 @@ type Check struct {
 	ID                      uint64
 	PublicID                string
 	VerificationRunID       uint64
+	SpecSchemaVersion       int
 	Type                    CheckType
 	Status                  CheckStatus
 	Required                bool
@@ -218,6 +219,7 @@ type Check struct {
 	Expected                json.RawMessage
 	Observed                json.RawMessage
 	SourceReference         string
+	SourceIdentity          string
 	Lookback                time.Duration
 	StabilityWindow         time.Duration
 	Timeout                 time.Duration

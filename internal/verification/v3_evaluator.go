@@ -37,14 +37,14 @@ func EvaluateV3Observation(check Check, observation Observation, now time.Time) 
 	if check.MinSamples > 0 && v3SampleCount(check, observation) < check.MinSamples {
 		return withV3Reason(sample, SampleUnavailable, "insufficient_samples")
 	}
-	if check.Type == CheckArgoExactRevision || check.Type == CheckArgoSyncSucceeded || check.Type == CheckDeploymentIdentity {
+	if v3BooleanObservationCheck(check.Type) {
 		if observation.MatchedCount > 0 || observation.Value == 0 {
 			if check.FailureMode == FailureImmediate {
-				return withV3Reason(sample, SampleFailed, "identity_mismatch")
+				return withV3Reason(sample, SampleFailed, v3BooleanReason(check.Type, false))
 			}
-			return withV3Reason(sample, SamplePending, "identity_mismatch")
+			return withV3Reason(sample, SamplePending, v3BooleanReason(check.Type, false))
 		}
-		return withV3Reason(sample, SamplePassed, "identity_matches")
+		return withV3Reason(sample, SamplePassed, v3BooleanReason(check.Type, true))
 	}
 	if check.Comparison == CompareAbsent {
 		if observation.MatchedCount == 0 {
@@ -60,6 +60,52 @@ func EvaluateV3Observation(check Check, observation Observation, now time.Time) 
 		return withV3Reason(sample, SamplePassed, "threshold_satisfied")
 	}
 	return v3NegativeSample(sample, check, "threshold_not_satisfied")
+}
+
+func v3BooleanObservationCheck(checkType CheckType) bool {
+	switch checkType {
+	case CheckArgoExactRevision, CheckArgoSyncSucceeded, CheckDeploymentObserved,
+		CheckDeploymentRolloutV3, CheckWorkloadReady, CheckIncidentAlertsResolved,
+		CheckDeploymentIdentity:
+		return true
+	default:
+		return false
+	}
+}
+
+func v3BooleanReason(checkType CheckType, satisfied bool) string {
+	if satisfied {
+		switch checkType {
+		case CheckArgoExactRevision, CheckDeploymentIdentity:
+			return "identity_matches"
+		case CheckArgoSyncSucceeded:
+			return "sync_succeeded"
+		case CheckDeploymentObserved:
+			return "generation_observed"
+		case CheckDeploymentRolloutV3:
+			return "rollout_complete"
+		case CheckWorkloadReady:
+			return "workload_ready"
+		case CheckIncidentAlertsResolved:
+			return "alerts_resolved"
+		}
+	}
+	switch checkType {
+	case CheckArgoExactRevision, CheckDeploymentIdentity:
+		return "identity_mismatch"
+	case CheckArgoSyncSucceeded:
+		return "sync_not_succeeded"
+	case CheckDeploymentObserved:
+		return "generation_not_observed"
+	case CheckDeploymentRolloutV3:
+		return "rollout_incomplete"
+	case CheckWorkloadReady:
+		return "workload_not_ready"
+	case CheckIncidentAlertsResolved:
+		return "alerts_firing"
+	default:
+		return "check_not_satisfied"
+	}
 }
 
 // ApplyV3Sample records one bounded sample but deliberately leaves a positive

@@ -86,6 +86,57 @@ func TestV3EvaluatorRequiresHealthAndMinimumSamples(t *testing.T) {
 	}
 }
 
+func TestV3EvaluatorHandlesEveryStructuralBooleanCheck(t *testing.T) {
+	plan, err := CompileV3VerificationPlan(validV3Input("post_delivery"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 7, 20, 5, 0, 0, 0, time.UTC)
+	want := map[CheckType]bool{
+		CheckArgoExactRevision: true, CheckArgoSyncSucceeded: true,
+		CheckDeploymentObserved: true, CheckDeploymentRolloutV3: true,
+		CheckWorkloadReady: true, CheckIncidentAlertsResolved: true,
+	}
+	for _, spec := range plan.Checks {
+		if !want[spec.Type] {
+			continue
+		}
+		check := Check{Type: spec.Type, Lookback: spec.Lookback, MinSamples: spec.MinSamples, SampleUnit: spec.SampleUnit, FailureMode: spec.FailureMode}
+		observation := Observation{
+			Status: ObservationAvailable, Value: 1, SampleCount: spec.MinSamples,
+			SeriesCount: spec.MinSamples, SampledAt: now, QueryValid: true,
+			SourceHealthy: true, RetentionCovered: true,
+		}
+		if got := EvaluateV3Observation(check, observation, now); got.Status != SamplePassed {
+			t.Fatalf("healthy %s observation=%+v", spec.Type, got)
+		}
+		observation.Value = 0
+		got := EvaluateV3Observation(check, observation, now)
+		wantStatus := SamplePending
+		if spec.FailureMode == FailureImmediate {
+			wantStatus = SampleFailed
+		}
+		if got.Status != wantStatus {
+			t.Fatalf("negative %s observation=%+v want=%s", spec.Type, got, wantStatus)
+		}
+		delete(want, spec.Type)
+	}
+	if len(want) != 0 {
+		t.Fatalf("uncovered boolean checks=%v", want)
+	}
+
+	noChange, err := CompileV3VerificationPlan(validV3Input("no_change"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := noChange.Checks[0]
+	check := Check{Type: identity.Type, Lookback: identity.Lookback, MinSamples: identity.MinSamples, SampleUnit: identity.SampleUnit, FailureMode: identity.FailureMode}
+	observation := Observation{Status: ObservationAvailable, Value: 1, SampleCount: 1, SampledAt: now, QueryValid: true, SourceHealthy: true, RetentionCovered: true}
+	if got := EvaluateV3Observation(check, observation, now); got.Status != SamplePassed || got.ReasonCode != "identity_matches" {
+		t.Fatalf("no-change identity observation=%+v", got)
+	}
+}
+
 func TestV3CommonWindowUsesLatestSuccessStartAndInconclusiveUnavailable(t *testing.T) {
 	start := time.Date(2026, 7, 19, 6, 0, 0, 0, time.UTC)
 	first, second := start, start.Add(10*time.Second)
