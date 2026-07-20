@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -232,6 +234,129 @@ func TestInvestigationStepEnqueuesRemediationOnlyForConfirmedRestoreDiagnosis(t 
 	}
 	if len(store.enqueued) != 0 {
 		t.Fatalf("non-remediable diagnosis enqueued %d tasks", len(store.enqueued))
+	}
+}
+
+func TestBuildInvestigationChangeCandidatesBindsImmutableDeploymentIdentity(t *testing.T) {
+	snapshot := testInvestigationSnapshot(t, stepModeTool, nil)
+	evidenceID := "22222222-2222-4222-8222-222222222222"
+	changeRef := "33333333-3333-4333-8333-333333333333"
+	revision := strings.Repeat("a", 40)
+	imageDigest := "sha256:" + strings.Repeat("b", 64)
+	fact := investigationCandidateTestFact("deployment.change_ref", evidenceID, map[string]string{
+		"change_ref": changeRef, "repository": "acme/gitops", "revision": revision,
+		"image_digest": imageDigest, "path": "apps/demo.yaml",
+		"deployed_at": "2026-07-19T09:58:00Z", "is_current": "true",
+	}, snapshot)
+	checkpoint := investigationStepCheckpoint{Observation: &agent.ToolObservation{
+		Status: agent.CollectionAvailable, CollectionPath: "argocd/deployment-context", Facts: []agent.EvidenceFact{fact},
+	}}
+
+	first, err := buildInvestigationChangeCandidates(snapshot, checkpoint, evidenceID)
+	if err != nil || len(first) != 1 {
+		t.Fatalf("candidates=%+v err=%v", first, err)
+	}
+	second, err := buildInvestigationChangeCandidates(snapshot, checkpoint, evidenceID)
+	if err != nil || len(second) != 1 {
+		t.Fatalf("replayed candidates=%+v err=%v", second, err)
+	}
+	candidate := first[0]
+	if candidate.PublicID == "" || candidate.ContentHash == "" || candidate.ChangeRef != changeRef ||
+		candidate.Repository != "acme/gitops" || candidate.Revision != revision || candidate.ImageDigest != imageDigest ||
+		candidate.TargetPath != "apps/demo.yaml" || candidate.Category != "high_confidence" ||
+		!slices.Equal(candidate.SupportingEvidence, []string{evidenceID}) ||
+		candidate.PublicID != second[0].PublicID || candidate.ContentHash != second[0].ContentHash {
+		t.Fatalf("candidate identity is not deterministic: first=%+v second=%+v", candidate, second[0])
+	}
+}
+
+func TestBuildInvestigationChangeAssessmentRequiresCandidateSpecificCorrelation(t *testing.T) {
+	snapshot := testInvestigationSnapshot(t, stepModeSynthesize, nil)
+	deploymentEvidence := "22222222-2222-4222-8222-222222222222"
+	detailEvidence := "33333333-3333-4333-8333-333333333333"
+	changeRef := "44444444-4444-4444-8444-444444444444"
+	revision := strings.Repeat("a", 40)
+	imageDigest := "sha256:" + strings.Repeat("b", 64)
+	candidate := persistedInvestigationChangeCandidate{ID: 41, investigationChangeCandidate: investigationChangeCandidate{
+		PublicID: "55555555-5555-4555-8555-555555555555", ChangeRef: changeRef,
+		Repository: "acme/gitops", Revision: revision, ImageDigest: imageDigest,
+		TargetPath: "apps/demo.yaml", Category: "high_confidence",
+		ChangeTime:         time.Date(2026, 7, 19, 9, 58, 0, 0, time.UTC),
+		SupportingEvidence: []string{deploymentEvidence}, ContentHash: strings.Repeat("c", 64),
+	}}
+	snapshot.Facts = []agent.EvidenceFact{
+		investigationCandidateTestFact("deployment.change_ref", deploymentEvidence, map[string]string{
+			"change_ref": changeRef, "repository": candidate.Repository, "revision": revision, "is_current": "true",
+		}, snapshot),
+		investigationCandidateTestFact("argocd.bad_revision_deployed", deploymentEvidence, map[string]string{"deployed_revision": revision}, snapshot),
+		investigationCandidateTestFact("source_revision.unchanged", deploymentEvidence, nil, snapshot),
+		investigationCandidateTestFact("image_digest.unchanged", deploymentEvidence, map[string]string{"image_digest": imageDigest}, snapshot),
+		investigationCandidateTestFact("gitops.required_env_removed", detailEvidence, map[string]string{
+			"change_ref": changeRef, "repository": candidate.Repository, "revision": revision, "path": candidate.TargetPath,
+		}, snapshot),
+		investigationCandidateTestFact("change.ci_succeeded", detailEvidence, map[string]string{
+			"change_ref": changeRef, "repository": candidate.Repository, "revision": revision,
+		}, snapshot),
+	}
+	policyHash, diagnosisHash := strings.Repeat("d", 64), strings.Repeat("e", 64)
+	checkpoint := investigationStepCheckpoint{TerminalOutcome: "diagnosed", Diagnosis: &agent.DiagnosisRecord{
+		Candidate: agent.DiagnosisCandidate{
+			ClaimType: agent.GoldenRequiredEnvClaimPolicy().ClaimType, Confidence: agent.DiagnosisConfirmed,
+			RemediationHint: agent.RemediationRestoreRequiredEnv,
+		},
+		ClaimPolicyHash: policyHash, DiagnosisHash: diagnosisHash,
+		EvidenceIDs: []string{deploymentEvidence, detailEvidence},
+	}}
+
+	assessment, err := buildInvestigationChangeAssessment(snapshot, checkpoint, candidate, policyHash, diagnosisHash)
+	if err != nil || assessment.Status != "matched" ||
+		!slices.Equal(assessment.SupportingEvidence, []string{deploymentEvidence, detailEvidence}) || len(assessment.ContradictingEvidence) != 0 {
+		t.Fatalf("matched assessment=%+v err=%v", assessment, err)
+	}
+
+	other := candidate
+	other.ID = 42
+	other.ChangeRef = "66666666-6666-4666-8666-666666666666"
+	other.Revision = strings.Repeat("f", 40)
+	unknown, err := buildInvestigationChangeAssessment(snapshot, checkpoint, other, policyHash, diagnosisHash)
+	if err != nil || unknown.Status != "unknown" {
+		t.Fatalf("cross-candidate assessment=%+v err=%v", unknown, err)
+	}
+}
+
+func TestBuildInvestigationChangeAssessmentPlacesDisqualifierInContradictingEvidence(t *testing.T) {
+	snapshot := testInvestigationSnapshot(t, stepModeSynthesize, nil)
+	deploymentEvidence := "22222222-2222-4222-8222-222222222222"
+	detailEvidence := "33333333-3333-4333-8333-333333333333"
+	candidate := persistedInvestigationChangeCandidate{ID: 41, investigationChangeCandidate: investigationChangeCandidate{
+		PublicID: "55555555-5555-4555-8555-555555555555", ChangeRef: "44444444-4444-4444-8444-444444444444",
+		Repository: "acme/gitops", Revision: strings.Repeat("a", 40), ImageDigest: "sha256:" + strings.Repeat("b", 64),
+		TargetPath: "apps/demo.yaml", Category: "high_confidence", ChangeTime: time.Now().UTC(),
+		SupportingEvidence: []string{deploymentEvidence}, ContentHash: strings.Repeat("c", 64),
+	}}
+	snapshot.Facts = []agent.EvidenceFact{
+		investigationCandidateTestFact("deployment.change_ref", deploymentEvidence, map[string]string{
+			"change_ref": candidate.ChangeRef, "repository": candidate.Repository, "revision": candidate.Revision, "is_current": "true",
+		}, snapshot),
+		investigationCandidateTestFact("gitops.required_env_not_removed", detailEvidence, map[string]string{
+			"change_ref": candidate.ChangeRef, "repository": candidate.Repository, "revision": candidate.Revision, "path": candidate.TargetPath,
+		}, snapshot),
+	}
+	assessment, err := buildInvestigationChangeAssessment(snapshot, investigationStepCheckpoint{TerminalOutcome: "insufficient_evidence"}, candidate, strings.Repeat("d", 64), "")
+	if err != nil || assessment.Status != "excluded" ||
+		!slices.Equal(assessment.SupportingEvidence, []string{deploymentEvidence}) ||
+		!slices.Equal(assessment.ContradictingEvidence, []string{detailEvidence}) {
+		t.Fatalf("excluded assessment=%+v err=%v", assessment, err)
+	}
+}
+
+func investigationCandidateTestFact(factType, evidenceID string, attributes map[string]string, snapshot investigationSnapshot) agent.EvidenceFact {
+	return agent.EvidenceFact{
+		ID: hashCanonical("candidate-test-fact", factType, evidenceID), EvidenceID: evidenceID,
+		IncidentID: snapshot.IncidentPublicID, CycleNo: uint64(snapshot.Task.CycleNo), Type: factType,
+		SourceSystem: "fixture", CollectionPath: "fixture/v1", CorroborationGroup: "fixture/candidate",
+		Authority: "authoritative", Integrity: "verified", Freshness: "fresh", Completeness: "complete",
+		ClaimUse: "support", CollectionStatus: agent.CollectionAvailable, Direct: true, Attributes: attributes,
 	}
 }
 

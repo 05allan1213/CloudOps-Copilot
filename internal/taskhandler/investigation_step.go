@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/05allan1213/CloudOps-Copilot/internal/agent"
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
+	"github.com/05allan1213/CloudOps-Copilot/internal/change"
 )
 
 const (
@@ -1401,6 +1403,9 @@ func (o *investigationStepOperation) applyPrepared(ctx context.Context, tx async
 		if err := insertInvestigationEvidence(ctx, tx, snapshot, checkpoint, evidencePublicID); err != nil {
 			return err
 		}
+		if err := insertInvestigationChangeCandidates(ctx, tx, snapshot, checkpoint, evidencePublicID); err != nil {
+			return err
+		}
 	}
 	terminal := checkpoint.TerminalOutcome != ""
 	legacyStatus, v3Status := "RUNNING", "running"
@@ -1456,6 +1461,9 @@ WHERE id = ? AND incident_id = ? AND domain_schema_version = 3 AND cycle_no = ?
 		return fmt.Errorf("append investigation step event: %w", err)
 	}
 	if terminal {
+		if err := assessInvestigationChangeCandidates(ctx, tx, snapshot, checkpoint); err != nil {
+			return err
+		}
 		if err := o.enqueueRemediationPrepare(ctx, tx, snapshot, checkpoint); err != nil {
 			return err
 		}
@@ -1549,6 +1557,498 @@ func insertInvestigationEvidence(ctx context.Context, tx asyncjob.DBTX, snapshot
 		return fmt.Errorf("read investigation Evidence result: %w", err)
 	}
 	return nil
+}
+
+type investigationChangeCandidate struct {
+	PublicID           string
+	ChangeRef          string
+	Repository         string
+	Revision           string
+	ImageDigest        string
+	TargetPath         string
+	Category           string
+	ChangeTime         time.Time
+	SupportingEvidence []string
+	ContentHash        string
+}
+
+func insertInvestigationChangeCandidates(ctx context.Context, tx asyncjob.DBTX, snapshot investigationSnapshot, checkpoint investigationStepCheckpoint, evidencePublicID string) error {
+	candidates, err := buildInvestigationChangeCandidates(snapshot, checkpoint, evidencePublicID)
+	if err != nil {
+		return err
+	}
+	for _, candidate := range candidates {
+		supporting, marshalErr := json.Marshal(candidate.SupportingEvidence)
+		if marshalErr != nil {
+			return fmt.Errorf("encode investigation ChangeCandidate evidence: %w", marshalErr)
+		}
+		result, execErr := tx.ExecContext(ctx, `INSERT INTO change_candidates
+ (public_id, domain_schema_version, candidate_schema_version, incident_id, cycle_no, agent_run_id,
+  change_ref, source_type, repository, commit_sha, gitops_revision, image_digest, target_path,
+  category, change_time, supporting_evidence_json, content_hash, created_at)
+ VALUES (?, 3, 1, ?, ?, ?, ?, 'github_commit', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
+			candidate.PublicID, snapshot.Task.IncidentID, snapshot.Task.CycleNo, snapshot.Task.SubjectID,
+			candidate.ChangeRef, candidate.Repository, candidate.Revision, candidate.Revision, candidate.ImageDigest,
+			candidate.TargetPath, candidate.Category, candidate.ChangeTime.UTC(), supporting, candidate.ContentHash,
+			checkpoint.CapturedAt.UTC())
+		if execErr != nil {
+			return fmt.Errorf("persist investigation ChangeCandidate: %w", execErr)
+		}
+		candidateID, lastIDErr := result.LastInsertId()
+		if lastIDErr != nil || candidateID <= 0 {
+			if lastIDErr != nil {
+				return fmt.Errorf("read investigation ChangeCandidate result: %w", lastIDErr)
+			}
+			return fmt.Errorf("%w: persisted ChangeCandidate returned an invalid id", asyncjob.ErrInvalidMutation)
+		}
+		if err := verifyInvestigationChangeCandidate(ctx, tx, uint64(candidateID), snapshot, candidate); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func buildInvestigationChangeCandidates(snapshot investigationSnapshot, checkpoint investigationStepCheckpoint, evidencePublicID string) ([]investigationChangeCandidate, error) {
+	observation := checkpoint.Observation
+	if observation == nil || observation.CollectionPath != "argocd/deployment-context" || observation.Status != agent.CollectionAvailable {
+		return nil, nil
+	}
+	result := make([]investigationChangeCandidate, 0, 10)
+	seenRefs := make(map[string]struct{}, 10)
+	for _, fact := range observation.Facts {
+		if fact.Type != "deployment.change_ref" {
+			continue
+		}
+		if !usableInvestigationCandidateFact(fact, snapshot) || fact.EvidenceID != evidencePublicID {
+			return nil, fmt.Errorf("%w: deployment ChangeCandidate is not bound to the persisted Evidence", asyncjob.ErrInvalidMutation)
+		}
+		changeRef := strings.TrimSpace(fact.Attributes["change_ref"])
+		repository := strings.ToLower(strings.Trim(strings.TrimSpace(fact.Attributes["repository"]), "/"))
+		revision := strings.ToLower(strings.TrimSpace(fact.Attributes["revision"]))
+		imageDigest := strings.ToLower(strings.TrimSpace(fact.Attributes["image_digest"]))
+		targetPath := strings.TrimPrefix(strings.TrimSpace(fact.Attributes["path"]), "./")
+		changeTime, timeErr := time.Parse(time.RFC3339, strings.TrimSpace(fact.Attributes["deployed_at"]))
+		isCurrent, currentErr := strconv.ParseBool(strings.TrimSpace(fact.Attributes["is_current"]))
+		if _, parseErr := uuid.Parse(changeRef); parseErr != nil || strings.Count(repository, "/") != 1 ||
+			!change.ValidExactGitObjectID(revision) || !validImageDigest(imageDigest) || targetPath == "" ||
+			strings.HasPrefix(targetPath, "../") || change.SensitivePath(targetPath, nil) || timeErr != nil || currentErr != nil {
+			return nil, fmt.Errorf("%w: deployment ChangeCandidate identity is invalid", asyncjob.ErrInvalidMutation)
+		}
+		if _, duplicate := seenRefs[changeRef]; duplicate {
+			return nil, fmt.Errorf("%w: deployment context contains duplicate change references", asyncjob.ErrInvalidMutation)
+		}
+		seenRefs[changeRef] = struct{}{}
+		category := "low_confidence"
+		if isCurrent {
+			category = "high_confidence"
+		}
+		supporting := []string{evidencePublicID}
+		candidate := investigationChangeCandidate{
+			ChangeRef: changeRef, Repository: repository, Revision: revision, ImageDigest: imageDigest,
+			TargetPath: targetPath, Category: category, ChangeTime: changeTime.UTC(),
+			SupportingEvidence: supporting,
+		}
+		contentHash, hashErr := investigationChangeCandidateContentHash(snapshot, candidate)
+		if hashErr != nil {
+			return nil, hashErr
+		}
+		candidate.ContentHash = contentHash
+		candidate.PublicID = uuid.NewSHA1(uuid.NameSpaceURL, []byte("cloudops-change-candidate\x00"+snapshot.RunPublicID+"\x00"+changeRef+"\x00"+contentHash)).String()
+		result = append(result, candidate)
+	}
+	return result, nil
+}
+
+func investigationChangeCandidateContentHash(snapshot investigationSnapshot, candidate investigationChangeCandidate) (string, error) {
+	canonical, err := json.Marshal(struct {
+		SchemaVersion          int
+		CandidateSchemaVersion int
+		IncidentID             string
+		AgentRunID             string
+		CycleNo                uint64
+		ChangeRef              string
+		SourceType             string
+		Repository             string
+		Revision               string
+		ImageDigest            string
+		TargetPath             string
+		Category               string
+		ChangeTime             time.Time
+		Supporting             []string
+	}{
+		SchemaVersion: 3, CandidateSchemaVersion: 1,
+		IncidentID: snapshot.IncidentPublicID, AgentRunID: snapshot.RunPublicID, CycleNo: uint64(snapshot.Task.CycleNo),
+		ChangeRef: candidate.ChangeRef, SourceType: "github_commit", Repository: candidate.Repository,
+		Revision: candidate.Revision, ImageDigest: candidate.ImageDigest, TargetPath: candidate.TargetPath,
+		Category: candidate.Category, ChangeTime: candidate.ChangeTime.UTC(), Supporting: candidate.SupportingEvidence,
+	})
+	if err != nil {
+		return "", fmt.Errorf("encode investigation ChangeCandidate hash input: %w", err)
+	}
+	return hashBytesInvestigation(canonical), nil
+}
+
+func usableInvestigationCandidateFact(fact agent.EvidenceFact, snapshot investigationSnapshot) bool {
+	return fact.ID != "" && fact.EvidenceID != "" && fact.IncidentID == snapshot.IncidentPublicID &&
+		fact.CycleNo == uint64(snapshot.Task.CycleNo) && fact.CollectionStatus == agent.CollectionAvailable &&
+		fact.Integrity == "verified" && fact.ClaimUse != "forbidden" && !fact.Truncated
+}
+
+func verifyInvestigationChangeCandidate(ctx context.Context, tx asyncjob.DBTX, candidateID uint64, snapshot investigationSnapshot, expected investigationChangeCandidate) error {
+	var actual investigationChangeCandidate
+	var incidentID, cycleNo, agentRunID uint64
+	var domainSchemaVersion, candidateSchemaVersion uint16
+	var sourceType, commitSHA, gitopsRevision string
+	var supportingJSON []byte
+	if err := tx.QueryRowContext(ctx, `SELECT public_id, domain_schema_version, candidate_schema_version,
+ incident_id, cycle_no, agent_run_id, change_ref, source_type, repository, commit_sha,
+ gitops_revision, image_digest, target_path, category, change_time, supporting_evidence_json, content_hash
+FROM change_candidates WHERE id = ? FOR UPDATE`, candidateID).Scan(
+		&actual.PublicID, &domainSchemaVersion, &candidateSchemaVersion, &incidentID, &cycleNo, &agentRunID,
+		&actual.ChangeRef, &sourceType, &actual.Repository, &commitSHA, &gitopsRevision, &actual.ImageDigest,
+		&actual.TargetPath, &actual.Category, &actual.ChangeTime, &supportingJSON, &actual.ContentHash); err != nil {
+		return fmt.Errorf("reload investigation ChangeCandidate: %w", err)
+	}
+	actual.Revision = gitopsRevision
+	if json.Unmarshal(supportingJSON, &actual.SupportingEvidence) != nil ||
+		domainSchemaVersion != 3 || candidateSchemaVersion != 1 || incidentID != snapshot.Task.IncidentID ||
+		cycleNo != uint64(snapshot.Task.CycleNo) || agentRunID != snapshot.Task.SubjectID || sourceType != "github_commit" ||
+		commitSHA != gitopsRevision || actual.PublicID != expected.PublicID ||
+		actual.ChangeRef != expected.ChangeRef || actual.Repository != expected.Repository || actual.Revision != expected.Revision ||
+		actual.ImageDigest != expected.ImageDigest || actual.TargetPath != expected.TargetPath || actual.Category != expected.Category ||
+		!actual.ChangeTime.UTC().Equal(expected.ChangeTime.UTC()) || !slices.Equal(actual.SupportingEvidence, expected.SupportingEvidence) ||
+		actual.ContentHash != expected.ContentHash {
+		return fmt.Errorf("%w: idempotent ChangeCandidate replay diverged from immutable payload", asyncjob.ErrInvalidMutation)
+	}
+	return nil
+}
+
+const investigationChangeValidatorVersion = "required-env-correlation-validator/v1"
+
+type persistedInvestigationChangeCandidate struct {
+	ID uint64
+	investigationChangeCandidate
+}
+
+type investigationChangeAssessment struct {
+	Status                string
+	SupportingEvidence    []string
+	ContradictingEvidence []string
+	ValidatorVersion      string
+	PolicyHash            string
+	DiagnosisHash         string
+}
+
+func assessInvestigationChangeCandidates(ctx context.Context, tx asyncjob.DBTX, snapshot investigationSnapshot, checkpoint investigationStepCheckpoint) error {
+	if checkpoint.TerminalOutcome == "" {
+		return nil
+	}
+	policyHash := checkpoint.State.Coverage.ClaimPolicyHash
+	diagnosisHash := ""
+	if checkpoint.Diagnosis != nil {
+		policyHash = checkpoint.Diagnosis.ClaimPolicyHash
+		diagnosisHash = checkpoint.Diagnosis.DiagnosisHash
+	}
+	if !validSHA256Text(policyHash) || checkpoint.Diagnosis != nil && !validSHA256Text(diagnosisHash) {
+		return fmt.Errorf("%w: terminal ChangeCandidate assessment lacks policy-bound identity", asyncjob.ErrInvalidMutation)
+	}
+	candidates, err := loadInvestigationChangeCandidatesForAssessment(ctx, tx, snapshot)
+	if err != nil {
+		return err
+	}
+	for _, candidate := range candidates {
+		assessment, assessErr := buildInvestigationChangeAssessment(snapshot, checkpoint, candidate, policyHash, diagnosisHash)
+		if assessErr != nil {
+			return assessErr
+		}
+		if err := persistInvestigationChangeAssessment(ctx, tx, snapshot, checkpoint, candidate, assessment); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func loadInvestigationChangeCandidatesForAssessment(ctx context.Context, tx asyncjob.DBTX, snapshot investigationSnapshot) ([]persistedInvestigationChangeCandidate, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id, public_id, change_ref, repository, commit_sha, gitops_revision,
+ image_digest, target_path, category, change_time, supporting_evidence_json, content_hash
+FROM change_candidates
+WHERE incident_id = ? AND cycle_no = ? AND agent_run_id = ? AND domain_schema_version = 3
+ORDER BY id FOR UPDATE`, snapshot.Task.IncidentID, snapshot.Task.CycleNo, snapshot.Task.SubjectID)
+	if err != nil {
+		return nil, fmt.Errorf("load investigation ChangeCandidates: %w", err)
+	}
+	defer rows.Close()
+	candidates := make([]persistedInvestigationChangeCandidate, 0, 10)
+	for rows.Next() {
+		var candidate persistedInvestigationChangeCandidate
+		var commitSHA, gitopsRevision string
+		var supportingJSON []byte
+		if err := rows.Scan(&candidate.ID, &candidate.PublicID, &candidate.ChangeRef, &candidate.Repository,
+			&commitSHA, &gitopsRevision, &candidate.ImageDigest, &candidate.TargetPath, &candidate.Category,
+			&candidate.ChangeTime, &supportingJSON, &candidate.ContentHash); err != nil {
+			return nil, fmt.Errorf("scan investigation ChangeCandidate: %w", err)
+		}
+		if json.Unmarshal(supportingJSON, &candidate.SupportingEvidence) != nil || commitSHA != gitopsRevision {
+			return nil, fmt.Errorf("%w: persisted ChangeCandidate is malformed", asyncjob.ErrInvalidMutation)
+		}
+		candidate.Revision = gitopsRevision
+		if err := validatePersistedInvestigationChangeCandidate(snapshot, candidate); err != nil {
+			return nil, err
+		}
+		candidates = append(candidates, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate investigation ChangeCandidates: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close investigation ChangeCandidates before assessment writes: %w", err)
+	}
+	return candidates, nil
+}
+
+func validatePersistedInvestigationChangeCandidate(snapshot investigationSnapshot, candidate persistedInvestigationChangeCandidate) error {
+	if candidate.ID == 0 || !validSHA256Text(candidate.ContentHash) || candidate.ChangeTime.IsZero() ||
+		!change.ValidExactGitObjectID(candidate.Revision) || !validImageDigest(candidate.ImageDigest) ||
+		strings.Count(candidate.Repository, "/") != 1 || candidate.TargetPath == "" ||
+		strings.HasPrefix(candidate.TargetPath, "../") || change.SensitivePath(candidate.TargetPath, nil) ||
+		candidate.Category != "high_confidence" && candidate.Category != "low_confidence" {
+		return fmt.Errorf("%w: persisted ChangeCandidate identity is invalid", asyncjob.ErrInvalidMutation)
+	}
+	if _, err := uuid.Parse(candidate.ChangeRef); err != nil {
+		return fmt.Errorf("%w: persisted ChangeCandidate change_ref is invalid", asyncjob.ErrInvalidMutation)
+	}
+	candidate.SupportingEvidence = stableUniqueInvestigation(candidate.SupportingEvidence)
+	if len(candidate.SupportingEvidence) == 0 || len(candidate.SupportingEvidence) > 64 {
+		return fmt.Errorf("%w: persisted ChangeCandidate evidence is invalid", asyncjob.ErrInvalidMutation)
+	}
+	expectedHash, err := investigationChangeCandidateContentHash(snapshot, candidate.investigationChangeCandidate)
+	if err != nil {
+		return err
+	}
+	expectedPublicID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("cloudops-change-candidate\x00"+snapshot.RunPublicID+"\x00"+candidate.ChangeRef+"\x00"+expectedHash)).String()
+	if candidate.ContentHash != expectedHash || candidate.PublicID != expectedPublicID {
+		return fmt.Errorf("%w: persisted ChangeCandidate hash binding is invalid", asyncjob.ErrInvalidMutation)
+	}
+	return nil
+}
+
+func buildInvestigationChangeAssessment(snapshot investigationSnapshot, checkpoint investigationStepCheckpoint, candidate persistedInvestigationChangeCandidate, policyHash, diagnosisHash string) (investigationChangeAssessment, error) {
+	assessment := investigationChangeAssessment{
+		Status: "unknown", SupportingEvidence: []string{}, ContradictingEvidence: []string{},
+		ValidatorVersion: investigationChangeValidatorVersion, PolicyHash: policyHash, DiagnosisHash: diagnosisHash,
+	}
+	positive := append([]string(nil), candidate.SupportingEvidence...)
+	contradicting := make([]string, 0, 4)
+	current, deployed, argoNotDeployed := false, false, false
+	sourceUnchanged, imageUnchanged, identityChanged := false, false, false
+	detailRemoved, detailNotRemoved, ciSucceeded := false, false, false
+	for _, fact := range snapshot.Facts {
+		if !usableInvestigationCandidateFact(fact, snapshot) {
+			continue
+		}
+		switch fact.Type {
+		case "deployment.change_ref":
+			if !slices.Contains(candidate.SupportingEvidence, fact.EvidenceID) || !sameInvestigationCandidateFact(fact, candidate, false) {
+				continue
+			}
+			value, err := strconv.ParseBool(strings.TrimSpace(fact.Attributes["is_current"]))
+			if err != nil {
+				return investigationChangeAssessment{}, fmt.Errorf("%w: candidate deployment current marker is invalid", asyncjob.ErrInvalidMutation)
+			}
+			current = current || value
+			positive = append(positive, fact.EvidenceID)
+		case "argocd.bad_revision_deployed":
+			if slices.Contains(candidate.SupportingEvidence, fact.EvidenceID) && strings.EqualFold(fact.Attributes["deployed_revision"], candidate.Revision) {
+				deployed = true
+				positive = append(positive, fact.EvidenceID)
+			}
+		case "argocd.bad_revision_not_deployed":
+			if slices.Contains(candidate.SupportingEvidence, fact.EvidenceID) && strings.EqualFold(fact.Attributes["deployed_revision"], candidate.Revision) {
+				argoNotDeployed = true
+				contradicting = append(contradicting, fact.EvidenceID)
+			}
+		case "source_revision.unchanged":
+			if slices.Contains(candidate.SupportingEvidence, fact.EvidenceID) {
+				sourceUnchanged = true
+				positive = append(positive, fact.EvidenceID)
+			}
+		case "image_digest.unchanged":
+			if slices.Contains(candidate.SupportingEvidence, fact.EvidenceID) && strings.EqualFold(fact.Attributes["image_digest"], candidate.ImageDigest) {
+				imageUnchanged = true
+				positive = append(positive, fact.EvidenceID)
+			}
+		case "deployment.source_and_image_changed":
+			if slices.Contains(candidate.SupportingEvidence, fact.EvidenceID) {
+				identityChanged = true
+				contradicting = append(contradicting, fact.EvidenceID)
+			}
+		case "gitops.required_env_removed":
+			if sameInvestigationCandidateFact(fact, candidate, true) {
+				detailRemoved = true
+				positive = append(positive, fact.EvidenceID)
+			}
+		case "gitops.required_env_not_removed":
+			if sameInvestigationCandidateFact(fact, candidate, true) {
+				detailNotRemoved = true
+				contradicting = append(contradicting, fact.EvidenceID)
+			}
+		case "change.ci_succeeded":
+			if sameInvestigationCandidateFact(fact, candidate, false) {
+				ciSucceeded = true
+				positive = append(positive, fact.EvidenceID)
+			}
+		case "change.ci_not_succeeded":
+			if sameInvestigationCandidateFact(fact, candidate, false) {
+				contradicting = append(contradicting, fact.EvidenceID)
+			}
+		}
+	}
+	positive = stableUniqueInvestigation(positive)
+	contradicting = stableUniqueInvestigation(contradicting)
+	if detailNotRemoved && !detailRemoved || argoNotDeployed && !deployed || identityChanged && !(sourceUnchanged && imageUnchanged) {
+		assessment.Status = "excluded"
+		assessment.SupportingEvidence = stableUniqueInvestigation(candidate.SupportingEvidence)
+		assessment.ContradictingEvidence = contradicting
+		return assessment, nil
+	}
+	diagnosis := checkpoint.Diagnosis
+	if diagnosis != nil && diagnosis.Candidate.Confidence == agent.DiagnosisConfirmed &&
+		diagnosis.Candidate.ClaimType == agent.GoldenRequiredEnvClaimPolicy().ClaimType &&
+		diagnosis.Candidate.RemediationHint == agent.RemediationRestoreRequiredEnv &&
+		current && deployed && sourceUnchanged && imageUnchanged && detailRemoved && !detailNotRemoved && ciSucceeded &&
+		allInvestigationEvidenceReferenced(positive, diagnosis.EvidenceIDs) && len(contradicting) == 0 {
+		assessment.Status = "matched"
+		assessment.SupportingEvidence = positive
+		return assessment, nil
+	}
+	for _, evidenceID := range positive {
+		if checkpoint.Diagnosis != nil && slices.Contains(checkpoint.Diagnosis.EvidenceIDs, evidenceID) {
+			assessment.SupportingEvidence = append(assessment.SupportingEvidence, evidenceID)
+		}
+	}
+	assessment.SupportingEvidence = stableUniqueInvestigation(assessment.SupportingEvidence)
+	assessment.ContradictingEvidence = contradicting
+	return assessment, nil
+}
+
+func sameInvestigationCandidateFact(fact agent.EvidenceFact, candidate persistedInvestigationChangeCandidate, requirePath bool) bool {
+	if strings.TrimSpace(fact.Attributes["change_ref"]) != candidate.ChangeRef ||
+		!strings.EqualFold(strings.Trim(strings.TrimSpace(fact.Attributes["repository"]), "/"), candidate.Repository) ||
+		!strings.EqualFold(strings.TrimSpace(fact.Attributes["revision"]), candidate.Revision) {
+		return false
+	}
+	if !requirePath {
+		return true
+	}
+	return strings.TrimPrefix(strings.TrimSpace(fact.Attributes["path"]), "./") == candidate.TargetPath
+}
+
+func allInvestigationEvidenceReferenced(required, actual []string) bool {
+	for _, evidenceID := range stableUniqueInvestigation(required) {
+		if !slices.Contains(actual, evidenceID) {
+			return false
+		}
+	}
+	return len(required) > 0
+}
+
+func persistInvestigationChangeAssessment(ctx context.Context, tx asyncjob.DBTX, snapshot investigationSnapshot, checkpoint investigationStepCheckpoint, candidate persistedInvestigationChangeCandidate, assessment investigationChangeAssessment) error {
+	var latestID uint64
+	var latestStatus, latestValidator, latestPolicy, latestHash string
+	var latestSupportingJSON, latestContradictingJSON []byte
+	var latestSupersedes sql.NullInt64
+	err := tx.QueryRowContext(ctx, `SELECT id, status, supporting_evidence_json, contradicting_evidence_json,
+ validator_version, policy_hash, content_hash, supersedes_assessment_id
+FROM change_candidate_assessments
+WHERE candidate_id = ?
+ORDER BY created_at DESC, id DESC LIMIT 1 FOR UPDATE`, candidate.ID).Scan(
+		&latestID, &latestStatus, &latestSupportingJSON, &latestContradictingJSON,
+		&latestValidator, &latestPolicy, &latestHash, &latestSupersedes)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("load latest ChangeCandidate assessment: %w", err)
+	}
+	if err == nil {
+		var latestSupporting, latestContradicting []string
+		if json.Unmarshal(latestSupportingJSON, &latestSupporting) != nil || json.Unmarshal(latestContradictingJSON, &latestContradicting) != nil ||
+			latestID == 0 || !validSHA256Text(latestHash) {
+			return fmt.Errorf("%w: latest ChangeCandidate assessment is malformed", asyncjob.ErrInvalidMutation)
+		}
+		latestSupersedesID := uint64(0)
+		if latestSupersedes.Valid {
+			latestSupersedesID = uint64(latestSupersedes.Int64)
+		}
+		expectedLatestHash, hashErr := investigationChangeAssessmentContentHash(candidate, assessment, latestSupersedesID)
+		if hashErr != nil {
+			return hashErr
+		}
+		if latestStatus == assessment.Status && latestValidator == assessment.ValidatorVersion && latestPolicy == assessment.PolicyHash &&
+			slices.Equal(latestSupporting, assessment.SupportingEvidence) && slices.Equal(latestContradicting, assessment.ContradictingEvidence) &&
+			latestHash == expectedLatestHash {
+			return nil
+		}
+	}
+	supersedesID := latestID
+	contentHash, err := investigationChangeAssessmentContentHash(candidate, assessment, supersedesID)
+	if err != nil {
+		return err
+	}
+	publicID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("cloudops-change-assessment\x00"+candidate.PublicID+"\x00"+contentHash)).String()
+	supporting, err := json.Marshal(assessment.SupportingEvidence)
+	if err != nil {
+		return fmt.Errorf("encode ChangeCandidate assessment supporting Evidence: %w", err)
+	}
+	contradicting, err := json.Marshal(assessment.ContradictingEvidence)
+	if err != nil {
+		return fmt.Errorf("encode ChangeCandidate assessment contradicting Evidence: %w", err)
+	}
+	var supersedes any
+	if supersedesID != 0 {
+		supersedes = supersedesID
+	}
+	result, err := tx.ExecContext(ctx, `INSERT INTO change_candidate_assessments
+ (public_id, domain_schema_version, assessment_schema_version, incident_id, cycle_no, candidate_id,
+  status, supporting_evidence_json, contradicting_evidence_json, validator_version, policy_hash,
+  content_hash, supersedes_assessment_id, created_at)
+ VALUES (?, 3, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, publicID, snapshot.Task.IncidentID,
+		snapshot.Task.CycleNo, candidate.ID, assessment.Status, supporting, contradicting,
+		assessment.ValidatorVersion, assessment.PolicyHash, contentHash, supersedes, checkpoint.CapturedAt.UTC())
+	if err != nil {
+		return fmt.Errorf("persist ChangeCandidate assessment: %w", err)
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+		if err != nil {
+			return fmt.Errorf("read ChangeCandidate assessment result: %w", err)
+		}
+		return fmt.Errorf("%w: ChangeCandidate assessment insert affected %d rows", asyncjob.ErrInvalidMutation, affected)
+	}
+	return nil
+}
+
+func investigationChangeAssessmentContentHash(candidate persistedInvestigationChangeCandidate, assessment investigationChangeAssessment, supersedesID uint64) (string, error) {
+	canonical, err := json.Marshal(struct {
+		SchemaVersion           int
+		AssessmentSchemaVersion int
+		CandidatePublicID       string
+		CandidateHash           string
+		Status                  string
+		Supporting              []string
+		Contradicting           []string
+		ValidatorVersion        string
+		PolicyHash              string
+		DiagnosisHash           string
+		SupersedesAssessmentID  uint64
+	}{
+		SchemaVersion: 3, AssessmentSchemaVersion: 1, CandidatePublicID: candidate.PublicID,
+		CandidateHash: candidate.ContentHash, Status: assessment.Status,
+		Supporting: assessment.SupportingEvidence, Contradicting: assessment.ContradictingEvidence,
+		ValidatorVersion: assessment.ValidatorVersion, PolicyHash: assessment.PolicyHash,
+		DiagnosisHash: assessment.DiagnosisHash, SupersedesAssessmentID: supersedesID,
+	})
+	if err != nil {
+		return "", fmt.Errorf("encode ChangeCandidate assessment hash input: %w", err)
+	}
+	return hashBytesInvestigation(canonical), nil
 }
 
 func (o *investigationStepOperation) enqueueNextInvestigationStep(ctx context.Context, tx asyncjob.DBTX, snapshot investigationSnapshot, state agent.InvestigationState, checkpoint investigationStepCheckpoint) error {

@@ -94,7 +94,11 @@ func (t *Toolset) deploymentContext(ctx context.Context, request agent.Investiga
 			continue
 		}
 		seenRefs[ref] = struct{}{}
-		fact := typedFact(request, "deployment.change_ref", "argocd", "argocd/deployment-context", "authoritative", "support", true, map[string]string{"change_ref": ref, "deployed_at": item.DeployedAt.UTC().Format(time.RFC3339), "is_current": strconv.FormatBool(strings.EqualFold(item.Revision, deployedRevision))})
+		fact := typedFact(request, "deployment.change_ref", "argocd", "argocd/deployment-context", "authoritative", "support", true, map[string]string{
+			"change_ref": ref, "repository": t.cfg.Target.Repository.FullName(), "revision": strings.ToLower(item.Revision),
+			"image_digest": strings.ToLower(runtime.ImageDigest), "path": t.cfg.Target.GitOpsPath,
+			"deployed_at": item.DeployedAt.UTC().Format(time.RFC3339), "is_current": strconv.FormatBool(strings.EqualFold(item.Revision, deployedRevision)),
+		})
 		fact.ID = ref
 		facts = append(facts, fact)
 		count++
@@ -151,7 +155,7 @@ func (t *Toolset) changeDetail(ctx context.Context, request agent.InvestigationT
 	}
 	factType := "gitops.required_env_not_removed"
 	patch, patchErr := remediation.RenderRestoreRequiredEnv(current.Content, parent.Content, remediationTarget(t.cfg.Target), t.cfg.Target.EnvKey)
-	attributes := map[string]string{"change_ref": params.ChangeRef, "path": t.cfg.Target.GitOpsPath, "revision": revision}
+	attributes := map[string]string{"change_ref": params.ChangeRef, "repository": t.cfg.Target.Repository.FullName(), "path": t.cfg.Target.GitOpsPath, "revision": revision}
 	if patchErr == nil {
 		factType = "gitops.required_env_removed"
 		attributes["before_hash"], attributes["post_image_hash"] = patch.BeforeHash, patch.PostImageHash
@@ -165,7 +169,10 @@ func (t *Toolset) changeDetail(ctx context.Context, request agent.InvestigationT
 	if strings.EqualFold(ci.Conclusion, "success") && !ci.Degraded {
 		ciType = "change.ci_succeeded"
 	}
-	facts = append(facts, typedFact(request, ciType, "github", "github/change-detail", "authoritative", "support", true, map[string]string{"change_ref": params.ChangeRef, "conclusion": ci.Conclusion, "check_runs": strconv.Itoa(len(ci.CheckRuns)), "workflow_runs": strconv.Itoa(len(ci.WorkflowRuns))}))
+	facts = append(facts, typedFact(request, ciType, "github", "github/change-detail", "authoritative", "support", true, map[string]string{
+		"change_ref": params.ChangeRef, "repository": t.cfg.Target.Repository.FullName(), "revision": revision,
+		"conclusion": ci.Conclusion, "check_runs": strconv.Itoa(len(ci.CheckRuns)), "workflow_runs": strconv.Itoa(len(ci.WorkflowRuns)),
+	}))
 	return available(request.Action, "github", "github/change-detail", "exact commit, parent file content and CI identity were read through allowlisted GitHub GETs", facts, commit.HTMLURL), nil
 }
 
