@@ -32,14 +32,7 @@ withDefaults(defineProps<{ id: string; title: string; state: LoadState; error?: 
       role="status"
       class="section-message section-message--warning"
     >
-      Permission denied. This section follows the existing RBAC policy.
-    </div>
-    <div
-      v-else-if="state === 'not_generated'"
-      role="status"
-      class="section-message"
-    >
-      Not generated
+      Viewer access was denied by the V3 role policy.
     </div>
     <div
       v-else-if="state === 'not_found'"

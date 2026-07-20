@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import { useRouter } from "vue-router";
-
 import { useTheme } from "../../composables/useTheme";
 import { useAuthStore } from "../../stores/auth";
 
@@ -9,13 +7,7 @@ defineProps<{
 }>();
 
 const auth = useAuthStore();
-const router = useRouter();
 const { isDark, toggleTheme } = useTheme();
-
-async function logout() {
-  auth.logout();
-  await router.push("/login");
-}
 </script>
 
 <template>
@@ -35,7 +27,7 @@ async function logout() {
         effect="plain"
         round
       >
-        Incident V2
+        Incident V3
       </el-tag>
       <el-switch
         :model-value="isDark"
@@ -46,19 +38,19 @@ async function logout() {
         @change="toggleTheme"
       />
       <div class="header-user">
-        <span class="header-username">{{ auth.user?.username }}</span>
+        <span class="header-username">{{ auth.actor?.login || "GitHub session" }}</span>
         <el-tag
           size="small"
           effect="plain"
           round
         >
-          {{ auth.user?.role }}
+          {{ auth.actor?.role || "viewer" }}
         </el-tag>
       </div>
       <el-button
         size="small"
         text
-        @click="logout"
+        @click="auth.signOut"
       >
         退出
       </el-button>

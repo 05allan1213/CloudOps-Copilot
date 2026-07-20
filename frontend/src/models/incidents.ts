@@ -2,39 +2,31 @@ import type {
   IncidentListQuery,
   IncidentSeverity,
   IncidentStatus,
-  IncidentTimelineDTO,
   LoadState,
+  ResourceView,
 } from "../types/incidents";
 
 export const incidentStatuses: IncidentStatus[] = [
-  "DETECTED",
-  "CORRELATING",
-  "DIAGNOSING",
-  "DIAGNOSIS_COMPLETED",
-  "PLANNING_REMEDIATION",
-  "AWAITING_APPROVAL",
-  "APPLYING_CHANGE",
-  "VERIFYING",
-  "RESOLVED",
-  "FAILED",
-  "CLOSED_NO_ACTION",
+  "detected",
+  "investigating",
+  "awaiting_approval",
+  "delivering",
+  "verifying",
+  "resolved",
+  "closed",
 ];
 
 export function incidentStatusLabel(value: string): string {
   const labels: Record<string, string> = {
-    DETECTED: "Detected",
-    CORRELATING: "Correlating",
-    DIAGNOSING: "Investigating",
-    DIAGNOSIS_COMPLETED: "Investigation complete",
-    PLANNING_REMEDIATION: "Planning remediation",
-    AWAITING_APPROVAL: "Awaiting approval",
-    APPLYING_CHANGE: "Delivering change",
-    VERIFYING: "Verifying recovery",
-    RESOLVED: "Resolved",
-    FAILED: "Failed",
-    CLOSED_NO_ACTION: "Closed without action",
+    detected: "Detected",
+    investigating: "Investigating",
+    awaiting_approval: "Awaiting approval",
+    delivering: "Delivering",
+    verifying: "Verifying recovery",
+    resolved: "Resolved",
+    closed: "Closed",
   };
-  return labels[value] ?? "Unknown";
+  return labels[value] ?? (value.replace(/_/g, " ") || "Unknown");
 }
 
 export function severityLabel(value: IncidentSeverity): string {
@@ -42,41 +34,32 @@ export function severityLabel(value: IncidentSeverity): string {
 }
 
 export function statusTone(value: string): "success" | "warning" | "danger" | "info" | "primary" {
-  if (value === "RESOLVED" || value === "passed" || value === "completed" || value === "available" || value === "generated") return "success";
-  if (value === "FAILED" || value === "failed" || value === "timed_out" || value === "conflict" || value === "malformed") return "danger";
-  if (value === "AWAITING_APPROVAL" || value === "pending" || value === "running" || value === "unavailable" || value === "partial") return "warning";
-  if (value === "unknown" || value === "not_started" || value === "not_generated" || value === "restricted" || value === "no_data") return "info";
+  const normalized = value.toLowerCase();
+  if (["resolved", "passed", "completed", "approved", "delivered", "valid"].includes(normalized)) return "success";
+  if (["failed", "timed_out", "invalid", "rejected", "policy_rejected"].includes(normalized)) return "danger";
+  if (["awaiting_approval", "pending", "running", "delivering", "verifying", "inconclusive", "unavailable"].includes(normalized)) return "warning";
+  if (["unknown", "cancelled", "superseded", "closed"].includes(normalized)) return "info";
   return "primary";
 }
 
 export function normalizeListQuery(query: Record<string, unknown>): IncidentListQuery {
-  const result: IncidentListQuery = { page: positiveInt(query.page, 1), page_size: Math.min(positiveInt(query.page_size, 20), 50) };
-  const stringKeys: Array<keyof IncidentListQuery> = ["status", "severity", "service", "environment", "namespace", "workload", "created_from", "created_to", "q"];
-  for (const key of stringKeys) {
-    const raw = query[key];
-    const value = Array.isArray(raw) ? raw[0] : raw;
-    if (typeof value === "string" && value.trim()) {
-      (result as Record<string, string | number>)[key] = value.trim();
-    }
-  }
+  const result: IncidentListQuery = { limit: Math.min(positiveInt(query.limit, 50), 100) };
+  const status = normalizedString(query.status);
+  const severity = normalizedString(query.severity);
+  const service = normalizedString(query.service);
+  if (status && incidentStatuses.includes(status as IncidentStatus)) result.status = status as IncidentStatus;
+  if (severity && ["critical", "warning", "info", "unknown"].includes(severity)) result.severity = severity as IncidentSeverity;
+  if (service) result.service = service.slice(0, 255);
   return result;
 }
 
 export function serializeListQuery(query: IncidentListQuery): Record<string, string> {
   const result: Record<string, string> = {};
-  for (const [key, value] of Object.entries(query)) {
-    if (value !== undefined && value !== "" && !(key === "page" && value === 1) && !(key === "page_size" && value === 20)) {
-      result[key] = String(value);
-    }
-  }
+  if (query.status) result.status = query.status;
+  if (query.severity) result.severity = query.severity;
+  if (query.service) result.service = query.service;
+  if (query.limit && query.limit !== 50) result.limit = String(query.limit);
   return result;
-}
-
-export function sortTimeline(items: IncidentTimelineDTO[]): IncidentTimelineDTO[] {
-  return [...items].sort((left, right) => {
-    const timeDelta = Date.parse(left.occurred_at) - Date.parse(right.occurred_at);
-    return timeDelta !== 0 ? timeDelta : left.key.localeCompare(right.key);
-  });
 }
 
 export function loadStateForStatus(status: number | null, fallback: LoadState = "error"): LoadState {
@@ -86,24 +69,21 @@ export function loadStateForStatus(status: number | null, fallback: LoadState = 
   return fallback;
 }
 
-export function postmortemStateForStatus(status: number | null): LoadState {
-  return status === 404 ? "not_generated" : loadStateForStatus(status);
-}
-
-export function factTone(classification: string): "fact" | "inference" | "unknown" {
-  return classification === "fact" || classification === "inference" ? classification : "unknown";
-}
-
-export function verificationRequirementLabel(required: boolean): "Required" | "Optional" {
-  return required ? "Required" : "Optional";
-}
-
 export function incidentDetailPath(publicID: string): string {
   return `/incidents/${encodeURIComponent(publicID)}`;
 }
 
 export function isCurrentRequest(identity: number, currentIdentity: number): boolean {
   return identity === currentIdentity;
+}
+
+export function resourceTimestamp(item: ResourceView): string {
+  return item.updated_at || item.created_at || "";
+}
+
+function normalizedString(value: unknown): string {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return typeof raw === "string" ? raw.trim() : "";
 }
 
 function positiveInt(value: unknown, fallback: number): number {

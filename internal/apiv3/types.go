@@ -195,9 +195,19 @@ type resourceResponse struct {
 	Resource ResourceView `json:"resource"`
 }
 
+// SessionActor is the bounded identity projection exposed to the browser. The
+// provider subject, OAuth token, proxy cookie, and any internal user key remain
+// outside the product API.
+type SessionActor struct {
+	Provider string `json:"provider"`
+	Login    string `json:"login"`
+	Role     string `json:"role"`
+}
+
 type csrfResponse struct {
-	Token     string    `json:"token"`
-	ExpiresAt time.Time `json:"expires_at"`
+	Token     string       `json:"token"`
+	ExpiresAt time.Time    `json:"expires_at"`
+	Actor     SessionActor `json:"actor"`
 }
 
 type storedHTTPResponse struct {

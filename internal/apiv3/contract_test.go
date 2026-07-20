@@ -266,6 +266,9 @@ func TestAuthRoleCSRFAndRequestIdentity(t *testing.T) {
 	if err := json.Unmarshal(csrfRecorder.Body.Bytes(), &csrf); err != nil || csrf.Token == "" {
 		t.Fatalf("csrf body=%s err=%v", csrfRecorder.Body.String(), err)
 	}
+	if csrf.Actor != (SessionActor{Provider: "provider", Login: "operator", Role: "operator"}) {
+		t.Fatalf("csrf actor=%+v", csrf.Actor)
+	}
 
 	missingCSRF := httptest.NewRecorder()
 	commandRequest := httptest.NewRequest(http.MethodPost, "/api/v3/incidents/"+contractIncidentID+"/close", strings.NewReader(`{"expected_version":1}`))

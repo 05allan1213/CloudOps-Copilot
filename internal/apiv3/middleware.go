@@ -178,7 +178,15 @@ func (h *Handler) issueCSRF(c *gin.Context) {
 	}
 	encodedPayload := base64.RawURLEncoding.EncodeToString(payload)
 	token := encodedPayload + "." + base64.RawURLEncoding.EncodeToString(h.signCSRF(encodedPayload))
-	h.writeJSON(c, http.StatusOK, csrfResponse{Token: token, ExpiresAt: expiresAt})
+	h.writeJSON(c, http.StatusOK, csrfResponse{
+		Token:     token,
+		ExpiresAt: expiresAt,
+		Actor: SessionActor{
+			Provider: identity.Provider,
+			Login:    identity.Login,
+			Role:     identity.Role,
+		},
+	})
 }
 
 func (h *Handler) verifyCSRFToken(token string, identity Identity, now time.Time) bool {

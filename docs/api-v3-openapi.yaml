@@ -342,10 +342,19 @@ components:
     CsrfToken:
       type: object
       additionalProperties: false
-      required: [token, expires_at]
+      required: [token, expires_at, actor]
       properties:
         token: { type: string }
         expires_at: { type: string, format: date-time }
+        actor: { $ref: "#/components/schemas/SessionActor" }
+    SessionActor:
+      type: object
+      additionalProperties: false
+      required: [provider, login, role]
+      properties:
+        provider: { type: string, maxLength: 32 }
+        login: { type: string, maxLength: 128 }
+        role: { type: string, enum: [viewer, operator] }
     Problem:
       type: object
       additionalProperties: false

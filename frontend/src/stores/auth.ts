@@ -1,83 +1,72 @@
 import { computed, ref } from "vue";
 import { defineStore } from "pinia";
 
-import { fetchCurrentUser, login as loginRequest } from "../api/auth";
-import {
-  clearStoredAuth,
-  getStoredExpiresAt,
-  getStoredToken,
-  getStoredUser,
-  setStoredExpiresAt,
-  setStoredToken,
-  setStoredUser,
-} from "../api/authStorage";
-import type { AuthUser } from "../types";
+import { fetchSession, oauthSignOutURL } from "../api/auth";
+import type { SessionActor } from "../types";
 
 export const useAuthStore = defineStore("auth", () => {
-  const token = ref(getStoredToken());
-  const user = ref<AuthUser | null>(getStoredUser<AuthUser>());
-  const expiresAt = ref(getStoredExpiresAt());
+  const actor = ref<SessionActor | null>(null);
+  const csrfToken = ref("");
+  const csrfExpiresAt = ref("");
+  const initialized = ref(false);
   const loading = ref(false);
   const error = ref("");
 
-  const isAuthenticated = computed(() => token.value !== "");
-  const isAdmin = computed(() => user.value?.role === "admin");
+  const isAuthenticated = computed(() => actor.value !== null);
+  const isOperator = computed(() => actor.value?.role === "operator");
 
-  function setSession(nextToken: string, nextUser: AuthUser, nextExpiresAt: string) {
-    token.value = nextToken;
-    user.value = nextUser;
-    expiresAt.value = nextExpiresAt;
-    setStoredToken(nextToken);
-    setStoredUser(nextUser);
-    setStoredExpiresAt(nextExpiresAt);
+  function tokenFresh(): boolean {
+    const expires = Date.parse(csrfExpiresAt.value);
+    return csrfToken.value !== "" && Number.isFinite(expires) && expires - Date.now() > 30_000;
   }
 
-  async function login(username: string, password: string) {
+  async function loadSession(force = false): Promise<void> {
+    if (!force && initialized.value && tokenFresh()) return;
     loading.value = true;
     error.value = "";
     try {
-      const result = await loginRequest({ username, password });
-      setSession(result.token, result.user, result.expires_at);
+      const session = await fetchSession();
+      actor.value = session.actor;
+      csrfToken.value = session.token;
+      csrfExpiresAt.value = session.expires_at;
+      initialized.value = true;
     } catch (err) {
-      error.value = err instanceof Error ? err.message : "登录失败";
+      clearSession();
+      error.value = err instanceof Error ? err.message : "Unable to establish the GitHub session";
       throw err;
     } finally {
       loading.value = false;
     }
   }
 
-  async function loadCurrentUser() {
-    if (!token.value) return;
-    loading.value = true;
-    error.value = "";
-    try {
-      user.value = await fetchCurrentUser();
-      setStoredUser(user.value);
-    } catch (err) {
-      logout();
-      throw err;
-    } finally {
-      loading.value = false;
-    }
+  async function commandToken(): Promise<string> {
+    await loadSession(!tokenFresh());
+    return csrfToken.value;
   }
 
-  function logout() {
-    token.value = "";
-    user.value = null;
-    expiresAt.value = "";
-    clearStoredAuth();
+  function clearSession() {
+    actor.value = null;
+    csrfToken.value = "";
+    csrfExpiresAt.value = "";
+    initialized.value = false;
+  }
+
+  function signOut() {
+    clearSession();
+    window.location.assign(oauthSignOutURL());
   }
 
   return {
-    token,
-    user,
-    expiresAt,
+    actor,
+    csrfExpiresAt,
+    initialized,
     loading,
     error,
     isAuthenticated,
-    isAdmin,
-    login,
-    loadCurrentUser,
-    logout,
+    isOperator,
+    loadSession,
+    commandToken,
+    clearSession,
+    signOut,
   };
 });

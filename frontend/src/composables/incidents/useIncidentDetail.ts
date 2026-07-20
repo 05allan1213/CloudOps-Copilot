@@ -2,56 +2,44 @@ import { onBeforeUnmount, reactive, ref } from "vue";
 
 import { isApiError } from "../../api/client";
 import {
+  closeIncident,
+  decideRemediation,
   getIncident,
   getIncidentDelivery,
-  getIncidentInvestigation,
-  getIncidentResources,
-  getIncidentPostmortem,
-  getIncidentRemediation,
-  getIncidentVerification,
+  getIncidentResolutionReport,
   listIncidentEvidence,
+  listIncidentInvestigations,
+  listIncidentRemediationPlans,
   listIncidentSignals,
   listIncidentTimeline,
   listIncidentVerifications,
+  startInvestigation,
 } from "../../api/incidents";
-import { isCurrentRequest, loadStateForStatus, postmortemStateForStatus, sortTimeline } from "../../models/incidents";
-import type {
-  DeliveryDTO,
-  IncidentDTO,
-  IncidentEvidenceDTO,
-  IncidentSignalDTO,
-  IncidentTimelineDTO,
-  IncidentResourcesDTO,
-  InvestigationDTO,
-  LoadState,
-  PostmortemDTO,
-  RemediationDTO,
-  VerificationDetailDTO,
-  VerificationRunDTO,
-} from "../../types/incidents";
+import { isCurrentRequest, loadStateForStatus } from "../../models/incidents";
+import type { CommandResponse, IncidentView, LoadState, ResourceView } from "../../types/incidents";
 
 interface Section<T> {
   state: LoadState;
   error: string;
   data: T;
+  nextCursor: string;
 }
 
-export function useIncidentDetail(incidentID: string, canViewApproval: boolean) {
-  const incident = ref<IncidentDTO | null>(null);
+type CollectionLoader = (cursor: string, signal?: AbortSignal) => Promise<{ items: ResourceView[]; next_cursor?: string }>;
+
+export function useIncidentDetail(incidentID: string) {
+  const incident = ref<IncidentView | null>(null);
   const pageState = ref<LoadState>("loading");
   const pageError = ref("");
-  const signals = reactive<Section<IncidentSignalDTO[]>>({ state: "loading", error: "", data: [] });
-  const timeline = reactive<Section<IncidentTimelineDTO[]>>({ state: "loading", error: "", data: [] });
-  const timelineTotal = ref(0);
-  const timelinePage = ref(1);
-  const evidence = reactive<Section<IncidentEvidenceDTO[]>>({ state: "loading", error: "", data: [] });
-  const investigation = reactive<Section<InvestigationDTO | null>>({ state: "loading", error: "", data: null });
-  const remediation = reactive<Section<RemediationDTO | null>>({ state: canViewApproval ? "loading" : "forbidden", error: "", data: null });
-  const delivery = reactive<Section<DeliveryDTO | null>>({ state: "loading", error: "", data: null });
-  const verificationRuns = reactive<Section<VerificationRunDTO[]>>({ state: "loading", error: "", data: [] });
-  const verification = reactive<Section<VerificationDetailDTO | null>>({ state: "loading", error: "", data: null });
-  const postmortem = reactive<Section<PostmortemDTO | null>>({ state: "loading", error: "", data: null });
-  const resources = reactive<Section<IncidentResourcesDTO>>({ state: "loading", error: "", data: { cluster: "", namespace: "", deployments: [], pods: [], services: [], events: [] } });
+  const commandPending = ref(false);
+  const signals = collectionSection();
+  const timeline = collectionSection();
+  const evidence = collectionSection();
+  const investigations = collectionSection();
+  const remediationPlans = collectionSection();
+  const verifications = collectionSection();
+  const delivery = resourceSection();
+  const resolutionReport = resourceSection();
   let requestIdentity = 0;
   let controller: AbortController | null = null;
 
@@ -62,20 +50,18 @@ export function useIncidentDetail(incidentID: string, canViewApproval: boolean) 
     pageState.value = "loading";
     pageError.value = "";
     try {
-      const item = await getIncident(incidentID, controller.signal);
+      incident.value = await getIncident(incidentID, controller.signal);
       if (!isCurrentRequest(identity, requestIdentity)) return;
-      incident.value = item;
       pageState.value = "ready";
       await Promise.all([
-        loadPageSection(identity, signals, () => listIncidentSignals(incidentID, 1, 50, controller?.signal), (result) => result.items),
-        loadTimeline(identity, 1, false),
-        loadPageSection(identity, evidence, () => listIncidentEvidence(incidentID, 1, 50, controller?.signal), (result) => result.items),
-        loadSimpleSection(identity, investigation, () => getIncidentInvestigation(incidentID, controller?.signal)),
-        canViewApproval ? loadSimpleSection(identity, remediation, () => getIncidentRemediation(incidentID, controller?.signal)) : Promise.resolve(),
-        loadSimpleSection(identity, delivery, () => getIncidentDelivery(incidentID, controller?.signal)),
-        loadVerificationSections(identity),
-        loadPostmortem(identity),
-        loadResources(identity),
+        loadCollection(identity, signals, (cursor, signal) => listIncidentSignals(incidentID, cursor, signal)),
+        loadCollection(identity, timeline, (cursor, signal) => listIncidentTimeline(incidentID, cursor, signal)),
+        loadCollection(identity, evidence, (cursor, signal) => listIncidentEvidence(incidentID, cursor, signal)),
+        loadCollection(identity, investigations, (cursor, signal) => listIncidentInvestigations(incidentID, cursor, signal)),
+        loadCollection(identity, remediationPlans, (cursor, signal) => listIncidentRemediationPlans(incidentID, cursor, signal)),
+        loadCollection(identity, verifications, (cursor, signal) => listIncidentVerifications(incidentID, cursor, signal)),
+        loadResource(identity, delivery, () => getIncidentDelivery(incidentID, controller?.signal)),
+        loadResource(identity, resolutionReport, () => getIncidentResolutionReport(incidentID, controller?.signal)),
       ]);
     } catch (cause) {
       if (identity !== requestIdentity || controller.signal.aborted) return;
@@ -84,81 +70,73 @@ export function useIncidentDetail(incidentID: string, canViewApproval: boolean) 
     }
   }
 
-  async function loadVerificationSections(identity: number) {
-    await loadPageSection(identity, verificationRuns, () => listIncidentVerifications(incidentID, 1, 20, controller?.signal), (result) => result.items);
-    if (identity !== requestIdentity) return;
-    const latest = verificationRuns.data[0];
-    if (!latest) {
-      verification.state = verificationRuns.state === "unavailable" ? "unavailable" : "empty";
-      verification.data = null;
-      return;
-    }
-    await loadSimpleSection(identity, verification, () => getIncidentVerification(incidentID, latest.id, controller?.signal));
+  async function loadMore(section: Section<ResourceView[]>, loader: CollectionLoader) {
+    if (!section.nextCursor || commandPending.value) return;
+    const identity = requestIdentity;
+    await loadCollection(identity, section, loader, true);
   }
 
-  async function loadPostmortem(identity: number) {
-    postmortem.state = "loading";
+  async function runCommand(request: () => Promise<CommandResponse>): Promise<CommandResponse> {
+    commandPending.value = true;
     try {
-      const result = await getIncidentPostmortem(incidentID, controller?.signal);
-      if (identity !== requestIdentity) return;
-      postmortem.data = result;
-      postmortem.state = "ready";
-    } catch (cause) {
-      if (identity !== requestIdentity) return;
-      const status = isApiError(cause) ? cause.status : null;
-      postmortem.data = null;
-      postmortem.state = postmortemStateForStatus(status);
-      postmortem.error = cause instanceof Error ? cause.message : "Failed to load postmortem";
+      const result = await request();
+      await load();
+      return result;
+    } finally {
+      commandPending.value = false;
     }
   }
 
-  async function loadTimeline(identity = requestIdentity, page = timelinePage.value + 1, append = true) {
-    timeline.state = "loading";
-    timeline.error = "";
-    try {
-      const result = await listIncidentTimeline(incidentID, page, 50, controller?.signal);
-      if (!isCurrentRequest(identity, requestIdentity)) return;
-      timelinePage.value = page;
-      timelineTotal.value = result.total;
-      const combined = append ? [...timeline.data, ...result.items] : result.items;
-      timeline.data = sortTimeline(Array.from(new Map(combined.map((item) => [item.key, item])).values()));
-      timeline.state = timeline.data.length === 0 ? "empty" : "ready";
-    } catch (cause) {
-      if (!isCurrentRequest(identity, requestIdentity)) return;
-      timeline.state = loadStateForStatus(isApiError(cause) ? cause.status : null);
-      timeline.error = cause instanceof Error ? cause.message : "Timeline unavailable";
-    }
+  function investigate(reason: string, csrfToken: string) {
+    if (!incident.value) throw new Error("Incident is not loaded");
+    return runCommand(() => startInvestigation(incidentID, { expected_version: incident.value!.version, reason: reason || undefined }, csrfToken));
   }
 
-  function loadMoreTimeline() {
-    return loadTimeline(requestIdentity, timelinePage.value + 1, true);
+  function close(reason: string, csrfToken: string) {
+    if (!incident.value) throw new Error("Incident is not loaded");
+    return runCommand(() => closeIncident(incidentID, { expected_version: incident.value!.version, reason: reason || undefined }, csrfToken));
   }
 
-  async function loadResources(identity: number) {
-    resources.state = "loading";
-    resources.error = "";
-    try {
-      const result = await getIncidentResources(incidentID, controller?.signal);
-      if (identity !== requestIdentity) return;
-      resources.data = result;
-      resources.state = [result.deployments, result.pods, result.services, result.events].every((items) => items.length === 0) ? "empty" : "ready";
-    } catch (cause) {
-      if (identity !== requestIdentity) return;
-      resources.state = loadStateForStatus(isApiError(cause) ? cause.status : null, "unavailable");
-      resources.error = cause instanceof Error ? cause.message : "Kubernetes context unavailable";
-    }
+  function decide(plan: ResourceView, decision: "approved" | "rejected", reason: string, csrfToken: string) {
+    if (!plan.version || !plan.hash) throw new Error("Plan version and canonical hash are required");
+    return runCommand(() => decideRemediation(plan.id, {
+      decision,
+      expected_version: plan.version!,
+      expected_hash: plan.hash!,
+      reason: reason || undefined,
+    }, csrfToken));
   }
 
-  async function loadSimpleSection<T>(identity: number, section: Section<T | null>, request: () => Promise<T>) {
+  async function loadCollection(
+    identity: number,
+    section: Section<ResourceView[]>,
+    loader: CollectionLoader,
+    append = false,
+  ) {
     section.state = "loading";
     section.error = "";
     try {
-      const result = await request();
-      if (identity !== requestIdentity) return;
-      section.data = result;
+      const result = await loader(append ? section.nextCursor : "", controller?.signal);
+      if (!isCurrentRequest(identity, requestIdentity)) return;
+      section.data = append ? [...section.data, ...result.items] : result.items;
+      section.nextCursor = result.next_cursor ?? "";
+      section.state = section.data.length === 0 ? "empty" : "ready";
+    } catch (cause) {
+      if (!isCurrentRequest(identity, requestIdentity)) return;
+      section.state = loadStateForStatus(isApiError(cause) ? cause.status : null);
+      section.error = cause instanceof Error ? cause.message : "Section unavailable";
+    }
+  }
+
+  async function loadResource(identity: number, section: Section<ResourceView | null>, loader: () => Promise<ResourceView>) {
+    section.state = "loading";
+    section.error = "";
+    try {
+      section.data = await loader();
+      if (!isCurrentRequest(identity, requestIdentity)) return;
       section.state = "ready";
     } catch (cause) {
-      if (identity !== requestIdentity) return;
+      if (!isCurrentRequest(identity, requestIdentity)) return;
       const status = isApiError(cause) ? cause.status : null;
       section.data = null;
       section.state = status === 404 ? "empty" : loadStateForStatus(status);
@@ -166,23 +144,45 @@ export function useIncidentDetail(incidentID: string, canViewApproval: boolean) 
     }
   }
 
-  async function loadPageSection<T, R>(identity: number, section: Section<T[]>, request: () => Promise<R>, select: (result: R) => T[]) {
-    section.state = "loading";
-    section.error = "";
-    try {
-      const result = select(await request());
-      if (identity !== requestIdentity) return;
-      section.data = result;
-      section.state = section.data.length === 0 ? "empty" : "ready";
-    } catch (cause) {
-      if (identity !== requestIdentity) return;
-      const status = isApiError(cause) ? cause.status : null;
-      section.data = [];
-      section.state = loadStateForStatus(status);
-      section.error = cause instanceof Error ? cause.message : "Section unavailable";
-    }
-  }
-
   onBeforeUnmount(() => controller?.abort());
-  return { incident, pageState, pageError, signals, timeline, timelineTotal, evidence, investigation, remediation, delivery, verificationRuns, verification, postmortem, resources, load, loadMoreTimeline };
+
+  const moreSignals = () => loadMore(signals, (cursor, signal) => listIncidentSignals(incidentID, cursor, signal));
+  const moreTimeline = () => loadMore(timeline, (cursor, signal) => listIncidentTimeline(incidentID, cursor, signal));
+  const moreEvidence = () => loadMore(evidence, (cursor, signal) => listIncidentEvidence(incidentID, cursor, signal));
+  const moreInvestigations = () => loadMore(investigations, (cursor, signal) => listIncidentInvestigations(incidentID, cursor, signal));
+  const moreRemediationPlans = () => loadMore(remediationPlans, (cursor, signal) => listIncidentRemediationPlans(incidentID, cursor, signal));
+  const moreVerifications = () => loadMore(verifications, (cursor, signal) => listIncidentVerifications(incidentID, cursor, signal));
+
+  return {
+    incident,
+    pageState,
+    pageError,
+    commandPending,
+    signals,
+    timeline,
+    evidence,
+    investigations,
+    remediationPlans,
+    delivery,
+    verifications,
+    resolutionReport,
+    load,
+    moreSignals,
+    moreTimeline,
+    moreEvidence,
+    moreInvestigations,
+    moreRemediationPlans,
+    moreVerifications,
+    investigate,
+    close,
+    decide,
+  };
+}
+
+function collectionSection(): Section<ResourceView[]> {
+  return reactive({ state: "loading", error: "", data: [], nextCursor: "" });
+}
+
+function resourceSection(): Section<ResourceView | null> {
+  return reactive({ state: "loading", error: "", data: null, nextCursor: "" });
 }

@@ -1,23 +1,30 @@
 import axios, { AxiosError, type AxiosRequestConfig } from "axios";
 import { ElMessage, ElNotification } from "element-plus";
 
-import type { ApiResponse } from "../types";
-import { clearStoredAuth, getStoredExpiresAt, getStoredToken } from "./authStorage";
+import type { ProblemDetails } from "../types";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 
 const httpClient = axios.create({
   baseURL: apiBaseUrl,
   timeout: 10000,
+  withCredentials: true,
+  headers: { Accept: "application/json" },
 });
 
 export class ApiError extends Error {
   readonly status: number | null;
+  readonly code: string;
+  readonly requestID: string;
+  readonly traceID: string;
 
-  constructor(message: string, status: number | null = null) {
+  constructor(message: string, status: number | null = null, code = "", requestID = "", traceID = "") {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.code = code;
+    this.requestID = requestID;
+    this.traceID = traceID;
   }
 }
 
@@ -25,34 +32,12 @@ export function isApiError(error: unknown): error is ApiError {
   return error instanceof ApiError;
 }
 
-httpClient.interceptors.request.use((config) => {
-  const token = getStoredToken();
-  if (token) {
-    const expiresAt = getStoredExpiresAt();
-    if (expiresAt) {
-      const expires = new Date(expiresAt).getTime();
-      if (Date.now() >= expires) {
-        clearStoredAuth();
-        if (window.location.pathname !== "/login") {
-          window.location.href = "/login";
-        }
-        return config;
-      }
-    }
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-});
-
 httpClient.interceptors.response.use(
   (response) => response,
-  (error: AxiosError<ApiResponse<unknown>>) => {
+  (error: AxiosError<ProblemDetails>) => {
     if (error.response?.status === 401) {
-      clearStoredAuth();
-      ElMessage.warning("登录已过期");
-      if (window.location.pathname !== "/login") {
-        window.location.href = "/login";
-      }
+      ElMessage.warning("GitHub 会话已过期，正在重新认证");
+      redirectToOAuth();
     } else if (error.response?.status === 403) {
       ElNotification({
         title: "权限不足",
@@ -83,126 +68,38 @@ export async function getApiData<T>(
   url: string,
   config: AxiosRequestConfig = {},
 ): Promise<T> {
+  return getJSON<T>(url, config);
+}
+
+export async function getJSON<T>(
+  url: string,
+  config: AxiosRequestConfig = {},
+): Promise<T> {
   try {
-    const response = await httpClient.get<ApiResponse<T>>(url, config);
-    const payload = response.data;
-
-    if (payload.status !== "success") {
-      throw new Error(payload.error ?? "Unknown API error");
-    }
-
-    if (payload.data === undefined) {
-      throw new Error("API response missing data field");
-    }
-
-    return payload.data;
+    return (await httpClient.get<T>(url, config)).data;
   } catch (err) {
-    if (axios.isAxiosError(err)) {
-      throw normalizeAxiosError(err);
-    }
+    if (axios.isAxiosError(err)) throw normalizeAxiosError(err);
     throw err;
   }
 }
 
-export async function postApiData<T, TBody = unknown>(
+export async function postJSON<T, TBody = unknown>(
   url: string,
   body?: TBody,
   config: AxiosRequestConfig = {},
 ): Promise<T> {
   try {
-    const response = await httpClient.post<ApiResponse<T>>(url, body, config);
-    const payload = response.data;
-
-    if (payload.status !== "success") {
-      throw new Error(payload.error ?? "Unknown API error");
-    }
-
-    if (payload.data === undefined) {
-      throw new Error("API response missing data field");
-    }
-
-    return payload.data;
+    return (await httpClient.post<T>(url, body, config)).data;
   } catch (err) {
-    if (axios.isAxiosError(err)) {
-      throw normalizeAxiosError(err);
-    }
+    if (axios.isAxiosError(err)) throw normalizeAxiosError(err);
     throw err;
   }
 }
 
-export async function putApiData<T, TBody = unknown>(
-  url: string,
-  body?: TBody,
-  config: AxiosRequestConfig = {},
-): Promise<T> {
-  try {
-    const response = await httpClient.put<ApiResponse<T>>(url, body, config);
-    const payload = response.data;
-
-    if (payload.status !== "success") {
-      throw new Error(payload.error ?? "Unknown API error");
-    }
-
-    if (payload.data === undefined) {
-      throw new Error("API response missing data field");
-    }
-
-    return payload.data;
-  } catch (err) {
-    if (axios.isAxiosError(err)) {
-      throw normalizeAxiosError(err);
-    }
-    throw err;
-  }
-}
-
-export async function deleteApiData(
-  url: string,
-  config: AxiosRequestConfig = {},
-): Promise<void> {
-  try {
-    await httpClient.delete(url, config);
-  } catch (err) {
-    if (axios.isAxiosError(err)) {
-      throw normalizeAxiosError(err);
-    }
-    throw err;
-  }
-}
-
-export async function getApiResponse<T>(
-  url: string,
-  config: AxiosRequestConfig = {},
-): Promise<ApiResponse<T>> {
-  try {
-    const response = await httpClient.get<ApiResponse<T>>(url, {
-      ...config,
-      validateStatus: (status) => status < 600,
-    });
-
-    const payload = response.data;
-    if (
-      !payload ||
-      typeof payload !== "object" ||
-      !("status" in payload) ||
-      typeof payload.status !== "string"
-    ) {
-      throw new Error("Invalid API response structure");
-    }
-
-    return payload;
-  } catch (err) {
-    if (axios.isAxiosError(err)) {
-      throw normalizeAxiosError(err);
-    }
-    throw err;
-  }
-}
-
-function normalizeAxiosError(err: AxiosError<ApiResponse<unknown>>): Error {
-  const payloadError = err.response?.data?.error;
-  if (payloadError) {
-    return new ApiError(payloadError, err.response?.status ?? null);
+function normalizeAxiosError(err: AxiosError<ProblemDetails>): Error {
+  const problem = err.response?.data;
+  if (problem && typeof problem === "object" && typeof problem.detail === "string") {
+    return new ApiError(problem.detail, err.response?.status ?? problem.status ?? null, problem.code, problem.request_id, problem.trace_id);
   }
 
   if (err.response) {
@@ -214,4 +111,10 @@ function normalizeAxiosError(err: AxiosError<ApiResponse<unknown>>): Error {
   }
 
   return new ApiError(err.message || "Request failed");
+}
+
+export function redirectToOAuth(): void {
+  if (typeof window === "undefined" || window.location.pathname.startsWith("/oauth2/")) return;
+  const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  window.location.assign(`/oauth2/start?rd=${encodeURIComponent(returnTo)}`);
 }

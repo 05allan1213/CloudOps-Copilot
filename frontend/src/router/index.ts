@@ -10,32 +10,11 @@ export const router = createRouter({
 
 router.beforeEach(async (to) => {
   const auth = useAuthStore();
-  const isPublicRoute = Boolean(to.meta.public);
-
-  if (isPublicRoute) {
-    if (auth.isAuthenticated) {
-      return { path: "/incidents" };
-    }
+  if (to.name === "not-found" && auth.initialized) return true;
+  try {
+    await auth.loadSession();
     return true;
+  } catch {
+    return false;
   }
-
-  if (!auth.isAuthenticated) {
-    return {
-      path: "/login",
-      query: { redirect: to.fullPath },
-    };
-  }
-
-  if (!auth.user) {
-    try {
-      await auth.loadCurrentUser();
-    } catch {
-      return {
-        path: "/login",
-        query: { redirect: to.fullPath },
-      };
-    }
-  }
-
-  return true;
 });

@@ -1,28 +1,40 @@
 import { onBeforeUnmount, ref } from "vue";
 
+import { redirectToOAuth } from "../../api/client";
 import { incidentRealtimeURL } from "../../api/incidents";
-import { getStoredToken } from "../../api/authStorage";
 import type { IncidentRealtimeEvent } from "../../types/incidents";
 
 export type RealtimeState = "connecting" | "connected" | "reconnecting" | "disconnected";
 
 export const maximumReconnectAttempts = 8;
 
+const refreshResources = new Set([
+  "incident",
+  "signals",
+  "timeline",
+  "evidence",
+  "investigations",
+  "remediation_plans",
+  "delivery",
+  "verifications",
+  "resolution_report",
+]);
+
 export function reconnectDelayForAttempt(attempt: number): number | null {
   if (!Number.isInteger(attempt) || attempt < 0 || attempt >= maximumReconnectAttempts) return null;
   return Math.min(1000 * 2 ** attempt, 30000);
 }
 
-export function acceptRealtimeSequence(lastSequence: number, event: IncidentRealtimeEvent, incidentID: string): number | null {
-  if (event.incident_id !== incidentID || event.kind !== "refresh" || !Number.isSafeInteger(event.sequence) || event.sequence <= lastSequence) {
+export function acceptRealtimeEvent(lastCursor: string, event: IncidentRealtimeEvent, incidentID: string): string | null {
+  if (event.incident_id !== incidentID || event.cursor === "" || event.cursor === lastCursor || !refreshResources.has(event.resource)) {
     return null;
   }
-  return event.sequence;
+  return event.cursor;
 }
 
-export function useIncidentRealtime(incidentID: string, resync: () => Promise<void>) {
+export function useIncidentRealtime(incidentID: string, resync: (resource: IncidentRealtimeEvent["resource"]) => Promise<void>) {
   const state = ref<RealtimeState>("disconnected");
-  const lastSequence = ref(0);
+  const lastCursor = ref("");
   let controller: AbortController | null = null;
   let reconnectTimer: number | null = null;
   let reconnectAttempts = 0;
@@ -42,9 +54,16 @@ export function useIncidentRealtime(incidentID: string, resync: () => Promise<vo
     controller = new AbortController();
     try {
       const headers: Record<string, string> = { Accept: "text/event-stream" };
-      const token = getStoredToken();
-      if (token) headers.Authorization = `Bearer ${token}`;
-      const response = await fetch(incidentRealtimeURL(incidentID), { headers, signal: controller.signal });
+      if (lastCursor.value) headers["Last-Event-ID"] = lastCursor.value;
+      const response = await fetch(incidentRealtimeURL(incidentID), {
+        credentials: "include",
+        headers,
+        signal: controller.signal,
+      });
+      if (response.status === 401) {
+        redirectToOAuth();
+        throw new Error("GitHub session expired");
+      }
       if (!response.ok || !response.body) throw new Error(`Realtime request failed with status ${response.status}`);
       state.value = "connected";
       const reader = response.body.getReader();
@@ -52,27 +71,26 @@ export function useIncidentRealtime(incidentID: string, resync: () => Promise<vo
       let buffer = "";
       while (!stopped) {
         const { done, value } = await reader.read();
-        buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+        buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done }).replace(/\r\n/g, "\n");
         let separator = buffer.indexOf("\n\n");
         while (separator >= 0) {
           const block = buffer.slice(0, separator);
           buffer = buffer.slice(separator + 2);
           const event = parseRefreshEvent(block);
           if (event) {
-            const accepted = acceptRealtimeSequence(lastSequence.value, event, incidentID);
+            const accepted = acceptRealtimeEvent(lastCursor.value, event, incidentID);
             if (accepted !== null) {
-              lastSequence.value = accepted;
-              await resync();
+              lastCursor.value = accepted;
+              await resync(event.resource);
             }
           }
           separator = buffer.indexOf("\n\n");
         }
         if (done) break;
       }
-      if (!stopped) await resync().catch(() => undefined);
     } catch (cause) {
       if (!stopped && !(cause instanceof DOMException && cause.name === "AbortError")) {
-        await resync().catch(() => undefined);
+        // Reconnect below. Query refresh remains server-authoritative.
       }
     } finally {
       controller = null;
@@ -106,21 +124,23 @@ export function useIncidentRealtime(incidentID: string, resync: () => Promise<vo
   }
 
   onBeforeUnmount(stop);
-  return { state, lastSequence, start, stop };
+  return { state, lastCursor, start, stop };
 }
 
 export function parseRefreshEvent(block: string): IncidentRealtimeEvent | null {
-  let name = "message";
+  let eventType = "message";
+  let cursor = "";
   const data: string[] = [];
-  for (const line of block.split("\n")) {
-    if (line.startsWith("event:")) name = line.slice(6).trim();
+  for (const line of block.replace(/\r\n/g, "\n").split("\n")) {
+    if (line.startsWith("event:")) eventType = line.slice(6).trim();
+    if (line.startsWith("id:")) cursor = line.slice(3).trim();
     if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
   }
-  if (name !== "incident_refresh" || data.length === 0) return null;
+  if (eventType !== "incident.refresh" || !cursor || data.length === 0) return null;
   try {
-    const parsed = JSON.parse(data.join("\n")) as Partial<IncidentRealtimeEvent>;
-    if (typeof parsed.incident_id !== "string" || typeof parsed.sequence !== "number" || parsed.kind !== "refresh") return null;
-    return parsed as IncidentRealtimeEvent;
+    const payload = JSON.parse(data.join("\n")) as Partial<IncidentRealtimeEvent>;
+    if (typeof payload.incident_id !== "string" || typeof payload.resource !== "string" || !refreshResources.has(payload.resource)) return null;
+    return { cursor, incident_id: payload.incident_id, resource: payload.resource as IncidentRealtimeEvent["resource"] };
   } catch {
     return null;
   }
