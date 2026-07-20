@@ -1,0 +1,13 @@
+profile: phase6
+api:
+  enabled: true
+migrate:
+  enabled: true
+oauth:
+  enabled: true
+worker:
+  enabled: true
+# Before installing phase6, pre-create the Worker provider-config and
+# credential Secrets named in values.yaml. The chart references them only.
+observability:
+  enabled: true

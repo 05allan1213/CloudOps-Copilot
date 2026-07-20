@@ -1,0 +1,174 @@
+profile: phase3
+
+images:
+  api:
+    repository: cloudops-api
+    tag: dev
+    digest: ""
+    pullPolicy: IfNotPresent
+  worker:
+    repository: cloudops-worker
+    tag: dev
+    digest: ""
+    pullPolicy: IfNotPresent
+  migrate:
+    repository: cloudops-migrate
+    tag: dev
+    digest: ""
+    pullPolicy: IfNotPresent
+  oauth2Proxy:
+    repository: quay.io/oauth2-proxy/oauth2-proxy
+    tag: v7.15.3
+    digest: ""
+    pullPolicy: IfNotPresent
+
+# Non-secret environment shared by API, Worker, and Migrate. Credential values
+# are always read from pre-created Secrets and are never rendered by this chart.
+commonEnv:
+  APP_ENV: local-demo
+  LOG_LEVEL: info
+  GIN_MODE: release
+  PROMETHEUS_URL: http://cloudops-monitoring-kube-prometheus-prometheus.cloudops-monitoring.svc:9090
+  REDIS_ADDR: ""
+  KAFKA_BROKERS: ""
+  MYSQL_HOST: mysql
+  MYSQL_PORT: "3306"
+  MYSQL_USER: cloudops
+  MYSQL_DATABASE: cloudops
+  MYSQL_STARTUP_TIMEOUT_SECONDS: "30"
+  MYSQL_PING_TIMEOUT_SECONDS: "3"
+  TRACE_OTLP_ENDPOINT: ""
+  TRACE_SAMPLE_RATE: "1.0"
+
+database:
+  secretName: cloudops-database
+  passwordKey: MYSQL_PASSWORD
+
+webhook:
+  secretName: cloudops-alertmanager-webhook
+  secretKey: token
+  mountPath: /var/run/secrets/cloudops/alertmanager
+  tokenFile: /var/run/secrets/cloudops/alertmanager/token
+
+# This signing key is intentionally isolated from the oauth2-proxy client and
+# cookie Secret. It is mounted only into cloudops-api when OAuth is enabled.
+csrf:
+  secretName: cloudops-csrf
+  secretKey: signing-key
+  mountPath: /var/run/secrets/cloudops/csrf
+  secretFile: /var/run/secrets/cloudops/csrf/signing-key
+
+api:
+  enabled: true
+  replicas: 1
+  userPort: 8080
+  internalPort: 8082
+  env:
+    AUTH_ENABLED: "false"
+    RATE_LIMIT_ENABLED: "false"
+    INCIDENT_AGENT_ENABLED: "false"
+    CHANGE_INTELLIGENCE_ENABLED: "false"
+    REMEDIATION_ENABLED: "false"
+    DELIVERY_TRACKING_ENABLED: "false"
+    VERIFICATION_ENABLED: "false"
+    K8S_ENABLED: "false"
+    K8S_WRITE_ENABLED: "false"
+    STATIC_DIR: /app/static
+    ALERTMANAGER_WEBHOOK_REQUIRE_BEARER: "true"
+    SIGNAL_TARGET_ALLOWLIST_JSON: '[{"cluster_id":"kind-cloudops-v3","environment":"local-demo","namespace":"cloudops-demo","workload_kind":"Deployment","workload_name":"cloudops-demo-workload","service_name":"cloudops-demo-workload","match_labels":{"cluster":"kind-cloudops-v3","environment":"local-demo","namespace":"cloudops-demo","deployment":"cloudops-demo-workload"}}]'
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+migrate:
+  enabled: true
+  backoffLimit: 6
+  activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 300
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 250m
+      memory: 128Mi
+
+oauth:
+  enabled: false
+  port: 4180
+  metricsPort: 44180
+  redirectURL: http://127.0.0.1:4180/oauth2/callback
+  allowedEmailDomains:
+    - "*"
+  viewerLogins:
+    - cloudops-viewer
+  operatorLogins:
+    - cloudops-operator
+  secret:
+    name: cloudops-oauth
+    clientIDKey: client-id
+    clientSecretKey: client-secret
+    cookieSecretKey: cookie-secret
+  cookie:
+    name: _cloudops_oauth2_proxy
+    secure: false
+    sameSite: lax
+    expire: 8h
+    refresh: 0s
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 250m
+      memory: 128Mi
+
+worker:
+  enabled: false
+  replicas: 1
+  managementPort: 8081
+  demoNamespace: cloudops-demo
+  # Pre-created configuration Secret. It supplies environment-specific,
+  # non-credential provider values such as V3_TARGET_REPOSITORY,
+  # V3_TARGET_GITOPS_PATH, V3_TARGET_ARGO_REPOSITORY_URL, GitHub App IDs,
+  # allowlists, fixed provider endpoints, and required workflow identities.
+  providerConfigSecretName: cloudops-worker-provider-config
+  # Pre-created file credential Secret. The chart mounts it read-only and
+  # publishes only file paths to the Worker; it never renders secret bytes.
+  credentials:
+    secretName: cloudops-worker-credentials
+    mountPath: /var/run/secrets/cloudops/worker
+    files:
+      V3_LLM_API_KEY_FILE: llm-api-key
+      GITHUB_PRIVATE_KEY_FILE: github-read-private-key.pem
+      GITHUB_WRITE_PRIVATE_KEY_FILE: github-write-private-key.pem
+      ARGOCD_TOKEN_FILE: argocd-token
+      OBSERVABILITY_ELASTICSEARCH_USERNAME_FILE: elasticsearch-username
+      OBSERVABILITY_ELASTICSEARCH_PASSWORD_FILE: elasticsearch-password
+      OBSERVABILITY_ELASTICSEARCH_CA_FILE: elasticsearch-ca.crt
+  env:
+    WORKER_MANAGEMENT_ADDR: ":8081"
+    V3_WORKER_PROVIDERS_ENABLED: "true"
+    K8S_ENABLED: "true"
+    K8S_WRITE_ENABLED: "false"
+    K8S_IN_CLUSTER: "true"
+    K8S_ALLOWED_NAMESPACES: cloudops-demo
+    K8S_DEFAULT_NAMESPACE: cloudops-demo
+    V3_TARGET_NAMESPACE: cloudops-demo
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+observability:
+  enabled: true
+  serviceMonitor:
+    interval: 15s
+    scrapeTimeout: 5s

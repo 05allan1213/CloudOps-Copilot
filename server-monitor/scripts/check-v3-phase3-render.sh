@@ -165,7 +165,7 @@ jq -e '
 ' <<<"${documents}" >/dev/null
 
 jq -e '
-  [.[] | select(.kind == "ConfigMap" and .metadata.name == "cloudops-v3-config")][0]
+  [.[] | select(.kind == "ConfigMap" and .metadata.name == "cloudops-config")][0]
   | .data.TRACE_OTLP_ENDPOINT == "cloudops-otel-collector.cloudops-system.svc.cluster.local:4317"
 ' <<<"${documents}" >/dev/null
 

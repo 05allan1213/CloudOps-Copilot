@@ -1,0 +1,11 @@
+profile: phase4
+api:
+  enabled: true
+migrate:
+  enabled: true
+oauth:
+  enabled: false
+worker:
+  enabled: false
+observability:
+  enabled: true

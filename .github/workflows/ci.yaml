@@ -7,6 +7,7 @@ on:
       - .dockerignore
       - Dockerfile
       - Makefile
+      - charts/**
       - go.mod
       - go.sum
       - cmd/**
@@ -23,6 +24,7 @@ on:
       - .dockerignore
       - Dockerfile
       - Makefile
+      - charts/**
       - go.mod
       - go.sum
       - cmd/**
@@ -225,19 +227,25 @@ jobs:
 
       - name: Lint charts
         run: |
-          helm lint server-monitor/charts/server-monitor
-          helm lint server-monitor/charts/server-monitor \
-            --values server-monitor/charts/server-monitor/values-v3-phase3.yaml
+          for profile in phase3 phase4 phase5 phase6; do
+            helm lint --strict charts/cloudops \
+              --values "charts/cloudops/values-${profile}.yaml"
+          done
           helm lint server-monitor/charts/cloudops-kind-platform
           helm lint server-monitor/charts/cloudops-demo
 
       - name: Render charts and V3 phase profile
         run: |
-          helm template cloudops server-monitor/charts/server-monitor >/tmp/cloudops-rendered.yaml
-          helm template cloudops-v3 server-monitor/charts/server-monitor \
-            --namespace cloudops-system \
-            --values server-monitor/charts/server-monitor/values-v3-phase3.yaml \
-            >/tmp/cloudops-v3-phase3-rendered.yaml
+          for profile in phase3 phase4 phase5 phase6; do
+            helm template "cloudops-${profile}" charts/cloudops \
+              --namespace cloudops-system \
+              --values "charts/cloudops/values-${profile}.yaml" \
+              >"/tmp/cloudops-${profile}-rendered.yaml"
+            docker run --rm -i \
+              "${{ env.YQ_IMAGE }}" eval -o=json 'select(.kind != null)' - \
+              <"/tmp/cloudops-${profile}-rendered.yaml" \
+              >"/tmp/cloudops-${profile}.json"
+          done
           helm template cloudops-platform server-monitor/charts/cloudops-kind-platform \
             --namespace cloudops-system \
             >/tmp/cloudops-platform-rendered.yaml
@@ -248,8 +256,10 @@ jobs:
       - name: Validate rendered Kubernetes schema
         run: |
           for manifest in \
-            /tmp/cloudops-rendered.yaml \
-            /tmp/cloudops-v3-phase3-rendered.yaml \
+            /tmp/cloudops-phase3-rendered.yaml \
+            /tmp/cloudops-phase4-rendered.yaml \
+            /tmp/cloudops-phase5-rendered.yaml \
+            /tmp/cloudops-phase6-rendered.yaml \
             /tmp/cloudops-platform-rendered.yaml \
             /tmp/cloudops-demo-rendered.yaml; do
             docker run --rm -i \
@@ -260,15 +270,21 @@ jobs:
 
       - name: Enforce V3 phase profile boundaries
         run: |
+          bash server-monitor/scripts/check-cloudops-profile-render.sh \
+            /tmp/cloudops-phase3.json \
+            /tmp/cloudops-phase4.json \
+            /tmp/cloudops-phase5.json \
+            /tmp/cloudops-phase6.json \
+            charts/cloudops
           docker run --rm -i \
             "${{ env.YQ_IMAGE }}" eval -o=json 'select(.kind != null)' - \
-            </tmp/cloudops-v3-phase3-rendered.yaml \
-            >/tmp/cloudops-v3-phase3.jsonl
+            </tmp/cloudops-phase3-rendered.yaml \
+            >/tmp/cloudops-phase3.jsonl
           docker run --rm -i \
             "${{ env.YQ_IMAGE }}" eval -o=json 'select(.kind != null)' - \
             </tmp/cloudops-demo-rendered.yaml \
             >/tmp/cloudops-demo.jsonl
-          cat /tmp/cloudops-demo.jsonl >>/tmp/cloudops-v3-phase3.jsonl
+          cat /tmp/cloudops-demo.jsonl >>/tmp/cloudops-phase3.jsonl
           jq -s -e '
             def count_resource($kind; $name):
               [.[] | select(.kind == $kind and .metadata.name == $name)] | length;
@@ -289,7 +305,7 @@ jobs:
             ([.[] | select(.metadata.name as $name |
               ["server-web", "prometheus", "victoriametrics", "jaeger", "kafka", "redis", "elasticsearch", "kibana", "fluent-bit", "grafana"] |
               index($name))] | length) == 0
-          ' /tmp/cloudops-v3-phase3.jsonl >/dev/null
+          ' /tmp/cloudops-phase3.jsonl >/dev/null
 
   static-delivery:
     name: workflow and manifest checks

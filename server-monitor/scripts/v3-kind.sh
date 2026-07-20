@@ -2,10 +2,10 @@
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-CHART_DIR="${ROOT_DIR}/server-monitor/charts/server-monitor"
+CHART_DIR="${ROOT_DIR}/charts/cloudops"
 PLATFORM_CHART_DIR="${ROOT_DIR}/server-monitor/charts/cloudops-kind-platform"
 DEMO_CHART_DIR="${ROOT_DIR}/server-monitor/charts/cloudops-demo"
-PROFILE_FILE="${CHART_DIR}/values-v3-phase3.yaml"
+PROFILE_FILE="${CHART_DIR}/values-phase3.yaml"
 PLATFORM_VALUES="${PLATFORM_CHART_DIR}/values.yaml"
 KIND_CONFIG="${ROOT_DIR}/server-monitor/deploy/kind/kind-config.yaml"
 MONITORING_VALUES="${ROOT_DIR}/server-monitor/deploy/kind/kube-prometheus-stack-values.yaml"
@@ -147,7 +147,7 @@ render_profile() {
   helm lint "${DEMO_CHART_DIR}"
   helm template "${PLATFORM_RELEASE}" "${PLATFORM_CHART_DIR}" --namespace "${APP_NAMESPACE}" --values "${PLATFORM_VALUES}" >"${platform_render}"
   helm template "${APP_RELEASE}" "${CHART_DIR}" --namespace "${APP_NAMESPACE}" --values "${PROFILE_FILE}" \
-    --set-string "v3.commonEnv.TRACE_OTLP_ENDPOINT=${OTEL_GRPC_ENDPOINT}" >"${RENDERED_FILE}"
+    --set-string "commonEnv.TRACE_OTLP_ENDPOINT=${OTEL_GRPC_ENDPOINT}" >"${RENDERED_FILE}"
   helm template "${DEMO_RELEASE}" "${DEMO_CHART_DIR}" --namespace "${DEMO_NAMESPACE}" \
     --set-string "trace.otlpEndpoint=${OTEL_GRPC_ENDPOINT}" >"${RENDERED_DEMO_FILE}"
   bash "${ROOT_DIR}/server-monitor/scripts/check-v3-phase3-render.sh" "${platform_render}" "${RENDERED_FILE}" "${RENDERED_DEMO_FILE}"
@@ -289,12 +289,13 @@ install_platform() {
 install_application() {
   helm upgrade --install "${APP_RELEASE}" "${CHART_DIR}" \
     --namespace "${APP_NAMESPACE}" --values "${PROFILE_FILE}" \
-    --set "v3.images.api.tag=${API_IMAGE_TAG}" \
-    --set "v3.images.migrate.tag=${MIGRATE_IMAGE_TAG}" \
-    --set "v3.images.api.repository=${API_IMAGE_REPOSITORY}" \
-    --set "v3.images.migrate.repository=${MIGRATE_IMAGE_REPOSITORY}" \
-    --set-string "v3.commonEnv.TRACE_OTLP_ENDPOINT=${OTEL_GRPC_ENDPOINT}" \
-    --set-file "v3.commonEnv.SIGNAL_TARGET_ALLOWLIST_JSON=${secret_dir}/signal-target-allowlist.json" \
+    --set-string "images.api.tag=${API_IMAGE_TAG}" \
+    --set-string "images.migrate.tag=${MIGRATE_IMAGE_TAG}" \
+    --set-string "images.api.repository=${API_IMAGE_REPOSITORY}" \
+    --set-string "images.migrate.repository=${MIGRATE_IMAGE_REPOSITORY}" \
+    --set-string "database.secretName=cloudops-v3-database" \
+    --set-string "commonEnv.TRACE_OTLP_ENDPOINT=${OTEL_GRPC_ENDPOINT}" \
+    --set-file "api.env.SIGNAL_TARGET_ALLOWLIST_JSON=${secret_dir}/signal-target-allowlist.json" \
     --wait --wait-for-jobs --timeout 10m
 }
 

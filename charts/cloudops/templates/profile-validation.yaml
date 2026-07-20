@@ -1,0 +1,70 @@
+{{- $profile := .Values.profile -}}
+{{- if not (has $profile (list "phase3" "phase4" "phase5" "phase6")) -}}
+{{- fail "profile must be one of phase3, phase4, phase5, or phase6" -}}
+{{- end -}}
+{{- if not .Values.api.enabled -}}
+{{- fail "all CloudOps profiles require cloudops-api" -}}
+{{- end -}}
+{{- if not .Values.migrate.enabled -}}
+{{- fail "all CloudOps profiles require cloudops-migrate" -}}
+{{- end -}}
+{{- if not .Values.observability.enabled -}}
+{{- fail "all CloudOps profiles require ServiceMonitor and PrometheusRule resources" -}}
+{{- end -}}
+{{- if has $profile (list "phase3" "phase4") -}}
+  {{- if .Values.oauth.enabled -}}
+  {{- fail (printf "%s requires oauth.enabled=false and no user-facing Service" $profile) -}}
+  {{- end -}}
+  {{- if .Values.worker.enabled -}}
+  {{- fail (printf "%s requires worker.enabled=false" $profile) -}}
+  {{- end -}}
+{{- else if eq $profile "phase5" -}}
+  {{- if not .Values.oauth.enabled -}}
+  {{- fail "phase5 requires oauth.enabled=true" -}}
+  {{- end -}}
+  {{- if .Values.worker.enabled -}}
+  {{- fail "phase5 requires worker.enabled=false" -}}
+  {{- end -}}
+{{- else if eq $profile "phase6" -}}
+  {{- if not .Values.oauth.enabled -}}
+  {{- fail "phase6 requires oauth.enabled=true" -}}
+  {{- end -}}
+  {{- if not .Values.worker.enabled -}}
+  {{- fail "phase6 requires worker.enabled=true" -}}
+  {{- end -}}
+{{- end -}}
+
+{{- range $name, $image := .Values.images -}}
+  {{- if eq (lower ($image.tag | toString)) "latest" -}}
+  {{- fail (printf "images.%s.tag must not be latest" $name) -}}
+  {{- end -}}
+{{- end -}}
+
+{{- if .Values.oauth.enabled -}}
+  {{- if ne .Values.images.oauth2Proxy.tag "v7.15.3" -}}
+  {{- fail "oauth2-proxy image tag must remain v7.15.3" -}}
+  {{- end -}}
+  {{- if eq .Values.oauth.secret.name .Values.csrf.secretName -}}
+  {{- fail "the API CSRF signing Secret must be separate from the oauth2-proxy Secret" -}}
+  {{- end -}}
+  {{- if eq (add (len .Values.oauth.viewerLogins) (len .Values.oauth.operatorLogins)) 0 -}}
+  {{- fail "OAuth profiles require at least one viewer or operator GitHub login" -}}
+  {{- end -}}
+  {{- $seen := dict -}}
+  {{- range concat .Values.oauth.viewerLogins .Values.oauth.operatorLogins -}}
+    {{- $login := lower . -}}
+    {{- if hasKey $seen $login -}}
+    {{- fail (printf "OAuth GitHub login %q is mapped more than once" .) -}}
+    {{- end -}}
+    {{- $_ := set $seen $login true -}}
+  {{- end -}}
+{{- end -}}
+
+{{- if .Values.worker.enabled -}}
+  {{- if ne (index .Values.worker.env "K8S_WRITE_ENABLED" | toString) "false" -}}
+  {{- fail "cloudops-worker Kubernetes access must remain read-only" -}}
+  {{- end -}}
+  {{- if ne (index .Values.worker.env "K8S_DEFAULT_NAMESPACE" | toString) .Values.worker.demoNamespace -}}
+  {{- fail "worker.demoNamespace and K8S_DEFAULT_NAMESPACE must match" -}}
+  {{- end -}}
+{{- end -}}

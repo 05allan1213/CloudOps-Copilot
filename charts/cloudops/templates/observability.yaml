@@ -1,0 +1,86 @@
+{{- if and .Values.observability.enabled .Values.api.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cloudops-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cloudops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api-internal
+    cloudops.io/monitoring: enabled
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: api-internal
+      cloudops.io/monitoring: enabled
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: internal
+      path: /metrics
+      interval: {{ .Values.observability.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.observability.serviceMonitor.scrapeTimeout }}
+      honorLabels: false
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cloudops-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cloudops.labels" . | nindent 4 }}
+    cloudops.io/monitoring: enabled
+spec:
+  groups:
+    - name: cloudops.api
+      rules:
+        - alert: CloudOpsAPIAvailability
+          expr: |
+            absent(up{namespace={{ .Release.Namespace | quote }},service="cloudops-api-internal"})
+            or max(up{namespace={{ .Release.Namespace | quote }},service="cloudops-api-internal"}) < 1
+          for: 2m
+          labels:
+            severity: warning
+            signal_target: cloudops-control-plane
+          annotations:
+            summary: CloudOps API metrics target is unavailable
+            description: The internal API Service has no healthy Prometheus target.
+{{- if .Values.worker.enabled }}
+        - alert: CloudOpsWorkerAvailability
+          expr: |
+            absent(up{namespace={{ .Release.Namespace | quote }},service="cloudops-worker-management"})
+            or max(up{namespace={{ .Release.Namespace | quote }},service="cloudops-worker-management"}) < 1
+          for: 2m
+          labels:
+            severity: warning
+            signal_target: cloudops-control-plane
+          annotations:
+            summary: CloudOps Worker metrics target is unavailable
+            description: The phase6 Worker management Service has no healthy Prometheus target.
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cloudops-worker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cloudops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker-management
+    cloudops.io/monitoring: enabled
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: worker-management
+      cloudops.io/monitoring: enabled
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  endpoints:
+    - port: management
+      path: /metrics
+      interval: {{ .Values.observability.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.observability.serviceMonitor.scrapeTimeout }}
+      honorLabels: false
+{{- end }}
+{{- end }}

@@ -11,19 +11,21 @@ GOLANGCI_LINT ?= golangci-lint
 ACTIONLINT ?= actionlint
 SHELLCHECK ?= shellcheck
 HELM ?= helm
+YQ ?= yq
 KUBECONFORM ?= kubeconform
 PROMTOOL ?= promtool
 
 TMPDIR ?= /tmp
 BUILD_DIR ?= $(TMPDIR)/cloudops-copilot-build
 FRONTEND_DIR := frontend
-CHART_DIR := server-monitor/charts/server-monitor
+CHART_DIR := charts/cloudops
 PLATFORM_CHART_DIR := server-monitor/charts/cloudops-kind-platform
 DEMO_CHART_DIR := server-monitor/charts/cloudops-demo
 MANIFEST_DIR := server-monitor/k8s
 COMPOSE_FILE := server-monitor/docker-compose.yml
 COMPOSE_ENV := server-monitor/.env.example
 V3_KIND_SCRIPT := server-monitor/scripts/v3-kind.sh
+PROFILE_CONTRACT_SCRIPT := server-monitor/scripts/check-cloudops-profile-render.sh
 GO_FILES := $(shell find cmd internal migrations -type f -name '*.go' -print 2>/dev/null | sort)
 SHELL_FILES := $(shell git ls-files '*.sh' | sort)
 
@@ -33,7 +35,7 @@ SHELL_FILES := $(shell git ls-files '*.sh' | sort)
 	actionlint shellcheck helm-lint helm-template kubeconform kubeconform-chart \
 	kubeconform-raw promtool compose-config static-checks check docker-build \
 	docker-build-api docker-build-worker docker-build-migrate docker-build-demo frontend-install \
-	preflight demo-up demo-down kind-render kind-check
+	preflight demo-up demo-down kind-render kind-check helm-contracts
 
 define require_cmd
 	@command -v $(1) >/dev/null 2>&1 || { echo "missing command: $(1)" >&2; exit 1; }
@@ -137,15 +139,34 @@ shellcheck:
 
 helm-lint:
 	$(call require_cmd,$(HELM))
-	$(HELM) lint $(CHART_DIR)
+	@for profile in phase3 phase4 phase5 phase6; do \
+		$(HELM) lint --strict $(CHART_DIR) --values $(CHART_DIR)/values-$$profile.yaml; \
+	done
 	$(HELM) lint $(PLATFORM_CHART_DIR)
 	$(HELM) lint $(DEMO_CHART_DIR)
 
 helm-template:
 	$(call require_cmd,$(HELM))
-	$(HELM) template cloudops $(CHART_DIR)
+	@for profile in phase3 phase4 phase5 phase6; do \
+		$(HELM) template cloudops-$$profile $(CHART_DIR) --namespace cloudops-system --values $(CHART_DIR)/values-$$profile.yaml >/dev/null; \
+	done
 	$(HELM) template cloudops-platform $(PLATFORM_CHART_DIR)
 	$(HELM) template cloudops-demo $(DEMO_CHART_DIR) --namespace cloudops-demo
+
+helm-contracts:
+	$(call require_cmd,$(HELM))
+	$(call require_cmd,$(YQ))
+	$(call require_cmd,jq)
+	@tmp_dir="$$(mktemp -d "$(TMPDIR)/cloudops-chart-contracts.XXXXXX")"; \
+		trap 'rm -rf "$$tmp_dir"' EXIT; \
+		for profile in phase3 phase4 phase5 phase6; do \
+			$(HELM) template cloudops-$$profile $(CHART_DIR) --namespace cloudops-system \
+				--values $(CHART_DIR)/values-$$profile.yaml >"$$tmp_dir/$$profile.yaml"; \
+			$(YQ) -o=json 'select(.kind != null)' "$$tmp_dir/$$profile.yaml" >"$$tmp_dir/$$profile.json"; \
+		done; \
+		bash $(PROFILE_CONTRACT_SCRIPT) \
+			"$$tmp_dir/phase3.json" "$$tmp_dir/phase4.json" \
+			"$$tmp_dir/phase5.json" "$$tmp_dir/phase6.json" $(CHART_DIR)
 
 kind-render: ## Render and enforce the V3 phase3 kind/Helm profile.
 	bash $(V3_KIND_SCRIPT) render
@@ -167,7 +188,11 @@ kubeconform: kubeconform-chart kubeconform-raw
 kubeconform-chart:
 	$(call require_cmd,$(HELM))
 	$(call require_cmd,$(KUBECONFORM))
-	$(HELM) template cloudops $(CHART_DIR) | $(KUBECONFORM) -strict -summary -ignore-missing-schemas
+	@for profile in phase3 phase4 phase5 phase6; do \
+		$(HELM) template cloudops-$$profile $(CHART_DIR) --namespace cloudops-system \
+			--values $(CHART_DIR)/values-$$profile.yaml | \
+			$(KUBECONFORM) -strict -summary -ignore-missing-schemas; \
+	done
 	$(HELM) template cloudops-platform $(PLATFORM_CHART_DIR) | $(KUBECONFORM) -strict -summary -ignore-missing-schemas
 	$(HELM) template cloudops-demo $(DEMO_CHART_DIR) --namespace cloudops-demo | $(KUBECONFORM) -strict -summary -ignore-missing-schemas
 
@@ -184,7 +209,7 @@ promtool:
 compose-config:
 	$(DOCKER_COMPOSE) --env-file $(COMPOSE_ENV) -f $(COMPOSE_FILE) config --quiet
 
-static-checks: actionlint shellcheck helm-lint kubeconform promtool compose-config
+static-checks: actionlint shellcheck helm-lint helm-contracts kubeconform promtool compose-config
 
 check: check-gofmt check-goimports check-deps check-structure vet lint-go test-go test-race build-go test-frontend build-frontend static-checks kind-render
 
