@@ -197,6 +197,44 @@ func TestInvestigationStepEnqueuesNextTaskWithNextSubjectVersionDedupe(t *testin
 	}
 }
 
+func TestInvestigationStepEnqueuesRemediationOnlyForConfirmedRestoreDiagnosis(t *testing.T) {
+	snapshot := testInvestigationSnapshot(t, stepModeSynthesize, nil)
+	store := &stepTestTaskStore{}
+	operation := testInvestigationOperation(snapshot, &stepTestModel{}, &stepTestTool{}, store)
+	at := time.Date(2026, 7, 19, 10, 0, 0, 0, time.UTC)
+	checkpoint := investigationStepCheckpoint{
+		TerminalOutcome: "diagnosed", CapturedAt: at,
+		Diagnosis: &agent.DiagnosisRecord{Candidate: agent.DiagnosisCandidate{
+			Confidence: agent.DiagnosisConfirmed, RemediationHint: agent.RemediationRestoreRequiredEnv,
+		}},
+	}
+	if err := operation.enqueueRemediationPrepare(context.Background(), nil, snapshot, checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	enqueued := store.singleEnqueued(t)
+	if enqueued.Type != asyncjob.TaskRemediationPrepare || enqueued.SubjectType != "agent_run" ||
+		enqueued.SubjectID != snapshot.Task.SubjectID || enqueued.Transition != "remediation.prepare" ||
+		enqueued.ExpectedSubjectVersion != snapshot.Task.ExpectedSubjectVersion+1 ||
+		enqueued.DedupeKey != hashCanonical("task", snapshot.RunPublicID, "remediation.prepare", "2") ||
+		enqueued.AvailableAt == nil || !enqueued.AvailableAt.Equal(at) {
+		t.Fatalf("unexpected remediation task: %+v", enqueued)
+	}
+	var payload remediationPreparePayload
+	if err := json.Unmarshal(enqueued.Payload, &payload); err != nil || payload.AgentRunID != snapshot.RunPublicID || payload.CycleNo != 1 {
+		t.Fatalf("unexpected remediation payload=%+v err=%v", payload, err)
+	}
+
+	store = &stepTestTaskStore{}
+	operation = testInvestigationOperation(snapshot, &stepTestModel{}, &stepTestTool{}, store)
+	checkpoint.Diagnosis.Candidate.RemediationHint = agent.RemediationNone
+	if err := operation.enqueueRemediationPrepare(context.Background(), nil, snapshot, checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.enqueued) != 0 {
+		t.Fatalf("non-remediable diagnosis enqueued %d tasks", len(store.enqueued))
+	}
+}
+
 func TestInvestigationStepRejectsInvalidLeaseBeforeCallingDependencies(t *testing.T) {
 	snapshot := testInvestigationSnapshot(t, stepModeDecide, nil)
 	model := &stepTestModel{}

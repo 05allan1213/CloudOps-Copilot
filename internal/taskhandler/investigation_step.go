@@ -1455,10 +1455,43 @@ WHERE id = ? AND incident_id = ? AND domain_schema_version = 3 AND cycle_no = ?
 		boundInvestigation(checkpoint.StepSummary, 2048), metadata, checkpoint.CapturedAt.UTC(), checkpoint.CapturedAt.UTC()); err != nil {
 		return fmt.Errorf("append investigation step event: %w", err)
 	}
-	if !terminal {
+	if terminal {
+		if err := o.enqueueRemediationPrepare(ctx, tx, snapshot, checkpoint); err != nil {
+			return err
+		}
+	} else {
 		if err := o.enqueueNextInvestigationStep(ctx, tx, snapshot, state, checkpoint); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (o *investigationStepOperation) enqueueRemediationPrepare(ctx context.Context, tx asyncjob.DBTX, snapshot investigationSnapshot, checkpoint investigationStepCheckpoint) error {
+	diagnosis := checkpoint.Diagnosis
+	if checkpoint.TerminalOutcome != "diagnosed" || diagnosis == nil ||
+		diagnosis.Candidate.Confidence != agent.DiagnosisConfirmed ||
+		diagnosis.Candidate.RemediationHint != agent.RemediationRestoreRequiredEnv {
+		return nil
+	}
+	payload, err := json.Marshal(remediationPreparePayload{
+		AgentRunID: snapshot.RunPublicID,
+		CycleNo:    uint64(snapshot.Task.CycleNo),
+	})
+	if err != nil {
+		return fmt.Errorf("encode remediation.prepare payload: %w", err)
+	}
+	nextSubjectVersion := snapshot.Task.ExpectedSubjectVersion + 1
+	dedupe := hashCanonical("task", snapshot.RunPublicID, "remediation.prepare", fmt.Sprint(nextSubjectVersion))
+	availableAt := checkpoint.CapturedAt.UTC()
+	if _, err := o.cfg.Tasks.EnqueueIn(ctx, tx, asyncjob.NewTask{
+		IncidentID: snapshot.Task.IncidentID, CycleNo: snapshot.Task.CycleNo, Type: asyncjob.TaskRemediationPrepare,
+		SubjectType: "agent_run", SubjectID: snapshot.Task.SubjectID, Transition: "remediation.prepare",
+		ExpectedSubjectVersion: nextSubjectVersion, PayloadSchemaVersion: remediationPreparePayloadSchema,
+		Payload: payload, DedupeKey: dedupe, Priority: snapshot.Task.Priority,
+		AvailableAt: &availableAt, MaxAttempts: snapshot.Task.MaxAttempts,
+	}); err != nil {
+		return fmt.Errorf("enqueue remediation.prepare: %w", err)
 	}
 	return nil
 }
