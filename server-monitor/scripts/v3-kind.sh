@@ -349,7 +349,10 @@ create_secrets() {
 docker_build_with_retry() {
   local _attempt
   for _attempt in 1 2 3; do
-    if docker build --network host "$@"; then
+    if docker build --network host \
+      --build-arg HTTP_PROXY --build-arg HTTPS_PROXY --build-arg ALL_PROXY \
+      --build-arg http_proxy --build-arg https_proxy --build-arg all_proxy \
+      "$@"; then
       return 0
     fi
     sleep 2
