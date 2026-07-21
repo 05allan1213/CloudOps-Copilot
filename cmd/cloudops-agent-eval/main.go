@@ -20,6 +20,7 @@ import (
 type options struct {
 	mode        string
 	root        string
+	revision    string
 	out         string
 	report      string
 	baseline    string
@@ -35,10 +36,11 @@ func main() {
 	var value options
 	flag.StringVar(&value.mode, "mode", "validate", "freeze, validate, baseline, guardrail, model, or gate")
 	flag.StringVar(&value.root, "root", ".", "repository root")
+	flag.StringVar(&value.revision, "revision", "v1", "frozen evaluation revision, for example v1 or v2")
 	flag.StringVar(&value.out, "out", "", "report output path; stdout when empty")
 	flag.StringVar(&value.report, "report", "", "measured model report required by gate mode")
 	flag.StringVar(&value.baseline, "baseline", "", "fixed-pipeline baseline report required by gate mode")
-	flag.StringVar(&value.thresholds, "thresholds", "", "quality thresholds path; defaults to eval/v1/thresholds.json")
+	flag.StringVar(&value.thresholds, "thresholds", "", "quality thresholds path; defaults to the selected revision")
 	flag.StringVar(&value.onlySplit, "split", "model", "model, calibration, quality, guardrail, or all")
 	flag.StringVar(&value.caseIDs, "cases", "", "comma-separated case IDs")
 	flag.IntVar(&value.repetitions, "repetitions", 0, "override repetitions")
@@ -52,7 +54,10 @@ func main() {
 }
 
 func run(options options) error {
-	paths := evalPaths(options.root)
+	paths, err := evalPaths(options.root, options.revision)
+	if err != nil {
+		return err
+	}
 	dataset, err := eval.LoadDataset(paths.dataset)
 	if err != nil {
 		return err
@@ -149,17 +154,33 @@ func run(options options) error {
 
 type evalPathsValue struct{ dataset, oracle, split, metrics, manifest, thresholds, reducer, runner string }
 
-func evalPaths(root string) evalPathsValue {
+func evalPaths(root, revision string) (evalPathsValue, error) {
+	revision = strings.TrimSpace(revision)
+	if !validEvalRevision(revision) {
+		return evalPathsValue{}, fmt.Errorf("invalid evaluation revision %q", revision)
+	}
 	return evalPathsValue{
-		dataset:    filepath.Join(root, "eval", "v1", "dataset.json"),
-		oracle:     filepath.Join(root, "eval", "v1", "oracle.json"),
-		split:      filepath.Join(root, "eval", "v1", "split.json"),
-		metrics:    filepath.Join(root, "eval", "v1", "metrics.json"),
-		manifest:   filepath.Join(root, "eval", "v1", "manifest.json"),
-		thresholds: filepath.Join(root, "eval", "v1", "thresholds.json"),
+		dataset:    filepath.Join(root, "eval", revision, "dataset.json"),
+		oracle:     filepath.Join(root, "eval", revision, "oracle.json"),
+		split:      filepath.Join(root, "eval", revision, "split.json"),
+		metrics:    filepath.Join(root, "eval", revision, "metrics.json"),
+		manifest:   filepath.Join(root, "eval", revision, "manifest.json"),
+		thresholds: filepath.Join(root, "eval", revision, "thresholds.json"),
 		reducer:    filepath.Join(root, "internal", "agent", "state_delta.go"),
 		runner:     filepath.Join(root, "internal", "agent"),
+	}, nil
+}
+
+func validEvalRevision(value string) bool {
+	if len(value) < 2 || value[0] != 'v' || value[1] == '0' {
+		return false
 	}
+	for _, character := range value[1:] {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func splitCaseIDs(raw string) []string {

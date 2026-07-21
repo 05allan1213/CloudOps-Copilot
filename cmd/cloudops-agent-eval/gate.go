@@ -14,16 +14,21 @@ import (
 )
 
 type qualityGateReport struct {
-	SchemaVersion int                    `json:"schema_version"`
-	DatasetID     string                 `json:"dataset_id"`
-	Status        string                 `json:"status"`
-	Provider      string                 `json:"provider"`
-	Model         string                 `json:"model"`
-	Manifest      eval.Manifest          `json:"manifest"`
-	Thresholds    eval.QualityThresholds `json:"thresholds"`
-	Baseline      eval.Aggregate         `json:"baseline"`
-	Measured      eval.Aggregate         `json:"measured"`
-	Failures      []string               `json:"failures,omitempty"`
+	SchemaVersion int               `json:"schema_version"`
+	DatasetID     string            `json:"dataset_id"`
+	Status        string            `json:"status"`
+	Provider      string            `json:"provider"`
+	Model         string            `json:"model"`
+	Manifest      eval.Manifest     `json:"manifest"`
+	Thresholds    qualityThresholds `json:"thresholds"`
+	Baseline      eval.Aggregate    `json:"baseline"`
+	Measured      eval.Aggregate    `json:"measured"`
+	Failures      []string          `json:"failures,omitempty"`
+}
+
+type qualityThresholds struct {
+	eval.QualityThresholds
+	AllowEqualAtBaselineCeiling bool `json:"allow_equal_at_baseline_ceiling,omitempty"`
 }
 
 func runQualityGate(paths evalPathsValue, manifest eval.Manifest, split eval.Split, options options) (qualityGateReport, error) {
@@ -34,7 +39,7 @@ func runQualityGate(paths evalPathsValue, manifest eval.Manifest, split eval.Spl
 	if thresholdPath == "" {
 		thresholdPath = paths.thresholds
 	}
-	var thresholds eval.QualityThresholds
+	var thresholds qualityThresholds
 	if err := loadStrictJSON(thresholdPath, &thresholds); err != nil {
 		return qualityGateReport{}, fmt.Errorf("load quality thresholds: %w", err)
 	}
@@ -62,7 +67,7 @@ func runQualityGate(paths evalPathsValue, manifest eval.Manifest, split eval.Spl
 	return result, nil
 }
 
-func validateQualityThresholds(value eval.QualityThresholds) error {
+func validateQualityThresholds(value qualityThresholds) error {
 	if value.SchemaVersion != 1 || strings.TrimSpace(value.DatasetID) == "" || strings.TrimSpace(value.Aggregation) == "" {
 		return errors.New("quality thresholds have invalid identity")
 	}
@@ -83,7 +88,7 @@ func validateQualityThresholds(value eval.QualityThresholds) error {
 	return nil
 }
 
-func validateQualityReportBindings(thresholds eval.QualityThresholds, manifest eval.Manifest, split eval.Split, measured, baseline eval.Report) []string {
+func validateQualityReportBindings(thresholds qualityThresholds, manifest eval.Manifest, split eval.Split, measured, baseline eval.Report) []string {
 	failures := make([]string, 0)
 	if thresholds.DatasetID != manifest.DatasetID || measured.DatasetID != manifest.DatasetID || baseline.DatasetID != manifest.DatasetID {
 		failures = append(failures, "dataset identity differs across thresholds, manifest, measured report, or baseline")
@@ -109,7 +114,7 @@ func validateQualityReportBindings(thresholds eval.QualityThresholds, manifest e
 	return failures
 }
 
-func compareQualityThresholds(thresholds eval.QualityThresholds, measured, baseline eval.Aggregate) []string {
+func compareQualityThresholds(thresholds qualityThresholds, measured, baseline eval.Aggregate) []string {
 	failures := make([]string, 0)
 	minimum := []struct {
 		name      string
@@ -150,7 +155,8 @@ func compareQualityThresholds(thresholds eval.QualityThresholds, measured, basel
 			{name: "citation_recall", measured: measured.CitationRecall, baseline: baseline.CitationRecall},
 		}
 		for _, comparison := range comparisons {
-			if comparison.measured <= comparison.baseline {
+			atAllowedCeiling := thresholds.AllowEqualAtBaselineCeiling && comparison.baseline == 1 && comparison.measured == 1
+			if comparison.measured <= comparison.baseline && !atAllowedCeiling {
 				failures = append(failures, fmt.Sprintf("%s %.10f does not strictly exceed baseline %.10f", comparison.name, comparison.measured, comparison.baseline))
 			}
 		}

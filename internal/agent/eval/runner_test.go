@@ -3,6 +3,7 @@ package agenteval
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
@@ -92,6 +93,43 @@ func TestRunFixedBaselineUsesNoModelCalls(t *testing.T) {
 	}
 	if len(report.Runs) != 1 || report.Runs[0].Outcome != OutcomeDiagnosed || report.Runs[0].ModelCalls != 0 || report.Provider != "fixed-pipeline" {
 		t.Fatalf("unexpected baseline: %+v", report)
+	}
+}
+
+func TestV2ConflictingSourcesCannotMakeAnyClaimReady(t *testing.T) {
+	dataset, err := LoadDataset(filepath.Join("..", "..", "..", "eval", "v2", "dataset.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var evalCase EvalCase
+	for _, candidate := range dataset.Cases {
+		if candidate.ID == "model-conflicting-sources" {
+			evalCase = candidate
+			break
+		}
+	}
+	if evalCase.ID == "" {
+		t.Fatal("v2 conflicting-sources case is missing")
+	}
+	runtime, err := newCaseRuntime(evalCase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fixture := range evalCase.Fixtures {
+		if err := applyFixture(evalCase, runtime, fixture.Actions[0]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	results, ready, _, err := evaluatePolicies(evalCase, runtime.state, runtime.facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ready) != 0 {
+		t.Fatalf("conflicting authoritative sources produced READY claims: %v", ready)
+	}
+	identity := results["deployment_identity_regression/v1"]
+	if identity.Outcome != agent.SufficiencyInsufficient || !slices.Contains(identity.BlockingIDs, "fact-conflict-env-present") {
+		t.Fatalf("identity policy did not fail closed on the current Pod fact: %+v", identity)
 	}
 }
 

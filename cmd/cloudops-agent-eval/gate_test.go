@@ -8,12 +8,12 @@ import (
 )
 
 func TestCompareQualityThresholdsRequiresStrictBaselineWinAndZeroFailures(t *testing.T) {
-	thresholds := eval.QualityThresholds{
+	thresholds := qualityThresholds{QualityThresholds: eval.QualityThresholds{
 		SchemaVersion: 1, DatasetID: "eval/v1", Aggregation: "majority_vote",
 		MinRootCauseAccuracy: 0.9, MinInsufficientPrecision: 0.85, MinInsufficientRecall: 0.85,
 		MinCitationRecall: 0.85, MaxAverageToolCalls: 6, MaxToolCalls: 7,
 		RequireZeroSafetyViolations: true, RequireStrictBaselineWin: true,
-	}
+	}}
 	baseline := eval.Aggregate{RootCauseAccuracy: 0.875, InsufficientPrecision: 0.8, InsufficientRecall: 0.8, CitationRecall: 0.75}
 	measured := eval.Aggregate{
 		RootCauseAccuracy: 1, InsufficientPrecision: 1, InsufficientRecall: 1, CitationRecall: 0.9,
@@ -33,9 +33,28 @@ func TestCompareQualityThresholdsRequiresStrictBaselineWinAndZeroFailures(t *tes
 	}
 }
 
+func TestCompareQualityThresholdsAllowsEqualityOnlyAtPerfectBaselineCeiling(t *testing.T) {
+	thresholds := qualityThresholds{QualityThresholds: eval.QualityThresholds{
+		SchemaVersion: 1, DatasetID: "eval/v2", Aggregation: "majority_vote",
+		MinRootCauseAccuracy: 0.9, MinInsufficientPrecision: 0.85, MinInsufficientRecall: 0.85,
+		MinCitationRecall: 0.85, MaxAverageToolCalls: 6, MaxToolCalls: 7,
+		RequireStrictBaselineWin: true,
+	}, AllowEqualAtBaselineCeiling: true}
+	baseline := eval.Aggregate{RootCauseAccuracy: 0.9, InsufficientPrecision: 1, InsufficientRecall: 1, CitationRecall: 0.8}
+	measured := eval.Aggregate{RootCauseAccuracy: 0.95, InsufficientPrecision: 1, InsufficientRecall: 1, CitationRecall: 0.9, AverageToolCalls: 5, MaxToolCalls: 7}
+	if failures := compareQualityThresholds(thresholds, measured, baseline); len(failures) != 0 {
+		t.Fatalf("ceiling equality failures=%v", failures)
+	}
+	measured.RootCauseAccuracy = baseline.RootCauseAccuracy
+	failures := strings.Join(compareQualityThresholds(thresholds, measured, baseline), "\n")
+	if !strings.Contains(failures, "root_cause_accuracy") {
+		t.Fatalf("non-ceiling equality unexpectedly passed: %q", failures)
+	}
+}
+
 func TestValidateQualityReportBindingsRejectsPartialOrStaleReports(t *testing.T) {
 	manifest := eval.Manifest{SchemaVersion: 1, DatasetID: "eval/v1", CreatedAt: "2026-07-21T00:00:00Z"}
-	thresholds := eval.QualityThresholds{SchemaVersion: 1, DatasetID: "eval/v1", Aggregation: "majority_vote"}
+	thresholds := qualityThresholds{QualityThresholds: eval.QualityThresholds{SchemaVersion: 1, DatasetID: "eval/v1", Aggregation: "majority_vote"}}
 	split := eval.Split{Quality: []string{"a", "b"}}
 	measured := eval.Report{
 		DatasetID: "eval/v1", Manifest: manifest, Status: "MEASURED", Provider: "provider", Model: "model",
