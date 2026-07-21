@@ -11,6 +11,25 @@
 {{- if not .Values.observability.enabled -}}
 {{- fail "all CloudOps profiles require ServiceMonitor and PrometheusRule resources" -}}
 {{- end -}}
+{{- if hasKey .Values.commonEnv "MYSQL_USER" -}}
+{{- fail "commonEnv must not define MYSQL_USER; use workload-scoped database identities" -}}
+{{- end -}}
+{{- if hasKey .Values.commonEnv "MYSQL_PASSWORD" -}}
+{{- fail "commonEnv must not contain MYSQL_PASSWORD" -}}
+{{- end -}}
+
+{{- if or
+  (eq .Values.database.api.user .Values.database.worker.user)
+  (eq .Values.database.api.user .Values.database.migrate.user)
+  (eq .Values.database.worker.user .Values.database.migrate.user) -}}
+{{- fail "API, Worker, and Migrate must use different MySQL users" -}}
+{{- end -}}
+{{- if or
+  (eq .Values.database.api.secretName .Values.database.worker.secretName)
+  (eq .Values.database.api.secretName .Values.database.migrate.secretName)
+  (eq .Values.database.worker.secretName .Values.database.migrate.secretName) -}}
+{{- fail "API, Worker, and Migrate must use different MySQL credential Secrets" -}}
+{{- end -}}
 {{- if has $profile (list "phase3" "phase4") -}}
   {{- if .Values.oauth.enabled -}}
   {{- fail (printf "%s requires oauth.enabled=false and no user-facing Service" $profile) -}}
@@ -44,11 +63,17 @@
 {{- end -}}
 
 {{- if .Values.baselineVerifier.enabled -}}
-  {{- if eq .Values.baselineVerifier.database.user (index .Values.commonEnv "MYSQL_USER" | toString) -}}
-  {{- fail "baseline verifier and runtime must use different MySQL users" -}}
+  {{- if or
+    (eq .Values.baselineVerifier.database.user .Values.database.api.user)
+    (eq .Values.baselineVerifier.database.user .Values.database.worker.user)
+    (eq .Values.baselineVerifier.database.user .Values.database.migrate.user) -}}
+  {{- fail "baseline verifier must use a MySQL user distinct from API, Worker, and Migrate" -}}
   {{- end -}}
-  {{- if eq .Values.baselineVerifier.database.secretName .Values.database.secretName -}}
-  {{- fail "baseline verifier and runtime must use different MySQL credential Secrets" -}}
+  {{- if or
+    (eq .Values.baselineVerifier.database.secretName .Values.database.api.secretName)
+    (eq .Values.baselineVerifier.database.secretName .Values.database.worker.secretName)
+    (eq .Values.baselineVerifier.database.secretName .Values.database.migrate.secretName) -}}
+  {{- fail "baseline verifier must use a MySQL credential Secret distinct from API, Worker, and Migrate" -}}
   {{- end -}}
   {{- if ne (index .Values.baselineVerifier.env "K8S_WRITE_ENABLED" | toString) "false" -}}
   {{- fail "baseline verifier Kubernetes access must remain read-only" -}}

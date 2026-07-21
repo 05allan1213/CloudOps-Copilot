@@ -6,6 +6,7 @@ phase4_manifest="${2:-}"
 phase5_manifest="${3:-}"
 phase6_manifest="${4:-}"
 chart_dir="${5:-}"
+platform_chart_dir=""
 
 if [[ -z "${phase3_manifest}" || ! -s "${phase3_manifest}" ||
       -z "${phase4_manifest}" || ! -s "${phase4_manifest}" ||
@@ -22,6 +23,8 @@ for command_name in jq helm; do
     exit 2
   }
 done
+
+platform_chart_dir="$(cd "${chart_dir}/../../server-monitor/charts/cloudops-kind-platform" && pwd)"
 
 check_profile() {
   local manifest="$1"
@@ -44,6 +47,9 @@ check_profile() {
       [deployment($deployment).spec.template.spec.containers[] | select(.name == $name)][0];
     def env($deployment; $container; $name):
       [container($deployment; $container).env[]? | select(.name == $name)][0];
+    def job_container($job): rs("Job"; $job)[0].spec.template.spec.containers[0];
+    def job_env($job; $name):
+      [job_container($job).env[]? | select(.name == $name)][0];
     def config: rs("ConfigMap"; "cloudops-config")[0];
     def oauth_config: config.data["oauth2-proxy-alpha-config.yaml"];
     def strips($name):
@@ -61,6 +67,8 @@ check_profile() {
     count("ServiceMonitor"; "cloudops-api") == 1 and
     count("PrometheusRule"; "cloudops-api") == 1 and
     config.metadata.labels["cloudops.io/profile"] == $profile and
+    (config.data | has("MYSQL_USER") | not) and
+    (config.data | has("MYSQL_PASSWORD") | not) and
     ([$documents[] | select(.kind == "Secret" or .kind == "Ingress" or
                   .kind == "ClusterRole" or .kind == "ClusterRoleBinding")] | length) == 0 and
     all($documents[] | select(.kind == "Service");
@@ -74,6 +82,14 @@ check_profile() {
     (rs("Job"; "cloudops-migrate")[0].spec.template.spec | has("serviceAccountName") | not) and
     (rs("Job"; "cloudops-migrate")[0].spec.template.spec.containers[0].env | map(.name) | sort) ==
       ["MYSQL_DATABASE","MYSQL_HOST","MYSQL_PASSWORD","MYSQL_PING_TIMEOUT_SECONDS","MYSQL_PORT","MYSQL_USER"] and
+    env("cloudops-api"; "cloudops-api"; "MYSQL_USER").value == "cloudops-api" and
+    env("cloudops-api"; "cloudops-api"; "MYSQL_PASSWORD").value == null and
+    env("cloudops-api"; "cloudops-api"; "MYSQL_PASSWORD").valueFrom.secretKeyRef ==
+      {"name":"cloudops-api-database","key":"MYSQL_PASSWORD"} and
+    job_env("cloudops-migrate"; "MYSQL_USER").value == "cloudops-migrate" and
+    job_env("cloudops-migrate"; "MYSQL_PASSWORD").value == null and
+    job_env("cloudops-migrate"; "MYSQL_PASSWORD").valueFrom.secretKeyRef ==
+      {"name":"cloudops-migrate-database","key":"MYSQL_PASSWORD"} and
     service("cloudops-api-internal").spec.ports ==
       [{"name":"internal","port":8082,"protocol":"TCP","targetPort":"internal"}] and
     rs("ServiceMonitor"; "cloudops-api")[0].spec.endpoints[0].port == "internal" and
@@ -96,9 +112,10 @@ check_profile() {
       (rs("Job"; "cloudops-baseline-verifier")[0].spec.template.spec.containers[0].env | map(.name) |
         any(. == "MYSQL_USER")) and
       ([rs("Job"; "cloudops-baseline-verifier")[0].spec.template.spec.containers[0].env[] |
-        select(.name == "MYSQL_USER")][0].value != config.data.MYSQL_USER) and
+        select(.name == "MYSQL_USER")][0].value == "cloudops-baseline") and
       ([rs("Job"; "cloudops-baseline-verifier")[0].spec.template.spec.containers[0].env[] |
-        select(.name == "MYSQL_PASSWORD")][0].valueFrom.secretKeyRef.name != "cloudops-database") and
+        select(.name == "MYSQL_PASSWORD")][0].valueFrom.secretKeyRef ==
+          {"name":"cloudops-baseline-database","key":"MYSQL_PASSWORD"}) and
       all([
         "LLM_API_KEY","V3_LLM_API_KEY_FILE","GITHUB_APP_ID","GITHUB_INSTALLATION_ID",
         "GITHUB_PRIVATE_KEY_FILE","GITHUB_TOKEN_FILE","GITHUB_WRITE_APP_ID",
@@ -178,6 +195,10 @@ check_profile() {
       env("cloudops-worker"; "cloudops-worker"; "V3_WORKER_PROVIDERS_ENABLED").value == "true" and
       env("cloudops-worker"; "cloudops-worker"; "K8S_WRITE_ENABLED").value == "false" and
       env("cloudops-worker"; "cloudops-worker"; "ASYNC_WORKER_ID").valueFrom.fieldRef.fieldPath == "metadata.name" and
+      env("cloudops-worker"; "cloudops-worker"; "MYSQL_USER").value == "cloudops-worker" and
+      env("cloudops-worker"; "cloudops-worker"; "MYSQL_PASSWORD").value == null and
+      env("cloudops-worker"; "cloudops-worker"; "MYSQL_PASSWORD").valueFrom.secretKeyRef ==
+        {"name":"cloudops-worker-database","key":"MYSQL_PASSWORD"} and
       (container("cloudops-worker"; "cloudops-worker").envFrom | length) == 1 and
       (container("cloudops-worker"; "cloudops-worker").envFrom[0].secretRef.name | length) > 0 and
       (deployment("cloudops-worker").spec.template.spec.volumes |
@@ -220,6 +241,16 @@ expect_template_failure() {
   fi
 }
 
+expect_platform_template_failure() {
+  local label="$1"
+  shift
+  if helm template cloudops-platform-negative "${platform_chart_dir}" \
+      --namespace cloudops-system "$@" >/dev/null 2>&1; then
+    printf 'negative MySQL platform Helm contract unexpectedly rendered: %s\n' "${label}" >&2
+    exit 1
+  fi
+}
+
 check_profile "${phase3_manifest}" phase3 false false false
 check_profile "${phase4_manifest}" phase4 false false false
 check_profile "${phase5_manifest}" phase5 true false true
@@ -236,12 +267,29 @@ expect_template_failure "phase6 Kubernetes writes" "${chart_dir}/values-phase6.y
 expect_template_failure "phase6 namespace drift" "${chart_dir}/values-phase6.yaml" --set-string worker.env.K8S_DEFAULT_NAMESPACE=other
 expect_template_failure "baseline Kubernetes writes" "${chart_dir}/values-phase5.yaml" --set-string baselineVerifier.env.K8S_WRITE_ENABLED=true
 expect_template_failure "baseline namespace drift" "${chart_dir}/values-phase5.yaml" --set-string baselineVerifier.env.K8S_DEFAULT_NAMESPACE=other
-expect_template_failure "baseline runtime database reuse" "${chart_dir}/values-phase5.yaml" --set-string baselineVerifier.database.user=cloudops
-expect_template_failure "baseline runtime database Secret reuse" "${chart_dir}/values-phase5.yaml" --set-string baselineVerifier.database.secretName=cloudops-database
+expect_template_failure "API and Worker database user reuse" "${chart_dir}/values-phase3.yaml" --set-string database.worker.user=cloudops-api
+expect_template_failure "API and Migrate database user reuse" "${chart_dir}/values-phase3.yaml" --set-string database.migrate.user=cloudops-api
+expect_template_failure "API and Worker database Secret reuse" "${chart_dir}/values-phase3.yaml" --set-string database.worker.secretName=cloudops-api-database
+expect_template_failure "API and Migrate database Secret reuse" "${chart_dir}/values-phase3.yaml" --set-string database.migrate.secretName=cloudops-api-database
+expect_template_failure "common raw MySQL password" "${chart_dir}/values-phase3.yaml" --set-string commonEnv.MYSQL_PASSWORD=rendered-secret-canary
+expect_template_failure "API raw MySQL password field" "${chart_dir}/values-phase3.yaml" --set-string database.api.password=rendered-secret-canary
+expect_template_failure "Worker raw MySQL password field" "${chart_dir}/values-phase6.yaml" --set-string database.worker.password=rendered-secret-canary
+expect_template_failure "Migrate raw MySQL password field" "${chart_dir}/values-phase3.yaml" --set-string database.migrate.password=rendered-secret-canary
+expect_template_failure "baseline API database user reuse" "${chart_dir}/values-phase5.yaml" --set-string baselineVerifier.database.user=cloudops-api
+expect_template_failure "baseline Worker database user reuse" "${chart_dir}/values-phase5.yaml" --set-string baselineVerifier.database.user=cloudops-worker
+expect_template_failure "baseline Migrate database user reuse" "${chart_dir}/values-phase5.yaml" --set-string baselineVerifier.database.user=cloudops-migrate
+expect_template_failure "baseline API database Secret reuse" "${chart_dir}/values-phase5.yaml" --set-string baselineVerifier.database.secretName=cloudops-api-database
+expect_template_failure "baseline Worker database Secret reuse" "${chart_dir}/values-phase5.yaml" --set-string baselineVerifier.database.secretName=cloudops-worker-database
+expect_template_failure "baseline Migrate database Secret reuse" "${chart_dir}/values-phase5.yaml" --set-string baselineVerifier.database.secretName=cloudops-migrate-database
 expect_template_failure "baseline LLM credential" "${chart_dir}/values-phase5.yaml" --set-string baselineVerifier.credentials.files.V3_LLM_API_KEY_FILE=llm-api-key
 expect_template_failure "oauth and csrf Secret reuse" "${chart_dir}/values-phase5.yaml" --set-string oauth.secret.name=cloudops-csrf
 expect_template_failure "duplicate OAuth role mapping" "${chart_dir}/values-phase5.yaml" --set-string 'oauth.operatorLogins[0]=cloudops-viewer'
 expect_template_failure "oauth2-proxy version drift" "${chart_dir}/values-phase5.yaml" --set-string images.oauth2Proxy.tag=v7.15.2
 expect_template_failure "mutable latest image" "${chart_dir}/values-phase3.yaml" --set-string images.api.tag=latest
 
-printf 'PASS: CloudOps phase3-6 rendered ownership, OAuth header stripping, baseline verifier isolation, Secret references, Service exposure, and SA/RBAC boundaries.\n'
+expect_platform_template_failure "platform API and Worker database user reuse" --set-string database.identities.worker.user=cloudops-api
+expect_platform_template_failure "platform API and Migrate database Secret reuse" --set-string database.identities.migrate.secretName=cloudops-api-database
+expect_platform_template_failure "platform root credential reuse" --set-string database.identities.api.secretName=cloudops-mysql-root
+expect_platform_template_failure "platform raw API password field" --set-string database.identities.api.password=rendered-secret-canary
+
+printf 'PASS: CloudOps phase3-6 rendered ownership, workload-scoped MySQL identities, OAuth header stripping, baseline verifier isolation, Secret references, Service exposure, and SA/RBAC boundaries.\n'

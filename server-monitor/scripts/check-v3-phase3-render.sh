@@ -31,6 +31,8 @@ has_resource() {
 has_resource Deployment cloudops-api
 has_resource Service cloudops-api-internal
 has_resource Job cloudops-migrate
+has_resource StatefulSet mysql
+has_resource ConfigMap cloudops-mysql-bootstrap
 has_resource ServiceMonitor cloudops-api
 has_resource PrometheusRule cloudops-api
 has_resource Deployment cloudops-demo-workload
@@ -58,6 +60,58 @@ for platform_resource in \
     exit 1
   }
 done
+
+jq -e '
+  [.[] | select(.kind == "StatefulSet" and .metadata.name == "mysql")][0] as $mysql
+  | $mysql.spec.template.spec.containers[0] as $container
+  | ($container.env | map(.name) | sort) == [
+      "CLOUDOPS_API_PASSWORD", "CLOUDOPS_API_USER",
+      "CLOUDOPS_BASELINE_PASSWORD", "CLOUDOPS_BASELINE_USER",
+      "CLOUDOPS_MIGRATE_PASSWORD", "CLOUDOPS_MIGRATE_USER",
+      "CLOUDOPS_WORKER_PASSWORD", "CLOUDOPS_WORKER_USER",
+      "MYSQL_DATABASE", "MYSQL_ROOT_PASSWORD"
+    ]
+  and ([
+    $container.env[]
+    | select(.name == "MYSQL_ROOT_PASSWORD" or (.name | endswith("_PASSWORD")))
+    | .valueFrom.secretKeyRef.name
+  ] | sort) == [
+    "cloudops-api-database", "cloudops-baseline-database",
+    "cloudops-migrate-database", "cloudops-mysql-root", "cloudops-worker-database"
+  ]
+  and all($container.env[] | select(.name == "MYSQL_ROOT_PASSWORD" or (.name | endswith("_PASSWORD")));
+    .value == null and .valueFrom.secretKeyRef.key != null)
+  and ([
+    $container.env[]
+    | select(.name == "CLOUDOPS_API_USER" or .name == "CLOUDOPS_WORKER_USER" or
+             .name == "CLOUDOPS_MIGRATE_USER" or .name == "CLOUDOPS_BASELINE_USER")
+    | .value
+  ] | sort) == ["cloudops-api", "cloudops-baseline", "cloudops-migrate", "cloudops-worker"]
+  and any($container.volumeMounts[];
+    .name == "bootstrap-identities" and
+    .mountPath == "/docker-entrypoint-initdb.d/10-cloudops-identities.sh" and
+    .readOnly == true)
+  and any($mysql.spec.template.spec.volumes[];
+    .name == "bootstrap-identities" and .configMap.name == "cloudops-mysql-bootstrap")
+' <<<"${platform_documents}" >/dev/null || {
+  printf 'MySQL must consume four distinct workload/verifier identities plus a separate root Secret\n' >&2
+  exit 1
+}
+
+jq -e '
+  [.[] | select(.kind == "ConfigMap" and .metadata.name == "cloudops-mysql-bootstrap")][0]
+  | .data["10-cloudops-identities.sh"] as $script
+  | ($script | contains("GRANT SELECT, INSERT, UPDATE, DELETE ON `cloudops`.* TO ${api_user}@'\''%'\'';"))
+  and ($script | contains("GRANT SELECT, INSERT, UPDATE, DELETE ON `cloudops`.* TO ${worker_user}@'\''%'\'';"))
+  and ($script | contains("GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, INDEX, REFERENCES ON `cloudops`.* TO ${migrate_user}@'\''%'\'';"))
+  and ($script | contains("GRANT SELECT ON `cloudops`.* TO ${baseline_user}@'\''%'\'';"))
+  and ($script | contains("GRANT INSERT, UPDATE ON `cloudops`.`deployment_baselines` TO ${baseline_user}@'\''%'\'';"))
+  and ($script | contains("GRANT INSERT, UPDATE ON `cloudops`.`baseline_observations` TO ${baseline_user}@'\''%'\'';"))
+  and (($script | test("GRANT ALL PRIVILEGES ON|WITH GRANT OPTION")) | not)
+' <<<"${platform_documents}" >/dev/null || {
+  printf 'MySQL bootstrap privileges are broader than the API/Worker/Migrate/baseline contract\n' >&2
+  exit 1
+}
 
 jq -e '
   ([.[] | .. | objects | .image? | select(type == "string")]) as $images

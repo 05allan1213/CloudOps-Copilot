@@ -15,13 +15,30 @@
     },
     "database": {
       "type": "object",
-      "required": ["name", "user", "secretName", "passwordKey", "rootPasswordKey"],
+      "additionalProperties": false,
+      "required": ["name", "root", "identities"],
       "properties": {
         "name": {"type": "string", "pattern": "^[a-zA-Z0-9_]+$"},
-        "user": {"type": "string", "pattern": "^[a-zA-Z0-9_]+$"},
-        "secretName": {"type": "string", "minLength": 1},
-        "passwordKey": {"type": "string", "minLength": 1},
-        "rootPasswordKey": {"type": "string", "minLength": 1}
+        "root": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["secretName", "passwordKey"],
+          "properties": {
+            "secretName": {"type": "string", "minLength": 1},
+            "passwordKey": {"type": "string", "minLength": 1}
+          }
+        },
+        "identities": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["api", "worker", "migrate", "baseline"],
+          "properties": {
+            "api": {"$ref": "#/definitions/mysqlIdentity"},
+            "worker": {"$ref": "#/definitions/mysqlIdentity"},
+            "migrate": {"$ref": "#/definitions/mysqlIdentity"},
+            "baseline": {"$ref": "#/definitions/mysqlIdentity"}
+          }
+        }
       }
     },
     "observability": {
@@ -123,6 +140,16 @@
     }
   },
   "definitions": {
+    "mysqlIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["user", "secretName", "passwordKey"],
+      "properties": {
+        "user": {"type": "string", "pattern": "^[A-Za-z0-9_][A-Za-z0-9_-]{0,31}$"},
+        "secretName": {"type": "string", "minLength": 1},
+        "passwordKey": {"type": "string", "minLength": 1}
+      }
+    },
     "image": {
       "type": "object",
       "required": ["repository", "tag", "digest", "pullPolicy"],

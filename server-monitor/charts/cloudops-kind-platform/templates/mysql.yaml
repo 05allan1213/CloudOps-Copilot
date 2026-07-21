@@ -40,17 +40,38 @@ spec:
             - name: MYSQL_ROOT_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.database.secretName | quote }}
-                  key: {{ .Values.database.rootPasswordKey | quote }}
+                  name: {{ .Values.database.root.secretName | quote }}
+                  key: {{ .Values.database.root.passwordKey | quote }}
             - name: MYSQL_DATABASE
               value: {{ .Values.database.name | quote }}
-            - name: MYSQL_USER
-              value: {{ .Values.database.user | quote }}
-            - name: MYSQL_PASSWORD
+            - name: CLOUDOPS_API_USER
+              value: {{ .Values.database.identities.api.user | quote }}
+            - name: CLOUDOPS_API_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.database.secretName | quote }}
-                  key: {{ .Values.database.passwordKey | quote }}
+                  name: {{ .Values.database.identities.api.secretName | quote }}
+                  key: {{ .Values.database.identities.api.passwordKey | quote }}
+            - name: CLOUDOPS_WORKER_USER
+              value: {{ .Values.database.identities.worker.user | quote }}
+            - name: CLOUDOPS_WORKER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.identities.worker.secretName | quote }}
+                  key: {{ .Values.database.identities.worker.passwordKey | quote }}
+            - name: CLOUDOPS_MIGRATE_USER
+              value: {{ .Values.database.identities.migrate.user | quote }}
+            - name: CLOUDOPS_MIGRATE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.identities.migrate.secretName | quote }}
+                  key: {{ .Values.database.identities.migrate.passwordKey | quote }}
+            - name: CLOUDOPS_BASELINE_USER
+              value: {{ .Values.database.identities.baseline.user | quote }}
+            - name: CLOUDOPS_BASELINE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.identities.baseline.secretName | quote }}
+                  key: {{ .Values.database.identities.baseline.passwordKey | quote }}
           ports:
             - name: mysql
               containerPort: 3306
@@ -72,6 +93,15 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/mysql
+            - name: bootstrap-identities
+              mountPath: /docker-entrypoint-initdb.d/10-cloudops-identities.sh
+              subPath: 10-cloudops-identities.sh
+              readOnly: true
+      volumes:
+        - name: bootstrap-identities
+          configMap:
+            name: cloudops-mysql-bootstrap
+            defaultMode: 0444
   volumeClaimTemplates:
     - metadata:
         name: data

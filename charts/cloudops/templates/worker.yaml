@@ -64,11 +64,13 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            - name: MYSQL_USER
+              value: {{ .Values.database.worker.user | quote }}
             - name: MYSQL_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.database.secretName }}
-                  key: {{ .Values.database.passwordKey }}
+                  name: {{ .Values.database.worker.secretName }}
+                  key: {{ .Values.database.worker.passwordKey }}
           ports:
             - name: management
               containerPort: {{ .Values.worker.managementPort }}

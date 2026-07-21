@@ -46,10 +46,11 @@
     "database": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["secretName", "passwordKey"],
+      "required": ["api", "worker", "migrate"],
       "properties": {
-        "secretName": { "$ref": "#/definitions/nonEmptyString" },
-        "passwordKey": { "$ref": "#/definitions/nonEmptyString" }
+        "api": { "$ref": "#/definitions/mysqlIdentity" },
+        "worker": { "$ref": "#/definitions/mysqlIdentity" },
+        "migrate": { "$ref": "#/definitions/mysqlIdentity" }
       }
     },
     "webhook": {
@@ -251,6 +252,16 @@
   },
   "definitions": {
     "nonEmptyString": { "type": "string", "minLength": 1 },
+    "mysqlIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["user", "secretName", "passwordKey"],
+      "properties": {
+        "user": { "type": "string", "pattern": "^[A-Za-z0-9_][A-Za-z0-9_-]{0,31}$" },
+        "secretName": { "$ref": "#/definitions/nonEmptyString" },
+        "passwordKey": { "$ref": "#/definitions/nonEmptyString" }
+      }
+    },
     "absolutePath": { "type": "string", "pattern": "^/" },
     "duration": { "type": "string", "pattern": "^[1-9][0-9]*(ms|s|m|h)$" },
     "nonNegativeDuration": { "type": "string", "pattern": "^(0|[1-9][0-9]*)(ms|s|m|h)$" },

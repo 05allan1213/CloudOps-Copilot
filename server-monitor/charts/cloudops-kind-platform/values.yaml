@@ -5,10 +5,26 @@ image:
   pullPolicy: IfNotPresent
 database:
   name: cloudops
-  user: cloudops
-  secretName: cloudops-v3-database
-  passwordKey: MYSQL_PASSWORD
-  rootPasswordKey: MYSQL_ROOT_PASSWORD
+  root:
+    secretName: cloudops-mysql-root
+    passwordKey: MYSQL_ROOT_PASSWORD
+  identities:
+    api:
+      user: cloudops-api
+      secretName: cloudops-api-database
+      passwordKey: MYSQL_PASSWORD
+    worker:
+      user: cloudops-worker
+      secretName: cloudops-worker-database
+      passwordKey: MYSQL_PASSWORD
+    migrate:
+      user: cloudops-migrate
+      secretName: cloudops-migrate-database
+      passwordKey: MYSQL_PASSWORD
+    baseline:
+      user: cloudops-baseline
+      secretName: cloudops-baseline-database
+      passwordKey: MYSQL_PASSWORD
 persistence:
   size: 2Gi
   storageClassName: ""

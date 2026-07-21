@@ -64,11 +64,13 @@ spec:
               value: {{ join "," .Values.oauth.operatorLogins | quote }}
             - name: V3_CSRF_SECRET_FILE
               value: {{ ternary .Values.csrf.secretFile "" .Values.oauth.enabled | quote }}
+            - name: MYSQL_USER
+              value: {{ .Values.database.api.user | quote }}
             - name: MYSQL_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.database.secretName }}
-                  key: {{ .Values.database.passwordKey }}
+                  name: {{ .Values.database.api.secretName }}
+                  key: {{ .Values.database.api.passwordKey }}
             - name: ALERTMANAGER_WEBHOOK_BEARER_TOKEN_FILE
               value: {{ .Values.webhook.tokenFile | quote }}
           ports:

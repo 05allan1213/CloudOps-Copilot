@@ -22,8 +22,9 @@ images:
     digest: ""
     pullPolicy: IfNotPresent
 
-# Non-secret environment shared by API, Worker, and Migrate. Credential values
-# are always read from pre-created Secrets and are never rendered by this chart.
+# Non-secret environment shared by API, Worker, and Migrate. MySQL identities
+# and credential values are workload-scoped below, read from pre-created
+# Secrets, and never rendered by this chart.
 commonEnv:
   APP_ENV: local-demo
   LOG_LEVEL: info
@@ -33,7 +34,6 @@ commonEnv:
   KAFKA_BROKERS: ""
   MYSQL_HOST: mysql
   MYSQL_PORT: "3306"
-  MYSQL_USER: cloudops
   MYSQL_DATABASE: cloudops
   MYSQL_STARTUP_TIMEOUT_SECONDS: "30"
   MYSQL_PING_TIMEOUT_SECONDS: "3"
@@ -41,8 +41,18 @@ commonEnv:
   TRACE_SAMPLE_RATE: "1.0"
 
 database:
-  secretName: cloudops-database
-  passwordKey: MYSQL_PASSWORD
+  api:
+    user: cloudops-api
+    secretName: cloudops-api-database
+    passwordKey: MYSQL_PASSWORD
+  worker:
+    user: cloudops-worker
+    secretName: cloudops-worker-database
+    passwordKey: MYSQL_PASSWORD
+  migrate:
+    user: cloudops-migrate
+    secretName: cloudops-migrate-database
+    passwordKey: MYSQL_PASSWORD
 
 webhook:
   secretName: cloudops-alertmanager-webhook

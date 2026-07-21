@@ -186,13 +186,19 @@ create_namespaces() {
 }
 
 create_secrets() {
-  local database_password root_password webhook_token
+  local api_database_password worker_database_password migrate_database_password baseline_database_password root_password webhook_token
   secret_dir="$(mktemp -d "${TMPDIR:-/tmp}/cloudops-v3-secrets.XXXXXX")"
   chmod 700 "${secret_dir}"
-  database_password="$(openssl rand -hex 32)"
+  api_database_password="$(openssl rand -hex 32)"
+  worker_database_password="$(openssl rand -hex 32)"
+  migrate_database_password="$(openssl rand -hex 32)"
+  baseline_database_password="$(openssl rand -hex 32)"
   root_password="$(openssl rand -hex 32)"
   webhook_token="$(openssl rand -hex 32)"
-  printf '%s' "${database_password}" >"${secret_dir}/mysql-password"
+  printf '%s' "${api_database_password}" >"${secret_dir}/mysql-api-password"
+  printf '%s' "${worker_database_password}" >"${secret_dir}/mysql-worker-password"
+  printf '%s' "${migrate_database_password}" >"${secret_dir}/mysql-migrate-password"
+  printf '%s' "${baseline_database_password}" >"${secret_dir}/mysql-baseline-password"
   printf '%s' "${root_password}" >"${secret_dir}/mysql-root-password"
   printf '%s' "${webhook_token}" >"${secret_dir}/webhook-token"
   printf '%s\n' \
@@ -210,9 +216,20 @@ create_secrets() {
     >"${secret_dir}/signal-target-allowlist.json"
   chmod 600 "${secret_dir}"/*
 
-  kubectl -n "${APP_NAMESPACE}" create secret generic cloudops-v3-database \
-    --from-file=MYSQL_PASSWORD="${secret_dir}/mysql-password" \
+  kubectl -n "${APP_NAMESPACE}" create secret generic cloudops-mysql-root \
     --from-file=MYSQL_ROOT_PASSWORD="${secret_dir}/mysql-root-password" \
+    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  kubectl -n "${APP_NAMESPACE}" create secret generic cloudops-api-database \
+    --from-file=MYSQL_PASSWORD="${secret_dir}/mysql-api-password" \
+    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  kubectl -n "${APP_NAMESPACE}" create secret generic cloudops-worker-database \
+    --from-file=MYSQL_PASSWORD="${secret_dir}/mysql-worker-password" \
+    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  kubectl -n "${APP_NAMESPACE}" create secret generic cloudops-migrate-database \
+    --from-file=MYSQL_PASSWORD="${secret_dir}/mysql-migrate-password" \
+    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  kubectl -n "${APP_NAMESPACE}" create secret generic cloudops-baseline-database \
+    --from-file=MYSQL_PASSWORD="${secret_dir}/mysql-baseline-password" \
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null
   kubectl -n "${APP_NAMESPACE}" create secret generic cloudops-alertmanager-webhook \
     --from-file=token="${secret_dir}/webhook-token" \
@@ -293,7 +310,6 @@ install_application() {
     --set-string "images.migrate.tag=${MIGRATE_IMAGE_TAG}" \
     --set-string "images.api.repository=${API_IMAGE_REPOSITORY}" \
     --set-string "images.migrate.repository=${MIGRATE_IMAGE_REPOSITORY}" \
-    --set-string "database.secretName=cloudops-v3-database" \
     --set-string "commonEnv.TRACE_OTLP_ENDPOINT=${OTEL_GRPC_ENDPOINT}" \
     --set-file "api.env.SIGNAL_TARGET_ALLOWLIST_JSON=${secret_dir}/signal-target-allowlist.json" \
     --wait --wait-for-jobs --timeout 10m

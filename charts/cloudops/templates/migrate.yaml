@@ -45,15 +45,17 @@ spec:
             # ServiceAccounts exist, so the migration Job receives only its
             # bounded database settings directly from values plus the
             # pre-created password Secret.
-            {{- range $name := list "MYSQL_HOST" "MYSQL_PORT" "MYSQL_USER" "MYSQL_DATABASE" "MYSQL_PING_TIMEOUT_SECONDS" }}
+            {{- range $name := list "MYSQL_HOST" "MYSQL_PORT" "MYSQL_DATABASE" "MYSQL_PING_TIMEOUT_SECONDS" }}
             - name: {{ $name }}
               value: {{ index $.Values.commonEnv $name | quote }}
             {{- end }}
+            - name: MYSQL_USER
+              value: {{ .Values.database.migrate.user | quote }}
             - name: MYSQL_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.database.secretName }}
-                  key: {{ .Values.database.passwordKey }}
+                  name: {{ .Values.database.migrate.secretName }}
+                  key: {{ .Values.database.migrate.passwordKey }}
           resources:
             {{- toYaml .Values.migrate.resources | nindent 12 }}
           volumeMounts:
