@@ -215,7 +215,7 @@ normalized_node_image_ref() {
 }
 
 preload_external_images() {
-  local digest_ref image image_id import_key import_ref local_ref node node_ref platform_digest platform_ref repository save_ref
+  local digest_ref image import_key import_ref local_ref node node_ref platform_digest platform_ref repository save_ref
   node="${CLUSTER_NAME}-control-plane"
   {
     monitoring_images
@@ -231,11 +231,15 @@ preload_external_images() {
     [[ "${platform_digest}" =~ ^sha256:[a-f0-9]{64}$ ]] || die "cannot resolve linux/amd64 manifest for ${image}"
     platform_ref="${repository}@${platform_digest}"
     docker pull --platform linux/amd64 "${platform_ref}" >/dev/null
-    image_id="$(docker image inspect --format '{{.Id}}' "${platform_ref}")"
     import_key="$(printf '%s' "${image}" | sha256sum | cut -c1-16)"
     local_ref="cloudops-preload:${import_key}"
     import_ref="docker.io/library/${local_ref}"
-    docker image tag "${image_id}" "${local_ref}"
+    # Docker's containerd image store can retain a sparse manifest-list entry
+    # whose dependent config/layers are omitted by docker save. A one-line
+    # FROM build materializes a complete single-platform image archive while
+    # preserving the exact upstream rootfs/config.
+    printf 'FROM %s\n' "${platform_ref}" |
+      docker build --quiet --platform linux/amd64 --provenance=false --sbom=false --tag "${local_ref}" - >/dev/null
     # kind load currently imports every manifest-list platform and can fail on
     # Docker's locally pruned attestations. Tag the resolved amd64 image ID so
     # docker save emits a single-platform archive, import it, then restore the
