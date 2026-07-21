@@ -19,3 +19,6 @@ The sole normative design remains ../CloudOps-Incident-Agent-V3-Refactor-Design.
 | [0011](0011-eval-gates-claim-safety.md) | Eval, hard Gates and claim safety | Phase 2-7 |
 | [0012](0012-legacy-cutover-contract.md) | Legacy cutover and deletion strategy | Phase 7A / 7B |
 | [0013](0013-agent-quality-thresholds.md) | Baseline-derived Agent Quality thresholds | Phase 4 / AGENT_QUALITY |
+| [0014](0014-agent-eval-v3-policy-and-thresholds.md) | Remove invalid identity-regression sufficiency policy | Phase 4 / AGENT_QUALITY |
+| [0015](0015-exhaustive-action-candidate-stop-contract.md) | Stop after exhaustive frozen action candidates | Phase 4 / AGENT_QUALITY |
+| [0016](0016-runtime-bound-agent-eval-revision.md) | Bind Eval evidence to current production Agent runtime | Phase 4 / AGENT_QUALITY |

@@ -5,7 +5,7 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 FIXTURE="${ROOT_DIR}/deploy/contracts/gitops-demo/regression/apps/demo/deployment.yaml"
 HEALTHY_FIXTURE="${ROOT_DIR}/deploy/contracts/gitops-demo/healthy/apps/demo/deployment.yaml"
-QUALITY_REPORT="${GOLDEN_AGENT_QUALITY_REPORT:-${ROOT_DIR}/docs/evidence/phase-4-agent-quality-v4-report.md}"
+QUALITY_REPORT="${GOLDEN_AGENT_QUALITY_REPORT:-${ROOT_DIR}/docs/evidence/phase-4-agent-quality-v5-report.md}"
 SOURCE_SHA="$(git -C "${ROOT_DIR}" rev-parse HEAD)"
 SOURCE_REPO="${GOLDEN_SOURCE_REPO:-05allan1213/CloudOps-Copilot}"
 GITOPS_REPO="${GOLDEN_GITOPS_REPO:-05allan1213/cloudops-gitops-demo}"
