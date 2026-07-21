@@ -272,6 +272,9 @@ type Config struct {
 	// 默认值：https://api.deepseek.com/v1/chat/completions
 	LLMAPIURL string
 
+	// LLMProvider is the stable provider identity persisted with each AgentRun.
+	LLMProvider string
+
 	// LLMModel LLM 模型名称
 	// 默认值：deepseek-chat
 	LLMModel string
@@ -662,6 +665,7 @@ func Load() Config {
 		RerankerTimeout:            configutil.DurationSeconds("RERANKER_TIMEOUT_SECONDS", 10),
 		LLMAPIKey:                  configutil.String("LLM_API_KEY", ""),
 		LLMAPIURL:                  configutil.String("LLM_API_URL", "https://api.deepseek.com/v1/chat/completions"),
+		LLMProvider:                configutil.String("LLM_PROVIDER", "deepseek"),
 		LLMModel:                   configutil.String("LLM_MODEL", "deepseek-chat"),
 		LLMTimeout:                 configutil.DurationSeconds("LLM_TIMEOUT_SECONDS", 60),
 		LLMMaxTokens:               configutil.PositiveInt("LLM_MAX_TOKENS", 800),

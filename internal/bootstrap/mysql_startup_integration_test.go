@@ -9,11 +9,13 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	drivermysql "github.com/go-sql-driver/mysql"
 
+	"github.com/05allan1213/CloudOps-Copilot/internal/agent"
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
 	apibootstrap "github.com/05allan1213/CloudOps-Copilot/internal/bootstrap/api"
 	appconfig "github.com/05allan1213/CloudOps-Copilot/internal/config"
@@ -182,6 +184,10 @@ func runtimeHTTPStatus(t *testing.T, method, url string, body io.Reader, content
 func testRuntimeTaskOperations() taskhandler.Config {
 	operation := func(context.Context, asyncjob.Execution) asyncjob.Result { return asyncjob.Succeeded(nil) }
 	return taskhandler.Config{
+		AgentRunIdentity: agent.RunModelIdentity{
+			Provider: "fixture", ActualModel: "fixture-model", PromptVersion: "prompt/v1",
+			PromptHash: strings.Repeat("a", 64), ToolSchemaVersion: "tools/v1", ToolSchemaHash: strings.Repeat("b", 64),
+		},
 		InvestigationStep: operation, RemediationPrepare: operation, ChangeEnsurePR: operation,
 		DeliveryObserve: operation, VerificationAdvance: operation,
 	}

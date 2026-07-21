@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/cloudwego/eino/compose"
@@ -206,6 +207,9 @@ func chargeStructuredUsage(total *agent.ModelUsage, usage *llm.ChatUsage) {
 	}
 	total.InputTokens += int64(usage.PromptTokens)
 	total.OutputTokens += int64(usage.CompletionTokens)
+	if usage.RequestIDHash != "" && !slices.Contains(total.ProviderRequestIDHashes, usage.RequestIDHash) {
+		total.ProviderRequestIDHashes = append(total.ProviderRequestIDHashes, usage.RequestIDHash)
+	}
 }
 
 func boundStructuredError(value string) string {

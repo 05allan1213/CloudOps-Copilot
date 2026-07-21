@@ -40,6 +40,32 @@ func TestV3StructuredModelRepairsDomainInvalidDeltaOnce(t *testing.T) {
 	}
 }
 
+func TestRuntimeModelIdentityUsesActualAdapterModelAndStableMaterials(t *testing.T) {
+	client := llm.NewClient(llm.Options{APIKey: "fixture", APIURL: "https://provider.example/v1/chat/completions", Model: "actual-model-v7"})
+	model, err := NewLLMModel(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policies := map[string]agent.ToolActionPolicy{
+		"z_tool": {TemplateIDs: []string{"z/v1"}, ParameterKeys: []string{"b", "a"}, ExpectedFactTypes: []string{"z.fact"}},
+		"a_tool": {TemplateIDs: []string{"a/v1"}, ExpectedFactTypes: []string{"a.fact"}},
+	}
+	identity, err := model.RuntimeModelIdentity("provider-x", policies)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.Provider != "provider-x" || identity.ActualModel != "actual-model-v7" ||
+		identity.PromptVersion != StructuredPromptVersion || identity.ToolSchemaVersion != InvestigationToolVersion ||
+		identity.Validate() != nil {
+		t.Fatalf("runtime identity=%+v", identity)
+	}
+	policies["z_tool"] = agent.ToolActionPolicy{TemplateIDs: []string{"z/v1"}, ParameterKeys: []string{"a", "b"}, ExpectedFactTypes: []string{"z.fact"}}
+	again, err := model.RuntimeModelIdentity("provider-x", policies)
+	if err != nil || again != identity {
+		t.Fatalf("identity changed under map/slice ordering: first=%+v second=%+v err=%v", identity, again, err)
+	}
+}
+
 func TestV3StructuredModelRepairsUnsupportedDiagnosisCitation(t *testing.T) {
 	invalid := `{"claim_type":"required_env_config_regression/v1","summary":"REQUIRED_ENV is absent in the deployed revision.","confidence":"confirmed","evidence_fact_ids":["missing-fact"],"remediation_hint":"restore_required_env"}`
 	valid := `{"claim_type":"required_env_config_regression/v1","summary":"REQUIRED_ENV is absent in the deployed revision.","confidence":"confirmed","evidence_fact_ids":["fact-1"],"unknowns":[],"remediation_hint":"restore_required_env"}`

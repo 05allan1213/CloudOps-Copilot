@@ -47,6 +47,7 @@ type InvestigationStepConfig struct {
 	Tasks              InvestigationTaskStore
 	Model              agent.InvestigationModel
 	Tools              agent.InvestigationReadTool
+	AgentRunIdentity   agent.RunModelIdentity
 	ClaimPolicy        agent.ClaimPolicy
 	ActionPolicies     map[string]agent.ToolActionPolicy
 	RequiredSources    []string
@@ -60,6 +61,9 @@ type InvestigationStepConfig struct {
 func NewInvestigationStep(config InvestigationStepConfig) (Operation, error) {
 	if config.DB == nil || config.Tasks == nil || config.Model == nil || config.Tools == nil {
 		return nil, errors.New("investigation.step requires MySQL, task store, model, and read-tool adapters")
+	}
+	if err := config.AgentRunIdentity.Validate(); err != nil {
+		return nil, fmt.Errorf("investigation.step requires a frozen AgentRun model identity: %w", err)
 	}
 	if err := validateInvestigationPolicy(config.ClaimPolicy, config.ActionPolicies); err != nil {
 		return nil, err
@@ -99,6 +103,7 @@ type investigationSnapshot struct {
 	Objective               string
 	Model                   string
 	PromptVersion           string
+	ModelIdentity           agent.RunModelIdentity
 	Limits                  agent.Limits
 	Usage                   agent.Usage
 	RunCheckpoint           json.RawMessage
@@ -136,26 +141,27 @@ type investigationStepPayload struct {
 }
 
 type investigationStepCheckpoint struct {
-	SchemaVersion          uint32                   `json:"schema_version"`
-	Mode                   string                   `json:"mode"`
-	SubjectVersion         uint64                   `json:"subject_version"`
-	BasisCheckpointVersion uint64                   `json:"basis_checkpoint_version"`
-	BasisCheckpointHash    string                   `json:"basis_checkpoint_hash"`
-	State                  agent.InvestigationState `json:"state"`
-	StateHash              string                   `json:"state_hash"`
-	Delta                  *agent.StateDelta        `json:"delta,omitempty"`
-	Action                 *agent.ProposedAction    `json:"action,omitempty"`
-	Observation            *agent.ToolObservation   `json:"observation,omitempty"`
-	Diagnosis              *agent.DiagnosisRecord   `json:"diagnosis,omitempty"`
-	Sufficiency            agent.SufficiencyResult  `json:"sufficiency"`
-	Usage                  agent.Usage              `json:"usage"`
-	StepNode               agent.Node               `json:"step_node"`
-	StepSummary            string                   `json:"step_summary"`
-	TerminalOutcome        string                   `json:"terminal_outcome,omitempty"`
-	NextMode               string                   `json:"next_mode,omitempty"`
-	NextAction             *agent.ProposedAction    `json:"next_action,omitempty"`
-	DurationMS             int64                    `json:"duration_ms"`
-	CapturedAt             time.Time                `json:"captured_at"`
+	SchemaVersion           uint32                   `json:"schema_version"`
+	Mode                    string                   `json:"mode"`
+	SubjectVersion          uint64                   `json:"subject_version"`
+	BasisCheckpointVersion  uint64                   `json:"basis_checkpoint_version"`
+	BasisCheckpointHash     string                   `json:"basis_checkpoint_hash"`
+	State                   agent.InvestigationState `json:"state"`
+	StateHash               string                   `json:"state_hash"`
+	Delta                   *agent.StateDelta        `json:"delta,omitempty"`
+	Action                  *agent.ProposedAction    `json:"action,omitempty"`
+	Observation             *agent.ToolObservation   `json:"observation,omitempty"`
+	Diagnosis               *agent.DiagnosisRecord   `json:"diagnosis,omitempty"`
+	Sufficiency             agent.SufficiencyResult  `json:"sufficiency"`
+	Usage                   agent.Usage              `json:"usage"`
+	StepNode                agent.Node               `json:"step_node"`
+	StepSummary             string                   `json:"step_summary"`
+	TerminalOutcome         string                   `json:"terminal_outcome,omitempty"`
+	NextMode                string                   `json:"next_mode,omitempty"`
+	NextAction              *agent.ProposedAction    `json:"next_action,omitempty"`
+	DurationMS              int64                    `json:"duration_ms"`
+	ProviderRequestIDHashes []string                 `json:"provider_request_id_hashes,omitempty"`
+	CapturedAt              time.Time                `json:"captured_at"`
 }
 
 func (o *investigationStepOperation) handle(ctx context.Context, execution asyncjob.Execution) asyncjob.Result {
@@ -173,6 +179,9 @@ func (o *investigationStepOperation) handle(ctx context.Context, execution async
 	snapshot, err := o.loader.Load(ctx, task)
 	if err != nil {
 		return investigationLoadFailure(err)
+	}
+	if snapshot.ModelIdentity != o.cfg.AgentRunIdentity {
+		return asyncjob.Dead("model_identity_mismatch", "AgentRun is bound to a different provider/model/prompt/tool identity", nil)
 	}
 	if err := o.bindPolicy(&snapshot); err != nil {
 		return asyncjob.Dead("checkpoint_policy_mismatch", boundInvestigation(err.Error(), 2048), o.failRunMutation(snapshot, "checkpoint_policy_mismatch"))
@@ -353,6 +362,8 @@ func (l mysqlInvestigationLoader) Load(ctx context.Context, task asyncjob.Task) 
 	}
 	const runQuery = `SELECT
  r.public_id, r.status, COALESCE(r.v3_status,''), r.objective, r.model, r.prompt_version,
+ COALESCE(r.model_provider,''), COALESCE(r.actual_model,''), COALESCE(r.prompt_hash,''),
+ COALESCE(r.tool_schema_version,''), COALESCE(r.tool_schema_hash,''),
  r.max_steps, r.used_steps, r.max_tool_calls, r.used_tool_calls,
  r.max_model_calls, r.used_model_calls, r.token_budget, r.input_tokens, r.output_tokens,
  r.max_evidence_items, r.used_evidence_items, r.max_runtime_ms, r.tool_timeout_ms,
@@ -380,6 +391,8 @@ WHERE r.id = ? AND r.incident_id = ? AND r.domain_schema_version = 3
 	var maxEvidence, usedEvidence, maxRuntime, toolTimeout, maxEvidenceBytes, maxCheckpointBytes, maxRetries int64
 	if err := l.db.QueryRowContext(ctx, runQuery, task.SubjectID, task.IncidentID, task.CycleNo, task.CycleNo).Scan(
 		&result.RunPublicID, &status, &v3Status, &result.Objective, &result.Model, &result.PromptVersion,
+		&result.ModelIdentity.Provider, &result.ModelIdentity.ActualModel, &result.ModelIdentity.PromptHash,
+		&result.ModelIdentity.ToolSchemaVersion, &result.ModelIdentity.ToolSchemaHash,
 		&maxSteps, &usedSteps, &maxTools, &usedTools, &maxModels, &usedModels, &tokenBudget, &inputTokens, &outputTokens,
 		&maxEvidence, &usedEvidence, &maxRuntime, &toolTimeout, &maxEvidenceBytes, &maxCheckpointBytes, &maxRetries,
 		&checkpoint, &checkpointVersion, &checkpointSchema, &checkpointHash, &result.RunVersion,
@@ -392,6 +405,7 @@ WHERE r.id = ? AND r.incident_id = ? AND r.domain_schema_version = 3
 		}
 		return investigationSnapshot{}, fmt.Errorf("load investigation.step subject: %w", err)
 	}
+	result.ModelIdentity.PromptVersion = result.PromptVersion
 	if result.RunPublicID == "" || result.IncidentPublicID == "" || result.RunVersion != task.ExpectedSubjectVersion ||
 		result.IncidentVersion != result.ExpectedIncidentVersion {
 		return investigationSnapshot{}, asyncjob.ErrSubjectVersionMismatch
@@ -728,7 +742,8 @@ func (o *investigationStepOperation) executeDecision(ctx context.Context, execut
 		SubjectVersion: snapshot.Task.ExpectedSubjectVersion, BasisCheckpointVersion: snapshot.State.CheckpointVersion,
 		BasisCheckpointHash: snapshot.StateHash, Delta: &delta, Sufficiency: sufficiency, Usage: usage,
 		StepNode: agent.NodeSelectAction, StepSummary: "validated one bounded StateDelta", CapturedAt: captured.UTC(),
-		DurationMS: nonnegativeDuration(started, captured),
+		ProviderRequestIDHashes: normalizedProviderRequestIDHashes(modelUsage.ProviderRequestIDHashes),
+		DurationMS:              nonnegativeDuration(started, captured),
 	}
 	switch {
 	case sufficiency.Outcome == agent.SufficiencyReady:
@@ -887,7 +902,8 @@ func (o *investigationStepOperation) executeSynthesis(ctx context.Context, execu
 		SubjectVersion: snapshot.Task.ExpectedSubjectVersion, BasisCheckpointVersion: snapshot.State.CheckpointVersion,
 		BasisCheckpointHash: snapshot.StateHash, Diagnosis: &diagnosis, Sufficiency: sufficiency, Usage: usage,
 		StepNode: agent.NodeProduceDiagnosis, StepSummary: "synthesized and deterministically validated diagnosis",
-		TerminalOutcome: "diagnosed", CapturedAt: captured.UTC(), DurationMS: nonnegativeDuration(started, captured),
+		ProviderRequestIDHashes: normalizedProviderRequestIDHashes(modelUsage.ProviderRequestIDHashes),
+		TerminalOutcome:         "diagnosed", CapturedAt: captured.UTC(), DurationMS: nonnegativeDuration(started, captured),
 	}
 	return finalizePrepared(checkpoint, state)
 }
@@ -1049,6 +1065,21 @@ func normalizedModelUsage(value agent.ModelUsage, input, output []byte) agent.Us
 		outputTokens = estimatedTokens(output)
 	}
 	return agent.Usage{Steps: 1, ModelCalls: modelCalls, InputTokens: inputTokens, OutputTokens: outputTokens}
+}
+
+func normalizedProviderRequestIDHashes(values []string) []string {
+	result := make([]string, 0, minInvestigation(len(values), 2))
+	for _, value := range values {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if !validSHA256Text(value) || slices.Contains(result, value) {
+			continue
+		}
+		result = append(result, value)
+		if len(result) == 2 {
+			break
+		}
+	}
+	return result
 }
 
 func reservedModelCalls(model agent.InvestigationModel) int {
@@ -1390,6 +1421,9 @@ func validateDecodedPrepared(snapshot investigationSnapshot, checkpoint investig
 	if checkpoint.CapturedAt.IsZero() || checkpoint.StepNode == "" || checkpoint.StepSummary == "" {
 		return errors.New("task checkpoint step metadata is incomplete")
 	}
+	if !slices.Equal(checkpoint.ProviderRequestIDHashes, normalizedProviderRequestIDHashes(checkpoint.ProviderRequestIDHashes)) {
+		return errors.New("task checkpoint provider request identity hashes are invalid")
+	}
 	if checkpoint.TerminalOutcome != "" {
 		if checkpoint.NextMode != "" || checkpoint.NextAction != nil || checkpoint.State.NextNode != agent.NodeEnd {
 			return errors.New("terminal task checkpoint contains a next operation")
@@ -1437,16 +1471,25 @@ func (o *investigationStepOperation) applyPrepared(ctx context.Context, tx async
 	if stepNode == "" {
 		stepNode = string(agent.NodeCompleteRun)
 	}
+	var providerRequestIDHashes any
+	if len(checkpoint.ProviderRequestIDHashes) > 0 {
+		encoded, marshalErr := json.Marshal(checkpoint.ProviderRequestIDHashes)
+		if marshalErr != nil {
+			return fmt.Errorf("encode provider request identity hashes: %w", marshalErr)
+		}
+		providerRequestIDHashes = encoded
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_steps
  (public_id, agent_run_id, domain_schema_version, incident_id, cycle_no, sequence, step_type,
   short_reason, selected_tool, arguments_json, arguments_hash, result_summary, result_ref,
-  evidence_public_id, status, retry_count, duration_ms, input_tokens, output_tokens, error_code,
+  evidence_public_id, status, retry_count, duration_ms, input_tokens, output_tokens, provider_request_id_hashes, error_code,
   started_at, finished_at, created_at)
- VALUES (?, ?, 3, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', 0, ?, ?, ?, '', ?, ?, ?)`,
+ VALUES (?, ?, 3, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', 0, ?, ?, ?, ?, '', ?, ?, ?)`,
 		stepPublicID, snapshot.Task.SubjectID, snapshot.Task.IncidentID, snapshot.Task.CycleNo, sequence,
 		stepNode, boundInvestigation(checkpoint.StepSummary, 1024), selectedTool(checkpoint), arguments, argumentsHash,
 		boundInvestigation(checkpoint.StepSummary, 4096), "", evidencePublicID, checkpoint.DurationMS,
-		checkpoint.Usage.InputTokens, checkpoint.Usage.OutputTokens, checkpoint.CapturedAt.UTC(), checkpoint.CapturedAt.UTC(), checkpoint.CapturedAt.UTC()); err != nil {
+		checkpoint.Usage.InputTokens, checkpoint.Usage.OutputTokens, providerRequestIDHashes,
+		checkpoint.CapturedAt.UTC(), checkpoint.CapturedAt.UTC(), checkpoint.CapturedAt.UTC()); err != nil {
 		return fmt.Errorf("persist investigation AgentStep: %w", err)
 	}
 	if checkpoint.Observation != nil {

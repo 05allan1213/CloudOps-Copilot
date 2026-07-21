@@ -86,6 +86,10 @@ func TestStaticTaskOperationFactoryValidatesBeforeMySQLStartup(t *testing.T) {
 
 func completeWorkerOperationConfig() WorkerOperationConfig {
 	return WorkerOperationConfig{
+		AgentRunIdentity: agent.RunModelIdentity{
+			Provider: "fixture", ActualModel: "fixture-model", PromptVersion: "prompt/v1",
+			PromptHash: strings.Repeat("a", 64), ToolSchemaVersion: "tools/v1", ToolSchemaHash: strings.Repeat("b", 64),
+		},
 		ClaimPolicy: agent.GoldenRequiredEnvClaimPolicy(),
 		ActionPolicies: map[string]agent.ToolActionPolicy{
 			"inspect_workload": {TemplateIDs: []string{"workload/v1"}, ExpectedFactTypes: []string{"workload.subject_confirmed"}},

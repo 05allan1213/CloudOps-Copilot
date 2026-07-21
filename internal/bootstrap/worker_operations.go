@@ -37,6 +37,7 @@ type WorkerOperationDependencies struct {
 // shared by the operation constructors. Provider credentials do not belong in
 // this value; their adapters own credential-file validation.
 type WorkerOperationConfig struct {
+	AgentRunIdentity   agent.RunModelIdentity
 	ClaimPolicy        agent.ClaimPolicy
 	ActionPolicies     map[string]agent.ToolActionPolicy
 	RequiredSources    []string
@@ -74,7 +75,8 @@ func AssembleWorkerTaskOperations(
 
 	investigationStep, err := taskhandler.NewInvestigationStep(taskhandler.InvestigationStepConfig{
 		DB: db, Tasks: tasks, Model: dependencies.InvestigationModel, Tools: dependencies.InvestigationTools,
-		ClaimPolicy: config.ClaimPolicy, ActionPolicies: config.ActionPolicies,
+		AgentRunIdentity: config.AgentRunIdentity,
+		ClaimPolicy:      config.ClaimPolicy, ActionPolicies: config.ActionPolicies,
 		RequiredSources: config.RequiredSources, MaxCheckpointBytes: config.MaxCheckpointBytes, Now: config.Now,
 	})
 	if err != nil {
@@ -122,6 +124,7 @@ func AssembleWorkerTaskOperations(
 	}
 
 	return taskhandler.Config{
+		AgentRunIdentity:  config.AgentRunIdentity,
 		InvestigationStep: investigationStep, RemediationPrepare: remediationPrepare,
 		ChangeEnsurePR: changeEnsurePR, DeliveryObserve: deliveryObserve,
 		VerificationAdvance: verificationAdvance,
@@ -129,6 +132,9 @@ func AssembleWorkerTaskOperations(
 }
 
 func validateWorkerOperationConfig(config WorkerOperationConfig) error {
+	if err := config.AgentRunIdentity.Validate(); err != nil {
+		return fmt.Errorf("production task operations require a frozen AgentRun model identity: %w", err)
+	}
 	if strings.TrimSpace(config.ClaimPolicy.Version) == "" || strings.TrimSpace(config.ClaimPolicy.ClaimType) == "" ||
 		len(config.ClaimPolicy.Requirements) == 0 || config.ClaimPolicy.MinIndependentCollectors < 1 {
 		return errors.New("production task operations require a versioned investigation claim policy")

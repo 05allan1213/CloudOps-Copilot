@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/05allan1213/CloudOps-Copilot/internal/agent"
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
 	"github.com/05allan1213/CloudOps-Copilot/internal/businessbudget"
 )
@@ -36,21 +37,30 @@ const (
 	defaultStepMaxAttempts    = 5
 )
 
-func investigationStart(_ context.Context, execution asyncjob.Execution) asyncjob.Result {
-	task := execution.Task
-	if dispatchKey(task) != investigationStartKey || task.SubjectID != task.IncidentID ||
-		task.CycleNo == 0 || task.ExpectedSubjectVersion == 0 || task.PayloadSchemaVersion != 1 {
-		return asyncjob.Dead("invalid_task_subject", "investigation.start task identity is invalid", nil)
+func investigationStart(identity agent.RunModelIdentity) Operation {
+	identityErr := identity.Validate()
+	return func(_ context.Context, execution asyncjob.Execution) asyncjob.Result {
+		task := execution.Task
+		if dispatchKey(task) != investigationStartKey || task.SubjectID != task.IncidentID ||
+			task.CycleNo == 0 || task.ExpectedSubjectVersion == 0 || task.PayloadSchemaVersion != 1 {
+			return asyncjob.Dead("invalid_task_subject", "investigation.start task identity is invalid", nil)
+		}
+		if _, err := decodeInvestigationStartPayload(task); err != nil {
+			return asyncjob.Dead("invalid_task_payload", err.Error(), nil)
+		}
+		if identityErr != nil {
+			return asyncjob.Dead("invalid_agent_run_identity", identityErr.Error(), nil)
+		}
+		return asyncjob.Succeeded(func(ctx context.Context, tx asyncjob.DBTX) error {
+			return startInvestigation(ctx, tx, task, identity)
+		})
 	}
-	if _, err := decodeInvestigationStartPayload(task); err != nil {
-		return asyncjob.Dead("invalid_task_payload", err.Error(), nil)
-	}
-	return asyncjob.Succeeded(func(ctx context.Context, tx asyncjob.DBTX) error {
-		return startInvestigation(ctx, tx, task)
-	})
 }
 
-func startInvestigation(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task) error {
+func startInvestigation(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, identity agent.RunModelIdentity) error {
+	if err := identity.Validate(); err != nil {
+		return fmt.Errorf("%w: %v", asyncjob.ErrInvalidMutation, err)
+	}
 	startPayload, err := decodeInvestigationStartPayload(task)
 	if err != nil {
 		return fmt.Errorf("%w: %v", asyncjob.ErrInvalidMutation, err)
@@ -87,16 +97,19 @@ FOR UPDATE`, task.IncidentID).Scan(&cycle, &status, &version); err != nil {
 	}
 	result, err := tx.ExecContext(ctx, `
 INSERT INTO agent_runs
-    (public_id, incident_id, idempotency_key, status, objective, model, prompt_version,
+    (public_id, incident_id, idempotency_key, status, objective, model, model_provider, actual_model,
+     prompt_version, prompt_hash, tool_schema_version, tool_schema_hash,
      max_steps, max_tool_calls, max_model_calls, token_budget, max_evidence_items,
      max_runtime_ms, tool_timeout_ms, max_evidence_bytes, max_checkpoint_bytes,
      max_step_retries, failure_code, row_version, domain_schema_version, v3_status,
      cycle_no, expected_incident_version, business_budget_authorization_id, deadline_at, created_at, updated_at)
 VALUES (?, ?, ?, 'PENDING', 'Investigate the current Incident using bounded read-only evidence.',
-        'configured', 'incident-agent-v3', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 1, 3,
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 1, 3,
         'pending', ?, ?, ?, TIMESTAMPADD(MICROSECOND, ?, NOW(6)), NOW(6), NOW(6))
 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
 		runPublicID, task.IncidentID, runKey,
+		identity.ActualModel, identity.Provider, identity.ActualModel, identity.PromptVersion, identity.PromptHash,
+		identity.ToolSchemaVersion, identity.ToolSchemaHash,
 		defaultSemanticIterations, defaultToolCalls, defaultModelCalls, defaultModelTokens,
 		defaultEvidenceItems, defaultRuntimeMillis, defaultToolTimeoutMillis,
 		defaultEvidenceBytes, defaultCheckpointBytes, defaultStepRetries,
@@ -111,16 +124,21 @@ ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
 
 	var runIncidentID, runCycle, runExpectedVersion uint64
 	var runKeyFound, runStatus string
+	var runIdentity agent.RunModelIdentity
 	var runAuthorization sql.NullInt64
 	if err := tx.QueryRowContext(ctx, `
 SELECT public_id, incident_id, COALESCE(cycle_no, 0), COALESCE(expected_incident_version, 0),
-       COALESCE(idempotency_key, ''), COALESCE(v3_status, ''), business_budget_authorization_id
+       COALESCE(idempotency_key, ''), COALESCE(v3_status, ''), business_budget_authorization_id,
+       COALESCE(model_provider, ''), COALESCE(actual_model, ''), COALESCE(prompt_version, ''),
+       COALESCE(prompt_hash, ''), COALESCE(tool_schema_version, ''), COALESCE(tool_schema_hash, '')
 FROM agent_runs WHERE id = ? FOR UPDATE`, runID).
-		Scan(&runPublicID, &runIncidentID, &runCycle, &runExpectedVersion, &runKeyFound, &runStatus, &runAuthorization); err != nil {
+		Scan(&runPublicID, &runIncidentID, &runCycle, &runExpectedVersion, &runKeyFound, &runStatus, &runAuthorization,
+			&runIdentity.Provider, &runIdentity.ActualModel, &runIdentity.PromptVersion, &runIdentity.PromptHash,
+			&runIdentity.ToolSchemaVersion, &runIdentity.ToolSchemaHash); err != nil {
 		return fmt.Errorf("load investigation AgentRun identity: %w", err)
 	}
 	if runIncidentID != task.IncidentID || runCycle != uint64(task.CycleNo) ||
-		runExpectedVersion != task.ExpectedSubjectVersion+1 || runKeyFound != runKey || runStatus != "pending" {
+		runExpectedVersion != task.ExpectedSubjectVersion+1 || runKeyFound != runKey || runStatus != "pending" || runIdentity != identity {
 		return fmt.Errorf("%w: active AgentRun does not match investigation.start", asyncjob.ErrInvalidMutation)
 	}
 	if (budget.AuthorizationID == 0 && runAuthorization.Valid) ||

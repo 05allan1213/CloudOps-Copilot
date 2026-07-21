@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -67,6 +69,7 @@ type ChatMessage struct {
 }
 
 type chatResponse struct {
+	ID      string `json:"id,omitempty"`
 	Choices []struct {
 		Message ChatMessage `json:"message"`
 	} `json:"choices"`
@@ -74,6 +77,7 @@ type chatResponse struct {
 }
 
 type chatStreamChunk struct {
+	ID      string `json:"id,omitempty"`
 	Choices []struct {
 		Delta   ChatMessage `json:"delta"`
 		Message ChatMessage `json:"message"`
@@ -82,9 +86,10 @@ type chatStreamChunk struct {
 }
 
 type ChatUsage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
+	PromptTokens     int    `json:"prompt_tokens"`
+	CompletionTokens int    `json:"completion_tokens"`
+	TotalTokens      int    `json:"total_tokens"`
+	RequestIDHash    string `json:"-"`
 }
 
 func NewClient(options Options) *Client {
@@ -307,7 +312,25 @@ func (c *Client) doChatRequest(ctx context.Context, chatReq chatRequest) (messag
 	if len(decoded.Choices) == 0 {
 		return ChatMessage{}, nil, ErrInvalidResponse
 	}
+	if decoded.Usage == nil {
+		decoded.Usage = &ChatUsage{}
+	}
+	decoded.Usage.RequestIDHash = providerRequestIDHash(resp.Header, decoded.ID)
 	return decoded.Choices[0].Message, decoded.Usage, nil
+}
+
+func providerRequestIDHash(header http.Header, bodyID string) string {
+	for _, name := range []string{"x-request-id", "request-id", "x-trace-id", "trace-id"} {
+		if value := strings.TrimSpace(header.Get(name)); value != "" {
+			sum := sha256.Sum256([]byte(strings.ToLower(name) + "\x00" + value))
+			return hex.EncodeToString(sum[:])
+		}
+	}
+	if value := strings.TrimSpace(bodyID); value != "" {
+		sum := sha256.Sum256([]byte("response-id\x00" + value))
+		return hex.EncodeToString(sum[:])
+	}
+	return ""
 }
 
 func (c *Client) doChatStreamRequest(ctx context.Context, messages []ChatMessage, onDelta func(string) error) (content string, usageResult *ChatUsage, retErr error) {

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/05allan1213/CloudOps-Copilot/internal/agent"
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
 )
 
@@ -29,6 +30,7 @@ func TestRegistryContainsOnlyFrozenTaskTypes(t *testing.T) {
 func TestRegistryContainsOnlyFrozenDispatchIdentities(t *testing.T) {
 	operation := func(context.Context, asyncjob.Execution) asyncjob.Result { return asyncjob.Succeeded(nil) }
 	registry, err := NewRegistry(Config{
+		AgentRunIdentity:  registryTestRunIdentity(),
 		InvestigationStep: operation, RemediationPrepare: operation, ChangeEnsurePR: operation,
 		DeliveryObserve: operation, VerificationAdvance: operation,
 	})
@@ -84,6 +86,7 @@ func TestRegistryDispatchesOnlyExactInjectedOperationsAndFailsClosed(t *testing.
 func TestNewRuntimeRequiresEveryOneStepOperation(t *testing.T) {
 	operation := func(context.Context, asyncjob.Execution) asyncjob.Result { return asyncjob.Succeeded(nil) }
 	complete := Config{
+		AgentRunIdentity:  registryTestRunIdentity(),
 		InvestigationStep: operation, RemediationPrepare: operation, ChangeEnsurePR: operation,
 		DeliveryObserve: operation, VerificationAdvance: operation,
 	}
@@ -109,6 +112,25 @@ func TestNewRuntimeRequiresEveryOneStepOperation(t *testing.T) {
 				t.Fatalf("missing operation error=%v", err)
 			}
 		})
+	}
+}
+
+func TestNewRuntimeRejectsPlaceholderAgentRunIdentity(t *testing.T) {
+	operation := func(context.Context, asyncjob.Execution) asyncjob.Result { return asyncjob.Succeeded(nil) }
+	config := Config{
+		AgentRunIdentity: registryTestRunIdentity(), InvestigationStep: operation, RemediationPrepare: operation,
+		ChangeEnsurePR: operation, DeliveryObserve: operation, VerificationAdvance: operation,
+	}
+	config.AgentRunIdentity.ActualModel = "configured"
+	if _, err := NewRuntime(config); err == nil || !strings.Contains(err.Error(), "model identity") {
+		t.Fatalf("placeholder identity error=%v", err)
+	}
+}
+
+func registryTestRunIdentity() agent.RunModelIdentity {
+	return agent.RunModelIdentity{
+		Provider: "fixture", ActualModel: "fixture-model", PromptVersion: "prompt/v1",
+		PromptHash: strings.Repeat("a", 64), ToolSchemaVersion: "tools/v1", ToolSchemaHash: strings.Repeat("b", 64),
 	}
 }
 

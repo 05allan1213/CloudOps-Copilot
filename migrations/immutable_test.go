@@ -72,6 +72,30 @@ func TestPhase5ChangeBaselineMigrationContract(t *testing.T) {
 	}
 }
 
+func TestAgentRunModelIdentityMigrationContract(t *testing.T) {
+	contents, err := FS.ReadFile("00013_agent_run_model_identity.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqlText := string(contents)
+	if !strings.HasPrefix(sqlText, "-- +goose Up") || !strings.Contains(sqlText, "-- +goose NO TRANSACTION") {
+		t.Fatal("00013 must be an explicit forward Goose migration")
+	}
+	up := strings.Split(sqlText, "-- +goose Down")[0]
+	for _, required := range []string{
+		"model_provider", "actual_model", "prompt_hash", "tool_schema_version", "tool_schema_hash",
+		"provider_request_id_hashes", "chk_agent_runs_model_identity", "LOWER(TRIM(actual_model)) <> 'configured'",
+	} {
+		if !strings.Contains(up, required) {
+			t.Fatalf("00013 missing AgentRun identity contract %q", required)
+		}
+	}
+	forbidden := regexp.MustCompile(`(?im)^\s*(UPDATE|INSERT|DELETE|TRUNCATE|DROP\s+TABLE|RENAME\s+TABLE)\b`)
+	if match := forbidden.FindString(up); match != "" {
+		t.Fatalf("00013 up contains non-expand statement %q", strings.TrimSpace(match))
+	}
+}
+
 func TestV3RemediationVerificationMigrationContract(t *testing.T) {
 	contents, err := FS.ReadFile("00009_expand_v3_remediation_verification.sql")
 	if err != nil {

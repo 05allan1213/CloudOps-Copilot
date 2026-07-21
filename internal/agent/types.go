@@ -2,10 +2,50 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
+	"strings"
 	"time"
 
 	domain "github.com/05allan1213/CloudOps-Copilot/internal/incident"
 )
+
+// RunModelIdentity is the immutable provider/model/prompt/tool contract bound
+// to one AgentRun. A worker may resume that Run only when its live adapters
+// expose the exact same identity.
+type RunModelIdentity struct {
+	Provider          string
+	ActualModel       string
+	PromptVersion     string
+	PromptHash        string
+	ToolSchemaVersion string
+	ToolSchemaHash    string
+}
+
+func (i RunModelIdentity) Validate() error {
+	values := []string{i.Provider, i.ActualModel, i.PromptVersion, i.ToolSchemaVersion}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || strings.EqualFold(value, "configured") {
+			return errors.New("agent run model identity is incomplete")
+		}
+	}
+	if !lowerHexIdentity(i.PromptHash, 64) || !lowerHexIdentity(i.ToolSchemaHash, 64) {
+		return errors.New("agent run model identity hashes are invalid")
+	}
+	return nil
+}
+
+func lowerHexIdentity(value string, length int) bool {
+	if len(value) != length || value != strings.ToLower(value) {
+		return false
+	}
+	for _, character := range value {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
+}
 
 type RunStatus = domain.AgentRunStatus
 
@@ -137,27 +177,28 @@ type Run struct {
 
 // Step is one durable graph-node execution summary.
 type Step struct {
-	ID               uint64
-	PublicID         string
-	RunID            uint64
-	Sequence         int
-	Node             Node
-	Status           StepStatus
-	ShortReason      string
-	SelectedTool     string
-	Arguments        json.RawMessage
-	ArgumentsHash    string
-	ResultSummary    string
-	ResultRef        string
-	EvidencePublicID string
-	RetryCount       int
-	DurationMS       int64
-	InputTokens      int64
-	OutputTokens     int64
-	ErrorCode        ErrorCode
-	StartedAt        *time.Time
-	FinishedAt       *time.Time
-	CreatedAt        time.Time
+	ID                      uint64
+	PublicID                string
+	RunID                   uint64
+	Sequence                int
+	Node                    Node
+	Status                  StepStatus
+	ShortReason             string
+	SelectedTool            string
+	Arguments               json.RawMessage
+	ArgumentsHash           string
+	ResultSummary           string
+	ResultRef               string
+	EvidencePublicID        string
+	RetryCount              int
+	DurationMS              int64
+	InputTokens             int64
+	OutputTokens            int64
+	ProviderRequestIDHashes []string
+	ErrorCode               ErrorCode
+	StartedAt               *time.Time
+	FinishedAt              *time.Time
+	CreatedAt               time.Time
 }
 
 // IncidentContext is the bounded Incident input available to the model.
@@ -267,7 +308,8 @@ type GraphState struct {
 
 // ModelUsage is returned by provider adapters.
 type ModelUsage struct {
-	Calls        int
-	InputTokens  int64
-	OutputTokens int64
+	Calls                   int
+	InputTokens             int64
+	OutputTokens            int64
+	ProviderRequestIDHashes []string
 }

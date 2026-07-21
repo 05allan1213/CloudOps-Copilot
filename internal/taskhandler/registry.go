@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/05allan1213/CloudOps-Copilot/internal/agent"
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
 )
 
@@ -70,6 +71,7 @@ func dispatchKey(task asyncjob.Task) DispatchKey {
 // phases. Phase 2 provides investigation.start because it is part of the
 // Incident/Task convergence transaction.
 type Config struct {
+	AgentRunIdentity    agent.RunModelIdentity
 	InvestigationStep   Operation
 	RemediationPrepare  Operation
 	ChangeEnsurePR      Operation
@@ -97,6 +99,9 @@ func NewRuntime(config Config) (map[asyncjob.TaskType]asyncjob.Handler, error) {
 
 // NewRegistry constructs the production exact-identity registry.
 func NewRegistry(config Config) (*Registry, error) {
+	if err := config.AgentRunIdentity.Validate(); err != nil {
+		return nil, fmt.Errorf("async task operations require a frozen AgentRun model identity: %w", err)
+	}
 	missing := missingOperations(config)
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("async task operations are not migrated: %s", strings.Join(missing, ", "))
@@ -151,7 +156,7 @@ func missingOperations(config Config) []string {
 
 func registry(config Config) *Registry {
 	return &Registry{operations: map[DispatchKey]Operation{
-		investigationStartKey:    investigationStart,
+		investigationStartKey:    investigationStart(config.AgentRunIdentity),
 		investigationStepKey:     config.InvestigationStep,
 		remediationPrepareKey:    config.RemediationPrepare,
 		changeEnsurePlanPRKey:    config.ChangeEnsurePR,

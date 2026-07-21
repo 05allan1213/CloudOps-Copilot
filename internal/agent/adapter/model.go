@@ -89,6 +89,9 @@ func callJSON[T any](ctx context.Context, client *llm.Client, system string, inp
 	modelUsage := agent.ModelUsage{Calls: 1}
 	if usage != nil {
 		modelUsage.InputTokens, modelUsage.OutputTokens = int64(usage.PromptTokens), int64(usage.CompletionTokens)
+		if usage.RequestIDHash != "" {
+			modelUsage.ProviderRequestIDHashes = []string{usage.RequestIDHash}
+		}
 	}
 	if err != nil {
 		code := agent.ErrorModelUnavailable

@@ -128,7 +128,7 @@ func (c V3WorkerProviderConfig) Validate() error {
 		c.Application.ObservabilityRequestTimeout <= 0 || c.Application.ObservabilityMaxLookback < 30*time.Minute {
 		return errors.New("V3 worker provider timeouts and observability bounds are invalid")
 	}
-	if strings.TrimSpace(c.Application.LLMAPIURL) == "" || strings.TrimSpace(c.Application.LLMModel) == "" ||
+	if strings.TrimSpace(c.Application.LLMAPIURL) == "" || strings.TrimSpace(c.Application.LLMProvider) == "" || strings.TrimSpace(c.Application.LLMModel) == "" ||
 		(strings.TrimSpace(c.Application.LLMAPIKey) == "" && strings.TrimSpace(c.LLMAPIKeyFile) == "") {
 		return errors.New("V3 worker requires one configured LLM credential source")
 	}
@@ -367,9 +367,14 @@ func (f ProductionTaskOperationFactory) Build(ctx context.Context, db *sql.DB, t
 	if err != nil {
 		return taskhandler.Config{}, fmt.Errorf("initialize V3 investigation model: %w", err)
 	}
+	actionPolicies := investigationread.GoldenActionPolicies()
+	modelIdentity, err := model.RuntimeModelIdentity(c.LLMProvider, actionPolicies)
+	if err != nil {
+		return taskhandler.Config{}, fmt.Errorf("freeze V3 investigation model identity: %w", err)
+	}
 
 	return AssembleWorkerTaskOperations(db, tasks, WorkerOperationConfig{
-		ClaimPolicy: agent.GoldenRequiredEnvClaimPolicy(), ActionPolicies: investigationread.GoldenActionPolicies(),
+		ClaimPolicy: agent.GoldenRequiredEnvClaimPolicy(), ActionPolicies: actionPolicies, AgentRunIdentity: modelIdentity,
 		RequiredSources: investigationread.RequiredSources(), MaxCheckpointBytes: f.Config.MaxCheckpointBytes,
 		CurrentPolicyHash:    policyHash,
 		DeliveryTarget:       taskhandler.DeliveryObserveTarget{ArgoApplication: target.ArgoApplication, ArgoProject: target.ArgoProject, ArgoRepository: target.ArgoRepositoryURL, ArgoPath: target.GitOpsPath, DesiredReplicas: 2},
