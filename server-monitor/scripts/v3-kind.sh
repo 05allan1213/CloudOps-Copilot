@@ -215,7 +215,7 @@ normalized_node_image_ref() {
 }
 
 preload_external_images() {
-  local digest_ref image image_id import_key import_ref local_ref node node_ref save_ref
+  local digest_ref image image_id import_key import_ref local_ref node node_ref platform_digest platform_ref repository save_ref
   node="${CLUSTER_NAME}-control-plane"
   {
     monitoring_images
@@ -223,9 +223,15 @@ preload_external_images() {
   } | sort -u | while IFS= read -r image; do
     [[ -n "${image}" ]] || continue
     printf 'Preloading pinned image through host Docker: %s\n' "${image}"
-    docker pull --platform linux/amd64 "${image}" >/dev/null
     save_ref="${image%@*}"
-    image_id="$(docker image inspect --format '{{.Id}}' "${image}")"
+    repository="${save_ref%:*}"
+    platform_digest="$(docker buildx imagetools inspect "${image}" --format '{{json .Manifest}}' |
+      jq -r '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest' |
+      head -1)"
+    [[ "${platform_digest}" =~ ^sha256:[a-f0-9]{64}$ ]] || die "cannot resolve linux/amd64 manifest for ${image}"
+    platform_ref="${repository}@${platform_digest}"
+    docker pull --platform linux/amd64 "${platform_ref}" >/dev/null
+    image_id="$(docker image inspect --format '{{.Id}}' "${platform_ref}")"
     import_key="$(printf '%s' "${image}" | sha256sum | cut -c1-16)"
     local_ref="cloudops-preload:${import_key}"
     import_ref="docker.io/library/${local_ref}"
@@ -234,7 +240,7 @@ preload_external_images() {
     # Docker's locally pruned attestations. Tag the resolved amd64 image ID so
     # docker save emits a single-platform archive, import it, then restore the
     # immutable target reference inside the disposable node.
-    docker save --platform linux/amd64 "${local_ref}" |
+    docker save "${local_ref}" |
       docker exec -i "${node}" ctr --namespace=k8s.io images import --digests --snapshotter=overlayfs - >/dev/null
     node_ref="$(normalized_node_image_ref "${save_ref}")"
     docker exec "${node}" ctr --namespace=k8s.io images tag "${import_ref}" "${node_ref}" >/dev/null
