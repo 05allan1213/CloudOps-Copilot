@@ -201,7 +201,7 @@ pinned_platform_images() {
 }
 
 preload_external_images() {
-  local image node save_ref
+  local digest_ref image node save_ref
   node="${CLUSTER_NAME}-control-plane"
   {
     monitoring_images
@@ -217,7 +217,13 @@ preload_external_images() {
     # tag@digest reference but docker save accepts its local tag reference.
     docker save "${save_ref}" |
       docker exec -i "${node}" ctr --namespace=k8s.io images import --digests --snapshotter=overlayfs - >/dev/null
-    docker exec "${node}" crictl inspecti "${image}" >/dev/null
+    if [[ "${image}" == *@sha256:* ]]; then
+      digest_ref="${save_ref%:*}@${image##*@}"
+      docker exec "${node}" ctr --namespace=k8s.io images tag "${save_ref}" "${digest_ref}" >/dev/null
+    else
+      digest_ref="${save_ref}"
+    fi
+    docker exec "${node}" crictl inspecti "${digest_ref}" >/dev/null
   done
   printf 'PASS: external monitoring/platform images are present in the kind node before Helm creates Pods\n'
 }
