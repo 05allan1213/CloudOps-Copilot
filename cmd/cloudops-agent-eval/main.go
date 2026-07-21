@@ -36,7 +36,7 @@ func main() {
 	var value options
 	flag.StringVar(&value.mode, "mode", "validate", "freeze, validate, baseline, guardrail, model, or gate")
 	flag.StringVar(&value.root, "root", ".", "repository root")
-	flag.StringVar(&value.revision, "revision", "v4", "frozen evaluation revision, for example v3 or v4")
+	flag.StringVar(&value.revision, "revision", "v5", "frozen evaluation revision, for example v4 or v5")
 	flag.StringVar(&value.out, "out", "", "report output path; stdout when empty")
 	flag.StringVar(&value.report, "report", "", "measured model report required by gate mode")
 	flag.StringVar(&value.baseline, "baseline", "", "fixed-pipeline baseline report required by gate mode")
@@ -87,7 +87,7 @@ func run(options options) error {
 		if parseErr != nil {
 			return fmt.Errorf("freeze mode requires a valid -freeze-at: %w", parseErr)
 		}
-		manifest, buildErr := eval.BuildManifest(dataset.DatasetID, paths.dataset, paths.oracle, paths.split, paths.metrics, contracts, promptMaterial, paths.reducer, paths.runner, createdAt)
+		manifest, buildErr := eval.BuildRuntimeManifest(dataset.DatasetID, paths.dataset, paths.oracle, paths.split, paths.metrics, contracts, promptMaterial, paths.reducer, paths.runner, paths.runtimeSources, createdAt)
 		if buildErr != nil {
 			return buildErr
 		}
@@ -100,7 +100,7 @@ func run(options options) error {
 	if manifest.DatasetID != dataset.DatasetID {
 		return errors.New("Agent Eval manifest dataset ID does not match the loaded dataset")
 	}
-	if err := eval.VerifyManifest(manifest, paths.dataset, paths.oracle, paths.split, paths.metrics, contracts, promptMaterial, paths.reducer, paths.runner); err != nil {
+	if err := eval.VerifyManifest(manifest, paths.dataset, paths.oracle, paths.split, paths.metrics, contracts, promptMaterial, paths.reducer, paths.runner, paths.runtimeSources); err != nil {
 		return err
 	}
 	caseIDs := splitCaseIDs(options.caseIDs)
@@ -152,14 +152,17 @@ func run(options options) error {
 	return writeReport(options.out, report)
 }
 
-type evalPathsValue struct{ dataset, oracle, split, metrics, manifest, thresholds, reducer, runner string }
+type evalPathsValue struct {
+	dataset, oracle, split, metrics, manifest, thresholds, reducer, runner string
+	runtimeSources                                                         []string
+}
 
 func evalPaths(root, revision string) (evalPathsValue, error) {
 	revision = strings.TrimSpace(revision)
 	if !validEvalRevision(revision) {
 		return evalPathsValue{}, fmt.Errorf("invalid evaluation revision %q", revision)
 	}
-	return evalPathsValue{
+	paths := evalPathsValue{
 		dataset:    filepath.Join(root, "eval", revision, "dataset.json"),
 		oracle:     filepath.Join(root, "eval", revision, "oracle.json"),
 		split:      filepath.Join(root, "eval", revision, "split.json"),
@@ -168,7 +171,17 @@ func evalPaths(root, revision string) (evalPathsValue, error) {
 		thresholds: filepath.Join(root, "eval", revision, "thresholds.json"),
 		reducer:    filepath.Join(root, "internal", "agent", "state_delta.go"),
 		runner:     filepath.Join(root, "internal", "agent"),
-	}, nil
+	}
+	paths.runtimeSources = []string{
+		filepath.Join(root, "internal", "taskhandler", "investigation_start.go"),
+		filepath.Join(root, "internal", "taskhandler", "investigation_step.go"),
+		filepath.Join(root, "internal", "taskhandler", "registry.go"),
+		filepath.Join(root, "internal", "bootstrap", "worker_operations.go"),
+		filepath.Join(root, "internal", "bootstrap", "worker_provider.go"),
+		filepath.Join(root, "internal", "config", "config.go"),
+		filepath.Join(root, "migrations", "00013_agent_run_model_identity.sql"),
+	}
+	return paths, nil
 }
 
 func validEvalRevision(value string) bool {

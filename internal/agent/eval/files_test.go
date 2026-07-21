@@ -227,7 +227,7 @@ func TestBuildManifestHashesExactMaterialWithoutIncludingIt(t *testing.T) {
 		t.Fatalf("CanonicalJSONSHA256(contracts) error = %v", err)
 	}
 	want := Manifest{
-		SchemaVersion:        ManifestSchemaVersion,
+		SchemaVersion:        LegacyManifestSchemaVersion,
 		DatasetID:            "eval-v1",
 		DatasetSHA256:        SHA256Bytes(dataset),
 		OracleSHA256:         SHA256Bytes(oracle),
@@ -251,6 +251,34 @@ func TestBuildManifestHashesExactMaterialWithoutIncludingIt(t *testing.T) {
 		if strings.Contains(string(encoded), forbidden) {
 			t.Fatalf("manifest exposed raw material %q: %s", forbidden, encoded)
 		}
+	}
+}
+
+func TestBuildRuntimeManifestBindsDurableAgentSource(t *testing.T) {
+	nonEmpty := writeEvalFile(t, "frozen.json", []byte("frozen\n"))
+	reducer := writeEvalFile(t, "reducer.go", []byte("package agent\n"))
+	runner := writeEvalFile(t, "runner.go", []byte("package agent\n"))
+	runtimeA := writeEvalFile(t, "investigation_start.go", []byte("package taskhandler\n"))
+	runtimeB := writeEvalFile(t, "00013.sql", []byte("ALTER TABLE agent_runs;\n"))
+	contracts := Contracts{SchemaVersion: DatasetSchemaVersion, DatasetID: "eval-v5", Actions: []agent.ModelActionSchema{{Tool: "inspect_workload"}}}
+
+	manifest, err := BuildRuntimeManifest(
+		"eval-v5", nonEmpty, nonEmpty, nonEmpty, nonEmpty, contracts, []byte("prompt"), reducer, runner,
+		[]string{runtimeB, runtimeA}, time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.SchemaVersion != ManifestSchemaVersion || len(manifest.RuntimeSourceSHA256) != 64 || manifest.Validate() != nil {
+		t.Fatalf("runtime manifest=%+v", manifest)
+	}
+	changed := writeEvalFile(t, "worker_provider.go", []byte("package bootstrap\n"))
+	second, err := BuildRuntimeManifest(
+		"eval-v5", nonEmpty, nonEmpty, nonEmpty, nonEmpty, contracts, []byte("prompt"), reducer, runner,
+		[]string{runtimeB, changed}, time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC),
+	)
+	if err != nil || second.RuntimeSourceSHA256 == manifest.RuntimeSourceSHA256 {
+		t.Fatalf("runtime source drift was not bound: first=%s second=%s err=%v", manifest.RuntimeSourceSHA256, second.RuntimeSourceSHA256, err)
 	}
 }
 

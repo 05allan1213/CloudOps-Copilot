@@ -16,6 +16,9 @@ func TestEvalPathsSelectsFrozenRevision(t *testing.T) {
 	if want := filepath.Join("/repo", "eval", "v2", "thresholds.json"); paths.thresholds != want {
 		t.Fatalf("threshold path=%q, want %q", paths.thresholds, want)
 	}
+	if len(paths.runtimeSources) != 7 || paths.runtimeSources[0] != filepath.Join("/repo", "internal", "taskhandler", "investigation_start.go") {
+		t.Fatalf("runtime source bindings=%v", paths.runtimeSources)
+	}
 }
 
 func TestEvalPathsRejectsTraversalAndAmbiguousRevisions(t *testing.T) {

@@ -10,11 +10,12 @@ import (
 )
 
 const (
-	DatasetSchemaVersion  = 1
-	OracleSchemaVersion   = 1
-	SplitSchemaVersion    = 1
-	MetricSchemaVersion   = 1
-	ManifestSchemaVersion = 1
+	DatasetSchemaVersion        = 1
+	OracleSchemaVersion         = 1
+	SplitSchemaVersion          = 1
+	MetricSchemaVersion         = 1
+	LegacyManifestSchemaVersion = 1
+	ManifestSchemaVersion       = 2
 
 	OutcomeDiagnosed    = "diagnosed"
 	OutcomeInsufficient = "insufficient_evidence"
@@ -113,11 +114,12 @@ type Manifest struct {
 	PromptMaterialSHA256 string `json:"prompt_material_sha256"`
 	ReducerSourceSHA256  string `json:"reducer_source_sha256"`
 	RunnerSourceSHA256   string `json:"runner_source_sha256"`
+	RuntimeSourceSHA256  string `json:"runtime_source_sha256,omitempty"`
 	CreatedAt            string `json:"created_at"`
 }
 
 func (m Manifest) Validate() error {
-	if m.SchemaVersion != ManifestSchemaVersion || m.DatasetID == "" || m.CreatedAt == "" {
+	if (m.SchemaVersion != LegacyManifestSchemaVersion && m.SchemaVersion != ManifestSchemaVersion) || m.DatasetID == "" || m.CreatedAt == "" {
 		return fmt.Errorf("invalid Agent Eval manifest identity")
 	}
 	for name, value := range map[string]string{
@@ -128,6 +130,12 @@ func (m Manifest) Validate() error {
 		if len(value) != 64 {
 			return fmt.Errorf("invalid Agent Eval %s hash", name)
 		}
+	}
+	if m.SchemaVersion == ManifestSchemaVersion && len(m.RuntimeSourceSHA256) != 64 {
+		return fmt.Errorf("invalid Agent Eval runtime source hash")
+	}
+	if m.SchemaVersion == LegacyManifestSchemaVersion && m.RuntimeSourceSHA256 != "" {
+		return fmt.Errorf("legacy Agent Eval manifest contains a runtime source hash")
 	}
 	if _, err := time.Parse(time.RFC3339Nano, m.CreatedAt); err != nil {
 		return fmt.Errorf("invalid Agent Eval manifest time: %w", err)

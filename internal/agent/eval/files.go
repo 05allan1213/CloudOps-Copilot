@@ -87,6 +87,7 @@ func VerifyManifest(
 	contracts Contracts,
 	promptMaterial []byte,
 	reducerSourcePath, runnerSourcePath string,
+	runtimeSourcePaths []string,
 ) error {
 	if err := expected.Validate(); err != nil {
 		return err
@@ -95,7 +96,12 @@ func VerifyManifest(
 	if err != nil {
 		return err
 	}
-	actual, err := BuildManifest(expected.DatasetID, datasetPath, oraclePath, splitPath, metricSpecPath, contracts, promptMaterial, reducerSourcePath, runnerSourcePath, createdAt)
+	var actual Manifest
+	if expected.SchemaVersion == ManifestSchemaVersion {
+		actual, err = BuildRuntimeManifest(expected.DatasetID, datasetPath, oraclePath, splitPath, metricSpecPath, contracts, promptMaterial, reducerSourcePath, runnerSourcePath, runtimeSourcePaths, createdAt)
+	} else {
+		actual, err = BuildManifest(expected.DatasetID, datasetPath, oraclePath, splitPath, metricSpecPath, contracts, promptMaterial, reducerSourcePath, runnerSourcePath, createdAt)
+	}
 	if err != nil {
 		return err
 	}
@@ -397,6 +403,42 @@ func BuildManifest(
 	runnerSourcePath string,
 	createdAt time.Time,
 ) (Manifest, error) {
+	return buildManifest(LegacyManifestSchemaVersion, datasetID, datasetPath, oraclePath, splitPath, metricSpecPath, contracts, promptMaterial, reducerSourcePath, runnerSourcePath, nil, createdAt)
+}
+
+// BuildRuntimeManifest adds a deterministic hash of the production
+// task/bootstrap/config/migration source that binds the provider-visible Agent
+// adapter to its durable AgentRun identity and recovery path.
+func BuildRuntimeManifest(
+	datasetID string,
+	datasetPath string,
+	oraclePath string,
+	splitPath string,
+	metricSpecPath string,
+	contracts Contracts,
+	promptMaterial []byte,
+	reducerSourcePath string,
+	runnerSourcePath string,
+	runtimeSourcePaths []string,
+	createdAt time.Time,
+) (Manifest, error) {
+	return buildManifest(ManifestSchemaVersion, datasetID, datasetPath, oraclePath, splitPath, metricSpecPath, contracts, promptMaterial, reducerSourcePath, runnerSourcePath, runtimeSourcePaths, createdAt)
+}
+
+func buildManifest(
+	schemaVersion int,
+	datasetID string,
+	datasetPath string,
+	oraclePath string,
+	splitPath string,
+	metricSpecPath string,
+	contracts Contracts,
+	promptMaterial []byte,
+	reducerSourcePath string,
+	runnerSourcePath string,
+	runtimeSourcePaths []string,
+	createdAt time.Time,
+) (Manifest, error) {
 	if strings.TrimSpace(datasetID) == "" {
 		return Manifest{}, errors.New("manifest: dataset ID must not be empty")
 	}
@@ -437,13 +479,20 @@ func BuildManifest(
 	if err != nil {
 		return Manifest{}, fmt.Errorf("manifest runner source: %w", err)
 	}
+	runtimeHash := ""
+	if schemaVersion == ManifestSchemaVersion {
+		runtimeHash, err = hashNonEmptyPaths(runtimeSourcePaths)
+		if err != nil {
+			return Manifest{}, fmt.Errorf("manifest runtime source: %w", err)
+		}
+	}
 	contractsHash, err := CanonicalJSONSHA256(contracts)
 	if err != nil {
 		return Manifest{}, fmt.Errorf("manifest contracts: %w", err)
 	}
 
 	return Manifest{
-		SchemaVersion:        ManifestSchemaVersion,
+		SchemaVersion:        schemaVersion,
 		DatasetID:            datasetID,
 		DatasetSHA256:        datasetHash,
 		OracleSHA256:         oracleHash,
@@ -453,8 +502,27 @@ func BuildManifest(
 		PromptMaterialSHA256: SHA256Bytes(promptMaterial),
 		ReducerSourceSHA256:  reducerHash,
 		RunnerSourceSHA256:   runnerHash,
+		RuntimeSourceSHA256:  runtimeHash,
 		CreatedAt:            createdAt.UTC().Format(time.RFC3339Nano),
 	}, nil
+}
+
+func hashNonEmptyPaths(paths []string) (string, error) {
+	if len(paths) == 0 {
+		return "", errors.New("source paths must not be empty")
+	}
+	paths = append([]string(nil), paths...)
+	sort.Strings(paths)
+	hash := sha256.New()
+	for _, path := range paths {
+		value, err := hashNonEmptyPath(path)
+		if err != nil {
+			return "", err
+		}
+		_, _ = hash.Write([]byte(value))
+		_, _ = hash.Write([]byte{0})
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func hashNonEmptyPath(path string) (string, error) {
