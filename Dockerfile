@@ -57,14 +57,14 @@ LABEL org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.version="${VERSION}"
 
 RUN apk add --no-cache ca-certificates tzdata wget \
-    && addgroup -S app \
-    && adduser -S -G app -h /app app
+    && addgroup -S -g 65532 app \
+    && adduser -S -u 65532 -G app -h /app app
 
 WORKDIR /app
 
 ENV GIN_MODE=release
 
-USER app:app
+USER 65532:65532
 
 FROM runtime-base AS cloudops-control-base
 
