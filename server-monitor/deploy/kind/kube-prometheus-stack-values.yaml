@@ -69,33 +69,29 @@ prometheus:
       matchLabels:
         cloudops.io/monitoring: enabled
     serviceMonitorNamespaceSelector:
-      matchNames:
-        - cloudops-system
-        - cloudops-demo
+      matchLabels:
+        cloudops.io/monitoring: enabled
     podMonitorSelectorNilUsesHelmValues: false
     podMonitorSelector:
       matchLabels:
         cloudops.io/monitoring: enabled
     podMonitorNamespaceSelector:
-      matchNames:
-        - cloudops-system
-        - cloudops-demo
+      matchLabels:
+        cloudops.io/monitoring: enabled
     ruleSelectorNilUsesHelmValues: false
     ruleSelector:
       matchLabels:
         cloudops.io/monitoring: enabled
     ruleNamespaceSelector:
-      matchNames:
-        - cloudops-system
-        - cloudops-demo
+      matchLabels:
+        cloudops.io/monitoring: enabled
     probeSelectorNilUsesHelmValues: false
     probeSelector:
       matchLabels:
         cloudops.io/monitoring: enabled
     probeNamespaceSelector:
-      matchNames:
-        - cloudops-system
-        - cloudops-demo
+      matchLabels:
+        cloudops.io/monitoring: enabled
     storageSpec:
       volumeClaimTemplate:
         spec:

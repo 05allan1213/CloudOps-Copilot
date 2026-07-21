@@ -36,6 +36,7 @@ tempo_port_forward_pid=""
 elasticsearch_port_forward_pid=""
 secret_dir=""
 MIN_AVAILABLE_MEMORY_MIB="${CLOUDOPS_MIN_AVAILABLE_MEMORY_MIB:-5120}"
+MIN_INOTIFY_INSTANCES="${CLOUDOPS_MIN_INOTIFY_INSTANCES:-256}"
 
 # The chart package checksum is kept in versions.env and checked before any
 # cluster mutation. This makes the local demo reproducible without committing
@@ -80,7 +81,7 @@ cleanup() {
 trap cleanup EXIT
 
 preflight() {
-  local available_mib
+  local available_mib inotify_instances
   for command_name in docker kind kubectl helm jq yq curl sha256sum openssl; do
     require_cmd "${command_name}"
   done
@@ -95,7 +96,9 @@ preflight() {
   available_mib="$(awk '/MemAvailable:/ {print int($2/1024)}' /proc/meminfo)"
   [[ "${available_mib}" -ge "${MIN_AVAILABLE_MEMORY_MIB}" ]] || die "at least ${MIN_AVAILABLE_MEMORY_MIB} MiB available memory is required (found ${available_mib} MiB)"
   [[ "$(nproc)" -ge 4 ]] || die "at least four CPU cores are required"
-  printf 'PASS: preflight profile=phase3 cluster=%s available_memory_mib=%s cpu=%s\n' "${CLUSTER_NAME}" "${available_mib}" "$(nproc)"
+  inotify_instances="$(cat /proc/sys/fs/inotify/max_user_instances)"
+  [[ "${inotify_instances}" -ge "${MIN_INOTIFY_INSTANCES}" ]] || die "fs.inotify.max_user_instances must be at least ${MIN_INOTIFY_INSTANCES} for a disposable kind node (found ${inotify_instances})"
+  printf 'PASS: preflight profile=phase3 cluster=%s available_memory_mib=%s cpu=%s inotify_instances=%s\n' "${CLUSTER_NAME}" "${available_mib}" "$(nproc)" "${inotify_instances}"
 }
 
 validate_version_lock() {
@@ -178,11 +181,52 @@ ensure_eck_package() {
   [[ "${actual_sha}" == "${ECK_OPERATOR_SHA256}" ]] || die "ECK operator checksum mismatch"
 }
 
+monitoring_images() {
+  helm template "${MONITORING_RELEASE}" "${KPS_PACKAGE}" \
+    --namespace "${MONITORING_NAMESPACE}" --values "${MONITORING_VALUES}" 2>/dev/null |
+    yq eval-all '.. | select(tag == "!!map") | .image // ""' - |
+    sed '/^$/d; /^---$/d'
+  printf '%s\n' "quay.io/prometheus-operator/prometheus-config-reloader:${KUBE_PROMETHEUS_OPERATOR_VERSION}"
+}
+
+pinned_platform_images() {
+  printf '%s\n' \
+    "mysql:${MYSQL_VERSION}@${MYSQL_IMAGE_DIGEST}" \
+    "${ECK_OPERATOR_IMAGE_REPOSITORY}:${ECK_OPERATOR_VERSION}@${ECK_OPERATOR_IMAGE_DIGEST}" \
+    "${ELASTICSEARCH_IMAGE_REPOSITORY}:${ELASTIC_STACK_VERSION}@${ELASTICSEARCH_IMAGE_DIGEST}" \
+    "${KIBANA_IMAGE_REPOSITORY}:${ELASTIC_STACK_VERSION}@${KIBANA_IMAGE_DIGEST}" \
+    "${FILEBEAT_IMAGE_REPOSITORY}:${ELASTIC_STACK_VERSION}@${FILEBEAT_IMAGE_DIGEST}" \
+    "${OTEL_COLLECTOR_IMAGE_REPOSITORY}:${OTEL_COLLECTOR_VERSION}@${OTEL_COLLECTOR_IMAGE_DIGEST}" \
+    "${TEMPO_IMAGE_REPOSITORY}:${TEMPO_VERSION}@${TEMPO_IMAGE_DIGEST}"
+}
+
+preload_external_images() {
+  local image node
+  node="${CLUSTER_NAME}-control-plane"
+  {
+    monitoring_images
+    pinned_platform_images
+  } | sort -u | while IFS= read -r image; do
+    [[ -n "${image}" ]] || continue
+    printf 'Preloading pinned image through host Docker: %s\n' "${image}"
+    docker pull --platform linux/amd64 "${image}" >/dev/null
+    # kind load currently imports every manifest-list platform and can fail on
+    # Docker's locally pruned attestations. Import the host-resolved amd64
+    # archive directly into the disposable node instead.
+    docker save "${image}" |
+      docker exec -i "${node}" ctr --namespace=k8s.io images import --digests --snapshotter=overlayfs - >/dev/null
+    docker exec "${node}" crictl inspecti "${image}" >/dev/null
+  done
+  printf 'PASS: external monitoring/platform images are present in the kind node before Helm creates Pods\n'
+}
+
 create_namespaces() {
   kubectl create namespace "${APP_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
   kubectl create namespace "${DEMO_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
   kubectl create namespace "${MONITORING_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
   kubectl create namespace "${ECK_OPERATOR_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+  kubectl label namespace "${APP_NAMESPACE}" "cloudops.io/monitoring=enabled" --overwrite >/dev/null
+  kubectl label namespace "${DEMO_NAMESPACE}" "cloudops.io/monitoring=enabled" --overwrite >/dev/null
 }
 
 create_secrets() {
@@ -487,7 +531,12 @@ up() {
   preflight
   render_profile
   ensure_monitoring_package
-  kind create cluster --name "${CLUSTER_NAME}" --config "${KIND_CONFIG}" --wait 120s
+  # Proxy variables pointing at host loopback are valid for host-side Docker
+  # pulls but invalid inside the kind node. Do not copy them into the node;
+  # preload_external_images imports the host-resolved pinned images instead.
+  env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY -u http_proxy -u https_proxy -u all_proxy \
+    kind create cluster --name "${CLUSTER_NAME}" --config "${KIND_CONFIG}" --wait 120s
+  preload_external_images
   create_namespaces
   create_secrets
   install_monitoring

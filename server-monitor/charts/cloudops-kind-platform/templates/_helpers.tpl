@@ -7,5 +7,5 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 {{- end }}
 
 {{- define "cloudops-kind-platform.image" -}}
-{{- printf "%s:%s@%s" .repository .tag .digest -}}
+{{- printf "%s@%s" .repository .digest -}}
 {{- end }}
