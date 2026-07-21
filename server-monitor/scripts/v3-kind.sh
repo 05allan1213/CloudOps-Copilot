@@ -201,7 +201,7 @@ pinned_platform_images() {
 }
 
 preload_external_images() {
-  local image node
+  local image node save_ref
   node="${CLUSTER_NAME}-control-plane"
   {
     monitoring_images
@@ -210,10 +210,12 @@ preload_external_images() {
     [[ -n "${image}" ]] || continue
     printf 'Preloading pinned image through host Docker: %s\n' "${image}"
     docker pull --platform linux/amd64 "${image}" >/dev/null
+    save_ref="${image%@*}"
     # kind load currently imports every manifest-list platform and can fail on
     # Docker's locally pruned attestations. Import the host-resolved amd64
-    # archive directly into the disposable node instead.
-    docker save "${image}" |
+    # archive directly into the disposable node instead. Docker can inspect a
+    # tag@digest reference but docker save accepts its local tag reference.
+    docker save "${save_ref}" |
       docker exec -i "${node}" ctr --namespace=k8s.io images import --digests --snapshotter=overlayfs - >/dev/null
     docker exec "${node}" crictl inspecti "${image}" >/dev/null
   done
