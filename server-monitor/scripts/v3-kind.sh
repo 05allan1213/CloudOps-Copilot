@@ -346,6 +346,17 @@ create_secrets() {
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 }
 
+docker_build_with_retry() {
+  local _attempt
+  for _attempt in 1 2 3; do
+    if docker build "$@"; then
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
 build_and_load_images() {
   local revision source_ref api_image migrate_image demo_image
   revision="$(git -C "${ROOT_DIR}" rev-parse HEAD)"
@@ -353,13 +364,13 @@ build_and_load_images() {
   api_image="cloudops-api:${revision}"
   migrate_image="cloudops-migrate:${revision}"
   demo_image="cloudops-demo:${revision}"
-  docker build --target cloudops-api \
+  docker_build_with_retry --target cloudops-api \
     --build-arg VCS_REF="${revision}" --build-arg VCS_SOURCE="${source_ref}" --build-arg VERSION="${revision}" \
     --tag "${api_image}" "${ROOT_DIR}"
-  docker build --target cloudops-migrate \
+  docker_build_with_retry --target cloudops-migrate \
     --build-arg VCS_REF="${revision}" --build-arg VCS_SOURCE="${source_ref}" --build-arg VERSION="${revision}" \
     --tag "${migrate_image}" "${ROOT_DIR}"
-  docker build --target cloudops-demo \
+  docker_build_with_retry --target cloudops-demo \
     --build-arg VCS_REF="${revision}" --build-arg VCS_SOURCE="${source_ref}" --build-arg VERSION="${revision}" \
     --tag "${demo_image}" "${ROOT_DIR}"
   kind load docker-image "${api_image}" --name "${CLUSTER_NAME}"
