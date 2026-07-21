@@ -133,6 +133,43 @@ func TestV2ConflictingSourcesCannotMakeAnyClaimReady(t *testing.T) {
 	}
 }
 
+func TestV3RemovesInvalidUnchangedIdentityRegressionPolicy(t *testing.T) {
+	dataset, err := LoadDataset(filepath.Join("..", "..", "..", "eval", "v3", "dataset.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var conflicting EvalCase
+	for _, evalCase := range dataset.Cases {
+		for _, policy := range evalCase.Policies {
+			if policy.ClaimType == "deployment_identity_regression/v1" {
+				t.Fatalf("case %q retained invalid unchanged-identity regression policy", evalCase.ID)
+			}
+		}
+		if evalCase.ID == "model-conflicting-sources" {
+			conflicting = evalCase
+		}
+	}
+	if conflicting.ID == "" {
+		t.Fatal("v3 conflicting-sources case is missing")
+	}
+	runtime, err := newCaseRuntime(conflicting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fixture := range conflicting.Fixtures {
+		if err := applyFixture(conflicting, runtime, fixture.Actions[0]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, ready, _, err := evaluatePolicies(conflicting, runtime.state, runtime.facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ready) != 0 {
+		t.Fatalf("v3 conflicting authoritative sources produced READY claims: %v", ready)
+	}
+}
+
 func TestRunModelKeepsInvestigatingWhenOneClaimIsReadyAndCandidatesRemain(t *testing.T) {
 	early := agent.ClaimPolicy{
 		Version: "early/v1", ClaimType: "early_claim/v1",
