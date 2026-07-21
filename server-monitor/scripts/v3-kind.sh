@@ -215,7 +215,7 @@ normalized_node_image_ref() {
 }
 
 preload_external_images() {
-  local digest_ref image node node_ref save_ref
+  local digest_ref image image_id import_key import_ref local_ref node node_ref save_ref
   node="${CLUSTER_NAME}-control-plane"
   {
     monitoring_images
@@ -225,19 +225,22 @@ preload_external_images() {
     printf 'Preloading pinned image through host Docker: %s\n' "${image}"
     docker pull --platform linux/amd64 "${image}" >/dev/null
     save_ref="${image%@*}"
-    if [[ "${image}" == *@sha256:* ]]; then
-      docker image tag "${image}" "${save_ref}"
-    fi
+    image_id="$(docker image inspect --format '{{.Id}}' "${image}")"
+    import_key="$(printf '%s' "${image}" | sha256sum | cut -c1-16)"
+    local_ref="cloudops-preload:${import_key}"
+    import_ref="docker.io/library/${local_ref}"
+    docker image tag "${image_id}" "${local_ref}"
     # kind load currently imports every manifest-list platform and can fail on
-    # Docker's locally pruned attestations. Import the host-resolved amd64
-    # archive directly into the disposable node instead. Docker can inspect a
-    # tag@digest reference but docker save accepts its local tag reference.
-    docker save "${save_ref}" |
+    # Docker's locally pruned attestations. Tag the resolved amd64 image ID so
+    # docker save emits a single-platform archive, import it, then restore the
+    # immutable target reference inside the disposable node.
+    docker save "${local_ref}" |
       docker exec -i "${node}" ctr --namespace=k8s.io images import --digests --snapshotter=overlayfs - >/dev/null
     node_ref="$(normalized_node_image_ref "${save_ref}")"
+    docker exec "${node}" ctr --namespace=k8s.io images tag "${import_ref}" "${node_ref}" >/dev/null
     if [[ "${image}" == *@sha256:* ]]; then
       digest_ref="${node_ref%:*}@${image##*@}"
-      docker exec "${node}" ctr --namespace=k8s.io images tag "${node_ref}" "${digest_ref}" >/dev/null
+      docker exec "${node}" ctr --namespace=k8s.io images tag "${import_ref}" "${digest_ref}" >/dev/null
     else
       digest_ref="${node_ref}"
     fi
