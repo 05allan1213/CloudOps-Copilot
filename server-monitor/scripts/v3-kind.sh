@@ -349,7 +349,7 @@ create_secrets() {
 docker_build_with_retry() {
   local _attempt
   for _attempt in 1 2 3; do
-    if docker build "$@"; then
+    if docker build --network host "$@"; then
       return 0
     fi
     sleep 2
