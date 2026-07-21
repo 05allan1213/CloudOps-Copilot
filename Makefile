@@ -28,6 +28,8 @@ COMPOSE_ENV := server-monitor/.env.example
 V3_KIND_SCRIPT := server-monitor/scripts/v3-kind.sh
 PROFILE_CONTRACT_SCRIPT := server-monitor/scripts/check-cloudops-profile-render.sh
 ARGO_GITOPS_CONTRACT_SCRIPT := server-monitor/scripts/check-argocd-gitops-contract.sh
+GOLDEN_E2E_SCRIPT := server-monitor/scripts/golden-e2e.sh
+GOLDEN_E2E_CONTRACT_SCRIPT := server-monitor/scripts/check-golden-e2e-contract.sh
 ARGO_PROJECT_MANIFEST := deploy/platform/argocd/appproject.yaml
 ARGO_APPLICATION_MANIFEST := deploy/platform/argocd/application.yaml
 GITOPS_HEALTHY_DIR := deploy/contracts/gitops-demo/healthy/apps/demo
@@ -42,7 +44,8 @@ SHELL_FILES := $(shell git ls-files '*.sh' | sort)
 	actionlint shellcheck helm-lint helm-template kubeconform kubeconform-chart \
 	kubeconform-raw promtool compose-config static-checks check docker-build \
 	docker-build-api docker-build-worker docker-build-migrate docker-build-demo frontend-install \
-	preflight demo-up demo-down kind-render kind-check helm-contracts argocd-contracts
+	preflight demo-up demo-down kind-render kind-check helm-contracts argocd-contracts \
+	scenario-open-regression-pr e2e-gitops golden-e2e-contracts
 
 define require_cmd
 	@command -v $(1) >/dev/null 2>&1 || { echo "missing command: $(1)" >&2; exit 1; }
@@ -198,6 +201,9 @@ argocd-contracts: ## Validate canonical Argo objects and contract-only GitOps fi
 			$(ARGO_PROJECT_MANIFEST) $(ARGO_APPLICATION_MANIFEST) \
 			$(GITOPS_HEALTHY_DIR)/*.yaml $(GITOPS_REGRESSION_DIR)/*.yaml
 
+golden-e2e-contracts: ## Validate the fail-closed Golden E2E command and evidence contracts without external writes.
+	bash $(GOLDEN_E2E_CONTRACT_SCRIPT)
+
 kind-render: ## Render and enforce the V3 phase3 kind/Helm profile.
 	bash $(V3_KIND_SCRIPT) render
 
@@ -206,6 +212,12 @@ preflight: ## Check disposable kind prerequisites without changing the cluster.
 
 demo-up: ## Start the V3 phase3 disposable kind + Helm observability demo.
 	bash $(V3_KIND_SCRIPT) up
+
+scenario-open-regression-pr: ## Create (but never merge) the fixed GitOps regression PR with the human gh identity.
+	bash $(GOLDEN_E2E_SCRIPT) scenario-open-regression-pr
+
+e2e-gitops: ## Run the real-system Golden GitOps verifier and write exact-SHA evidence.
+	bash $(GOLDEN_E2E_SCRIPT) run
 
 kind-check: ## Verify the running V3 phase3 kind metrics target and rule.
 	bash $(V3_KIND_SCRIPT) check
@@ -239,7 +251,7 @@ promtool:
 compose-config:
 	$(DOCKER_COMPOSE) --env-file $(COMPOSE_ENV) -f $(COMPOSE_FILE) config --quiet
 
-static-checks: actionlint shellcheck helm-lint helm-contracts argocd-contracts kubeconform promtool compose-config
+static-checks: actionlint shellcheck helm-lint helm-contracts argocd-contracts golden-e2e-contracts kubeconform promtool compose-config
 
 check: check-gofmt check-goimports check-deps check-structure vet lint-go test-go test-race build-go test-frontend build-frontend static-checks kind-render
 
