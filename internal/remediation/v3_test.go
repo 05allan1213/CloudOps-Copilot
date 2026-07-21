@@ -164,6 +164,25 @@ func TestV3ApprovalBindsEveryImmutableHash(t *testing.T) {
 	}
 }
 
+func TestV3DecisionRejectsLegacyAdminRole(t *testing.T) {
+	plan, err := CompileRestoreRequiredEnv(validRestoreRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := plan.CreatedAt.Add(10 * time.Minute)
+	if _, err := NewV3Approval(plan, "github", "legacy-admin", "admin", "reviewed exact diff", "request-admin", now, now.Add(10*time.Minute)); err == nil {
+		t.Fatal("legacy admin role unexpectedly authorized a V3 Decision")
+	}
+	approval, err := NewV3Approval(plan, "github", "operator-login", "operator", "reviewed exact diff", "request-operator", now, now.Add(10*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	approval.Role = "admin"
+	if err := ValidateV3DecisionBinding(plan, approval, now.Add(time.Minute)); !errors.Is(err, ErrApprovalMismatch) {
+		t.Fatalf("persisted legacy admin role error=%v", err)
+	}
+}
+
 func validRestoreRequest() RestoreEnvCompileRequest {
 	created := time.Date(2026, 7, 19, 3, 0, 0, 0, time.UTC)
 	policy := RestoreEnvPolicy{
