@@ -204,7 +204,7 @@ func loadModel() (*adapter.LLMModel, string, string, bool, error) {
 		timeout = time.Duration(seconds) * time.Second
 	}
 	zeroRetries := 0
-	client := llm.NewClient(llm.Options{APIKey: key, APIURL: apiURL, Model: modelName, Timeout: timeout, MaxTokens: 1200, MaxRetries: &zeroRetries})
+	client := llm.NewClient(llm.Options{APIKey: key, APIURL: apiURL, Model: modelName, Timeout: timeout, MaxTokens: 4096, MaxRetries: &zeroRetries})
 	model, err := adapter.NewLLMModel(client)
 	if err != nil {
 		return nil, provider, modelName, false, err

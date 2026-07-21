@@ -146,7 +146,7 @@ func runModelCase(ctx context.Context, evalCase EvalCase, caseOracle CaseOracle,
 		if evalErr != nil {
 			return finishRuntime(failedRun(result, "invalid_policy", evalErr), runtime), runtimeFactTypes(runtime)
 		}
-		if len(ready) > 0 {
+		if len(ready) > 0 && len(unusedActionCandidates(evalCase, runtime)) == 0 {
 			return synthesizeCase(ctx, evalCase, model, result, runtime, sufficiency, ready), runtimeFactTypes(runtime)
 		}
 		if allInsufficient || budgetExhausted(runtime.state.Usage, runtime.state.Limits) {
@@ -181,7 +181,13 @@ func runModelCase(ctx context.Context, evalCase EvalCase, caseOracle CaseOracle,
 		}
 		runtime.state = next
 		runtime.trace = append(runtime.trace, TraceEvent{Kind: "decision", Checkpoint: deltaHash})
-		if delta.ProposedStop == agent.StopInsufficient || delta.ProposedStop == agent.StopDiagnose {
+		if delta.ProposedStop == agent.StopDiagnose {
+			if len(ready) == 0 {
+				return finishRuntime(failedRun(result, "invalid_delta", errors.New("diagnose stop has no deterministically ready claim")), runtime), runtimeFactTypes(runtime)
+			}
+			return synthesizeCase(ctx, evalCase, model, result, runtime, sufficiency, ready), runtimeFactTypes(runtime)
+		}
+		if delta.ProposedStop == agent.StopInsufficient {
 			result.Outcome = OutcomeInsufficient
 			return finishRuntime(result, runtime), runtimeFactTypes(runtime)
 		}
@@ -260,6 +266,7 @@ func synthesizeCase(ctx context.Context, evalCase EvalCase, model agent.Investig
 	view := agent.DiagnosisView{
 		State: runtime.state, Facts: slices.Clone(runtime.facts), Sufficiency: sufficiency[ready[0]],
 		AllowedClaimTypes: slices.Clone(ready), SufficiencyByClaim: sufficiency,
+		RequiredEvidenceByClaim: requiredEvidenceByClaim(sufficiency, ready),
 	}
 	candidate, usage, err := model.SynthesizeDiagnosis(ctx, view)
 	chargeResultUsage(&result, usage)
@@ -516,6 +523,9 @@ func cloneClaimPolicy(policy agent.ClaimPolicy) agent.ClaimPolicy {
 func unusedActionCandidates(evalCase EvalCase, runtime *caseRuntime) []agent.ProposedAction {
 	result := make([]agent.ProposedAction, 0)
 	for _, fixture := range evalCase.Fixtures {
+		if fixtureWasUsed(fixture, runtime) {
+			continue
+		}
 		for _, action := range fixture.Actions {
 			signature, err := agent.ActionSignature(action)
 			if err != nil {
@@ -528,9 +538,35 @@ func unusedActionCandidates(evalCase EvalCase, runtime *caseRuntime) []agent.Pro
 			candidate.BoundedParameters = slices.Clone(action.BoundedParameters)
 			candidate.ExpectedFactTypes = slices.Clone(action.ExpectedFactTypes)
 			result = append(result, candidate)
+			break
 		}
 	}
 	return result
+}
+
+func requiredEvidenceByClaim(sufficiency map[string]agent.SufficiencyResult, ready []string) map[string][]string {
+	result := make(map[string][]string, len(ready))
+	for _, claimType := range ready {
+		claim, ok := sufficiency[claimType]
+		if !ok || claim.Outcome != agent.SufficiencyReady {
+			continue
+		}
+		result[claimType] = slices.Clone(claim.SupportingIDs)
+	}
+	return result
+}
+
+func fixtureWasUsed(fixture ToolFixture, runtime *caseRuntime) bool {
+	for _, action := range fixture.Actions {
+		signature, err := agent.ActionSignature(action)
+		if err != nil {
+			continue
+		}
+		if _, used := runtime.fixtureUse[signature]; used {
+			return true
+		}
+	}
+	return false
 }
 
 func replayRuntime(runtime *caseRuntime) (*caseRuntime, error) {
@@ -717,7 +753,7 @@ func inspectDeltaSafety(evalCase EvalCase, runtime *caseRuntime, view agent.Mode
 			result.InvalidSignature++
 		} else {
 			invalid := false
-			if len(view.ActionCandidates) > 0 && !hasActionCandidate(view.ActionCandidates, signature) {
+			if len(view.ActionCandidates) > 0 && !hasActionCandidate(view.ActionCandidates, *delta.ProposedAction, signature) {
 				invalid = true
 			}
 			if _, duplicate := runtime.fixtureUse[signature]; duplicate {
@@ -737,10 +773,10 @@ func inspectDeltaSafety(evalCase EvalCase, runtime *caseRuntime, view agent.Mode
 	return result
 }
 
-func hasActionCandidate(candidates []agent.ProposedAction, signature string) bool {
+func hasActionCandidate(candidates []agent.ProposedAction, proposed agent.ProposedAction, signature string) bool {
 	for _, candidate := range candidates {
 		candidateSignature, err := agent.ActionSignature(candidate)
-		if err == nil && candidateSignature == signature {
+		if err == nil && candidateSignature == signature && slices.Equal(candidate.ExpectedFactTypes, proposed.ExpectedFactTypes) && candidate.PurposeSummary == proposed.PurposeSummary {
 			return true
 		}
 	}

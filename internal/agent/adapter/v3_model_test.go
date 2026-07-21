@@ -115,11 +115,38 @@ func TestValidateModelDeltaAcceptsOnlyUnusedFrozenActionCandidates(t *testing.T)
 	if err := ValidateModelDelta(view, changed); err == nil {
 		t.Fatal("modified candidate parameters were accepted")
 	}
+	modifiedPurpose := candidate
+	modifiedPurpose.PurposeSummary = "different bounded purpose"
+	changed.ProposedAction = &modifiedPurpose
+	if err := ValidateModelDelta(view, changed); err == nil {
+		t.Fatal("modified candidate purpose was accepted")
+	}
+
+	stop := agent.StateDelta{
+		SchemaVersion: agent.InvestigationStateSchemaVersion, BasisCheckpointVersion: view.State.CheckpointVersion,
+		ProposedStop: agent.StopInsufficient,
+	}
+	if err := ValidateModelDelta(view, stop); err == nil {
+		t.Fatal("premature stop was accepted while frozen candidates remained")
+	}
+	readyView := view
+	readyView.ClaimSufficiency = map[string]agent.SufficiencyResult{
+		"metric_regression/v1": {Outcome: agent.SufficiencyReady, SupportingIDs: []string{"fact-1"}},
+	}
+	diagnose := stop
+	diagnose.ProposedStop = agent.StopDiagnose
+	if err := ValidateModelDelta(readyView, diagnose); err != nil {
+		t.Fatalf("diagnose stop with a deterministically ready claim was rejected: %v", err)
+	}
 
 	productionView := view
 	productionView.ActionCandidates = nil
+	changed.ProposedAction = &modified
 	if err := ValidateModelDelta(productionView, changed); err != nil {
 		t.Fatalf("production path without frozen candidates rejected a policy-valid action: %v", err)
+	}
+	if err := ValidateModelDelta(productionView, stop); err != nil {
+		t.Fatalf("production path without frozen candidates rejected an insufficient stop: %v", err)
 	}
 
 	signature, err := agent.ActionSignature(candidate)
@@ -130,6 +157,125 @@ func TestValidateModelDeltaAcceptsOnlyUnusedFrozenActionCandidates(t *testing.T)
 	usedView.State.ToolAttempts = []agent.ToolAttempt{{Signature: signature, Tool: candidate.Tool, Status: "available"}}
 	if err := ValidateModelDelta(usedView, exact); err == nil {
 		t.Fatal("previously used candidate was accepted")
+	}
+}
+
+func TestMarshalDeltaModelInputCompactsFrozenCandidateContext(t *testing.T) {
+	candidate := agent.ProposedAction{
+		Tool: "inspect_metric", ScopeRef: "scope-1", TemplateID: "metric/v1",
+		BoundedParameters: json.RawMessage(`{"service":"demo"}`), ExpectedFactTypes: []string{"metric.symptom"},
+		PurposeSummary: "inspect the bounded metric",
+	}
+	view := agent.ModelView{
+		State: agent.InvestigationState{
+			SchemaVersion: agent.InvestigationStateSchemaVersion, IncidentID: "incident-1", CycleNo: 1,
+			Objective: "identify the bounded cause", CheckpointVersion: 4, NextNode: agent.NodeSelectAction,
+			Correlation: agent.CorrelationSnapshot{Cluster: "kind", Namespace: "demo", Workload: "api"},
+			Limits:      agent.Limits{MaxCheckpointSize: 64 * 1024},
+		},
+		Facts: []agent.EvidenceFact{{
+			ID: "fact-1", EvidenceID: "evidence-1", Type: "metric.symptom", SourceSystem: "prometheus",
+			CollectionPath: "prometheus/metric", CollectionStatus: agent.CollectionAvailable,
+			ClaimUse: "support", Direct: true, Attributes: map[string]string{"private": "not-provider-visible"},
+		}},
+		ScopeRef: "scope-1",
+		AllowedActions: []agent.ModelActionSchema{{
+			Tool: "inspect_metric", TemplateIDs: []string{"metric/v1"}, ParameterKeys: []string{"service"},
+			ExpectedFactTypes: []string{"metric.symptom"},
+		}},
+		CandidateClaims: []agent.ClaimPolicy{{
+			Version: "policy/v1", ClaimType: "metric_regression/v1",
+			Requirements:      []agent.FactRequirement{{Facet: "metric", AnyOf: []string{"metric.symptom"}}, {Facet: "change", AnyOf: []string{"change.regression"}}},
+			BlockingFactTypes: []string{"metric.healthy"}, MinIndependentCollectors: 2, RequireDirectFact: true,
+		}},
+		ClaimSufficiency: map[string]agent.SufficiencyResult{
+			"metric_regression/v1": {Outcome: agent.SufficiencyContinue, MissingFacets: []string{"change"}, ReasonCodes: []string{"required_facets_missing"}, SupportingIDs: []string{"fact-1"}},
+		},
+		ActionCandidates: []agent.ProposedAction{candidate},
+	}
+	payload, err := marshalDeltaModelInput(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := decoded["allowed_actions"]; exists {
+		t.Fatal("candidate-mode payload repeated the full allowed action catalog")
+	}
+	state := decoded["state"].(map[string]any)
+	if _, exists := state["correlation"]; exists {
+		t.Fatal("candidate-mode state included redundant correlation details")
+	}
+	fact := decoded["facts"].([]any)[0].(map[string]any)
+	if _, exists := fact["attributes"]; exists {
+		t.Fatal("candidate-mode fact exposed non-decision attributes")
+	}
+	claim := decoded["candidate_claims"].([]any)[0].(map[string]any)
+	if _, exists := claim["version"]; exists {
+		t.Fatal("candidate-mode claim repeated non-decision policy metadata")
+	}
+	requirements := claim["missing_requirements"].([]any)
+	if len(requirements) != 1 || requirements[0].(map[string]any)["facet"] != "change" {
+		t.Fatalf("candidate-mode claim gaps=%+v", requirements)
+	}
+
+	productionView := view
+	productionView.ActionCandidates = nil
+	compact, err := marshalDeltaModelInput(productionView)
+	if err != nil {
+		t.Fatal(err)
+	}
+	full, _ := json.Marshal(productionView)
+	if string(compact) != string(full) {
+		t.Fatal("production model view changed without frozen candidates")
+	}
+}
+
+func TestMarshalDiagnosisModelInputCompactsRequiredEvidenceContext(t *testing.T) {
+	view := agent.DiagnosisView{
+		State: agent.InvestigationState{
+			SchemaVersion: agent.InvestigationStateSchemaVersion, IncidentID: "incident-1", CycleNo: 1,
+			Objective: "identify the bounded cause", CheckpointVersion: 4,
+			Correlation: agent.CorrelationSnapshot{Cluster: "kind", Namespace: "demo", Workload: "api"},
+		},
+		Facts: []agent.EvidenceFact{
+			{ID: "fact-1", EvidenceID: "evidence-1", Type: "metric.symptom", SourceSystem: "prometheus", CollectionPath: "prometheus/metric", CollectionStatus: agent.CollectionAvailable, ClaimUse: "support", Direct: true, Attributes: map[string]string{"private": "hidden"}},
+			{ID: "fact-unused", EvidenceID: "evidence-2", Type: "noise", SourceSystem: "logs", CollectionPath: "logs/noise", CollectionStatus: agent.CollectionAvailable, ClaimUse: "support", Direct: true},
+		},
+		AllowedClaimTypes:       []string{"metric_regression/v1"},
+		RequiredEvidenceByClaim: map[string][]string{"metric_regression/v1": {"fact-1"}},
+	}
+	payload, err := marshalDiagnosisModelInput(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := decoded["sufficiency"]; exists {
+		t.Fatal("compact diagnosis payload repeated full sufficiency object")
+	}
+	facts := decoded["facts"].([]any)
+	if len(facts) != 1 || facts[0].(map[string]any)["fact_id"] != "fact-1" {
+		t.Fatalf("compact diagnosis facts=%+v", facts)
+	}
+	required := decoded["required_evidence_by_claim"].(map[string]any)["metric_regression/v1"].([]any)
+	if len(required) != 1 || required[0] != "fact-1" {
+		t.Fatalf("compact diagnosis required evidence=%+v", required)
+	}
+
+	productionView := view
+	productionView.RequiredEvidenceByClaim = nil
+	compact, err := marshalDiagnosisModelInput(productionView)
+	if err != nil {
+		t.Fatal(err)
+	}
+	full, _ := json.Marshal(productionView)
+	if string(compact) != string(full) {
+		t.Fatal("production diagnosis view changed without required evidence projection")
 	}
 }
 

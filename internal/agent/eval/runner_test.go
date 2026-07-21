@@ -49,6 +49,9 @@ func TestRunModelReplansAfterObservationAndReplaysCheckpoint(t *testing.T) {
 	if report.Runs[0].ToolCalls != 2 || !report.Runs[0].ReplayOK || report.Aggregate.CitationRecall != 1 || report.Aggregate.Safety.Total() != 0 {
 		t.Fatalf("unexpected replay/metric result: run=%+v aggregate=%+v", report.Runs[0], report.Aggregate)
 	}
+	if !model.requiredEvidenceSeen {
+		t.Fatal("diagnosis model did not receive deterministic required evidence IDs")
+	}
 	if model.views != 2 || model.secondViewFacts != 1 {
 		t.Fatalf("observation did not affect replanning: views=%d secondFacts=%d", model.views, model.secondViewFacts)
 	}
@@ -92,6 +95,48 @@ func TestRunFixedBaselineUsesNoModelCalls(t *testing.T) {
 	}
 }
 
+func TestRunModelKeepsInvestigatingWhenOneClaimIsReadyAndCandidatesRemain(t *testing.T) {
+	early := agent.ClaimPolicy{
+		Version: "early/v1", ClaimType: "early_claim/v1",
+		Requirements:             []agent.FactRequirement{{Facet: "subject", AnyOf: []string{"workload.subject_confirmed"}}},
+		MinIndependentCollectors: 1, RequireDirectFact: true,
+	}
+	target := agent.ClaimPolicy{
+		Version: "target/v1", ClaimType: "target_claim/v1",
+		Requirements: []agent.FactRequirement{
+			{Facet: "subject", AnyOf: []string{"workload.subject_confirmed"}},
+			{Facet: "selector", AnyOf: []string{"change.selector_mismatch"}},
+		},
+		MinIndependentCollectors: 2, RequireDirectFact: true,
+	}
+	actionOne := evalAction("inspect_workload", "workload-snapshot/v1", "scope-1", nil, "workload.subject_confirmed")
+	actionTwo := evalAction("get_change_detail", "change-detail/v1", "scope-1", map[string]any{"change_ref": "change-1"}, "change.selector_mismatch")
+	now := time.Date(2026, 7, 21, 3, 0, 0, 0, time.UTC)
+	dataset := Dataset{SchemaVersion: DatasetSchemaVersion, DatasetID: "eval-ready/v1", Cases: []EvalCase{{
+		ID: "case-ready", Mode: ModeModel, ScopeRef: "scope-1", Objective: "distinguish competing claims",
+		Correlation: agent.CorrelationSnapshot{Cluster: "kind", Environment: "demo", Namespace: "demo", Workload: "app", TargetKind: "Deployment"},
+		Window:      agent.QueryWindow{From: now.Add(-time.Minute), To: now}, Policies: []agent.ClaimPolicy{early, target},
+		Limits: agent.Limits{MaxSteps: 8, MaxToolCalls: 3, MaxModelCalls: 6, TokenBudget: 10000, MaxEvidenceItems: 4, MaxCheckpointSize: 128 * 1024},
+		Fixtures: []ToolFixture{
+			{Actions: []agent.ProposedAction{actionOne}, Observation: evalObservation(actionOne, "kubernetes", "kubernetes/workload", evalFact("fact-subject", "workload.subject_confirmed", "kubernetes", "kubernetes/workload"))},
+			{Actions: []agent.ProposedAction{actionTwo}, Observation: evalObservation(actionTwo, "github", "github/change", evalFact("fact-change", "change.selector_mismatch", "github", "github/change"))},
+		},
+	}}}
+	oracle := Oracle{SchemaVersion: OracleSchemaVersion, DatasetID: dataset.DatasetID, Cases: map[string]CaseOracle{
+		"case-ready": {ExpectedOutcome: OutcomeDiagnosed, AcceptableClaimTypes: []string{target.ClaimType}, RequiredEvidenceGroups: [][]string{{"workload.subject_confirmed"}, {"change.selector_mismatch"}}, MaxToolCalls: 2},
+	}}
+	split := Split{SchemaVersion: SplitSchemaVersion, DatasetID: dataset.DatasetID, Quality: []string{"case-ready"}, Repetitions: 1, Aggregation: "single_run"}
+	model := &scriptedEvalModel{actions: []agent.ProposedAction{actionOne, actionTwo}, diagnosisClaim: target.ClaimType}
+
+	report, err := RunModel(context.Background(), dataset, oracle, split, Manifest{DatasetID: dataset.DatasetID}, model, RunOptions{OnlySplit: SplitQuality, Repetitions: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if model.views != 2 || report.Runs[0].ToolCalls != 2 || report.Runs[0].ClaimType != target.ClaimType {
+		t.Fatalf("ready claim ended investigation before alternatives were resolved: model_views=%d run=%+v", model.views, report.Runs[0])
+	}
+}
+
 func TestSelectedCasesModelExcludesGuardrails(t *testing.T) {
 	dataset := Dataset{Cases: []EvalCase{{ID: "cal"}, {ID: "quality"}, {ID: "guard"}}}
 	split := Split{Calibration: []string{"cal"}, Quality: []string{"quality"}, Guardrail: []string{"guard"}}
@@ -104,11 +149,27 @@ func TestSelectedCasesModelExcludesGuardrails(t *testing.T) {
 	}
 }
 
+func TestUnusedActionCandidatesDropsAllVariantsOfUsedFixture(t *testing.T) {
+	first := evalAction("query_metrics", "metric/v1", "scope-1", map[string]any{"window": "5m"}, "metric.symptom")
+	second := evalAction("query_metrics", "metric/v1", "scope-1", map[string]any{"window": "15m"}, "metric.symptom")
+	signature, err := agent.ActionSignature(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evalCase := EvalCase{Fixtures: []ToolFixture{{Actions: []agent.ProposedAction{first, second}}}}
+	runtime := &caseRuntime{fixtureUse: map[string]struct{}{signature: {}}}
+	if candidates := unusedActionCandidates(evalCase, runtime); len(candidates) != 0 {
+		t.Fatalf("used fixture variants remained candidates: %+v", candidates)
+	}
+}
+
 type scriptedEvalModel struct {
-	actions         []agent.ProposedAction
-	views           int
-	secondViewFacts int
-	capturedViews   []agent.ModelView
+	actions              []agent.ProposedAction
+	views                int
+	secondViewFacts      int
+	capturedViews        []agent.ModelView
+	requiredEvidenceSeen bool
+	diagnosisClaim       string
 }
 
 func (m *scriptedEvalModel) ProposeDelta(_ context.Context, view agent.ModelView) (agent.StateDelta, agent.ModelUsage, error) {
@@ -121,10 +182,15 @@ func (m *scriptedEvalModel) ProposeDelta(_ context.Context, view agent.ModelView
 	return agent.StateDelta{SchemaVersion: 1, BasisCheckpointVersion: view.State.CheckpointVersion, ProposedAction: &action, ProposedStop: agent.StopContinue}, agent.ModelUsage{Calls: 1, InputTokens: 10, OutputTokens: 10}, nil
 }
 
-func (*scriptedEvalModel) SynthesizeDiagnosis(_ context.Context, view agent.DiagnosisView) (agent.DiagnosisCandidate, agent.ModelUsage, error) {
+func (m *scriptedEvalModel) SynthesizeDiagnosis(_ context.Context, view agent.DiagnosisView) (agent.DiagnosisCandidate, agent.ModelUsage, error) {
+	claim := view.AllowedClaimTypes[0]
+	if m.diagnosisClaim != "" {
+		claim = m.diagnosisClaim
+	}
+	m.requiredEvidenceSeen = len(view.RequiredEvidenceByClaim[claim]) > 0
 	return agent.DiagnosisCandidate{
-		ClaimType: view.AllowedClaimTypes[0], Summary: "The persisted facts identify the configured root cause.", Confidence: agent.DiagnosisConfirmed,
-		EvidenceFactIDs: append([]string(nil), view.SufficiencyByClaim[view.AllowedClaimTypes[0]].SupportingIDs...), RemediationHint: agent.RemediationNone,
+		ClaimType: claim, Summary: "The persisted facts identify the configured root cause.", Confidence: agent.DiagnosisConfirmed,
+		EvidenceFactIDs: append([]string(nil), view.SufficiencyByClaim[claim].SupportingIDs...), RemediationHint: agent.RemediationNone,
 	}, agent.ModelUsage{Calls: 1, InputTokens: 10, OutputTokens: 10}, nil
 }
 
