@@ -1,6 +1,6 @@
 # ADR 0013: Agent Quality Thresholds
 
-- Status: Accepted threshold decision; quality split and AGENT_QUALITY result NOT RUN
+- Status: Accepted threshold decision; quality Gate FAIL at exact SHA `f8ffcc1`
 - Date: 2026-07-21
 - Owner: Phase 4 / AGENT_QUALITY
 
