@@ -21,7 +21,7 @@ const (
 	phase7ALockName       = "cloudops-copilot:phase7a-prepare"
 	phase7AConverter      = "phase7a-cutover/v1"
 	phase7AControlName    = "release-a"
-	phase7AOutboxRegistry = "incident.created,incident.updated,incident.signal_resolved,incident.status_changed,remediation_plan_policy_rejected,remediation_planning_started,remediation_plan_awaiting_approval,remediation_plan_approved,remediation_plan_rejected,remediation_draft_pr_created,controlled_direct_execution_delivered,delivery_argocd_revision_detected,delivery_ci_pending,delivery_ci_passed,delivery_ci_failed,delivery_pr_merged,delivery_pr_closed,delivery_argocd_sync_started,delivery_argocd_sync_succeeded,delivery_argocd_sync_failed,delivery_kubernetes_rollout_started,delivery_completed,verification_started,verification_check_passed,verification_check_failed,verification_failed,verification_passed,incident_resolved,incident_returned_to_investigation,verification_timed_out"
+	phase7AOutboxRegistry = "incident.created,incident.updated,incident.signal_resolved,incident.status_changed,remediation_plan_policy_rejected,remediation_planning_started,remediation_plan_awaiting_approval,remediation_plan_approved,remediation_plan_rejected,remediation_draft_pr_created,controlled_direct_execution_delivered,delivery_argocd_revision_detected,delivery_pending,delivery_delivering,delivery_pr_created,delivery_ci_pending,delivery_ci_passed,delivery_ci_failed,delivery_merge_pending,delivery_pr_merged,delivery_pr_closed,delivery_argocd_pending,delivery_argocd_sync_started,delivery_argocd_sync_succeeded,delivery_argocd_sync_failed,delivery_argocd_timeout,delivery_kubernetes_rollout_started,delivery_rollout_failed,delivery_completed,delivery_merge_timeout,delivery_revision_mismatch,delivery_delivery_cancelled,delivery_failed,verification_started,verification_check_pending,verification_check_running,verification_check_passed,verification_check_failed,verification_check_timed_out,verification_check_unavailable,verification_check_invalid,verification_check_cancelled,verification_failed,verification_passed,incident_resolved_after_verification,incident_returned_to_investigation,verification_timed_out"
 )
 
 var phase7AEventTypes = strings.Split(phase7AOutboxRegistry, ",")
@@ -116,6 +116,14 @@ func (p *Phase7APreparer) Prepare(ctx context.Context, request PrepareRequest) (
 	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM async_tasks WHERE status='running'").Scan(&runningTasks); err != nil || runningTasks != 0 {
 		return report, fmt.Errorf("running V3 tasks=%d want zero: %w", runningTasks, err)
 	}
+	if existing, found, err := existingPreparation(ctx, tx, request, version); err != nil {
+		return report, err
+	} else if found {
+		if err := tx.Commit(); err != nil {
+			return report, fmt.Errorf("commit idempotent phase7a inspection: %w", err)
+		}
+		return existing, nil
+	}
 
 	now, err := databaseTime(ctx, tx)
 	if err != nil {
@@ -205,6 +213,54 @@ ON DUPLICATE KEY UPDATE source_outbox_id=VALUES(source_outbox_id)`, now); err !=
 		BinaryImageDigest: request.BinaryImageDigest, SchemaVersion: version,
 		QuiesceLedgerPublicID: quiesceID, ReconciliationLedgerPublicID: reconcileID,
 		ConverterAuditLedgerPublicID: auditID, Counts: counts, PreparedAt: now}, nil
+}
+
+func existingPreparation(ctx context.Context, tx *sql.Tx, request PrepareRequest, version uint64) (PrepareReport, bool, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT public_id,operation,status,source_exact_sha,binary_image_digest
+FROM migration_ledger WHERE plan_version=? AND operation IN (?,?,?) ORDER BY id FOR UPDATE`, request.PlanVersion,
+		QuiesceOperation, ReconciliationOperation, ConverterAuditOperation)
+	if err != nil {
+		return PrepareReport{}, false, fmt.Errorf("inspect existing phase7a preparation: %w", err)
+	}
+	defer rows.Close()
+	ids := map[string]string{}
+	for rows.Next() {
+		var id, operation, status, sourceSHA, digest string
+		if err := rows.Scan(&id, &operation, &status, &sourceSHA, &digest); err != nil {
+			return PrepareReport{}, false, err
+		}
+		if status != "passed" || sourceSHA != request.SourceExactSHA || digest != request.BinaryImageDigest {
+			return PrepareReport{}, false, fmt.Errorf("existing phase7a ledger %s has a different or incomplete release identity", operation)
+		}
+		if _, duplicate := ids[operation]; duplicate {
+			return PrepareReport{}, false, fmt.Errorf("duplicate passed phase7a ledger operation %s", operation)
+		}
+		ids[operation] = id
+	}
+	if err := rows.Err(); err != nil {
+		return PrepareReport{}, false, err
+	}
+	if len(ids) == 0 {
+		return PrepareReport{}, false, nil
+	}
+	if len(ids) != 3 || ids[QuiesceOperation] == "" || ids[ReconciliationOperation] == "" || ids[ConverterAuditOperation] == "" {
+		return PrepareReport{}, false, fmt.Errorf("partial phase7a preparation ledger count=%d; manual audit is required", len(ids))
+	}
+	var completed sql.NullTime
+	if err := tx.QueryRowContext(ctx, `SELECT completed_at FROM cutover_controls WHERE control_name=? AND plan_version=? AND source_exact_sha=? AND binary_image_digest=? FOR UPDATE`,
+		phase7AControlName, request.PlanVersion, request.SourceExactSHA, request.BinaryImageDigest).Scan(&completed); err != nil {
+		return PrepareReport{}, false, fmt.Errorf("read completed phase7a control: %w", err)
+	}
+	if !completed.Valid {
+		return PrepareReport{}, false, errors.New("phase7a prerequisite ledgers exist without a completed quiesce control")
+	}
+	counts, err := collectCutoverCounts(ctx, tx)
+	if err != nil {
+		return PrepareReport{}, false, err
+	}
+	return PrepareReport{PlanVersion: request.PlanVersion, SourceExactSHA: request.SourceExactSHA, BinaryImageDigest: request.BinaryImageDigest,
+		SchemaVersion: version, QuiesceLedgerPublicID: ids[QuiesceOperation], ReconciliationLedgerPublicID: ids[ReconciliationOperation],
+		ConverterAuditLedgerPublicID: ids[ConverterAuditOperation], Counts: counts, PreparedAt: completed.Time.UTC()}, true, nil
 }
 
 func unknownOutboxCount(ctx context.Context, tx *sql.Tx) (uint64, error) {

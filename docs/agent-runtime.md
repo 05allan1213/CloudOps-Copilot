@@ -60,8 +60,8 @@ Evidence 持久化保存 bounded typed facts、provenance、content hash 和 aut
 
 | 项目 | 状态 | 当前证据 |
 |---|---|---|
-| Runtime-bound Agent Eval v5 | `PASS` | [v5 quality report](evidence/phase-4-agent-quality-v5-report.md)：quality、prompt injection、secret canary 均通过 |
-| Frozen manifest / reducer / runtime source identity | `PASS` | `eval/v5/manifest.json` 与 v5 report |
+| Runtime-bound Agent Eval v6 | `PASS` | [v6 quality report](evidence/phase-4-agent-quality-v6-report.md)：quality、prompt injection、secret canary 均通过 |
+| Frozen manifest / reducer / runtime source identity | `PASS` | `eval/v6/manifest.json` 与 v6 report；migrated legacy Evidence 被确定性排除 |
 | 五类 production operation 源码装配 | `PASS` | `internal/bootstrap/worker_provider.go`、`internal/taskhandler/registry.go` |
 | 当前 HEAD 的全量 test/race | `NOT RUN` | 本文档切片不运行代码测试 |
 | Phase 3 clean-kind | `NOT RUN` | 当前没有新的 clean-cluster runtime 证据 |
@@ -74,8 +74,8 @@ Evidence 持久化保存 bounded typed facts、provenance、content hash 和 aut
 
 ```bash
 go test ./internal/agent/... ./internal/taskhandler/... ./internal/asyncjob/...
-go run ./cmd/cloudops-agent-eval -revision v5 -mode validate -split all
-go run ./cmd/cloudops-agent-eval -revision v5 -mode guardrail -split guardrail
+go run ./cmd/cloudops-agent-eval -revision v6 -mode validate -split all
+go run ./cmd/cloudops-agent-eval -revision v6 -mode guardrail -split guardrail
 ```
 
-真实模型 quality、hostile surveys 和 gate 的 exact-SHA 命令及输出位置记录在 [v5 quality report](evidence/phase-4-agent-quality-v5-report.md)。
+真实模型 quality、hostile surveys 和 gate 的 exact-SHA 命令及输出位置记录在 [v6 quality report](evidence/phase-4-agent-quality-v6-report.md)。
