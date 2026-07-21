@@ -36,7 +36,7 @@ func main() {
 	var value options
 	flag.StringVar(&value.mode, "mode", "validate", "freeze, validate, baseline, guardrail, model, or gate")
 	flag.StringVar(&value.root, "root", ".", "repository root")
-	flag.StringVar(&value.revision, "revision", "v5", "frozen evaluation revision, for example v4 or v5")
+	flag.StringVar(&value.revision, "revision", "v6", "frozen evaluation revision, for example v5 or v6")
 	flag.StringVar(&value.out, "out", "", "report output path; stdout when empty")
 	flag.StringVar(&value.report, "report", "", "measured model report required by gate mode")
 	flag.StringVar(&value.baseline, "baseline", "", "fixed-pipeline baseline report required by gate mode")

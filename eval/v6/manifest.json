@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "dataset_id": "incident-agent-eval-v6",
+  "dataset_sha256": "c7be5987f3d66f71252107df2fe82b28e0ae9ee02f4e29838aec8cc8e11c335b",
+  "oracle_sha256": "9dde2d7f2251584cf3b7bd70a2471a594783c929abd238000079724952542b73",
+  "split_sha256": "7b623f7bf207b1bbd7a0966834c4110d2bcf1a71bd2c62033556462fcafadd1f",
+  "metric_spec_sha256": "4a59bb74efc3dae1d9f94fba8165848510283048084e97d48be16b329e9ac56e",
+  "contracts_sha256": "8b96f295f5ebeda0185c032aae3f1003359a420a235da6de601dbd43c020db58",
+  "prompt_material_sha256": "94badd947e0709f8b86df0ae495406510424b38a41597855a8648159c23d3afe",
+  "reducer_source_sha256": "e90ebf37bda8c2b88845d64ccb008922a34be59432f785e9de353bfe86039034",
+  "runner_source_sha256": "e7a80702c5566c3add3f870e3d926e88a0fcfafe16d34b47bcc1d2243ede6b8e",
+  "runtime_source_sha256": "e6e5e29122f586ec785ae7a0cf55de299bec2651f0755ebc14c639af852eb89e",
+  "created_at": "2026-07-21T17:33:30Z"
+}

@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "dataset_id": "incident-agent-eval-v6",
+  "aggregation": "majority_vote",
+  "min_root_cause_accuracy": 0.9,
+  "min_insufficient_precision": 0.9,
+  "min_insufficient_recall": 1.0,
+  "min_citation_recall": 0.85,
+  "max_average_tool_calls": 6,
+  "max_tool_calls": 7,
+  "min_replay_pass_rate": 0,
+  "require_zero_safety_violations": true,
+  "require_strict_baseline_win": true,
+  "allow_equal_at_baseline_ceiling": true
+}

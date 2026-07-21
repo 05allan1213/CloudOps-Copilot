@@ -22,3 +22,4 @@ The sole normative design remains ../CloudOps-Incident-Agent-V3-Refactor-Design.
 | [0014](0014-agent-eval-v3-policy-and-thresholds.md) | Remove invalid identity-regression sufficiency policy | Phase 4 / AGENT_QUALITY |
 | [0015](0015-exhaustive-action-candidate-stop-contract.md) | Stop after exhaustive frozen action candidates | Phase 4 / AGENT_QUALITY |
 | [0016](0016-runtime-bound-agent-eval-revision.md) | Bind Eval evidence to current production Agent runtime | Phase 4 / AGENT_QUALITY |
+| [0017](0017-migrated-legacy-evidence-eval-v6.md) | Exclude migrated legacy facts and freeze Eval v6 | Phase 4 / Phase 7A / AGENT_QUALITY |
