@@ -20,7 +20,7 @@ spec:
       providers:
         - type: kubernetes
           node: ${NODE_NAME}
-          scope: namespace
+          scope: node
           namespace: {{ .Values.observability.namespaces.cloudops | quote }}
           hints.enabled: false
           templates:
@@ -45,7 +45,7 @@ spec:
                     data_stream.namespace: default
         - type: kubernetes
           node: ${NODE_NAME}
-          scope: namespace
+          scope: node
           namespace: {{ .Values.observability.namespaces.demo | quote }}
           hints.enabled: false
           templates:

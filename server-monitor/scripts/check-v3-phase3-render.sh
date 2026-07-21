@@ -150,7 +150,7 @@ jq -e '
   [.[] | select(.kind == "Beat" and .metadata.name == "cloudops-filebeat")][0] as $beat
   | $beat.spec.type == "filebeat"
   and ($beat.spec.config["filebeat.autodiscover"].providers | length == 2)
-  and (($beat.spec.config["filebeat.autodiscover"].providers | map(.scope) | unique) == ["namespace"])
+  and (($beat.spec.config["filebeat.autodiscover"].providers | map(.scope) | unique) == ["node"])
   and (($beat.spec.config["filebeat.autodiscover"].providers | map(.namespace) | sort) == ["cloudops-demo", "cloudops-system"])
   and all($beat.spec.config["filebeat.autodiscover"].providers[];
     (.["hints.enabled"] == false) and
