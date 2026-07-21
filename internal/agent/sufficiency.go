@@ -33,6 +33,7 @@ type EvidenceFact struct {
 	CollectionStatus   CollectionStatus  `json:"collection_status"`
 	Direct             bool              `json:"direct"`
 	Truncated          bool              `json:"truncated"`
+	MigratedLegacy     bool              `json:"migrated_legacy,omitempty"`
 	DerivedFrom        []string          `json:"derived_from,omitempty"`
 	Attributes         map[string]string `json:"attributes,omitempty"`
 }
@@ -222,7 +223,7 @@ func usableFact(fact EvidenceFact) bool {
 	return fact.ID != "" && fact.EvidenceID != "" && fact.Type != "" && fact.SourceSystem != "" &&
 		fact.CollectionPath != "" && fact.CorroborationGroup != "" && fact.CollectionStatus == CollectionAvailable &&
 		fact.Integrity == "verified" && fact.Freshness == "fresh" && fact.Completeness == "complete" &&
-		fact.ClaimUse != "forbidden" && !fact.Truncated
+		fact.ClaimUse != "forbidden" && !fact.Truncated && !fact.MigratedLegacy
 }
 
 func independentCollectors(facts []EvidenceFact) map[string]struct{} {

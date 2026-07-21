@@ -275,6 +275,25 @@ type DeliveryObserveStore interface {
 	PersistIn(context.Context, asyncjob.DBTX, asyncjob.Task, DeliveryObserveSnapshot, DeliveryObserveOutcome) error
 }
 
+type LegacyDeliveryObserveSnapshot struct {
+	ChangeRequestID uint64
+	IncidentID      uint64
+	CycleNo         uint32
+	RowVersion      uint64
+	IncidentVersion uint64
+	Repository      string
+	PRNumber        int64
+	BaseRevision    string
+	HeadCommitSHA   string
+	PRURL           string
+	Now             time.Time
+}
+
+type LegacyDeliveryObserveStore interface {
+	LoadLegacy(context.Context, asyncjob.Task) (LegacyDeliveryObserveSnapshot, error)
+	PersistLegacyIn(context.Context, asyncjob.DBTX, asyncjob.Task, LegacyDeliveryObserveSnapshot, DeliveryPullRequestObservation, time.Time) error
+}
+
 type DeliveryObserveConfig struct {
 	Observer     DeliveryObserver
 	Store        DeliveryObserveStore
@@ -303,6 +322,7 @@ type deliveryObserveOperation struct{ cfg DeliveryObserveConfig }
 type deliveryObservePayload struct {
 	ChangeRequestID string `json:"change_request_id"`
 	Phase           string `json:"phase"`
+	LegacyReadOnly  bool   `json:"legacy_read_only,omitempty"`
 }
 
 func (o *deliveryObserveOperation) handle(ctx context.Context, execution asyncjob.Execution) asyncjob.Result {
@@ -315,6 +335,9 @@ func (o *deliveryObserveOperation) handle(ctx context.Context, execution asyncjo
 	payload, err := decodeDeliveryObservePayload(task)
 	if err != nil {
 		return asyncjob.Dead("invalid_delivery_payload", boundChange(err.Error(), 2048), nil)
+	}
+	if payload.LegacyReadOnly {
+		return o.handleLegacyReadOnly(ctx, execution, payload)
 	}
 	snapshot, err := o.cfg.Store.Load(ctx, task)
 	if err != nil {
@@ -363,6 +386,48 @@ func (o *deliveryObserveOperation) handle(ctx context.Context, execution asyncjo
 	}
 	return asyncjob.Succeeded(func(ctx context.Context, tx asyncjob.DBTX) error {
 		return o.cfg.Store.PersistIn(ctx, tx, task, snapshot, outcome)
+	})
+}
+
+func (o *deliveryObserveOperation) handleLegacyReadOnly(ctx context.Context, execution asyncjob.Execution, payload deliveryObservePayload) asyncjob.Result {
+	store, ok := o.cfg.Store.(LegacyDeliveryObserveStore)
+	if !ok {
+		return asyncjob.Dead("legacy_delivery_store_unsupported", "delivery store does not implement the Phase 7A read-only contract", nil)
+	}
+	snapshot, err := store.LoadLegacy(ctx, execution.Task)
+	if err != nil {
+		return deliveryObserveLoadFailure(err)
+	}
+	if snapshot.ChangeRequestID != execution.Task.SubjectID || snapshot.IncidentID != execution.Task.IncidentID || snapshot.CycleNo != execution.Task.CycleNo ||
+		snapshot.RowVersion != execution.Task.ExpectedSubjectVersion || payload.Phase != "observe" {
+		return asyncjob.Dead("subject_version_mismatch", "legacy delivery subject is stale", nil)
+	}
+	now := o.cfg.Now().UTC()
+	if !snapshot.Now.IsZero() {
+		now = snapshot.Now.UTC()
+	}
+	externalCtx, cancel, err := asyncjob.ExternalCallContext(ctx)
+	if err != nil {
+		return asyncjob.RetryAfter(0, "external_deadline_missing", "legacy delivery observer deadline is unavailable", nil)
+	}
+	observation, observeErr := o.cfg.Observer.Observe(externalCtx, DeliveryObserveRequest{
+		Kind: DeliveryObservePullRequest, Repository: snapshot.Repository, PullRequest: snapshot.PRNumber,
+		HeadSHA: snapshot.HeadCommitSHA, ExpectedBaseSHA: snapshot.BaseRevision,
+	})
+	cancel()
+	if observeErr != nil {
+		return deliveryObserveProviderFailure(observeErr)
+	}
+	if observation.Kind != DeliveryObservePullRequest || observation.PullRequest == nil {
+		return asyncjob.RetryAfter(0, "delivery_observation_invalid", "legacy observer returned no pull request facts", nil)
+	}
+	pr := *observation.PullRequest
+	state := strings.ToLower(strings.TrimSpace(pr.State))
+	if state != "open" && state != "closed" || pr.HeadSHA == "" || !strings.EqualFold(pr.HeadSHA, snapshot.HeadCommitSHA) {
+		return asyncjob.RetryAfter(0, "delivery_observation_invalid", "legacy pull request identity is ambiguous", nil)
+	}
+	return asyncjob.Succeeded(func(ctx context.Context, tx asyncjob.DBTX) error {
+		return store.PersistLegacyIn(ctx, tx, execution.Task, snapshot, pr, now)
 	})
 }
 
@@ -919,6 +984,61 @@ LIMIT 2`, snapshot.Cluster, snapshot.Environment, snapshot.Namespace, snapshot.W
 	// no provider query language is accepted here.
 	snapshot.AlertNames = []string{snapshot.IncidentFingerprint}
 	return snapshot, nil
+}
+
+func (s *mysqlDeliveryObserveStore) LoadLegacy(ctx context.Context, task asyncjob.Task) (LegacyDeliveryObserveSnapshot, error) {
+	if task.SubjectType != "change_request" || task.SubjectID == 0 || task.CycleNo == 0 {
+		return LegacyDeliveryObserveSnapshot{}, asyncjob.ErrInvalidMutation
+	}
+	var snapshot LegacyDeliveryObserveSnapshot
+	err := s.cfg.DB.QueryRowContext(ctx, `SELECT cr.id,cr.incident_id,cr.cycle_no,cr.row_version,i.version,
+cr.repository,cr.pr_number,cr.base_revision,cr.commit_sha,cr.pr_url,UTC_TIMESTAMP(6)
+FROM change_requests cr JOIN incidents i ON i.id=cr.incident_id AND i.domain_schema_version=3
+WHERE cr.id=? AND cr.incident_id=? AND cr.cycle_no=? AND cr.domain_schema_version=3
+AND cr.migrated_legacy=TRUE AND cr.pr_number>0 AND cr.pr_url<>''`, task.SubjectID, task.IncidentID, task.CycleNo).Scan(
+		&snapshot.ChangeRequestID, &snapshot.IncidentID, &snapshot.CycleNo, &snapshot.RowVersion, &snapshot.IncidentVersion,
+		&snapshot.Repository, &snapshot.PRNumber, &snapshot.BaseRevision, &snapshot.HeadCommitSHA, &snapshot.PRURL, &snapshot.Now)
+	if err != nil {
+		return LegacyDeliveryObserveSnapshot{}, err
+	}
+	return snapshot, nil
+}
+
+func (s *mysqlDeliveryObserveStore) PersistLegacyIn(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, snapshot LegacyDeliveryObserveSnapshot, pr DeliveryPullRequestObservation, at time.Time) error {
+	if tx == nil || task.SubjectID != snapshot.ChangeRequestID || task.ExpectedSubjectVersion != snapshot.RowVersion {
+		return asyncjob.ErrInvalidMutation
+	}
+	var incidentVersion uint64
+	if err := tx.QueryRowContext(ctx, `SELECT version FROM incidents WHERE id=? AND cycle_no=? AND domain_schema_version=3 FOR UPDATE`, task.IncidentID, task.CycleNo).Scan(&incidentVersion); err != nil {
+		return err
+	}
+	if incidentVersion != snapshot.IncidentVersion {
+		return asyncjob.ErrSubjectVersionMismatch
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE change_requests SET v3_status='superseded',status=CASE WHEN ? THEN 'delivered' ELSE 'failed' END,
+pr_state=?,merged_commit_sha=CASE WHEN ? THEN ? ELSE merged_commit_sha END,failure_code='legacy_delivery_observed',
+failure_reason='Phase 7A read-only reconciliation completed; legacy approval cannot authorize V3 continuation',
+row_version=row_version+1,expected_subject_version=row_version+1,updated_at=?
+WHERE id=? AND incident_id=? AND cycle_no=? AND row_version=? AND migrated_legacy=TRUE`, pr.Merged, strings.ToLower(pr.State), pr.Merged, strings.ToLower(pr.MergeCommitSHA), at, task.SubjectID, task.IncidentID, task.CycleNo, snapshot.RowVersion)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return asyncjob.ErrSubjectVersionMismatch
+	}
+	result, err = tx.ExecContext(ctx, `UPDATE incidents SET status='DIAGNOSING',v3_status='investigating',needs_attention=TRUE,
+blocking_reason_code='legacy_delivery_observed',blocked_at=?,version=version+1,updated_at=?
+WHERE id=? AND cycle_no=? AND version=? AND domain_schema_version=3`, at, at, task.IncidentID, task.CycleNo, incidentVersion)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return asyncjob.ErrSubjectVersionMismatch
+	}
+	metadata, _ := json.Marshal(map[string]any{"change_request_id": snapshot.ChangeRequestID, "pr_number": snapshot.PRNumber, "pr_state": strings.ToLower(pr.State), "merged": pr.Merged, "migrated_legacy": true})
+	_, err = tx.ExecContext(ctx, `INSERT INTO incident_events (public_id,incident_id,domain_schema_version,cycle_no,event_schema_version,event_type,actor_type,actor_id,summary,metadata_json,occurred_at,created_at)
+VALUES (?, ?,3,?,1,'legacy_delivery_observed','system','phase7a-cutover','Legacy pull request reconciled read-only; Incident returned to investigation',?,?,?)`, uuid.NewString(), task.IncidentID, task.CycleNo, metadata, at, at)
+	return err
 }
 
 func (s *mysqlDeliveryObserveStore) PersistIn(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, snapshot DeliveryObserveSnapshot, outcome DeliveryObserveOutcome) error {

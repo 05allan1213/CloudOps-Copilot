@@ -78,6 +78,18 @@ func TestSufficiencyRejectsStaleCrossCycleAndSameCollectorFacts(t *testing.T) {
 	}
 }
 
+func TestSufficiencyRejectsMigratedLegacyEvidence(t *testing.T) {
+	facts := goldenFacts()
+	facts[1].MigratedLegacy = true
+	result, err := EvaluateSufficiency(SufficiencyInput{IncidentID: "incident-1", CycleNo: 2, Facts: facts, Policy: GoldenRequiredEnvClaimPolicy()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Outcome != SufficiencyContinue || !containsString(result.MissingFacets, "desired-change") {
+		t.Fatalf("migrated legacy fact counted toward sufficiency: %+v", result)
+	}
+}
+
 func goldenFacts() []EvidenceFact {
 	types := []struct {
 		id, factType, source, path string

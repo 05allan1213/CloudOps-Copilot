@@ -1,6 +1,6 @@
 # V3 Migration Ledger
 
-> Status: Phase 1 `EXPAND-LEGACY-SCHEMA`, Phase 2 `EXPAND-INCIDENT-TASK`, and the Phase 5/6 schema expansions `EXPAND-REMEDIATION`/`EXPAND-VERIFICATION` locally verified; subject-bound business handlers remain owned by Phases 4-6; backfill/cutover/contract units `NOT RUN`
+> Status: expand migrations through schema 16 and the Phase 7A archive/converter/ledger tooling are implemented; live deployed-data preparation, irreversible marker, Golden, and Phase 7B contract deletion remain `NOT RUN`
 >
 > Normative source: [`CloudOps-Incident-Agent-V3-Refactor-Design.md`](CloudOps-Incident-Agent-V3-Refactor-Design.md)
 >
@@ -38,8 +38,9 @@ The Git blob is the repository content address. SHA-256 is recorded for external
 | 00007 | `migrations/00007_expand_legacy_schema.sql` | 190 | `ba66c7c8f69465cdaa6232f9d68b0bc41003550e` | `e254655698086f7ff3679fe615d0d7b6c2bd58158eb44501086ca37f44c54f45` | Creates the ten compatibility tables previously owned by runtime GORM, using idempotent `CREATE TABLE IF NOT EXISTS`; contains no DML, ALTER, conversion or Down section | Phase 1 `EXPAND-LEGACY-SCHEMA`; retain all legacy rows and semantics until their later owning archive/contract Gates |
 | 00008 | `migrations/00008_expand_v3_async_runtime.sql` | 583 | `1a1e413be591f6dd7d6dd649e1fb56f19a656aec` | `a769354179532733b6216fbfde699cf756744f72dd75c98cf730feb2e093e96e` | Additive V3 compatibility columns/generated keys and the five Phase 2 tables: `async_tasks`, `async_task_attempts`, `signal_rejections`, `command_idempotency_records`, `migration_ledger` | Phase 2 `EXPAND-INCIDENT-TASK`; no DML, backfill, outbox/task conversion, legacy deletion, Down section or `CUTOVER_V3` marker |
 | 00009 | `migrations/00009_expand_v3_remediation_verification.sql` | 526 | `7c5ab3bef5edee0b38dcb8f54a84fe732fbe88f9` | `944ca629c190fe82a77e36ac7b35bfff4017fb8b59f3fb4db333918337d9c927` | Adds complete immutable Plan bindings, V3 `remediation_decisions`, append-only ChangeRequest events, frozen verification profile/check fields, `verification_samples` and `resolution_reports`; old approvals/Postmortems remain untouched | Phase 5/6 expand; nullable contract versions preserve 00008 partial rows; no backfill, cutover marker, legacy deletion or Goose Down |
+| 00016 | `migrations/00016_phase7a_cutover_archives.sql` | generated at implementation closeout | pending commit | pending commit | Adds quiesce controls, outbox/Incident/Agent/Change/Verification/Postmortem archives, conversion records and `migrated_legacy` provenance | Phase 7A tooling only; forward-only, retains every legacy source table/lease, writes no marker and performs no live conversion by itself |
 
-All nine migrations use Goose `NO TRANSACTION`; DDL is not atomically rolled back. `00007` is restartable because every statement is an additive `CREATE TABLE IF NOT EXISTS`; `00008` and `00009` are forward expand migrations and rely on Goose version ownership plus the canonical schema check below. Every future release must verify pre/post schema and ledger state explicitly.
+All migrations use Goose `NO TRANSACTION`; DDL is not atomically rolled back. `00007` is restartable because every statement is an additive `CREATE TABLE IF NOT EXISTS`; later forward migrations rely on Goose version ownership plus the canonical schema check below. Every release must verify pre/post schema and ledger state explicitly.
 
 ## 3. Current Table Ledger
 
@@ -125,7 +126,7 @@ Phase 5/6 validated the `00009` schema expansion on disposable MySQL `8.0.46-0ub
 
 ## 4. Forward Units
 
-Phase 1 allocated and verified `00007_expand_legacy_schema.sql`; Phase 2 allocated and verified `00008_expand_v3_async_runtime.sql`; Phase 5/6 allocated and verified `00009_expand_v3_remediation_verification.sql`. Backfill, cutover and contract units remain unallocated until their owning gates.
+Phase 1 allocated `00007`; Phase 2 allocated `00008`; later expand work reached `00015`; Phase 7A archive ownership is allocated by `00016`. The live `cutover-prepare` and irreversible `cutover-write` operations remain operator-run units, not migration-time side effects.
 
 | Ledger unit | Earliest owner | Purpose | Compatibility boundary | Required evidence |
 |---|---|---|---|---|
@@ -135,12 +136,23 @@ Phase 1 allocated and verified `00007_expand_legacy_schema.sql`; Phase 2 allocat
 | `EXPAND-OBSERVABILITY` | Phase 3-4 | Add typed source/template/provenance fields needed by real Metric/Log/Trace/K8s Evidence | No external raw data copy | adapter contract and bounded payload proof |
 | `EXPAND-REMEDIATION` | Phase 5 | Implemented by `migrations/00009_expand_v3_remediation_verification.sql`; adds complete Plan bindings, immutable `remediation_decisions` and append-only ChangeRequest events | V2 Approval remains non-actionable; partial 00008 rows remain readable | hash-bound Decision, contract CHECK/FK and partial-opt-in negative |
 | `EXPAND-VERIFICATION` | Phase 6 | Implemented by `migrations/00009_expand_v3_remediation_verification.sql`; adds frozen profile/check fields, `verification_samples`, common-window projection and `resolution_reports` | V2 Postmortem remains separate; legacy partial rows retain NULL contract version | CheckSpec/min-sample/failure-mode, Sample FK and no-change report persistence |
+| `EXPAND-CUTOVER-ARCHIVE` | Phase 7A | Implemented by `migrations/00016_phase7a_cutover_archives.sql`; creates archive/control/audit ownership and provenance columns | No source row is converted and no marker is written during Goose Up | forward-only static contract and schema-version binding |
 | `BACKFILL-V3` | Phase 7A pre-cutover | Batch immutable facts/cycle/references/projections and archive legacy narratives/outbox | Old Worker is still sole live executor during batch work | per-batch count/range/input-output hash/status |
 | `CUTOVER-V3` | Phase 7A release A | Quiesce, reconcile external state, derive tasks from compatible child rows, convert states, write marker, start only V3 Worker | Old binary must refuse marker; no rollback after claim/new state | maintenance transcript, zero old lease, task anti-join, marker test |
 | `GOLDEN-AUDIT` | Phase 7A release A | Run exact-SHA Agent Quality and Golden E2E after cutover; export audit | No deletion yet | manifest, exact images/revisions, full stable-window PASS |
 | `CONTRACT-V3` | Phase 7B release B | Delete legacy claim paths/lease columns/tables/deploy assets after an independent review | Forward fix only | Golden/audit accepted; zero old image/lease/caller; backup/export hashes |
 
 Phase 2's "V3 task is the only claim path" is a code/test Gate for the V3 compatibility binary. It does not authorize live data cutover or concurrent old/new workers. The live task/state conversion and irreversible marker occur only in Phase 7A after all converters exist.
+
+The one-shot operator flow is now explicit:
+
+```text
+cloudops-migrate cutover-prepare <exact release identity and four observed zero counts>
+cloudops-migrate cutover-export
+cloudops-migrate cutover-write <three returned ledger IDs and CUTOVER-V3 confirmation>
+```
+
+`cutover-prepare` holds a named MySQL lock and one serializable transaction, rejects unknown outbox types, active legacy leases/running V3 tasks and non-zero external observations, archives before conversion, uses subject anti-joins, and emits `QUIESCE-V3`, `RECONCILE-EXTERNAL-WRITES-V3`, and `CONVERTER-AUDIT-V3`. The command is implemented but has not been executed against a deployed database in this report.
 
 ## 5. Backfill Ledger Contract
 

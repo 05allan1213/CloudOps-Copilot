@@ -24,6 +24,8 @@ func TestParseCommandAllowsOnlyExplicitForwardAndCutoverCommands(t *testing.T) {
 		{args: nil, want: commandUp},
 		{args: []string{"up"}, want: commandUp},
 		{args: []string{"cutover-check"}, want: commandCutoverCheck},
+		{args: []string{"cutover-export"}, want: commandCutoverExport},
+		{args: validCutoverPrepareArgs(), want: commandCutoverPrepare},
 		{args: validCutoverWriteArgs(), want: commandCutoverWrite},
 	}
 	for _, test := range tests {
@@ -36,6 +38,15 @@ func TestParseCommandAllowsOnlyExplicitForwardAndCutoverCommands(t *testing.T) {
 		if _, err := parseCommand(args); err == nil {
 			t.Fatalf("parseCommand(%v) unexpectedly succeeded", args)
 		}
+	}
+}
+
+func validCutoverPrepareArgs() []string {
+	return []string{
+		"cutover-prepare", "--plan-version", "7", "--source-exact-sha", strings.Repeat("a", 40),
+		"--binary-image-digest", "sha256:" + strings.Repeat("b", 64),
+		"--observed-ingress-writers", "0", "--observed-mutation-writers", "0",
+		"--observed-legacy-workers", "0", "--observed-unknown-external-writes", "0",
 	}
 }
 
