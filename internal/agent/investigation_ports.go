@@ -24,9 +24,11 @@ type ModelActionSchema struct {
 // DiagnosisView is the bounded input for a diagnosis synthesis step.
 // Sufficiency is calculated by project code and is not delegated to the model.
 type DiagnosisView struct {
-	State       InvestigationState `json:"state"`
-	Facts       []EvidenceFact     `json:"facts"`
-	Sufficiency SufficiencyResult  `json:"sufficiency"`
+	State              InvestigationState           `json:"state"`
+	Facts              []EvidenceFact               `json:"facts"`
+	Sufficiency        SufficiencyResult            `json:"sufficiency"`
+	AllowedClaimTypes  []string                     `json:"allowed_claim_types,omitempty"`
+	SufficiencyByClaim map[string]SufficiencyResult `json:"-"`
 }
 
 // InvestigationModel is the V3 model boundary. Each call represents exactly

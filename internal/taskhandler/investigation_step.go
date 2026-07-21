@@ -841,7 +841,11 @@ func (o *investigationStepOperation) executeSynthesis(ctx context.Context, execu
 	if sufficiency.Outcome != agent.SufficiencyReady {
 		return o.prepareInsufficient(snapshot, investigationStepPayload{Mode: stepModeSynthesize}, "diagnosis_coverage_not_ready", o.cfg.Now())
 	}
-	view := agent.DiagnosisView{State: snapshot.State, Facts: slices.Clone(snapshot.Facts), Sufficiency: sufficiency}
+	view := agent.DiagnosisView{
+		State: snapshot.State, Facts: slices.Clone(snapshot.Facts), Sufficiency: sufficiency,
+		AllowedClaimTypes:  []string{snapshot.State.Coverage.ClaimType},
+		SufficiencyByClaim: map[string]agent.SufficiencyResult{snapshot.State.Coverage.ClaimType: sufficiency},
+	}
 	input, _ := json.Marshal(view)
 	reservation := agent.Usage{Steps: 1, ModelCalls: reservedModelCalls(o.cfg.Model), InputTokens: estimatedTokens(input), OutputTokens: 1}
 	if err := snapshot.State.Usage.CanCharge(reservation, snapshot.State.Limits); err != nil {
