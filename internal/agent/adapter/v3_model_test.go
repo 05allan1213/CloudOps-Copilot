@@ -98,7 +98,7 @@ func TestValidateModelDeltaAcceptsOnlyUnusedFrozenActionCandidates(t *testing.T)
 			Tool: "inspect_metric", TemplateIDs: []string{"metric/v1"}, ParameterKeys: []string{"service"},
 			ExpectedFactTypes: []string{"metric.symptom"},
 		}},
-		ActionCandidates: []agent.ProposedAction{candidate},
+		ActionCandidates: []agent.ProposedAction{candidate}, ActionCandidatesExhaustive: true,
 	}
 	exact := agent.StateDelta{
 		SchemaVersion: agent.InvestigationStateSchemaVersion, BasisCheckpointVersion: view.State.CheckpointVersion,
@@ -141,6 +141,7 @@ func TestValidateModelDeltaAcceptsOnlyUnusedFrozenActionCandidates(t *testing.T)
 
 	productionView := view
 	productionView.ActionCandidates = nil
+	productionView.ActionCandidatesExhaustive = false
 	changed.ProposedAction = &modified
 	if err := ValidateModelDelta(productionView, changed); err != nil {
 		t.Fatalf("production path without frozen candidates rejected a policy-valid action: %v", err)
@@ -191,7 +192,8 @@ func TestMarshalDeltaModelInputCompactsFrozenCandidateContext(t *testing.T) {
 		ClaimSufficiency: map[string]agent.SufficiencyResult{
 			"metric_regression/v1": {Outcome: agent.SufficiencyContinue, MissingFacets: []string{"change"}, ReasonCodes: []string{"required_facets_missing"}, SupportingIDs: []string{"fact-1"}},
 		},
-		ActionCandidates: []agent.ProposedAction{candidate},
+		ActionCandidates:           []agent.ProposedAction{candidate},
+		ActionCandidatesExhaustive: true,
 	}
 	payload, err := marshalDeltaModelInput(view)
 	if err != nil {
@@ -223,6 +225,7 @@ func TestMarshalDeltaModelInputCompactsFrozenCandidateContext(t *testing.T) {
 
 	productionView := view
 	productionView.ActionCandidates = nil
+	productionView.ActionCandidatesExhaustive = false
 	compact, err := marshalDeltaModelInput(productionView)
 	if err != nil {
 		t.Fatal(err)
@@ -230,6 +233,57 @@ func TestMarshalDeltaModelInputCompactsFrozenCandidateContext(t *testing.T) {
 	full, _ := json.Marshal(productionView)
 	if string(compact) != string(full) {
 		t.Fatal("production model view changed without frozen candidates")
+	}
+
+	depletedView := view
+	depletedView.ActionCandidates = nil
+	depletedView.ActionCandidatesExhaustive = true
+	depleted, err := marshalDeltaModelInput(depletedView)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var depletedInput map[string]any
+	if err := json.Unmarshal(depleted, &depletedInput); err != nil {
+		t.Fatal(err)
+	}
+	if exhaustive, ok := depletedInput["action_candidates_exhaustive"].(bool); !ok || !exhaustive {
+		t.Fatalf("depleted candidate payload omitted exhaustive contract: %+v", depletedInput)
+	}
+	if candidates, ok := depletedInput["action_candidates"].([]any); !ok || len(candidates) != 0 {
+		t.Fatalf("depleted candidate payload retained actions: %+v", depletedInput["action_candidates"])
+	}
+}
+
+func TestValidateModelDeltaRequiresStopAfterExhaustiveCandidatesAreDepleted(t *testing.T) {
+	view := agent.ModelView{
+		State: agent.InvestigationState{
+			SchemaVersion: agent.InvestigationStateSchemaVersion, IncidentID: "incident-1", CycleNo: 1,
+			CheckpointVersion: 4, Limits: agent.Limits{MaxCheckpointSize: 64 * 1024},
+		},
+		ScopeRef: "scope-1",
+		AllowedActions: []agent.ModelActionSchema{{
+			Tool: "inspect_metric", TemplateIDs: []string{"metric/v1"}, ParameterKeys: []string{"service"},
+			ExpectedFactTypes: []string{"metric.symptom"},
+		}},
+		ActionCandidatesExhaustive: true,
+	}
+	stop := agent.StateDelta{
+		SchemaVersion: agent.InvestigationStateSchemaVersion, BasisCheckpointVersion: view.State.CheckpointVersion,
+		ProposedStop: agent.StopInsufficient,
+	}
+	if err := ValidateModelDelta(view, stop); err != nil {
+		t.Fatalf("terminal insufficient stop rejected: %v", err)
+	}
+	action := agent.ProposedAction{
+		Tool: "inspect_metric", ScopeRef: "scope-1", TemplateID: "metric/v1",
+		BoundedParameters: json.RawMessage(`{"service":"demo"}`), ExpectedFactTypes: []string{"metric.symptom"},
+		PurposeSummary: "inspect the bounded metric",
+	}
+	continueDelta := stop
+	continueDelta.ProposedStop = agent.StopContinue
+	continueDelta.ProposedAction = &action
+	if err := ValidateModelDelta(view, continueDelta); err == nil {
+		t.Fatal("action after depleted exhaustive candidates was accepted")
 	}
 }
 

@@ -502,10 +502,11 @@ func evaluationModelView(evalCase EvalCase, runtime *caseRuntime, sufficiency ma
 	}
 	return agent.ModelView{
 		State: runtime.state, Facts: slices.Clone(runtime.facts), ScopeRef: evalCase.ScopeRef,
-		AllowedActions:   EvaluationContracts(evalCase.ID).Actions,
-		CandidateClaims:  claims,
-		ClaimSufficiency: results,
-		ActionCandidates: unusedActionCandidates(evalCase, runtime),
+		AllowedActions:             EvaluationContracts(evalCase.ID).Actions,
+		CandidateClaims:            claims,
+		ClaimSufficiency:           results,
+		ActionCandidates:           unusedActionCandidates(evalCase, runtime),
+		ActionCandidatesExhaustive: true,
 	}
 }
 

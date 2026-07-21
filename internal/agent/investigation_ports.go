@@ -12,6 +12,10 @@ type ModelView struct {
 	CandidateClaims  []ClaimPolicy                `json:"candidate_claims,omitempty"`
 	ClaimSufficiency map[string]SufficiencyResult `json:"claim_sufficiency,omitempty"`
 	ActionCandidates []ProposedAction             `json:"action_candidates,omitempty"`
+	// ActionCandidatesExhaustive means the caller has supplied the complete
+	// bounded action set for this decision. An empty exhaustive set requires a
+	// terminal stop; production callers with dynamic tool selection leave it false.
+	ActionCandidatesExhaustive bool `json:"action_candidates_exhaustive,omitempty"`
 }
 
 // ModelActionSchema is the provider-visible projection of a fixed Go-owned
