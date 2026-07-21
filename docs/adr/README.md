@@ -18,3 +18,4 @@ The sole normative design remains ../CloudOps-Incident-Agent-V3-Refactor-Design.
 | [0010](0010-kind-helm-resource-boundary.md) | kind + Helm only and resource boundary | Phase 3 / 7 |
 | [0011](0011-eval-gates-claim-safety.md) | Eval, hard Gates and claim safety | Phase 2-7 |
 | [0012](0012-legacy-cutover-contract.md) | Legacy cutover and deletion strategy | Phase 7A / 7B |
+| [0013](0013-agent-quality-thresholds.md) | Baseline-derived Agent Quality thresholds | Phase 4 / AGENT_QUALITY |

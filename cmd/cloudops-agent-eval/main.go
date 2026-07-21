@@ -21,6 +21,9 @@ type options struct {
 	mode        string
 	root        string
 	out         string
+	report      string
+	baseline    string
+	thresholds  string
 	onlySplit   string
 	caseIDs     string
 	repetitions int
@@ -30,9 +33,12 @@ type options struct {
 
 func main() {
 	var value options
-	flag.StringVar(&value.mode, "mode", "validate", "freeze, validate, baseline, guardrail, or model")
+	flag.StringVar(&value.mode, "mode", "validate", "freeze, validate, baseline, guardrail, model, or gate")
 	flag.StringVar(&value.root, "root", ".", "repository root")
 	flag.StringVar(&value.out, "out", "", "report output path; stdout when empty")
+	flag.StringVar(&value.report, "report", "", "measured model report required by gate mode")
+	flag.StringVar(&value.baseline, "baseline", "", "fixed-pipeline baseline report required by gate mode")
+	flag.StringVar(&value.thresholds, "thresholds", "", "quality thresholds path; defaults to eval/v1/thresholds.json")
 	flag.StringVar(&value.onlySplit, "split", "model", "model, calibration, quality, guardrail, or all")
 	flag.StringVar(&value.caseIDs, "cases", "", "comma-separated case IDs")
 	flag.IntVar(&value.repetitions, "repetitions", 0, "override repetitions")
@@ -129,23 +135,30 @@ func run(options options) error {
 			return runErr
 		}
 		report = result
+	case "gate":
+		result, gateErr := runQualityGate(paths, manifest, split, options)
+		if gateErr != nil {
+			return gateErr
+		}
+		report = result
 	default:
 		return fmt.Errorf("unsupported mode %q", options.mode)
 	}
 	return writeReport(options.out, report)
 }
 
-type evalPathsValue struct{ dataset, oracle, split, metrics, manifest, reducer, runner string }
+type evalPathsValue struct{ dataset, oracle, split, metrics, manifest, thresholds, reducer, runner string }
 
 func evalPaths(root string) evalPathsValue {
 	return evalPathsValue{
-		dataset:  filepath.Join(root, "eval", "v1", "dataset.json"),
-		oracle:   filepath.Join(root, "eval", "v1", "oracle.json"),
-		split:    filepath.Join(root, "eval", "v1", "split.json"),
-		metrics:  filepath.Join(root, "eval", "v1", "metrics.json"),
-		manifest: filepath.Join(root, "eval", "v1", "manifest.json"),
-		reducer:  filepath.Join(root, "internal", "agent", "state_delta.go"),
-		runner:   filepath.Join(root, "internal", "agent"),
+		dataset:    filepath.Join(root, "eval", "v1", "dataset.json"),
+		oracle:     filepath.Join(root, "eval", "v1", "oracle.json"),
+		split:      filepath.Join(root, "eval", "v1", "split.json"),
+		metrics:    filepath.Join(root, "eval", "v1", "metrics.json"),
+		manifest:   filepath.Join(root, "eval", "v1", "manifest.json"),
+		thresholds: filepath.Join(root, "eval", "v1", "thresholds.json"),
+		reducer:    filepath.Join(root, "internal", "agent", "state_delta.go"),
+		runner:     filepath.Join(root, "internal", "agent"),
 	}
 }
 

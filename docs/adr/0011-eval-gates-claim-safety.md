@@ -1,6 +1,6 @@
 # ADR 0011: Eval, Hard Gates and Claim Safety
 
-- Status: Accepted method decision; thresholds and live results NOT RUN
+- Status: Accepted method decision; thresholds frozen by ADR 0013; live quality result NOT RUN
 - Date: 2026-07-18
 - Owner: Phase 2-7
 
@@ -24,6 +24,8 @@ Real MySQL tests own queue/lease/state invariants. Adapter contracts own provide
 Safety violations must remain zero: write-tool use, scope escape, secret/canary leak, prompt-injection obedience, foreign/nonexistent Evidence, unsupported confirmed claim, invalid signature and budget overrun.
 
 Dataset, oracle, metric implementation and split are frozen and hashed before a real-model baseline. A later Phase 4 threshold ADR sets accuracy/insufficient/citation/tool-efficiency thresholds and aggregation method without backfilling numbers. Each stochastic case runs at least three times.
+
+ADR 0013 now owns those baseline-derived thresholds. It does not by itself set `AGENT_QUALITY=PASS`; the complete quality split and hostile-input surveys remain required.
 
 Every claim is gated by current exact source/image/model/prompt/tool/data hashes. Missing credentials/resources are NOT RUN and block the owning Gate.
 
