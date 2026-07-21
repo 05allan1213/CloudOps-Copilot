@@ -450,7 +450,16 @@ WHERE r.id = ? AND r.incident_id = ? AND r.domain_schema_version = 3
 
 func (l mysqlInvestigationLoader) loadEvidence(ctx context.Context, snapshot *investigationSnapshot) error {
 	const evidenceQuery = `SELECT public_id, source, tool_name, summary, facts_json,
- result_hash, raw_ref, redaction_json, truncated, valid, idempotency_key, collected_at
+ result_hash, content_hash, raw_ref, redaction_json, truncated, valid, idempotency_key, collected_at,
+ COALESCE(evidence_contract_version,0), producer_type, COALESCE(producer_id,''), COALESCE(producer_version,''), producer_dedupe_key,
+ COALESCE(agent_step_id,0), COALESCE(fact_schema_version,0), COALESCE(fact_schema_hash,''),
+ COALESCE(provenance_json,JSON_OBJECT()), COALESCE(provenance_hash,''),
+ COALESCE(trust_axes_json,JSON_OBJECT()), COALESCE(claim_use,''),
+ COALESCE(corroboration_groups_json,JSON_ARRAY()), COALESCE(input_evidence_ids_json,JSON_ARRAY()),
+ COALESCE(input_sample_ids_json,JSON_ARRAY()), COALESCE(input_hashes_json,JSON_ARRAY()),
+ COALESCE(redaction_policy_version,''), COALESCE(redaction_counts_json,JSON_OBJECT()),
+ COALESCE(prompt_safety_flags_json,JSON_OBJECT()), COALESCE(safe_raw_reference,raw_ref),
+ COALESCE(observed_at,collected_at)
 FROM evidence_items
 WHERE incident_id = ? AND agent_run_id = ? AND domain_schema_version = 3 AND cycle_no = ?
 ORDER BY collected_at, id`
@@ -460,22 +469,69 @@ ORDER BY collected_at, id`
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var publicID, source, toolName, summary, resultHash, rawRef string
-		var factsJSON, redactionJSON []byte
+		var publicID, source, toolName, summary, resultHash, contentHash, rawRef string
+		var producerType, producerID, producerVersion, producerKey, factSchemaHash string
+		var provenanceHash, claimUse, redactionPolicy, safeRawReference string
+		var factsJSON, redactionJSON, provenanceJSON, trustJSON, corroborationJSON []byte
+		var inputEvidenceJSON, inputSampleJSON, inputHashesJSON, redactionCountsJSON, promptFlagsJSON []byte
 		var truncated, valid bool
 		var idempotency sql.NullString
-		var collected time.Time
-		if err := rows.Scan(&publicID, &source, &toolName, &summary, &factsJSON, &resultHash, &rawRef, &redactionJSON, &truncated, &valid, &idempotency, &collected); err != nil {
+		var collected, observed time.Time
+		var contractVersion, factSchemaVersion int
+		var agentStepID uint64
+		if err := rows.Scan(&publicID, &source, &toolName, &summary, &factsJSON, &resultHash, &contentHash, &rawRef, &redactionJSON,
+			&truncated, &valid, &idempotency, &collected, &contractVersion, &producerType, &producerID, &producerVersion,
+			&producerKey, &agentStepID, &factSchemaVersion, &factSchemaHash, &provenanceJSON, &provenanceHash, &trustJSON,
+			&claimUse, &corroborationJSON, &inputEvidenceJSON, &inputSampleJSON, &inputHashesJSON, &redactionPolicy,
+			&redactionCountsJSON, &promptFlagsJSON, &safeRawReference, &observed); err != nil {
 			return fmt.Errorf("scan investigation evidence: %w", err)
 		}
-		record := agent.EvidenceRecord{PublicID: publicID, IncidentID: snapshot.Task.IncidentID, RunID: snapshot.Task.SubjectID, SourceType: source, ToolName: toolName, Summary: summary, Facts: append([]byte(nil), factsJSON...), ResultHash: resultHash, RawRef: rawRef, Redaction: append([]byte(nil), redactionJSON...), Truncated: truncated, Valid: valid, CollectedAt: collected.UTC()}
+		if contractVersion != 0 && contractVersion != evidenceContractVersion {
+			return fmt.Errorf("%w: investigation Evidence contract version is unsupported", asyncjob.ErrInvalidMutation)
+		}
+		if contractVersion == evidenceContractVersion && (producerType != evidenceProducerAgentStep || agentStepID == 0 ||
+			producerID == "" || producerVersion != "agent-step-evidence/v1" || producerKey == "" ||
+			factSchemaVersion != evidenceFactSchema || factSchemaHash != hashCanonical("evidence-fact-schema", "agent.EvidenceFact/v1", "typed-facts-envelope/v1") ||
+			!validSHA256Text(resultHash) || resultHash != contentHash || !validSHA256Text(provenanceHash) ||
+			provenanceHash != hashBytesInvestigation(provenanceJSON) || redactionPolicy != "v3-observation-redaction/v1" ||
+			observed.After(collected) || !json.Valid(factsJSON) || !json.Valid(provenanceJSON) || !json.Valid(trustJSON) ||
+			!json.Valid(corroborationJSON) || !json.Valid(inputEvidenceJSON) || !json.Valid(inputSampleJSON) ||
+			!json.Valid(inputHashesJSON) || !json.Valid(redactionCountsJSON) || !json.Valid(promptFlagsJSON)) {
+			return fmt.Errorf("%w: investigation Evidence durable contract is invalid", asyncjob.ErrInvalidMutation)
+		}
+		record := agent.EvidenceRecord{
+			PublicID: publicID, IncidentID: snapshot.Task.IncidentID, RunID: snapshot.Task.SubjectID,
+			ContractVersion: contractVersion, ProducerType: producerType, ProducerID: producerID,
+			ProducerVersion: producerVersion, ProducerDedupeKey: producerKey, AgentStepID: agentStepID,
+			SourceType: source, ToolName: toolName, Summary: summary, Facts: append([]byte(nil), factsJSON...),
+			FactSchemaVersion: factSchemaVersion, FactSchemaHash: factSchemaHash,
+			Provenance: append([]byte(nil), provenanceJSON...), ProvenanceHash: provenanceHash,
+			TrustAxes: append([]byte(nil), trustJSON...), ClaimUse: claimUse,
+			CorroborationGroups: append([]byte(nil), corroborationJSON...), InputEvidenceIDs: append([]byte(nil), inputEvidenceJSON...),
+			InputSampleIDs: append([]byte(nil), inputSampleJSON...), InputHashes: append([]byte(nil), inputHashesJSON...),
+			ResultHash: resultHash, RawRef: rawRef, SafeRawReference: safeRawReference,
+			Redaction: append([]byte(nil), redactionJSON...), RedactionPolicyVersion: redactionPolicy,
+			RedactionCounts: append([]byte(nil), redactionCountsJSON...), PromptSafetyFlags: append([]byte(nil), promptFlagsJSON...),
+			Truncated: truncated, Valid: valid, ObservedAt: observed.UTC(), CollectedAt: collected.UTC(),
+		}
 		if idempotency.Valid {
 			record.IdempotencyKey = idempotency.String
 		}
 		snapshot.Evidence[publicID] = record
 		var envelope storedEvidenceEnvelope
-		if json.Unmarshal(factsJSON, &envelope) != nil || envelope.SchemaVersion != 1 {
-			continue
+		if json.Unmarshal(factsJSON, &envelope) != nil || envelope.SchemaVersion != evidenceFactSchema ||
+			envelope.ContentHash != contentHash || !slices.Equal(envelope.InputEvidenceIDs, decodeEvidenceStringArray(inputEvidenceJSON)) ||
+			!slices.Equal(envelope.InputSampleIDs, decodeEvidenceStringArray(inputSampleJSON)) ||
+			!slices.Equal(envelope.InputHashes, decodeEvidenceStringArray(inputHashesJSON)) {
+			return fmt.Errorf("%w: investigation Evidence typed-fact envelope is invalid", asyncjob.ErrInvalidMutation)
+		}
+		if contractVersion == evidenceContractVersion {
+			metadata, metadataErr := buildDurableEvidenceMetadata(envelope.Facts, envelope.Provenance, envelope.InputEvidenceIDs, envelope.InputSampleIDs, envelope.InputHashes)
+			if metadataErr != nil || metadata.FactSchemaHash != factSchemaHash || metadata.ProvenanceHash != provenanceHash ||
+				!bytes.Equal(metadata.TrustAxesJSON, trustJSON) || metadata.ClaimUse != claimUse ||
+				!bytes.Equal(metadata.CorroborationGroups, corroborationJSON) {
+				return fmt.Errorf("%w: investigation Evidence trust/provenance metadata diverges from typed facts", asyncjob.ErrInvalidMutation)
+			}
 		}
 		for _, fact := range envelope.Facts {
 			if fact.ID == "" || fact.EvidenceID == "" || fact.IncidentID != snapshot.IncidentPublicID || fact.CycleNo != uint64(snapshot.Task.CycleNo) {
@@ -491,17 +547,20 @@ ORDER BY collected_at, id`
 }
 
 type storedEvidenceEnvelope struct {
-	SchemaVersion   int                    `json:"schema_version"`
-	Status          agent.CollectionStatus `json:"status"`
-	SourceSystem    string                 `json:"source_system"`
-	CollectionPath  string                 `json:"collection_path"`
-	TemplateVersion string                 `json:"template_version"`
-	Summary         string                 `json:"summary"`
-	Facts           []agent.EvidenceFact   `json:"facts"`
-	Truncated       bool                   `json:"truncated"`
-	Provenance      map[string]string      `json:"provenance,omitempty"`
-	SafeDeepLink    string                 `json:"safe_deep_link,omitempty"`
-	ContentHash     string                 `json:"content_hash"`
+	SchemaVersion    int                    `json:"schema_version"`
+	Status           agent.CollectionStatus `json:"status"`
+	SourceSystem     string                 `json:"source_system"`
+	CollectionPath   string                 `json:"collection_path"`
+	TemplateVersion  string                 `json:"template_version"`
+	Summary          string                 `json:"summary"`
+	Facts            []agent.EvidenceFact   `json:"facts"`
+	Truncated        bool                   `json:"truncated"`
+	Provenance       map[string]string      `json:"provenance,omitempty"`
+	SafeDeepLink     string                 `json:"safe_deep_link,omitempty"`
+	InputEvidenceIDs []string               `json:"input_evidence_ids,omitempty"`
+	InputSampleIDs   []string               `json:"input_sample_ids,omitempty"`
+	InputHashes      []string               `json:"input_hashes,omitempty"`
+	ContentHash      string                 `json:"content_hash"`
 }
 
 func decodeRunState(snapshot investigationSnapshot) (agent.InvestigationState, string, error) {
@@ -776,8 +835,10 @@ func (o *investigationStepOperation) executeTool(ctx context.Context, execution 
 	if !hasProposedAttempt(snapshot.State.ToolAttempts, signature, action.Tool) {
 		return preparedInvestigationStep{}, fmt.Errorf("%w: tool action is not the reducer-approved pending signature", agent.ErrPermission)
 	}
-	usage := agent.Usage{Steps: 1, ToolCalls: 1, Evidence: 1}
-	if err := snapshot.State.Usage.CanCharge(usage, snapshot.State.Limits); err != nil {
+	usage := agent.Usage{Steps: 1, ToolCalls: 1}
+	reservation := usage
+	reservation.Evidence = 1
+	if err := snapshot.State.Usage.CanCharge(reservation, snapshot.State.Limits); err != nil {
 		return o.prepareInsufficient(snapshot, investigationStepPayload{Mode: stepModeTool, Action: &action}, "tool_budget_exhausted", o.cfg.Now())
 	}
 	externalCtx, cancel, err := asyncjob.ExternalCallContext(ctx)
@@ -807,6 +868,9 @@ func (o *investigationStepOperation) executeTool(ctx context.Context, execution 
 	observation, err = normalizeObservation(observation, snapshot, action, evidenceID)
 	if err != nil {
 		return preparedInvestigationStep{}, err
+	}
+	if len(observation.Facts) > 0 {
+		usage.Evidence = 1
 	}
 	state := snapshot.State
 	state.ToolAttempts = slices.Clone(state.ToolAttempts)
@@ -1181,6 +1245,11 @@ func normalizeObservation(value agent.ToolObservation, snapshot investigationSna
 	if len(value.Facts) > 64 {
 		return agent.ToolObservation{}, fmt.Errorf("%w: observation has too many facts", agent.ErrInvalidArgument)
 	}
+	value.InputEvidenceIDs, value.InputSampleIDs, value.InputHashes = nil, nil, nil
+	priorFacts := make(map[string]agent.EvidenceFact, len(snapshot.Facts))
+	for _, fact := range snapshot.Facts {
+		priorFacts[fact.ID] = fact
+	}
 	seenFacts := make(map[string]struct{}, len(value.Facts))
 	for index := range value.Facts {
 		fact := &value.Facts[index]
@@ -1228,6 +1297,26 @@ func normalizeObservation(value agent.ToolObservation, snapshot investigationSna
 		if attributeBytes > 4096 {
 			return agent.ToolObservation{}, fmt.Errorf("%w: observation fact attributes exceed size bound", agent.ErrInvalidArgument)
 		}
+		fact.DerivedFrom = stableUniqueInvestigation(fact.DerivedFrom)
+		for _, parentID := range fact.DerivedFrom {
+			parent, ok := priorFacts[parentID]
+			if !ok || parent.EvidenceID == "" || parent.IncidentID != snapshot.IncidentPublicID ||
+				parent.CycleNo != uint64(snapshot.Task.CycleNo) || parent.CollectionStatus != agent.CollectionAvailable ||
+				parent.Integrity != "verified" || parent.ClaimUse == "forbidden" || parent.Truncated {
+				return agent.ToolObservation{}, fmt.Errorf("%w: derived observation fact has no usable current-cycle input", agent.ErrInvalidArgument)
+			}
+			record, ok := snapshot.Evidence[parent.EvidenceID]
+			if !ok || !record.Valid || record.Truncated || !validSHA256Text(record.ResultHash) {
+				return agent.ToolObservation{}, fmt.Errorf("%w: derived observation input Evidence is not durable", agent.ErrInvalidArgument)
+			}
+			value.InputEvidenceIDs = append(value.InputEvidenceIDs, parent.EvidenceID)
+			value.InputHashes = append(value.InputHashes, record.ResultHash)
+		}
+	}
+	value.InputEvidenceIDs = stableUniqueInvestigation(value.InputEvidenceIDs)
+	value.InputHashes = stableUniqueInvestigation(value.InputHashes)
+	if len(value.InputEvidenceIDs) != len(value.InputHashes) {
+		return agent.ToolObservation{}, fmt.Errorf("%w: derived observation inputs are not one-to-one", agent.ErrInvalidArgument)
 	}
 	if value.SafeDeepLink != "" {
 		parsed, err := url.Parse(value.SafeDeepLink)
@@ -1262,7 +1351,9 @@ func evidenceEnvelope(observation agent.ToolObservation) ([]byte, error) {
 		SchemaVersion: 1, Status: observation.Status, SourceSystem: observation.SourceSystem,
 		CollectionPath: observation.CollectionPath, TemplateVersion: observation.TemplateVersion,
 		Summary: observation.Summary, Facts: observation.Facts, Truncated: observation.Truncated,
-		Provenance: observation.Provenance, SafeDeepLink: observation.SafeDeepLink, ContentHash: observation.ContentHash,
+		Provenance: observation.Provenance, SafeDeepLink: observation.SafeDeepLink,
+		InputEvidenceIDs: observation.InputEvidenceIDs, InputSampleIDs: observation.InputSampleIDs, InputHashes: observation.InputHashes,
+		ContentHash: observation.ContentHash,
 	})
 }
 
@@ -1457,7 +1548,7 @@ func (o *investigationStepOperation) applyPrepared(ctx context.Context, tx async
 	stepPublicID := deterministicPublicID("investigation-step", snapshot.Task.DedupeKey)
 	arguments, argumentsHash := stepArguments(checkpoint)
 	evidencePublicID := ""
-	if checkpoint.Observation != nil {
+	if checkpoint.Observation != nil && len(checkpoint.Observation.Facts) > 0 {
 		evidencePublicID = deterministicPublicID("investigation-evidence", snapshot.Task.DedupeKey)
 	}
 	var sequence int
@@ -1479,7 +1570,7 @@ func (o *investigationStepOperation) applyPrepared(ctx context.Context, tx async
 		}
 		providerRequestIDHashes = encoded
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_steps
+	stepResult, err := tx.ExecContext(ctx, `INSERT INTO agent_steps
  (public_id, agent_run_id, domain_schema_version, incident_id, cycle_no, sequence, step_type,
   short_reason, selected_tool, arguments_json, arguments_hash, result_summary, result_ref,
   evidence_public_id, status, retry_count, duration_ms, input_tokens, output_tokens, provider_request_id_hashes, error_code,
@@ -1489,11 +1580,16 @@ func (o *investigationStepOperation) applyPrepared(ctx context.Context, tx async
 		stepNode, boundInvestigation(checkpoint.StepSummary, 1024), selectedTool(checkpoint), arguments, argumentsHash,
 		boundInvestigation(checkpoint.StepSummary, 4096), "", evidencePublicID, checkpoint.DurationMS,
 		checkpoint.Usage.InputTokens, checkpoint.Usage.OutputTokens, providerRequestIDHashes,
-		checkpoint.CapturedAt.UTC(), checkpoint.CapturedAt.UTC(), checkpoint.CapturedAt.UTC()); err != nil {
+		checkpoint.CapturedAt.UTC(), checkpoint.CapturedAt.UTC(), checkpoint.CapturedAt.UTC())
+	if err != nil {
 		return fmt.Errorf("persist investigation AgentStep: %w", err)
 	}
-	if checkpoint.Observation != nil {
-		if err := insertInvestigationEvidence(ctx, tx, snapshot, checkpoint, evidencePublicID); err != nil {
+	stepID, err := stepResult.LastInsertId()
+	if err != nil || stepID <= 0 {
+		return fmt.Errorf("read investigation AgentStep id: %w", err)
+	}
+	if checkpoint.Observation != nil && len(checkpoint.Observation.Facts) > 0 {
+		if err := insertInvestigationEvidence(ctx, tx, snapshot, checkpoint, uint64(stepID), stepPublicID, evidencePublicID); err != nil {
 			return err
 		}
 		if err := insertInvestigationChangeCandidates(ctx, tx, snapshot, checkpoint, evidencePublicID); err != nil {
@@ -1619,7 +1715,7 @@ func selectedTool(checkpoint investigationStepCheckpoint) string {
 	return ""
 }
 
-func insertInvestigationEvidence(ctx context.Context, tx asyncjob.DBTX, snapshot investigationSnapshot, checkpoint investigationStepCheckpoint, publicID string) error {
+func insertInvestigationEvidence(ctx context.Context, tx asyncjob.DBTX, snapshot investigationSnapshot, checkpoint investigationStepCheckpoint, stepID uint64, stepPublicID, publicID string) error {
 	observation := *checkpoint.Observation
 	facts, err := evidenceEnvelope(observation)
 	if err != nil {
@@ -1630,19 +1726,48 @@ func insertInvestigationEvidence(ctx context.Context, tx asyncjob.DBTX, snapshot
 	}
 	producerKey := hashCanonical("agent-step", snapshot.RunPublicID, observation.SourceSystem, observation.CollectionPath, observation.TemplateVersion, observation.ContentHash)
 	idempotencyKey := hashCanonical("agent-evidence", snapshot.Task.DedupeKey, observation.ContentHash)
+	templateID, templateVersion, err := evidenceTemplateIdentity(observation.TemplateVersion)
+	if err != nil {
+		return err
+	}
+	_, argumentsHash := stepArguments(checkpoint)
+	timeRange, _ := canonicalEvidenceJSON(map[string]any{"from": snapshot.State.Window.From.UTC(), "to": snapshot.State.Window.To.UTC()})
+	scopeHash := hashCanonical("evidence-scope", snapshot.IncidentPublicID, fmt.Sprint(snapshot.Task.CycleNo), snapshot.ScopeRef)
+	provenance := map[string]string{
+		"source_system": observation.SourceSystem, "collection_path": observation.CollectionPath,
+		"agent_run_id": snapshot.RunPublicID, "agent_step_id": stepPublicID,
+	}
+	for key, value := range observation.Provenance {
+		provenance[key] = value
+	}
+	metadata, err := buildDurableEvidenceMetadata(observation.Facts, provenance, observation.InputEvidenceIDs, observation.InputSampleIDs, observation.InputHashes)
+	if err != nil {
+		return fmt.Errorf("build investigation Evidence provenance: %w", err)
+	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO evidence_items
- (public_id, incident_id, domain_schema_version, cycle_no, agent_run_id, type, source,
-  producer_type, producer_dedupe_key, tool_name, resource_ref, time_range_json, query_text,
-  summary, facts_json, result_hash, content_hash, raw_ref, redaction_json, truncated, valid,
-  idempotency_key, collected_at, created_at)
- VALUES (?, ?, 3, ?, ?, 'agent_observation', ?, 'agent_step', ?, ?, ?, NULL, '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ (public_id, incident_id, domain_schema_version, evidence_contract_version, cycle_no,
+  agent_run_id, agent_step_id, type, source, producer_type, producer_id, producer_version,
+  producer_dedupe_key, adapter_version, query_template_id, query_template_version,
+  scope_snapshot_hash, arguments_hash, tool_name, resource_ref, time_range_json, query_text,
+  summary, facts_json, fact_schema_version, fact_schema_hash, provenance_json, provenance_hash,
+  trust_axes_json, claim_use, corroboration_groups_json, input_evidence_ids_json,
+  input_sample_ids_json, input_hashes_json, result_hash, content_hash, raw_ref,
+  safe_raw_reference, redaction_json, redaction_policy_version, redaction_counts_json,
+  prompt_safety_flags_json, truncated, valid, idempotency_key, collected_at, observed_at, created_at)
+ VALUES (?, ?, 3, 1, ?, ?, ?, 'agent_observation', ?, 'agent_step', ?, 'agent-step-evidence/v1',
+         ?, 'investigation-read/v1', ?, ?, ?, ?, ?, ?, ?, '', ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+         ?, ?, ?, ?, ?, 'v3-observation-redaction/v1', ?, ?, ?, ?, ?, ?, ?, ?)
  ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
-		publicID, snapshot.Task.IncidentID, snapshot.Task.CycleNo, snapshot.Task.SubjectID,
-		boundInvestigation(observation.SourceSystem, 128), producerKey, selectedTool(checkpoint),
-		boundInvestigation(observation.CollectionPath, 1024), boundInvestigation(observation.Summary, 4096), facts,
-		observation.ContentHash, observation.ContentHash, boundInvestigation(observation.SafeDeepLink, 1024),
-		json.RawMessage(`{"policy":"v3-observation-redaction","raw_text_omitted":true}`), observation.Truncated,
-		observation.Status != agent.CollectionInvalid, idempotencyKey, checkpoint.CapturedAt.UTC(), checkpoint.CapturedAt.UTC())
+		publicID, snapshot.Task.IncidentID, snapshot.Task.CycleNo, snapshot.Task.SubjectID, stepID,
+		boundInvestigation(observation.SourceSystem, 128), stepPublicID, producerKey, templateID, templateVersion,
+		scopeHash, argumentsHash, selectedTool(checkpoint), boundInvestigation(observation.CollectionPath, 1024), timeRange,
+		boundInvestigation(observation.Summary, 4096), facts, metadata.FactSchemaHash, metadata.ProvenanceJSON,
+		metadata.ProvenanceHash, metadata.TrustAxesJSON, metadata.ClaimUse, metadata.CorroborationGroups,
+		metadata.InputEvidenceIDs, metadata.InputSampleIDs, metadata.InputHashes, observation.ContentHash,
+		observation.ContentHash, boundInvestigation(observation.SafeDeepLink, 1024), boundInvestigation(observation.SafeDeepLink, 1024),
+		json.RawMessage(`{"policy":"v3-observation-redaction","raw_text_omitted":true}`), metadata.RedactionCounts,
+		metadata.PromptSafetyFlags, observation.Truncated, observation.Status != agent.CollectionInvalid,
+		idempotencyKey, checkpoint.CapturedAt.UTC(), checkpoint.CapturedAt.UTC(), checkpoint.CapturedAt.UTC())
 	if err != nil {
 		return fmt.Errorf("persist investigation Evidence: %w", err)
 	}

@@ -2,4 +2,4 @@
 // contract without embedding SQL files or compiling Goose into API/Worker.
 package schemaversion
 
-const Latest int64 = 12
+const Latest int64 = 14

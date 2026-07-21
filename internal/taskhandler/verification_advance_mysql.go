@@ -21,6 +21,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/05allan1213/CloudOps-Copilot/internal/agent"
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
 	"github.com/05allan1213/CloudOps-Copilot/internal/baseline"
 	"github.com/05allan1213/CloudOps-Copilot/internal/businessbudget"
@@ -467,7 +468,8 @@ FOR UPDATE`, check.ID, task.SubjectID, task.IncidentID, task.CycleNo).Scan(&stor
 	}
 	contentHash := hashVerificationSample(sample, check, storedAttempt+1)
 	windowStart, windowEnd := sampleWindow(check, sample, now)
-	if err := insertVerificationSample(ctx, tx, task, check, sample, storedAttempt+1, contentHash, windowStart, windowEnd, now); err != nil {
+	sampleID, samplePublicID, err := insertVerificationSample(ctx, tx, task, check, sample, storedAttempt+1, contentHash, windowStart, windowEnd, now)
+	if err != nil {
 		return err
 	}
 	if err := updateVerificationCheck(ctx, tx, task, check, sample, now); err != nil {
@@ -517,7 +519,7 @@ WHERE id = ? AND incident_id = ? AND cycle_no = ? AND row_version = ?`,
 		return nil
 	}
 	if verification.TerminalRun(status) {
-		if err := persistVerificationFailureEvidence(ctx, tx, task, check, sample, now); err != nil {
+		if err := persistVerificationFailureEvidence(ctx, tx, task, snapshot, check, sample, sampleID, samplePublicID, contentHash, now); err != nil {
 			return err
 		}
 		return requeueInvestigation(ctx, tx, s.tasks, task, status, reason, s.maxAgentRuns)
@@ -538,18 +540,26 @@ func validateVerificationMutation(check verification.Check, sample verification.
 	return nil
 }
 
-func insertVerificationSample(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, check verification.Check, sample verification.Sample, sequence int, contentHash string, windowStart, windowEnd *time.Time, now time.Time) error {
-	_, err := tx.ExecContext(ctx, `
+func insertVerificationSample(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, check verification.Check, sample verification.Sample, sequence int, contentHash string, windowStart, windowEnd *time.Time, now time.Time) (uint64, string, error) {
+	publicID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(fmt.Sprintf("verification-sample\x00%d\x00%d\x00%d\x00%s", task.SubjectID, check.ID, sequence, contentHash))).String()
+	result, err := tx.ExecContext(ctx, `
 INSERT INTO verification_samples
  (public_id, domain_schema_version, sample_schema_version, incident_id, cycle_no,
   verification_run_id, verification_check_id, sample_sequence, status, observed_json,
   source_reference, reason_code, window_start_at, window_end_at, sampled_at, content_hash)
 VALUES (?, 3, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
-		uuid.NewString(), verificationSampleSchema, task.IncidentID, task.CycleNo, task.SubjectID, check.ID,
+		publicID, verificationSampleSchema, task.IncidentID, task.CycleNo, task.SubjectID, check.ID,
 		sequence, sample.Status, sample.Observed, boundVerificationText(sample.SourceReference, 1024),
 		boundVerificationText(sample.ReasonCode, 128), nullableTimeValue(windowStart), nullableTimeValue(windowEnd), now, contentHash)
-	return err
+	if err != nil {
+		return 0, "", err
+	}
+	id, err := result.LastInsertId()
+	if err != nil || id <= 0 {
+		return 0, "", fmt.Errorf("read verification sample id: %w", err)
+	}
+	return uint64(id), publicID, nil
 }
 
 func updateVerificationCheck(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, check verification.Check, sample verification.Sample, now time.Time) error {
@@ -692,25 +702,75 @@ VALUES (?, ?, 3, ?, 1, 'incident_resolved', ?, 'system', 'verification.advance',
 	return err
 }
 
-func persistVerificationFailureEvidence(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, check verification.Check, sample verification.Sample, now time.Time) error {
-	facts, _ := json.Marshal(map[string]any{"check_id": check.PublicID, "check_type": check.Type, "sample_status": sample.Status, "reason": sample.ReasonCode, "observed": json.RawMessage(sample.Observed)})
+func persistVerificationFailureEvidence(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, snapshot VerificationAdvanceSnapshot, check verification.Check, sample verification.Sample, sampleID uint64, samplePublicID, sampleHash string, now time.Time) error {
+	evidencePublicID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("verification-evidence\x00"+samplePublicID)).String()
+	fact := agent.EvidenceFact{
+		ID: uuid.NewSHA1(uuid.NameSpaceOID, []byte("verification-fact\x00"+samplePublicID)).String(), EvidenceID: evidencePublicID,
+		IncidentID: snapshot.Run.IncidentPublicID, CycleNo: uint64(task.CycleNo), Type: "verification.recovery_not_established",
+		SourceSystem: "verification", CollectionPath: "verification/" + string(check.Type), CorroborationGroup: "verification/" + check.PublicID,
+		Authority: "runtime_observation", Integrity: "verified", Freshness: "fresh", Completeness: "complete",
+		ClaimUse: "blocking", CollectionStatus: verificationEvidenceCollectionStatus(sample.Status), Direct: true,
+		Attributes: map[string]string{"check_id": check.PublicID, "check_type": string(check.Type), "sample_status": string(sample.Status), "reason_code": sample.ReasonCode},
+	}
+	provenance := map[string]string{"verification_run_id": snapshot.Run.PublicID, "verification_check_id": check.PublicID, "verification_sample_id": samplePublicID, "source_reference": sample.SourceReference}
+	metadata, err := buildDurableEvidenceMetadata([]agent.EvidenceFact{fact}, provenance, nil, []string{samplePublicID}, []string{sampleHash})
+	if err != nil {
+		return err
+	}
+	facts, _ := canonicalEvidenceJSON(map[string]any{
+		"schema_version": evidenceFactSchema, "status": fact.CollectionStatus, "source_system": "verification",
+		"collection_path": fact.CollectionPath, "template_version": check.TemplateVersion, "facts": []agent.EvidenceFact{fact},
+		"check_id": check.PublicID, "check_type": check.Type, "sample_status": sample.Status,
+		"reason": sample.ReasonCode, "observed": json.RawMessage(sample.Observed),
+	})
 	if len(facts) > 16*1024 {
 		return asyncjob.ErrInvalidMutation
 	}
 	contentHash := hashVerificationTask(string(facts))
-	_, err := tx.ExecContext(ctx, `
+	producerKey := hashVerificationTask("verification-check-evidence/v1", check.PublicID, samplePublicID, contentHash)
+	templateID, templateVersion := strings.TrimSpace(check.TemplateID), strings.TrimSpace(check.TemplateVersion)
+	if templateID == "" || templateVersion == "" {
+		return fmt.Errorf("%w: verification Evidence template identity is incomplete", asyncjob.ErrInvalidMutation)
+	}
+	scopeHash := hashVerificationTask("verification-scope", snapshot.Run.IncidentPublicID, task.CycleNo, snapshot.Run.PublicID, check.PublicID)
+	argumentsHash := hashVerificationTask("verification-arguments", string(check.Type), string(check.Expected), check.SourceIdentity)
+	_, err = tx.ExecContext(ctx, `
 INSERT INTO evidence_items
- (public_id, incident_id, agent_run_id, type, source, tool_name, resource_ref,
-  query_text, summary, facts_json, result_hash, raw_ref, truncated, valid,
-  idempotency_key, collected_at, domain_schema_version, cycle_no, producer_type,
-  producer_dedupe_key, content_hash)
-VALUES (?, ?, NULL, 'verification_failure', 'verification', 'verification.advance', ?,
-        '', ?, ?, ?, '', FALSE, TRUE, ?, ?, 3, ?, 'verification', ?, ?)
+ (public_id, incident_id, domain_schema_version, evidence_contract_version, cycle_no,
+  verification_run_id, verification_check_id, type, source, producer_type, producer_id,
+  producer_version, producer_dedupe_key, adapter_version, query_template_id,
+  query_template_version, scope_snapshot_hash, arguments_hash, tool_name, resource_ref,
+  query_text, summary, facts_json, fact_schema_version, fact_schema_hash, provenance_json,
+  provenance_hash, trust_axes_json, claim_use, corroboration_groups_json,
+  input_evidence_ids_json, input_sample_ids_json, input_hashes_json, result_hash,
+  content_hash, raw_ref, safe_raw_reference, redaction_json, redaction_policy_version,
+  redaction_counts_json, prompt_safety_flags_json, truncated, valid, idempotency_key,
+  collected_at, observed_at, created_at)
+VALUES (?, ?, 3, 1, ?, ?, ?, 'verification_failure', 'verification', 'verification_check', ?,
+       'verification-check-evidence/v1', ?, 'verification-observer/v1', ?, ?, ?, ?,
+       'verification.advance', ?, '', ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+       'verification-redaction/v1', ?, ?, FALSE, TRUE, ?, ?, ?, ?)
 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
-		uuid.NewString(), task.IncidentID, "verification/"+check.PublicID,
-		"Verification check did not establish recovery", facts, contentHash, contentHash, now,
-		task.CycleNo, contentHash, contentHash)
+		evidencePublicID, task.IncidentID, task.CycleNo, task.SubjectID, check.ID, check.PublicID,
+		producerKey, templateID, templateVersion, scopeHash, argumentsHash, "verification/"+check.PublicID,
+		"Verification check did not establish recovery", facts, metadata.FactSchemaHash, metadata.ProvenanceJSON,
+		metadata.ProvenanceHash, metadata.TrustAxesJSON, metadata.ClaimUse, metadata.CorroborationGroups,
+		metadata.InputEvidenceIDs, metadata.InputSampleIDs, metadata.InputHashes, contentHash, contentHash,
+		boundVerificationText(sample.SourceReference, 1024), boundVerificationText(sample.SourceReference, 1024),
+		json.RawMessage(`{"policy":"verification-redaction/v1"}`), metadata.RedactionCounts, metadata.PromptSafetyFlags,
+		producerKey, now, now, now)
 	return err
+}
+
+func verificationEvidenceCollectionStatus(status verification.SampleStatus) agent.CollectionStatus {
+	switch status {
+	case verification.SampleUnavailable:
+		return agent.CollectionUnavailable
+	case verification.SampleInvalid:
+		return agent.CollectionInvalid
+	default:
+		return agent.CollectionAvailable
+	}
 }
 
 func hashVerificationSample(sample verification.Sample, check verification.Check, sequence int) string {
@@ -1352,7 +1412,7 @@ func reportDeliveryObservations(ctx context.Context, tx asyncjob.DBTX, task asyn
 	if changeRequestPublicID == "" {
 		return nil, asyncjob.ErrInvalidMutation
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT public_id, facts_json, content_hash, producer_dedupe_key, collected_at FROM evidence_items WHERE incident_id = ? AND cycle_no = ? AND domain_schema_version = 3 AND producer_type = 'delivery.observe' AND valid = TRUE ORDER BY collected_at, id`, task.IncidentID, task.CycleNo)
+	rows, err := tx.QueryContext(ctx, `SELECT public_id, facts_json, content_hash, producer_dedupe_key, collected_at FROM evidence_items WHERE incident_id = ? AND cycle_no = ? AND domain_schema_version = 3 AND producer_type IN ('delivery.observe','delivery_observation') AND valid = TRUE ORDER BY collected_at, id`, task.IncidentID, task.CycleNo)
 	if err != nil {
 		return nil, err
 	}

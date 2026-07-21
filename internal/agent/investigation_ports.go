@@ -94,16 +94,19 @@ type DiagnosisRecord struct {
 // provide typed facts and provenance; raw external text is never promoted to
 // Evidence by the step operation.
 type ToolObservation struct {
-	Status          CollectionStatus  `json:"status"`
-	SourceSystem    string            `json:"source_system"`
-	CollectionPath  string            `json:"collection_path"`
-	TemplateVersion string            `json:"template_version"`
-	Summary         string            `json:"summary"`
-	Facts           []EvidenceFact    `json:"facts"`
-	Truncated       bool              `json:"truncated"`
-	Provenance      map[string]string `json:"provenance,omitempty"`
-	SafeDeepLink    string            `json:"safe_deep_link,omitempty"`
-	ContentHash     string            `json:"content_hash"`
+	Status           CollectionStatus  `json:"status"`
+	SourceSystem     string            `json:"source_system"`
+	CollectionPath   string            `json:"collection_path"`
+	TemplateVersion  string            `json:"template_version"`
+	Summary          string            `json:"summary"`
+	Facts            []EvidenceFact    `json:"facts"`
+	Truncated        bool              `json:"truncated"`
+	Provenance       map[string]string `json:"provenance,omitempty"`
+	SafeDeepLink     string            `json:"safe_deep_link,omitempty"`
+	InputEvidenceIDs []string          `json:"input_evidence_ids,omitempty"`
+	InputSampleIDs   []string          `json:"input_sample_ids,omitempty"`
+	InputHashes      []string          `json:"input_hashes,omitempty"`
+	ContentHash      string            `json:"content_hash"`
 }
 
 // InvestigationToolRequest carries the server-resolved Incident scope for one

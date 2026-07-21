@@ -104,7 +104,8 @@ VALUES (?, ?, 'RUNNING', 'fixture-model', 'incident-agent-v3', 10, NULL, '', 1, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := insertInvestigationEvidence(ctx, tx, snapshot, deploymentCheckpoint, deploymentEvidenceID); err != nil {
+	deploymentStepID, deploymentStepPublicID := insertCandidateEvidenceStep(t, ctx, tx, snapshot, deploymentCheckpoint, 1, deploymentEvidenceID)
+	if err := insertInvestigationEvidence(ctx, tx, snapshot, deploymentCheckpoint, deploymentStepID, deploymentStepPublicID, deploymentEvidenceID); err != nil {
 		_ = tx.Rollback()
 		t.Fatal(err)
 	}
@@ -136,7 +137,8 @@ VALUES (?, ?, 'RUNNING', 'fixture-model', 'incident-agent-v3', 10, NULL, '', 1, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := insertInvestigationEvidence(ctx, tx, snapshot, detailCheckpoint, detailEvidenceID); err != nil {
+	detailStepID, detailStepPublicID := insertCandidateEvidenceStep(t, ctx, tx, snapshot, detailCheckpoint, 2, detailEvidenceID)
+	if err := insertInvestigationEvidence(ctx, tx, snapshot, detailCheckpoint, detailStepID, detailStepPublicID, detailEvidenceID); err != nil {
 		_ = tx.Rollback()
 		t.Fatal(err)
 	}
@@ -209,4 +211,28 @@ FROM change_candidate_assessments ORDER BY id DESC LIMIT 1`).Scan(&status, &supp
 	if assessmentCount != 2 || !supersedes.Valid || supersedes.Int64 <= 0 {
 		t.Fatalf("superseding assessment count=%d supersedes=%+v", assessmentCount, supersedes)
 	}
+}
+
+func insertCandidateEvidenceStep(t *testing.T, ctx context.Context, tx *sql.Tx, snapshot investigationSnapshot, checkpoint investigationStepCheckpoint, sequence int, evidencePublicID string) (uint64, string) {
+	t.Helper()
+	publicID := uuid.NewString()
+	arguments, argumentsHash := stepArguments(checkpoint)
+	result, err := tx.ExecContext(ctx, `INSERT INTO agent_steps
+ (public_id, agent_run_id, domain_schema_version, incident_id, cycle_no, sequence, step_type,
+  short_reason, selected_tool, arguments_json, arguments_hash, result_summary, result_ref,
+  evidence_public_id, status, retry_count, duration_ms, input_tokens, output_tokens, error_code,
+  started_at, finished_at, created_at)
+ VALUES (?, ?, 3, ?, ?, ?, 'execute_tool', 'candidate fixture', ?, ?, ?, 'candidate fixture', '', ?,
+         'COMPLETED', 0, 0, 0, 0, '', ?, ?, ?)`,
+		publicID, snapshot.Task.SubjectID, snapshot.Task.IncidentID, snapshot.Task.CycleNo, sequence,
+		selectedTool(checkpoint), arguments, argumentsHash, evidencePublicID,
+		checkpoint.CapturedAt.UTC(), checkpoint.CapturedAt.UTC(), checkpoint.CapturedAt.UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil || id <= 0 {
+		t.Fatalf("candidate AgentStep id=%d err=%v", id, err)
+	}
+	return uint64(id), publicID
 }

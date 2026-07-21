@@ -95,7 +95,7 @@ func TestMySQLVerificationAdvanceTimeoutRequeuesInvestigation(t *testing.T) {
 	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM verification_checks WHERE verification_run_id = ? AND status = 'timed_out'", 1, runID)
 	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM verification_runs WHERE id = ? AND completed_at IS NOT NULL AND common_window_completed_at IS NULL", 1, runID)
 	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM verification_samples WHERE verification_run_id = ? AND status = 'timed_out'", 1, runID)
-	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM evidence_items WHERE incident_id = ? AND cycle_no = 1 AND producer_type = 'verification'", 1, incidentID)
+	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM evidence_items WHERE incident_id = ? AND cycle_no = 1 AND evidence_contract_version = 1 AND producer_type = 'verification_check'", 1, incidentID)
 	assertVerificationIntegrationValue(t, ctx, db, "SELECT v3_status FROM incidents WHERE id = ?", "investigating", incidentID)
 	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM async_tasks WHERE incident_id = ? AND cycle_no = 1 AND transition = 'investigation.start' AND status = 'ready'", 1, incidentID)
 	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM incident_signals WHERE id = ? AND incident_id = ?", 1, signalID, incidentID)

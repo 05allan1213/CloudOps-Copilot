@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/05allan1213/CloudOps-Copilot/internal/agent"
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
 	"github.com/05allan1213/CloudOps-Copilot/internal/businessbudget"
 	"github.com/05allan1213/CloudOps-Copilot/internal/change"
@@ -1204,7 +1205,25 @@ func appendDeliveryIncidentEvent(ctx context.Context, tx asyncjob.DBTX, snapshot
 }
 
 func appendDeliveryEvidence(ctx context.Context, tx asyncjob.DBTX, snapshot DeliveryObserveSnapshot, outcome DeliveryObserveOutcome, at time.Time) error {
-	facts, err := json.Marshal(map[string]any{
+	evidencePublicID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("delivery-evidence\x00"+snapshot.ChangeRequestPublicID+"\x00"+string(outcome.Kind)+"\x00"+outcome.Projection.TargetRevision)).String()
+	fact := agent.EvidenceFact{
+		ID: uuid.NewSHA1(uuid.NameSpaceOID, []byte("delivery-fact\x00"+evidencePublicID)).String(), EvidenceID: evidencePublicID,
+		IncidentID: snapshot.IncidentPublicID, CycleNo: uint64(snapshot.CycleNo), Type: "delivery." + string(outcome.Kind),
+		SourceSystem: outcome.SourceSystem, CollectionPath: "delivery/" + string(outcome.Kind), CorroborationGroup: "delivery/" + snapshot.ChangeRequestPublicID,
+		Authority: deliveryEvidenceAuthority(outcome.Kind), Integrity: "verified", Freshness: "fresh", Completeness: "complete",
+		ClaimUse: "support", CollectionStatus: agent.CollectionAvailable, Direct: true,
+		Attributes: map[string]string{"source_revision": snapshot.SourceRevision, "image_digest": snapshot.ImageDigest,
+			"baseline_gitops_revision": snapshot.BaselineGitOpsSHA, "target_gitops_revision": outcome.Projection.TargetRevision,
+			"failure_code": outcome.FailureCode},
+	}
+	provenance := map[string]string{"change_request_id": snapshot.ChangeRequestPublicID, "source_system": outcome.SourceSystem, "kind": string(outcome.Kind)}
+	metadata, err := buildDurableEvidenceMetadata([]agent.EvidenceFact{fact}, provenance, nil, nil, nil)
+	if err != nil {
+		return err
+	}
+	facts, err := canonicalEvidenceJSON(map[string]any{
+		"schema_version": evidenceFactSchema, "status": agent.CollectionAvailable, "source_system": outcome.SourceSystem,
+		"collection_path": fact.CollectionPath, "template_version": "v1", "facts": []agent.EvidenceFact{fact},
 		"kind": outcome.Kind, "observation": outcome.Observation,
 		"source_revision": snapshot.SourceRevision, "image_digest": snapshot.ImageDigest,
 		"baseline_gitops_revision": snapshot.BaselineGitOpsSHA,
@@ -1223,12 +1242,38 @@ func appendDeliveryEvidence(ctx context.Context, tx asyncjob.DBTX, snapshot Deli
 		resourceRef = "kubernetes:" + snapshot.Namespace + "/" + snapshot.WorkloadName
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO evidence_items
- (public_id, incident_id, domain_schema_version, cycle_no, type, source, producer_type, producer_dedupe_key, tool_name, resource_ref,
-  time_range_json, query_text, summary, facts_json, result_hash, content_hash, raw_ref, redaction_json, truncated, valid, idempotency_key, collected_at, created_at)
- VALUES (?, ?, 3, ?, 'delivery_observation', ?, 'delivery.observe', ?, '', ?, NULL, '', ?, ?, ?, ?, '', ?, FALSE, TRUE, ?, ?, ?)
- ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`, uuid.NewString(), snapshot.IncidentID, snapshot.CycleNo, outcome.SourceSystem, producerKey, resourceRef,
-		boundChange(string(outcome.Kind)+" delivery observation", 4096), facts, contentHash, contentHash, json.RawMessage(`{"policy":"v3-delivery-redaction"}`), producerKey, at.UTC(), at.UTC())
+ (public_id, incident_id, domain_schema_version, evidence_contract_version, cycle_no,
+  change_request_id, type, source, producer_type, producer_id, producer_version,
+  producer_dedupe_key, adapter_version, query_template_id, query_template_version,
+  scope_snapshot_hash, arguments_hash, tool_name, resource_ref, time_range_json, query_text,
+  summary, facts_json, fact_schema_version, fact_schema_hash, provenance_json, provenance_hash,
+  trust_axes_json, claim_use, corroboration_groups_json, input_evidence_ids_json,
+  input_sample_ids_json, input_hashes_json, result_hash, content_hash, raw_ref,
+  safe_raw_reference, redaction_json, redaction_policy_version, redaction_counts_json,
+  prompt_safety_flags_json, source_revision, resource_version, truncated, valid,
+  idempotency_key, collected_at, observed_at, created_at)
+ VALUES (?, ?, 3, 1, ?, ?, 'delivery_observation', ?, 'delivery_observation', ?,
+         'delivery-observation-evidence/v1', ?, 'delivery-observer/v1', ?, 'v1', ?, ?, '', ?,
+         NULL, '', ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?,
+         'delivery-observation-redaction/v1', ?, ?, ?, ?, FALSE, TRUE, ?, ?, ?, ?)
+ ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`, evidencePublicID, snapshot.IncidentID, snapshot.CycleNo,
+		snapshot.ChangeRequestID, outcome.SourceSystem, snapshot.ChangeRequestPublicID, producerKey,
+		"delivery/"+string(outcome.Kind), hashCanonical("delivery-scope", snapshot.IncidentPublicID, fmt.Sprint(snapshot.CycleNo), snapshot.ChangeRequestPublicID),
+		hashCanonical("delivery-arguments", string(outcome.Kind), snapshot.SourceRevision, outcome.Projection.TargetRevision), resourceRef,
+		boundChange(string(outcome.Kind)+" delivery observation", 4096), facts, metadata.FactSchemaHash,
+		metadata.ProvenanceJSON, metadata.ProvenanceHash, metadata.TrustAxesJSON, metadata.ClaimUse,
+		metadata.CorroborationGroups, metadata.InputEvidenceIDs, metadata.InputSampleIDs, metadata.InputHashes,
+		contentHash, contentHash, json.RawMessage(`{"policy":"delivery-observation-redaction/v1"}`),
+		metadata.RedactionCounts, metadata.PromptSafetyFlags, snapshot.SourceRevision, outcome.Projection.TargetRevision,
+		producerKey, at.UTC(), at.UTC(), at.UTC())
 	return err
+}
+
+func deliveryEvidenceAuthority(kind DeliveryObservationKind) string {
+	if kind == DeliveryObserveRollout {
+		return "runtime_observation"
+	}
+	return "authoritative"
 }
 
 func sha256Hex(value []byte) string {

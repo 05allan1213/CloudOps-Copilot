@@ -49,23 +49,47 @@ type StepFinish struct {
 }
 
 type EvidenceRecord struct {
-	PublicID       string
-	IncidentID     uint64
-	RunID          uint64
-	SourceType     string
-	ToolName       string
-	ResourceScope  string
-	TimeRange      json.RawMessage
-	Query          string
-	Summary        string
-	Facts          json.RawMessage
-	ResultHash     string
-	RawRef         string
-	Redaction      json.RawMessage
-	Truncated      bool
-	Valid          bool
-	IdempotencyKey string
-	CollectedAt    time.Time
+	PublicID               string
+	IncidentID             uint64
+	RunID                  uint64
+	ContractVersion        int
+	ProducerType           string
+	ProducerID             string
+	ProducerVersion        string
+	ProducerDedupeKey      string
+	AgentStepID            uint64
+	VerificationRunID      uint64
+	VerificationCheckID    uint64
+	ChangeRequestID        uint64
+	SourceType             string
+	ToolName               string
+	ResourceScope          string
+	TimeRange              json.RawMessage
+	Query                  string
+	Summary                string
+	Facts                  json.RawMessage
+	FactSchemaVersion      int
+	FactSchemaHash         string
+	Provenance             json.RawMessage
+	ProvenanceHash         string
+	TrustAxes              json.RawMessage
+	ClaimUse               string
+	CorroborationGroups    json.RawMessage
+	InputEvidenceIDs       json.RawMessage
+	InputSampleIDs         json.RawMessage
+	InputHashes            json.RawMessage
+	ResultHash             string
+	RawRef                 string
+	SafeRawReference       string
+	Redaction              json.RawMessage
+	RedactionPolicyVersion string
+	RedactionCounts        json.RawMessage
+	PromptSafetyFlags      json.RawMessage
+	Truncated              bool
+	Valid                  bool
+	IdempotencyKey         string
+	ObservedAt             time.Time
+	CollectedAt            time.Time
 }
 
 // Store is the durable Agent application port implemented by MySQL.

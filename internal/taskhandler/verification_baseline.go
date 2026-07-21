@@ -272,7 +272,7 @@ func loadBaselineDeliveryEvidence(ctx context.Context, tx asyncjob.DBTX, task as
 SELECT public_id, CAST(facts_json AS CHAR), content_hash, producer_dedupe_key, collected_at
 FROM evidence_items
 WHERE incident_id = ? AND cycle_no = ? AND domain_schema_version = 3
-  AND producer_type = 'delivery.observe' AND valid = TRUE
+  AND producer_type IN ('delivery.observe','delivery_observation') AND valid = TRUE
 ORDER BY collected_at, id
 LIMIT 257`, task.IncidentID, task.CycleNo)
 	if err != nil {
