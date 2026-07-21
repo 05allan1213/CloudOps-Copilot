@@ -234,7 +234,7 @@ preload_external_images() {
     # Docker's locally pruned attestations. Tag the resolved amd64 image ID so
     # docker save emits a single-platform archive, import it, then restore the
     # immutable target reference inside the disposable node.
-    docker save "${local_ref}" |
+    docker save --platform linux/amd64 "${local_ref}" |
       docker exec -i "${node}" ctr --namespace=k8s.io images import --digests --snapshotter=overlayfs - >/dev/null
     node_ref="$(normalized_node_image_ref "${save_ref}")"
     docker exec "${node}" ctr --namespace=k8s.io images tag "${import_ref}" "${node_ref}" >/dev/null
