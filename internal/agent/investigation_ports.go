@@ -5,10 +5,13 @@ import "context"
 // ModelView is the bounded, provider-neutral input for one V3 investigation
 // decision. Provider prompts and raw responses never cross this port.
 type ModelView struct {
-	State          InvestigationState  `json:"state"`
-	Facts          []EvidenceFact      `json:"facts"`
-	ScopeRef       string              `json:"scope_ref"`
-	AllowedActions []ModelActionSchema `json:"allowed_actions"`
+	State            InvestigationState           `json:"state"`
+	Facts            []EvidenceFact               `json:"facts"`
+	ScopeRef         string                       `json:"scope_ref"`
+	AllowedActions   []ModelActionSchema          `json:"allowed_actions"`
+	CandidateClaims  []ClaimPolicy                `json:"candidate_claims,omitempty"`
+	ClaimSufficiency map[string]SufficiencyResult `json:"claim_sufficiency,omitempty"`
+	ActionCandidates []ProposedAction             `json:"action_candidates,omitempty"`
 }
 
 // ModelActionSchema is the provider-visible projection of a fixed Go-owned

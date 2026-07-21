@@ -681,9 +681,15 @@ func (o *investigationStepOperation) executeOne(ctx context.Context, execution a
 }
 
 func (o *investigationStepOperation) executeDecision(ctx context.Context, execution asyncjob.Execution, snapshot investigationSnapshot) (preparedInvestigationStep, error) {
+	sufficiency, err := o.evaluateSufficiency(snapshot, snapshot.State, snapshot.Facts)
+	if err != nil {
+		return preparedInvestigationStep{}, err
+	}
 	view := agent.ModelView{
 		State: snapshot.State, Facts: slices.Clone(snapshot.Facts), ScopeRef: snapshot.ScopeRef,
-		AllowedActions: modelActionSchemas(o.cfg.ActionPolicies),
+		AllowedActions:   modelActionSchemas(o.cfg.ActionPolicies),
+		CandidateClaims:  []agent.ClaimPolicy{o.cfg.ClaimPolicy},
+		ClaimSufficiency: map[string]agent.SufficiencyResult{o.cfg.ClaimPolicy.ClaimType: sufficiency},
 	}
 	input, _ := json.Marshal(view)
 	reservation := agent.Usage{Steps: 1, ModelCalls: reservedModelCalls(o.cfg.Model), InputTokens: estimatedTokens(input), OutputTokens: 1}
@@ -713,7 +719,7 @@ func (o *investigationStepOperation) executeDecision(ctx context.Context, execut
 		return preparedInvestigationStep{}, err
 	}
 	state.UpdatedAt = captured.UTC()
-	sufficiency, err := o.evaluateSufficiency(snapshot, state, snapshot.Facts)
+	sufficiency, err = o.evaluateSufficiency(snapshot, state, snapshot.Facts)
 	if err != nil {
 		return preparedInvestigationStep{}, err
 	}

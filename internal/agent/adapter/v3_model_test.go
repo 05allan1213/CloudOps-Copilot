@@ -82,6 +82,57 @@ func TestV3StructuredModelFailsClosedAfterOneRepair(t *testing.T) {
 	}
 }
 
+func TestValidateModelDeltaAcceptsOnlyUnusedFrozenActionCandidates(t *testing.T) {
+	candidate := agent.ProposedAction{
+		Tool: "inspect_metric", ScopeRef: "scope-1", TemplateID: "metric/v1",
+		BoundedParameters: json.RawMessage(`{"service":"demo"}`), ExpectedFactTypes: []string{"metric.symptom"},
+		PurposeSummary: "inspect the bounded metric",
+	}
+	view := agent.ModelView{
+		State: agent.InvestigationState{
+			SchemaVersion: agent.InvestigationStateSchemaVersion, IncidentID: "incident-1", CycleNo: 1,
+			CheckpointVersion: 4, Limits: agent.Limits{MaxCheckpointSize: 64 * 1024},
+		},
+		ScopeRef: "scope-1",
+		AllowedActions: []agent.ModelActionSchema{{
+			Tool: "inspect_metric", TemplateIDs: []string{"metric/v1"}, ParameterKeys: []string{"service"},
+			ExpectedFactTypes: []string{"metric.symptom"},
+		}},
+		ActionCandidates: []agent.ProposedAction{candidate},
+	}
+	exact := agent.StateDelta{
+		SchemaVersion: agent.InvestigationStateSchemaVersion, BasisCheckpointVersion: view.State.CheckpointVersion,
+		ProposedAction: &candidate, ProposedStop: agent.StopContinue,
+	}
+	if err := ValidateModelDelta(view, exact); err != nil {
+		t.Fatalf("exact frozen candidate rejected: %v", err)
+	}
+
+	modified := candidate
+	modified.BoundedParameters = json.RawMessage(`{"service":"other"}`)
+	changed := exact
+	changed.ProposedAction = &modified
+	if err := ValidateModelDelta(view, changed); err == nil {
+		t.Fatal("modified candidate parameters were accepted")
+	}
+
+	productionView := view
+	productionView.ActionCandidates = nil
+	if err := ValidateModelDelta(productionView, changed); err != nil {
+		t.Fatalf("production path without frozen candidates rejected a policy-valid action: %v", err)
+	}
+
+	signature, err := agent.ActionSignature(candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usedView := view
+	usedView.State.ToolAttempts = []agent.ToolAttempt{{Signature: signature, Tool: candidate.Tool, Status: "available"}}
+	if err := ValidateModelDelta(usedView, exact); err == nil {
+		t.Fatal("previously used candidate was accepted")
+	}
+}
+
 func newV3StructuredTestModel(t *testing.T, outputs []string) (*LLMModel, func() int) {
 	t.Helper()
 	var mutex sync.Mutex

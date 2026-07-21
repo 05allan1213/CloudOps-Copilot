@@ -34,6 +34,13 @@ func TestInvestigationStepRunsOneModelDecisionThroughUnifiedRegistryAndCheckpoin
 	if len(model.lastView.AllowedActions) != 1 || model.lastView.AllowedActions[0].Tool != "inspect_workload" {
 		t.Fatalf("model did not receive the bounded action contract: %+v", model.lastView.AllowedActions)
 	}
+	if len(model.lastView.CandidateClaims) != 1 || model.lastView.CandidateClaims[0].ClaimType != "test-claim/v1" {
+		t.Fatalf("model did not receive the candidate claim policy: %+v", model.lastView.CandidateClaims)
+	}
+	sufficiency := model.lastView.ClaimSufficiency["test-claim/v1"]
+	if !slices.Contains(sufficiency.MissingFacets, "subject") || len(model.lastView.ActionCandidates) != 0 {
+		t.Fatalf("model view did not carry deterministic sufficiency/production candidate state: %+v", model.lastView)
+	}
 	checkpoint := taskStore.singleCheckpoint(t)
 	var durable investigationStepCheckpoint
 	if err := json.Unmarshal(checkpoint.Payload, &durable); err != nil {

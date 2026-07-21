@@ -3,6 +3,7 @@ package agenteval
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"testing"
 	"time"
 
@@ -51,6 +52,21 @@ func TestRunModelReplansAfterObservationAndReplaysCheckpoint(t *testing.T) {
 	if model.views != 2 || model.secondViewFacts != 1 {
 		t.Fatalf("observation did not affect replanning: views=%d secondFacts=%d", model.views, model.secondViewFacts)
 	}
+	if len(model.capturedViews) != 2 {
+		t.Fatalf("captured model views=%d, want 2", len(model.capturedViews))
+	}
+	first, second := model.capturedViews[0], model.capturedViews[1]
+	firstGap := first.ClaimSufficiency[policy.ClaimType]
+	secondGap := second.ClaimSufficiency[policy.ClaimType]
+	if len(first.CandidateClaims) != 1 || !slices.Contains(firstGap.MissingFacets, "subject") || !slices.Contains(firstGap.MissingFacets, "selector") {
+		t.Fatalf("first view omitted deterministic claim gaps: %+v", first)
+	}
+	if slices.Contains(secondGap.MissingFacets, "subject") || !slices.Contains(secondGap.MissingFacets, "selector") || len(secondGap.SupportingIDs) != 1 {
+		t.Fatalf("observation did not update deterministic sufficiency: %+v", secondGap)
+	}
+	if len(first.ActionCandidates) != 2 || len(second.ActionCandidates) != 1 || second.ActionCandidates[0].Tool != actionTwo.Tool {
+		t.Fatalf("unused action candidates were not updated: first=%+v second=%+v", first.ActionCandidates, second.ActionCandidates)
+	}
 }
 
 func TestRunFixedBaselineUsesNoModelCalls(t *testing.T) {
@@ -92,10 +108,12 @@ type scriptedEvalModel struct {
 	actions         []agent.ProposedAction
 	views           int
 	secondViewFacts int
+	capturedViews   []agent.ModelView
 }
 
 func (m *scriptedEvalModel) ProposeDelta(_ context.Context, view agent.ModelView) (agent.StateDelta, agent.ModelUsage, error) {
 	m.views++
+	m.capturedViews = append(m.capturedViews, view)
 	if m.views == 2 {
 		m.secondViewFacts = len(view.Facts)
 	}
