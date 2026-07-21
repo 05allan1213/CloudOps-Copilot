@@ -200,8 +200,22 @@ pinned_platform_images() {
     "${TEMPO_IMAGE_REPOSITORY}:${TEMPO_VERSION}@${TEMPO_IMAGE_DIGEST}"
 }
 
+normalized_node_image_ref() {
+  local first_segment reference="$1"
+  if [[ "${reference}" != */* ]]; then
+    printf 'docker.io/library/%s\n' "${reference}"
+    return
+  fi
+  first_segment="${reference%%/*}"
+  if [[ "${first_segment}" != *.* && "${first_segment}" != *:* && "${first_segment}" != "localhost" ]]; then
+    printf 'docker.io/%s\n' "${reference}"
+    return
+  fi
+  printf '%s\n' "${reference}"
+}
+
 preload_external_images() {
-  local digest_ref image node save_ref
+  local digest_ref image node node_ref save_ref
   node="${CLUSTER_NAME}-control-plane"
   {
     monitoring_images
@@ -220,11 +234,12 @@ preload_external_images() {
     # tag@digest reference but docker save accepts its local tag reference.
     docker save "${save_ref}" |
       docker exec -i "${node}" ctr --namespace=k8s.io images import --digests --snapshotter=overlayfs - >/dev/null
+    node_ref="$(normalized_node_image_ref "${save_ref}")"
     if [[ "${image}" == *@sha256:* ]]; then
-      digest_ref="${save_ref%:*}@${image##*@}"
-      docker exec "${node}" ctr --namespace=k8s.io images tag "${save_ref}" "${digest_ref}" >/dev/null
+      digest_ref="${node_ref%:*}@${image##*@}"
+      docker exec "${node}" ctr --namespace=k8s.io images tag "${node_ref}" "${digest_ref}" >/dev/null
     else
-      digest_ref="${save_ref}"
+      digest_ref="${node_ref}"
     fi
     docker exec "${node}" crictl inspecti "${digest_ref}" >/dev/null
   done
