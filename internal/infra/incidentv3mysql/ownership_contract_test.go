@@ -37,8 +37,8 @@ func TestV3ActiveRuntimeDoesNotUseLegacyCurrentRunPointer(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, required := range []string{
-		"WHERE incident_id = ? AND cycle_no = ? AND domain_schema_version = 3",
-		"active_incident_cycle_key IS NOT NULL",
+		"active_incident_cycle_key = UNHEX(CONCAT('01'",
+		"AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3",
 		"v3_status IN ('pending','running')",
 	} {
 		if !strings.Contains(string(budgetSource), required) {

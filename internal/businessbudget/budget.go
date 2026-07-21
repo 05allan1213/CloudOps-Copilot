@@ -285,12 +285,11 @@ func ActiveAgentRunForCycle(ctx context.Context, tx DBTX, incidentID uint64, cyc
 	var runID uint64
 	err := tx.QueryRowContext(ctx, `SELECT id
 FROM agent_runs
-WHERE incident_id = ? AND cycle_no = ? AND domain_schema_version = 3
-  AND active_incident_cycle_key IS NOT NULL
+WHERE active_incident_cycle_key = UNHEX(CONCAT('01', LPAD(HEX(?), 16, '0'), LPAD(HEX(?), 16, '0')))
+  AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3
   AND v3_status IN ('pending','running')
-ORDER BY id DESC
 LIMIT 1
-FOR UPDATE`, incidentID, cycleNo).Scan(&runID)
+FOR UPDATE`, incidentID, cycleNo, incidentID, cycleNo).Scan(&runID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
