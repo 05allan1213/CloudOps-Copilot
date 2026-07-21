@@ -215,7 +215,7 @@ normalized_node_image_ref() {
 }
 
 preload_external_images() {
-  local digest_ref image import_key import_ref local_ref node node_ref platform_digest platform_ref repository save_ref
+  local _attempt built digest_ref image import_key import_ref local_ref manifest_json node node_ref platform_digest platform_ref pulled repository save_ref
   node="${CLUSTER_NAME}-control-plane"
   {
     monitoring_images
@@ -225,12 +225,25 @@ preload_external_images() {
     printf 'Preloading pinned image through host Docker: %s\n' "${image}"
     save_ref="${image%@*}"
     repository="${save_ref%:*}"
-    platform_digest="$(docker buildx imagetools inspect "${image}" --format '{{json .Manifest}}' |
-      jq -r '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest' |
-      head -1)"
+    manifest_json=""
+    for _attempt in 1 2 3; do
+      if manifest_json="$(docker buildx imagetools inspect "${image}" --format '{{json .Manifest}}')"; then
+        break
+      fi
+      sleep 2
+    done
+    platform_digest="$(jq -r '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest' <<<"${manifest_json}" | head -1)"
     [[ "${platform_digest}" =~ ^sha256:[a-f0-9]{64}$ ]] || die "cannot resolve linux/amd64 manifest for ${image}"
     platform_ref="${repository}@${platform_digest}"
-    docker pull --platform linux/amd64 "${platform_ref}" >/dev/null
+    pulled=false
+    for _attempt in 1 2 3; do
+      if docker pull --platform linux/amd64 "${platform_ref}" >/dev/null; then
+        pulled=true
+        break
+      fi
+      sleep 2
+    done
+    [[ "${pulled}" == true ]] || die "cannot pull linux/amd64 manifest for ${image}"
     import_key="$(printf '%s' "${image}" | sha256sum | cut -c1-16)"
     local_ref="cloudops-preload:${import_key}"
     import_ref="docker.io/library/${local_ref}"
@@ -238,8 +251,16 @@ preload_external_images() {
     # whose dependent config/layers are omitted by docker save. A one-line
     # FROM build materializes a complete single-platform image archive while
     # preserving the exact upstream rootfs/config.
-    printf 'FROM %s\n' "${platform_ref}" |
-      docker build --quiet --platform linux/amd64 --provenance=false --sbom=false --tag "${local_ref}" - >/dev/null
+    built=false
+    for _attempt in 1 2 3; do
+      if printf 'FROM %s\n' "${platform_ref}" |
+        docker build --quiet --platform linux/amd64 --provenance=false --sbom=false --tag "${local_ref}" - >/dev/null; then
+        built=true
+        break
+      fi
+      sleep 2
+    done
+    [[ "${built}" == true ]] || die "cannot materialize linux/amd64 image for ${image}"
     # kind load currently imports every manifest-list platform and can fail on
     # Docker's locally pruned attestations. Tag the resolved amd64 image ID so
     # docker save emits a single-platform archive, import it, then restore the
