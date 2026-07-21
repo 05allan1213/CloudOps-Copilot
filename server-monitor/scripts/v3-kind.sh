@@ -211,6 +211,9 @@ preload_external_images() {
     printf 'Preloading pinned image through host Docker: %s\n' "${image}"
     docker pull --platform linux/amd64 "${image}" >/dev/null
     save_ref="${image%@*}"
+    if [[ "${image}" == *@sha256:* ]]; then
+      docker image tag "${image}" "${save_ref}"
+    fi
     # kind load currently imports every manifest-list platform and can fail on
     # Docker's locally pruned attestations. Import the host-resolved amd64
     # archive directly into the disposable node instead. Docker can inspect a
