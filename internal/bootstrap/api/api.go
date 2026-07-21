@@ -27,7 +27,10 @@ func NewAPI(ctx context.Context, cfg APIConfig) (*API, error) {
 		return nil, err
 	}
 	application := cfg.Application
-	infra, err := startup.InitInfra(ctx, application, startup.InfraOptions{ServiceName: "cloudops-api", EnableKafka: true})
+	// The V3 API owns HTTP ingress and MySQL-backed commands/queries only.
+	// Redis cache/rate-limit and Kafka event production remain legacy surfaces
+	// and must never be initialized by this process.
+	infra, err := startup.InitInfra(ctx, application, startup.InfraOptions{ServiceName: "cloudops-api"})
 	if err != nil {
 		return nil, err
 	}

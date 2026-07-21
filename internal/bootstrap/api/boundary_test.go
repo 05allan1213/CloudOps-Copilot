@@ -56,6 +56,20 @@ func TestAPIBootstrapHasNoLegacyWorkerLoop(t *testing.T) {
 	}
 }
 
+func TestAPIBootstrapDoesNotEnableRedisOrKafka(t *testing.T) {
+	root := repositoryRoot(t)
+	path := filepath.Join(root, "internal", "bootstrap", "api", "api.go")
+	source, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"EnableRedis: true", "EnableKafka: true", "initKafkaProducer", "rediscache.NewClient"} {
+		if strings.Contains(string(source), forbidden) {
+			t.Fatalf("cloudops-api initializes forbidden legacy dependency %q", forbidden)
+		}
+	}
+}
+
 func TestAPICompileDependencyBoundary(t *testing.T) {
 	root := repositoryRoot(t)
 	output := runCommand(t, root, "go", "list", "-deps", "./cmd/cloudops-api")

@@ -21,6 +21,7 @@ import (
 
 type InfraOptions struct {
 	ServiceName string
+	EnableRedis bool
 	EnableKafka bool
 }
 
@@ -31,16 +32,19 @@ func InitInfra(ctx context.Context, cfg config.Config, options InfraOptions) (*d
 	}
 	shutdownTracer := initTracer(ctx, cfg, serviceName)
 	gin.SetMode(cfg.GinMode)
-	redisClient := rediscache.NewClient(rediscache.Options{
-		Addr:            cfg.RedisAddr,
-		Password:        cfg.RedisPassword,
-		DB:              cfg.RedisDB,
-		DialTimeout:     cfg.RedisDialTimeout,
-		ReadTimeout:     cfg.RedisReadTimeout,
-		WriteTimeout:    cfg.RedisWriteTimeout,
-		ConnMaxLifetime: cfg.RedisConnMaxLifetime,
-		ConnMaxIdleTime: cfg.RedisConnMaxIdleTime,
-	})
+	var redisClient *rediscache.Client
+	if options.EnableRedis {
+		redisClient = rediscache.NewClient(rediscache.Options{
+			Addr:            cfg.RedisAddr,
+			Password:        cfg.RedisPassword,
+			DB:              cfg.RedisDB,
+			DialTimeout:     cfg.RedisDialTimeout,
+			ReadTimeout:     cfg.RedisReadTimeout,
+			WriteTimeout:    cfg.RedisWriteTimeout,
+			ConnMaxLifetime: cfg.RedisConnMaxLifetime,
+			ConnMaxIdleTime: cfg.RedisConnMaxIdleTime,
+		})
+	}
 	mysqlClient, err := initMySQL(cfg)
 	if err != nil {
 		return nil, err
