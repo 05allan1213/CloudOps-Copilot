@@ -158,6 +158,26 @@ func TestMarkerWriterPropagatesUnknownDatabaseEvidence(t *testing.T) {
 	}
 }
 
+func TestSQLMarkerWriterLocksPrerequisitesAndQueriesEveryLegacyLeaseOwner(t *testing.T) {
+	for name, query := range map[string]string{
+		"marker": markerStatusesForUpdateSQL,
+		"prerequisite": prerequisiteForUpdateSQL,
+	} {
+		if !strings.HasSuffix(strings.TrimSpace(query), "FOR UPDATE") {
+			t.Fatalf("%s query is not transaction-locked: %s", name, query)
+		}
+	}
+	for _, table := range []string{"agent_runs", "change_requests", "verification_runs"} {
+		if !strings.Contains(legacyActiveLeaseCountSQL, "FROM "+table) {
+			t.Fatalf("legacy lease query omits %s", table)
+		}
+	}
+	if strings.Count(legacyActiveLeaseCountSQL, "UTC_TIMESTAMP(6)") != 3 ||
+		strings.Count(legacyActiveLeaseCountSQL, "lease_owner <> ''") != 3 {
+		t.Fatalf("legacy lease query is not active-owner bounded: %s", legacyActiveLeaseCountSQL)
+	}
+}
+
 func validWriteRequest() WriteRequest {
 	return WriteRequest{
 		PlanVersion: 7, SourceExactSHA: strings.Repeat("c", 40), BinaryImageDigest: "sha256:" + strings.Repeat("d", 64),

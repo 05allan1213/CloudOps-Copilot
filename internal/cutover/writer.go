@@ -21,6 +21,16 @@ const (
 	IrreversibleConfirmation = MarkerOperation
 
 	markerLockName = "cloudops-copilot:cutover-v3-marker"
+
+	markerStatusesForUpdateSQL = "SELECT status FROM migration_ledger WHERE operation = ? ORDER BY id FOR UPDATE"
+	prerequisiteForUpdateSQL   = `SELECT public_id, plan_version, operation,
+source_schema_version, target_schema_version, status, source_exact_sha,
+binary_image_digest, completed_at
+FROM migration_ledger WHERE public_id = ? FOR UPDATE`
+	legacyActiveLeaseCountSQL = `SELECT
+  (SELECT COUNT(*) FROM agent_runs WHERE lease_owner <> '' AND lease_expires_at >= UTC_TIMESTAMP(6)) +
+  (SELECT COUNT(*) FROM change_requests WHERE lease_owner <> '' AND lease_expires_at >= UTC_TIMESTAMP(6)) +
+  (SELECT COUNT(*) FROM verification_runs WHERE lease_owner <> '' AND lease_expires_at >= UTC_TIMESTAMP(6))`
 )
 
 // WriteRequest binds the irreversible marker to the exact release and to
@@ -288,7 +298,7 @@ func (t sqlMarkerTx) DatabaseSchemaVersion(ctx context.Context) (uint64, error) 
 }
 
 func (t sqlMarkerTx) MarkerStatusesForUpdate(ctx context.Context) ([]string, error) {
-	rows, err := t.tx.QueryContext(ctx, "SELECT status FROM migration_ledger WHERE operation = ? ORDER BY id FOR UPDATE", MarkerOperation)
+	rows, err := t.tx.QueryContext(ctx, markerStatusesForUpdateSQL, MarkerOperation)
 	if err != nil {
 		return nil, err
 	}
@@ -306,10 +316,7 @@ func (t sqlMarkerTx) MarkerStatusesForUpdate(ctx context.Context) ([]string, err
 
 func (t sqlMarkerTx) PrerequisiteForUpdate(ctx context.Context, publicID string) (prerequisite, error) {
 	var row prerequisite
-	err := t.tx.QueryRowContext(ctx, `SELECT public_id, plan_version, operation,
-source_schema_version, target_schema_version, status, source_exact_sha,
-binary_image_digest, completed_at
-FROM migration_ledger WHERE public_id = ? FOR UPDATE`, publicID).Scan(
+	err := t.tx.QueryRowContext(ctx, prerequisiteForUpdateSQL, publicID).Scan(
 		&row.PublicID, &row.PlanVersion, &row.Operation, &row.SourceSchemaVersion, &row.TargetSchemaVersion,
 		&row.Status, &row.SourceExactSHA, &row.BinaryImageDigest, &row.CompletedAt,
 	)
@@ -318,10 +325,7 @@ FROM migration_ledger WHERE public_id = ? FOR UPDATE`, publicID).Scan(
 
 func (t sqlMarkerTx) LegacyActiveLeaseCount(ctx context.Context) (uint64, error) {
 	var count uint64
-	err := t.tx.QueryRowContext(ctx, `SELECT
-  (SELECT COUNT(*) FROM agent_runs WHERE lease_owner <> '' AND lease_expires_at >= UTC_TIMESTAMP(6)) +
-  (SELECT COUNT(*) FROM change_requests WHERE lease_owner <> '' AND lease_expires_at >= UTC_TIMESTAMP(6)) +
-  (SELECT COUNT(*) FROM verification_runs WHERE lease_owner <> '' AND lease_expires_at >= UTC_TIMESTAMP(6))`).Scan(&count)
+	err := t.tx.QueryRowContext(ctx, legacyActiveLeaseCountSQL).Scan(&count)
 	return count, err
 }
 
