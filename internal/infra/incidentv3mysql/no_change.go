@@ -162,7 +162,7 @@ func startNoChangeVerification(ctx context.Context, tx *sql.Tx, incident *incide
 	if identityErr != nil && !errors.Is(identityErr, errNoChangeIdentityUnavailable) {
 		return false, identityErr
 	}
-	originatingAgentRunID, err := businessbudget.CurrentOriginatingAgentRun(ctx, tx, incident.id, uint32(incident.cycleNo))
+	originatingAgentRunID, err := businessbudget.ActiveAgentRunForCycle(ctx, tx, incident.id, uint32(incident.cycleNo))
 	if err != nil {
 		return false, err
 	}
@@ -478,7 +478,7 @@ func ensureNoChangeInvestigating(ctx context.Context, tx *sql.Tx, incident *inci
 	}
 	previous := incident.status
 	result, err := tx.ExecContext(ctx, `UPDATE incidents
-SET status = 'DIAGNOSING', v3_status = 'investigating', current_agent_run_id = NULL,
+SET status = 'DIAGNOSING', v3_status = 'investigating',
     version = version + 1, needs_attention = FALSE, blocking_reason_code = NULL,
     blocked_at = NULL, updated_at = NOW(6)
 WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? AND version = ? AND v3_status = ?`,
@@ -499,7 +499,7 @@ WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? AND version = ? AND 
 
 func blockNoChangeVerification(ctx context.Context, tx *sql.Tx, incident *incidentRow, triggerSignalPublicID, reason string) error {
 	result, err := tx.ExecContext(ctx, `UPDATE incidents
-SET current_agent_run_id = NULL, version = version + 1, needs_attention = TRUE,
+SET version = version + 1, needs_attention = TRUE,
     blocking_reason_code = ?, blocked_at = NOW(6), updated_at = NOW(6)
 WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? AND version = ? AND v3_status = 'investigating'`,
 		reason, incident.id, incident.cycleNo, incident.version)
@@ -583,7 +583,7 @@ VALUES (?, ?, 3, ?, ?, ?, 'pending', ?, ?, ?, '', ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, 
 		}
 	}
 	updated, err := tx.ExecContext(ctx, `UPDATE incidents
-SET status = 'VERIFYING', v3_status = 'verifying', current_agent_run_id = NULL,
+SET status = 'VERIFYING', v3_status = 'verifying',
     version = version + 1, needs_attention = FALSE, blocking_reason_code = NULL,
     blocked_at = NULL, updated_at = ?
 WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? AND version = ? AND v3_status = 'investigating'`,

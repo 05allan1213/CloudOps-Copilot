@@ -275,30 +275,29 @@ func GuardChild(ctx context.Context, tx DBTX, kind Kind, incidentID uint64, cycl
 	return result, nil
 }
 
-// CurrentOriginatingAgentRun returns only the Incident projection's exact
-// current AgentRun when it belongs to the same V3 cycle. It deliberately does
-// not fall back to any older cycle-level authorization.
-func CurrentOriginatingAgentRun(ctx context.Context, tx DBTX, incidentID uint64, cycleNo uint32) (uint64, error) {
+// ActiveAgentRunForCycle returns the unique pending/running V3 AgentRun for an
+// Incident cycle. The generated active-cycle key enforces uniqueness; the
+// lookup never consults the legacy circular Incident pointer.
+func ActiveAgentRunForCycle(ctx context.Context, tx DBTX, incidentID uint64, cycleNo uint32) (uint64, error) {
 	if tx == nil || incidentID == 0 || cycleNo == 0 {
 		return 0, ErrInvalidAuthorization
 	}
-	var runID sql.NullInt64
-	var ownerIncident, ownerCycle sql.NullInt64
-	err := tx.QueryRowContext(ctx, `SELECT i.current_agent_run_id, ar.incident_id, ar.cycle_no
-FROM incidents i
-LEFT JOIN agent_runs ar ON ar.id = i.current_agent_run_id AND ar.domain_schema_version = 3
-WHERE i.id = ? AND i.domain_schema_version = 3 AND i.cycle_no = ?
-FOR UPDATE`, incidentID, cycleNo).Scan(&runID, &ownerIncident, &ownerCycle)
+	var runID uint64
+	err := tx.QueryRowContext(ctx, `SELECT id
+FROM agent_runs
+WHERE incident_id = ? AND cycle_no = ? AND domain_schema_version = 3
+  AND active_incident_cycle_key IS NOT NULL
+  AND v3_status IN ('pending','running')
+ORDER BY id DESC
+LIMIT 1
+FOR UPDATE`, incidentID, cycleNo).Scan(&runID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
 	if err != nil {
 		return 0, err
 	}
-	if !runID.Valid {
-		return 0, nil
-	}
-	if !ownerIncident.Valid || !ownerCycle.Valid || uint64(ownerIncident.Int64) != incidentID || uint64(ownerCycle.Int64) != uint64(cycleNo) {
-		return 0, fmt.Errorf("%w: current AgentRun escaped the Incident cycle", ErrInvalidAuthorization)
-	}
-	return uint64(runID.Int64), nil
+	return runID, nil
 }
 
 // MarkExhausted is a successful domain mutation: it leaves the Incident open,

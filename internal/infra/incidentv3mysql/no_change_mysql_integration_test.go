@@ -47,6 +47,19 @@ func TestMySQLIncidentV3ResolvedSignalCreatesNoChangeVerificationAndFencesAgent(
 	if stale.Task.SubjectType != "agent_run" || stale.Task.Transition != "investigation.step" {
 		t.Fatalf("claimed task=%+v", stale.Task)
 	}
+	legacyResult, err := db.ExecContext(ctx, `INSERT INTO agent_runs
+ (public_id, incident_id, status, model, prompt_version, max_steps, failure_code, completed_at)
+VALUES (?, ?, 'COMPLETED', 'legacy-model', 'legacy-v2', 1, '', NOW(6))`, uuid.NewString(), incidentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyPointerRunID, err := legacyResult.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE incidents SET current_agent_run_id = ? WHERE id = ?`, legacyPointerRunID, incidentID); err != nil {
+		t.Fatal(err)
+	}
 
 	resolved := resolvedIncidentIntegrationSignal(firing, 202)
 	results, err := store.IngestBatch(ctx, []SignalInput{resolved})
@@ -67,7 +80,8 @@ func TestMySQLIncidentV3ResolvedSignalCreatesNoChangeVerificationAndFencesAgent(
 FROM incidents WHERE id = ?`, incidentID).Scan(&incidentStatus, &legacyStatus, &incidentVersion, &currentAgent); err != nil {
 		t.Fatal(err)
 	}
-	if incidentStatus != "verifying" || legacyStatus != "VERIFYING" || incidentVersion != 3 || currentAgent.Valid {
+	if incidentStatus != "verifying" || legacyStatus != "VERIFYING" || incidentVersion != 3 ||
+		!currentAgent.Valid || currentAgent.Int64 != legacyPointerRunID {
 		t.Fatalf("incident status=%s/%s version=%d current_agent=%+v", incidentStatus, legacyStatus, incidentVersion, currentAgent)
 	}
 	assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM agent_runs
@@ -100,7 +114,7 @@ FROM verification_runs WHERE incident_id = ? AND cycle_no = 1`, incidentID).Scan
 		sourceRevision != identity.sourceRevision || imageDigest != identity.imageDigest || gitopsRevision != identity.gitopsRevision ||
 		plan.TriggerType != "no_change" || plan.TargetRevision != identity.gitopsRevision || len(plan.Checks) != 8 ||
 		remediationPlanID.Valid || changeRequestID.Valid || attempt != 1 ||
-		!originatingAgentRunID.Valid || budgetAuthorizationID.Valid {
+		!originatingAgentRunID.Valid || originatingAgentRunID.Int64 != int64(stale.Task.SubjectID) || budgetAuthorizationID.Valid {
 		t.Fatalf("verification run trigger=%s profile=%s plan=%+v", triggerType, profileID, plan)
 	}
 	assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM agent_runs

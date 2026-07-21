@@ -60,6 +60,11 @@ func TestMySQLIncidentV3DuplicateCreateReopenAndStartUniqueness(t *testing.T) {
 	processOneIncidentStart(t, ctx, db, incidentID, 1)
 	assertIncidentIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM agent_runs WHERE incident_id = ? AND cycle_no = 1 AND domain_schema_version = 3", 1, incidentID)
 	assertIncidentIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM async_tasks WHERE incident_id = ? AND cycle_no = 1 AND transition = 'investigation.step'", 1, incidentID)
+	var cycleOneRunID uint64
+	if err := db.QueryRowContext(ctx, `SELECT id FROM agent_runs
+WHERE incident_id = ? AND cycle_no = 1 AND domain_schema_version = 3`, incidentID).Scan(&cycleOneRunID); err != nil {
+		t.Fatal(err)
+	}
 
 	if _, err := db.ExecContext(ctx, `UPDATE agent_runs
 SET status = 'COMPLETED', v3_status = 'completed', completed_at = NOW(6), row_version = row_version + 1
@@ -67,8 +72,9 @@ WHERE incident_id = ? AND cycle_no = 1 AND domain_schema_version = 3`, incidentI
 		t.Fatal(err)
 	}
 	if _, err := db.ExecContext(ctx, `UPDATE incidents
-SET status = 'RESOLVED', v3_status = 'resolved', resolved_at = NOW(6), terminal_at = NOW(6), version = version + 1
-WHERE id = ? AND domain_schema_version = 3 AND cycle_no = 1`, incidentID); err != nil {
+SET status = 'RESOLVED', v3_status = 'resolved', resolved_at = NOW(6), terminal_at = NOW(6),
+    current_agent_run_id = ?, version = version + 1
+WHERE id = ? AND domain_schema_version = 3 AND cycle_no = 1`, cycleOneRunID, incidentID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -108,9 +114,10 @@ WHERE id = ? AND domain_schema_version = 3 AND cycle_no = 1`, incidentID); err !
 	assertIncidentIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM incidents WHERE correlation_key = ?", 1, correlationKey)
 	assertIncidentIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM incident_signals WHERE incident_id = ? AND cycle_no = 2", 2, incidentID)
 	assertIncidentIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM async_tasks WHERE incident_id = ? AND cycle_no = 2 AND transition = 'investigation.start'", 1, incidentID)
-	assertIncidentIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM incidents WHERE id = ? AND current_agent_run_id IS NULL", 1, incidentID)
+	assertIncidentIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM incidents WHERE id = ? AND current_agent_run_id = ?", 1, incidentID, cycleOneRunID)
 
 	processOneIncidentStart(t, ctx, db, incidentID, 2)
+	assertIncidentIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM incidents WHERE id = ? AND current_agent_run_id = ?", 1, incidentID, cycleOneRunID)
 	for cycle := 1; cycle <= 2; cycle++ {
 		assertIncidentIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM agent_runs WHERE incident_id = ? AND cycle_no = ? AND domain_schema_version = 3", 1, incidentID, cycle)
 		assertIncidentIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM async_tasks WHERE incident_id = ? AND cycle_no = ? AND transition = 'investigation.start'", 1, incidentID, cycle)
@@ -1018,31 +1025,32 @@ func processOneIncidentStart(t *testing.T, ctx context.Context, db *sql.DB, inci
 		t.Fatalf("resolve investigation.start: %v", err)
 	}
 	var (
-		currentRunID, runID, runCycle, expectedIncidentVersion  uint64
+		runID, runCycle, expectedIncidentVersion                uint64
 		maxSteps, maxToolCalls, maxModelCalls, maxEvidenceItems int
 		tokenBudget, maxRuntimeMS, maxCheckpointBytes           int64
 		deadlineMicros                                          int64
 	)
 	if err := db.QueryRowContext(ctx, `
-SELECT i.current_agent_run_id, r.id, r.cycle_no, r.expected_incident_version,
+SELECT r.id, r.cycle_no, r.expected_incident_version,
        r.max_steps, r.max_tool_calls, r.max_model_calls, r.token_budget,
        r.max_evidence_items, r.max_runtime_ms, r.max_checkpoint_bytes,
        TIMESTAMPDIFF(MICROSECOND, r.created_at, r.deadline_at)
-FROM incidents i
-JOIN agent_runs r ON r.id = i.current_agent_run_id
-WHERE i.id = ? AND r.domain_schema_version = 3`, incidentID).Scan(
-		&currentRunID, &runID, &runCycle, &expectedIncidentVersion,
+FROM agent_runs r
+WHERE r.incident_id = ? AND r.cycle_no = ? AND r.domain_schema_version = 3
+  AND r.active_incident_cycle_key IS NOT NULL AND r.v3_status IN ('pending','running')
+ORDER BY r.id DESC LIMIT 1`, incidentID, cycle).Scan(
+		&runID, &runCycle, &expectedIncidentVersion,
 		&maxSteps, &maxToolCalls, &maxModelCalls, &tokenBudget,
 		&maxEvidenceItems, &maxRuntimeMS, &maxCheckpointBytes, &deadlineMicros,
 	); err != nil {
 		t.Fatalf("load investigation.start runtime snapshot: %v", err)
 	}
-	if currentRunID != runID || runCycle != uint64(cycle) || expectedIncidentVersion != claimed.Task.ExpectedSubjectVersion+1 ||
+	if runID == 0 || runCycle != uint64(cycle) || expectedIncidentVersion != claimed.Task.ExpectedSubjectVersion+1 ||
 		maxSteps != 8 || maxToolCalls != 8 || maxModelCalls != 10 || tokenBudget != 16_000 ||
 		maxEvidenceItems != 20 || maxRuntimeMS != 180_000 || maxCheckpointBytes != 64*1024 ||
 		deadlineMicros != 180_000_000 {
-		t.Fatalf("unexpected investigation.start runtime snapshot run=%d/%d cycle=%d expected=%d budgets=%d/%d/%d/%d/%d/%d/%d deadline_us=%d",
-			currentRunID, runID, runCycle, expectedIncidentVersion, maxSteps, maxToolCalls,
+		t.Fatalf("unexpected investigation.start runtime snapshot run=%d cycle=%d expected=%d budgets=%d/%d/%d/%d/%d/%d/%d deadline_us=%d",
+			runID, runCycle, expectedIncidentVersion, maxSteps, maxToolCalls,
 			maxModelCalls, tokenBudget, maxEvidenceItems, maxRuntimeMS, maxCheckpointBytes, deadlineMicros)
 	}
 }
@@ -1051,8 +1059,14 @@ func advanceFailedInvestigationRun(t *testing.T, ctx context.Context, db *sql.DB
 	t.Helper()
 	var runID, version uint64
 	if err := db.QueryRowContext(ctx, `
-SELECT current_agent_run_id, version
-FROM incidents WHERE id = ? AND v3_status = 'investigating' FOR UPDATE`, incidentID).Scan(&runID, &version); err != nil {
+SELECT r.id, i.version
+FROM incidents i
+JOIN agent_runs r
+  ON r.incident_id = i.id AND r.cycle_no = i.cycle_no
+ AND r.domain_schema_version = 3 AND r.active_incident_cycle_key IS NOT NULL
+ AND r.v3_status IN ('pending','running')
+WHERE i.id = ? AND i.domain_schema_version = 3 AND i.v3_status = 'investigating'
+ORDER BY r.id DESC LIMIT 1 FOR UPDATE`, incidentID).Scan(&runID, &version); err != nil {
 		t.Fatal(err)
 	}
 	if runID == 0 {

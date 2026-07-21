@@ -148,10 +148,10 @@ FROM agent_runs WHERE id = ? FOR UPDATE`, runID).
 
 	updated, err := tx.ExecContext(ctx, `
 UPDATE incidents
-SET v3_status = 'investigating', current_agent_run_id = ?, version = version + 1, updated_at = NOW(6)
+SET v3_status = 'investigating', version = version + 1, updated_at = NOW(6)
 WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? AND version = ?
   AND v3_status IN ('detected','investigating')`,
-		runID, task.IncidentID, task.CycleNo, task.ExpectedSubjectVersion)
+		task.IncidentID, task.CycleNo, task.ExpectedSubjectVersion)
 	if err != nil {
 		return fmt.Errorf("advance investigation Incident: %w", err)
 	}

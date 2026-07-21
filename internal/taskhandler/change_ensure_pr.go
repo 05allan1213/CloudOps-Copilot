@@ -1037,7 +1037,7 @@ WHERE id = ? AND cycle_no = ? AND domain_schema_version = 3 FOR UPDATE`, task.In
 		return 0, asyncjob.ErrSubjectVersionMismatch
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE incidents
-SET status = 'DIAGNOSING', v3_status = 'investigating', current_agent_run_id = NULL,
+SET status = 'DIAGNOSING', v3_status = 'investigating',
     version = version + 1, needs_attention = FALSE, blocking_reason_code = NULL,
     blocked_at = NULL, updated_at = NOW(6)
 WHERE id = ? AND cycle_no = ? AND domain_schema_version = 3 AND version = ? AND v3_status = ?`,

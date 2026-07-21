@@ -437,7 +437,7 @@ ORDER BY terminal_at DESC, id DESC LIMIT 1 FOR UPDATE`, input.CorrelationKey).
 	UPDATE incidents
 	SET cycle_no = cycle_no + 1, version = version + 1, v3_status = 'investigating',
 	    severity = ?, resolved_at = NULL, terminal_at = NULL, needs_attention = FALSE,
-	    blocking_reason_code = NULL, blocked_at = NULL, current_agent_run_id = NULL,
+	    blocking_reason_code = NULL, blocked_at = NULL,
 	    last_seen_at = ?, updated_at = NOW(6)
 	WHERE id = ? AND domain_schema_version = 3 AND version = ? AND v3_status = 'resolved'
   AND terminal_at >= TIMESTAMPADD(MINUTE, -30, NOW(6))`, severity, input.OccurredAt.UTC(), latest.id, latest.version)
@@ -465,9 +465,9 @@ ORDER BY terminal_at DESC, id DESC LIMIT 1 FOR UPDATE`, input.CorrelationKey).
 INSERT INTO incidents
     (public_id, fingerprint, correlation_key, correlation_key_version, cluster, namespace,
      service_name, environment, target_kind, target_name, severity, status, summary,
-     first_seen_at, last_seen_at, resolved_at, current_agent_run_id, version,
+     first_seen_at, last_seen_at, resolved_at, version,
      domain_schema_version, v3_status, cycle_no, needs_attention, created_at, updated_at)
-VALUES (?, ?, ?, 2, ?, ?, ?, ?, ?, ?, ?, 'DETECTED', ?, ?, ?, NULL, NULL, 1,
+VALUES (?, ?, ?, 2, ?, ?, ?, ?, ?, ?, ?, 'DETECTED', ?, ?, ?, NULL, 1,
         3, 'detected', 1, FALSE, NOW(6), NOW(6))`,
 		publicID, input.Fingerprint, input.CorrelationKey, input.Cluster, input.Namespace,
 		input.ServiceName, input.Environment, input.TargetKind, input.TargetName, input.Severity,

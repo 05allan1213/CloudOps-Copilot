@@ -1,5 +1,6 @@
-// Command cloudops-migrate applies forward-only Goose migrations or performs
-// the read-only runtime-generation cutover check.
+// Command cloudops-migrate applies forward-only Goose migrations, performs
+// the read-only runtime-generation check, or writes the fail-closed Phase 7A
+// irreversible marker after explicit prerequisite audits.
 package main
 
 import (

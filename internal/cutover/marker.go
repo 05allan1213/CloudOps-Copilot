@@ -1,5 +1,6 @@
 // Package cutover owns the irreversible Phase 7A runtime-generation marker
-// contract. It intentionally does not perform live cutover or data conversion.
+// reader, startup guards, and fail-closed writer. It does not perform data
+// conversion, change runtime generation, or call external systems.
 package cutover
 
 import (

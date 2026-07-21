@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"flag"
 	"fmt"
+	"io"
 
 	"github.com/05allan1213/CloudOps-Copilot/internal/bootstrap/logger"
 	"github.com/05allan1213/CloudOps-Copilot/internal/cutover"
@@ -16,7 +18,15 @@ type command string
 const (
 	commandUp           command = "up"
 	commandCutoverCheck command = "cutover-check"
+	commandCutoverWrite command = "cutover-write"
 )
+
+const commandUsage = "usage: cloudops-migrate [up|cutover-check|cutover-write --plan-version N --source-exact-sha SHA --binary-image-digest sha256:... --source-schema-version N --target-schema-version N --quiesce-ledger-id UUID --reconciliation-ledger-id UUID --converter-audit-ledger-id UUID --old-worker-count 0 --confirm-irreversible CUTOVER-V3]"
+
+type invocation struct {
+	command command
+	write   cutover.WriteRequest
+}
 
 func Run(ctx context.Context, args []string) (retErr error) {
 	operation, err := parseCommand(args)
@@ -47,13 +57,23 @@ func Run(ctx context.Context, args []string) (retErr error) {
 
 	commandCtx, commandCancel := context.WithTimeout(ctx, cfg.CommandTimeout)
 	defer commandCancel()
-	if operation == commandCutoverCheck {
+	if operation.command == commandCutoverCheck {
 		guard, err := cutover.NewSQLRuntimeGuard(db, cutover.CurrentRuntimeGeneration)
 		if err != nil {
 			return fmt.Errorf("initialize cutover marker check: %w", err)
 		}
 		if err := guard.Check(commandCtx); err != nil {
 			return fmt.Errorf("cutover marker check: %w", err)
+		}
+		return nil
+	}
+	if operation.command == commandCutoverWrite {
+		writer, err := cutover.NewSQLMarkerWriter(db, cfg.LockTimeout)
+		if err != nil {
+			return fmt.Errorf("initialize cutover marker writer: %w", err)
+		}
+		if _, err := writer.Write(commandCtx, operation.write); err != nil {
+			return fmt.Errorf("write cutover marker: %w", err)
 		}
 		return nil
 	}
@@ -75,17 +95,40 @@ func Run(ctx context.Context, args []string) (retErr error) {
 	return nil
 }
 
-func parseCommand(args []string) (command, error) {
+func parseCommand(args []string) (invocation, error) {
 	if len(args) == 0 {
-		return commandUp, nil
-	}
-	if len(args) != 1 {
-		return "", fmt.Errorf("usage: cloudops-migrate [up|cutover-check]")
+		return invocation{command: commandUp}, nil
 	}
 	switch command(args[0]) {
 	case commandUp, commandCutoverCheck:
-		return command(args[0]), nil
+		if len(args) != 1 {
+			return invocation{}, errors.New(commandUsage)
+		}
+		return invocation{command: command(args[0])}, nil
+	case commandCutoverWrite:
+		var result invocation
+		result.command = commandCutoverWrite
+		result.write.OldWorkerCount = -1
+		flags := flag.NewFlagSet(string(commandCutoverWrite), flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		flags.Uint64Var(&result.write.PlanVersion, "plan-version", 0, "cutover plan version")
+		flags.StringVar(&result.write.SourceExactSHA, "source-exact-sha", "", "exact source SHA")
+		flags.StringVar(&result.write.BinaryImageDigest, "binary-image-digest", "", "exact binary image digest")
+		flags.Uint64Var(&result.write.SourceSchemaVersion, "source-schema-version", 0, "source schema version")
+		flags.Uint64Var(&result.write.TargetSchemaVersion, "target-schema-version", 0, "target schema version")
+		flags.StringVar(&result.write.QuiesceLedgerPublicID, "quiesce-ledger-id", "", "passed quiesce ledger UUID")
+		flags.StringVar(&result.write.ReconciliationLedgerPublicID, "reconciliation-ledger-id", "", "passed reconciliation ledger UUID")
+		flags.StringVar(&result.write.ConverterAuditLedgerPublicID, "converter-audit-ledger-id", "", "passed converter audit ledger UUID")
+		flags.Int64Var(&result.write.OldWorkerCount, "old-worker-count", -1, "observed old worker count")
+		flags.StringVar(&result.write.Confirmation, "confirm-irreversible", "", "must equal CUTOVER-V3")
+		if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 {
+			return invocation{}, errors.New(commandUsage)
+		}
+		if err := result.write.Validate(); err != nil {
+			return invocation{}, fmt.Errorf("%s: %w", commandUsage, err)
+		}
+		return result, nil
 	default:
-		return "", fmt.Errorf("usage: cloudops-migrate [up|cutover-check]")
+		return invocation{}, errors.New(commandUsage)
 	}
 }
