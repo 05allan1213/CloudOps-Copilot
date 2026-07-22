@@ -119,8 +119,9 @@ watch(
 
 .app-shell {
   display: flex;
+  height: 100dvh;
   min-width: 0;
-  min-height: 100dvh;
+  min-height: 0;
   overflow: hidden;
   background: var(--co-bg-canvas);
 }
@@ -128,8 +129,10 @@ watch(
 .app-frame {
   display: flex;
   flex: 1;
+  height: 100dvh;
   min-width: 0;
-  min-height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
   flex-direction: column;
 }
 

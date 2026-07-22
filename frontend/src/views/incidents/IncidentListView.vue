@@ -1,17 +1,50 @@
 <script setup lang="ts">
-import { onMounted } from "vue";
+import { computed, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
-import IncidentStatusBadge from "../../components/incidents/IncidentStatusBadge.vue";
+import IncidentFilterBar from "../../components/incidents/IncidentFilterBar.vue";
+import IncidentTable from "../../components/incidents/IncidentTable.vue";
+import StateBlock from "../../components/incidents/StateBlock.vue";
 import { useIncidentList } from "../../composables/incidents/useIncidentList";
-import { incidentDetailPath, incidentStatuses, severityLabel } from "../../models/incidents";
 import { formatIncidentTime } from "../../utils/incidentTime";
 
 const route = useRoute();
 const router = useRouter();
-const { filters, items, nextCursor, state, error, load, loadMore, syncURLAndLoad, reset } = useIncidentList(router, route.query);
+const {
+  filters,
+  items,
+  nextCursor,
+  state,
+  error,
+  loading,
+  loadingMore,
+  lastUpdatedAt,
+  hydratedFromCache,
+  load,
+  loadMore,
+  syncURLAndLoad,
+  reset,
+} = useIncidentList(router, route.query);
 
-onMounted(() => load(false));
+const resultAnnouncement = computed(() => {
+  if (loading.value && items.value.length > 0) return `Updating ${items.value.length} loaded incidents…`;
+  if (state.value === "empty") return "No incidents match the current filters.";
+  if (items.value.length === 1) return "1 incident loaded.";
+  return `${items.value.length} incidents loaded.`;
+});
+
+const refreshLabel = computed(() =>
+  lastUpdatedAt.value ? formatIncidentTime(lastUpdatedAt.value) : "Not refreshed yet",
+);
+const hasActiveFilters = computed(() => Boolean(filters.status || filters.severity || filters.service));
+
+function recoverEmptyState() {
+  return hasActiveFilters.value ? reset() : load(false);
+}
+
+onMounted(() => {
+  if (!hydratedFromCache) void load(false);
+});
 </script>
 
 <template>
@@ -19,170 +52,364 @@ onMounted(() => load(false));
     class="incident-list-view"
     aria-labelledby="incident-list-title"
   >
-    <header>
-      <div>
+    <header class="page-header">
+      <div class="page-heading">
         <p class="eyebrow">
-          MySQL-authoritative V3 operations
+          Evidence-First Operations
         </p>
         <h1 id="incident-list-title">
           Incident Workbench
         </h1>
-        <p>Read bounded Incident projections and follow the durable investigation, delivery and recovery chain.</p>
+        <p>Compare current lifecycle, severity, attention, and freshness before opening the full Incident chain.</p>
       </div>
+      <dl class="page-facts">
+        <div>
+          <dt>Loaded</dt>
+          <dd>{{ items.length }}</dd>
+        </div>
+        <div>
+          <dt>Last Refresh</dt>
+          <dd>{{ refreshLabel }}</dd>
+        </div>
+      </dl>
     </header>
-    <section
-      class="filters"
-      aria-labelledby="incident-filters-title"
-    >
-      <h2 id="incident-filters-title">
-        Server-supported filters
-      </h2>
-      <div class="filter-grid">
-        <el-select
-          v-model="filters.status"
-          aria-label="Incident status"
-          clearable
-          placeholder="Status"
-        >
-          <el-option
-            v-for="status in incidentStatuses"
-            :key="status"
-            :label="status.replace(/_/g, ' ')"
-            :value="status"
-          />
-        </el-select>
-        <el-select
-          v-model="filters.severity"
-          aria-label="Severity"
-          clearable
-          placeholder="Severity"
-        >
-          <el-option
-            v-for="severity in ['critical', 'warning', 'info', 'unknown']"
-            :key="severity"
-            :label="severity"
-            :value="severity"
-          />
-        </el-select>
-        <el-input
-          v-model="filters.service"
-          aria-label="Service"
-          maxlength="255"
-          clearable
-          placeholder="Exact service name"
-          @keyup.enter="syncURLAndLoad"
+
+    <IncidentFilterBar
+      v-model:status="filters.status"
+      v-model:severity="filters.severity"
+      v-model:service="filters.service"
+      :loading="loading && !loadingMore"
+      @apply="syncURLAndLoad"
+      @reset="reset"
+    />
+
+    <div class="results-heading">
+      <div>
+        <h2 id="incident-results-title">
+          Incidents
+        </h2>
+        <p>Server order defaults to most recently updated. Table sort controls apply to loaded cursor results.</p>
+      </div>
+      <span
+        class="result-count"
+        role="status"
+        aria-live="polite"
+      >
+        <span
+          v-if="loading"
+          class="updating-dot"
+          aria-hidden="true"
         />
-      </div>
-      <div class="filter-actions">
-        <el-button
-          type="primary"
-          @click="syncURLAndLoad"
-        >
-          Apply filters
-        </el-button>
-        <el-button @click="reset">
-          Reset
-        </el-button>
-      </div>
-    </section>
+        {{ resultAnnouncement }}
+      </span>
+    </div>
+
     <div
       v-if="state === 'loading' && items.length === 0"
+      class="incident-skeleton"
       role="status"
       aria-live="polite"
-      class="state-message"
+      aria-label="Loading incidents"
     >
-      Loading incidents…
+      <div class="skeleton-header" />
+      <div
+        v-for="index in 8"
+        :key="index"
+        class="skeleton-row"
+      >
+        <span
+          v-for="cell in 6"
+          :key="cell"
+        />
+      </div>
     </div>
-    <div
+
+    <StateBlock
       v-else-if="state === 'forbidden'"
-      role="alert"
-      class="state-message"
-    >
-      Viewer access is required.
-    </div>
-    <div
+      state="forbidden"
+      :message="error?.message"
+      :request-i-d="error?.requestID"
+      :trace-i-d="error?.traceID"
+      primary-action-label="Retry Access Check"
+      @primary-action="load(false)"
+    />
+
+    <StateBlock
       v-else-if="state === 'error' || state === 'unavailable'"
-      role="alert"
-      class="state-message state-message--error"
-    >
-      {{ error }} <el-button @click="load(false)">
-        Retry
-      </el-button>
-    </div>
-    <div
+      :state="state"
+      :message="error?.message"
+      :request-i-d="error?.requestID"
+      :trace-i-d="error?.traceID"
+      primary-action-label="Retry Incidents"
+      @primary-action="load(false)"
+    />
+
+    <StateBlock
       v-else-if="state === 'empty'"
-      role="status"
-      class="state-message"
-    >
-      No V3 incidents match these filters.
-    </div>
-    <section
-      v-else
-      aria-labelledby="incident-results-title"
-    >
-      <h2
-        id="incident-results-title"
-        class="visually-hidden"
-      >
-        Incident results
-      </h2>
-      <ul class="incident-grid">
-        <li
-          v-for="incident in items"
-          :key="incident.id"
-        >
-          <router-link
-            :to="incidentDetailPath(incident.id)"
-            class="incident-card"
-          >
-            <div class="card-top">
-              <span class="severity">{{ severityLabel(incident.severity) }}</span>
-              <IncidentStatusBadge :status="incident.status" />
-            </div>
-            <h3>{{ incident.summary || "Incident cycle in progress" }}</h3>
-            <dl>
-              <div><dt>Cycle / version</dt><dd>{{ incident.cycle }} / {{ incident.version }}</dd></div>
-              <div><dt>Needs attention</dt><dd>{{ incident.needs_attention ? "Yes" : "No" }}</dd></div>
-              <div><dt>Blocking reason</dt><dd>{{ incident.blocking_reason_code || "None" }}</dd></div>
-              <div><dt>Updated (UTC)</dt><dd>{{ formatIncidentTime(incident.updated_at) }}</dd></div>
-            </dl>
-          </router-link>
-        </li>
-      </ul>
-      <el-button
-        v-if="nextCursor"
-        :loading="state === 'loading'"
-        @click="loadMore"
-      >
-        Load next cursor page
-      </el-button>
-    </section>
+      state="empty"
+      :primary-action-label="hasActiveFilters ? 'Clear Filters' : 'Retry Incidents'"
+      :secondary-action-label="hasActiveFilters ? 'Retry' : undefined"
+      @primary-action="recoverEmptyState"
+      @secondary-action="load(false)"
+    />
+
+    <template v-else>
+      <StateBlock
+        v-if="error"
+        state="error"
+        title="Additional results could not be loaded"
+        :message="error.message"
+        :request-i-d="error.requestID"
+        :trace-i-d="error.traceID"
+        primary-action-label="Retry"
+        @primary-action="nextCursor ? loadMore() : load(false)"
+      />
+      <IncidentTable
+        :items="items"
+        :pending="loading"
+        :next-cursor="nextCursor"
+        :loading-more="loadingMore"
+        @load-more="loadMore"
+      />
+    </template>
   </section>
 </template>
 
 <style scoped>
-.incident-list-view { display: grid; min-width: 0; gap: 20px; }
-.incident-list-view > * { min-width: 0; }
-header { padding: 24px; border-radius: 12px; color: #fff; background: linear-gradient(125deg, #172554, #312e81 55%, #0f766e); }
-header h1 { margin: 4px 0; font-size: clamp(25px, 4vw, 36px); }
-header p { margin: 0; opacity: .82; }
-.eyebrow { font-size: 12px; text-transform: uppercase; }
-.filters { padding: 18px; border: 1px solid var(--cloudops-border-color); border-radius: 10px; background: var(--cloudops-bg-card); }
-.filters h2 { margin-top: 0; font-size: 17px; }
-.filter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
-.filter-actions { display: flex; gap: 8px; margin-top: 12px; }
-.state-message { padding: 38px; text-align: center; color: var(--el-text-color-secondary); }
-.state-message--error { color: var(--el-color-danger); }
-.incident-grid { min-width: 0; list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 310px), 1fr)); gap: 14px; }
-.incident-grid > li { min-width: 0; }
-.incident-card { display: block; height: 100%; box-sizing: border-box; padding: 18px; color: inherit; text-decoration: none; border: 1px solid var(--cloudops-border-color); border-radius: 10px; background: var(--cloudops-bg-card); }
-.incident-card:hover, .incident-card:focus-visible { border-color: var(--el-color-primary); outline: 3px solid var(--el-color-primary-light-8); }
-.card-top { display: flex; justify-content: space-between; gap: 8px; }
-.severity { font-size: 12px; text-transform: uppercase; }
-.incident-card h3 { margin-bottom: 12px; overflow-wrap: anywhere; }
-.incident-card dl { display: grid; gap: 8px; }
-.incident-card dl div { display: grid; grid-template-columns: minmax(110px, .7fr) 1fr; gap: 8px; }
-dt { color: var(--el-text-color-secondary); font-size: 11px; text-transform: uppercase; }
-dd { margin: 0; overflow-wrap: anywhere; font-size: 12px; }
-.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.incident-list-view {
+  display: grid;
+  width: min(100%, var(--co-content-max-width));
+  min-width: 0;
+  margin: 0 auto;
+  gap: var(--co-space-5);
+}
+
+.page-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--co-space-6);
+  padding: var(--co-space-4) var(--co-space-5);
+  border-bottom: 1px solid var(--co-border-default);
+}
+
+.page-heading {
+  min-width: 0;
+}
+
+.eyebrow,
+.page-heading h1,
+.page-heading > p,
+.page-facts,
+.results-heading h2,
+.results-heading p {
+  margin: 0;
+}
+
+.eyebrow {
+  color: var(--co-action-primary);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.page-heading h1 {
+  margin-top: 2px;
+  color: var(--co-text-primary);
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.page-heading > p {
+  max-width: 72ch;
+  margin-top: var(--co-space-1);
+  color: var(--co-text-secondary);
+  font-size: 13px;
+}
+
+.page-facts {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: stretch;
+  gap: var(--co-space-4);
+}
+
+.page-facts div {
+  display: grid;
+  min-width: 96px;
+  align-content: center;
+  gap: 2px;
+  padding-left: var(--co-space-4);
+  border-left: 1px solid var(--co-border-default);
+}
+
+.page-facts dt {
+  color: var(--co-text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.page-facts dd {
+  max-width: 200px;
+  margin: 0;
+  color: var(--co-text-primary);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.page-facts div:first-child dd {
+  font-family: var(--co-font-mono);
+  font-size: 18px;
+  font-weight: 750;
+}
+
+.results-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--co-space-4);
+}
+
+.results-heading h2 {
+  font-size: 18px;
+}
+
+.results-heading p {
+  margin-top: 2px;
+  color: var(--co-text-muted);
+  font-size: 12px;
+}
+
+.result-count {
+  display: inline-flex;
+  min-height: 28px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--co-space-2);
+  padding: 3px 10px;
+  border: 1px solid var(--co-border-default);
+  border-radius: var(--co-radius-pill);
+  color: var(--co-text-secondary);
+  background: var(--co-bg-surface);
+  font-size: 12px;
+}
+
+.updating-dot {
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--co-status-info-border);
+  border-top-color: var(--co-status-info-fg);
+  border-radius: 50%;
+  animation: updating-rotation 1s linear infinite;
+}
+
+.incident-skeleton {
+  overflow: hidden;
+  border: 1px solid var(--co-border-default);
+  border-radius: var(--co-radius-panel);
+  background: var(--co-bg-surface);
+}
+
+.skeleton-header,
+.skeleton-row {
+  display: grid;
+  grid-template-columns: 0.8fr 2fr 1fr 1.4fr 0.8fr 1.2fr;
+  gap: var(--co-space-4);
+  padding: var(--co-space-3) var(--co-space-4);
+}
+
+.skeleton-header {
+  height: 42px;
+  background: var(--co-bg-subtle);
+}
+
+.skeleton-row {
+  min-height: 60px;
+  align-items: center;
+  border-top: 1px solid var(--co-border-default);
+}
+
+.skeleton-row span {
+  height: 12px;
+  border-radius: var(--co-radius-control);
+  background: linear-gradient(90deg, var(--co-bg-subtle), var(--co-bg-hover), var(--co-bg-subtle));
+  background-size: 220% 100%;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes updating-rotation {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes skeleton-shimmer {
+  to { background-position-x: -220%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .updating-dot,
+  .skeleton-row span {
+    animation: none;
+  }
+}
+
+@media (max-width: 767px) {
+  .page-header,
+  .results-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .page-header {
+    gap: var(--co-space-4);
+    padding: var(--co-space-2) 0 var(--co-space-4);
+  }
+
+  .page-heading h1 {
+    font-size: 22px;
+  }
+
+  .page-heading > p {
+    font-size: 14px;
+  }
+
+  .page-facts {
+    width: 100%;
+  }
+
+  .page-facts div {
+    min-width: 0;
+    flex: 1;
+    padding-left: var(--co-space-3);
+  }
+
+  .page-facts div:first-child {
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .page-facts dd {
+    overflow-wrap: anywhere;
+  }
+
+  .result-count {
+    min-height: 32px;
+  }
+
+  .skeleton-header {
+    display: none;
+  }
+
+  .skeleton-row {
+    grid-template-columns: 1fr 1fr;
+    min-height: 132px;
+  }
+
+  .skeleton-row span:nth-child(n + 5) {
+    display: none;
+  }
+}
 </style>

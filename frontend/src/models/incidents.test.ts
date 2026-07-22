@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   incidentDetailPath,
   incidentStatusLabel,
+  humanizeCode,
   isCurrentRequest,
   loadStateForStatus,
   normalizeListQuery,
@@ -23,6 +24,8 @@ describe("V3 Incident Workbench presentation contract", () => {
     expect(normalized).toEqual({ limit: 100, status: "resolved", severity: "critical", service: "checkout" });
     expect(serializeListQuery(normalized)).toEqual({ limit: "100", status: "resolved", severity: "critical", service: "checkout" });
     expect(normalizeListQuery({ status: "legacy", limit: "500" })).toEqual({ limit: 100 });
+    expect(normalizeListQuery({ cursor: "page-2" })).toEqual({ limit: 50, cursor: "page-2" });
+    expect(serializeListQuery({ limit: 50, cursor: "page-2" })).toEqual({ cursor: "page-2" });
   });
 
   it("maps transport and persisted resource states explicitly", () => {
@@ -30,7 +33,11 @@ describe("V3 Incident Workbench presentation contract", () => {
     expect(loadStateForStatus(404)).toBe("not_found");
     expect(loadStateForStatus(503)).toBe("unavailable");
     expect(statusTone("approved")).toBe("success");
-    expect(statusTone("inconclusive")).toBe("warning");
+    expect(statusTone("inconclusive")).toBe("inconclusive");
+    expect(statusTone("unavailable")).toBe("neutral");
+    expect(statusTone("NOT RUN")).toBe("neutral");
+    expect(statusTone("detected")).toBe("danger");
+    expect(humanizeCode("evidence_dependency_unavailable")).toBe("Evidence Dependency Unavailable");
   });
 
   it("builds a stable encoded public UUID route", () => {

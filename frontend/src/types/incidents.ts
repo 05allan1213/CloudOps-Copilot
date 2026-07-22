@@ -18,6 +18,8 @@ export interface IncidentView {
   version: number;
   needs_attention: boolean;
   blocking_reason_code?: string;
+  migrated_legacy: boolean;
+  migrated_legacy_context: boolean;
   created_at?: string;
   updated_at?: string;
 }

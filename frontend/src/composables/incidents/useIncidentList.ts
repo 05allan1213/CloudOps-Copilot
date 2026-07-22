@@ -6,12 +6,37 @@ import { isApiError } from "../../api/client";
 import { loadStateForStatus, normalizeListQuery, serializeListQuery } from "../../models/incidents";
 import type { IncidentListQuery, IncidentView, LoadState } from "../../types/incidents";
 
+export interface IncidentListError {
+  message: string;
+  status: number | null;
+  code: string;
+  requestID: string;
+  traceID: string;
+}
+
+interface IncidentListCacheEntry {
+  items: IncidentView[];
+  nextCursor: string;
+  lastUpdatedAt: string;
+}
+
+const listSessionCache = new Map<string, IncidentListCacheEntry>();
+
+function cacheKey(query: IncidentListQuery): string {
+  return JSON.stringify(serializeListQuery(query));
+}
+
 export function useIncidentList(router: Router, initialQuery: Record<string, unknown>) {
   const filters = reactive<IncidentListQuery>(normalizeListQuery(initialQuery));
-  const items = ref<IncidentView[]>([]);
-  const nextCursor = ref("");
-  const state = ref<LoadState>("loading");
-  const error = ref("");
+  const cached = listSessionCache.get(cacheKey(filters));
+  const items = ref<IncidentView[]>(cached?.items ?? []);
+  const nextCursor = ref(cached?.nextCursor ?? "");
+  const state = ref<LoadState>(cached ? (cached.items.length > 0 ? "ready" : "empty") : "loading");
+  const error = ref<IncidentListError | null>(null);
+  const loading = ref(false);
+  const loadingMore = ref(false);
+  const lastUpdatedAt = ref(cached?.lastUpdatedAt ?? "");
+  const hydratedFromCache = Boolean(cached);
   let requestIdentity = 0;
   let controller: AbortController | null = null;
 
@@ -19,26 +44,58 @@ export function useIncidentList(router: Router, initialQuery: Record<string, unk
     const identity = ++requestIdentity;
     controller?.abort();
     controller = new AbortController();
-    state.value = "loading";
-    error.value = "";
+    loading.value = true;
+    loadingMore.value = append;
+    if (!append && items.value.length === 0) state.value = "loading";
+    error.value = null;
     try {
       const query: IncidentListQuery = { ...filters };
-      if (append && nextCursor.value) query.cursor = nextCursor.value;
+      const requestedCursor = append ? nextCursor.value : (query.cursor ?? "");
+      if (append && requestedCursor) query.cursor = requestedCursor;
       const result = await listIncidents(query, controller.signal);
       if (identity !== requestIdentity) return;
       items.value = append ? [...items.value, ...result.items] : result.items;
       nextCursor.value = result.next_cursor ?? "";
+      if (append) {
+        filters.cursor = requestedCursor || undefined;
+        await router.replace({ query: serializeListQuery(filters) as LocationQueryRaw });
+      }
       state.value = items.value.length === 0 ? "empty" : "ready";
+      lastUpdatedAt.value = new Date().toISOString();
+      listSessionCache.set(cacheKey(filters), {
+        items: [...items.value],
+        nextCursor: nextCursor.value,
+        lastUpdatedAt: lastUpdatedAt.value,
+      });
     } catch (cause) {
       if (identity !== requestIdentity || controller.signal.aborted) return;
-      error.value = cause instanceof Error ? cause.message : "Failed to load incidents";
-      state.value = loadStateForStatus(isApiError(cause) ? cause.status : null);
+      const apiError = isApiError(cause) ? cause : null;
+      error.value = {
+        message: cause instanceof Error ? cause.message : "Failed to load incidents",
+        status: apiError?.status ?? null,
+        code: apiError?.code ?? "",
+        requestID: apiError?.requestID ?? "",
+        traceID: apiError?.traceID ?? "",
+      };
+      state.value = items.value.length > 0
+        ? "ready"
+        : loadStateForStatus(apiError?.status ?? null);
+    } finally {
+      if (identity === requestIdentity) {
+        loading.value = false;
+        loadingMore.value = false;
+      }
     }
   }
 
   async function syncURLAndLoad() {
-    await router.replace({ query: serializeListQuery(filters) as LocationQueryRaw });
+    filters.service = filters.service?.trim() || undefined;
+    filters.cursor = undefined;
+    items.value = [];
     nextCursor.value = "";
+    lastUpdatedAt.value = "";
+    state.value = "loading";
+    await router.replace({ query: serializeListQuery(filters) as LocationQueryRaw });
     await load(false);
   }
 
@@ -49,5 +106,19 @@ export function useIncidentList(router: Router, initialQuery: Record<string, unk
 
   onBeforeUnmount(() => controller?.abort());
 
-  return { filters, items, nextCursor, state, error, load, loadMore: () => load(true), syncURLAndLoad, reset };
+  return {
+    filters,
+    items,
+    nextCursor,
+    state,
+    error,
+    loading,
+    loadingMore,
+    lastUpdatedAt,
+    hydratedFromCache,
+    load,
+    loadMore: () => load(true),
+    syncURLAndLoad,
+    reset,
+  };
 }

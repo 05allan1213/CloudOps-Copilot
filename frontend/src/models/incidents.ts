@@ -33,12 +33,24 @@ export function severityLabel(value: IncidentSeverity): string {
   return ({ critical: "Critical", warning: "Warning", info: "Info", unknown: "Unknown" })[value];
 }
 
-export function statusTone(value: string): "success" | "warning" | "danger" | "info" | "primary" {
+export function humanizeCode(value?: string): string {
+  const normalized = value?.trim();
+  if (!normalized) return "No blocking reason";
+  return normalized
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+export type StatusTone = "success" | "warning" | "danger" | "info" | "primary" | "inconclusive" | "neutral";
+
+export function statusTone(value: string): StatusTone {
   const normalized = value.toLowerCase();
   if (["resolved", "passed", "completed", "approved", "delivered", "valid"].includes(normalized)) return "success";
-  if (["failed", "timed_out", "invalid", "rejected", "policy_rejected"].includes(normalized)) return "danger";
-  if (["awaiting_approval", "pending", "running", "delivering", "verifying", "inconclusive", "unavailable"].includes(normalized)) return "warning";
-  if (["unknown", "cancelled", "superseded", "closed"].includes(normalized)) return "info";
+  if (["detected", "failed", "invalid", "rejected", "policy_rejected"].includes(normalized)) return "danger";
+  if (["awaiting_approval", "pending", "timed_out"].includes(normalized)) return "warning";
+  if (normalized === "inconclusive") return "inconclusive";
+  if (["investigating", "running", "delivering", "verifying"].includes(normalized)) return "primary";
+  if (["unknown", "cancelled", "superseded", "closed", "unavailable", "not_run", "not run"].includes(normalized)) return "neutral";
   return "primary";
 }
 
@@ -47,9 +59,11 @@ export function normalizeListQuery(query: Record<string, unknown>): IncidentList
   const status = normalizedString(query.status);
   const severity = normalizedString(query.severity);
   const service = normalizedString(query.service);
+  const cursor = normalizedString(query.cursor);
   if (status && incidentStatuses.includes(status as IncidentStatus)) result.status = status as IncidentStatus;
   if (severity && ["critical", "warning", "info", "unknown"].includes(severity)) result.severity = severity as IncidentSeverity;
   if (service) result.service = service.slice(0, 255);
+  if (cursor && cursor.length <= 512) result.cursor = cursor;
   return result;
 }
 
@@ -58,6 +72,7 @@ export function serializeListQuery(query: IncidentListQuery): Record<string, str
   if (query.status) result.status = query.status;
   if (query.severity) result.severity = query.severity;
   if (query.service) result.service = query.service;
+  if (query.cursor) result.cursor = query.cursor;
   if (query.limit && query.limit !== 50) result.limit = String(query.limit);
   return result;
 }
