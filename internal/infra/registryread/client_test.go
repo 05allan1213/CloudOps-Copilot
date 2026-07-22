@@ -42,6 +42,22 @@ func testDigest(value []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
+func TestAllowedConfigResponseType(t *testing.T) {
+	for name, contentType := range map[string]string{
+		"declared OCI config": configOCI,
+		"GHCR blob redirect":  configGeneric,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if !allowedConfigResponseType(contentType, configOCI) {
+				t.Fatalf("content type %q rejected", contentType)
+			}
+		})
+	}
+	if allowedConfigResponseType("text/plain", configOCI) {
+		t.Fatal("unrelated config content type accepted")
+	}
+}
+
 func newTestClient(t *testing.T, server *httptest.Server, mutate func(*Config)) *Client {
 	t.Helper()
 	parsed, err := url.Parse(server.URL)

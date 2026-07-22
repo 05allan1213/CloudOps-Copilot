@@ -32,6 +32,7 @@ const (
 	manifestDocker = "application/vnd.docker.distribution.manifest.v2+json"
 	configOCI      = "application/vnd.oci.image.config.v1+json"
 	configDocker   = "application/vnd.docker.container.image.v1+json"
+	configGeneric  = "application/octet-stream"
 	maxTokenBytes  = int64(16 * 1024)
 	maxSecretBytes = int64(8 * 1024)
 )
@@ -338,7 +339,7 @@ func (c *Client) readUncached(ctx context.Context, repository, manifestDigest st
 		result.Integrity = change.RegistryIntegrityInvalid
 		return result, &APIError{Code: ErrorInvalid}
 	}
-	if contentType := mediaType(configHeaders.Get("Content-Type")); contentType != "" && contentType != manifest.Config.MediaType {
+	if contentType := mediaType(configHeaders.Get("Content-Type")); contentType != "" && !allowedConfigResponseType(contentType, manifest.Config.MediaType) {
 		result.Integrity = change.RegistryIntegrityInvalid
 		return result, &APIError{Code: ErrorInvalid}
 	}
@@ -632,6 +633,9 @@ func headerDigestValid(header, expected string) bool {
 
 func allowedManifestType(value string) bool { return value == manifestOCI || value == manifestDocker }
 func allowedConfigType(value string) bool   { return value == configOCI || value == configDocker }
+func allowedConfigResponseType(value, expected string) bool {
+	return value == expected || value == configGeneric
+}
 
 func mediaType(value string) string {
 	if index := strings.IndexByte(value, ';'); index >= 0 {
