@@ -125,6 +125,45 @@ func TestLokiAndTempoBoundedFacts(t *testing.T) {
 	}
 }
 
+func TestTempoTemplateUsesOTelDeploymentEnvironmentName(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		check     verification.CheckType
+		errorOnly bool
+		want      string
+	}{
+		{
+			name:      "error traces",
+			check:     verification.CheckTraceErrorRateBelow,
+			errorOnly: true,
+			want:      `{ resource.service.name = "checkout\"api" && resource.deployment.environment.name = "staging" && status = error }`,
+		},
+		{
+			name:  "all traces",
+			check: verification.CheckTraceErrorRateBelow,
+			want:  `{ resource.service.name = "checkout\"api" && resource.deployment.environment.name = "staging" }`,
+		},
+		{
+			name:  "latency traces",
+			check: verification.CheckTraceLatencyP95Below,
+			want:  `{ resource.service.name = "checkout\"api" && resource.deployment.environment.name = "staging" }`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := tempoTemplate(query(tc.check), tc.errorOnly)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("TraceQL mismatch:\n got: %s\nwant: %s", got, tc.want)
+			}
+			if strings.Contains(got, "resource.deployment.environment =") {
+				t.Fatalf("legacy deployment environment attribute returned: %s", got)
+			}
+		})
+	}
+}
+
 func TestCancellationOversizeLimitsAndAuthority(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(strings.Repeat("x", 5000))) }))
 	defer server.Close()

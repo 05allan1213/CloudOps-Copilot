@@ -300,11 +300,11 @@ func tempoTemplate(q verification.SignalQuery, errorOnly bool) (string, error) {
 	switch verification.CheckType(q.Template) {
 	case verification.CheckTraceErrorRateBelow:
 		if errorOnly {
-			return `{ resource.service.name = "` + service + `" && resource.deployment.environment = "` + environment + `" && status = error }`, nil
+			return `{ resource.service.name = "` + service + `" && resource.deployment.environment.name = "` + environment + `" && status = error }`, nil
 		}
-		return `{ resource.service.name = "` + service + `" && resource.deployment.environment = "` + environment + `" }`, nil
+		return `{ resource.service.name = "` + service + `" && resource.deployment.environment.name = "` + environment + `" }`, nil
 	case verification.CheckTraceLatencyP95Below:
-		return `{ resource.service.name = "` + service + `" && resource.deployment.environment = "` + environment + `" }`, nil
+		return `{ resource.service.name = "` + service + `" && resource.deployment.environment.name = "` + environment + `" }`, nil
 	default:
 		return "", verification.ErrInvalidArgument
 	}
