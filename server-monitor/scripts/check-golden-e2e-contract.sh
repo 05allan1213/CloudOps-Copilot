@@ -22,7 +22,11 @@ done
 for required in \
   'Status: `AGENT_QUALITY=PASS`' \
   'gh auth status' \
-  'https://api.github.com/installation' \
+  '/git/refs' \
+  '/pulls' \
+  '/branches/main/protection' \
+  'permission probe unexpectedly created a Git ref' \
+  'permission probe unexpectedly created a pull request' \
   'argocd account can-i sync' \
   'current Kubernetes context is not kind' \
   'live LLM response contract failed' \
@@ -34,6 +38,9 @@ for required in \
   'NOT RUN'; do
   grep -Fq "${required}" "${RUNNER}" || die "runner is missing contract: ${required}"
 done
+if grep -Fq 'https://api.github.com/installation' "${RUNNER}"; then
+  die "runner uses the user-to-server /installation endpoint for installation tokens"
+fi
 
 grep -Fq 'gh pr create' "${RUNNER}" || die "regression command does not create a PR"
 grep -Fq 'regression/required-env-${SOURCE_SHA:0:12}' "${RUNNER}" || die "regression branch does not match the external required check"

@@ -113,6 +113,39 @@ jq -e '
   exit 1
 }
 
+mysql_bootstrap_script="$(jq -r '
+  [.[] | select(.kind == "ConfigMap" and .metadata.name == "cloudops-mysql-bootstrap")][0]
+  | .data["10-cloudops-identities.sh"]
+' <<<"${platform_documents}")"
+mysql_bootstrap_tmp="$(mktemp -d "${TMPDIR:-/tmp}/cloudops-mysql-bootstrap-check.XXXXXX")"
+cleanup_mysql_bootstrap() { rm -rf "${mysql_bootstrap_tmp}"; }
+trap cleanup_mysql_bootstrap EXIT
+printf '%s\n' '#!/usr/bin/env bash' 'set -Eeuo pipefail' "tee \"\${MYSQL_CAPTURE}\" >/dev/null" >"${mysql_bootstrap_tmp}/mysql"
+printf '%s\n' "${mysql_bootstrap_script}" >"${mysql_bootstrap_tmp}/bootstrap.sh"
+chmod 700 "${mysql_bootstrap_tmp}/mysql" "${mysql_bootstrap_tmp}/bootstrap.sh"
+PATH="${mysql_bootstrap_tmp}:${PATH}" \
+MYSQL_CAPTURE="${mysql_bootstrap_tmp}/captured.sql" \
+MYSQL_ROOT_PASSWORD=root-password \
+CLOUDOPS_API_USER=cloudops-api CLOUDOPS_API_PASSWORD=api-password \
+CLOUDOPS_WORKER_USER=cloudops-worker CLOUDOPS_WORKER_PASSWORD=worker-password \
+CLOUDOPS_MIGRATE_USER=cloudops-migrate CLOUDOPS_MIGRATE_PASSWORD=migrate-password \
+CLOUDOPS_BASELINE_USER=cloudops-baseline CLOUDOPS_BASELINE_PASSWORD=baseline-password \
+  bash "${mysql_bootstrap_tmp}/bootstrap.sh"
+for expected_sql in \
+  "GRANT SELECT, INSERT, UPDATE, DELETE ON \`cloudops\`.* TO 'cloudops-api'@'%';" \
+  "GRANT SELECT, INSERT, UPDATE, DELETE ON \`cloudops\`.* TO 'cloudops-worker'@'%';" \
+  "GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, INDEX, REFERENCES ON \`cloudops\`.* TO 'cloudops-migrate'@'%';" \
+  "GRANT SELECT ON \`cloudops\`.* TO 'cloudops-baseline'@'%';" \
+  "GRANT INSERT, UPDATE ON \`cloudops\`.\`deployment_baselines\` TO 'cloudops-baseline'@'%';" \
+  "GRANT INSERT, UPDATE ON \`cloudops\`.\`baseline_observations\` TO 'cloudops-baseline'@'%';"; do
+  grep -Fqx "${expected_sql}" "${mysql_bootstrap_tmp}/captured.sql" || {
+    printf 'MySQL bootstrap shell expansion corrupted SQL: %s\n' "${expected_sql}" >&2
+    exit 1
+  }
+done
+cleanup_mysql_bootstrap
+trap - EXIT
+
 jq -e '
   ([.[] | .. | objects | .image? | select(type == "string")]) as $images
   | ($images | length) >= 6

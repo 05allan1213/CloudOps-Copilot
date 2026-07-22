@@ -29,6 +29,14 @@ cookie jar, exact digest-pinned API/Worker images, and the merged regression PR
 number in `GOLDEN_REGRESSION_PR`. Provider credentials are read from explicit
 files and are never written into evidence.
 
+The GitHub App preflight verifies actual bounded capabilities without creating
+remote state. Both tokens must read repository contents and pull requests. It
+then submits a ref request bound to the impossible all-zero commit, an invalid
+empty pull request, and an invalid empty branch-protection request. The read
+token must receive `403`; the write token must receive `422` for Contents/PR
+operations; both must receive `403` for repository administration. A final
+read proves that neither the probe ref nor a probe PR exists.
+
 Environment-specific inputs:
 
 - `GOLDEN_GITOPS_WORKTREE`

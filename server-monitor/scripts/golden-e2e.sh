@@ -122,19 +122,64 @@ check_human_gh() {
   pass human_gh "authenticated human ${login}; exact-SHA Actions PASS"
 }
 
+github_status() {
+  local token="$1" method="$2" url="$3" payload="${4:-}" response
+  if [[ -n "${payload}" ]]; then
+    response="$(curl --silent --show-error --max-time 20 --request "${method}" \
+      -H 'Accept: application/vnd.github+json' -H "Authorization: Bearer ${token}" \
+      -H 'X-GitHub-Api-Version: 2022-11-28' --data-binary "${payload}" \
+      --write-out $'\n%{http_code}' "${url}")"
+  else
+    response="$(curl --silent --show-error --max-time 20 --request "${method}" \
+      -H 'Accept: application/vnd.github+json' -H "Authorization: Bearer ${token}" \
+      -H 'X-GitHub-Api-Version: 2022-11-28' --write-out $'\n%{http_code}' "${url}")"
+  fi
+  printf '%s' "${response##*$'\n'}"
+}
+
 check_github_app_token() {
-  local file="$1" expected_contents="$2" expected_pr="$3" label="$4" token response
+  local file="$1" expected_mode="$2" label="$3" token repo_api probe_branch ref_status pr_status admin_status absent_status pulls
   safe_file "${file}"; token="$(read_secret "${file}")"
-  response="$(curl --fail --silent --show-error --max-time 20 -H 'Accept: application/vnd.github+json' -H "Authorization: Bearer ${token}" -H 'X-GitHub-Api-Version: 2022-11-28' https://api.github.com/installation)"
+  repo_api="https://api.github.com/repos/${GITOPS_REPO}"
+  probe_branch="cloudops-permission-probe-${SOURCE_SHA:0:12}"
+
+  curl --fail --silent --show-error --max-time 20 \
+    -H 'Accept: application/vnd.github+json' -H "Authorization: Bearer ${token}" \
+    -H 'X-GitHub-Api-Version: 2022-11-28' \
+    "${repo_api}/contents?ref=main" >/dev/null || fail github_apps "${label} cannot read repository contents"
+  curl --fail --silent --show-error --max-time 20 \
+    -H 'Accept: application/vnd.github+json' -H "Authorization: Bearer ${token}" \
+    -H 'X-GitHub-Api-Version: 2022-11-28' \
+    "${repo_api}/pulls?state=open&per_page=1" >/dev/null || fail github_apps "${label} cannot read pull requests"
+
+  ref_status="$(github_status "${token}" POST "${repo_api}/git/refs" \
+    "$(jq -cn --arg ref "refs/heads/${probe_branch}" '{ref:$ref,sha:"0000000000000000000000000000000000000000"}')")"
+  pr_status="$(github_status "${token}" POST "${repo_api}/pulls" \
+    "$(jq -cn --arg head "${probe_branch}" '{title:"",head:$head,base:"main"}')")"
+  admin_status="$(github_status "${token}" PUT "${repo_api}/branches/main/protection" '{}')"
+
+  if [[ "${expected_mode}" == read ]]; then
+    [[ "${ref_status}" == 403 && "${pr_status}" == 403 ]] || fail github_apps "${label} unexpectedly has contents or pull-request write permission"
+  else
+    [[ "${ref_status}" == 422 && "${pr_status}" == 422 ]] || fail github_apps "${label} did not expose bounded contents and pull-request write capability"
+  fi
+  [[ "${admin_status}" == 403 ]] || fail github_apps "${label} unexpectedly has repository administration write permission"
+
+  absent_status="$(github_status "${token}" GET "${repo_api}/git/ref/heads/${probe_branch}")"
+  [[ "${absent_status}" == 404 ]] || fail github_apps "${label} permission probe unexpectedly created a Git ref"
+  pulls="$(curl --fail --silent --show-error --max-time 20 \
+    -H 'Accept: application/vnd.github+json' -H "Authorization: Bearer ${token}" \
+    -H 'X-GitHub-Api-Version: 2022-11-28' \
+    "${repo_api}/pulls?state=all&head=${GITOPS_REPO%%/*}:${probe_branch}")"
+  jq -e 'length == 0' <<<"${pulls}" >/dev/null || fail github_apps "${label} permission probe unexpectedly created a pull request"
   unset token
-  jq -e --arg contents "${expected_contents}" --arg prs "${expected_pr}" '.id>0 and .app_slug!="" and .permissions.contents==$contents and .permissions.pull_requests==$prs and ((.permissions.administration//"read")!="write")' <<<"${response}" >/dev/null || fail github_apps "${label} GitHub App installation permissions are invalid"
 }
 
 check_github_apps() {
   require_env GOLDEN_GITHUB_READ_APP_TOKEN_FILE; require_env GOLDEN_GITHUB_WRITE_APP_TOKEN_FILE
   [[ "$(sha256sum "${GOLDEN_GITHUB_READ_APP_TOKEN_FILE}" | cut -d' ' -f1)" != "$(sha256sum "${GOLDEN_GITHUB_WRITE_APP_TOKEN_FILE}" | cut -d' ' -f1)" ]] || fail github_apps "read and write GitHub App tokens must be distinct"
-  check_github_app_token "${GOLDEN_GITHUB_READ_APP_TOKEN_FILE}" read read read-app
-  check_github_app_token "${GOLDEN_GITHUB_WRITE_APP_TOKEN_FILE}" write write write-app
+  check_github_app_token "${GOLDEN_GITHUB_READ_APP_TOKEN_FILE}" read read-app
+  check_github_app_token "${GOLDEN_GITHUB_WRITE_APP_TOKEN_FILE}" write write-app
   pass github_apps "separate live read/write installation tokens and bounded permissions verified"
 }
 
