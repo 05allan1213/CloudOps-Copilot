@@ -68,8 +68,6 @@ USER 65532:65532
 
 FROM runtime-base AS cloudops-control-base
 
-# Keep the runtime validator patched while CI also checks rules against the deployed 2.51 line.
-COPY --from=prom/prometheus:v3.13.1@sha256:3c42b892cf723fa54d2f262c37a0e1f80aa8c8ddb1da7b9b0df9455a35a7f893 /bin/promtool /usr/local/bin/promtool
 COPY server-monitor/runbooks /app/runbooks
 
 ENV RUNBOOK_DIR=/app/runbooks
