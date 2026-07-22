@@ -19,6 +19,13 @@ func TestImmutableMigrationHistory(t *testing.T) {
 		"00007_expand_legacy_schema.sql":                  "e254655698086f7ff3679fe615d0d7b6c2bd58158eb44501086ca37f44c54f45",
 		"00008_expand_v3_async_runtime.sql":               "a769354179532733b6216fbfde699cf756744f72dd75c98cf730feb2e093e96e",
 		"00009_expand_v3_remediation_verification.sql":    "944ca629c190fe82a77e36ac7b35bfff4017fb8b59f3fb4db333918337d9c927",
+		"00010_phase5_change_baselines.sql":               "05f053ad42175938fff72bdcb4b98717382f3559ad930cba059cd847d7a6c3c2",
+		"00011_evidence_supersessions.sql":                "2386406a3ded80c9b1ec0d25383a90267277ffb217140a2d5ce1e27d995987dc",
+		"00012_incident_cycle_business_budgets.sql":       "f486ae9ec9a44669c58441622b4ed1494f2e8b29d1c4f744edb3b553e0cd473f",
+		"00013_agent_run_model_identity.sql":              "375dce856ebbee6e2a892999605855266930b16f35e477af60052de1d1578b3e",
+		"00014_evidence_durable_contract.sql":             "c803b9c572f2e7d06e1eaade9446d2db7478ccb4332cfd022e44b32939eed2cf",
+		"00015_operator_only_remediation_decisions.sql":   "92c06ca177a2ced26d3691bf66e40b9f5a88b8d5389476d55a1eee6f1944af28",
+		"00016_phase7a_cutover_archives.sql":              "69884451e4f6b2b6031469bd41c160acf9f79cdc3858dff5cc1f9fb6e03dc629",
 	}
 	for name, expectedHash := range expected {
 		contents, err := FS.ReadFile(name)
