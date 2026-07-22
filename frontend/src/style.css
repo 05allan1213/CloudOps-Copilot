@@ -118,10 +118,6 @@ pre,
   min-height: 40px;
 }
 
-.el-table__row {
-  transition: background-color var(--co-motion-fast) var(--co-ease-out);
-}
-
 @keyframes page-enter {
   from {
     opacity: 0;

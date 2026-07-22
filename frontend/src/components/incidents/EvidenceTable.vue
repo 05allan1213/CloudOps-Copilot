@@ -55,7 +55,7 @@ function replaceEvidenceQuery(evidenceID: string) {
   const query = { ...route.query };
   if (evidenceID) query.evidence = evidenceID;
   else delete query.evidence;
-  return router.replace({ path: route.path, query, hash: route.hash });
+  return router.replace({ path: route.path, query, hash: window.location.hash });
 }
 
 function openEvidence(item: ResourceView, event: MouseEvent) {
@@ -388,8 +388,7 @@ td code { font-size: 10px; }
   height: 58px;
   border-radius: var(--co-radius-control);
   background: linear-gradient(90deg, var(--co-bg-subtle), var(--co-bg-hover), var(--co-bg-subtle));
-  background-size: 220% 100%;
-  animation: evidence-shimmer 1.4s ease-in-out infinite;
+  animation: evidence-pulse 1.4s ease-in-out infinite;
 }
 
 .evidence-drawer {
@@ -476,8 +475,8 @@ td code { font-size: 10px; }
 
 .trust-boundary p { margin-top: var(--co-space-3) !important; }
 
-@keyframes evidence-shimmer {
-  to { background-position-x: -220%; }
+@keyframes evidence-pulse {
+  50% { opacity: 0.55; }
 }
 
 @media (prefers-reduced-motion: reduce) {

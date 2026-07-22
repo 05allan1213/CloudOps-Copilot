@@ -88,6 +88,19 @@ const traceID = computed(() => typeof props.error === "string" ? "" : props.erro
     >
       <strong>Viewer access was denied.</strong>
       <span>Use an identity with Incident viewer access, then retry this projection.</span>
+      <dl
+        v-if="requestID || traceID"
+        class="request-identity"
+      >
+        <div v-if="requestID">
+          <dt>Request ID</dt>
+          <dd><code translate="no">{{ requestID }}</code></dd>
+        </div>
+        <div v-if="traceID">
+          <dt>Trace ID</dt>
+          <dd><code translate="no">{{ traceID }}</code></dd>
+        </div>
+      </dl>
       <button
         v-if="retryable"
         type="button"
@@ -112,6 +125,19 @@ const traceID = computed(() => typeof props.error === "string" ? "" : props.erro
     >
       <strong>Projection unavailable.</strong>
       <span>{{ errorMessage || "The API dependency did not return this persisted projection." }}</span>
+      <dl
+        v-if="requestID || traceID"
+        class="request-identity"
+      >
+        <div v-if="requestID">
+          <dt>Request ID</dt>
+          <dd><code translate="no">{{ requestID }}</code></dd>
+        </div>
+        <div v-if="traceID">
+          <dt>Trace ID</dt>
+          <dd><code translate="no">{{ traceID }}</code></dd>
+        </div>
+      </dl>
       <button
         v-if="retryable"
         type="button"
@@ -128,9 +154,19 @@ const traceID = computed(() => typeof props.error === "string" ? "" : props.erro
     >
       <strong>Projection request failed.</strong>
       <span>{{ errorMessage || "Failed to load this section." }}</span>
-      <small v-if="requestID || traceID">
-        {{ requestID ? `Request ${requestID}` : "" }}{{ requestID && traceID ? " · " : "" }}{{ traceID ? `Trace ${traceID}` : "" }}
-      </small>
+      <dl
+        v-if="requestID || traceID"
+        class="request-identity"
+      >
+        <div v-if="requestID">
+          <dt>Request ID</dt>
+          <dd><code translate="no">{{ requestID }}</code></dd>
+        </div>
+        <div v-if="traceID">
+          <dt>Trace ID</dt>
+          <dd><code translate="no">{{ traceID }}</code></dd>
+        </div>
+      </dl>
       <button
         v-if="retryable"
         type="button"
@@ -219,8 +255,7 @@ const traceID = computed(() => typeof props.error === "string" ? "" : props.erro
   height: 42px;
   border-radius: var(--co-radius-control);
   background: linear-gradient(90deg, var(--co-bg-subtle), var(--co-bg-hover), var(--co-bg-subtle));
-  background-size: 220% 100%;
-  animation: section-shimmer 1.4s ease-in-out infinite;
+  animation: section-pulse 1.4s ease-in-out infinite;
 }
 
 .section-message {
@@ -232,7 +267,30 @@ const traceID = computed(() => typeof props.error === "string" ? "" : props.erro
 
 .section-message--warning { color: var(--co-status-warning-fg); }
 .section-message--error { color: var(--co-status-critical-fg); }
-.section-message small { overflow-wrap: anywhere; color: var(--co-text-muted); }
+
+.request-identity {
+  display: grid;
+  min-width: 0;
+  gap: var(--co-space-2);
+  margin: var(--co-space-2) 0 0;
+}
+
+.request-identity div {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: var(--co-space-2);
+}
+
+.request-identity dt {
+  color: var(--co-text-muted);
+  font-size: 12px;
+}
+
+.request-identity dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
 
 .section-retry {
   width: fit-content;
@@ -248,8 +306,8 @@ const traceID = computed(() => typeof props.error === "string" ? "" : props.erro
 
 .section-retry:hover { background: var(--co-bg-hover); }
 
-@keyframes section-shimmer {
-  to { background-position-x: -220%; }
+@keyframes section-pulse {
+  50% { opacity: 0.55; }
 }
 
 @media (prefers-reduced-motion: reduce) {

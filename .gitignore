@@ -54,6 +54,8 @@ package-lock.json
 # Frontend build outputs
 **/frontend/dist/
 **/frontend/.vite/
+frontend/playwright-report/
+frontend/test-results/
 
 # Project build outputs
 main

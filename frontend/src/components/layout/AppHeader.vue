@@ -50,7 +50,10 @@ function handleUserCommand(command: string) {
         title="Open primary navigation"
         @click="requestMobileNavigation"
       >
-        <el-icon :size="20">
+        <el-icon
+          :size="20"
+          aria-hidden="true"
+        >
           <Menu />
         </el-icon>
       </button>
@@ -107,7 +110,10 @@ function handleUserCommand(command: string) {
         :title="themeActionLabel"
         @click="toggleTheme"
       >
-        <el-icon :size="20">
+        <el-icon
+          :size="20"
+          aria-hidden="true"
+        >
           <Sunny v-if="isDark" />
           <Moon v-else />
         </el-icon>

@@ -1,7 +1,29 @@
 import { createApp } from "vue";
 import { createPinia } from "pinia";
-import ElementPlus from "element-plus";
-import "element-plus/dist/index.css";
+import {
+  ElButton,
+  ElDrawer,
+  ElDropdown,
+  ElDropdownItem,
+  ElDropdownMenu,
+  ElIcon,
+  ElInput,
+  ElOption,
+  ElResult,
+  ElSelect,
+} from "element-plus";
+import "element-plus/es/components/button/style/css";
+import "element-plus/es/components/drawer/style/css";
+import "element-plus/es/components/dropdown/style/css";
+import "element-plus/es/components/dropdown-item/style/css";
+import "element-plus/es/components/dropdown-menu/style/css";
+import "element-plus/es/components/icon/style/css";
+import "element-plus/es/components/input/style/css";
+import "element-plus/es/components/message/style/css";
+import "element-plus/es/components/message-box/style/css";
+import "element-plus/es/components/option/style/css";
+import "element-plus/es/components/result/style/css";
+import "element-plus/es/components/select/style/css";
 import "element-plus/theme-chalk/dark/css-vars.css";
 
 import App from "./App.vue";
@@ -14,4 +36,19 @@ import "./styles/light.scss";
 
 initializeTheme();
 
-createApp(App).use(createPinia()).use(router).use(ElementPlus).mount("#app");
+const app = createApp(App);
+for (const component of [
+  ElButton,
+  ElDrawer,
+  ElDropdown,
+  ElDropdownItem,
+  ElDropdownMenu,
+  ElIcon,
+  ElInput,
+  ElOption,
+  ElResult,
+  ElSelect,
+]) {
+  app.component(component.name!, component);
+}
+app.use(createPinia()).use(router).mount("#app");

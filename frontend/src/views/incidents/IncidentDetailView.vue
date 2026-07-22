@@ -154,6 +154,7 @@ async function refreshIncidentAfterConflict() {
       </h1>
       <StateBlock
         :state="detail.pageState.value === 'ready' ? 'error' : detail.pageState.value"
+        :heading-level="2"
         :title="detail.pageState.value === 'loading' ? 'Loading Incident' : undefined"
         :message="detail.pageError.value?.message"
         :request-i-d="detail.pageError.value?.requestID"

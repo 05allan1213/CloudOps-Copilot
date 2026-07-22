@@ -40,7 +40,7 @@ GO_FILES := $(shell find cmd internal migrations -type f -name '*.go' -print 2>/
 SHELL_FILES := $(sort $(shell git ls-files '*.sh') $(GITOPS_BOOTSTRAP_SCRIPT))
 
 .PHONY: help build build-go build-api build-worker build-migrate build-demo build-frontend \
-	test test-go test-race test-frontend frontend-lint frontend-typecheck frontend-unit \
+	test test-go test-race test-frontend frontend-lint frontend-typecheck frontend-unit frontend-e2e \
 	vet lint lint-go check-gofmt check-goimports check-deps check-structure \
 	actionlint shellcheck helm-lint helm-template kubeconform kubeconform-chart \
 	kubeconform-raw promtool compose-config static-checks check docker-build \
@@ -96,6 +96,9 @@ frontend-typecheck:
 
 frontend-unit:
 	cd $(FRONTEND_DIR) && $(NPM) test
+
+frontend-e2e: ## Run deterministic frontend Playwright browser gates.
+	cd $(FRONTEND_DIR) && $(NPM) run test:e2e
 
 vet:
 	$(GO) vet ./...

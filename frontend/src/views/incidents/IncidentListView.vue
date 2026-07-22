@@ -337,16 +337,15 @@ onMounted(() => {
   height: 12px;
   border-radius: var(--co-radius-control);
   background: linear-gradient(90deg, var(--co-bg-subtle), var(--co-bg-hover), var(--co-bg-subtle));
-  background-size: 220% 100%;
-  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
 }
 
 @keyframes updating-rotation {
   to { transform: rotate(360deg); }
 }
 
-@keyframes skeleton-shimmer {
-  to { background-position-x: -220%; }
+@keyframes skeleton-pulse {
+  50% { opacity: 0.55; }
 }
 
 @media (prefers-reduced-motion: reduce) {

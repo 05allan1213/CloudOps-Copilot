@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
+import { useRoute } from "vue-router";
 
 export interface IncidentZone {
   id: string;
@@ -13,7 +13,6 @@ const props = defineProps<{
 }>();
 
 const route = useRoute();
-const router = useRouter();
 const activeZone = ref(zoneFromHash(route.hash) || props.zones[0]?.id || "");
 let observer: IntersectionObserver | null = null;
 
@@ -26,7 +25,15 @@ function navigateToZone(zoneID: string) {
   if (!props.zones.some((zone) => zone.id === zoneID)) return;
   activeZone.value = zoneID;
   document.getElementById(zoneID)?.scrollIntoView({ block: "start" });
-  if (route.hash !== `#${zoneID}`) void router.replace({ hash: `#${zoneID}` });
+  replaceZoneHash(zoneID);
+}
+
+function replaceZoneHash(zoneID: string) {
+  const nextHash = `#${zoneID}`;
+  if (window.location.hash === nextHash) return;
+  const url = new URL(window.location.href);
+  url.hash = nextHash;
+  window.history.replaceState(window.history.state, "", url);
 }
 
 function onZoneSelect(event: Event) {
@@ -52,7 +59,7 @@ onMounted(async () => {
       const next = visible[0]?.target.id;
       if (!next || next === activeZone.value) return;
       activeZone.value = next;
-      if (route.hash !== `#${next}`) void router.replace({ hash: `#${next}` });
+      replaceZoneHash(next);
     }, {
       root: scrollRoot,
       rootMargin: "-12px 0px -68% 0px",

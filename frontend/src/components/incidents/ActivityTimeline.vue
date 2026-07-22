@@ -234,12 +234,11 @@ const emit = defineEmits<{
   height: 72px;
   border-radius: var(--co-radius-control);
   background: linear-gradient(90deg, var(--co-bg-subtle), var(--co-bg-hover), var(--co-bg-subtle));
-  background-size: 220% 100%;
-  animation: timeline-shimmer 1.4s ease-in-out infinite;
+  animation: timeline-pulse 1.4s ease-in-out infinite;
 }
 
-@keyframes timeline-shimmer {
-  to { background-position-x: -220%; }
+@keyframes timeline-pulse {
+  50% { opacity: 0.55; }
 }
 
 @media (prefers-reduced-motion: reduce) {

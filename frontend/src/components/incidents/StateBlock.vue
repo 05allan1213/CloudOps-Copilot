@@ -13,15 +13,24 @@ import type { LoadState } from "../../types/incidents";
 
 type StateBlockState = Exclude<LoadState, "ready"> | "disabled";
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   state: StateBlockState;
+  headingLevel?: 2 | 3;
   title?: string;
   message?: string;
   requestID?: string;
   traceID?: string;
   primaryActionLabel?: string;
   secondaryActionLabel?: string;
-}>();
+}>(), {
+  headingLevel: 3,
+  title: "",
+  message: "",
+  requestID: "",
+  traceID: "",
+  primaryActionLabel: "",
+  secondaryActionLabel: "",
+});
 
 defineEmits<{
   primaryAction: [];
@@ -41,6 +50,7 @@ const definitions: Record<StateBlockState, { title: string; message: string; ico
 const definition = computed(() => definitions[props.state]);
 const effectiveTitle = computed(() => props.title || definition.value.title);
 const effectiveMessage = computed(() => props.message || definition.value.message);
+const headingTag = computed(() => `h${props.headingLevel}`);
 const role = computed(() => ["error", "forbidden", "unavailable"].includes(props.state) ? "alert" : "status");
 </script>
 
@@ -60,7 +70,9 @@ const role = computed(() => ["error", "forbidden", "unavailable"].includes(props
       </el-icon>
     </span>
     <div class="state-copy">
-      <h3>{{ effectiveTitle }}</h3>
+      <component :is="headingTag">
+        {{ effectiveTitle }}
+      </component>
       <p>{{ effectiveMessage }}</p>
       <dl
         v-if="requestID || traceID"
@@ -125,14 +137,14 @@ const role = computed(() => ["error", "forbidden", "unavailable"].includes(props
 .state-block--warning .state-icon { color: var(--co-status-warning-fg); background: var(--co-status-warning-bg); }
 
 .state-copy,
-.state-copy h3,
+.state-copy :is(h2, h3),
 .state-copy p,
 .request-identity {
   min-width: 0;
   margin: 0;
 }
 
-.state-copy h3 {
+.state-copy :is(h2, h3) {
   color: var(--co-text-primary);
   font-size: 16px;
 }
