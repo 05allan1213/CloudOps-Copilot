@@ -235,7 +235,7 @@ check_images() {
     image_id="$(kubectl -n "${APP_NAMESPACE}" get pods -l "app.kubernetes.io/name=cloudops-${service}" -o json | jq -r '[.items[].status.containerStatuses[]?|select(.name=="cloudops-'"${service}"'")|.imageID]|unique|if length==1 then .[0] else empty end')"
     digest="${image_id##*@}"; [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || fail images "${service} Pod does not expose one immutable image digest"
     [[ "${image}" == *@"${digest}" ]] || fail images "${service} Deployment is not pinned to its running digest"
-    revision="$(docker buildx imagetools inspect "${image}" --format '{{json .Image.config.Labels}}' | jq -r '."org.opencontainers.image.revision" // empty')"
+    revision="$(docker buildx imagetools inspect "${image}" --format '{{json .Image}}' | jq -r '.config.Labels["org.opencontainers.image.revision"] // empty')"
     [[ "${revision}" == "${SOURCE_SHA}" ]] || fail images "${service} OCI revision does not equal the exact source SHA"
     if [[ "${service}" == api ]]; then API_DIGEST="${digest}"; else WORKER_DIGEST="${digest}"; fi
   done

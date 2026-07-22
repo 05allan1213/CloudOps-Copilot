@@ -57,7 +57,7 @@ preflight() {
   image_reference="${IMAGE_REPOSITORY}@${image_digest}"
   remote_digest="$(docker buildx imagetools inspect "${image_reference}" --format '{{json .Manifest}}' | jq -r '.digest // empty')"
   [[ "${remote_digest}" == "${image_digest}" ]] || die "registry manifest digest does not equal GOLDEN_DEMO_IMAGE_DIGEST"
-  labels="$(docker buildx imagetools inspect "${image_reference}" --format '{{json .Image.config.Labels}}')"
+  labels="$(docker buildx imagetools inspect "${image_reference}" --format '{{json .Image}}' | jq -c '.config.Labels // {}')"
   remote_revision="$(jq -r '."org.opencontainers.image.revision" // empty' <<<"${labels}")"
   remote_source="$(jq -r '."org.opencontainers.image.source" // empty' <<<"${labels}")"
   [[ "${remote_revision}" == "${source_revision}" ]] || die "Demo image OCI revision does not equal GOLDEN_DEMO_SOURCE_REVISION"
