@@ -453,7 +453,7 @@ func buildRemediationVerificationSnapshot(baseline remediationPrepareBaseline) (
 }
 
 func validateRemediationPreparePolicy(policy remediation.RestoreEnvPolicy) error {
-	if policy.Version != "restore-required-env-policy/v1" || policy.VerificationVersion != verification.GoldenRequiredEnvProfileID ||
+	if policy.Version != remediation.RestoreRequiredEnvPolicyVersion || policy.VerificationVersion != verification.GoldenRequiredEnvProfileID ||
 		policy.APIVersion != "apps/v1" || policy.Namespace == "" || policy.Workload == "" || policy.Container == "" || policy.EnvKey == "" ||
 		policy.Repository == "" || strings.Count(policy.Repository, "/") != 1 || policy.BaseBranch == "" ||
 		policy.AllowedPath == "" || path.Clean(policy.AllowedPath) != policy.AllowedPath || strings.HasPrefix(policy.AllowedPath, "../") ||

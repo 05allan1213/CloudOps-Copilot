@@ -324,13 +324,7 @@ func (f ProductionTaskOperationFactory) Build(ctx context.Context, db *sql.DB, t
 		return taskhandler.Config{}, fmt.Errorf("initialize V3 verification source: %w", err)
 	}
 
-	policy := remediation.RestoreEnvPolicy{
-		Version: "restore-required-env/v1", Repository: target.repository(), BaseBranch: target.BaseBranch,
-		AllowedPath: target.GitOpsPath, APIVersion: "apps/v1", Namespace: target.Namespace,
-		Workload: target.Workload, Container: target.Container, EnvKey: target.RequiredEnvKey,
-		MaxDiffBytes: remediation.MaxV3PlanDiffBytes, MaxPostImageBytes: remediation.MaxV3PostImageBytes,
-		VerificationVersion: verification.GoldenRequiredEnvProfileID,
-	}
+	policy := v3RestoreEnvPolicy(target)
 	policyHash, err := restorePolicyHash(policy)
 	if err != nil {
 		return taskhandler.Config{}, err
@@ -386,6 +380,16 @@ func (f ProductionTaskOperationFactory) Build(ctx context.Context, db *sql.DB, t
 		DeliveryObserver: deliveryObserver, VerificationObservations: verificationSource,
 		ResolutionReports: taskhandler.NewMySQLResolutionReportWriter(),
 	})
+}
+
+func v3RestoreEnvPolicy(target V3WorkerTargetConfig) remediation.RestoreEnvPolicy {
+	return remediation.RestoreEnvPolicy{
+		Version: remediation.RestoreRequiredEnvPolicyVersion, Repository: target.repository(), BaseBranch: target.BaseBranch,
+		AllowedPath: target.GitOpsPath, APIVersion: "apps/v1", Namespace: target.Namespace,
+		Workload: target.Workload, Container: target.Container, EnvKey: target.RequiredEnvKey,
+		MaxDiffBytes: remediation.MaxV3PlanDiffBytes, MaxPostImageBytes: remediation.MaxV3PostImageBytes,
+		VerificationVersion: verification.GoldenRequiredEnvProfileID,
+	}
 }
 
 func buildGitHubRead(c appconfig.Config, repository string) (*githubread.Client, error) {

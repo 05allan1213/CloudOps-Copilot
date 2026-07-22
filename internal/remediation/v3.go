@@ -18,14 +18,15 @@ import (
 )
 
 const (
-	V3DomainSchemaVersion      = 3
-	V3HashSchemaVersion        = 1
-	V3PlanContentSchemaVersion = 2
-	V3DecisionSchemaVersion    = 1
-	MaxV3PlanDiffBytes         = 64 * 1024
-	MaxV3PostImageBytes        = 256 * 1024
-	MaxV3PolicyBytes           = 16 * 1024
-	MaxV3Evidence              = 40
+	V3DomainSchemaVersion           = 3
+	V3HashSchemaVersion             = 1
+	V3PlanContentSchemaVersion      = 2
+	V3DecisionSchemaVersion         = 1
+	RestoreRequiredEnvPolicyVersion = "restore-required-env-policy/v1"
+	MaxV3PlanDiffBytes              = 64 * 1024
+	MaxV3PostImageBytes             = 256 * 1024
+	MaxV3PolicyBytes                = 16 * 1024
+	MaxV3Evidence                   = 40
 )
 
 var (
