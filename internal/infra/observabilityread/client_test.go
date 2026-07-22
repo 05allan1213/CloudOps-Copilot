@@ -67,6 +67,32 @@ func TestPrometheusFixedTemplateBoundsAndStatuses(t *testing.T) {
 	}
 }
 
+func TestV3ErrorRateTreatsMissingErrorSeriesAsVerifiedZero(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		promQL := r.URL.Query().Get("query")
+		value := "100"
+		if strings.Contains(promQL, "cloudops_demo_http_errors_total") {
+			if !strings.Contains(promQL, "or vector(0)") {
+				t.Errorf("healthy missing error series is not normalized to zero: %s", promQL)
+			}
+			value = "0"
+		}
+		_, _ = fmt.Fprintf(w, `{"status":"success","data":{"resultType":"vector","result":[{"value":[%d,%q]}]}}`, time.Now().Unix(), value)
+	}))
+	defer server.Close()
+	client, err := NewPrometheus(testConfig(server))
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation, err := client.ObserveV3(context.Background(), V3MetricQuery{
+		Kind: V3MetricErrorRate, Service: "checkout\"api", Namespace: "shop", Environment: "staging",
+		WorkloadName: "demo", Lookback: 30 * time.Minute,
+	})
+	if err != nil || observation.Status != verification.ObservationAvailable || observation.Value != 0 || observation.Denominator != 100 || observation.SampleCount != 100 {
+		t.Fatalf("observation=%+v err=%v", observation, err)
+	}
+}
+
 func TestLokiAndTempoBoundedFacts(t *testing.T) {
 	now := time.Now().Unix()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

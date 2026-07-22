@@ -74,7 +74,7 @@ func (p *Prometheus) ObserveV3(ctx context.Context, query V3MetricQuery) (verifi
 	case V3MetricReadiness:
 		return read(`min(cloudops_demo_workload_ready{` + labels + `})`)
 	case V3MetricErrorRate, V3MetricAvailability:
-		errorsObservation, err := read(`sum(increase(cloudops_demo_http_errors_total{` + labels + `,route="/"}[` + lookback + `]))`)
+		errorsObservation, err := read(`sum(increase(cloudops_demo_http_errors_total{` + labels + `,route="/"}[` + lookback + `])) or vector(0)`)
 		if err != nil {
 			return errorsObservation, err
 		}
