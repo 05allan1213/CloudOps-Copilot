@@ -136,8 +136,8 @@ func TestRuntimeGenerationGuardsFailClosed(t *testing.T) {
 	if _, err := CheckRuntime(context.Background(), RuntimeGeneration("unknown"), present); err == nil {
 		t.Fatal("unknown runtime generation was accepted")
 	}
-	if CurrentRuntimeGeneration != RuntimeCompatibility {
-		t.Fatalf("current exact-SHA runtime generation=%q, want compatibility", CurrentRuntimeGeneration)
+	if CurrentRuntimeGeneration != RuntimeV3 {
+		t.Fatalf("current exact-SHA runtime generation=%q, want v3", CurrentRuntimeGeneration)
 	}
 }
 

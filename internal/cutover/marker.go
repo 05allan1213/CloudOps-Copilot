@@ -24,11 +24,10 @@ const (
 	RuntimeCompatibility RuntimeGeneration = "compatibility"
 	RuntimeV3            RuntimeGeneration = "v3"
 
-	// CurrentRuntimeGeneration is intentionally source-bound. The Phase 7A
-	// V3-only release must change this constant in its own exact-SHA commit;
-	// operators cannot turn a compatibility image into a V3 image with an
-	// environment variable.
-	CurrentRuntimeGeneration = RuntimeCompatibility
+	// CurrentRuntimeGeneration is intentionally source-bound. This exact-SHA
+	// Release A build is the V3-only binary; operators cannot turn a
+	// compatibility image into a V3 image with an environment variable.
+	CurrentRuntimeGeneration = RuntimeV3
 )
 
 var (

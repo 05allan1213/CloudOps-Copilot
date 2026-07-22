@@ -96,8 +96,8 @@ func TestMarkerWriterWritesOnePassedReleaseBoundMarker(t *testing.T) {
 	if marker.SourceHash != second.SourceHash || marker.TargetHash != second.TargetHash {
 		t.Fatal("marker prerequisite hashes are not deterministic")
 	}
-	if CurrentRuntimeGeneration != RuntimeCompatibility {
-		t.Fatalf("writer changed current runtime generation=%q", CurrentRuntimeGeneration)
+	if CurrentRuntimeGeneration != RuntimeV3 {
+		t.Fatalf("current exact-SHA runtime generation=%q, want v3", CurrentRuntimeGeneration)
 	}
 }
 
