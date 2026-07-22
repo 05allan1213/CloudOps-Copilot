@@ -13,11 +13,13 @@ import {
   listIncidentSignals,
   listIncidentTimeline,
   listIncidentVerifications,
+  newCommandKey,
   startInvestigation,
 } from "../../api/incidents";
 import { isCurrentRequest, loadStateForStatus } from "../../models/incidents";
+import { commandFeedbackForFailure, retainCommandAttempt, type CommandAttemptIdentity, type CommandFeedback } from "../../models/commands";
 import type {
-  CommandResponse,
+  CommandOutcome,
   DeliveryView,
   IncidentRealtimeEvent,
   IncidentView,
@@ -32,6 +34,7 @@ export interface SectionError {
   message: string;
   status: number | null;
   code: string;
+  httpStatus: number;
   requestID: string;
   traceID: string;
 }
@@ -46,6 +49,8 @@ export interface Section<T> {
   lastUpdatedAt: string;
 }
 
+export type { CommandFeedback, CommandFeedbackState } from "../../models/commands";
+
 type Identified = { id: string };
 type CollectionLoader<T extends Identified> = (cursor: string, signal?: AbortSignal) => Promise<{ items: T[]; next_cursor?: string }>;
 type CollectionLoadMode = "replace" | "prepend" | "append";
@@ -58,11 +63,18 @@ interface CollectionLoadOptions {
   loadingMore?: boolean;
 }
 
+interface RetryableCommand {
+  identity: CommandAttemptIdentity;
+  request: (idempotencyKey: string) => Promise<CommandOutcome>;
+}
+
 export function useIncidentDetail(incidentID: string) {
   const incident = ref<IncidentView | null>(null);
   const pageState = ref<LoadState>("loading");
   const pageError = ref<SectionError | null>(null);
   const commandPending = ref(false);
+  const commandFeedback = ref<CommandFeedback | null>(null);
+  const canRetryCommand = ref(false);
   const refreshing = ref(false);
   const lastUpdatedAt = ref("");
   const signals = collectionSection<ResourceView>();
@@ -77,6 +89,7 @@ export function useIncidentDetail(incidentID: string) {
   const sectionRequestIdentities = new WeakMap<object, number>();
   let requestIdentity = 0;
   let controller: AbortController | null = null;
+  let retryableCommand: RetryableCommand | null = null;
 
   async function load(options: { preserve?: boolean } = {}) {
     const preserve = options.preserve ?? incident.value !== null;
@@ -183,35 +196,97 @@ export function useIncidentDetail(incidentID: string) {
     }));
   }
 
-  async function runCommand(request: () => Promise<CommandResponse>): Promise<CommandResponse> {
+  async function runCommand(
+    action: string,
+    resourceID: string,
+    request: (idempotencyKey: string) => Promise<CommandOutcome>,
+    idempotencyKey = newCommandKey(action.toLowerCase().replace(/\s+/g, "-"), resourceID),
+  ): Promise<CommandOutcome> {
+    if (commandPending.value) throw new Error("Another command is already submitting");
     commandPending.value = true;
+    commandFeedback.value = {
+      state: "submitting",
+      action,
+      resourceID,
+      message: "Submitting the exact versioned command…",
+      code: "",
+      httpStatus: 0,
+      requestID: "",
+      traceID: "",
+      idempotencyKey,
+      idempotentReplay: false,
+      retryable: false,
+    };
+    const attempt: RetryableCommand = { identity: retainCommandAttempt({ action, resourceID, idempotencyKey }), request };
     try {
-      const result = await request();
+      const outcome = await request(idempotencyKey);
+      commandFeedback.value = {
+        state: "accepted",
+        action,
+        resourceID,
+        message: outcome.idempotentReplay
+          ? "The server replayed the previously accepted command result."
+          : "The command was persisted and accepted for asynchronous execution.",
+        code: outcome.result.status,
+        httpStatus: outcome.httpStatus,
+        requestID: outcome.requestID,
+        traceID: outcome.traceID,
+        idempotencyKey,
+        idempotentReplay: outcome.idempotentReplay,
+        retryable: false,
+      };
+      retryableCommand = null;
+      canRetryCommand.value = false;
       await load({ preserve: true });
-      return result;
+      return outcome;
+    } catch (cause) {
+      const feedback = normalizeCommandFeedback(cause, action, resourceID, idempotencyKey);
+      commandFeedback.value = feedback;
+      retryableCommand = feedback.retryable ? attempt : null;
+      canRetryCommand.value = feedback.retryable;
+      throw cause;
     } finally {
       commandPending.value = false;
     }
   }
 
+  function retryLastCommand(): Promise<CommandOutcome | null> {
+    const attempt = retryableCommand;
+    if (!attempt || commandPending.value) return Promise.resolve(null);
+    return runCommand(attempt.identity.action, attempt.identity.resourceID, attempt.request, attempt.identity.idempotencyKey);
+  }
+
+  function clearCommandFeedback() {
+    commandFeedback.value = null;
+    retryableCommand = null;
+    canRetryCommand.value = false;
+  }
+
   function investigate(reason: string, csrfToken: string) {
     if (!incident.value) throw new Error("Incident is not loaded");
-    return runCommand(() => startInvestigation(incidentID, { expected_version: incident.value!.version, reason: reason || undefined }, csrfToken));
+    const body = { expected_version: incident.value.version, reason: reason || undefined };
+    return runCommand("Start Investigation", incidentID, (idempotencyKey) => startInvestigation(incidentID, body, csrfToken, { idempotencyKey }));
   }
 
   function close(reason: string, csrfToken: string) {
     if (!incident.value) throw new Error("Incident is not loaded");
-    return runCommand(() => closeIncident(incidentID, { expected_version: incident.value!.version, reason: reason || undefined }, csrfToken));
+    const body = { expected_version: incident.value.version, reason: reason || undefined };
+    return runCommand("Close Incident", incidentID, (idempotencyKey) => closeIncident(incidentID, body, csrfToken, { idempotencyKey }));
   }
 
   function decide(plan: RemediationPlanView, decision: "approved" | "rejected", reason: string, csrfToken: string) {
     if (!plan.version || !plan.canonical_plan_hash) throw new Error("Plan version and canonical hash are required");
-    return runCommand(() => decideRemediation(plan.id, {
+    const body = {
       decision,
       expected_version: plan.version,
       expected_hash: plan.canonical_plan_hash,
       reason,
-    }, csrfToken));
+    };
+    return runCommand(
+      decision === "approved" ? "Approve Plan" : "Reject Plan",
+      plan.id,
+      (idempotencyKey) => decideRemediation(plan.id, body, csrfToken, { idempotencyKey }),
+    );
   }
 
   async function loadCollection<T extends Identified>(
@@ -349,6 +424,8 @@ export function useIncidentDetail(incidentID: string) {
     pageState,
     pageError,
     commandPending,
+    commandFeedback,
+    canRetryCommand,
     refreshing,
     lastUpdatedAt,
     signals,
@@ -370,6 +447,8 @@ export function useIncidentDetail(incidentID: string) {
     investigate,
     close,
     decide,
+    retryLastCommand,
+    clearCommandFeedback,
   };
 }
 
@@ -417,7 +496,20 @@ function normalizeSectionError(cause: unknown, fallback: string): SectionError {
     message: cause instanceof Error ? cause.message : fallback,
     status: apiError?.status ?? null,
     code: apiError?.code ?? "",
+    httpStatus: apiError?.status ?? 0,
     requestID: apiError?.requestID ?? "",
     traceID: apiError?.traceID ?? "",
   };
+}
+
+function normalizeCommandFeedback(cause: unknown, action: string, resourceID: string, idempotencyKey: string): CommandFeedback {
+  const apiError = isApiError(cause) ? cause : null;
+  return commandFeedbackForFailure({
+    status: apiError?.status ?? null,
+    message: cause instanceof Error ? cause.message : "The command could not be completed.",
+    code: apiError?.code,
+    requestID: apiError?.requestID,
+    traceID: apiError?.traceID,
+    idempotentReplay: apiError?.idempotentReplay,
+  }, action, resourceID, idempotencyKey);
 }

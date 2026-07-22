@@ -133,6 +133,8 @@ export interface RemediationPlanView {
   decision?: RemediationDecisionView;
   created_at: string;
   updated_at: string;
+  migrated_legacy: boolean;
+  migrated_legacy_context: boolean;
 }
 
 export interface DeliveryView {
@@ -181,6 +183,8 @@ export interface DeliveryView {
   failure_reason?: string;
   created_at: string;
   updated_at: string;
+  migrated_legacy: boolean;
+  migrated_legacy_context: boolean;
 }
 
 export interface VerificationSampleView {
@@ -196,6 +200,8 @@ export interface VerificationSampleView {
   sampled_at: string;
   content_hash: string;
   created_at: string;
+  migrated_legacy: boolean;
+  migrated_legacy_context: boolean;
 }
 
 export interface VerificationCheckView {
@@ -244,6 +250,8 @@ export interface VerificationCheckView {
   samples: VerificationSampleView[];
   created_at: string;
   updated_at: string;
+  migrated_legacy: boolean;
+  migrated_legacy_context: boolean;
 }
 
 export interface VerificationRunView {
@@ -282,6 +290,8 @@ export interface VerificationRunView {
   checks: VerificationCheckView[];
   created_at: string;
   updated_at: string;
+  migrated_legacy: boolean;
+  migrated_legacy_context: boolean;
 }
 
 export interface ResolutionReportView {
@@ -325,6 +335,7 @@ export interface ResolutionReportView {
   verification: JSONValue;
   timeline: JSONValue;
   agent_usage: JSONValue;
+  migrated_legacy_context: boolean;
 }
 
 export interface CollectionResponse<T> {
@@ -346,6 +357,15 @@ export interface CommandResponse {
   status: string;
   version?: number;
   cycle?: number;
+}
+
+export interface CommandOutcome {
+  result: CommandResponse;
+  httpStatus: number;
+  requestID: string;
+  traceID: string;
+  idempotentReplay: boolean;
+  idempotencyKey: string;
 }
 
 export interface VersionedCommand {

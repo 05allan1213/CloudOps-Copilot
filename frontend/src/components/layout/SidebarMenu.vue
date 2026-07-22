@@ -39,7 +39,9 @@ function isActive(path: string): boolean {
       :to="item.index"
       class="sidebar-menu-item"
       :class="{ 'is-active': isActive(item.index) }"
+      :aria-label="item.title"
       :aria-current="isActive(item.index) ? 'page' : undefined"
+      :title="item.title"
       @click="$emit('navigate')"
     >
       <el-icon
@@ -118,11 +120,7 @@ function isActive(path: string): boolean {
   }
 
   .sidebar-menu--desktop .sidebar-menu-label {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
+    display: none;
   }
 }
 </style>

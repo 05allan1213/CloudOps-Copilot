@@ -16,14 +16,23 @@ export class ApiError extends Error {
   readonly code: string;
   readonly requestID: string;
   readonly traceID: string;
+  readonly idempotentReplay: boolean;
 
-  constructor(message: string, status: number | null = null, code = "", requestID = "", traceID = "") {
+  constructor(
+    message: string,
+    status: number | null = null,
+    code = "",
+    requestID = "",
+    traceID = "",
+    idempotentReplay = false,
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
     this.requestID = requestID;
     this.traceID = traceID;
+    this.idempotentReplay = idempotentReplay;
   }
 }
 
@@ -73,14 +82,52 @@ export async function postJSON<T, TBody = unknown>(
   }
 }
 
-function normalizeAxiosError(err: AxiosError<ProblemDetails>): Error {
+export interface JSONResponse<T> {
+  data: T;
+  status: number;
+  requestID: string;
+  traceID: string;
+  idempotentReplay: boolean;
+}
+
+export async function postJSONWithMeta<T, TBody = unknown>(
+  url: string,
+  body?: TBody,
+  config: AxiosRequestConfig = {},
+): Promise<JSONResponse<T>> {
+  try {
+    const response = await httpClient.post<T>(url, body, config);
+    return {
+      data: response.data,
+      status: response.status,
+      requestID: responseHeader(response.headers, "x-request-id"),
+      traceID: responseHeader(response.headers, "x-trace-id"),
+      idempotentReplay: responseHeader(response.headers, "idempotent-replay") === "true",
+    };
+  } catch (err) {
+    if (axios.isAxiosError(err)) throw normalizeAxiosError(err);
+    throw err;
+  }
+}
+
+function normalizeAxiosError(err: AxiosError<ProblemDetails>): ApiError {
   const problem = err.response?.data;
+  const requestID = err.response ? responseHeader(err.response.headers, "x-request-id") : "";
+  const traceID = err.response ? responseHeader(err.response.headers, "x-trace-id") : "";
+  const replayed = err.response ? responseHeader(err.response.headers, "idempotent-replay") === "true" : false;
   if (problem && typeof problem === "object" && typeof problem.detail === "string") {
-    return new ApiError(problem.detail, err.response?.status ?? problem.status ?? null, problem.code, problem.request_id, problem.trace_id);
+    return new ApiError(
+      problem.detail,
+      err.response?.status ?? problem.status ?? null,
+      problem.code,
+      problem.request_id || requestID,
+      problem.trace_id || traceID,
+      replayed,
+    );
   }
 
   if (err.response) {
-    return new ApiError(`Request failed with status ${err.response.status}`, err.response.status);
+    return new ApiError(`Request failed with status ${err.response.status}`, err.response.status, "", requestID, traceID, replayed);
   }
 
   if (err.code === AxiosError.ETIMEDOUT || err.code === "ECONNABORTED") {
@@ -88,6 +135,13 @@ function normalizeAxiosError(err: AxiosError<ProblemDetails>): Error {
   }
 
   return new ApiError(err.message || "Request failed");
+}
+
+function responseHeader(headers: unknown, name: string): string {
+  if (!headers || typeof headers !== "object") return "";
+  const maybeHeaders = headers as { get?: (key: string) => unknown; [key: string]: unknown };
+  const value = typeof maybeHeaders.get === "function" ? maybeHeaders.get(name) : maybeHeaders[name];
+  return typeof value === "string" ? value : "";
 }
 
 export function redirectToOAuth(): void {

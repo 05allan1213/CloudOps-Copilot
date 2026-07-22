@@ -1,23 +1,25 @@
 <script setup lang="ts">
-import { onMounted } from "vue";
+import { computed, onMounted } from "vue";
 import { ArrowLeft } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useRoute, useRouter } from "vue-router";
 
 import ActivityTimeline from "../../components/incidents/ActivityTimeline.vue";
 import AgentActivityPanel from "../../components/incidents/AgentActivityPanel.vue";
+import CommandFeedback from "../../components/incidents/CommandFeedback.vue";
+import DeliveryRail from "../../components/incidents/DeliveryRail.vue";
 import EvidenceTable from "../../components/incidents/EvidenceTable.vue";
-import IncidentDeliveryPanel from "../../components/incidents/IncidentDeliveryPanel.vue";
 import IncidentHeader from "../../components/incidents/IncidentHeader.vue";
-import IncidentRemediationPanel from "../../components/incidents/IncidentRemediationPanel.vue";
-import IncidentResolutionReport from "../../components/incidents/IncidentResolutionReport.vue";
 import IncidentSignalStrip from "../../components/incidents/IncidentSignalStrip.vue";
-import IncidentVerificationPanel from "../../components/incidents/IncidentVerificationPanel.vue";
 import PersistedContextPanel from "../../components/incidents/PersistedContextPanel.vue";
+import RemediationWorkbench from "../../components/incidents/RemediationWorkbench.vue";
+import ResolutionReport from "../../components/incidents/ResolutionReport.vue";
 import StateBlock from "../../components/incidents/StateBlock.vue";
+import VerificationMatrix from "../../components/incidents/VerificationMatrix.vue";
 import ZoneNav, { type IncidentZone } from "../../components/incidents/ZoneNav.vue";
 import { useIncidentDetail } from "../../composables/incidents/useIncidentDetail";
 import { useIncidentRealtime } from "../../composables/incidents/useIncidentRealtime";
+import { canExposeResolutionReport } from "../../models/recovery";
 import { useAuthStore } from "../../stores/auth";
 import type { IncidentRealtimeEvent, RemediationPlanView } from "../../types/incidents";
 
@@ -27,6 +29,10 @@ const auth = useAuthStore();
 const incidentID = String(route.params.incidentId ?? "");
 const detail = useIncidentDetail(incidentID);
 const realtime = useIncidentRealtime(incidentID, detail.refreshResource);
+const resolutionEligible = computed(() => canExposeResolutionReport(detail.verifications.data));
+const incidentCommandFeedback = computed(() => detail.commandFeedback.value?.resourceID === incidentID
+  ? detail.commandFeedback.value
+  : null);
 const zones: IncidentZone[] = [
   { id: "what-happened", label: "What Happened", index: "01" },
   { id: "investigation-zone", label: "Investigation", index: "02" },
@@ -74,27 +80,58 @@ async function promptReason(title: string, required: boolean, maxLength = 2048):
 async function runInvestigation() {
   const reason = await promptReason("Start Bounded Re-investigation", false, 1024);
   if (reason === null) return;
-  await runCommand(async () => detail.investigate(reason, await auth.commandToken()), "Investigation command accepted");
+  await runIncidentCommand(async () => detail.investigate(reason, await auth.commandToken()));
 }
 
 async function runClose() {
   const reason = await promptReason("Close This Incident", true);
   if (reason === null) return;
-  await runCommand(async () => detail.close(reason, await auth.commandToken()), "Close command accepted");
+  await runIncidentCommand(async () => detail.close(reason, await auth.commandToken()));
 }
 
-async function runDecision(plan: RemediationPlanView, decision: "approved" | "rejected") {
-  const reason = await promptReason(`${decision === "approved" ? "Approve" : "Reject"} Exact Plan`, true, 1024);
-  if (reason === null) return;
-  await runCommand(async () => detail.decide(plan, decision, reason, await auth.commandToken()), `Plan ${decision}`);
+async function runDecision(plan: RemediationPlanView, decision: "approved" | "rejected", reason: string) {
+  try {
+    await detail.decide(plan, decision, reason, await auth.commandToken());
+  } catch (cause) {
+    if (detail.commandFeedback.value?.resourceID !== plan.id) {
+      ElMessage.error(cause instanceof Error ? cause.message : "Decision command failed before submission");
+    }
+  }
 }
 
-async function runCommand(request: () => Promise<unknown>, success: string) {
+async function runIncidentCommand(request: () => Promise<unknown>) {
   try {
     await request();
-    ElMessage.success(success);
   } catch (cause) {
-    ElMessage.error(cause instanceof Error ? cause.message : "Command failed");
+    if (!incidentCommandFeedback.value) {
+      ElMessage.error(cause instanceof Error ? cause.message : "Command failed before submission");
+    }
+  }
+}
+
+async function retryCommand() {
+  try {
+    await detail.retryLastCommand();
+  } catch {
+    // CommandFeedback preserves the retry result and request identity.
+  }
+}
+
+async function refreshRemediationAfterConflict() {
+  try {
+    await detail.refreshResource("remediation_plans");
+    detail.clearCommandFeedback();
+  } catch {
+    // The section keeps the prior Plan visible and renders the refresh error.
+  }
+}
+
+async function refreshIncidentAfterConflict() {
+  try {
+    await detail.load({ preserve: true });
+    detail.clearCommandFeedback();
+  } catch {
+    // Detail load normalizes the error while preserving the visible Incident.
   }
 }
 </script>
@@ -177,6 +214,13 @@ async function runCommand(request: () => Promise<unknown>, success: string) {
           </el-button>
         </div>
       </div>
+
+      <CommandFeedback
+        :feedback="incidentCommandFeedback"
+        :pending="detail.commandPending.value"
+        @retry="retryCommand"
+        @refresh="refreshIncidentAfterConflict"
+      />
 
       <ZoneNav :zones="zones" />
 
@@ -278,20 +322,30 @@ async function runCommand(request: () => Promise<unknown>, success: string) {
             </div>
           </header>
 
-          <IncidentRemediationPanel
+          <RemediationWorkbench
             :state="detail.remediationPlans.state"
-            :error="detail.remediationPlans.error?.message || ''"
+            :error="detail.remediationPlans.error"
             :plans="detail.remediationPlans.data"
             :next-cursor="detail.remediationPlans.nextCursor"
+            :refreshing="detail.remediationPlans.refreshing"
+            :loading-more="detail.remediationPlans.loadingMore"
+            :incident-version="detail.incident.value.version"
+            :incident-status="detail.incident.value.status"
             :is-operator="auth.isOperator"
             :command-pending="detail.commandPending.value"
+            :command-feedback="detail.commandFeedback.value"
             @load-more="detail.moreRemediationPlans"
             @decide="runDecision"
+            @retry-resource="retryResource('remediation_plans')"
+            @retry-command="retryCommand"
+            @refresh-conflict="refreshRemediationAfterConflict"
           />
-          <IncidentDeliveryPanel
+          <DeliveryRail
             :state="detail.delivery.state"
-            :error="detail.delivery.error?.message || ''"
+            :error="detail.delivery.error"
             :delivery="detail.delivery.data"
+            :refreshing="detail.delivery.refreshing"
+            @retry="retryResource('delivery')"
           />
         </section>
 
@@ -310,17 +364,23 @@ async function runCommand(request: () => Promise<unknown>, success: string) {
             </div>
           </header>
 
-          <IncidentVerificationPanel
+          <VerificationMatrix
             :state="detail.verifications.state"
-            :error="detail.verifications.error?.message || ''"
+            :error="detail.verifications.error"
             :runs="detail.verifications.data"
             :next-cursor="detail.verifications.nextCursor"
+            :refreshing="detail.verifications.refreshing"
+            :loading-more="detail.verifications.loadingMore"
             @load-more="detail.moreVerifications"
+            @retry="retryResource('verifications')"
           />
-          <IncidentResolutionReport
+          <ResolutionReport
             :state="detail.resolutionReport.state"
-            :error="detail.resolutionReport.error?.message || ''"
+            :error="detail.resolutionReport.error"
             :report="detail.resolutionReport.data"
+            :eligible="resolutionEligible"
+            :refreshing="detail.resolutionReport.refreshing"
+            @retry="retryResource('resolution_report')"
           />
         </section>
       </div>

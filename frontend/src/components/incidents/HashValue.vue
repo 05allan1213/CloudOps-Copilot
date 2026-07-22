@@ -1,18 +1,27 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { onBeforeUnmount, ref } from "vue";
 import { CopyDocument } from "@element-plus/icons-vue";
 
 const props = defineProps<{ label: string; value?: string }>();
-const copied = ref(false);
+const copyStatus = ref("");
+let resetTimer: number | null = null;
+
+onBeforeUnmount(() => {
+  if (resetTimer !== null) window.clearTimeout(resetTimer);
+});
 
 async function copyValue() {
-  if (!props.value || !navigator.clipboard) return;
+  if (!props.value || !navigator.clipboard) {
+    copyStatus.value = "Copy unavailable";
+    return;
+  }
   try {
     await navigator.clipboard.writeText(props.value);
-    copied.value = true;
-    window.setTimeout(() => { copied.value = false; }, 1600);
+    copyStatus.value = "Copied";
+    if (resetTimer !== null) window.clearTimeout(resetTimer);
+    resetTimer = window.setTimeout(() => { copyStatus.value = ""; }, 1600);
   } catch {
-    copied.value = false;
+    copyStatus.value = "Copy failed";
   }
 }
 </script>
@@ -33,7 +42,10 @@ async function copyValue() {
         <CopyDocument />
       </el-icon>
     </button>
-    <small aria-live="polite">{{ copied ? "Copied" : "" }}</small>
+    <small
+      role="status"
+      aria-live="polite"
+    >{{ copyStatus }}</small>
   </div>
 </template>
 

@@ -1,8 +1,9 @@
 import type { AxiosRequestConfig } from "axios";
 
-import { getJSON, postJSON } from "./client";
+import { ApiError, getJSON, postJSONWithMeta } from "./client";
 import type {
   CollectionResponse,
+  CommandOutcome,
   CommandResponse,
   DeliveryView,
   DecisionCommand,
@@ -18,6 +19,10 @@ import type {
 } from "../types/incidents";
 
 const base = "/api/v3/incidents";
+
+export interface CommandRequestOptions {
+  idempotencyKey?: string;
+}
 
 export function listIncidents(query: IncidentListQuery, signal?: AbortSignal): Promise<CollectionResponse<IncidentView>> {
   return getJSON<CollectionResponse<IncidentView>>(base, { params: query, signal });
@@ -68,16 +73,31 @@ export async function getIncidentResolutionReport(incidentID: string, signal?: A
   return getTypedResource<ResolutionReportView>(incidentID, "resolution-report", signal);
 }
 
-export function startInvestigation(incidentID: string, body: VersionedCommand, csrfToken: string): Promise<CommandResponse> {
-  return postCommand(`${base}/${encodeURIComponent(incidentID)}/investigations`, body, csrfToken, "investigate", incidentID);
+export function startInvestigation(
+  incidentID: string,
+  body: VersionedCommand,
+  csrfToken: string,
+  options?: CommandRequestOptions,
+): Promise<CommandOutcome> {
+  return postCommand(`${base}/${encodeURIComponent(incidentID)}/investigations`, body, csrfToken, "investigate", incidentID, options);
 }
 
-export function closeIncident(incidentID: string, body: VersionedCommand, csrfToken: string): Promise<CommandResponse> {
-  return postCommand(`${base}/${encodeURIComponent(incidentID)}/close`, body, csrfToken, "close", incidentID);
+export function closeIncident(
+  incidentID: string,
+  body: VersionedCommand,
+  csrfToken: string,
+  options?: CommandRequestOptions,
+): Promise<CommandOutcome> {
+  return postCommand(`${base}/${encodeURIComponent(incidentID)}/close`, body, csrfToken, "close", incidentID, options);
 }
 
-export function decideRemediation(planID: string, body: DecisionCommand, csrfToken: string): Promise<CommandResponse> {
-  return postCommand(`/api/v3/remediation-plans/${encodeURIComponent(planID)}/decisions`, body, csrfToken, body.decision, planID);
+export function decideRemediation(
+  planID: string,
+  body: DecisionCommand,
+  csrfToken: string,
+  options?: CommandRequestOptions,
+): Promise<CommandOutcome> {
+  return postCommand(`/api/v3/remediation-plans/${encodeURIComponent(planID)}/decisions`, body, csrfToken, body.decision, planID, options);
 }
 
 export function incidentRealtimeURL(incidentID: string): string {
@@ -125,15 +145,38 @@ function postCommand<TBody>(
   csrfToken: string,
   action: string,
   resourceID: string,
-): Promise<CommandResponse> {
-  const config: AxiosRequestConfig = {
-    headers: {
-      "Content-Type": "application/json",
-      "X-CSRF-Token": csrfToken,
-      "Idempotency-Key": newCommandKey(action, resourceID),
-    },
+  options: CommandRequestOptions = {},
+): Promise<CommandOutcome> {
+  const idempotencyKey = options.idempotencyKey || newCommandKey(action, resourceID);
+  const config: AxiosRequestConfig = { headers: commandHeaders(csrfToken, idempotencyKey) };
+  return postJSONWithMeta<CommandResponse, TBody>(url, body, config).then((response) => {
+    if (response.status !== 202) {
+      throw new ApiError(
+        `Command returned unexpected HTTP ${response.status}; expected 202 Accepted`,
+        response.status,
+        "UNEXPECTED_COMMAND_STATUS",
+        response.requestID,
+        response.traceID,
+        response.idempotentReplay,
+      );
+    }
+    return {
+      result: response.data,
+      httpStatus: response.status,
+      requestID: response.requestID,
+      traceID: response.traceID,
+      idempotentReplay: response.idempotentReplay,
+      idempotencyKey,
+    };
+  });
+}
+
+export function commandHeaders(csrfToken: string, idempotencyKey: string): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    "X-CSRF-Token": csrfToken,
+    "Idempotency-Key": idempotencyKey,
   };
-  return postJSON<CommandResponse, TBody>(url, body, config);
 }
 
 export function newCommandKey(action: string, resourceID: string): string {
