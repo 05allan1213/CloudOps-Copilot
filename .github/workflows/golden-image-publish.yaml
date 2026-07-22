@@ -1,0 +1,138 @@
+name: Golden Image Publish
+
+on:
+  push:
+    branches:
+      - codex/v3-refactor
+    paths:
+      - .github/workflows/golden-image-publish.yaml
+
+concurrency:
+  group: golden-image-publish-${{ github.sha }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: publish Golden image (${{ matrix.image.name }})
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/codex/v3-refactor' &&
+      github.actor == '05allan1213'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - name: api
+            target: cloudops-api
+          - name: worker
+            target: cloudops-worker
+          - name: migrate
+            target: cloudops-migrate
+          - name: demo
+            target: cloudops-demo
+    steps:
+      - name: Checkout exact source SHA
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Validate bounded Golden publish context
+        run: |
+          [[ "${GITHUB_EVENT_NAME}" == "push" ]]
+          [[ "${GITHUB_REF}" == "refs/heads/codex/v3-refactor" ]]
+          [[ "${GITHUB_ACTOR}" == "05allan1213" ]]
+          [[ "${GITHUB_SHA}" =~ ^[a-f0-9]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Prepare immutable image identity
+        id: image
+        env:
+          NAME: ${{ matrix.image.name }}
+        run: |
+          case "${NAME}" in
+            api|worker|migrate|demo) ;;
+            *) exit 1 ;;
+          esac
+          repository="ghcr.io/05allan1213/cloudops-${NAME}"
+          {
+            echo "repository=${repository}"
+            echo "tag=${repository}:${GITHUB_SHA}"
+          } >>"${GITHUB_OUTPUT}"
+
+      - name: Build exact SHA image locally
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: ./Dockerfile
+          target: ${{ matrix.image.target }}
+          load: true
+          push: false
+          provenance: false
+          sbom: false
+          tags: ${{ steps.image.outputs.tag }}
+          build-args: |
+            VCS_REF=${{ github.sha }}
+            VCS_SOURCE=${{ github.server_url }}/${{ github.repository }}
+            VERSION=${{ github.sha }}
+          cache-from: type=gha,scope=golden-${{ matrix.image.name }}
+          cache-to: type=gha,mode=max,scope=golden-${{ matrix.image.name }}
+
+      - name: Scan exact image before publish
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
+        with:
+          version: v0.72.0
+          image-ref: ${{ steps.image.outputs.tag }}
+          format: table
+          exit-code: '1'
+          ignore-unfixed: false
+          severity: HIGH,CRITICAL
+
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Push and verify immutable digest
+        env:
+          IMAGE_REPOSITORY: ${{ steps.image.outputs.repository }}
+          IMAGE_TAG: ${{ steps.image.outputs.tag }}
+          NAME: ${{ matrix.image.name }}
+        run: |
+          docker push "${IMAGE_TAG}"
+          digest="$(docker buildx imagetools inspect "${IMAGE_TAG}" --format '{{json .Manifest}}' | jq -r '.digest')"
+          [[ "${digest}" =~ ^sha256:[a-f0-9]{64}$ ]]
+          labels="$(docker buildx imagetools inspect "${IMAGE_REPOSITORY}@${digest}" --format '{{json .Image.config.Labels}}')"
+          jq -e --arg sha "${GITHUB_SHA}" --arg source "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" '
+            .["org.opencontainers.image.revision"] == $sha and
+            .["org.opencontainers.image.version"] == $sha and
+            .["org.opencontainers.image.source"] == $source
+          ' <<<"${labels}" >/dev/null
+          jq -n \
+            --arg name "${NAME}" \
+            --arg repository "${IMAGE_REPOSITORY}" \
+            --arg digest "${digest}" \
+            --arg source_sha "${GITHUB_SHA}" \
+            '{name: $name, repository: $repository, digest: $digest, source_sha: $source_sha}' \
+            >"${RUNNER_TEMP}/golden-image-${NAME}.json"
+          printf 'Published %s@%s\n' "${IMAGE_REPOSITORY}" "${digest}"
+
+      - name: Upload digest evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: golden-image-${{ matrix.image.name }}-${{ github.sha }}
+          path: ${{ runner.temp }}/golden-image-${{ matrix.image.name }}.json
+          if-no-files-found: error
+          retention-days: 30
