@@ -14,6 +14,7 @@ on:
       - cmd/**
       - internal/**
       - migrations/**
+      - scripts/check-immutable-workflow-dependencies.py
       - server-monitor/**
   push:
     branches:
@@ -32,6 +33,7 @@ on:
       - cmd/**
       - internal/**
       - migrations/**
+      - scripts/check-immutable-workflow-dependencies.py
       - server-monitor/**
   workflow_dispatch:
 
@@ -175,15 +177,21 @@ jobs:
           cp .env.example .env
           docker compose --env-file .env.example config >/tmp/server-monitor-compose.yaml
 
-      - name: Check shell syntax
+      - name: Check shell syntax and run shellcheck
         run: |
-          while IFS= read -r script; do
+          script_list="${RUNNER_TEMP}/server-monitor-shell-scripts.nul"
+          find . -type f -name '*.sh' -print0 | sort -z >"${script_list}"
+          scripts=()
+          while IFS= read -r -d '' script; do
+            scripts+=("${script}")
+          done <"${script_list}"
+          if ((${#scripts[@]} == 0)); then
+            echo "No shell scripts found under server-monitor" >&2
+            exit 1
+          fi
+          for script in "${scripts[@]}"; do
             bash -n "${script}"
-          done < <(rg --files -g '*.sh')
-
-      - name: Run shellcheck
-        run: |
-          mapfile -t scripts < <(rg --files -g '*.sh')
+          done
           docker run --rm \
             -v "${{ github.workspace }}:/repo" \
             -w /repo/server-monitor \
@@ -345,16 +353,7 @@ jobs:
             "${{ env.ACTIONLINT_IMAGE }}" -color
 
       - name: Audit immutable workflow dependencies
-        run: |
-          if rg -n --pcre2 'uses:\s+[^\s]+@(?![a-f0-9]{40}(?:\s|$))' .github/workflows .github/actions 2>/dev/null; then
-            echo "Every external action must use an immutable 40-character commit SHA" >&2
-            exit 1
-          fi
-          if rg -n 'uses:\s+docker://[^@\s]+(?:\s|$)' .github/workflows .github/actions 2>/dev/null; then
-            echo "Docker actions must use an immutable image digest" >&2
-            exit 1
-          fi
-          test "$(rg -l 'id-token:[[:space:]]*write' .github/workflows/*.yaml | wc -l)" -eq 2
+        run: python3 scripts/check-immutable-workflow-dependencies.py
 
       - name: Parse raw Kubernetes YAML
         run: |

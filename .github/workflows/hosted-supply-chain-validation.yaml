@@ -37,16 +37,16 @@ jobs:
       - name: Prove validation has no deployment surface
         run: |
           WORKFLOW=.github/workflows/hosted-supply-chain-validation.yaml
-          if rg -n '^[[:space:]]+environment:' "${WORKFLOW}"; then
+          if grep -En '^[[:space:]]+environment:' "${WORKFLOW}"; then
             exit 1
           fi
-          if rg -n '^[[:space:]]+uses:[[:space:]]+azure/setup-(helm|kubectl)@' "${WORKFLOW}"; then
+          if grep -En '^[[:space:]]+uses:[[:space:]]+azure/setup-(helm|kubectl)@' "${WORKFLOW}"; then
             exit 1
           fi
-          if rg -n '^[[:space:]]+(helm|kubectl|argocd)[[:space:]]' "${WORKFLOW}"; then
+          if grep -En '^[[:space:]]+(helm|kubectl|argocd)[[:space:]]' "${WORKFLOW}"; then
             exit 1
           fi
-          if rg -n '^[[:space:]]+[A-Za-z0-9_-]+:.*secrets\.' "${WORKFLOW}"; then
+          if grep -En '^[[:space:]]+[A-Za-z0-9_-]+:.*secrets\.' "${WORKFLOW}"; then
             exit 1
           fi
 
@@ -469,7 +469,7 @@ jobs:
               else
                 REFERRER_STATE="residual"
               fi
-            elif rg -qi 'manifest unknown|name unknown|not found|no signatures|404' \
+            elif grep -Eqi 'manifest unknown|name unknown|not found|no signatures|404' \
               "${referrer_error}"; then
               REFERRER_STATE="subject_not_found"
             else
