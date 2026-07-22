@@ -24,7 +24,7 @@ var (
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	log, err := logger.Init("cloudops-demo-workload")
+	log, err := logger.Init("demo")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cloudops-demo logger failed:", err)
 		os.Exit(1)
@@ -38,9 +38,9 @@ func main() {
 	serviceVersion := env("SERVICE_VERSION", version)
 	revision := env("SOURCE_REVISION", sourceRevision)
 	shutdownTrace, err := tracer.Init(ctx, tracer.Config{
-		ServiceName: "cloudops-demo-workload", ServiceVersion: serviceVersion,
+		ServiceName: "demo", ServiceVersion: serviceVersion,
 		Environment: env("DEPLOYMENT_ENVIRONMENT", "local-demo"), Cluster: env("K8S_CLUSTER_NAME", "kind-cloudops-v3"),
-		Namespace: env("K8S_NAMESPACE_NAME", "cloudops-demo"), PodUID: env("K8S_POD_UID", "unknown"), WorkloadKind: "Deployment", WorkloadName: "cloudops-demo-workload",
+		Namespace: env("K8S_NAMESPACE", "demo"), PodUID: env("K8S_POD_UID", "unknown"), WorkloadKind: "Deployment", WorkloadName: "demo",
 		SourceRevision: revision, OTLPEndpoint: strings.TrimSpace(os.Getenv("TRACE_OTLP_ENDPOINT")), SampleRate: sampleRate,
 	})
 	if err != nil {
@@ -53,7 +53,7 @@ func main() {
 		_ = shutdownTrace(shutdownCtx)
 	}()
 	server, err := demoapp.New(demoapp.Config{
-		ListenAddr: env("LISTEN_ADDR", ":8080"), ServiceName: "cloudops-demo-workload",
+		ListenAddr: env("LISTEN_ADDR", ":8080"), ServiceName: "demo",
 		ServiceVersion: serviceVersion, SourceRevision: revision, Environment: env("DEPLOYMENT_ENVIRONMENT", "local-demo"),
 		RequiredEnv: os.Getenv("REQUIRED_ENV"),
 	})

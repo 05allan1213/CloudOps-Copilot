@@ -11,7 +11,7 @@
 | `cloudops-baseline-verifier` | Demo/K8s/Argo/observability/Registry read；baseline tables write | GitHub write、LLM、Incident mutation |
 | `oauth2-proxy` | GitHub OAuth、session cookie、可信 user header | GitHub repository write、向 API 转发 access/session secret |
 
-Chart ownership可在 [API Deployment](../charts/cloudops/templates/api.yaml)、[Worker Deployment](../charts/cloudops/templates/worker.yaml)、[baseline verifier](../charts/cloudops/templates/baseline-verifier.yaml) 和 [RBAC](../charts/cloudops/templates/rbac.yaml) 中审计。API ServiceAccount token 默认不挂载；Worker 只允许 `cloudops-demo` namespace 的只读资源。
+Chart ownership可在 [API Deployment](../charts/cloudops/templates/api.yaml)、[Worker Deployment](../charts/cloudops/templates/worker.yaml)、[baseline verifier](../charts/cloudops/templates/baseline-verifier.yaml) 和 [RBAC](../charts/cloudops/templates/rbac.yaml) 中审计。API ServiceAccount token 默认不挂载；Worker 只允许 `demo` namespace 的只读资源。
 
 ## 2. OAuth、角色与浏览器命令
 

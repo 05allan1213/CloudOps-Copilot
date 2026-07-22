@@ -52,7 +52,8 @@ func TestBuildPhasedDeliveryRequestBindsApprovedPlan(t *testing.T) {
 		request.BaseBlobSHA != plan.BaseBlobSHA || request.ExpectedBeforeHash != plan.ExpectedBeforeHash ||
 		request.ExpectedPostImageHash != plan.ExpectedPostImageHash || request.ExpectedTreeHash != plan.ExpectedTreeHash ||
 		string(request.Content) != string(plan.PostImage) || !strings.Contains(request.PRBody, plan.CanonicalPlanHash) ||
-		!strings.Contains(request.PRBody, plan.EvidenceBindings[0].ID) {
+		!strings.Contains(request.PRBody, plan.EvidenceBindings[0].ID) ||
+		request.Branch != remediation.V3GitOpsBranch(plan.IncidentPublicID, plan.CanonicalPlanHash) {
 		t.Fatalf("request is not fully bound: %+v", request)
 	}
 	if !validWriteAdvance(remediation.WritePhaseEnsureBranch, remediation.WritePhaseEnsureCommit) ||

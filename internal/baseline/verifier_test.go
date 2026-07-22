@@ -135,9 +135,9 @@ func newVerifierFixture(t *testing.T) (*Verifier, *verifierStoreStub) {
 	}
 	cfg := VerifierConfig{
 		Target: Target{
-			Cluster: "kind-cloudops-v3", Environment: "local-demo", Namespace: "cloudops-demo",
+			Cluster: "kind-cloudops-v3", Environment: "local-demo", Namespace: "demo",
 			WorkloadKind: "Deployment", WorkloadName: "demo", ContainerName: "demo",
-			Repository: "acme/gitops", BaseBranch: "main", TargetPath: "apps/demo.yaml",
+			Repository: "acme/gitops", BaseBranch: "main", TargetPath: "apps/demo/deployment.yaml",
 		},
 		Service: "demo", ArgoApplication: "demo", ArgoProject: "demo-project", ArgoPath: "apps",
 		ArgoDestinationServer: "https://kubernetes.default.svc",
@@ -147,7 +147,7 @@ func newVerifierFixture(t *testing.T) (*Verifier, *verifierStoreStub) {
 		Argo: verifierArgoStub{application: change.ArgoApplication{
 			Name: "demo", Project: "demo-project", Repository: "https://github.com/acme/gitops",
 			Path: "apps", DeployedRevision: gitopsRevision, SyncStatus: "Synced",
-			DestinationServer: "https://kubernetes.default.svc", Namespace: "cloudops-demo",
+			DestinationServer: "https://kubernetes.default.svc", Namespace: "demo",
 			HealthStatus: "Healthy", OperationPhase: "Succeeded", ResultHash: strings.Repeat("c", 64),
 		}},
 		Runtime: verifierRuntimeStub{runtimes: []change.ContainerRuntime{{
@@ -163,7 +163,7 @@ func newVerifierFixture(t *testing.T) (*Verifier, *verifierStoreStub) {
 			Repository: "acme/source", SHA: sourceRevision, TreeSHA: strings.Repeat("1", 40),
 		}},
 		Git: verifierGitStub{file: change.FileContent{
-			Repository: "acme/gitops", Revision: gitopsRevision, Path: "apps/demo.yaml",
+			Repository: "acme/gitops", Revision: gitopsRevision, Path: "apps/demo/deployment.yaml",
 			BlobSHA: strings.Repeat("e", 40), Content: content,
 		}},
 		Rollout: verifierRolloutStub{value: rollout}, Prometheus: prom,

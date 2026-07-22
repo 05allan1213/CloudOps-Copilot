@@ -93,7 +93,7 @@ func prepareTestRequest() remediation.RestoreEnvCompileRequest {
 kind: Deployment
 metadata:
   name: demo
-  namespace: cloudops-demo
+  namespace: demo
 spec:
   template:
     spec:
@@ -104,7 +104,7 @@ spec:
 	baseline := append(append([]byte(nil), current...), []byte("          env:\n            - name: REQUIRED_ENV\n              value: healthy\n")...)
 	policy := remediation.RestoreEnvPolicy{
 		Version: "restore-required-env-policy/v1", Repository: "acme/gitops", BaseBranch: "main",
-		AllowedPath: "apps/demo.yaml", APIVersion: "apps/v1", Namespace: "cloudops-demo",
+		AllowedPath: "apps/demo.yaml", APIVersion: "apps/v1", Namespace: "demo",
 		Workload: "demo", Container: "demo", EnvKey: "REQUIRED_ENV",
 		MaxDiffBytes: remediation.MaxV3PlanDiffBytes, MaxPostImageBytes: remediation.MaxV3PostImageBytes,
 		VerificationVersion: "golden-required-env/v1",
@@ -116,7 +116,7 @@ spec:
 		DiagnosisHash: strings.Repeat("d", 64), Repository: policy.Repository, BaseBranch: policy.BaseBranch,
 		BaseRevision: strings.Repeat("a", 40), LastKnownGoodRevision: strings.Repeat("b", 40),
 		TargetPath: policy.AllowedPath, BaseBlobSHA: strings.Repeat("c", 40), ExpectedTreeHash: strings.Repeat("e", 40), FileMode: "100644",
-		Target: remediation.TargetResource{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "cloudops-demo", Name: "demo", Container: "demo"},
+		Target: remediation.TargetResource{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "demo", Name: "demo", Container: "demo"},
 		EnvKey: "REQUIRED_ENV", CurrentContent: current, BaselineContent: baseline, Policy: policy,
 		VerificationPlan:   json.RawMessage(`{"profile":"golden-required-env/v1","stability_window_seconds":60}`),
 		Evidence:           []remediation.EvidenceBinding{{ID: "33333333-3333-4333-8333-333333333333", ContentHash: strings.Repeat("1", 64)}},

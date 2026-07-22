@@ -1,7 +1,7 @@
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor
 metadata:
-  name: cloudops-demo-workload
+  name: demo
   namespace: {{ .Release.Namespace | quote }}
   labels:
     {{- include "cloudops-demo.labels" . | nindent 4 }}
@@ -11,7 +11,6 @@ spec:
   selector:
     matchLabels:
       {{- include "cloudops-demo.selectorLabels" . | nindent 6 }}
-      cloudops.io/monitoring: enabled
   namespaceSelector:
     matchNames:
       - {{ .Release.Namespace | quote }}
@@ -25,7 +24,7 @@ spec:
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
-  name: cloudops-demo-workload
+  name: demo
   namespace: {{ .Release.Namespace | quote }}
   labels:
     {{- include "cloudops-demo.labels" . | nindent 4 }}
@@ -40,12 +39,12 @@ spec:
           for: {{ .Values.monitoring.readinessAlertFor | quote }}
           labels:
             severity: critical
-            signal_target: cloudops-demo
+            signal_target: demo
             cluster: {{ .Values.clusterName | quote }}
             environment: {{ .Values.environment | quote }}
             namespace: {{ .Release.Namespace | quote }}
-            service: cloudops-demo-workload
-            deployment: cloudops-demo-workload
+            service: demo
+            deployment: demo
           annotations:
             summary: Demo workload is missing REQUIRED_ENV
             description: Both demo replicas remain live but are not ready because the required GitOps environment node is absent.
@@ -54,12 +53,12 @@ spec:
           for: {{ .Values.monitoring.errorAlertFor | quote }}
           labels:
             severity: critical
-            signal_target: cloudops-demo
+            signal_target: demo
             cluster: {{ .Values.clusterName | quote }}
             environment: {{ .Values.environment | quote }}
             namespace: {{ .Release.Namespace | quote }}
-            service: cloudops-demo-workload
-            deployment: cloudops-demo-workload
+            service: demo
+            deployment: demo
           annotations:
             summary: Demo workload request error rate is high
             description: The bounded diagnostics traffic is observing controlled server errors from the demo workload.

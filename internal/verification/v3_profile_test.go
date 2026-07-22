@@ -192,7 +192,7 @@ func validV3Input(trigger string) V3CompileInput {
 	return V3CompileInput{
 		TriggerType: trigger, Repository: "acme/gitops", PullRequest: 7,
 		TargetRevision: strings.Repeat("a", 40), SourceRevision: strings.Repeat("b", 40), ImageDigest: "sha256:" + strings.Repeat("c", 64), GitOpsRevision: strings.Repeat("a", 40),
-		ArgoApplication: "demo", ArgoProject: "cloudops", Cluster: "kind", Environment: "demo", Namespace: "cloudops-demo", Service: "demo", WorkloadName: "demo", AlertNames: []string{"DemoReadiness", "DemoErrors"},
+		ArgoApplication: "demo", ArgoProject: "cloudops", Cluster: "kind", Environment: "demo", Namespace: "demo", Service: "demo", WorkloadName: "demo", AlertNames: []string{"DemoReadiness", "DemoErrors"},
 	}
 }
 

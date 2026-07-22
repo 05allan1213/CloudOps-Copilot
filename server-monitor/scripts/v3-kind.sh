@@ -13,7 +13,7 @@ VERSIONS_FILE="${ROOT_DIR}/server-monitor/deploy/kind/versions.env"
 
 CLUSTER_NAME="${CLOUDOPS_KIND_CLUSTER:-cloudops-v3-phase3}"
 APP_NAMESPACE="${CLOUDOPS_APP_NAMESPACE:-cloudops-system}"
-DEMO_NAMESPACE="${CLOUDOPS_DEMO_NAMESPACE:-cloudops-demo}"
+DEMO_NAMESPACE="${CLOUDOPS_DEMO_NAMESPACE:-demo}"
 MONITORING_NAMESPACE="${CLOUDOPS_MONITORING_NAMESPACE:-cloudops-monitoring}"
 ECK_OPERATOR_NAMESPACE="${CLOUDOPS_ECK_OPERATOR_NAMESPACE:-elastic-system}"
 MONITORING_RELEASE="${CLOUDOPS_MONITORING_RELEASE:-cloudops-monitoring}"
@@ -316,7 +316,7 @@ create_secrets() {
     --arg cluster "${CLUSTER_NAME}" \
     --arg environment "local-demo" \
     --arg namespace "${DEMO_NAMESPACE}" \
-    '[{cluster_id:$cluster,environment:$environment,namespace:$namespace,workload_kind:"Deployment",workload_name:"cloudops-demo-workload",service_name:"cloudops-demo-workload",match_labels:{cluster:$cluster,environment:$environment,namespace:$namespace,deployment:"cloudops-demo-workload"}}]' \
+    '[{cluster_id:$cluster,environment:$environment,namespace:$namespace,workload_kind:"Deployment",workload_name:"demo",service_name:"demo",match_labels:{cluster:$cluster,environment:$environment,namespace:$namespace,deployment:"demo"}}]' \
     >"${secret_dir}/signal-target-allowlist.json"
   chmod 600 "${secret_dir}"/*
 
@@ -546,7 +546,7 @@ check_platform_observability() {
   curl --fail --silent http://127.0.0.1:13200/ready >/dev/null || die "Tempo query path is not healthy"
   for _ in $(seq 1 60); do
     trace_result="$(curl --fail --silent --get \
-      --data-urlencode 'q={ resource.service.name = "cloudops-demo-workload" }' \
+      --data-urlencode 'q={ resource.service.name = "demo" }' \
       --data-urlencode 'limit=20' \
       http://127.0.0.1:13200/api/search 2>/dev/null || true)"
     if jq -e '.traces | length > 0' <<<"${trace_result}" >/dev/null 2>&1; then break; fi
@@ -559,9 +559,9 @@ check_observability() {
   local service_name query_result revision version_result
   kubectl -n "${APP_NAMESPACE}" wait --for=condition=available --timeout=180s deployment/cloudops-api
   kubectl -n "${APP_NAMESPACE}" get servicemonitor/cloudops-api prometheusrule/cloudops-api >/dev/null
-  kubectl -n "${DEMO_NAMESPACE}" wait --for=condition=available --timeout=180s deployment/cloudops-demo-workload
-  kubectl -n "${DEMO_NAMESPACE}" get podmonitor/cloudops-demo-workload prometheusrule/cloudops-demo-workload >/dev/null
-  kubectl -n "${DEMO_NAMESPACE}" port-forward svc/cloudops-demo-workload 18081:8080 >"${DEMO_PORT_FORWARD_LOG}" 2>&1 &
+  kubectl -n "${DEMO_NAMESPACE}" wait --for=condition=available --timeout=180s deployment/demo
+  kubectl -n "${DEMO_NAMESPACE}" get podmonitor/demo prometheusrule/demo >/dev/null
+  kubectl -n "${DEMO_NAMESPACE}" port-forward svc/demo 18081:8080 >"${DEMO_PORT_FORWARD_LOG}" 2>&1 &
   demo_port_forward_pid="$!"
   for _ in $(seq 1 30); do
     if curl --fail --silent http://127.0.0.1:18081/readyz >/dev/null 2>&1; then break; fi

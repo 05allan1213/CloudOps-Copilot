@@ -161,18 +161,18 @@ type insertedSignal struct {
 }
 
 type incidentRow struct {
-	id          uint64
-	publicID    string
-	cycleNo     uint64
-	severity    domain.Severity
-	status      domain.V3Status
-	version     uint64
-	cluster     string
-	environment string
-	namespace   string
-	service     string
-	targetKind  string
-	targetName  string
+	id                    uint64
+	publicID              string
+	cycleNo               uint64
+	severity              domain.Severity
+	status                domain.V3Status
+	version               uint64
+	cluster               string
+	environment           string
+	namespace             string
+	service               string
+	targetKind            string
+	targetName            string
 	migratedLegacyContext bool
 }
 

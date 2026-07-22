@@ -49,7 +49,7 @@ func New(cfg Config) (*Server, error) {
 		cfg.ListenAddr = ":8080"
 	}
 	if strings.TrimSpace(cfg.ServiceName) == "" {
-		cfg.ServiceName = "cloudops-demo-workload"
+		cfg.ServiceName = "demo"
 	}
 	if strings.TrimSpace(cfg.ServiceVersion) == "" {
 		cfg.ServiceVersion = "dev"

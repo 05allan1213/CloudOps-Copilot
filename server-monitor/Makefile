@@ -53,7 +53,7 @@ LOCAL_RUNBOOK_DIR ?= $(PROJECT_DIR)/runbooks
 	dev-deps dev-stop dev-web dev-frontend \
 	compose-config compose-build compose-migrate compose-up compose-down compose-logs compose-ps compose-clean \
 	helm-lint helm-template deploy-helm undeploy-helm deploy-k8s undeploy-k8s k8s-script-check k8s-setup k8s-teardown \
-	preflight demo-up demo-down kind-render kind-check scenario-open-regression-pr e2e-gitops golden-e2e-contracts \
+	preflight demo-up demo-down kind-render kind-check demo-bootstrap-pr scenario-open-regression-pr e2e-gitops golden-e2e-contracts \
 	docker docker-up docker-down docker-logs docker-clean ci-check dev-server-web
 
 define require_cmd
@@ -190,6 +190,9 @@ e2e-gitops: ## 运行真实 GitHub/Argo/kind/LLM/OAuth/App Golden 验证并导�
 
 golden-e2e-contracts: ## 仅验证 Golden harness 合同，不访问或修改外部系统
 	$(MAKE) -C $(ROOT_DIR) golden-e2e-contracts
+
+demo-bootstrap-pr: ## 生成固定五文件 bootstrap 分支并创建 draft PR；绝不 merge
+	$(MAKE) -C $(ROOT_DIR) demo-bootstrap-pr
 
 kind-check: ## 校验运行中的 V3 Phase 3 metrics target/rule
 	$(MAKE) -C $(ROOT_DIR) kind-check

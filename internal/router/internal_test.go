@@ -28,6 +28,7 @@ func TestInternalRouterHasExactCapabilitySurfaceAndUserRouterDoesNotMountWebhook
 	ingress, err := alertmanageringress.NewHandler(alertmanageringress.Config{
 		Store: internalRouterStore{}, Targets: targets,
 		MaxBodyBytes: cfg.AlertmanagerWebhookMaxBodyBytes, RequestTimeout: cfg.RequestTimeout,
+		RuntimeReady: func(context.Context) error { return nil },
 	})
 	if err != nil {
 		t.Fatal(err)

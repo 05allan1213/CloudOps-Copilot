@@ -12,7 +12,7 @@ const currentRequiredEnvYAML = `apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: demo
-  namespace: cloudops-demo
+  namespace: demo
 spec:
   template:
     spec:
@@ -28,7 +28,7 @@ const baselineRequiredEnvYAML = `apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: demo
-  namespace: cloudops-demo
+  namespace: demo
 spec:
   template:
     spec:
@@ -187,7 +187,7 @@ func validRestoreRequest() RestoreEnvCompileRequest {
 	created := time.Date(2026, 7, 19, 3, 0, 0, 0, time.UTC)
 	policy := RestoreEnvPolicy{
 		Version: "restore-required-env-policy/v1", Repository: "acme/cloudops-gitops-demo", BaseBranch: "main",
-		AllowedPath: "apps/demo/deployment.yaml", APIVersion: "apps/v1", Namespace: "cloudops-demo",
+		AllowedPath: "apps/demo/deployment.yaml", APIVersion: "apps/v1", Namespace: "demo",
 		Workload: "demo", Container: "demo", EnvKey: "REQUIRED_ENV",
 		MaxDiffBytes: MaxV3PlanDiffBytes, MaxPostImageBytes: MaxV3PostImageBytes, VerificationVersion: "golden-required-env/v1",
 	}
@@ -197,7 +197,7 @@ func validRestoreRequest() RestoreEnvCompileRequest {
 		Repository: policy.Repository, BaseBranch: policy.BaseBranch, BaseRevision: strings.Repeat("a", 40),
 		LastKnownGoodRevision: strings.Repeat("b", 40), TargetPath: policy.AllowedPath,
 		BaseBlobSHA: strings.Repeat("c", 40), ExpectedTreeHash: strings.Repeat("e", 40), FileMode: "100644",
-		Target: TargetResource{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "cloudops-demo", Name: "demo", Container: "demo"},
+		Target: TargetResource{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "demo", Name: "demo", Container: "demo"},
 		EnvKey: "REQUIRED_ENV", CurrentContent: []byte(currentRequiredEnvYAML), BaselineContent: []byte(baselineRequiredEnvYAML),
 		Policy: policy, VerificationPlan: json.RawMessage(`{"profile":"golden-required-env/v1","stability_window_seconds":60}`),
 		Evidence: []EvidenceBinding{

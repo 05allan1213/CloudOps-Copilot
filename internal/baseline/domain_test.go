@@ -15,9 +15,9 @@ func testSnapshot(t *testing.T) Snapshot {
 	content := []byte("apiVersion: apps/v1\nkind: Deployment\n")
 	s := Snapshot{
 		Target: Target{
-			Cluster: "kind-cloudops-v3", Environment: "local-demo", Namespace: "cloudops-demo",
-			WorkloadKind: "Deployment", WorkloadName: "cloudops-demo-workload", ContainerName: "cloudops-demo",
-			Repository: "acme/cloudops-demo", BaseBranch: "main", TargetPath: "apps/demo.yaml",
+			Cluster: "kind-cloudops-v3", Environment: "local-demo", Namespace: "demo",
+			WorkloadKind: "Deployment", WorkloadName: "demo", ContainerName: "demo",
+			Repository: "acme/cloudops-demo", BaseBranch: "main", TargetPath: "apps/demo/deployment.yaml",
 		},
 		SourceRevision: strings.Repeat("a", 40),
 		ImageDigest:    "sha256:" + strings.Repeat("b", 64),

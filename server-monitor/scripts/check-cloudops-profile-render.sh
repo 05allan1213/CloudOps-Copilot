@@ -125,7 +125,7 @@ check_profile() {
           map(.name) | index($forbidden)) == null) and
       (rs("Job"; "cloudops-baseline-verifier")[0].spec.template.spec.volumes |
         [ .[] | select(.name == "baseline-credentials") ][0].secret.items | length) == 4 and
-      rs("Role"; "cloudops-baseline-verifier-readonly")[0].metadata.namespace == "cloudops-demo" and
+      rs("Role"; "cloudops-baseline-verifier-readonly")[0].metadata.namespace == "demo" and
       ([rs("Role"; "cloudops-baseline-verifier-readonly")[0].rules[].resources[]] | sort) ==
         ["deployments","pods"] and
       all(rs("Role"; "cloudops-baseline-verifier-readonly")[0].rules[];
@@ -205,7 +205,7 @@ check_profile() {
         any(.[]; .name == "worker-credentials" and (.secret.secretName | length) > 0)) and
       service("cloudops-worker-management").spec.ports ==
         [{"name":"management","port":8081,"protocol":"TCP","targetPort":"management"}] and
-      rs("Role"; "cloudops-worker-readonly")[0].metadata.namespace == "cloudops-demo" and
+      rs("Role"; "cloudops-worker-readonly")[0].metadata.namespace == "demo" and
       ([rs("Role"; "cloudops-worker-readonly")[0].rules[].resources[]] | sort) ==
         ["deployments","endpointslices","events","pods","replicasets","services"] and
       all(rs("Role"; "cloudops-worker-readonly")[0].rules[]; (.verbs | sort) == ["get","list"]) and

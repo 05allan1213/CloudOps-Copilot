@@ -3,8 +3,9 @@
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-FIXTURE="${ROOT_DIR}/deploy/contracts/gitops-demo/regression/apps/demo/deployment.yaml"
-HEALTHY_FIXTURE="${ROOT_DIR}/deploy/contracts/gitops-demo/healthy/apps/demo/deployment.yaml"
+REGRESSION_FIXTURE_DIR="${ROOT_DIR}/deploy/contracts/gitops-demo/regression/apps/demo"
+HEALTHY_FIXTURE_DIR="${ROOT_DIR}/deploy/contracts/gitops-demo/healthy/apps/demo"
+CONTRACT_PACKAGE="./cmd/gitops-demo-contract"
 QUALITY_REPORT="${GOLDEN_AGENT_QUALITY_REPORT:-${ROOT_DIR}/docs/evidence/phase-4-agent-quality-v5-report.md}"
 SOURCE_SHA="$(git -C "${ROOT_DIR}" rev-parse HEAD)"
 SOURCE_REPO="${GOLDEN_SOURCE_REPO:-05allan1213/CloudOps-Copilot}"
@@ -12,7 +13,7 @@ GITOPS_REPO="${GOLDEN_GITOPS_REPO:-05allan1213/cloudops-gitops-demo}"
 GITOPS_PATH="${GOLDEN_GITOPS_PATH:-apps/demo/deployment.yaml}"
 ARGO_APP="${GOLDEN_ARGO_APPLICATION:-cloudops-demo}"
 APP_NAMESPACE="${GOLDEN_APP_NAMESPACE:-cloudops-system}"
-DEMO_NAMESPACE="${GOLDEN_DEMO_NAMESPACE:-cloudops-demo}"
+DEMO_NAMESPACE="${GOLDEN_DEMO_NAMESPACE:-demo}"
 DEMO_RELEASE="${GOLDEN_DEMO_RELEASE:-cloudops-demo}"
 API_BASE_URL="${GOLDEN_API_BASE_URL:-}"
 EVIDENCE_DIR="${ROOT_DIR}/docs/evidence/${SOURCE_SHA}"
@@ -237,25 +238,30 @@ run_preflight() {
 }
 
 scenario_open_regression_pr() {
-  local worktree branch actor existing original_json expected_json actual_json healthy_fixture_json regression_json pr_url
-  for command in git jq yq gh; do require_cmd "${command}"; done
+  local worktree branch actor actor_type existing origin_url original_json expected_json actual_json pr_url changed
+  for command in git jq yq gh go; do require_cmd "${command}"; done
   check_source; require_env GOLDEN_GITOPS_WORKTREE; worktree="$(cd "${GOLDEN_GITOPS_WORKTREE}" && pwd)"
   [[ -z "$(git -C "${worktree}" status --porcelain)" ]] || die "GitOps worktree must be clean"
-  [[ "$(git -C "${worktree}" remote get-url origin)" == *"${GITOPS_REPO}"* ]] || die "GitOps origin does not match ${GITOPS_REPO}"
-  gh auth status >/dev/null 2>&1; actor="$(gh api user --jq .login)"; [[ "${actor}" != *"[bot]" ]] || die "regression actor must be human"
+  origin_url="$(git -C "${worktree}" remote get-url origin)"
+  [[ "${origin_url}" == "https://github.com/${GITOPS_REPO}.git" || "${origin_url}" == "git@github.com:${GITOPS_REPO}.git" ]] || die "GitOps origin does not match the fixed repository or embeds credentials"
+  gh auth status >/dev/null 2>&1; actor="$(gh api user --jq .login)"; actor_type="$(gh api user --jq .type)"
+  [[ "${actor_type}" == "User" && "${actor,,}" == "05allan1213" ]] || die "regression actor must be the human repository owner"
   git -C "${worktree}" fetch --quiet origin main
+  [[ "$(git -C "${worktree}" symbolic-ref --quiet --short HEAD)" == "main" ]] || die "GitOps worktree must be on branch main"
   [[ "$(git -C "${worktree}" rev-parse HEAD)" == "$(git -C "${worktree}" rev-parse origin/main)" ]] || die "GitOps worktree must be at exact origin/main"
-  branch="cloudops/golden-required-env-regression-${SOURCE_SHA:0:12}"
+  go -C "${ROOT_DIR}" run "${CONTRACT_PACKAGE}" healthy "${worktree}/apps/demo" >/dev/null || die "external GitOps base does not match the fixed five-file required-check contract"
+  go -C "${ROOT_DIR}" run "${CONTRACT_PACKAGE}" regression "${HEALTHY_FIXTURE_DIR}" "${REGRESSION_FIXTURE_DIR}" >/dev/null || die "local regression fixture is not exactly REQUIRED_ENV removal"
+  branch="regression/required-env-${SOURCE_SHA:0:12}"
   existing="$(gh pr list -R "${GITOPS_REPO}" --head "${branch}" --state all --json url --jq '.[0].url // empty')"
   [[ -z "${existing}" ]] || { printf '%s\n' "${existing}"; return 0; }
-  healthy_fixture_json="$(yq -o=json -I=0 '.' "${HEALTHY_FIXTURE}")"; regression_json="$(yq -o=json -I=0 '.' "${FIXTURE}")"
-  jq -e --argjson bad "${regression_json}" '(.spec.template.spec.containers[0].env|map(select(.name!="REQUIRED_ENV"))) as $trimmed | (.spec.template.spec.containers[0].env|map(select(.name=="REQUIRED_ENV"))|length)==1 and (.spec.template.spec.containers[0].env=$trimmed)==$bad' <<<"${healthy_fixture_json}" >/dev/null || die "regression fixture is not exactly REQUIRED_ENV removal"
   original_json="$(yq -o=json -I=0 '.' "${worktree}/${GITOPS_PATH}")"
-  expected_json="$(jq -c 'if ([.spec.template.spec.containers[]|select(.name=="cloudops-demo")|.env[]|select(.name=="REQUIRED_ENV")]|length)!=1 then error("REQUIRED_ENV count must equal one") else (.spec.template.spec.containers[]|select(.name=="cloudops-demo")|.env) |= map(select(.name!="REQUIRED_ENV")) end' <<<"${original_json}")" || die "external GitOps manifest must contain exactly one REQUIRED_ENV"
+  expected_json="$(jq -c 'if ([.spec.template.spec.containers[]|select(.name=="demo")|.env[]|select(.name=="REQUIRED_ENV")]|length)!=1 then error("REQUIRED_ENV count must equal one") else (.spec.template.spec.containers[]|select(.name=="demo")|.env) |= map(select(.name!="REQUIRED_ENV")) end' <<<"${original_json}")" || die "external GitOps manifest must contain exactly one REQUIRED_ENV"
   git -C "${worktree}" switch -c "${branch}"
-  yq -i '(.spec.template.spec.containers[] | select(.name == "cloudops-demo") | .env) |= map(select(.name != "REQUIRED_ENV"))' "${worktree}/${GITOPS_PATH}"
+  yq -i '(.spec.template.spec.containers[] | select(.name == "demo") | .env) |= map(select(.name != "REQUIRED_ENV"))' "${worktree}/${GITOPS_PATH}"
   actual_json="$(yq -o=json -I=0 '.' "${worktree}/${GITOPS_PATH}")"
   jq -e --argjson expected "${expected_json}" '. == $expected' <<<"${actual_json}" >/dev/null || die "regression edit changed content beyond REQUIRED_ENV removal"
+  changed="$(git -C "${worktree}" diff --name-status --no-renames origin/main --)"
+  [[ "${changed}" == $'M\tapps/demo/deployment.yaml' ]] || die "regression branch must modify only apps/demo/deployment.yaml"
   git -C "${worktree}" add -- "${GITOPS_PATH}"
   git -C "${worktree}" diff --cached --quiet && die "regression patch is empty"
   git -C "${worktree}" commit -m "test(golden): remove REQUIRED_ENV for ${SOURCE_SHA:0:12}"
@@ -279,7 +285,7 @@ run_golden() {
   helm test "${DEMO_RELEASE}" -n "${DEMO_NAMESPACE}" --logs --timeout 31m >"${TMP_ROOT}/load-generator.log" 2>&1 & load_pid=$!
   argo="$(wait_for_json argo_json '.status.sync.revision=="'"${BAD_SHA}"'" and .status.sync.status=="Synced"')" || fail argo_bad "Argo did not observe the exact bad merged SHA"
   pass argo_bad "Argo synced bad revision ${BAD_SHA}"
-  final_incidents="$(wait_for_json 'api_get "/api/v3/incidents?service=cloudops-demo-workload&limit=100"' '[.items[]|select(.created_at>="'"${bad_merge_at}"'" and (.migrated_legacy|not) and (.migrated_legacy_context|not))]|length>0')" || fail incident "no native current-cycle incident appeared after the bad merge"
+  final_incidents="$(wait_for_json 'api_get "/api/v3/incidents?service=demo&limit=100"' '[.items[]|select(.created_at>="'"${bad_merge_at}"'" and (.migrated_legacy|not) and (.migrated_legacy_context|not))]|length>0')" || fail incident "no native current-cycle incident appeared after the bad merge"
   INCIDENT_ID="$(jq -r --arg at "${bad_merge_at}" '[.items[]|select(.created_at >= $at and (.migrated_legacy|not) and (.migrated_legacy_context|not))]|sort_by(.created_at)|last.id' <<<"${final_incidents}")"; is_uuid "${INCIDENT_ID}" || fail incident "incident public ID is invalid"; incident_at="$(jq -r --arg id "${INCIDENT_ID}" '.items[]|select(.id==$id)|.created_at' <<<"${final_incidents}")"; pass incident "Incident ${INCIDENT_ID} detected"
   plans="$(wait_for_json 'api_get "/api/v3/incidents/'"${INCIDENT_ID}"'/remediation-plans?limit=100"' '[.items[]|select(.operation_type=="restore_required_env" and .decision.decision=="approved" and (.migrated_legacy|not) and (.migrated_legacy_context|not))]|length==1')" || fail plan_approval "no unique native approved restore_required_env plan appeared"
   plan="$(jq -c '[.items[]|select(.operation_type=="restore_required_env" and .decision.decision=="approved" and (.migrated_legacy|not) and (.migrated_legacy_context|not))][0]' <<<"${plans}")"; PLAN_ID="$(jq -r .id <<<"${plan}")"; AGENT_RUN_ID="$(jq -r .created_by_agent_run_id <<<"${plan}")"; APPROVAL_ID="$(jq -r .decision.id <<<"${plan}")"; APPROVED_TREE_HASH="$(jq -r .decision.approved_tree_hash <<<"${plan}")"; APPROVED_POST_IMAGE_HASH="$(jq -r .decision.approved_post_image_hash <<<"${plan}")"; EVIDENCE_IDS="$(jq -r '[.evidence_bindings[].id]|join(",")' <<<"${plan}")"; agent_at="$(jq -r .created_at <<<"${plan}")"; approval_at="$(jq -r .decision.created_at <<<"${plan}")"; pass agent "AgentRun ${AGENT_RUN_ID} produced one bounded plan"; pass plan_approval "Plan ${PLAN_ID}, approval ${APPROVAL_ID}, hashes bound"

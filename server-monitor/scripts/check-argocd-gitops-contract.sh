@@ -2,15 +2,16 @@
 set -Eeuo pipefail
 
 if [[ "$#" -ne 6 ]]; then
-  printf 'usage: %s APPPROJECT_JSON APPLICATION_JSON VALUES_JSON HEALTHY_JSON REGRESSION_JSON VERSION_LOCK\n' "$0" >&2
+  printf 'usage: %s APPPROJECT_JSON APPLICATION_JSON VALUES_JSON HEALTHY_DIR REGRESSION_DIR VERSION_LOCK\n' "$0" >&2
   exit 2
 fi
 
+root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 project_json="$1"
 application_json="$2"
 values_json="$3"
-healthy_json="$4"
-regression_json="$5"
+healthy_dir="$4"
+regression_dir="$5"
 version_lock="$6"
 
 die() {
@@ -18,10 +19,11 @@ die() {
   exit 1
 }
 
-for required_file in \
-  "${project_json}" "${application_json}" "${values_json}" \
-  "${healthy_json}" "${regression_json}" "${version_lock}"; do
+for required_file in "${project_json}" "${application_json}" "${values_json}" "${version_lock}"; do
   [[ -s "${required_file}" ]] || die "missing or empty contract input: ${required_file}"
+done
+for required_dir in "${healthy_dir}" "${regression_dir}"; do
+  [[ -d "${required_dir}" ]] || die "missing contract fixture directory: ${required_dir}"
 done
 
 repository_url="https://github.com/05allan1213/cloudops-gitops-demo.git"
@@ -29,7 +31,7 @@ repository_name="05allan1213/cloudops-gitops-demo"
 application_name="cloudops-demo"
 project_name="cloudops-demo"
 argocd_namespace="cloudops-argocd"
-demo_namespace="cloudops-demo"
+demo_namespace="demo"
 destination_server="https://kubernetes.default.svc"
 application_path="apps/demo"
 deployment_path="apps/demo/deployment.yaml"
@@ -96,7 +98,33 @@ jq -e \
   --arg application_path "${application_path}" \
   --arg application "${application_name}" \
   --arg project "${project_name}" \
-  --arg destination "${destination_server}" '
+  --arg destination "${destination_server}" \
+  --arg demo_namespace "${demo_namespace}" '
+  (.api.env.SIGNAL_TARGET_ALLOWLIST_JSON | fromjson) == [{
+    "cluster_id": "kind-cloudops-v3",
+    "environment": "local-demo",
+    "namespace": $demo_namespace,
+    "workload_kind": "Deployment",
+    "workload_name": "demo",
+    "service_name": "demo",
+    "match_labels": {
+      "cluster": "kind-cloudops-v3",
+      "environment": "local-demo",
+      "namespace": $demo_namespace,
+      "deployment": "demo"
+    }
+  }] and
+  .worker.demoNamespace == $demo_namespace and
+  .worker.env.K8S_ALLOWED_NAMESPACES == $demo_namespace and
+  .worker.env.K8S_DEFAULT_NAMESPACE == $demo_namespace and
+  .worker.env.V3_TARGET_NAMESPACE == $demo_namespace and
+  .baselineVerifier.demoNamespace == $demo_namespace and
+  .baselineVerifier.env.K8S_ALLOWED_NAMESPACES == $demo_namespace and
+  .baselineVerifier.env.K8S_DEFAULT_NAMESPACE == $demo_namespace and
+  .baselineVerifier.env.V3_TARGET_NAMESPACE == $demo_namespace and
+  .baselineVerifier.env.V3_TARGET_SERVICE == "demo" and
+  .baselineVerifier.env.V3_TARGET_WORKLOAD == "demo" and
+  .baselineVerifier.env.V3_TARGET_CONTAINER == "demo" and
   .baselineVerifier.env.V3_TARGET_REPOSITORY == $repository and
   .baselineVerifier.env.V3_TARGET_BASE_BRANCH == "main" and
   .baselineVerifier.env.V3_TARGET_GITOPS_PATH == $deployment_path and
@@ -104,52 +132,16 @@ jq -e \
   .baselineVerifier.env.V3_TARGET_ARGO_APPLICATION == $application and
   .baselineVerifier.env.V3_TARGET_ARGO_PROJECT == $project and
   .baselineVerifier.env.V3_TARGET_ARGO_DESTINATION_SERVER == $destination and
+  .baselineVerifier.env.V3_TARGET_READY_URL == "http://demo-diagnostics.demo.svc:8080/readyz" and
+  .baselineVerifier.env.V3_TARGET_REQUIRED_ENV_KEY == "REQUIRED_ENV" and
+  .baselineVerifier.env.V3_REQUIRED_CHECK_NAME == "gitops-required-check" and
+  .baselineVerifier.env.V3_REQUIRED_WORKFLOW_PATH == ".github/workflows/gitops-required-check.yml" and
   .baselineVerifier.env.ARGOCD_ALLOWED_APPLICATIONS == $application and
   .baselineVerifier.env.ARGOCD_ALLOWED_PROJECTS == $project
 ' "${values_json}" >/dev/null || die "Argo assets no longer match the checked CloudOps target configuration"
 
-jq -e --arg namespace "${demo_namespace}" '
-  length == 5 and
-  ([.[] | select(.apiVersion == "apps/v1" and .kind == "Deployment" and .metadata.name == "cloudops-demo-workload")] | length == 1) and
-  ([.[] | select(.apiVersion == "v1" and .kind == "Service") | .metadata.name] | sort) == ["cloudops-demo-workload", "demo-diagnostics"] and
-  ([.[] | select(.apiVersion == "monitoring.coreos.com/v1" and .kind == "PodMonitor" and .metadata.name == "cloudops-demo-workload")] | length == 1) and
-  ([.[] | select(.apiVersion == "monitoring.coreos.com/v1" and .kind == "PrometheusRule" and .metadata.name == "cloudops-demo-workload")] | length == 1) and
-  all(.[]; .metadata.namespace == $namespace) and
-  all(.[].kind; . == "Deployment" or . == "Service" or . == "PodMonitor" or . == "PrometheusRule") and
-  ([.[] | select(.kind == "Job" or .kind == "Secret" or .kind == "ServiceAccount" or .kind == "Role" or .kind == "RoleBinding" or .kind == "ClusterRole" or .kind == "ClusterRoleBinding" or .kind == "Ingress")] | length == 0) and
-  ([.. | objects | select(has("secretKeyRef") or has("secretRef") or has("envFrom"))] | length == 0)
-' "${healthy_json}" >/dev/null || die "healthy GitOps fixture inventory exceeds the AppProject or contains secret/RBAC/load-generator state"
-
-jq -e '
-  [
-    .[] |
-    select(.kind == "Deployment" and .metadata.name == "cloudops-demo-workload") |
-    .spec.template.spec.containers[] |
-    select(.name == "cloudops-demo") |
-    .env[] |
-    select(.name == "REQUIRED_ENV")
-  ] == [{"name": "REQUIRED_ENV", "value": "baseline-present"}]
-' "${healthy_json}" >/dev/null || die "healthy fixture must contain exactly one literal non-secret REQUIRED_ENV"
-
-jq -e '
-  length == 1 and
-  .[0].apiVersion == "apps/v1" and
-  .[0].kind == "Deployment" and
-  .[0].metadata.name == "cloudops-demo-workload" and
-  .[0].metadata.namespace == "cloudops-demo" and
-  ([.[0].spec.template.spec.containers[] | select(.name == "cloudops-demo") | .env[] | select(.name == "REQUIRED_ENV")] | length == 0)
-' "${regression_json}" >/dev/null || die "regression fixture is not the fixed Demo Deployment without REQUIRED_ENV"
-
-jq -e --slurpfile regression "${regression_json}" '
-  def remove_required_env:
-    .spec.template.spec.containers |= map(
-      if .name == "cloudops-demo"
-      then .env |= map(select(.name != "REQUIRED_ENV"))
-      else .
-      end
-    );
-  ([.[] | select(.kind == "Deployment" and .metadata.name == "cloudops-demo-workload")][0] | remove_required_env) == $regression[0][0]
-' "${healthy_json}" >/dev/null || die "regression fixture changes more than removal of REQUIRED_ENV"
+go -C "${root_dir}" run ./cmd/gitops-demo-contract healthy "${healthy_dir}" >/dev/null || die "healthy GitOps fixture violates the external required-check contract"
+go -C "${root_dir}" run ./cmd/gitops-demo-contract regression "${healthy_dir}" "${regression_dir}" >/dev/null || die "regression fixture changes more than removal of REQUIRED_ENV"
 
 lock_value() {
   local key="$1"
@@ -166,4 +158,4 @@ chart_sha="$(lock_value ARGOCD_CHART_SHA256)"
 [[ "${chart_url}" == "https://github.com/argoproj/argo-helm/releases/download/argo-cd-${chart_version}/argo-cd-${chart_version}.tgz" ]] || die "Argo CD chart URL does not match its version lock"
 [[ "${chart_sha}" =~ ^[0-9a-f]{64}$ ]] || die "Argo CD chart checksum lock is invalid"
 
-printf 'PASS: canonical AppProject/Application and healthy/regression GitOps contracts are bounded and aligned\n'
+printf 'PASS: canonical AppProject/Application and fixed five-file healthy/regression GitOps contracts are bounded and aligned\n'

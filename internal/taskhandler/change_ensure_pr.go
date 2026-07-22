@@ -1131,7 +1131,7 @@ func buildPhasedDeliveryRequest(plan remediation.RemediationPlan, logicalOperati
 		DeliveryRequest: remediation.DeliveryRequest{
 			Repository: plan.TargetRepository, BaseRevision: plan.TargetBaseRevision,
 			BaseBranch: plan.TargetBaseBranch, Path: plan.TargetPath, Content: append([]byte(nil), plan.PostImage...),
-			Branch:      "cloudops/incident-" + plan.IncidentPublicID + "/remediation-" + plan.PublicID,
+			Branch:      remediation.V3GitOpsBranch(plan.IncidentPublicID, plan.CanonicalPlanHash),
 			CommitTitle: "cloudops: approved remediation " + plan.PublicID,
 			PRTitle:     "[Draft] restore required environment", PRBody: body, Marker: marker,
 		},

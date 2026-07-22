@@ -1,0 +1,41 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: demo
+  namespace: demo
+  labels:
+    app.kubernetes.io/name: demo
+    cloudops.io/monitoring: enabled
+    cloudops.io/signal-target: demo
+spec:
+  groups:
+    - name: cloudops.v3.demo
+      rules:
+        - alert: CloudOpsDemoRequiredEnvMissing
+          expr: max(cloudops_demo_workload_ready{namespace="demo"}) < 1
+          for: 30s
+          labels:
+            severity: critical
+            signal_target: demo
+            cluster: kind-cloudops-v3
+            environment: local-demo
+            namespace: demo
+            service: demo
+            deployment: demo
+          annotations:
+            summary: Demo workload is missing REQUIRED_ENV
+            description: Both demo replicas remain live but are not ready because the required GitOps environment node is absent.
+        - alert: CloudOpsDemoErrorRateHigh
+          expr: sum(rate(cloudops_demo_http_errors_total{namespace="demo",route="/"}[1m])) / clamp_min(sum(rate(cloudops_demo_http_requests_total{namespace="demo",route="/"}[1m])), 0.001) > 0.20
+          for: 30s
+          labels:
+            severity: critical
+            signal_target: demo
+            cluster: kind-cloudops-v3
+            environment: local-demo
+            namespace: demo
+            service: demo
+            deployment: demo
+          annotations:
+            summary: Demo workload request error rate is high
+            description: Bounded diagnostics traffic is observing controlled server errors from the demo workload.

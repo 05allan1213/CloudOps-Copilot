@@ -40,7 +40,7 @@ observability:
   enabled: true
   namespaces:
     cloudops: cloudops-system
-    demo: cloudops-demo
+    demo: demo
   environment: local-demo
   clusterName: cloudops-v3-phase3
   elastic:

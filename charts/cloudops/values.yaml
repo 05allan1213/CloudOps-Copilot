@@ -85,7 +85,7 @@ api:
     K8S_WRITE_ENABLED: "false"
     STATIC_DIR: /app/static
     ALERTMANAGER_WEBHOOK_REQUIRE_BEARER: "true"
-    SIGNAL_TARGET_ALLOWLIST_JSON: '[{"cluster_id":"kind-cloudops-v3","environment":"local-demo","namespace":"cloudops-demo","workload_kind":"Deployment","workload_name":"cloudops-demo-workload","service_name":"cloudops-demo-workload","match_labels":{"cluster":"kind-cloudops-v3","environment":"local-demo","namespace":"cloudops-demo","deployment":"cloudops-demo-workload"}}]'
+    SIGNAL_TARGET_ALLOWLIST_JSON: '[{"cluster_id":"kind-cloudops-v3","environment":"local-demo","namespace":"demo","workload_kind":"Deployment","workload_name":"demo","service_name":"demo","match_labels":{"cluster":"kind-cloudops-v3","environment":"local-demo","namespace":"demo","deployment":"demo"}}]'
   resources:
     requests:
       cpu: 50m
@@ -141,7 +141,7 @@ worker:
   enabled: false
   replicas: 1
   managementPort: 8081
-  demoNamespace: cloudops-demo
+  demoNamespace: demo
   # Pre-created configuration Secret. It supplies environment-specific,
   # non-credential provider values such as V3_TARGET_REPOSITORY,
   # V3_TARGET_GITOPS_PATH, V3_TARGET_ARGO_REPOSITORY_URL, GitHub App IDs,
@@ -166,9 +166,9 @@ worker:
     K8S_ENABLED: "true"
     K8S_WRITE_ENABLED: "false"
     K8S_IN_CLUSTER: "true"
-    K8S_ALLOWED_NAMESPACES: cloudops-demo
-    K8S_DEFAULT_NAMESPACE: cloudops-demo
-    V3_TARGET_NAMESPACE: cloudops-demo
+    K8S_ALLOWED_NAMESPACES: demo
+    K8S_DEFAULT_NAMESPACE: demo
+    V3_TARGET_NAMESPACE: demo
   resources:
     requests:
       cpu: 50m
@@ -179,7 +179,7 @@ worker:
 
 baselineVerifier:
   enabled: false
-  demoNamespace: cloudops-demo
+  demoNamespace: demo
   backoffLimit: 2
   activeDeadlineSeconds: 300
   ttlSecondsAfterFinished: 600
@@ -199,14 +199,14 @@ baselineVerifier:
     K8S_ENABLED: "true"
     K8S_WRITE_ENABLED: "false"
     K8S_IN_CLUSTER: "true"
-    K8S_ALLOWED_NAMESPACES: cloudops-demo
-    K8S_DEFAULT_NAMESPACE: cloudops-demo
+    K8S_ALLOWED_NAMESPACES: demo
+    K8S_DEFAULT_NAMESPACE: demo
     V3_TARGET_CLUSTER: kind-cloudops-v3
     V3_TARGET_ENVIRONMENT: local-demo
-    V3_TARGET_NAMESPACE: cloudops-demo
-    V3_TARGET_SERVICE: cloudops-demo-workload
-    V3_TARGET_WORKLOAD: cloudops-demo-workload
-    V3_TARGET_CONTAINER: cloudops-demo
+    V3_TARGET_NAMESPACE: demo
+    V3_TARGET_SERVICE: demo
+    V3_TARGET_WORKLOAD: demo
+    V3_TARGET_CONTAINER: demo
     V3_TARGET_REPOSITORY: 05allan1213/cloudops-gitops-demo
     V3_SOURCE_REPOSITORY: 05allan1213/CloudOps-Copilot
     V3_TARGET_BASE_BRANCH: main
@@ -215,6 +215,10 @@ baselineVerifier:
     V3_TARGET_ARGO_APPLICATION: cloudops-demo
     V3_TARGET_ARGO_PROJECT: cloudops-demo
     V3_TARGET_ARGO_DESTINATION_SERVER: https://kubernetes.default.svc
+    V3_TARGET_READY_URL: http://demo-diagnostics.demo.svc:8080/readyz
+    V3_TARGET_REQUIRED_ENV_KEY: REQUIRED_ENV
+    V3_REQUIRED_CHECK_NAME: gitops-required-check
+    V3_REQUIRED_WORKFLOW_PATH: .github/workflows/gitops-required-check.yml
     V3_BASELINE_ALERT_NAMES: CloudOpsDemoRequiredEnvMissing,CloudOpsDemoErrorRateHigh
     V3_BASELINE_LOOKBACK_SECONDS: "1800"
     V3_BASELINE_TIMEOUT_SECONDS: "180"

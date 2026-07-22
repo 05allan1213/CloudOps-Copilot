@@ -25,7 +25,7 @@ alertmanager:
       routes:
         - receiver: cloudops-v3-webhook
           matchers:
-            - signal_target="cloudops-demo"
+            - signal_target="demo"
     receivers:
       - name: "null"
       - name: cloudops-v3-webhook

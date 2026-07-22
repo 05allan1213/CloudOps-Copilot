@@ -36,13 +36,13 @@ v3:
     VERIFICATION_ENABLED: "false"
     K8S_ENABLED: "false"
     K8S_WRITE_ENABLED: "false"
-    K8S_ALLOWED_NAMESPACES: cloudops-demo
-    K8S_DEFAULT_NAMESPACE: cloudops-demo
+    K8S_ALLOWED_NAMESPACES: demo
+    K8S_DEFAULT_NAMESPACE: demo
     TRACE_OTLP_ENDPOINT: ""
     TRACE_SAMPLE_RATE: "1.0"
     STATIC_DIR: /app/static
     ALERTMANAGER_WEBHOOK_REQUIRE_BEARER: "true"
-    SIGNAL_TARGET_ALLOWLIST_JSON: '[{"cluster_id":"kind-cloudops-v3-phase3","environment":"local-demo","namespace":"cloudops-demo","workload_kind":"Deployment","workload_name":"cloudops-demo-workload","service_name":"cloudops-demo-workload","match_labels":{"cluster":"kind-cloudops-v3-phase3","environment":"local-demo","namespace":"cloudops-demo","deployment":"cloudops-demo-workload"}}]'
+    SIGNAL_TARGET_ALLOWLIST_JSON: '[{"cluster_id":"kind-cloudops-v3-phase3","environment":"local-demo","namespace":"demo","workload_kind":"Deployment","workload_name":"demo","service_name":"demo","match_labels":{"cluster":"kind-cloudops-v3-phase3","environment":"local-demo","namespace":"demo","deployment":"demo"}}]'
   images:
     api:
       repository: cloudops-api

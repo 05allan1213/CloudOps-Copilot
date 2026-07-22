@@ -211,7 +211,7 @@ func insertV3RemediationFixture(t *testing.T, ctx context.Context, db *sql.DB) v
 public_id, fingerprint, correlation_key, correlation_key_version, cluster, namespace,
 service_name, environment, target_kind, target_name, severity, status, summary,
 first_seen_at, last_seen_at, version, domain_schema_version, v3_status, cycle_no
-) VALUES (?, 'v3-remediation-fixture', ?, 2, 'kind-v3', 'cloudops-demo', 'demo',
+) VALUES (?, 'v3-remediation-fixture', ?, 2, 'kind-v3', 'demo', 'demo',
           'development', 'Deployment', 'demo', 'warning', 'DIAGNOSING',
           'V3 remediation repository fixture', NOW(6), NOW(6), 2, 3, 'investigating', 1)`,
 		fixture.incidentPublicID, "v2:"+strings.Repeat("a", 64))
@@ -259,7 +259,7 @@ func v3RemediationCompileRequest(fixture v3RemediationFixture) remediation.Resto
 kind: Deployment
 metadata:
   name: demo
-  namespace: cloudops-demo
+  namespace: demo
 spec:
   template:
     spec:
@@ -270,7 +270,7 @@ spec:
 	baseline := append(append([]byte(nil), current...), []byte("          env:\n            - name: REQUIRED_ENV\n              value: healthy\n")...)
 	policy := remediation.RestoreEnvPolicy{
 		Version: "restore-required-env-policy/v1", Repository: "acme/gitops", BaseBranch: "main",
-		AllowedPath: "apps/demo.yaml", APIVersion: "apps/v1", Namespace: "cloudops-demo",
+		AllowedPath: "apps/demo.yaml", APIVersion: "apps/v1", Namespace: "demo",
 		Workload: "demo", Container: "demo", EnvKey: "REQUIRED_ENV",
 		MaxDiffBytes: remediation.MaxV3PlanDiffBytes, MaxPostImageBytes: remediation.MaxV3PostImageBytes,
 		VerificationVersion: "golden-required-env/v1",
@@ -283,7 +283,7 @@ spec:
 		BaseRevision: strings.Repeat("a", 40), LastKnownGoodRevision: strings.Repeat("b", 40),
 		TargetPath: policy.AllowedPath, BaseBlobSHA: strings.Repeat("c", 40),
 		ExpectedTreeHash: strings.Repeat("e", 40), FileMode: "100644",
-		Target: remediation.TargetResource{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "cloudops-demo", Name: "demo", Container: "demo"},
+		Target: remediation.TargetResource{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "demo", Name: "demo", Container: "demo"},
 		EnvKey: "REQUIRED_ENV", CurrentContent: current, BaselineContent: baseline, Policy: policy,
 		VerificationPlan:   json.RawMessage(`{"profile":"golden-required-env/v1","stability_window_seconds":60}`),
 		Evidence:           []remediation.EvidenceBinding{{ID: fixture.evidencePublicID, ContentHash: fixture.evidenceContentHash}},

@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cloudops-demo-workload
+  name: demo
   namespace: {{ .Release.Namespace | quote }}
   labels:
     {{- include "cloudops-demo.labels" . | nindent 4 }}
@@ -41,12 +41,15 @@ spec:
                   matchLabels:
                     {{- include "cloudops-demo.selectorLabels" . | nindent 20 }}
       containers:
-        - name: cloudops-demo
+        - name: demo
           image: {{ include "cloudops-demo.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy | quote }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
             capabilities:
               drop: ["ALL"]
           env:
@@ -60,13 +63,20 @@ spec:
               value: {{ .Values.environment | quote }}
             - name: K8S_CLUSTER_NAME
               value: {{ .Values.clusterName | quote }}
-            - name: K8S_NAMESPACE_NAME
+            - name: K8S_NAMESPACE
               valueFrom:
                 fieldRef:
+                  apiVersion: v1
                   fieldPath: metadata.namespace
+            - name: K8S_POD_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.name
             - name: K8S_POD_UID
               valueFrom:
                 fieldRef:
+                  apiVersion: v1
                   fieldPath: metadata.uid
             - name: TRACE_OTLP_ENDPOINT
               value: {{ .Values.trace.otlpEndpoint | quote }}
@@ -101,7 +111,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: cloudops-demo-workload
+  name: demo
   namespace: {{ .Release.Namespace | quote }}
   labels:
     {{- include "cloudops-demo.labels" . | nindent 4 }}

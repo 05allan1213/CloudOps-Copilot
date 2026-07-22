@@ -8,6 +8,7 @@ import (
 	"time"
 
 	appconfig "github.com/05allan1213/CloudOps-Copilot/internal/config"
+	"github.com/05allan1213/CloudOps-Copilot/internal/cutover"
 )
 
 func TestAPIServerGracefulShutdown(t *testing.T) {
@@ -51,7 +52,7 @@ func TestLoadAPIConfig(t *testing.T) {
 	if config.InternalListenAddr == "" || config.InternalListenAddr == config.Application.ListenAddr {
 		t.Fatalf("invalid INTERNAL listen address %q", config.InternalListenAddr)
 	}
-	if string(config.RuntimeGeneration) != "compatibility" {
+	if config.RuntimeGeneration != cutover.CurrentRuntimeGeneration {
 		t.Fatalf("runtime generation=%q", config.RuntimeGeneration)
 	}
 }

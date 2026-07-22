@@ -66,7 +66,7 @@ func (s *Service) Approve(ctx context.Context, publicID, actor, role, planHash, 
 	if plan.PlanHash != planHash || plan.ProposedPatchHash != patchHash {
 		return nil, nil, remediation.ErrApprovalMismatch
 	}
-	branch := "cloudops/incident-" + plan.IncidentPublicID + "/remediation-" + plan.PublicID
+	branch := remediation.V3GitOpsBranch(plan.IncidentPublicID, plan.PlanHash)
 	idempotency, _ := remediation.CanonicalHash(struct{ PlanID, PlanHash, PatchHash string }{plan.PublicID, plan.PlanHash, plan.ProposedPatchHash})
 	delivery := &remediation.ChangeRequest{PublicID: uuid.NewString(), Repository: plan.TargetRepository, BaseRevision: plan.TargetBaseRevision, HeadBranch: branch, Status: remediation.DeliveryPending, CIStatus: remediation.CIPending, IdempotencyKey: idempotency, RowVersion: 1, CreatedAt: s.cfg.Now().UTC(), UpdatedAt: s.cfg.Now().UTC()}
 	approval := remediation.Approval{PublicID: uuid.NewString(), Decision: remediation.DecisionApproved, Actor: actor, ApprovedPlanHash: planHash, ApprovedPatchHash: patchHash, CreatedAt: s.cfg.Now().UTC()}

@@ -163,15 +163,15 @@ VALUES (?, ?, 3, 1, 1, 'verification_fixture', ?, 'system', 'integration-test', 
 		TriggerType: "no_change", TargetRevision: strings.Repeat("b", 40), SourceRevision: strings.Repeat("c", 40),
 		ImageDigest: "sha256:" + strings.Repeat("d", 64), GitOpsRevision: strings.Repeat("b", 40),
 		ArgoApplication: "cloudops-demo", ArgoProject: "cloudops-demo", Cluster: "kind-local", Environment: "local",
-		Namespace: "cloudops-demo", Service: "cloudops-demo", WorkloadName: "cloudops-demo", AlertNames: []string{"RequiredEnvMissing"},
+		Namespace: "demo", Service: "demo", WorkloadName: "demo", AlertNames: []string{"RequiredEnvMissing"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	activateVerificationBaselineFixture(t, ctx, db, baselinepkg.Target{
-		Cluster: "kind-local", Environment: "local", Namespace: "cloudops-demo", WorkloadKind: "Deployment",
-		WorkloadName: "cloudops-demo", ContainerName: "cloudops-demo", Repository: "acme/gitops",
-		BaseBranch: "main", TargetPath: "apps/cloudops-demo.yaml",
+		Cluster: "kind-local", Environment: "local", Namespace: "demo", WorkloadKind: "Deployment",
+		WorkloadName: "demo", ContainerName: "demo", Repository: "acme/gitops",
+		BaseBranch: "main", TargetPath: "apps/demo/deployment.yaml",
 	}, plan.SourceRevision, plan.ImageDigest, plan.GitOpsRevision, strings.Repeat("e", 64), now.Add(-3*time.Minute))
 	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM deployment_baselines WHERE status = 'active'", 1)
 	task := asyncjob.Task{IncidentID: incidentID, CycleNo: 1, SubjectID: runID, ExpectedSubjectVersion: 1}
@@ -349,7 +349,7 @@ VALUES (?, ?, 'COMPLETED', 'fixture-model', 'incident-agent-v3', 1, ?, '', ?, 3,
   producer_dedupe_key, resource_ref, query_text, summary, facts_json, result_hash,
   content_hash, raw_ref, truncated, valid, collected_at, domain_schema_version, cycle_no)
 VALUES (?, ?, ?, 'configuration', 'github', 'agent_step', ?,
-        'github://acme/gitops/apps/demo.yaml', 'exact blob', 'verified missing required env',
+	        'github://acme/gitops/apps/demo/deployment.yaml', 'exact blob', 'verified missing required env',
         ?, ?, ?, '', FALSE, TRUE, ?, 3, 1)`, baselineEvidencePublicID, incidentID, agentRunID,
 		hashVerificationTask("baseline-evidence", baselineEvidencePublicID), baselineFacts,
 		baselineContentHash, baselineContentHash, now.Add(-time.Minute)); err != nil {
@@ -362,7 +362,7 @@ VALUES (?, ?, ?, 'configuration', 'github', 'agent_step', ?,
 		TriggerType: "post_delivery", Repository: "acme/gitops", PullRequest: 7,
 		TargetRevision: targetRevision, SourceRevision: sourceRevision, ImageDigest: imageDigest, GitOpsRevision: targetRevision,
 		ArgoApplication: "cloudops-demo", ArgoProject: "cloudops-demo", Cluster: "kind-local", Environment: "local",
-		Namespace: "cloudops-demo", Service: "cloudops-demo", WorkloadName: "cloudops-demo", AlertNames: []string{"RequiredEnvMissing"},
+		Namespace: "demo", Service: "demo", WorkloadName: "demo", AlertNames: []string{"RequiredEnvMissing"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -381,8 +381,8 @@ VALUES (?, ?, ?, 'configuration', 'github', 'agent_step', ?,
 		t.Fatal(err)
 	}
 	oldBaseline := activateVerificationBaselineFixture(t, ctx, db, baselinepkg.Target{
-		Cluster: "kind-local", Environment: "local", Namespace: "cloudops-demo", WorkloadKind: "Deployment",
-		WorkloadName: "cloudops-demo", ContainerName: "cloudops-demo", Repository: "acme/gitops",
+		Cluster: "kind-local", Environment: "local", Namespace: "demo", WorkloadKind: "Deployment",
+		WorkloadName: "demo", ContainerName: "demo", Repository: "acme/gitops",
 		BaseBranch: remediationPlan.TargetBaseBranch, TargetPath: remediationPlan.TargetPath,
 	}, verificationPlan.SourceRevision, verificationPlan.ImageDigest, remediationPlan.LastKnownGoodRevision,
 		remediationPlan.ExpectedPostImageHash, now.Add(-3*time.Minute))
@@ -415,7 +415,7 @@ VALUES (?, ?, 3, ?, 1, 'acme/gitops', ?, 'cloudops/restore-required-env', ?, 7,
         'https://github.example/acme/gitops/pull/7', 'delivered', 'delivered', 'observe',
         'passing', 'closed', ?, ?, 'cloudops-demo', 'cloudops-demo', ?, 'Synced',
         'Succeeded', 'Healthy', JSON_ARRAY(JSON_OBJECT('kind','Deployment','health','Healthy')),
-        'kind-local', 'local', 'cloudops-demo', 'Deployment', 'cloudops-demo',
+	        'kind-local', 'local', 'demo', 'Deployment', 'demo',
         7, 7, '7', 2, 2, 2, 0, ?, ?, ?, ?, ?, ?, 5, 5)`,
 		changePublicID, remediationPlan.ID, incidentID, remediationPlan.TargetBaseRevision,
 		targetRevision, targetRevision, targetRevision, targetRevision,
@@ -610,7 +610,7 @@ func insertVerificationIntegrationFixture(t *testing.T, ctx context.Context, db 
   version, domain_schema_version, v3_status, cycle_no, needs_attention,
   correlation_key_version, created_at, updated_at)
 VALUES (?, 'verification-fingerprint', 'sha256:verification-correlation', 'kind-local',
-        'cloudops-demo', 'cloudops-demo', 'local', 'Deployment', 'cloudops-demo',
+	        'demo', 'demo', 'local', 'Deployment', 'demo',
         'critical', 'VERIFYING', 'verification integration fixture', ?, ?, 1, 3,
         'verifying', 1, FALSE, 2, ?, ?)`, uuid.NewString(), now.Add(-10*time.Minute), now, now, now)
 	if err != nil {
@@ -627,7 +627,7 @@ VALUES (?, 'verification-fingerprint', 'sha256:verification-correlation', 'kind-
   labels_json, annotations_json, raw_payload, created_at)
 VALUES (?, ?, 3, 1, 2, 2, 'alertmanager', 'verification-firing',
         'verification-fingerprint', ?, 'firing', 'critical', 'kind-local',
-        'cloudops-demo', 'cloudops-demo', 'local', 'Deployment', 'cloudops-demo',
+	        'demo', 'demo', 'local', 'Deployment', 'demo',
         'availability', ?, ?, NULL, ?, 'firing signal', JSON_OBJECT(), JSON_OBJECT(),
         JSON_OBJECT(), ?)`, uuid.NewString(), incidentID, hash, now.Add(-10*time.Minute), now.Add(-10*time.Minute), now.Add(-10*time.Minute), now.Add(-10*time.Minute)); err != nil {
 		t.Fatal(err)
@@ -640,7 +640,7 @@ VALUES (?, ?, 3, 1, 2, 2, 'alertmanager', 'verification-firing',
   labels_json, annotations_json, raw_payload, created_at)
 VALUES (?, ?, 3, 1, 2, 2, 'alertmanager', 'verification-resolved',
         'verification-fingerprint', ?, 'resolved', 'critical', 'kind-local',
-        'cloudops-demo', 'cloudops-demo', 'local', 'Deployment', 'cloudops-demo',
+	        'demo', 'demo', 'local', 'Deployment', 'demo',
         'availability', ?, ?, ?, ?, 'resolved signal', JSON_OBJECT(), JSON_OBJECT(),
         JSON_OBJECT(), ?)`, uuid.NewString(), incidentID, hash, now, now.Add(-10*time.Minute), now, now, now)
 	if err != nil {
@@ -653,8 +653,8 @@ VALUES (?, ?, 3, 1, 2, 2, 'alertmanager', 'verification-resolved',
 		TargetRevision: strings.Repeat("b", 40), SourceRevision: strings.Repeat("c", 40),
 		ImageDigest: "sha256:" + strings.Repeat("d", 64), GitOpsRevision: strings.Repeat("b", 40),
 		ArgoApplication: "cloudops-demo", ArgoProject: "cloudops-demo",
-		Cluster: "kind-local", Environment: "local", Namespace: "cloudops-demo",
-		Service: "cloudops-demo", WorkloadName: "cloudops-demo",
+		Cluster: "kind-local", Environment: "local", Namespace: "demo",
+		Service: "demo", WorkloadName: "demo",
 		AlertNames: []string{"RequiredEnvMissing"},
 	})
 	if err != nil {
@@ -710,20 +710,20 @@ func postDeliveryRemediationCompileRequest(incidentID uint64, incidentPublicID, 
 	current := []byte(`apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cloudops-demo
-  namespace: cloudops-demo
+	  name: demo
+	  namespace: demo
 spec:
   template:
     spec:
       containers:
-        - name: cloudops-demo
+	        - name: demo
           image: example/cloudops-demo@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
 `)
 	baseline := append(append([]byte(nil), current...), []byte("          env:\n            - name: REQUIRED_ENV\n              value: healthy\n")...)
 	policy := remediation.RestoreEnvPolicy{
 		Version: "restore-required-env-policy/v1", Repository: "acme/gitops", BaseBranch: "main",
-		AllowedPath: "apps/cloudops-demo.yaml", APIVersion: "apps/v1", Namespace: "cloudops-demo",
-		Workload: "cloudops-demo", Container: "cloudops-demo", EnvKey: "REQUIRED_ENV",
+		AllowedPath: "apps/demo/deployment.yaml", APIVersion: "apps/v1", Namespace: "demo",
+		Workload: "demo", Container: "demo", EnvKey: "REQUIRED_ENV",
 		MaxDiffBytes: remediation.MaxV3PlanDiffBytes, MaxPostImageBytes: remediation.MaxV3PostImageBytes,
 		VerificationVersion: verification.GoldenRequiredEnvProfileID,
 	}
@@ -734,7 +734,7 @@ spec:
 		Repository: policy.Repository, BaseBranch: policy.BaseBranch, BaseRevision: strings.Repeat("a", 40),
 		LastKnownGoodRevision: strings.Repeat("9", 40), TargetPath: policy.AllowedPath,
 		BaseBlobSHA: strings.Repeat("8", 40), ExpectedTreeHash: strings.Repeat("e", 40), FileMode: "100644",
-		Target: remediation.TargetResource{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "cloudops-demo", Name: "cloudops-demo", Container: "cloudops-demo"},
+		Target: remediation.TargetResource{APIVersion: "apps/v1", Kind: "Deployment", Namespace: "demo", Name: "demo", Container: "demo"},
 		EnvKey: "REQUIRED_ENV", CurrentContent: current, BaselineContent: baseline, Policy: policy,
 		VerificationPlan:   verificationPlan,
 		Evidence:           []remediation.EvidenceBinding{{ID: evidencePublicID, ContentHash: evidenceContentHash}},

@@ -16,9 +16,9 @@ func TestListPodsIsNamespaceAllowlistedAndBounded(t *testing.T) {
 	started := metav1.NewTime(time.Date(2026, time.July, 17, 8, 0, 0, 0, time.UTC))
 	client := fake.NewSimpleClientset(&corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: "cloudops-demo",
+			Namespace: "demo",
 			Name:      "workload-0",
-			Labels:    map[string]string{"app": "cloudops-demo-workload"},
+			Labels:    map[string]string{"app.kubernetes.io/name": "demo"},
 			OwnerReferences: []metav1.OwnerReference{{
 				Kind: "ReplicaSet",
 				Name: "workload-abc",
@@ -41,8 +41,8 @@ func TestListPodsIsNamespaceAllowlistedAndBounded(t *testing.T) {
 	})
 	service := NewServiceWithClient(client, Config{
 		Enabled:           true,
-		AllowedNamespaces: []string{"cloudops-demo"},
-		DefaultNamespace:  "cloudops-demo",
+		AllowedNamespaces: []string{"demo"},
+		DefaultNamespace:  "demo",
 		RequestTimeout:    time.Second,
 	})
 	service.now = func() time.Time { return time.Date(2026, time.July, 17, 8, 5, 0, 0, time.UTC) }

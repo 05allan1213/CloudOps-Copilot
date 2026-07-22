@@ -10,7 +10,7 @@ import (
 func TestDemoModelProducesEvidenceBoundedDiagnosis(t *testing.T) {
 	model := NewDemoModel()
 	state := agent.GraphState{
-		Incident:     agent.IncidentContext{Namespace: "default", TargetName: "cloudops-demo-workload"},
+		Incident:     agent.IncidentContext{Namespace: "demo", TargetName: "demo"},
 		EvidenceIDs:  []string{"11111111-1111-4111-8111-111111111111"},
 		Observations: []agent.Observation{{Valid: true}},
 	}

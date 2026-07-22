@@ -16,6 +16,27 @@ type staticToken string
 
 func (t staticToken) Token(context.Context) (string, error) { return string(t), nil }
 
+func TestBranchPatternMatchesExternalRequiredCheck(t *testing.T) {
+	incidentID := "11111111-1111-4111-8111-111111111111"
+	for _, branch := range []string{
+		"cloudops/incident-" + incidentID + "/plan-" + strings.Repeat("a", 12),
+		"cloudops/incident-" + incidentID + "/plan-" + strings.Repeat("b", 64),
+	} {
+		if !branchPattern.MatchString(branch) {
+			t.Fatalf("required-check branch was rejected: %s", branch)
+		}
+	}
+	for _, branch := range []string{
+		"cloudops/incident-" + incidentID + "/remediation-22222222-2222-4222-8222-222222222222",
+		"cloudops/incident-" + incidentID + "/plan-" + strings.Repeat("a", 11),
+		"cloudops/incident-" + incidentID + "/plan-" + strings.Repeat("A", 64),
+	} {
+		if branchPattern.MatchString(branch) {
+			t.Fatalf("out-of-contract branch was accepted: %s", branch)
+		}
+	}
+}
+
 func TestClientCreatesOnlyOneCommitBranchAndDraftPR(t *testing.T) {
 	baseSHA := strings.Repeat("a", 40)
 	commitSHA := strings.Repeat("b", 40)
@@ -70,7 +91,7 @@ func TestClientCreatesOnlyOneCommitBranchAndDraftPR(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := remediation.DeliveryRequest{Repository: "acme/gitops", BaseRevision: baseSHA, BaseBranch: "main", Path: "apps/api.yaml", Content: []byte("kind: Deployment\n"), Branch: "cloudops/incident-11111111-1111-4111-8111-111111111111/remediation-22222222-2222-4222-8222-222222222222", CommitTitle: "approved remediation", PRTitle: "draft", PRBody: "bounded\n" + marker, Marker: marker}
+	request := remediation.DeliveryRequest{Repository: "acme/gitops", BaseRevision: baseSHA, BaseBranch: "main", Path: "apps/api.yaml", Content: []byte("kind: Deployment\n"), Branch: "cloudops/incident-11111111-1111-4111-8111-111111111111/plan-" + strings.Repeat("2", 64), CommitTitle: "approved remediation", PRTitle: "draft", PRBody: "bounded\n" + marker, Marker: marker}
 	result, err := client.DeliverDraftPR(context.Background(), request)
 	if err != nil || result.CommitSHA != commitSHA || result.PRNumber != 17 {
 		t.Fatalf("result=%+v err=%v", result, err)
@@ -123,7 +144,7 @@ func TestClientRejectsBaseRevisionDriftBeforeWrite(t *testing.T) {
 	}
 	id := "11111111-1111-4111-8111-111111111111"
 	marker := "<!-- cloudops-remediation:" + id + ":" + strings.Repeat("c", 64) + " -->"
-	_, err = client.DeliverDraftPR(context.Background(), remediation.DeliveryRequest{Repository: "acme/gitops", BaseRevision: strings.Repeat("a", 40), BaseBranch: "main", Path: "apps/api.yaml", Content: []byte("kind: Deployment\n"), Branch: "cloudops/incident-" + id + "/remediation-22222222-2222-4222-8222-222222222222", CommitTitle: "approved", PRTitle: "draft", PRBody: marker, Marker: marker})
+	_, err = client.DeliverDraftPR(context.Background(), remediation.DeliveryRequest{Repository: "acme/gitops", BaseRevision: strings.Repeat("a", 40), BaseBranch: "main", Path: "apps/api.yaml", Content: []byte("kind: Deployment\n"), Branch: "cloudops/incident-" + id + "/plan-" + strings.Repeat("2", 64), CommitTitle: "approved", PRTitle: "draft", PRBody: marker, Marker: marker})
 	if err != remediation.ErrDrift || calls != 1 {
 		t.Fatalf("base drift err=%v calls=%d", err, calls)
 	}

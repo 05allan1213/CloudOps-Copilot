@@ -150,8 +150,8 @@ public_id, fingerprint, correlation_key, correlation_key_version, cluster,
 namespace, service_name, environment, target_kind, target_name, severity,
 status, summary, first_seen_at, last_seen_at, version,
 domain_schema_version, v3_status, cycle_no
-) VALUES (?, ?, ?, 2, 'kind-local', 'cloudops-demo', 'cloudops-demo', 'local',
-          'Deployment', 'cloudops-demo', 'critical', 'DIAGNOSING',
+) VALUES (?, ?, ?, 2, 'kind-local', 'demo', 'demo', 'local',
+          'Deployment', 'demo', 'critical', 'DIAGNOSING',
           'typed Workbench fixture', ?, ?, 2, 3, 'investigating', 1)`,
 		incidentPublicID, "workbench-"+incidentPublicID, "v2:"+strings.Repeat("1", 64),
 		now.Add(-10*time.Minute), now)
@@ -184,7 +184,7 @@ producer_dedupe_key, resource_ref, query_text, summary, facts_json,
 result_hash, content_hash, raw_ref, truncated, valid, collected_at,
 domain_schema_version, cycle_no
 ) VALUES (?, ?, ?, 'configuration', 'github', 'agent_step', ?,
-          'github://acme/gitops/apps/cloudops-demo.yaml', 'exact blob',
+          'github://acme/gitops/apps/demo/deployment.yaml', 'exact blob',
           'verified baseline node', JSON_OBJECT('required_env','healthy'),
           ?, ?, '', FALSE, TRUE, ?, 3, 1)`, evidencePublicID, incidentID,
 		agentRunID, "workbench-evidence-"+evidencePublicID, evidenceHash, evidenceHash, now.Add(-2*time.Minute)); err != nil {
@@ -197,20 +197,20 @@ domain_schema_version, cycle_no
 		TargetRevision: targetRevision, SourceRevision: strings.Repeat("7", 40),
 		ImageDigest: "sha256:" + strings.Repeat("8", 64), GitOpsRevision: targetRevision,
 		ArgoApplication: "cloudops-demo", ArgoProject: "cloudops-demo",
-		Cluster: "kind-local", Environment: "local", Namespace: "cloudops-demo",
-		Service: "cloudops-demo", WorkloadName: "cloudops-demo",
+		Cluster: "kind-local", Environment: "local", Namespace: "demo",
+		Service: "demo", WorkloadName: "demo",
 		AlertNames: []string{"RequiredEnvMissing"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	verificationPlanJSON, _ := json.Marshal(verificationPlan)
-	current := []byte("apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: cloudops-demo\n  namespace: cloudops-demo\nspec:\n  template:\n    spec:\n      containers:\n        - name: cloudops-demo\n          image: example/demo@sha256:" + strings.Repeat("9", 64) + "\n")
+	current := []byte("apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: demo\n  namespace: demo\nspec:\n  template:\n    spec:\n      containers:\n        - name: demo\n          image: example/demo@sha256:" + strings.Repeat("9", 64) + "\n")
 	baseline := append(append([]byte(nil), current...), []byte("          env:\n            - name: REQUIRED_ENV\n              value: healthy\n")...)
 	policy := remediation.RestoreEnvPolicy{
 		Version: "restore-required-env-policy/v1", Repository: "acme/gitops", BaseBranch: "main",
-		AllowedPath: "apps/cloudops-demo.yaml", APIVersion: "apps/v1", Namespace: "cloudops-demo",
-		Workload: "cloudops-demo", Container: "cloudops-demo", EnvKey: "REQUIRED_ENV",
+		AllowedPath: "apps/demo/deployment.yaml", APIVersion: "apps/v1", Namespace: "demo",
+		Workload: "demo", Container: "demo", EnvKey: "REQUIRED_ENV",
 		MaxDiffBytes: remediation.MaxV3PlanDiffBytes, MaxPostImageBytes: remediation.MaxV3PostImageBytes,
 		VerificationVersion: verification.GoldenRequiredEnvProfileID,
 	}
@@ -222,7 +222,7 @@ domain_schema_version, cycle_no
 		LastKnownGoodRevision: strings.Repeat("b", 40), TargetPath: policy.AllowedPath,
 		BaseBlobSHA: strings.Repeat("c", 40), ExpectedTreeHash: strings.Repeat("d", 40), FileMode: "100644",
 		Target: remediation.TargetResource{
-			APIVersion: "apps/v1", Kind: "Deployment", Namespace: "cloudops-demo", Name: "cloudops-demo", Container: "cloudops-demo",
+			APIVersion: "apps/v1", Kind: "Deployment", Namespace: "demo", Name: "demo", Container: "demo",
 		},
 		EnvKey: "REQUIRED_ENV", CurrentContent: current, BaselineContent: baseline,
 		Policy: policy, VerificationPlan: verificationPlanJSON,
@@ -280,7 +280,7 @@ created_at, updated_at
           'https://github.com/acme/gitops/pull/42', 'open', ?, ?,
           'rollout_pending', 'passing', ?, 'cloudops-demo', 'cloudops-demo', ?,
           'Synced', 'Succeeded', 'Progressing', JSON_OBJECT('deployment','Progressing'),
-          'kind-local', 'local', 'cloudops-demo', 'Deployment', 'cloudops-demo',
+          'kind-local', 'local', 'demo', 'Deployment', 'demo',
           8, 8, ?, 2, 2, 1, 1, ?, ?, ?, 2, 3, ?, 1, 'rolling_out',
           'observe', 1, ?, ?, ?)`, deliveryPublicID, plan.ID, plan.TargetBaseRevision,
 		strings.Repeat("5", 40), targetRevision, targetRevision, strings.Repeat("4", 64),

@@ -708,7 +708,7 @@ func Load() Config {
 		TraceSampleRate:            configutil.FloatRange("TRACE_SAMPLE_RATE", 1.0, 0, 1),
 		KafkaBrokers:               configutil.List("KAFKA_BROKERS"),
 	}
-	result.SignalTargetAllowlistJSON = configutil.String("SIGNAL_TARGET_ALLOWLIST_JSON", `[{"cluster_id":"kind-cloudops-demo","environment":"local-demo","namespace":"cloudops-demo","workload_kind":"Deployment","workload_name":"cloudops-demo-workload","service_name":"cloudops-demo-workload","match_labels":{"cluster":"kind-cloudops-demo","environment":"local-demo","namespace":"cloudops-demo","deployment":"cloudops-demo-workload"}}]`)
+	result.SignalTargetAllowlistJSON = configutil.String("SIGNAL_TARGET_ALLOWLIST_JSON", `[{"cluster_id":"kind-cloudops-v3","environment":"local-demo","namespace":"demo","workload_kind":"Deployment","workload_name":"demo","service_name":"demo","match_labels":{"cluster":"kind-cloudops-v3","environment":"local-demo","namespace":"demo","deployment":"demo"}}]`)
 	result.AlertmanagerWebhookBearerTokenFile = configutil.String("ALERTMANAGER_WEBHOOK_BEARER_TOKEN_FILE", "")
 	result.AlertmanagerWebhookRequireBearer = configutil.Bool("ALERTMANAGER_WEBHOOK_REQUIRE_BEARER", false)
 	return result

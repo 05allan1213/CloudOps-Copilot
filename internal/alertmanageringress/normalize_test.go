@@ -22,7 +22,7 @@ func TestCanonicalV2IdentitiesAndMultiAlertCorrelation(t *testing.T) {
 	left, right := batch.Signals[0], batch.Signals[1]
 	if left.SourceEventID != "v2:bb3466ad8f87503540c45fcc86c2f8e859e3f62acf31d1817481a1ff3bcae7ed" ||
 		left.AlertInstanceKey != "725b3a18075a23308e7ef19160fcde920f1463257b4f3f842ac0bdfff79f1452" ||
-		left.CorrelationKey != "v2:9be11f9153a87aa2abe367a6600e7ea3176709fbaa1caf91c74b76b005e5b81b" {
+		left.CorrelationKey != "v2:6cc0330d16aa0610192c1880497fca6c315222d55822271ea2f47d5b88a7c037" {
 		t.Fatalf("canonical identity vector source=%q instance=%q correlation=%q", left.SourceEventID, left.AlertInstanceKey, left.CorrelationKey)
 	}
 	if left.CorrelationKey != right.CorrelationKey || !strings.HasPrefix(left.CorrelationKey, "v2:") || len(left.CorrelationKey) != 67 {
@@ -96,7 +96,7 @@ func TestTargetAllowlistRejectsUnknownConflictAndAmbiguity(t *testing.T) {
 
 	targets := mustTargets(t)
 	overlap := targets[0]
-	overlap.MatchLabels = map[string]string{"deployment": "cloudops-demo-workload"}
+	overlap.MatchLabels = map[string]string{"deployment": "demo"}
 	batch, err = normalizeEnvelope(testEnvelope(allowed), append(targets, overlap))
 	if err != nil {
 		t.Fatal(err)
@@ -204,9 +204,9 @@ func testAlert(status, fingerprint, alertName, severity string) alert {
 		Status: status, Fingerprint: fingerprint,
 		StartsAt: time.Date(2026, 7, 18, 12, 0, 0, 123456000, time.UTC),
 		Labels: map[string]string{
-			"alertname": alertName, "severity": severity, "cluster": "kind-cloudops-demo",
-			"environment": "local-demo", "namespace": "cloudops-demo",
-			"service": "cloudops-demo-workload", "deployment": "cloudops-demo-workload",
+			"alertname": alertName, "severity": severity, "cluster": "kind-cloudops-v3",
+			"environment": "local-demo", "namespace": "demo",
+			"service": "demo", "deployment": "demo",
 		},
 		Annotations: map[string]string{"summary": "demo regression"},
 	}

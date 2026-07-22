@@ -26,8 +26,8 @@ func TestV3ObserverBuildsRolloutIdentityFromRealReadPorts(t *testing.T) {
 	}
 	result, err := observer.Observe(context.Background(), taskhandler.DeliveryObserveRequest{
 		Kind:            taskhandler.DeliveryObserveRollout,
-		ArgoApplication: "demo", ArgoProject: "project", Cluster: "kind-cloudops",
-		Environment: "local-demo", Namespace: "cloudops-demo", WorkloadKind: "Deployment",
+		ArgoApplication: "demo", ArgoProject: "project", Cluster: "kind-cloudops-v3",
+		Environment: "local-demo", Namespace: "demo", WorkloadKind: "Deployment",
 		WorkloadName: "demo", Container: "demo",
 	})
 	if err != nil {
@@ -50,7 +50,7 @@ func TestV3ObserverRejectsUnverifiedRegistryIdentity(t *testing.T) {
 	}
 	_, err = observer.Observe(context.Background(), taskhandler.DeliveryObserveRequest{
 		Kind: taskhandler.DeliveryObserveRollout, ArgoApplication: "demo", ArgoProject: "project",
-		Cluster: "kind-cloudops", Environment: "local-demo", Namespace: "cloudops-demo",
+		Cluster: "kind-cloudops-v3", Environment: "local-demo", Namespace: "demo",
 		WorkloadKind: "Deployment", WorkloadName: "demo", Container: "demo",
 	})
 	if err == nil {
@@ -76,19 +76,19 @@ func TestV3GitHubBindsTreeContentActorAndRequiredCIIdentity(t *testing.T) {
 			merged: {SHA: merged, TreeSHA: strings.Repeat("d", 40), Parents: []string{base}},
 		},
 		files: map[string]change.FileContent{
-			head:   {Revision: head, Path: "env/demo.yaml", BlobSHA: blobSHA, Content: []byte("healthy")},
-			merged: {Revision: merged, Path: "env/demo.yaml", BlobSHA: blobSHA, Content: []byte("healthy")},
+			head:   {Revision: head, Path: "apps/demo/deployment.yaml", BlobSHA: blobSHA, Content: []byte("healthy")},
+			merged: {Revision: merged, Path: "apps/demo/deployment.yaml", BlobSHA: blobSHA, Content: []byte("healthy")},
 		},
 		ci: change.CIStatus{
-			CheckRuns:    []change.CheckRun{{ID: 1, Name: "cloudops/validate", Status: "completed", Conclusion: "success", AppID: 42}},
-			WorkflowRuns: []change.WorkflowRun{{ID: 2, WorkflowID: 99, Path: ".github/workflows/cloudops.yaml", HeadSHA: head, Status: "completed", Conclusion: "success"}},
+			CheckRuns:    []change.CheckRun{{ID: 1, Name: "gitops-required-check", Status: "completed", Conclusion: "success", AppID: 42}},
+			WorkflowRuns: []change.WorkflowRun{{ID: 2, WorkflowID: 99, Path: ".github/workflows/gitops-required-check.yml", HeadSHA: head, Status: "completed", Conclusion: "success"}},
 		},
 	}
-	github, err := NewV3GitHub(V3GitHubConfig{Reader: reader, RequiredCheckName: "cloudops/validate", ProducerAppID: 42, WorkflowID: 99, WorkflowPath: ".github/workflows/cloudops.yaml"})
+	github, err := NewV3GitHub(V3GitHubConfig{Reader: reader, RequiredCheckName: "gitops-required-check", ProducerAppID: 42, WorkflowID: 99, WorkflowPath: ".github/workflows/gitops-required-check.yml"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := taskhandler.DeliveryObserveRequest{Repository: "acme/gitops", PullRequest: 7, HeadSHA: head, TargetPath: "env/demo.yaml"}
+	request := taskhandler.DeliveryObserveRequest{Repository: "acme/gitops", PullRequest: 7, HeadSHA: head, TargetPath: "apps/demo/deployment.yaml"}
 	pullRequest, err := github.ObservePullRequest(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
@@ -112,16 +112,16 @@ func TestV3GitHubRejectsAbbreviatedRevisionAndMismatchedBlobIdentity(t *testing.
 			head: {SHA: head, TreeSHA: strings.Repeat("d", 40)},
 		},
 		files: map[string]change.FileContent{
-			head: {Revision: head, Path: "env/demo.yaml", BlobSHA: strings.Repeat("f", 40), Content: []byte("healthy")},
+			head: {Revision: head, Path: "apps/demo/deployment.yaml", BlobSHA: strings.Repeat("f", 40), Content: []byte("healthy")},
 		},
 	}
-	github, err := NewV3GitHub(V3GitHubConfig{Reader: reader, RequiredCheckName: "cloudops/validate", ProducerAppID: 42, WorkflowID: 99, WorkflowPath: ".github/workflows/cloudops.yaml"})
+	github, err := NewV3GitHub(V3GitHubConfig{Reader: reader, RequiredCheckName: "gitops-required-check", ProducerAppID: 42, WorkflowID: 99, WorkflowPath: ".github/workflows/gitops-required-check.yml"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, revision := range []string{"deadbeef", head} {
 		_, err := github.ObserveCI(context.Background(), taskhandler.DeliveryObserveRequest{
-			Repository: "acme/gitops", HeadSHA: revision, TargetPath: "env/demo.yaml",
+			Repository: "acme/gitops", HeadSHA: revision, TargetPath: "apps/demo/deployment.yaml",
 		})
 		if err == nil {
 			t.Fatalf("invalid exact Git identity %q was accepted", revision)

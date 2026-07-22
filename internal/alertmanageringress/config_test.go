@@ -12,7 +12,7 @@ func TestParseTargetAllowlistIsTypedStrictAndDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(targets) != 1 || targets[0].ClusterID != "kind-cloudops-demo" || targets[0].ServiceName != "cloudops-demo-workload" {
+	if len(targets) != 1 || targets[0].ClusterID != "kind-cloudops-v3" || targets[0].ServiceName != "demo" {
 		t.Fatalf("targets=%+v", targets)
 	}
 	for name, raw := range map[string]string{
@@ -64,5 +64,5 @@ func TestHandlerRequiresRuntimeGenerationGuard(t *testing.T) {
 }
 
 func testTargetJSON() string {
-	return `[{"cluster_id":"kind-cloudops-demo","environment":"local-demo","namespace":"cloudops-demo","workload_kind":"Deployment","workload_name":"cloudops-demo-workload","service_name":"cloudops-demo-workload","match_labels":{"cluster":"kind-cloudops-demo","environment":"local-demo","namespace":"cloudops-demo","deployment":"cloudops-demo-workload"}}]`
+	return `[{"cluster_id":"kind-cloudops-v3","environment":"local-demo","namespace":"demo","workload_kind":"Deployment","workload_name":"demo","service_name":"demo","match_labels":{"cluster":"kind-cloudops-v3","environment":"local-demo","namespace":"demo","deployment":"demo"}}]`
 }

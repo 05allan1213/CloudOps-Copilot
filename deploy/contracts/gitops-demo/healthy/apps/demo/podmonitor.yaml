@@ -1,0 +1,22 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: demo
+  namespace: demo
+  labels:
+    app.kubernetes.io/name: demo
+    cloudops.io/monitoring: enabled
+    cloudops.io/signal-target: demo
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: demo
+  namespaceSelector:
+    matchNames:
+      - demo
+  podMetricsEndpoints:
+    - port: http
+      path: /metrics
+      interval: 15s
+      scrapeTimeout: 5s
+      honorLabels: false

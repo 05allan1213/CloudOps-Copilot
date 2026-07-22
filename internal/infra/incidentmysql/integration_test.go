@@ -270,7 +270,7 @@ func TestMySQLMigrationRepositoryAndConcurrentIngestion(t *testing.T) {
 			t.Fatal(err)
 		}
 		badApproval := remediation.Approval{PublicID: uuid.NewString(), Decision: remediation.DecisionApproved, Actor: "admin", ApprovedPlanHash: strings.Repeat("f", 64), ApprovedPatchHash: plan.ProposedPatchHash}
-		delivery := &remediation.ChangeRequest{PublicID: uuid.NewString(), Repository: plan.TargetRepository, BaseRevision: plan.TargetBaseRevision, HeadBranch: "cloudops/incident-" + remediationItem.PublicID + "/remediation-" + plan.PublicID, Status: remediation.DeliveryPending, CIStatus: remediation.CIPending, IdempotencyKey: strings.Repeat("1", 64), RowVersion: 1}
+		delivery := &remediation.ChangeRequest{PublicID: uuid.NewString(), Repository: plan.TargetRepository, BaseRevision: plan.TargetBaseRevision, HeadBranch: remediation.V3GitOpsBranch(remediationItem.PublicID, plan.PlanHash), Status: remediation.DeliveryPending, CIStatus: remediation.CIPending, IdempotencyKey: strings.Repeat("1", 64), RowVersion: 1}
 		if _, _, err := repository.ApprovePlan(ctx, plan.PublicID, plan.RowVersion, badApproval, delivery); !errors.Is(err, remediation.ErrApprovalMismatch) {
 			t.Fatalf("approval hash mismatch err=%v", err)
 		}

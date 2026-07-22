@@ -23,7 +23,7 @@ var (
 	repositoryPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 	revisionPattern   = regexp.MustCompile(`^[a-fA-F0-9]{40,64}$`)
 	sha256Pattern     = regexp.MustCompile(`^[a-f0-9]{64}$`)
-	branchPattern     = regexp.MustCompile(`^cloudops/incident-[a-f0-9-]{36}/remediation-[a-f0-9-]{36}$`)
+	branchPattern     = regexp.MustCompile(`^cloudops/incident-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/plan-[0-9a-f]{12,64}$`)
 )
 
 type Observer interface {

@@ -1,17 +1,28 @@
 # Golden E2E Harness
 
-The two public entry points are:
+The three external-GitOps entry points are:
 
 ```text
+make demo-bootstrap-pr
 make scenario-open-regression-pr
 make e2e-gitops
 ```
 
-The first command requires a clean external GitOps checkout in
+`demo-bootstrap-pr` requires explicit `GOLDEN_DEMO_IMAGE_DIGEST`,
+`GOLDEN_DEMO_SOURCE_REVISION`, and a clean external GitOps checkout in
+`GOLDEN_GITOPS_WORKTREE`. It also requires a clean CloudOps source worktree at
+that exact revision, the fixed source/GitOps origins, GitOps `HEAD` equal to
+`origin/main`, an empty base `apps/demo`, an authenticated human repository
+owner, and a remotely inspectable final GHCR digest whose OCI source/revision
+labels match CloudOps. It creates only `bootstrap/demo-manifests`, adds the
+fixed five single-document manifests, commits, pushes, and opens a draft PR. It
+never merges.
+
+`scenario-open-regression-pr` requires a clean external GitOps checkout in
 `GOLDEN_GITOPS_WORKTREE`. It uses the current human `gh` identity to create the
 fixed `REQUIRED_ENV` removal branch and PR. It never merges the PR.
 
-The second command is fail closed. It requires live GitHub Actions, separate
+`e2e-gitops` is fail closed. It requires live GitHub Actions, separate
 GitHub read/write App installation-token files, a kind context, a read-only
 Argo token, an HTTPS real-model endpoint/key file, a real oauth2-proxy browser
 cookie jar, exact digest-pinned API/Worker images, and the merged regression PR
@@ -21,6 +32,8 @@ files and are never written into evidence.
 Environment-specific inputs:
 
 - `GOLDEN_GITOPS_WORKTREE`
+- `GOLDEN_DEMO_IMAGE_DIGEST` and `GOLDEN_DEMO_SOURCE_REVISION` for
+  `demo-bootstrap-pr`
 - `GOLDEN_REGRESSION_PR`
 - `GOLDEN_GITHUB_READ_APP_TOKEN_FILE`
 - `GOLDEN_GITHUB_WRITE_APP_TOKEN_FILE`

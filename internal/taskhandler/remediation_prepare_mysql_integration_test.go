@@ -56,7 +56,7 @@ func TestMySQLRemediationPrepareLoaderBindsTaskDiagnosisEvidenceBaselineAndExact
 	git := newRemediationLoaderGitFixture(t, fixture.baselineContent, fixture.currentContent, fixture.baselineRevision)
 	policy := remediation.RestoreEnvPolicy{
 		Version: "restore-required-env-policy/v1", Repository: "acme/gitops", BaseBranch: "main",
-		AllowedPath: "apps/demo.yaml", APIVersion: "apps/v1", Namespace: "cloudops-demo",
+		AllowedPath: "apps/demo.yaml", APIVersion: "apps/v1", Namespace: "demo",
 		Workload: "demo", Container: "demo", EnvKey: "REQUIRED_ENV",
 		MaxDiffBytes: remediation.MaxV3PlanDiffBytes, MaxPostImageBytes: remediation.MaxV3PostImageBytes,
 		VerificationVersion: verification.GoldenRequiredEnvProfileID,
@@ -146,7 +146,7 @@ func insertRemediationLoaderFixture(t *testing.T, ctx context.Context, db *sql.D
 	t.Helper()
 	fixture := remediationLoaderFixture{
 		agentRunVersion: 7, agentRunPublicID: uuid.NewString(), baselineRevision: strings.Repeat("9", 40),
-		currentContent: []byte("apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: demo\n  namespace: cloudops-demo\nspec:\n  template:\n    spec:\n      containers:\n        - name: demo\n          image: example/demo@sha256:" + strings.Repeat("a", 64) + "\n"),
+		currentContent: []byte("apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: demo\n  namespace: demo\nspec:\n  template:\n    spec:\n      containers:\n        - name: demo\n          image: example/demo@sha256:" + strings.Repeat("a", 64) + "\n"),
 	}
 	fixture.baselineContent = append(append([]byte(nil), fixture.currentContent...), []byte("          env:\n            - name: REQUIRED_ENV\n              value: healthy\n")...)
 	incidentPublicID := uuid.NewString()
@@ -154,7 +154,7 @@ func insertRemediationLoaderFixture(t *testing.T, ctx context.Context, db *sql.D
  (public_id, fingerprint, correlation_key, correlation_key_version, cluster, namespace,
   service_name, environment, target_kind, target_name, severity, status, summary,
   first_seen_at, last_seen_at, version, domain_schema_version, v3_status, cycle_no)
-VALUES (?, ?, ?, 2, 'kind-v3', 'cloudops-demo', 'demo', 'development', 'Deployment',
+VALUES (?, ?, ?, 2, 'kind-v3', 'demo', 'demo', 'development', 'Deployment',
         'demo', 'warning', 'DIAGNOSING', 'remediation loader fixture', ?, ?, 2, 3, 'investigating', 1)`,
 		incidentPublicID, "remediation-loader-"+uuid.NewString(), "v2:"+strings.Repeat("a", 64), now.Add(-2*time.Minute), now.Add(-2*time.Minute))
 	if err != nil {
@@ -229,7 +229,7 @@ VALUES (?, ?, 3, 1, ?, 'agent_observation', ?, 'agent_step', ?, 'fixture.read',
   repository, base_branch, target_path, source_revision, image_digest, gitops_revision,
   config_hash, verification_policy_version, verification_hash, status, row_version,
   verified_at, created_at, updated_at)
-VALUES (?, 3, 1, ?, 'kind-v3', 'development', 'cloudops-demo', 'Deployment', 'demo', 'demo',
+VALUES (?, 3, 1, ?, 'kind-v3', 'development', 'demo', 'Deployment', 'demo', 'demo',
         'acme/gitops', 'main', 'apps/demo.yaml', ?, ?, ?, ?, 'baseline-health/v1', ?,
         'active', 1, ?, ?, ?)`, uuid.NewString(), strings.Repeat("b", 64), strings.Repeat("c", 40),
 		"sha256:"+strings.Repeat("d", 64), fixture.baselineRevision, configHash, strings.Repeat("e", 64),

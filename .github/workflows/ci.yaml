@@ -252,7 +252,7 @@ jobs:
             --namespace cloudops-system \
             >/tmp/cloudops-platform-rendered.yaml
           helm template cloudops-demo server-monitor/charts/cloudops-demo \
-            --namespace cloudops-demo \
+            --namespace demo \
             >/tmp/cloudops-demo-rendered.yaml
 
       - name: Validate rendered Kubernetes schema
@@ -294,14 +294,14 @@ jobs:
             count_resource("Job"; "cloudops-migrate") == 1 and
             count_resource("ServiceMonitor"; "cloudops-api") == 1 and
             count_resource("PrometheusRule"; "cloudops-api") == 1 and
-            count_resource("Deployment"; "cloudops-demo-workload") == 1 and
-            count_resource("Service"; "cloudops-demo-workload") == 1 and
+            count_resource("Deployment"; "demo") == 1 and
+            count_resource("Service"; "demo") == 1 and
             count_resource("Service"; "demo-diagnostics") == 1 and
-            count_resource("PodMonitor"; "cloudops-demo-workload") == 1 and
-            count_resource("PrometheusRule"; "cloudops-demo-workload") == 1 and
+            count_resource("PodMonitor"; "demo") == 1 and
+            count_resource("PrometheusRule"; "demo") == 1 and
             count_resource("Job"; "cloudops-demo-load-generator") == 1 and
-            ([.[] | select(.kind == "Service" and .metadata.namespace == "cloudops-demo") | .metadata.name] | sort) == ["cloudops-demo-workload", "demo-diagnostics"] and
-            ([.[] | select(.kind == "Deployment" and .metadata.name == "cloudops-demo-workload")][0].spec.replicas) == 2 and
+            ([.[] | select(.kind == "Service" and .metadata.namespace == "demo") | .metadata.name] | sort) == ["demo", "demo-diagnostics"] and
+            ([.[] | select(.kind == "Deployment" and .metadata.name == "demo")][0].spec.replicas) == 2 and
             count_resource("Deployment"; "cloudops-worker") == 0 and
             ([.[] | select(.kind == "Secret")] | length) == 0 and
             ([.[] | select(.metadata.name as $name |

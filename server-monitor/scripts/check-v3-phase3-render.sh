@@ -35,11 +35,11 @@ has_resource StatefulSet mysql
 has_resource ConfigMap cloudops-mysql-bootstrap
 has_resource ServiceMonitor cloudops-api
 has_resource PrometheusRule cloudops-api
-has_resource Deployment cloudops-demo-workload
-has_resource Service cloudops-demo-workload
+has_resource Deployment demo
+has_resource Service demo
 has_resource Service demo-diagnostics
-has_resource PodMonitor cloudops-demo-workload
-has_resource PrometheusRule cloudops-demo-workload
+has_resource PodMonitor demo
+has_resource PrometheusRule demo
 has_resource Job cloudops-demo-load-generator
 
 for platform_resource in \
@@ -140,7 +140,7 @@ jq -e '
 }
 
 jq -e '
-  [.[] | select(.kind == "Role" and (.metadata.name == "cloudops-filebeat-discovery" or .metadata.name == "cloudops-otel-k8sattributes")) | .metadata.namespace] | sort | unique == ["cloudops-demo", "cloudops-system"]
+  [.[] | select(.kind == "Role" and (.metadata.name == "cloudops-filebeat-discovery" or .metadata.name == "cloudops-otel-k8sattributes")) | .metadata.namespace] | sort | unique == ["cloudops-system", "demo"]
 ' <<<"${platform_documents}" >/dev/null || {
   printf 'observability Roles must exist only in the CloudOps and Demo namespaces\n' >&2
   exit 1
@@ -151,7 +151,7 @@ jq -e '
   | $beat.spec.type == "filebeat"
   and ($beat.spec.config["filebeat.autodiscover"].providers | length == 2)
   and (($beat.spec.config["filebeat.autodiscover"].providers | map(.scope) | unique) == ["node"])
-  and (($beat.spec.config["filebeat.autodiscover"].providers | map(.namespace) | sort) == ["cloudops-demo", "cloudops-system"])
+  and (($beat.spec.config["filebeat.autodiscover"].providers | map(.namespace) | sort) == ["cloudops-system", "demo"])
   and all($beat.spec.config["filebeat.autodiscover"].providers[];
     (.["hints.enabled"] == false) and
     all(.templates[].config[];
@@ -184,7 +184,7 @@ jq -e '
   (.service.pipelines.traces.processors | index("transform/sanitize_k8s_identity") != null) and
   (.service.pipelines.traces.processors | index("filter/allowed_namespaces") != null) and
   .processors."k8sattributes/cloudops".filter.namespace == "cloudops-system" and
-  .processors."k8sattributes/demo".filter.namespace == "cloudops-demo" and
+  .processors."k8sattributes/demo".filter.namespace == "demo" and
   (.processors."transform/sanitize_k8s_identity".trace_statements[0].statements | index("delete_key(attributes, \"k8s.namespace.name\")") != null) and
   (.processors."transform/sanitize_k8s_identity".trace_statements[0].statements | index("delete_key(attributes, \"k8s.workload.name\")") != null) and
   (.processors."filter/allowed_namespaces".trace_conditions | length == 1) and
@@ -241,13 +241,22 @@ jq -e '
 ' <<<"${documents}" >/dev/null
 
 jq -e '
-  [.[] | select(.kind == "Deployment" and .metadata.name == "cloudops-demo-workload")][0]
-  | .metadata.namespace == "cloudops-demo"
+  [.[] | select(.kind == "Deployment" and .metadata.name == "demo")][0]
+  | .metadata.namespace == "demo"
   and .spec.replicas == 2
+  and .spec.selector == {"matchLabels":{"app.kubernetes.io/name":"demo"}}
   and .spec.template.spec.automountServiceAccountToken == false
+  and .spec.template.spec.securityContext.runAsNonRoot == true
+  and .spec.template.spec.securityContext.seccompProfile == {"type":"RuntimeDefault"}
+  and .spec.template.spec.containers[0].name == "demo"
   and .spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem == true
+  and .spec.template.spec.containers[0].securityContext.runAsNonRoot == true
+  and .spec.template.spec.containers[0].securityContext.seccompProfile == {"type":"RuntimeDefault"}
+  and .spec.template.spec.containers[0].securityContext.capabilities == {"drop":["ALL"]}
   and any(.spec.template.spec.containers[0].env[]; .name == "REQUIRED_ENV" and (.value | length > 0))
-  and any(.spec.template.spec.containers[0].env[]; .name == "K8S_POD_UID" and .valueFrom.fieldRef.fieldPath == "metadata.uid")
+  and any(.spec.template.spec.containers[0].env[]; .name == "K8S_NAMESPACE" and .valueFrom.fieldRef == {"apiVersion":"v1","fieldPath":"metadata.namespace"})
+  and any(.spec.template.spec.containers[0].env[]; .name == "K8S_POD_NAME" and .valueFrom.fieldRef == {"apiVersion":"v1","fieldPath":"metadata.name"})
+  and any(.spec.template.spec.containers[0].env[]; .name == "K8S_POD_UID" and .valueFrom.fieldRef == {"apiVersion":"v1","fieldPath":"metadata.uid"})
   and any(.spec.template.spec.containers[0].env[]; .name == "TRACE_OTLP_ENDPOINT" and .value == "cloudops-otel-collector.cloudops-system.svc.cluster.local:4317")
   and any(.spec.template.spec.containers[0].env[]; .name == "TRACE_SAMPLE_RATE" and .value == "1")
   and .spec.template.spec.containers[0].livenessProbe.httpGet.path == "/livez"
@@ -255,14 +264,15 @@ jq -e '
 ' <<<"${documents}" >/dev/null
 
 jq -e '
-  [.[] | select(.kind == "Service" and .metadata.namespace == "cloudops-demo") | .metadata.name] | sort
-  == ["cloudops-demo-workload", "demo-diagnostics"]
+  [.[] | select(.kind == "Service" and .metadata.namespace == "demo") | .metadata.name] | sort
+  == ["demo", "demo-diagnostics"]
 ' <<<"${documents}" >/dev/null
 
 jq -e '
-  [.[] | select(.kind == "Service" and .metadata.name == "cloudops-demo-workload")][0]
+  [.[] | select(.kind == "Service" and .metadata.name == "demo")][0]
   | .spec.type == "ClusterIP"
   and ((.spec.publishNotReadyAddresses // false) == false)
+  and .spec.selector == {"app.kubernetes.io/name":"demo"}
   and (.spec.ports | length == 1)
   and .spec.ports[0].name == "http"
 ' <<<"${documents}" >/dev/null
@@ -271,28 +281,31 @@ jq -e '
   [.[] | select(.kind == "Service" and .metadata.name == "demo-diagnostics")][0]
   | .spec.type == "ClusterIP"
   and .spec.publishNotReadyAddresses == true
+  and .spec.selector == {"app.kubernetes.io/name":"demo"}
   and (.spec.ports | length == 1)
   and .spec.ports[0].name == "http"
 ' <<<"${documents}" >/dev/null
 
 jq -e '
-  [.[] | select(.kind == "PodMonitor" and .metadata.name == "cloudops-demo-workload")][0]
-  | .metadata.namespace == "cloudops-demo"
+  [.[] | select(.kind == "PodMonitor" and .metadata.name == "demo")][0]
+  | .metadata.namespace == "demo"
   and .metadata.labels["cloudops.io/monitoring"] == "enabled"
+  and .spec.selector == {"matchLabels":{"app.kubernetes.io/name":"demo"}}
+  and .spec.namespaceSelector == {"matchNames":["demo"]}
   and .spec.podMetricsEndpoints[0].path == "/metrics"
 ' <<<"${documents}" >/dev/null
 
 jq -e '
-  [.[] | select(.kind == "PrometheusRule" and .metadata.name == "cloudops-demo-workload")][0]
-  | .metadata.namespace == "cloudops-demo"
+  [.[] | select(.kind == "PrometheusRule" and .metadata.name == "demo")][0]
+  | .metadata.namespace == "demo"
   and .metadata.labels["cloudops.io/monitoring"] == "enabled"
-  and any(.spec.groups[].rules[]; .alert == "CloudOpsDemoRequiredEnvMissing" and .labels.signal_target == "cloudops-demo")
-  and any(.spec.groups[].rules[]; .alert == "CloudOpsDemoErrorRateHigh" and .labels.signal_target == "cloudops-demo")
+  and any(.spec.groups[].rules[]; .alert == "CloudOpsDemoRequiredEnvMissing" and .labels.signal_target == "demo" and .labels.namespace == "demo" and .labels.service == "demo" and .labels.deployment == "demo")
+  and any(.spec.groups[].rules[]; .alert == "CloudOpsDemoErrorRateHigh" and .labels.signal_target == "demo" and .labels.namespace == "demo" and .labels.service == "demo" and .labels.deployment == "demo")
 ' <<<"${documents}" >/dev/null
 
 jq -e '
   [.[] | select(.kind == "Job" and .metadata.name == "cloudops-demo-load-generator")][0]
-  | .metadata.namespace == "cloudops-demo"
+  | .metadata.namespace == "demo"
   and .metadata.annotations["helm.sh/hook"] == "test"
   and .metadata.annotations["cloudops.io/load-rate"] == "5-rps"
   and .metadata.annotations["cloudops.io/request-timeout"] == "2s"
@@ -301,7 +314,7 @@ jq -e '
   and (.spec.template.spec.containers[0].args[0] | contains("http://demo-diagnostics:8080/") and contains("sleep 0.2"))
 ' <<<"${documents}" >/dev/null
 
-if jq -e 'any(.[]; .metadata.namespace == "cloudops-demo" and (.kind == "Ingress" or .kind == "ServiceAccount" or .kind == "Role" or .kind == "RoleBinding"))' <<<"${application_documents}" >/dev/null; then
+if jq -e 'any(.[]; .metadata.namespace == "demo" and (.kind == "Ingress" or .kind == "ServiceAccount" or .kind == "Role" or .kind == "RoleBinding"))' <<<"${application_documents}" >/dev/null; then
   printf 'demo profile rendered a forbidden ingress or RBAC resource\n' >&2
   exit 1
 fi

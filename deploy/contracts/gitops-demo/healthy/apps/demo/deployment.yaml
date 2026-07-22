@@ -1,11 +1,10 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cloudops-demo-workload
-  namespace: cloudops-demo
+  name: demo
+  namespace: demo
   labels:
-    app.kubernetes.io/name: cloudops-demo-workload
-    app.kubernetes.io/instance: cloudops-demo
+    app.kubernetes.io/name: demo
     app.kubernetes.io/component: workload
 spec:
   replicas: 2
@@ -18,13 +17,11 @@ spec:
       maxSurge: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: cloudops-demo-workload
-      app.kubernetes.io/instance: cloudops-demo
+      app.kubernetes.io/name: demo
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: cloudops-demo-workload
-        app.kubernetes.io/instance: cloudops-demo
+        app.kubernetes.io/name: demo
         app.kubernetes.io/component: workload
         cloudops.io/monitoring: enabled
     spec:
@@ -35,12 +32,15 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: cloudops-demo
-          image: ghcr.io/05allan1213/cloudops-demo:contract-fixture
+        - name: demo
+          image: cloudops-demo@sha256:3c2008e41d439325d8b2fff920abf7dafa7d0ad9ad5f92dd1b8af34bd90f1e5d
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
             capabilities:
               drop:
                 - ALL
@@ -48,20 +48,27 @@ spec:
             - name: REQUIRED_ENV
               value: baseline-present
             - name: SERVICE_VERSION
-              value: contract-fixture
+              value: 0431b71568ae62d96c56aa2f48275511aaccaa52
             - name: SOURCE_REVISION
-              value: contract-fixture
+              value: 0431b71568ae62d96c56aa2f48275511aaccaa52
             - name: DEPLOYMENT_ENVIRONMENT
               value: local-demo
             - name: K8S_CLUSTER_NAME
               value: kind-cloudops-v3
-            - name: K8S_NAMESPACE_NAME
+            - name: K8S_NAMESPACE
               valueFrom:
                 fieldRef:
+                  apiVersion: v1
                   fieldPath: metadata.namespace
+            - name: K8S_POD_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.name
             - name: K8S_POD_UID
               valueFrom:
                 fieldRef:
+                  apiVersion: v1
                   fieldPath: metadata.uid
             - name: TRACE_OTLP_ENDPOINT
               value: cloudops-otel-collector.cloudops-system.svc.cluster.local:4317

@@ -77,7 +77,7 @@ func TestWorkerRejectsBaseAndPatchDriftBeforeWrite(t *testing.T) {
 	}
 	plan := &remediation.RemediationPlan{PublicID: "22222222-2222-4222-8222-222222222222", IncidentPublicID: "11111111-1111-4111-8111-111111111111", TargetRepository: "acme/gitops", TargetBaseRevision: strings.Repeat("a", 40), TargetPath: "apps/api.yaml", OperationType: remediation.OperationSetReplicas, Parameters: params, ExpectedBeforeHash: patch.BeforeHash, ProposedPatchHash: strings.Repeat("f", 64)}
 	plan.PlanHash, _ = remediation.ComputePlanHash(*plan)
-	delivery := &remediation.ChangeRequest{ID: 1, RowVersion: 2, Repository: "acme/gitops", HeadBranch: "cloudops/incident-11111111-1111-4111-8111-111111111111/remediation-22222222-2222-4222-8222-222222222222"}
+	delivery := &remediation.ChangeRequest{ID: 1, RowVersion: 2, Repository: "acme/gitops", HeadBranch: "cloudops/incident-11111111-1111-4111-8111-111111111111/plan-" + strings.Repeat("2", 64)}
 	repo := &workerRepository{delivery: delivery, plan: plan}
 	github := &workerGitHub{base: base}
 	worker, err := NewWorker(WorkerConfig{Enabled: true, Owner: "worker", PollInterval: time.Second, Lease: 10 * time.Second, Repository: repo, GitHub: github, BaseBranches: map[string]string{"acme/gitops": "main"}})

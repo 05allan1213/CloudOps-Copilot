@@ -163,7 +163,7 @@ func phasedRequest(baseSHA, baseBlobSHA, treeSHA string, baseContent, postConten
 	return remediation.PhasedDeliveryRequest{
 		DeliveryRequest: remediation.DeliveryRequest{
 			Repository: "acme/gitops", BaseRevision: baseSHA, BaseBranch: "main", Path: "apps/demo.yaml",
-			Content: postContent, Branch: "cloudops/incident-" + incidentID + "/remediation-" + planID,
+			Content: postContent, Branch: "cloudops/incident-" + incidentID + "/plan-" + strings.Repeat("2", 64),
 			CommitTitle: "cloudops: approved remediation " + planID, PRTitle: "[Draft] restore REQUIRED_ENV",
 			PRBody: "Bounded exact diff.\n\n" + marker, Marker: marker,
 		},

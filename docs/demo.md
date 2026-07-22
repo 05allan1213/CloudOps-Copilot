@@ -11,6 +11,7 @@ V3 只有一个演示场景：GitOps 删除 Demo Deployment 的非 Secret `REQUI
 ```bash
 make preflight
 make demo-up
+make demo-bootstrap-pr
 make scenario-open-regression-pr
 make e2e-gitops
 make demo-down
@@ -18,6 +19,7 @@ make demo-down
 
 - `preflight`：Phase 3 disposable kind 工具/资源/文件检查，不修改集群。
 - `demo-up`：创建 disposable kind 并安装 Phase 3 platform/API/Demo/observability profile。
+- `demo-bootstrap-pr`：从 clean CloudOps HEAD 和 exact `origin/main` GitOps checkout 生成固定五文件 bootstrap 分支，push并创建 draft PR；绝不 merge。
 - `scenario-open-regression-pr`：用本机 human `gh` 身份在外部 GitOps repo创建固定 PR；不 merge。
 - `e2e-gitops`：真实系统 fail-closed verifier；会运行 Helm-owned load generator并写 exact-SHA manifest。
 - `demo-down`：只删除显式命名的 disposable kind cluster；不会自动执行。
@@ -54,7 +56,30 @@ Load generator不属于 Argo desired state、不常驻、不用 raw kubectl创�
 
 仓库中的 [healthy/regression fixtures](../deploy/contracts/gitops-demo/) 只用于 contract validation，不会由 bootstrap apply，也不能替代外部 GitOps repo、human merge、GitHub Actions 或 Argo deployed revision。
 
-`scenario-open-regression-pr` 会验证外部 checkout位于 exact `origin/main`、worktree clean、actor不是 bot，并证明 diff 只移除一个 `REQUIRED_ENV`。它只 push branch/create PR；merge必须由人完成。
+外部 required-check 是 bootstrap 合同的唯一事实源：branch 固定为 `bootstrap/demo-manifests`，namespace、Deployment、normal Service、PodMonitor、PrometheusRule、selector 和 container 均为 `demo`，另有 Service `demo-diagnostics`；PR 只能新增以下五个单文档文件：
+
+```text
+apps/demo/deployment.yaml
+apps/demo/diagnostics-service.yaml
+apps/demo/podmonitor.yaml
+apps/demo/prometheusrule.yaml
+apps/demo/service.yaml
+```
+
+运行 bootstrap 前必须显式提供：
+
+```bash
+export GOLDEN_GITOPS_WORKTREE=/absolute/path/to/cloudops-gitops-demo
+export GOLDEN_DEMO_IMAGE_DIGEST=sha256:<final-64-hex-digest>
+export GOLDEN_DEMO_SOURCE_REVISION=<clean-cloudops-head-40-hex-sha>
+make demo-bootstrap-pr
+```
+
+命令会检查 CloudOps/GitOps worktree clean、CloudOps fixed origin、GitOps exact `origin/main`、base `apps/demo` 为空、human repository-owner `gh` identity、远端 GHCR manifest和 OCI source/revision labels、精确文件 inventory、单文档、安全上下文和 allowlist。它只 commit/push固定 branch并创建 draft PR，绝不 merge，也不调用 kubectl或 Argo mutation。
+
+保留名说明：Argo Application/AppProject、Helm chart/release 和 Demo image repository 仍可使用产品名 `cloudops-demo`，它们不是 Kubernetes target identity。`cloudops-demo-workload` 只保留在明确标注的 V2 FastDemo、controlled-direct 非 GitOps测试以及历史 evidence/eval/migration 中；这些区域不属于 V3 Golden external target，不能作为本合同证据。
+
+`scenario-open-regression-pr` 会验证外部 checkout位于 exact `origin/main`、worktree clean、actor是 human repository owner，并证明 diff 只移除一个 `REQUIRED_ENV`。它只 push branch/create PR；merge必须由人完成。
 
 ## 5. Golden verifier
 
@@ -104,4 +129,4 @@ make argocd-contracts
 make golden-e2e-contracts
 ```
 
-`make demo-up`、`make scenario-open-regression-pr`、`make e2e-gitops` 和 `make demo-down` 会改变本地集群或外部 Git repository 状态，只能由操作者在确认 context、凭据、worktree 和 cleanup plan 后显式执行。
+`make demo-up`、`make demo-bootstrap-pr`、`make scenario-open-regression-pr`、`make e2e-gitops` 和 `make demo-down` 会改变本地集群或外部 Git repository 状态，只能由操作者在确认 context、凭据、worktree 和 cleanup plan 后显式执行。

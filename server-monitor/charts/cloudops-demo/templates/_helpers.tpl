@@ -1,6 +1,6 @@
 {{/* Common labels for the GitOps-owned demo resources. */}}
 {{- define "cloudops-demo.labels" -}}
-app.kubernetes.io/name: cloudops-demo-workload
+app.kubernetes.io/name: demo
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
@@ -8,8 +8,7 @@ helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
 {{- end }}
 
 {{- define "cloudops-demo.selectorLabels" -}}
-app.kubernetes.io/name: cloudops-demo-workload
-app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/name: demo
 {{- end }}
 
 {{- define "cloudops-demo.image" -}}

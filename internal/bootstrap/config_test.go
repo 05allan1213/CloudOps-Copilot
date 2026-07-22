@@ -2,6 +2,8 @@ package bootstrap
 
 import (
 	"testing"
+
+	"github.com/05allan1213/CloudOps-Copilot/internal/cutover"
 )
 
 func TestLoadProcessSpecificConfig(t *testing.T) {
@@ -15,7 +17,7 @@ func TestLoadProcessSpecificConfig(t *testing.T) {
 	if workerConfig.ManagementAddr != "127.0.0.1:18081" {
 		t.Fatalf("management address=%q", workerConfig.ManagementAddr)
 	}
-	if string(workerConfig.RuntimeGeneration) != "compatibility" {
+	if workerConfig.RuntimeGeneration != cutover.CurrentRuntimeGeneration {
 		t.Fatalf("runtime generation=%q", workerConfig.RuntimeGeneration)
 	}
 }

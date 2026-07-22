@@ -30,13 +30,14 @@ PROFILE_CONTRACT_SCRIPT := server-monitor/scripts/check-cloudops-profile-render.
 ARGO_GITOPS_CONTRACT_SCRIPT := server-monitor/scripts/check-argocd-gitops-contract.sh
 GOLDEN_E2E_SCRIPT := server-monitor/scripts/golden-e2e.sh
 GOLDEN_E2E_CONTRACT_SCRIPT := server-monitor/scripts/check-golden-e2e-contract.sh
+GITOPS_BOOTSTRAP_SCRIPT := server-monitor/scripts/gitops-demo-bootstrap.sh
 ARGO_PROJECT_MANIFEST := deploy/platform/argocd/appproject.yaml
 ARGO_APPLICATION_MANIFEST := deploy/platform/argocd/application.yaml
 GITOPS_HEALTHY_DIR := deploy/contracts/gitops-demo/healthy/apps/demo
 GITOPS_REGRESSION_DIR := deploy/contracts/gitops-demo/regression/apps/demo
 VERSION_LOCK_FILE := server-monitor/deploy/kind/versions.env
 GO_FILES := $(shell find cmd internal migrations -type f -name '*.go' -print 2>/dev/null | sort)
-SHELL_FILES := $(shell git ls-files '*.sh' | sort)
+SHELL_FILES := $(sort $(shell git ls-files '*.sh') $(GITOPS_BOOTSTRAP_SCRIPT))
 
 .PHONY: help build build-go build-api build-worker build-migrate build-demo build-frontend \
 	test test-go test-race test-frontend frontend-lint frontend-typecheck frontend-unit \
@@ -45,7 +46,7 @@ SHELL_FILES := $(shell git ls-files '*.sh' | sort)
 	kubeconform-raw promtool compose-config static-checks check docker-build \
 	docker-build-api docker-build-worker docker-build-migrate docker-build-demo frontend-install \
 	preflight demo-up demo-down kind-render kind-check helm-contracts argocd-contracts \
-	scenario-open-regression-pr e2e-gitops golden-e2e-contracts
+	demo-bootstrap-pr scenario-open-regression-pr e2e-gitops golden-e2e-contracts
 
 define require_cmd
 	@command -v $(1) >/dev/null 2>&1 || { echo "missing command: $(1)" >&2; exit 1; }
@@ -161,7 +162,7 @@ helm-template:
 		$(HELM) template cloudops-$$profile $(CHART_DIR) --namespace cloudops-system --values $(CHART_DIR)/values-$$profile.yaml >/dev/null; \
 	done
 	$(HELM) template cloudops-platform $(PLATFORM_CHART_DIR)
-	$(HELM) template cloudops-demo $(DEMO_CHART_DIR) --namespace cloudops-demo
+	$(HELM) template cloudops-demo $(DEMO_CHART_DIR) --namespace demo
 
 helm-contracts:
 	$(call require_cmd,$(HELM))
@@ -187,22 +188,19 @@ argocd-contracts: ## Validate canonical Argo objects and contract-only GitOps fi
 		$(YQ) -o=json -I=0 '.' $(ARGO_PROJECT_MANIFEST) >"$$tmp_dir/appproject.json"; \
 		$(YQ) -o=json -I=0 '.' $(ARGO_APPLICATION_MANIFEST) >"$$tmp_dir/application.json"; \
 		$(YQ) -o=json -I=0 '.' $(CHART_DIR)/values.yaml >"$$tmp_dir/values.json"; \
-		for manifest in $(GITOPS_HEALTHY_DIR)/*.yaml; do \
-			$(YQ) -o=json -I=0 'select(.kind != null)' "$$manifest"; \
-		done | $(JQ) -s '.' >"$$tmp_dir/healthy.json"; \
-		for manifest in $(GITOPS_REGRESSION_DIR)/*.yaml; do \
-			$(YQ) -o=json -I=0 'select(.kind != null)' "$$manifest"; \
-		done | $(JQ) -s '.' >"$$tmp_dir/regression.json"; \
 		bash $(ARGO_GITOPS_CONTRACT_SCRIPT) \
 			"$$tmp_dir/appproject.json" "$$tmp_dir/application.json" \
-			"$$tmp_dir/values.json" "$$tmp_dir/healthy.json" \
-			"$$tmp_dir/regression.json" $(VERSION_LOCK_FILE); \
+			"$$tmp_dir/values.json" $(GITOPS_HEALTHY_DIR) \
+			$(GITOPS_REGRESSION_DIR) $(VERSION_LOCK_FILE); \
 		$(KUBECONFORM) -strict -summary -ignore-missing-schemas \
 			$(ARGO_PROJECT_MANIFEST) $(ARGO_APPLICATION_MANIFEST) \
 			$(GITOPS_HEALTHY_DIR)/*.yaml $(GITOPS_REGRESSION_DIR)/*.yaml
 
 golden-e2e-contracts: ## Validate the fail-closed Golden E2E command and evidence contracts without external writes.
 	bash $(GOLDEN_E2E_CONTRACT_SCRIPT)
+
+demo-bootstrap-pr: ## Push the fixed five-file demo bootstrap branch and create a draft PR; never merge.
+	bash $(GITOPS_BOOTSTRAP_SCRIPT)
 
 kind-render: ## Render and enforce the V3 phase3 kind/Helm profile.
 	bash $(V3_KIND_SCRIPT) render
@@ -236,7 +234,7 @@ kubeconform-chart:
 			$(KUBECONFORM) -strict -summary -ignore-missing-schemas; \
 	done
 	$(HELM) template cloudops-platform $(PLATFORM_CHART_DIR) | $(KUBECONFORM) -strict -summary -ignore-missing-schemas
-	$(HELM) template cloudops-demo $(DEMO_CHART_DIR) --namespace cloudops-demo | $(KUBECONFORM) -strict -summary -ignore-missing-schemas
+	$(HELM) template cloudops-demo $(DEMO_CHART_DIR) --namespace demo | $(KUBECONFORM) -strict -summary -ignore-missing-schemas
 
 kubeconform-raw:
 	$(call require_cmd,$(KUBECONFORM))

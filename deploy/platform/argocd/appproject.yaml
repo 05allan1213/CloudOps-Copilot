@@ -9,7 +9,7 @@ spec:
     - https://github.com/05allan1213/cloudops-gitops-demo.git
   destinations:
     - server: https://kubernetes.default.svc
-      namespace: cloudops-demo
+      namespace: demo
   clusterResourceWhitelist: []
   namespaceResourceWhitelist:
     - group: apps
