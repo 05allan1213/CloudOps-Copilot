@@ -30,7 +30,7 @@ func TestMySQLPhase7AMigrationBackfillConversionAuditAndMarkerContracts(t *testi
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
 	admin := openPhase7ATestDB(t, adminDSN)
-	defer admin.Close()
+	defer closePhase7ATestDB(t, "admin", admin)
 	var mysqlVersion string
 	if err := admin.QueryRowContext(ctx, "SELECT VERSION()").Scan(&mysqlVersion); err != nil {
 		t.Fatal(err)
@@ -48,7 +48,7 @@ func TestMySQLPhase7AMigrationBackfillConversionAuditAndMarkerContracts(t *testi
 	}
 
 	fresh := openPhase7ATestDB(t, phase7ATestDatabaseDSN(t, adminDSN, freshName))
-	defer fresh.Close()
+	defer closePhase7ATestDB(t, "fresh", fresh)
 	freshProvider := newPhase7ATestProvider(t, fresh)
 	if _, err := freshProvider.Up(ctx); err != nil {
 		t.Fatalf("fresh 00001->00017: %v", err)
@@ -57,7 +57,7 @@ func TestMySQLPhase7AMigrationBackfillConversionAuditAndMarkerContracts(t *testi
 	assertFreshPreparationDetectsPostPassDrift(t, ctx, fresh)
 
 	existing := openPhase7ATestDB(t, phase7ATestDatabaseDSN(t, adminDSN, existingName))
-	defer existing.Close()
+	defer closePhase7ATestDB(t, "existing", existing)
 	existingProvider := newPhase7ATestProvider(t, existing)
 	if _, err := existingProvider.UpTo(ctx, 16); err != nil {
 		t.Fatalf("existing schema through 00016: %v", err)
@@ -581,7 +581,7 @@ WHERE operation=? AND batch_no=1 ORDER BY attempt`, BackfillOperationPrefix+"inc
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
+	defer closePhase7ATestRows(t, "BACKFILL-V3 retry chain", rows)
 	type attemptRow struct {
 		attempt  uint64
 		status   string
@@ -758,10 +758,26 @@ func openPhase7ATestDB(t *testing.T, dsn string) *sql.DB {
 		t.Fatal(err)
 	}
 	if err := db.Ping(); err != nil {
-		db.Close()
+		if closeErr := db.Close(); closeErr != nil {
+			t.Fatal(errors.Join(err, fmt.Errorf("close Phase 7A test database after failed ping: %w", closeErr)))
+		}
 		t.Fatal(err)
 	}
 	return db
+}
+
+func closePhase7ATestDB(t *testing.T, name string, db *sql.DB) {
+	t.Helper()
+	if err := db.Close(); err != nil {
+		t.Errorf("close Phase 7A %s test database: %v", name, err)
+	}
+}
+
+func closePhase7ATestRows(t *testing.T, name string, rows *sql.Rows) {
+	t.Helper()
+	if err := rows.Close(); err != nil {
+		t.Errorf("close Phase 7A %s rows: %v", name, err)
+	}
 }
 
 func phase7ATestDatabaseDSN(t *testing.T, adminDSN, database string) string {

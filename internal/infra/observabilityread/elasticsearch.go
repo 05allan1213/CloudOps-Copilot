@@ -112,7 +112,7 @@ func NewElasticsearch(cfg ElasticConfig) (*Elastic, error) {
 				pool = x509.NewCertPool()
 			}
 			if !pool.AppendCertsFromPEM(ca) {
-				return nil, errors.New("Elasticsearch CA contains no certificate")
+				return nil, errors.New("elasticsearch CA contains no certificate")
 			}
 			transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: pool}
 		}
@@ -183,11 +183,12 @@ func (e *Elastic) Search(ctx context.Context, query ElasticQuery) (verification.
 		map[string]any{"prefix": map[string]any{"kubernetes.pod.name": query.Workload + "-"}},
 		map[string]any{"match_phrase": map[string]any{"message": query.Keyword}},
 	}
-	if query.Severity == "error" {
+	switch query.Severity {
+	case "error":
 		filters = append(filters, map[string]any{"bool": map[string]any{"should": []any{
 			map[string]any{"term": map[string]any{"log.level": "error"}}, map[string]any{"match_phrase": map[string]any{"message": "\"level\":\"error\""}},
 		}, "minimum_should_match": 1}})
-	} else if query.Severity == "warning" {
+	case "warning":
 		filters = append(filters, map[string]any{"bool": map[string]any{"should": []any{
 			map[string]any{"term": map[string]any{"log.level": "warn"}}, map[string]any{"term": map[string]any{"log.level": "warning"}},
 		}, "minimum_should_match": 1}})

@@ -33,7 +33,7 @@ type legacyChangeRequestRow struct {
 	snapshotHash    string
 }
 
-func convertChangeRequests(ctx context.Context, tx *sql.Tx, reconciler LegacyChangeReconciler, at time.Time) (conversionSummary, error) {
+func convertChangeRequests(ctx context.Context, tx *sql.Tx, reconciler LegacyChangeReconciler, at time.Time) (returnSummary conversionSummary, retErr error) {
 	if tx == nil {
 		return conversionSummary{}, errors.New("legacy ChangeRequest converter transaction is required")
 	}
@@ -51,7 +51,7 @@ WHERE c.domain_schema_version IS NULL ORDER BY c.id FOR UPDATE`)
 	if err != nil {
 		return conversionSummary{}, err
 	}
-	defer rows.Close()
+	defer joinRowsCloseError(&retErr, rows, "close legacy ChangeRequest rows")
 	items := make([]legacyChangeRequestRow, 0)
 	for rows.Next() {
 		var row legacyChangeRequestRow

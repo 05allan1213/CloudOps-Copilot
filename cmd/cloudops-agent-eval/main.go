@@ -98,7 +98,7 @@ func run(options options) error {
 		return err
 	}
 	if manifest.DatasetID != dataset.DatasetID {
-		return errors.New("Agent Eval manifest dataset ID does not match the loaded dataset")
+		return errors.New("agent eval manifest dataset ID does not match the loaded dataset")
 	}
 	if err := eval.VerifyManifest(manifest, paths.dataset, paths.oracle, paths.split, paths.metrics, contracts, promptMaterial, paths.reducer, paths.runner, paths.runtimeSources); err != nil {
 		return err

@@ -304,7 +304,7 @@ func compareExisting(row baselineRow, snapshot baseline.Snapshot) error {
 	return nil
 }
 
-func loadObservationIDs(ctx context.Context, tx baseline.Transaction, rowID uint64, snapshot baseline.Snapshot) ([]uint64, error) {
+func loadObservationIDs(ctx context.Context, tx baseline.Transaction, rowID uint64, snapshot baseline.Snapshot) (ids []uint64, retErr error) {
 	rows, err := tx.QueryContext(ctx, `
 SELECT id, public_id, domain_schema_version, observation_schema_version, sequence_no,
        observation_type, source_identity, CAST(observed_json AS CHAR), content_hash,
@@ -315,8 +315,12 @@ ORDER BY sequence_no`, rowID)
 	if err != nil {
 		return nil, fmt.Errorf("load existing baseline observations: %w", err)
 	}
-	defer rows.Close()
-	ids := make([]uint64, 0, len(snapshot.Observations))
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("close existing baseline observation rows: %w", closeErr))
+		}
+	}()
+	ids = make([]uint64, 0, len(snapshot.Observations))
 	index := 0
 	for rows.Next() {
 		var (

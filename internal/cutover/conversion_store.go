@@ -65,7 +65,7 @@ type conversionTaskOutcome struct {
 	AntiJoin string
 }
 
-func ensureConversionTask(ctx context.Context, tx *sql.Tx, spec conversionTaskSpec, at time.Time) (conversionTaskOutcome, error) {
+func ensureConversionTask(ctx context.Context, tx *sql.Tx, spec conversionTaskSpec, at time.Time) (returnOutcome conversionTaskOutcome, retErr error) {
 	if tx == nil || spec.CycleNo == 0 || spec.CycleNo > math.MaxUint32 || spec.LegacySubjectID == 0 || spec.LegacySourceVersion == 0 || strings.TrimSpace(spec.ConverterVersion) == "" {
 		return conversionTaskOutcome{}, errors.New("legacy conversion task identity is incomplete")
 	}
@@ -103,7 +103,7 @@ ORDER BY id FOR UPDATE`, spec.IncidentID, spec.CycleNo, spec.TaskType, spec.Subj
 	if err != nil {
 		return conversionTaskOutcome{}, err
 	}
-	defer rows.Close()
+	defer joinRowsCloseError(&retErr, rows, "close legacy conversion task rows")
 	type existingTask struct {
 		id                uint64
 		queue             asyncjob.Queue
@@ -255,7 +255,7 @@ type conversionRecordInput struct {
 	CreatedAt             time.Time
 }
 
-func recordConversion(ctx context.Context, tx *sql.Tx, input conversionRecordInput) (uint64, error) {
+func recordConversion(ctx context.Context, tx *sql.Tx, input conversionRecordInput) (returnID uint64, retErr error) {
 	if tx == nil || input.SubjectID == 0 || input.IncidentID == 0 || input.CycleNo == 0 ||
 		!isSHA256(input.InputHash) || !isSHA256(input.OutputHash) || strings.TrimSpace(input.ConverterVersion) == "" ||
 		strings.TrimSpace(input.SourceTable) == "" || strings.TrimSpace(input.TargetTable) == "" {
@@ -278,7 +278,7 @@ ORDER BY attempt FOR UPDATE`, input.SubjectType, input.SubjectID, input.Converte
 	if err != nil {
 		return 0, err
 	}
-	defer rows.Close()
+	defer joinRowsCloseError(&retErr, rows, "close legacy conversion record rows")
 	var previousID, previousAttempt uint64
 	for rows.Next() {
 		var id, attempt, taskID, sourceSchema, targetSchema uint64

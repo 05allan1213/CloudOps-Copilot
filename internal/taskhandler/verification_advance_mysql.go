@@ -269,7 +269,7 @@ type verificationCheckQueryer interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }
 
-func loadVerificationChecks(ctx context.Context, queryer verificationCheckQueryer, task asyncjob.Task) ([]verification.Check, error) {
+func loadVerificationChecks(ctx context.Context, queryer verificationCheckQueryer, task asyncjob.Task) (checks []verification.Check, retErr error) {
 	rows, err := queryer.QueryContext(ctx, `
 SELECT id, public_id, verification_run_id, COALESCE(check_spec_schema_version,0), check_type, status, required_check,
 	       subject_json, expected_json, COALESCE(observed_json, JSON_OBJECT()),
@@ -285,8 +285,8 @@ ORDER BY id`, task.SubjectID, task.IncidentID, task.CycleNo)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	checks := make([]verification.Check, 0, 12)
+	defer joinRowsCloseError(&retErr, rows, "close verification check rows")
+	checks = make([]verification.Check, 0, 12)
 	for rows.Next() {
 		var (
 			check                                 verification.Check
@@ -1195,12 +1195,12 @@ func appendReportBoundary(first, latest *[]map[string]any, item map[string]any, 
 	*latest = append(*latest, item)
 }
 
-func reportEvidence(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task) ([]byte, error) {
+func reportEvidence(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task) (returnValue []byte, retErr error) {
 	rows, err := tx.QueryContext(ctx, `SELECT public_id, type, source, resource_ref, summary, facts_json, result_hash, content_hash, collected_at FROM evidence_items WHERE incident_id = ? AND cycle_no = ? AND domain_schema_version = 3 AND valid = TRUE ORDER BY collected_at, id`, task.IncidentID, task.CycleNo)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer joinRowsCloseError(&retErr, rows, "close resolution report evidence rows")
 	projection := newReportEvidenceAccumulator()
 	for rows.Next() {
 		var id, typ, source, resource, summary, resultHash, contentHash string
@@ -1443,7 +1443,7 @@ WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3`
 	return plan, decision, delivery, decisionID, baseRevision, targetRevision, nil
 }
 
-func reportDeliveryObservations(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, changeRequestPublicID string) ([]byte, error) {
+func reportDeliveryObservations(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, changeRequestPublicID string) (returnValue []byte, retErr error) {
 	if changeRequestPublicID == "" {
 		return nil, asyncjob.ErrInvalidMutation
 	}
@@ -1451,7 +1451,7 @@ func reportDeliveryObservations(ctx context.Context, tx asyncjob.DBTX, task asyn
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer joinRowsCloseError(&retErr, rows, "close delivery observation report rows")
 	type observationRecord struct {
 		id          string
 		kind        DeliveryObservationKind
@@ -1517,12 +1517,12 @@ func validDeliveryObservationKind(kind DeliveryObservationKind) bool {
 	}
 }
 
-func reportSamples(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task) ([]byte, error) {
+func reportSamples(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task) (returnValue []byte, retErr error) {
 	rows, err := tx.QueryContext(ctx, `SELECT public_id, sample_schema_version, verification_check_id, sample_sequence, status, observed_json, source_reference, reason_code, window_start_at, window_end_at, sampled_at, content_hash FROM verification_samples WHERE verification_run_id = ? AND incident_id = ? AND cycle_no = ? ORDER BY verification_check_id, sample_sequence, id LIMIT 2001`, task.SubjectID, task.IncidentID, task.CycleNo)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer joinRowsCloseError(&retErr, rows, "close verification sample report rows")
 	count := 0
 	latest := make(map[uint64]map[string]any)
 	latestIDs := make([]uint64, 0, 16)
@@ -1584,12 +1584,12 @@ func reportSamples(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task) ([
 	}, 32768)
 }
 
-func reportTimeline(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task) ([]byte, error) {
+func reportTimeline(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task) (returnValue []byte, retErr error) {
 	rows, err := tx.QueryContext(ctx, `SELECT public_id, event_type, actor_type, actor_id, summary, metadata_json, occurred_at FROM incident_events WHERE incident_id = ? AND cycle_no = ? AND domain_schema_version = 3 ORDER BY occurred_at, id`, task.IncidentID, task.CycleNo)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer joinRowsCloseError(&retErr, rows, "close incident timeline report rows")
 	const (
 		firstTimelineItems = 8
 		lastTimelineItems  = 16

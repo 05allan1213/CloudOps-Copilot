@@ -139,7 +139,7 @@ func (o *verificationAdvanceOperation) handle(ctx context.Context, execution asy
 	snapshot.Checks[checkIndex] = check
 	status, reason, terminal, commonStart := verification.CommonWindowResult(snapshot.Checks, now, snapshot.Run.DeadlineAt)
 	if !terminal && !now.Before(snapshot.Run.DeadlineAt) {
-		status, reason, terminal = verification.RunTimedOut, "verification_deadline_exceeded", true
+		status, reason = verification.RunTimedOut, "verification_deadline_exceeded"
 	}
 	return asyncjob.Succeeded(func(ctx context.Context, tx asyncjob.DBTX) error {
 		return o.cfg.Store.PersistIn(ctx, tx, task, snapshot, check, sample, status, reason, commonStart)

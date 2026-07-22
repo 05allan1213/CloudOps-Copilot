@@ -573,15 +573,15 @@ func validateService(object map[string]any, path string) error {
 func deploymentContainer(object map[string]any) (map[string]any, map[string]any, error) {
 	podSpec, ok := asMap(dig(object, "spec", "template", "spec"))
 	if !ok {
-		return nil, nil, errors.New("Deployment pod spec must be a mapping")
+		return nil, nil, errors.New("deployment pod spec must be a mapping")
 	}
 	containers, ok := asSlice(podSpec["containers"])
 	if !ok || len(containers) != 1 {
-		return nil, nil, errors.New("Deployment must contain exactly one container")
+		return nil, nil, errors.New("deployment must contain exactly one container")
 	}
 	container, ok := asMap(containers[0])
 	if !ok {
-		return nil, nil, errors.New("Deployment container must be a mapping")
+		return nil, nil, errors.New("deployment container must be a mapping")
 	}
 	return container, podSpec, nil
 }

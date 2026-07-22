@@ -267,7 +267,7 @@ FOR SHARE`, snapshot.RemediationPlanID, snapshot.ChangeRequestID, task.IncidentI
 	return contract, nil
 }
 
-func loadBaselineDeliveryEvidence(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, snapshot VerificationAdvanceSnapshot, changePublicID string) (map[DeliveryObservationKind]baselineDeliveryEvidenceProof, error) {
+func loadBaselineDeliveryEvidence(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, snapshot VerificationAdvanceSnapshot, changePublicID string) (returnProofs map[DeliveryObservationKind]baselineDeliveryEvidenceProof, retErr error) {
 	rows, err := tx.QueryContext(ctx, `
 SELECT public_id, CAST(facts_json AS CHAR), content_hash, producer_dedupe_key, collected_at
 FROM evidence_items
@@ -278,7 +278,7 @@ LIMIT 257`, task.IncidentID, task.CycleNo)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer joinRowsCloseError(&retErr, rows, "close baseline delivery evidence rows")
 	latest := make(map[DeliveryObservationKind]baselineDeliveryEvidenceProof, 4)
 	count := 0
 	for rows.Next() {
@@ -375,7 +375,7 @@ LIMIT 1 FOR UPDATE`, target.Cluster, target.Environment, target.Namespace,
 	return target, nil
 }
 
-func loadBaselineVerificationProofs(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, snapshot VerificationAdvanceSnapshot, commonStart *time.Time, verifiedAt time.Time) (map[verification.CheckType]baselineVerificationSampleProof, error) {
+func loadBaselineVerificationProofs(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, snapshot VerificationAdvanceSnapshot, commonStart *time.Time, verifiedAt time.Time) (returnProofs map[verification.CheckType]baselineVerificationSampleProof, retErr error) {
 	rows, err := tx.QueryContext(ctx, `
 SELECT c.public_id, c.check_type, c.status, c.required_check, c.source_identity,
        COALESCE(CAST(c.observed_json AS CHAR), '{}'), c.source_reference,
@@ -396,7 +396,7 @@ ORDER BY c.id`, task.SubjectID, task.IncidentID, task.CycleNo)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer joinRowsCloseError(&retErr, rows, "close baseline verification proof rows")
 	expected := make(map[verification.CheckType]string, len(snapshot.Run.Plan.Checks))
 	for _, spec := range snapshot.Run.Plan.Checks {
 		expected[spec.Type] = spec.SourceIdentity
@@ -637,7 +637,7 @@ func canonicalVerificationObservation(raw []byte) ([]byte, error) {
 	}
 	canonical, err := json.Marshal(observation)
 	if err != nil || !jsonVerificationEqual(raw, canonical) {
-		return nil, errors.New("Verification observation has unknown fields")
+		return nil, errors.New("verification observation has unknown fields")
 	}
 	return canonical, nil
 }

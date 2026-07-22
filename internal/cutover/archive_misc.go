@@ -33,7 +33,7 @@ WHERE c.id IS NULL`).Scan(&missing); err != nil {
 	return nil
 }
 
-func archivePostmortemsV2(ctx context.Context, tx *sql.Tx, at time.Time) error {
+func archivePostmortemsV2(ctx context.Context, tx *sql.Tx, at time.Time) (retErr error) {
 	if tx == nil {
 		return errors.New("legacy Postmortem archive transaction is required")
 	}
@@ -48,7 +48,7 @@ FROM postmortems ORDER BY id FOR SHARE`)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer joinRowsCloseError(&retErr, rows, "close legacy Postmortem rows")
 	type item struct {
 		id, incidentID uint64
 		publicID       string

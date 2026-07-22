@@ -89,7 +89,7 @@ type AuditExport struct {
 // ExportAudit emits only bounded release metadata, counts, hashes, statuses,
 // ID ranges, and reason codes. It never emits outbox payloads, checkpoints,
 // Evidence facts, narrative fields, provider responses, or credentials.
-func ExportAudit(ctx context.Context, db *sql.DB, output io.Writer) error {
+func ExportAudit(ctx context.Context, db *sql.DB, output io.Writer) (retErr error) {
 	if db == nil || output == nil {
 		return errors.New("cutover audit export requires database and output")
 	}
@@ -97,7 +97,11 @@ func ExportAudit(ctx context.Context, db *sql.DB, output io.Writer) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() {
+		if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			retErr = errors.Join(retErr, fmt.Errorf("rollback cutover audit transaction: %w", rollbackErr))
+		}
+	}()
 	var controlName, sourceSHA, digest string
 	var plan uint64
 	var ingress, mutations, workers, unknown uint64
@@ -160,7 +164,7 @@ prepared_at,completed_at FROM cutover_controls WHERE control_name=?`, phase7ACon
 	return encoder.Encode(export)
 }
 
-func exportLedger(ctx context.Context, tx *sql.Tx, plan uint64) ([]AuditLedgerUnit, uint64, uint64, error) {
+func exportLedger(ctx context.Context, tx *sql.Tx, plan uint64) (result []AuditLedgerUnit, sourceSchema, targetSchema uint64, retErr error) {
 	rows, err := tx.QueryContext(ctx, `SELECT public_id,stage,operation,attempt,previous_ledger_id,
 source_schema_version,target_schema_version,source_table,target_table,batch_no,id_min,id_max,
 source_count,target_count,skipped_count,rejected_count,source_hash,target_hash,canonical_hash_version,
@@ -169,9 +173,8 @@ FROM migration_ledger WHERE plan_version=? ORDER BY id`, plan)
 	if err != nil {
 		return nil, 0, 0, err
 	}
-	defer rows.Close()
-	result := make([]AuditLedgerUnit, 0)
-	var sourceSchema, targetSchema uint64
+	defer joinRowsCloseError(&retErr, rows, "close cutover audit ledger rows")
+	result = make([]AuditLedgerUnit, 0)
 	for rows.Next() {
 		var item AuditLedgerUnit
 		var previous, idMin, idMax sql.NullInt64
@@ -204,15 +207,15 @@ FROM migration_ledger WHERE plan_version=? ORDER BY id`, plan)
 	return result, sourceSchema, targetSchema, nil
 }
 
-func exportOutboxCounts(ctx context.Context, tx *sql.Tx) ([]AuditOutboxCount, error) {
+func exportOutboxCounts(ctx context.Context, tx *sql.Tx) (result []AuditOutboxCount, retErr error) {
 	rows, err := tx.QueryContext(ctx, `SELECT event_type,schema_version,publication_state,COUNT(*)
 FROM legacy_outbox_archive GROUP BY event_type,schema_version,publication_state
 ORDER BY event_type,schema_version,publication_state`)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	result := make([]AuditOutboxCount, 0)
+	defer joinRowsCloseError(&retErr, rows, "close cutover audit outbox rows")
+	result = make([]AuditOutboxCount, 0)
 	for rows.Next() {
 		var item AuditOutboxCount
 		if err := rows.Scan(&item.EventType, &item.SchemaVersion, &item.PublicationState, &item.Count); err != nil {
@@ -223,15 +226,15 @@ ORDER BY event_type,schema_version,publication_state`)
 	return result, rows.Err()
 }
 
-func exportConversionCounts(ctx context.Context, tx *sql.Tx) ([]AuditConversionCount, error) {
+func exportConversionCounts(ctx context.Context, tx *sql.Tx) (result []AuditConversionCount, retErr error) {
 	rows, err := tx.QueryContext(ctx, `SELECT r.subject_type,r.status,r.reason_code,r.anti_join_result,COUNT(*)`+
 		latestConversionBaseSQL+` GROUP BY r.subject_type,r.status,r.reason_code,r.anti_join_result
 ORDER BY r.subject_type,r.status,r.reason_code,r.anti_join_result`)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	result := make([]AuditConversionCount, 0)
+	defer joinRowsCloseError(&retErr, rows, "close cutover audit conversion rows")
+	result = make([]AuditConversionCount, 0)
 	for rows.Next() {
 		var item AuditConversionCount
 		if err := rows.Scan(&item.SubjectType, &item.Status, &item.ReasonCode, &item.AntiJoinResult, &item.Count); err != nil {

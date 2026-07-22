@@ -3,6 +3,7 @@ package investigationread
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -176,7 +177,7 @@ func (t *Toolset) changeDetail(ctx context.Context, request agent.InvestigationT
 	return available(request.Action, "github", "github/change-detail", "exact commit, parent file content and CI identity were read through allowlisted GitHub GETs", facts, commit.HTMLURL), nil
 }
 
-func (t *Toolset) loadBaseline(ctx context.Context) (baselineIdentity, error) {
+func (t *Toolset) loadBaseline(ctx context.Context) (returnIdentity baselineIdentity, retErr error) {
 	rows, err := t.cfg.DB.QueryContext(ctx, `SELECT source_revision, image_digest, gitops_revision
 FROM deployment_baselines
 WHERE domain_schema_version = 3 AND status = 'active' AND cluster = ? AND environment = ? AND namespace = ?
@@ -187,7 +188,11 @@ ORDER BY id LIMIT 2`, t.cfg.Target.Cluster, t.cfg.Target.Environment, t.cfg.Targ
 	if err != nil {
 		return baselineIdentity{}, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("close active deployment baseline rows: %w", closeErr))
+		}
+	}()
 	var values []baselineIdentity
 	for rows.Next() {
 		var value baselineIdentity

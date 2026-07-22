@@ -106,7 +106,7 @@ func VerifyManifest(
 		return err
 	}
 	if actual != expected {
-		return fmt.Errorf("Agent Eval manifest drift: expected=%+v actual=%+v", expected, actual)
+		return fmt.Errorf("agent eval manifest drift: expected=%+v actual=%+v", expected, actual)
 	}
 	return nil
 }

@@ -239,9 +239,10 @@ func ReduceStateDelta(state InvestigationState, delta StateDelta, policy Reducer
 					continue
 				}
 				result.Questions[i].EvidenceID = appendUniqueStrings(result.Questions[i].EvidenceID, op.EvidenceIDs...)
-				if op.Operation == QuestionAnswer {
+				switch op.Operation {
+				case QuestionAnswer:
 					result.Questions[i].Answer = op.Answer
-				} else if op.Operation == QuestionClose {
+				case QuestionClose:
 					result.Questions[i].Closed = true
 				}
 				break

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
@@ -24,7 +23,7 @@ type legacyIncidentRow struct {
 	updatedAt    time.Time
 }
 
-func convertIncidentStates(ctx context.Context, tx *sql.Tx, at time.Time) error {
+func convertIncidentStates(ctx context.Context, tx *sql.Tx, at time.Time) (retErr error) {
 	if tx == nil {
 		return errors.New("legacy Incident converter transaction is required")
 	}
@@ -33,7 +32,7 @@ FROM incidents WHERE domain_schema_version IS NULL ORDER BY id FOR UPDATE`)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer joinRowsCloseError(&retErr, rows, "close legacy Incident rows")
 	incidents := make([]legacyIncidentRow, 0)
 	for rows.Next() {
 		var row legacyIncidentRow
@@ -216,7 +215,7 @@ VALUES (?,?,3,1,1,'legacy_state_converted',?,?,?,?,?,?,TRUE,?,'system','phase7a-
 	return nil
 }
 
-func ensureIncidentFallbackTasks(ctx context.Context, tx *sql.Tx, incident legacyIncidentRow, state IncidentStateConversion, at time.Time) error {
+func ensureIncidentFallbackTasks(ctx context.Context, tx *sql.Tx, incident legacyIncidentRow, state IncidentStateConversion, at time.Time) (retErr error) {
 	type fallbackSubject struct {
 		subjectType string
 		subjectID   uint64
@@ -232,7 +231,7 @@ ORDER BY 1,2`, incident.id, incident.id)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer joinRowsCloseError(&retErr, rows, "close legacy Incident fallback subject rows")
 	subjects := make([]fallbackSubject, 0)
 	for rows.Next() {
 		var item fallbackSubject
@@ -299,8 +298,4 @@ func nullableArchivedInt(value sql.NullInt64) any {
 		return nil
 	}
 	return value.Int64
-}
-
-func normalizedLegacyStatus(value string) string {
-	return strings.ToUpper(strings.TrimSpace(value))
 }

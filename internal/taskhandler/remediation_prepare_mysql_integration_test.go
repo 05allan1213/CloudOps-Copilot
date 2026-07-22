@@ -29,7 +29,7 @@ func TestMySQLRemediationPrepareLoaderBindsTaskDiagnosisEvidenceBaselineAndExact
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	admin := openVerificationIntegrationDB(t, adminDSN)
-	defer admin.Close()
+	defer closeVerificationIntegrationDB(t, "remediation loader admin", admin)
 	databaseName := fmt.Sprintf("cloudops_remediation_loader_%d", time.Now().UnixNano())
 	if _, err := admin.ExecContext(ctx, "CREATE DATABASE `"+databaseName+"` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"); err != nil {
 		t.Fatal(err)
@@ -42,7 +42,7 @@ func TestMySQLRemediationPrepareLoaderBindsTaskDiagnosisEvidenceBaselineAndExact
 		}
 	}()
 	db := openVerificationIntegrationDB(t, verificationDatabaseDSN(t, adminDSN, databaseName))
-	defer db.Close()
+	defer closeVerificationIntegrationDB(t, "remediation loader", db)
 	migrations, err := migration.NewRunner(ctx, db, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)

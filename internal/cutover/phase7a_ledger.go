@@ -54,7 +54,7 @@ type phase7ALedgerExpectation struct {
 	sourceHash, targetHash   string
 }
 
-func existingPreparationV2(ctx context.Context, tx *sql.Tx, request PrepareRequest, version uint64) (PrepareReport, bool, error) {
+func existingPreparationV2(ctx context.Context, tx *sql.Tx, request PrepareRequest, version uint64) (returnReport PrepareReport, returnFound bool, retErr error) {
 	placeholders := make([]string, len(phase7AFinalOperations))
 	args := make([]any, 0, len(phase7AFinalOperations)+1)
 	args = append(args, request.PlanVersion)
@@ -71,7 +71,7 @@ ORDER BY operation,attempt FOR UPDATE`, args...)
 	if err != nil {
 		return PrepareReport{}, false, fmt.Errorf("inspect existing Phase 7A preparation: %w", err)
 	}
-	defer rows.Close()
+	defer joinRowsCloseError(&retErr, rows, "close existing Phase 7A preparation rows")
 	latest := map[string]persistedPhase7ALedger{}
 	for rows.Next() {
 		var row persistedPhase7ALedger
@@ -82,7 +82,7 @@ ORDER BY operation,attempt FOR UPDATE`, args...)
 			return PrepareReport{}, false, err
 		}
 		if row.sha != request.SourceExactSHA || row.digest != request.BinaryImageDigest {
-			return PrepareReport{}, false, fmt.Errorf("Phase 7A ledger %s plan=%d has a different release identity", row.operation, request.PlanVersion)
+			return PrepareReport{}, false, fmt.Errorf("phase 7A ledger %s plan=%d has a different release identity", row.operation, request.PlanVersion)
 		}
 		latest[row.operation] = row
 	}
@@ -294,7 +294,7 @@ func collectCutoverCountsV2(ctx context.Context, tx *sql.Tx, request PrepareRequ
 
 func validatePhase7ACounts(counts map[string]uint64, request PrepareRequest) error {
 	if counts == nil {
-		return errors.New("Phase 7A counts are absent")
+		return errors.New("phase 7A counts are absent")
 	}
 	if counts["outbox_source"] != counts["outbox_archived"] ||
 		counts["outbox_archived"] != counts["outbox_archived_published"]+counts["outbox_archived_unpublished"] {
@@ -341,14 +341,14 @@ func validatePhase7ACounts(counts map[string]uint64, request PrepareRequest) err
 		"legacy_rows_remaining",
 	} {
 		if counts[invariant] != 0 {
-			return fmt.Errorf("Phase 7A invariant %s=%d", invariant, counts[invariant])
+			return fmt.Errorf("phase 7A invariant %s=%d", invariant, counts[invariant])
 		}
 	}
 	if request.ObservedIngressWriters != 0 || request.ObservedMutationWriters != 0 ||
 		request.ObservedLegacyWorkers != 0 || request.ObservedUnknownExternalWrite != 0 ||
 		counts["observed_ingress_writers"] != 0 || counts["observed_mutation_writers"] != 0 ||
 		counts["observed_legacy_workers"] != 0 || counts["observed_unknown_external_writes"] != 0 {
-		return errors.New("Phase 7A external quiesce observations are not zero")
+		return errors.New("phase 7A external quiesce observations are not zero")
 	}
 	if counts["marker_count"] != 0 {
 		return fmt.Errorf("CUTOVER-V3 marker count=%d want zero during prepare", counts["marker_count"])
@@ -512,7 +512,7 @@ func persistPhase7ALedgers(ctx context.Context, tx *sql.Tx, identity ReleaseIden
 		{"active_legacy_leases", counts["active_legacy_leases"]},
 	} {
 		if invariant.value != 0 {
-			return ids, fmt.Errorf("Phase 7A invariant %s=%d", invariant.name, invariant.value)
+			return ids, fmt.Errorf("phase 7A invariant %s=%d", invariant.name, invariant.value)
 		}
 	}
 	outboxHash, err := hashStringColumn(ctx, tx, "SELECT row_hash FROM legacy_outbox_archive ORDER BY source_outbox_id")
@@ -640,12 +640,12 @@ func persistFinalLedger(ctx context.Context, tx *sql.Tx, identity ReleaseIdentit
 	return batch.PublicID, nil
 }
 
-func hashStringColumn(ctx context.Context, tx *sql.Tx, query string, args ...any) (string, error) {
+func hashStringColumn(ctx context.Context, tx *sql.Tx, query string, args ...any) (returnHash string, retErr error) {
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return "", err
 	}
-	defer rows.Close()
+	defer joinRowsCloseError(&retErr, rows, "close Phase 7A canonical hash rows")
 	values := make([]string, 0)
 	for rows.Next() {
 		var value sql.NullString
@@ -667,14 +667,14 @@ func hashLatestConversions(ctx context.Context, tx *sql.Tx) (string, error) {
 	return hashLatestConversionsWhere(ctx, tx, "")
 }
 
-func hashLegacyExternalArtifacts(ctx context.Context, tx *sql.Tx) (string, error) {
+func hashLegacyExternalArtifacts(ctx context.Context, tx *sql.Tx) (returnHash string, retErr error) {
 	rows, err := tx.QueryContext(ctx, `SELECT source_change_request_id,source_content_hash,repository,pr_number,pr_url,
 base_revision,head_branch,head_revision,pr_state,merged_commit_sha,external_state,conversion_status,reason_code
 FROM legacy_change_request_archive ORDER BY source_change_request_id`)
 	if err != nil {
 		return "", err
 	}
-	defer rows.Close()
+	defer joinRowsCloseError(&retErr, rows, "close legacy external artifact rows")
 	values := make([]string, 0)
 	for rows.Next() {
 		var sourceID uint64
@@ -697,13 +697,13 @@ FROM legacy_change_request_archive ORDER BY source_change_request_id`)
 	return canonicalHashSet(values), nil
 }
 
-func hashLatestConversionsWhere(ctx context.Context, tx *sql.Tx, condition string) (string, error) {
+func hashLatestConversionsWhere(ctx context.Context, tx *sql.Tx, condition string) (returnHash string, retErr error) {
 	rows, err := tx.QueryContext(ctx, `SELECT r.subject_type,r.subject_id,r.converter_version,r.input_hash,r.output_hash,
 r.status,r.reason_code,COALESCE(r.target_task_id,0),r.anti_join_result`+latestConversionBaseSQL+condition+` ORDER BY r.subject_type,r.subject_id,r.converter_version`)
 	if err != nil {
 		return "", err
 	}
-	defer rows.Close()
+	defer joinRowsCloseError(&retErr, rows, "close latest legacy conversion rows")
 	values := make([]string, 0)
 	for rows.Next() {
 		var subjectType, converter, inputHash, outputHash, status, reason, antiJoin string
@@ -720,7 +720,7 @@ r.status,r.reason_code,COALESCE(r.target_task_id,0),r.anti_join_result`+latestCo
 	return canonicalHashSet(values), nil
 }
 
-func recordPreparationFailure(ctx context.Context, db *sql.DB, lockTimeout time.Duration, identity ReleaseIdentity, cause error) error {
+func recordPreparationFailure(ctx context.Context, db *sql.DB, lockTimeout time.Duration, identity ReleaseIdentity, cause error) (retErr error) {
 	if db == nil || cause == nil {
 		return nil
 	}
@@ -728,12 +728,20 @@ func recordPreparationFailure(ctx context.Context, db *sql.DB, lockTimeout time.
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() {
+		if closeErr := conn.Close(); closeErr != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("close Phase 7A preparation failure connection: %w", closeErr))
+		}
+	}()
 	tx, err := conn.BeginTx(context.WithoutCancel(ctx), &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() {
+		if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			retErr = errors.Join(retErr, fmt.Errorf("rollback Phase 7A preparation failure transaction: %w", rollbackErr))
+		}
+	}()
 	batch, err := beginLedgerBatch(context.WithoutCancel(ctx), tx, identity, "convert", ConverterAuditOperation,
 		"legacy_cutover_inputs", "phase7a_preparation", 1, nil, nil, phase7AConverter, time.Now().UTC())
 	if errors.Is(err, ErrLedgerAlreadyPassed) {
@@ -754,14 +762,4 @@ func recordPreparationFailure(ctx context.Context, db *sql.DB, lockTimeout time.
 		return errors.Join(finishErr, commitErr)
 	}
 	return nil
-}
-
-func countKeysWithPrefix(values map[string]uint64, prefix string) uint64 {
-	var total uint64
-	for key, value := range values {
-		if strings.HasPrefix(key, prefix) {
-			total += value
-		}
-	}
-	return total
 }

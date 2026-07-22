@@ -701,7 +701,7 @@ WHERE id = ? AND cycle_no = ? AND domain_schema_version = 3 AND v3_status = 'awa
 	return err
 }
 
-func (s *mysqlChangeEnsurePRStore) MarkWriteIntent(ctx context.Context, task asyncjob.Task, snapshot changeSnapshot, marker string) error {
+func (s *mysqlChangeEnsurePRStore) MarkWriteIntent(ctx context.Context, task asyncjob.Task, snapshot changeSnapshot, marker string) (retErr error) {
 	if marker != expectedExternalWriteMarker(snapshot, task.ExpectedSubjectVersion) {
 		return fmt.Errorf("%w: external write marker is not bound to the current phase", asyncjob.ErrPolicyViolation)
 	}
@@ -709,7 +709,11 @@ func (s *mysqlChangeEnsurePRStore) MarkWriteIntent(ctx context.Context, task asy
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() {
+		if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			retErr = errors.Join(retErr, fmt.Errorf("rollback external write intent transaction: %w", rollbackErr))
+		}
+	}()
 	var version uint64
 	var phase, existingMarker string
 	if err := tx.QueryRowContext(ctx, `

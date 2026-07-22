@@ -187,7 +187,7 @@ func startNoChangeVerification(ctx context.Context, tx *sql.Tx, incident *incide
 	}
 	if !budget.Allowed() {
 		if budget.IncidentVersion != incident.version {
-			return false, errors.New("Incident changed before no-change budget block")
+			return false, errors.New("incident changed before no-change budget block")
 		}
 		if err := businessbudget.MarkExhausted(ctx, tx, budget, incident.id, uint32(incident.cycleNo), "v3-ingress.no-change"); err != nil {
 			return false, err
@@ -224,7 +224,7 @@ ORDER BY id LIMIT 2 FOR UPDATE`, incident.id, incident.cycleNo)
 		return noChangeWorkflowState{}, err
 	}
 	if verificationCount > 1 {
-		return noChangeWorkflowState{}, errors.New("Incident cycle has multiple active VerificationRuns")
+		return noChangeWorkflowState{}, errors.New("incident cycle has multiple active VerificationRuns")
 	}
 	state.ActiveVerification = verificationCount == 1
 
@@ -487,7 +487,7 @@ WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? AND version = ? AND 
 		return err
 	}
 	if affected, _ := result.RowsAffected(); affected != 1 {
-		return errors.New("Incident changed before no-change investigating transition")
+		return errors.New("incident changed before no-change investigating transition")
 	}
 	incident.status = domain.V3StatusInvestigating
 	incident.version++
@@ -507,7 +507,7 @@ WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? AND version = ? AND 
 		return err
 	}
 	if affected, _ := result.RowsAffected(); affected != 1 {
-		return errors.New("Incident changed before no-change block")
+		return errors.New("incident changed before no-change block")
 	}
 	incident.version++
 	metadata, _ := json.Marshal(map[string]any{
@@ -593,7 +593,7 @@ WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? AND version = ? AND 
 		return false, err
 	}
 	if affected, _ := updated.RowsAffected(); affected != 1 {
-		return false, errors.New("Incident changed before no-change verifying transition")
+		return false, errors.New("incident changed before no-change verifying transition")
 	}
 	incident.status = domain.V3StatusVerifying
 	incident.version++

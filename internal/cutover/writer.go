@@ -307,13 +307,12 @@ func (t sqlMarkerTx) DatabaseSchemaVersion(ctx context.Context) (uint64, error) 
 	return version, err
 }
 
-func (t sqlMarkerTx) MarkerStatusesForUpdate(ctx context.Context) ([]string, error) {
+func (t sqlMarkerTx) MarkerStatusesForUpdate(ctx context.Context) (result []string, retErr error) {
 	rows, err := t.tx.QueryContext(ctx, markerStatusesForUpdateSQL, MarkerOperation)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var result []string
+	defer joinRowsCloseError(&retErr, rows, "close cutover marker status rows")
 	for rows.Next() {
 		var status string
 		if err := rows.Scan(&status); err != nil {
@@ -350,7 +349,7 @@ func (t sqlMarkerTx) ValidatePhase7APreparation(ctx context.Context, request Wri
 	if report.QuiesceLedgerPublicID != request.QuiesceLedgerPublicID ||
 		report.ReconciliationLedgerPublicID != request.ReconciliationLedgerPublicID ||
 		report.ConverterAuditLedgerPublicID != request.ConverterAuditLedgerPublicID {
-		return errors.New("Phase 7A preparation ledger IDs differ from the marker request")
+		return errors.New("phase 7A preparation ledger IDs differ from the marker request")
 	}
 	return nil
 }

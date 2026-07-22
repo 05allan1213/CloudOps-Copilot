@@ -325,7 +325,7 @@ func validateCurrentRemediationDiagnosis(stored agent.DiagnosisRecord, incidentP
 	return nil
 }
 
-func (l *mysqlRemediationPrepareLoader) loadActiveBaseline(ctx context.Context, tx *sql.Tx, incident remediationPrepareDurableFacts, taskCreatedAt time.Time) (remediationPrepareBaseline, error) {
+func (l *mysqlRemediationPrepareLoader) loadActiveBaseline(ctx context.Context, tx *sql.Tx, incident remediationPrepareDurableFacts, taskCreatedAt time.Time) (result remediationPrepareBaseline, retErr error) {
 	rows, err := tx.QueryContext(ctx, `SELECT id, public_id, baseline_schema_version, target_identity_hash,
  source_revision, image_digest, gitops_revision, config_hash,
  verification_policy_version, verification_hash, row_version, verified_at
@@ -339,7 +339,11 @@ LIMIT 2`, incident.Cluster, incident.Environment, incident.Namespace, incident.T
 	if err != nil {
 		return remediationPrepareBaseline{}, fmt.Errorf("load active DeploymentBaseline: %w", err)
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("close active deployment baseline rows: %w", closeErr))
+		}
+	}()
 	var matches []remediationPrepareBaseline
 	for rows.Next() {
 		var baseline remediationPrepareBaseline
@@ -380,7 +384,11 @@ LIMIT 2`, baseline.ID)
 	if err != nil {
 		return remediationPrepareBaseline{}, fmt.Errorf("load baseline config observation: %w", err)
 	}
-	defer observationRows.Close()
+	defer func() {
+		if closeErr := observationRows.Close(); closeErr != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("close baseline config observation rows: %w", closeErr))
+		}
+	}()
 	count := 0
 	for observationRows.Next() {
 		var schemaVersion uint64

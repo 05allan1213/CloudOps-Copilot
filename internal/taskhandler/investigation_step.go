@@ -453,7 +453,7 @@ WHERE r.id = ? AND r.incident_id = ? AND r.domain_schema_version = 3
 	return result, nil
 }
 
-func (l mysqlInvestigationLoader) loadEvidence(ctx context.Context, snapshot *investigationSnapshot) error {
+func (l mysqlInvestigationLoader) loadEvidence(ctx context.Context, snapshot *investigationSnapshot) (retErr error) {
 	const evidenceQuery = `SELECT public_id, source, tool_name, summary, facts_json,
  result_hash, content_hash, raw_ref, redaction_json, truncated, valid, idempotency_key, collected_at,
  COALESCE(evidence_contract_version,0), producer_type, COALESCE(producer_id,''), COALESCE(producer_version,''), producer_dedupe_key,
@@ -472,7 +472,7 @@ ORDER BY collected_at, id`
 	if err != nil {
 		return fmt.Errorf("load investigation evidence: %w", err)
 	}
-	defer rows.Close()
+	defer joinRowsCloseError(&retErr, rows, "close investigation evidence rows")
 	for rows.Next() {
 		var publicID, source, toolName, summary, resultHash, contentHash, rawRef string
 		var producerType, producerID, producerVersion, producerKey, factSchemaHash string
@@ -2005,7 +2005,7 @@ func assessInvestigationChangeCandidates(ctx context.Context, tx asyncjob.DBTX, 
 	return nil
 }
 
-func loadInvestigationChangeCandidatesForAssessment(ctx context.Context, tx asyncjob.DBTX, snapshot investigationSnapshot) ([]persistedInvestigationChangeCandidate, error) {
+func loadInvestigationChangeCandidatesForAssessment(ctx context.Context, tx asyncjob.DBTX, snapshot investigationSnapshot) (returnCandidates []persistedInvestigationChangeCandidate, retErr error) {
 	rows, err := tx.QueryContext(ctx, `SELECT id, public_id, migrated_legacy, change_ref, repository, commit_sha, gitops_revision,
  image_digest, target_path, category, change_time, supporting_evidence_json, content_hash
 FROM change_candidates
@@ -2014,7 +2014,7 @@ ORDER BY id FOR UPDATE`, snapshot.Task.IncidentID, snapshot.Task.CycleNo, snapsh
 	if err != nil {
 		return nil, fmt.Errorf("load investigation ChangeCandidates: %w", err)
 	}
-	defer rows.Close()
+	defer joinRowsCloseError(&retErr, rows, "close investigation ChangeCandidate rows")
 	candidates := make([]persistedInvestigationChangeCandidate, 0, 10)
 	for rows.Next() {
 		var candidate persistedInvestigationChangeCandidate
@@ -2143,7 +2143,7 @@ func buildInvestigationChangeAssessment(snapshot investigationSnapshot, checkpoi
 	}
 	positive = stableUniqueInvestigation(positive)
 	contradicting = stableUniqueInvestigation(contradicting)
-	if detailNotRemoved && !detailRemoved || argoNotDeployed && !deployed || identityChanged && !(sourceUnchanged && imageUnchanged) {
+	if detailNotRemoved && !detailRemoved || argoNotDeployed && !deployed || identityChanged && (!sourceUnchanged || !imageUnchanged) {
 		assessment.Status = "excluded"
 		assessment.SupportingEvidence = stableUniqueInvestigation(candidate.SupportingEvidence)
 		assessment.ContradictingEvidence = contradicting

@@ -454,7 +454,8 @@ func validateLegacyPullRequestObservation(snapshot LegacyDeliveryObserveSnapshot
 		strings.TrimSpace(pr.HeadBranch) == "" || pr.HeadBranch != snapshot.HeadBranch {
 		return false
 	}
-	if snapshot.SourcePRState != "" && !strings.EqualFold(snapshot.SourcePRState, state) && !(strings.EqualFold(snapshot.SourcePRState, "merged") && pr.Merged) {
+	if snapshot.SourcePRState != "" && !strings.EqualFold(snapshot.SourcePRState, state) &&
+		(!strings.EqualFold(snapshot.SourcePRState, "merged") || !pr.Merged) {
 		return false
 	}
 	if snapshot.SourceMergedSHA != "" && pr.Merged && !strings.EqualFold(snapshot.SourceMergedSHA, pr.MergeCommitSHA) {
@@ -876,7 +877,7 @@ func NewMySQLDeliveryObserveStore(config MySQLDeliveryObserveConfig) (DeliveryOb
 
 type mysqlDeliveryObserveStore struct{ cfg MySQLDeliveryObserveConfig }
 
-func (s *mysqlDeliveryObserveStore) Load(ctx context.Context, task asyncjob.Task) (DeliveryObserveSnapshot, error) {
+func (s *mysqlDeliveryObserveStore) Load(ctx context.Context, task asyncjob.Task) (result DeliveryObserveSnapshot, retErr error) {
 	if task.SubjectType != "change_request" || task.SubjectID == 0 || task.CycleNo == 0 {
 		return DeliveryObserveSnapshot{}, asyncjob.ErrInvalidMutation
 	}
@@ -989,7 +990,11 @@ LIMIT 2`, snapshot.Cluster, snapshot.Environment, snapshot.Namespace, snapshot.W
 	if err != nil {
 		return DeliveryObserveSnapshot{}, err
 	}
-	defer baselineRows.Close()
+	defer func() {
+		if closeErr := baselineRows.Close(); closeErr != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("close deployment baseline rows: %w", closeErr))
+		}
+	}()
 	for baselineRows.Next() {
 		baselineCount++
 		if err := baselineRows.Scan(&snapshot.SourceRevision, &snapshot.ImageDigest, &snapshot.BaselineGitOpsSHA); err != nil {
@@ -1430,9 +1435,10 @@ func appendDeliveryEvidence(ctx context.Context, tx asyncjob.DBTX, snapshot Deli
 	contentHash := sha256Hex(facts)
 	producerKey := hashCanonical("delivery.observe", snapshot.ChangeRequestPublicID, string(outcome.Kind), contentHash)
 	resourceRef := "change-request:" + snapshot.ChangeRequestPublicID
-	if outcome.Kind == DeliveryObserveArgo {
+	switch outcome.Kind {
+	case DeliveryObserveArgo:
 		resourceRef = "argocd:" + snapshot.ArgoApplication
-	} else if outcome.Kind == DeliveryObserveRollout {
+	case DeliveryObserveRollout:
 		resourceRef = "kubernetes:" + snapshot.Namespace + "/" + snapshot.WorkloadName
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO evidence_items

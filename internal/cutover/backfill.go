@@ -287,12 +287,16 @@ func validatePassedBackfillBatch(batch LedgerBatch, identity ReleaseIdentity, un
 	return nil
 }
 
-func (b *Phase7ABackfiller) recordFailedBatch(ctx context.Context, conn *sql.Conn, identity ReleaseIdentity, unit backfillUnit, operation string, batchNo, idMin, idMax uint64, rows []backfillRow, sourceHashes []string, cause error) (LedgerBatch, error) {
+func (b *Phase7ABackfiller) recordFailedBatch(ctx context.Context, conn *sql.Conn, identity ReleaseIdentity, unit backfillUnit, operation string, batchNo, idMin, idMax uint64, rows []backfillRow, sourceHashes []string, cause error) (result LedgerBatch, retErr error) {
 	tx, err := conn.BeginTx(context.WithoutCancel(ctx), &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return LedgerBatch{}, err
 	}
-	defer tx.Rollback()
+	defer func() {
+		if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			retErr = errors.Join(retErr, fmt.Errorf("rollback failed backfill ledger transaction: %w", rollbackErr))
+		}
+	}()
 	started := b.now().UTC()
 	batch, err := beginLedgerBatch(context.WithoutCancel(ctx), tx, identity, "backfill", operation, unit.sourceTable, unit.targetTable, batchNo, &idMin, &idMax, BackfillConverterVersion, started)
 	if err != nil {
@@ -614,13 +618,13 @@ func legacyChangeAssessment(row *backfillRow) (json.RawMessage, string, error) {
 	return canonical, hash, err
 }
 
-func loadBackfillRows(ctx context.Context, tx *sql.Tx, query string, after, limit uint64) ([]backfillRow, error) {
+func loadBackfillRows(ctx context.Context, tx *sql.Tx, query string, after, limit uint64) (result []backfillRow, retErr error) {
 	rows, err := tx.QueryContext(ctx, query, after, limit)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	result := make([]backfillRow, 0, limit)
+	defer joinRowsCloseError(&retErr, rows, "close legacy backfill source rows")
+	result = make([]backfillRow, 0, limit)
 	for rows.Next() {
 		var item backfillRow
 		var incident sql.NullInt64

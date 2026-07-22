@@ -104,7 +104,7 @@ func (c LedgerCompletion) passing() (bool, string) {
 	return true, ""
 }
 
-func beginLedgerBatch(ctx context.Context, tx *sql.Tx, identity ReleaseIdentity, stage, operation, sourceTable, targetTable string, batchNo uint64, idMin, idMax *uint64, converter string, startedAt time.Time) (LedgerBatch, error) {
+func beginLedgerBatch(ctx context.Context, tx *sql.Tx, identity ReleaseIdentity, stage, operation, sourceTable, targetTable string, batchNo uint64, idMin, idMax *uint64, converter string, startedAt time.Time) (returnBatch LedgerBatch, retErr error) {
 	if tx == nil || strings.TrimSpace(stage) == "" || strings.TrimSpace(operation) == "" || strings.TrimSpace(sourceTable) == "" || strings.TrimSpace(targetTable) == "" || batchNo == 0 || strings.TrimSpace(converter) == "" {
 		return LedgerBatch{}, errors.New("ledger batch identity is incomplete")
 	}
@@ -119,7 +119,7 @@ FROM migration_ledger WHERE plan_version=? AND operation=? AND batch_no=? ORDER 
 	if err != nil {
 		return LedgerBatch{}, err
 	}
-	defer rows.Close()
+	defer joinRowsCloseError(&retErr, rows, "close migration ledger batch rows")
 	var previous *LedgerBatch
 	for rows.Next() {
 		var item LedgerBatch

@@ -131,7 +131,7 @@ func validateReconciledPullRequest(source LegacyExternalArtifact, observed Recon
 	}
 	pathParts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
 	if len(pathParts) < 4 || pathParts[len(pathParts)-2] != "pull" ||
-		strings.ToLower(strings.Join(pathParts[:len(pathParts)-2], "/")) != strings.ToLower(source.Repository) ||
+		!strings.EqualFold(strings.Join(pathParts[:len(pathParts)-2], "/"), source.Repository) ||
 		pathParts[len(pathParts)-1] != fmt.Sprint(source.PullRequest) {
 		return errors.New("source PR URL does not bind repository and number")
 	}

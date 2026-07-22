@@ -34,7 +34,7 @@ type legacyAgentRunRow struct {
 	deadlineAt        sql.NullTime
 }
 
-func convertAgentRuns(ctx context.Context, tx *sql.Tx, at time.Time) (conversionSummary, error) {
+func convertAgentRuns(ctx context.Context, tx *sql.Tx, at time.Time) (summary conversionSummary, retErr error) {
 	if tx == nil {
 		return conversionSummary{}, errors.New("legacy Agent converter transaction is required")
 	}
@@ -49,7 +49,11 @@ WHERE r.domain_schema_version IS NULL ORDER BY r.id FOR UPDATE`)
 	if err != nil {
 		return conversionSummary{}, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("close legacy Agent run rows: %w", closeErr))
+		}
+	}()
 	runs := make([]legacyAgentRunRow, 0)
 	for rows.Next() {
 		var row legacyAgentRunRow
@@ -73,7 +77,6 @@ WHERE r.domain_schema_version IS NULL ORDER BY r.id FOR UPDATE`)
 	if err := rows.Err(); err != nil {
 		return conversionSummary{}, err
 	}
-	var summary conversionSummary
 	for _, row := range runs {
 		evidence, err := loadLegacyAgentEvidence(ctx, tx, row, at)
 		if err != nil {
@@ -140,7 +143,7 @@ WHERE r.domain_schema_version IS NULL ORDER BY r.id FOR UPDATE`)
 	return summary, nil
 }
 
-func loadLegacyAgentEvidence(ctx context.Context, tx *sql.Tx, run legacyAgentRunRow, at time.Time) ([]LegacyAgentEvidence, error) {
+func loadLegacyAgentEvidence(ctx context.Context, tx *sql.Tx, run legacyAgentRunRow, at time.Time) (result []LegacyAgentEvidence, retErr error) {
 	rows, err := tx.QueryContext(ctx, `SELECT e.public_id,e.type,e.valid,e.content_hash,e.collected_at,e.migrated_legacy,
 i.public_id,e.cycle_no
 FROM evidence_items e JOIN incidents i ON i.id=e.incident_id
@@ -148,8 +151,12 @@ WHERE e.agent_run_id=? ORDER BY e.id FOR SHARE`, run.id)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	result := make([]LegacyAgentEvidence, 0)
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("close legacy Agent evidence rows: %w", closeErr))
+		}
+	}()
+	result = make([]LegacyAgentEvidence, 0)
 	freshFrom := run.createdAt
 	if run.startedAt.Valid {
 		freshFrom = run.startedAt.Time
@@ -177,14 +184,18 @@ WHERE e.agent_run_id=? ORDER BY e.id FOR SHARE`, run.id)
 	return result, rows.Err()
 }
 
-func loadLegacyCompletedToolSignatures(ctx context.Context, tx *sql.Tx, runID uint64) ([]string, error) {
+func loadLegacyCompletedToolSignatures(ctx context.Context, tx *sql.Tx, runID uint64) (result []string, retErr error) {
 	rows, err := tx.QueryContext(ctx, `SELECT selected_tool,arguments_hash FROM agent_steps
 WHERE agent_run_id=? AND status='COMPLETED' ORDER BY sequence,id FOR SHARE`, runID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	result := make([]string, 0)
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("close legacy completed tool signature rows: %w", closeErr))
+		}
+	}()
+	result = make([]string, 0)
 	for rows.Next() {
 		var tool, argumentsHash string
 		if err := rows.Scan(&tool, &argumentsHash); err != nil {

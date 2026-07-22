@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
@@ -43,7 +42,7 @@ type legacyVerificationRunRow struct {
 	updatedAt               time.Time
 }
 
-func convertVerificationRuns(ctx context.Context, tx *sql.Tx, at time.Time) (conversionSummary, error) {
+func convertVerificationRuns(ctx context.Context, tx *sql.Tx, at time.Time) (returnSummary conversionSummary, retErr error) {
 	if tx == nil {
 		return conversionSummary{}, errors.New("legacy Verification converter transaction is required")
 	}
@@ -59,7 +58,7 @@ r.verification_profile_version,r.verification_profile_hash,r.plan_json,r.common_
 	if err != nil {
 		return conversionSummary{}, err
 	}
-	defer rows.Close()
+	defer joinRowsCloseError(&retErr, rows, "close legacy VerificationRun rows")
 	runs := make([]legacyVerificationRunRow, 0)
 	for rows.Next() {
 		var row legacyVerificationRunRow
@@ -294,7 +293,7 @@ func synthesizeLegacyVerificationSamples(checks []LegacyVerificationCheck) []Leg
 	return result
 }
 
-func loadLegacyVerificationChecks(ctx context.Context, tx *sql.Tx, runID uint64, plan verification.Plan) ([]LegacyVerificationCheck, error) {
+func loadLegacyVerificationChecks(ctx context.Context, tx *sql.Tx, runID uint64, plan verification.Plan) (result []LegacyVerificationCheck, retErr error) {
 	rows, err := tx.QueryContext(ctx, `SELECT check_type,status,required_check,subject_json,expected_json,
 profile_id,template_id,template_version,comparison,threshold,source_identity,initial_delay_ms,lookback_ms,
 poll_interval_ms,timeout_ms,stability_window_ms,min_samples,sample_unit,failure_mode,consecutive_success_since,
@@ -303,8 +302,8 @@ FROM verification_checks WHERE verification_run_id=? ORDER BY id FOR SHARE`, run
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	result := make([]LegacyVerificationCheck, 0)
+	defer joinRowsCloseError(&retErr, rows, "close legacy VerificationCheck rows")
+	result = make([]LegacyVerificationCheck, 0)
 	for rows.Next() {
 		var item LegacyVerificationCheck
 		var subjectJSON, expectedJSON []byte
@@ -354,7 +353,7 @@ FROM verification_checks WHERE verification_run_id=? ORDER BY id FOR SHARE`, run
 	return result, rows.Err()
 }
 
-func loadLegacyVerificationSamples(ctx context.Context, tx *sql.Tx, runID uint64) ([]LegacyVerificationSample, error) {
+func loadLegacyVerificationSamples(ctx context.Context, tx *sql.Tx, runID uint64) (result []LegacyVerificationSample, retErr error) {
 	rows, err := tx.QueryContext(ctx, `SELECT c.check_type,c.sample_unit,s.sample_sequence,s.status,s.observed_json,
 s.window_start_at,s.window_end_at,s.sampled_at,s.content_hash
 FROM verification_samples s JOIN verification_checks c ON c.id=s.verification_check_id
@@ -362,8 +361,8 @@ WHERE s.verification_run_id=? ORDER BY s.verification_check_id,s.sample_sequence
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	result := make([]LegacyVerificationSample, 0)
+	defer joinRowsCloseError(&retErr, rows, "close legacy VerificationSample rows")
+	result = make([]LegacyVerificationSample, 0)
 	for rows.Next() {
 		var item LegacyVerificationSample
 		var sampleUnit sql.NullString
@@ -627,12 +626,4 @@ func nullableMilliseconds(value sql.NullInt64) time.Duration {
 
 func legacyVerificationStatusActive(status verification.RunStatus) bool {
 	return status == verification.RunPending || status == verification.RunRunning
-}
-
-func normalizedVerificationTrigger(trigger string) string {
-	trigger = strings.TrimSpace(trigger)
-	if trigger == "no_change" {
-		return "no_change_signal"
-	}
-	return trigger
 }

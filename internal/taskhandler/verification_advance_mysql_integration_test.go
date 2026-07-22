@@ -31,7 +31,7 @@ func TestMySQLVerificationAdvanceTimeoutRequeuesInvestigation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	admin := openVerificationIntegrationDB(t, adminDSN)
-	defer admin.Close()
+	defer closeVerificationIntegrationDB(t, "verification timeout admin", admin)
 	databaseName := fmt.Sprintf("cloudops_verification_%d", time.Now().UnixNano())
 	if _, err := admin.ExecContext(ctx, "CREATE DATABASE `"+databaseName+"` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"); err != nil {
 		t.Fatal(err)
@@ -44,7 +44,7 @@ func TestMySQLVerificationAdvanceTimeoutRequeuesInvestigation(t *testing.T) {
 		}
 	}()
 	db := openVerificationIntegrationDB(t, verificationDatabaseDSN(t, adminDSN, databaseName))
-	defer db.Close()
+	defer closeVerificationIntegrationDB(t, "verification timeout", db)
 	runner, err := migration.NewRunner(ctx, db, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
@@ -109,7 +109,7 @@ func TestMySQLVerificationAdvancePassesWithBoundedNoChangeReport(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	admin := openVerificationIntegrationDB(t, adminDSN)
-	defer admin.Close()
+	defer closeVerificationIntegrationDB(t, "verification report admin", admin)
 	databaseName := fmt.Sprintf("cloudops_verification_report_%d", time.Now().UnixNano())
 	if _, err := admin.ExecContext(ctx, "CREATE DATABASE `"+databaseName+"` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"); err != nil {
 		t.Fatal(err)
@@ -122,7 +122,7 @@ func TestMySQLVerificationAdvancePassesWithBoundedNoChangeReport(t *testing.T) {
 		}
 	}()
 	db := openVerificationIntegrationDB(t, verificationDatabaseDSN(t, adminDSN, databaseName))
-	defer db.Close()
+	defer closeVerificationIntegrationDB(t, "verification report", db)
 	runner, err := migration.NewRunner(ctx, db, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
@@ -259,7 +259,7 @@ VALUES (?, ?, 3, 1, 1, 'verification_fixture', ?, 'system', 'integration-test', 
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer rows.Close()
+		defer closeVerificationIntegrationRows(t, "verification failure diagnostic", rows)
 		states := make([]string, 0, 8)
 		for rows.Next() {
 			var checkType, status, reason string
@@ -289,7 +289,7 @@ func TestMySQLVerificationAdvancePersistsBoundPostDeliveryReport(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	admin := openVerificationIntegrationDB(t, adminDSN)
-	defer admin.Close()
+	defer closeVerificationIntegrationDB(t, "post-delivery report admin", admin)
 	databaseName := fmt.Sprintf("cloudops_verification_delivery_report_%d", time.Now().UnixNano())
 	if _, err := admin.ExecContext(ctx, "CREATE DATABASE `"+databaseName+"` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci"); err != nil {
 		t.Fatal(err)
@@ -302,7 +302,7 @@ func TestMySQLVerificationAdvancePersistsBoundPostDeliveryReport(t *testing.T) {
 		}
 	}()
 	db := openVerificationIntegrationDB(t, verificationDatabaseDSN(t, adminDSN, databaseName))
-	defer db.Close()
+	defer closeVerificationIntegrationDB(t, "post-delivery report", db)
 	runner, err := migration.NewRunner(ctx, db, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
@@ -904,10 +904,26 @@ func openVerificationIntegrationDB(t *testing.T, dsn string) *sql.DB {
 		t.Fatal(err)
 	}
 	if err := db.Ping(); err != nil {
-		_ = db.Close()
+		if closeErr := db.Close(); closeErr != nil {
+			t.Fatal(errors.Join(err, fmt.Errorf("close verification integration database after failed ping: %w", closeErr)))
+		}
 		t.Fatal(err)
 	}
 	return db
+}
+
+func closeVerificationIntegrationDB(t *testing.T, name string, db *sql.DB) {
+	t.Helper()
+	if err := db.Close(); err != nil {
+		t.Errorf("close %s database: %v", name, err)
+	}
+}
+
+func closeVerificationIntegrationRows(t *testing.T, name string, rows *sql.Rows) {
+	t.Helper()
+	if err := rows.Close(); err != nil {
+		t.Errorf("close %s rows: %v", name, err)
+	}
 }
 
 func mustVerificationBaselineStore(t *testing.T, db *sql.DB) *baselinemysql.Repository {

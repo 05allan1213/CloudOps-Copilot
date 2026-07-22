@@ -33,7 +33,7 @@ var fixedBaselineToolOrder = []string{
 // fixture observations are selected only by their canonical action signature.
 func RunModel(ctx context.Context, dataset Dataset, oracle Oracle, split Split, manifest Manifest, model agent.InvestigationModel, options RunOptions) (Report, error) {
 	if model == nil {
-		return Report{}, errors.New("Agent Eval model is required")
+		return Report{}, errors.New("agent eval model is required")
 	}
 	if err := validateRuntimeInputs(dataset, oracle, split); err != nil {
 		return Report{}, err
@@ -47,7 +47,7 @@ func RunModel(ctx context.Context, dataset Dataset, oracle Oracle, split Split, 
 		repetitions = split.Repetitions
 	}
 	if repetitions < 1 {
-		return Report{}, errors.New("Agent Eval repetitions must be positive")
+		return Report{}, errors.New("agent eval repetitions must be positive")
 	}
 	timeout := options.Timeout
 	if timeout <= 0 {
@@ -208,7 +208,7 @@ func runModelCase(ctx context.Context, evalCase EvalCase, caseOracle CaseOracle,
 			runtime.replayOK, result.ReplayOK = true, true
 		}
 	}
-	return finishRuntime(failedRun(result, "iteration_limit", errors.New("Agent Eval iteration limit reached")), runtime), runtimeFactTypes(runtime)
+	return finishRuntime(failedRun(result, "iteration_limit", errors.New("agent eval iteration limit reached")), runtime), runtimeFactTypes(runtime)
 }
 
 func runModelSafetySurvey(ctx context.Context, evalCase EvalCase, model agent.InvestigationModel, result RunResult, runtime *caseRuntime) RunResult {
@@ -642,7 +642,7 @@ func selectedCases(dataset Dataset, split Split, only string, caseIDs []string) 
 		for _, id := range caseIDs {
 			id = strings.TrimSpace(id)
 			if id == "" {
-				return nil, errors.New("Agent Eval case filter contains an empty ID")
+				return nil, errors.New("agent eval case filter contains an empty ID")
 			}
 			filter[id] = struct{}{}
 		}
@@ -653,7 +653,7 @@ func selectedCases(dataset Dataset, split Split, only string, caseIDs []string) 
 		}
 		for id := range filter {
 			if _, ok := wanted[id]; !ok {
-				return nil, fmt.Errorf("Agent Eval case %q is outside selected split", id)
+				return nil, fmt.Errorf("agent eval case %q is outside selected split", id)
 			}
 		}
 	}
@@ -665,7 +665,7 @@ func selectedCases(dataset Dataset, split Split, only string, caseIDs []string) 
 		}
 	}
 	if len(wanted) > 0 {
-		return nil, errors.New("Agent Eval split references missing cases")
+		return nil, errors.New("agent eval split references missing cases")
 	}
 	return result, nil
 }
@@ -673,19 +673,19 @@ func selectedCases(dataset Dataset, split Split, only string, caseIDs []string) 
 func validateRuntimeInputs(dataset Dataset, oracle Oracle, split Split) error {
 	if dataset.SchemaVersion != DatasetSchemaVersion || oracle.SchemaVersion != OracleSchemaVersion || split.SchemaVersion != SplitSchemaVersion ||
 		dataset.DatasetID == "" || dataset.DatasetID != oracle.DatasetID || dataset.DatasetID != split.DatasetID || len(dataset.Cases) == 0 {
-		return errors.New("Agent Eval dataset, oracle, and split are incompatible")
+		return errors.New("agent eval dataset, oracle, and split are incompatible")
 	}
 	seen := make(map[string]struct{}, len(dataset.Cases))
 	for _, evalCase := range dataset.Cases {
 		if evalCase.ID == "" {
-			return errors.New("Agent Eval case ID is empty")
+			return errors.New("agent eval case ID is empty")
 		}
 		if _, duplicate := seen[evalCase.ID]; duplicate {
 			return fmt.Errorf("duplicate Agent Eval case %q", evalCase.ID)
 		}
 		seen[evalCase.ID] = struct{}{}
 		if _, ok := oracle.Cases[evalCase.ID]; !ok {
-			return fmt.Errorf("Agent Eval case %q has no oracle", evalCase.ID)
+			return fmt.Errorf("agent eval case %q has no oracle", evalCase.ID)
 		}
 	}
 	return nil
