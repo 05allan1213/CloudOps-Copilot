@@ -100,7 +100,7 @@ func TestScanResolutionReportProjectsDurableFields(t *testing.T) {
 		want.Stability.CommonWindowStartedAt, want.Stability.CommonWindowCompletedAt,
 		want.TriggerSignal, want.Diagnosis, want.Evidence, want.RemediationPlan,
 		want.RemediationDecision, want.Delivery, want.Verification, want.Timeline,
-		want.AgentUsage, want.Summary, want.Hash, want.GeneratedAt,
+		want.AgentUsage, want.Summary, want.Hash, want.GeneratedAt, want.MigratedLegacyContext,
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -271,6 +271,12 @@ func (s resolutionReportScannerFixture) Scan(destinations ...any) error {
 			converted, ok := value.(uint64)
 			if !ok {
 				return fmt.Errorf("scan value %d is %T, want uint64", index, value)
+			}
+			*target = converted
+		case *bool:
+			converted, ok := value.(bool)
+			if !ok {
+				return fmt.Errorf("scan value %d is %T, want bool", index, value)
 			}
 			*target = converted
 		case *time.Time:

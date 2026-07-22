@@ -113,6 +113,43 @@ func TestDeliveryObserveRejectsInvalidLeaseBeforeReads(t *testing.T) {
 	}
 }
 
+func TestLegacyDeliveryObservationRequiresFullRepositoryPRBaseHeadBranchAndMergeIdentity(t *testing.T) {
+	base := LegacyDeliveryObserveSnapshot{Repository: "acme/app", PRNumber: 7,
+		BaseRevision: strings.Repeat("a", 40), HeadCommitSHA: strings.Repeat("b", 40), HeadBranch: "feature/fix",
+		SourcePRState: "open", PRURL: "https://github.com/acme/app/pull/7"}
+	observation := DeliveryPullRequestObservation{Repository: base.Repository, PullRequest: base.PRNumber,
+		State: "open", BaseSHA: base.BaseRevision, HeadSHA: base.HeadCommitSHA, HeadBranch: base.HeadBranch, URL: base.PRURL}
+	if !validateLegacyPullRequestObservation(base, observation, "open") {
+		t.Fatal("complete legacy pull request observation was rejected")
+	}
+	mutations := []func(*DeliveryPullRequestObservation){
+		func(value *DeliveryPullRequestObservation) { value.Repository = "acme/other" },
+		func(value *DeliveryPullRequestObservation) { value.PullRequest++ },
+		func(value *DeliveryPullRequestObservation) { value.BaseSHA = strings.Repeat("c", 40) },
+		func(value *DeliveryPullRequestObservation) { value.HeadSHA = strings.Repeat("d", 40) },
+		func(value *DeliveryPullRequestObservation) { value.HeadBranch = "feature/other" },
+		func(value *DeliveryPullRequestObservation) { value.URL = "https://github.com/acme/app/pull/8" },
+	}
+	for index, mutate := range mutations {
+		changed := observation
+		mutate(&changed)
+		if validateLegacyPullRequestObservation(base, changed, strings.ToLower(changed.State)) {
+			t.Fatalf("legacy identity mutation %d was accepted: %+v", index, changed)
+		}
+	}
+	merged := observation
+	merged.State, merged.Merged, merged.MergeCommitSHA = "merged", true, strings.Repeat("e", 40)
+	base.SourcePRState = "merged"
+	base.SourceMergedSHA = merged.MergeCommitSHA
+	if !validateLegacyPullRequestObservation(base, merged, "merged") {
+		t.Fatal("complete merged pull request identity was rejected")
+	}
+	merged.MergeCommitSHA = strings.Repeat("f", 40)
+	if validateLegacyPullRequestObservation(base, merged, "merged") {
+		t.Fatal("mismatched merge identity was accepted")
+	}
+}
+
 func TestDeliveryObserveRejectsSupersededApprovalBeforeProviderRead(t *testing.T) {
 	store := &deliveryTestStore{loadErr: errApprovedEvidenceSuperseded}
 	observer := &deliveryTestObserver{}

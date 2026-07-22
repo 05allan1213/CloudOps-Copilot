@@ -30,6 +30,7 @@ type fakeMarkerWriteTx struct {
 	markerStatuses []string
 	prerequisites  map[string]prerequisite
 	activeLeases   uint64
+	phase7AErr     error
 	now            time.Time
 	inserted       *Marker
 	markerCount    uint64
@@ -48,6 +49,9 @@ func (t *fakeMarkerWriteTx) PrerequisiteForUpdate(_ context.Context, id string) 
 		return prerequisite{}, sql.ErrNoRows
 	}
 	return row, nil
+}
+func (t *fakeMarkerWriteTx) ValidatePhase7APreparation(context.Context, WriteRequest) error {
+	return t.phase7AErr
 }
 func (t *fakeMarkerWriteTx) LegacyActiveLeaseCount(context.Context) (uint64, error) {
 	return t.activeLeases, nil
@@ -130,6 +134,9 @@ func TestMarkerWriterFailsClosedBeforeInsert(t *testing.T) {
 			row.SourceExactSHA = strings.Repeat("e", 40)
 			tx.prerequisites[r.ConverterAuditLedgerPublicID] = row
 		}, needle: "identity mismatch"},
+		{name: "preparation drift", edit: func(_ *WriteRequest, tx *fakeMarkerWriteTx) {
+			tx.phase7AErr = errors.New("archive parity drift")
+		}, needle: "archive parity drift"},
 		{name: "active legacy lease", edit: func(_ *WriteRequest, tx *fakeMarkerWriteTx) { tx.activeLeases = 1 }, needle: "active lease count=1"},
 		{name: "ambiguous inserted marker", edit: func(_ *WriteRequest, tx *fakeMarkerWriteTx) { tx.markerCount = 2 }, needle: "rows=2"},
 	}
@@ -160,7 +167,7 @@ func TestMarkerWriterPropagatesUnknownDatabaseEvidence(t *testing.T) {
 
 func TestSQLMarkerWriterLocksPrerequisitesAndQueriesEveryLegacyLeaseOwner(t *testing.T) {
 	for name, query := range map[string]string{
-		"marker": markerStatusesForUpdateSQL,
+		"marker":       markerStatusesForUpdateSQL,
 		"prerequisite": prerequisiteForUpdateSQL,
 	} {
 		if !strings.HasSuffix(strings.TrimSpace(query), "FOR UPDATE") {

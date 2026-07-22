@@ -88,6 +88,7 @@ func TestMarkerValidateRequiresCompleteIrreversibleLedgerUnit(t *testing.T) {
 		{name: "summary", edit: func(value *Marker) { value.BoundedSummary = "" }},
 		{name: "source sha", edit: func(value *Marker) { value.SourceExactSHA = strings.Repeat("a", 41) }},
 		{name: "image digest", edit: func(value *Marker) { value.BinaryImageDigest = "latest" }},
+		{name: "release identity hash", edit: func(value *Marker) { value.ReleaseIdentityHash = strings.Repeat("e", 64) }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -142,7 +143,7 @@ func TestRuntimeGenerationGuardsFailClosed(t *testing.T) {
 
 func validMarker() Marker {
 	started := time.Date(2026, 7, 21, 1, 2, 3, 456000000, time.UTC)
-	return Marker{
+	marker := Marker{
 		PublicID:            "12345678-1234-4234-8234-123456789abc",
 		PlanVersion:         1,
 		Stage:               MarkerStage,
@@ -164,11 +165,18 @@ func validMarker() Marker {
 		SourceExactSHA:      strings.Repeat("c", 40),
 		BinaryImageDigest:   "sha256:" + strings.Repeat("d", 64),
 	}
+	marker.ReleaseIdentityHash = releaseIdentityHash(
+		marker.SourceExactSHA,
+		marker.BinaryImageDigest,
+		marker.SourceSchemaVersion,
+		marker.TargetSchemaVersion,
+	)
+	return marker
 }
 
 func scanMarker(marker Marker, count uint64) rowScanner {
 	return scanFunc(func(dest ...any) error {
-		if len(dest) != 28 {
+		if len(dest) != 29 {
 			return errors.New("unexpected marker scan width")
 		}
 		*dest[0].(*string) = marker.PublicID
@@ -198,7 +206,8 @@ func scanMarker(marker Marker, count uint64) rowScanner {
 		*dest[24].(*sql.NullString) = sql.NullString{String: marker.BoundedSummary, Valid: marker.BoundedSummary != ""}
 		*dest[25].(*string) = marker.SourceExactSHA
 		*dest[26].(*string) = marker.BinaryImageDigest
-		*dest[27].(*uint64) = count
+		*dest[27].(*string) = marker.ReleaseIdentityHash
+		*dest[28].(*uint64) = count
 		return nil
 	})
 }
