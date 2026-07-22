@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - codex/v3-refactor
-    paths:
-      - .github/workflows/golden-image-publish.yaml
 
 concurrency:
   group: golden-image-publish-${{ github.sha }}
