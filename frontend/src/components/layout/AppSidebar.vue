@@ -1,259 +1,132 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { DataAnalysis } from "@element-plus/icons-vue";
 
 import SidebarMenu from "./SidebarMenu.vue";
-
-const route = useRoute();
-const collapsed = ref(false);
-const isMobile = ref(false);
-const overlayVisible = ref(false);
-
-function checkScreenSize() {
-  const width = window.innerWidth;
-  isMobile.value = width < 768;
-  if (width < 768) {
-    collapsed.value = true;
-    overlayVisible.value = false;
-  } else if (width < 1024) {
-    collapsed.value = true;
-    overlayVisible.value = false;
-  } else {
-    collapsed.value = false;
-    overlayVisible.value = false;
-  }
-}
-
-function toggleCollapse() {
-  if (isMobile.value) {
-    overlayVisible.value = !overlayVisible.value;
-    collapsed.value = !overlayVisible.value;
-  } else {
-    collapsed.value = !collapsed.value;
-  }
-}
-
-function closeMobileSidebar() {
-  if (isMobile.value) {
-    overlayVisible.value = false;
-    collapsed.value = true;
-  }
-}
-
-watch(() => route.path, () => {
-  closeMobileSidebar();
-});
-
-onMounted(() => {
-  checkScreenSize();
-  window.addEventListener("resize", checkScreenSize);
-});
-
-onBeforeUnmount(() => {
-  window.removeEventListener("resize", checkScreenSize);
-});
 </script>
 
 <template>
-  <el-aside
-    :width="collapsed ? '64px' : '220px'"
+  <aside
     class="app-sidebar"
-    :class="{ 'sidebar-mobile-open': overlayVisible }"
+    aria-label="Primary application navigation"
   >
-    <div
-      v-if="overlayVisible"
-      class="sidebar-overlay"
-      @click="closeMobileSidebar"
-    />
-    <div class="sidebar-content">
-      <div class="sidebar-header">
-        <div
-          v-if="!collapsed"
-          class="sidebar-brand"
-        >
-          <div class="sidebar-logo">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="rgba(255,255,255,0.85)"
-              stroke-width="1.8"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M6.5 19.5a4 4 0 0 1-.5-7.97 7 7 0 0 1 13.36 1.2A3.5 3.5 0 0 1 18.5 19.5H6.5z" />
-            </svg>
-          </div>
-          <span class="sidebar-title">CloudOps</span>
-        </div>
-        <div
-          v-else
-          class="sidebar-logo-collapsed"
-        >
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="rgba(255,255,255,0.85)"
-            stroke-width="1.8"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <path d="M6.5 19.5a4 4 0 0 1-.5-7.97 7 7 0 0 1 13.36 1.2A3.5 3.5 0 0 1 18.5 19.5H6.5z" />
-          </svg>
-        </div>
-        <button
-          class="sidebar-collapse-btn"
-          :aria-label="collapsed ? '展开侧边栏' : '折叠侧边栏'"
-          :title="collapsed ? '展开侧边栏' : '折叠侧边栏'"
-          @click="toggleCollapse"
-        >
-          <el-icon :size="16">
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-            >
-              <polyline
-                v-if="collapsed"
-                points="9 18 15 12 9 6"
-              />
-              <polyline
-                v-else
-                points="15 18 9 12 15 6"
-              />
-            </svg>
-          </el-icon>
-        </button>
-      </div>
-      <SidebarMenu :collapsed="collapsed" />
+    <RouterLink
+      class="sidebar-brand"
+      to="/incidents"
+      aria-label="CloudOps Incident Agent home"
+    >
+      <span
+        class="sidebar-brand-icon"
+        aria-hidden="true"
+      >
+        <el-icon :size="22">
+          <DataAnalysis />
+        </el-icon>
+      </span>
+      <span class="sidebar-brand-copy">
+        <strong>CloudOps</strong>
+        <small>Incident Agent</small>
+      </span>
+    </RouterLink>
+
+    <SidebarMenu variant="desktop" />
+
+    <div class="sidebar-footer">
+      <span>Evidence-first Workbench</span>
+      <small>V3 MySQL projection</small>
     </div>
-  </el-aside>
+  </aside>
 </template>
 
 <style scoped>
 .app-sidebar {
-  background: var(--cloudops-sidebar-bg);
-  border-right: 1px solid var(--cloudops-border-color);
-  transition: width 0.25s ease;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  flex-shrink: 0;
   position: relative;
-}
-
-.sidebar-content {
+  z-index: var(--co-z-header);
   display: flex;
-  flex-direction: column;
-  height: 100%;
+  flex: 0 0 var(--co-sidebar-width);
+  width: var(--co-sidebar-width);
+  min-height: 100dvh;
   overflow: hidden;
-}
-
-.sidebar-overlay {
-  display: none;
-}
-
-.sidebar-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: var(--cloudops-header-height);
-  padding: 0 16px;
-  border-bottom: 1px solid var(--cloudops-border-color);
-  flex-shrink: 0;
+  flex-direction: column;
+  border-right: 1px solid var(--co-border-default);
+  background: var(--co-bg-surface);
+  transition: width var(--co-motion-standard) var(--co-ease-out),
+    flex-basis var(--co-motion-standard) var(--co-ease-out);
 }
 
 .sidebar-brand {
   display: flex;
+  min-height: var(--co-header-height);
   align-items: center;
-  gap: 10px;
-  overflow: hidden;
+  gap: var(--co-space-3);
+  padding: 0 var(--co-space-4);
+  border-bottom: 1px solid var(--co-border-default);
+  color: var(--co-text-primary);
 }
 
-.sidebar-logo {
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  background: linear-gradient(135deg, var(--cloudops-accent), #6366f1);
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 5px;
+.sidebar-brand:hover {
+  background: var(--co-bg-hover);
 }
 
-.sidebar-logo svg {
-  width: 100%;
-  height: 100%;
+.sidebar-brand-icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  place-items: center;
+  border: 1px solid var(--co-border-default);
+  border-radius: var(--co-radius-control);
+  color: var(--co-action-primary);
+  background: var(--co-bg-subtle);
 }
 
-.sidebar-title {
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--cloudops-text-primary);
+.sidebar-brand-copy {
+  display: grid;
+  min-width: 0;
+  line-height: 1.2;
   white-space: nowrap;
-  letter-spacing: -0.02em;
 }
 
-.sidebar-logo-collapsed {
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  background: linear-gradient(135deg, var(--cloudops-accent), #6366f1);
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 5px;
+.sidebar-brand-copy strong {
+  font-size: 14px;
 }
 
-.sidebar-logo-collapsed svg {
-  width: 100%;
-  height: 100%;
+.sidebar-brand-copy small,
+.sidebar-footer small {
+  color: var(--co-text-muted);
+  font-size: 11px;
 }
 
-.sidebar-collapse-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 4px;
-  color: var(--cloudops-text-muted);
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: color 0.15s, background 0.15s;
-  border: none;
-  background: none;
+.sidebar-footer {
+  display: grid;
+  gap: 2px;
+  margin-top: auto;
+  padding: var(--co-space-4);
+  border-top: 1px solid var(--co-border-default);
+  color: var(--co-text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
 }
 
-.sidebar-collapse-btn:hover {
-  color: var(--cloudops-text-primary);
-  background: var(--cloudops-bg-hover);
+@media (min-width: 768px) and (max-width: 1279px) {
+  .app-sidebar {
+    flex-basis: var(--co-sidebar-rail-width);
+    width: var(--co-sidebar-rail-width);
+  }
+
+  .sidebar-brand {
+    justify-content: center;
+    padding: 0;
+  }
+
+  .sidebar-brand-copy,
+  .sidebar-footer {
+    display: none;
+  }
 }
 
 @media (max-width: 767px) {
   .app-sidebar {
-    position: fixed;
-    top: 0;
-    left: 0;
-    bottom: 0;
-    z-index: 2000;
-  }
-
-  .app-sidebar.sidebar-mobile-open {
-    width: 220px !important;
-  }
-
-  .sidebar-overlay {
-    display: block;
-    position: fixed;
-    top: 0;
-    left: 220px;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
-    z-index: 1999;
+    display: none;
   }
 }
 </style>

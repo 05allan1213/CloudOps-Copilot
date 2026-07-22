@@ -15,13 +15,18 @@ onMounted(() => load(false));
 </script>
 
 <template>
-  <main class="incident-list-view">
+  <section
+    class="incident-list-view"
+    aria-labelledby="incident-list-title"
+  >
     <header>
       <div>
         <p class="eyebrow">
           MySQL-authoritative V3 operations
         </p>
-        <h1>Incident Workbench</h1>
+        <h1 id="incident-list-title">
+          Incident Workbench
+        </h1>
         <p>Read bounded Incident projections and follow the durable investigation, delivery and recovery chain.</p>
       </div>
     </header>
@@ -152,11 +157,12 @@ onMounted(() => load(false));
         Load next cursor page
       </el-button>
     </section>
-  </main>
+  </section>
 </template>
 
 <style scoped>
-.incident-list-view { display: grid; gap: 20px; }
+.incident-list-view { display: grid; min-width: 0; gap: 20px; }
+.incident-list-view > * { min-width: 0; }
 header { padding: 24px; border-radius: 12px; color: #fff; background: linear-gradient(125deg, #172554, #312e81 55%, #0f766e); }
 header h1 { margin: 4px 0; font-size: clamp(25px, 4vw, 36px); }
 header p { margin: 0; opacity: .82; }
@@ -167,7 +173,8 @@ header p { margin: 0; opacity: .82; }
 .filter-actions { display: flex; gap: 8px; margin-top: 12px; }
 .state-message { padding: 38px; text-align: center; color: var(--el-text-color-secondary); }
 .state-message--error { color: var(--el-color-danger); }
-.incident-grid { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); gap: 14px; }
+.incident-grid { min-width: 0; list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 310px), 1fr)); gap: 14px; }
+.incident-grid > li { min-width: 0; }
 .incident-card { display: block; height: 100%; box-sizing: border-box; padding: 18px; color: inherit; text-decoration: none; border: 1px solid var(--cloudops-border-color); border-radius: 10px; background: var(--cloudops-bg-card); }
 .incident-card:hover, .incident-card:focus-visible { border-color: var(--el-color-primary); outline: 3px solid var(--el-color-primary-light-8); }
 .card-top { display: flex; justify-content: space-between; gap: 8px; }

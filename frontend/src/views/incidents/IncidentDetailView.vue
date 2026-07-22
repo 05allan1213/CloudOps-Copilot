@@ -75,7 +75,7 @@ async function runCommand(request: () => Promise<unknown>, success: string) {
 </script>
 
 <template>
-  <main class="incident-detail-view">
+  <section class="incident-detail-view">
     <router-link
       :to="{ name: 'incidents' }"
       class="back-link"
@@ -251,7 +251,7 @@ async function runCommand(request: () => Promise<unknown>, success: string) {
         </p>
       </IncidentSectionShell>
     </template>
-  </main>
+  </section>
 </template>
 
 <style scoped>

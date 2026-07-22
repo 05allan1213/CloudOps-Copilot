@@ -1,63 +1,82 @@
 html.dark {
-  --cloudops-bg-primary: #0f172a;
-  --cloudops-bg-secondary: #1e293b;
-  --cloudops-bg-card: rgba(30, 41, 59, 0.85);
-  --cloudops-bg-hover: rgba(51, 65, 85, 0.6);
-  --cloudops-bg-active: rgba(59, 130, 246, 0.1);
-  --cloudops-bg-overlay: rgba(30, 41, 59, 0.95);
+  --co-bg-canvas: #0b0f14;
+  --co-bg-surface: #121920;
+  --co-bg-subtle: #19232d;
+  --co-bg-hover: #202d38;
+  --co-bg-active: #172d40;
+  --co-bg-overlay: #162029;
+  --co-text-primary: #f1f5f7;
+  --co-text-secondary: #a9b4be;
+  --co-text-muted: #8996a3;
+  --co-border-default: #2c3a46;
+  --co-border-strong: #43515e;
+  --co-action-primary: #63aeff;
+  --co-action-hover: #8cc6ff;
+  --co-focus-ring: #8cc6ff;
+  --co-status-critical-fg: #ff8a8a;
+  --co-status-critical-bg: #35171a;
+  --co-status-critical-border: #7a271a;
+  --co-status-warning-fg: #f5b942;
+  --co-status-warning-bg: #33270f;
+  --co-status-warning-border: #7a5a11;
+  --co-status-success-fg: #57d89b;
+  --co-status-success-bg: #102b21;
+  --co-status-success-border: #217a55;
+  --co-status-info-fg: #78b7ff;
+  --co-status-info-bg: #102a44;
+  --co-status-info-border: #175cd3;
+  --co-status-inconclusive-fg: #c4a7ff;
+  --co-status-inconclusive-bg: #2b2140;
+  --co-status-inconclusive-border: #6941c6;
+  --co-status-neutral-fg: #a9b4be;
+  --co-status-neutral-bg: #19232d;
+  --co-status-neutral-border: #43515e;
 
-  --cloudops-border-color: rgba(71, 85, 105, 0.6);
-  --cloudops-border-hover: rgba(100, 116, 139, 0.8);
+  --cloudops-bg-primary: var(--co-bg-canvas);
+  --cloudops-bg-secondary: var(--co-bg-surface);
+  --cloudops-bg-card: var(--co-bg-surface);
+  --cloudops-bg-hover: var(--co-bg-hover);
+  --cloudops-bg-active: var(--co-bg-active);
+  --cloudops-bg-overlay: var(--co-bg-overlay);
+  --cloudops-border-color: var(--co-border-default);
+  --cloudops-border-hover: var(--co-border-strong);
+  --cloudops-text-primary: var(--co-text-primary);
+  --cloudops-text-secondary: var(--co-text-secondary);
+  --cloudops-text-muted: var(--co-text-muted);
+  --cloudops-accent: var(--co-action-primary);
+  --cloudops-accent-soft: var(--co-bg-active);
+  --cloudops-success: var(--co-status-success-fg);
+  --cloudops-success-soft: var(--co-status-success-bg);
+  --cloudops-warning: var(--co-status-warning-fg);
+  --cloudops-warning-soft: var(--co-status-warning-bg);
+  --cloudops-danger: var(--co-status-critical-fg);
+  --cloudops-danger-soft: var(--co-status-critical-bg);
+  --cloudops-info: var(--co-status-info-fg);
+  --cloudops-info-soft: var(--co-status-info-bg);
+  --cloudops-sidebar-bg: var(--co-bg-surface);
+  --cloudops-shadow-sm: 0 1px 2px rgb(0 0 0 / 30%);
+  --cloudops-shadow-md: var(--co-shadow-overlay);
 
-  --cloudops-text-primary: #f1f5f9;
-  --cloudops-text-secondary: #94a3b8;
-  --cloudops-text-muted: #64748b;
-
-  --cloudops-accent: #3b82f6;
-  --cloudops-accent-soft: rgba(59, 130, 246, 0.1);
-  --cloudops-accent-glow: rgba(59, 130, 246, 0.25);
-
-  --cloudops-success: #22c55e;
-  --cloudops-success-soft: rgba(34, 197, 94, 0.1);
-  --cloudops-warning: #f59e0b;
-  --cloudops-warning-soft: rgba(245, 158, 11, 0.1);
-  --cloudops-danger: #ef4444;
-  --cloudops-danger-soft: rgba(239, 68, 68, 0.1);
-  --cloudops-info: #06b6d4;
-  --cloudops-info-soft: rgba(6, 182, 212, 0.1);
-
-  --cloudops-radius-sm: 6px;
-  --cloudops-radius-md: 8px;
-  --cloudops-radius-lg: 12px;
-
-  --cloudops-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --cloudops-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35);
-  --cloudops-shadow-glow: 0 0 20px var(--cloudops-accent-glow);
-
-  --cloudops-sidebar-bg: #0f172a;
-  --cloudops-sidebar-width: 220px;
-  --cloudops-sidebar-collapsed-width: 64px;
-  --cloudops-header-height: 56px;
-
-  --el-bg-color: #0f172a;
-  --el-bg-color-overlay: #1e293b;
-  --el-bg-color-page: #0f172a;
-
-  --el-text-color-primary: #f1f5f9;
-  --el-text-color-regular: #cbd5e1;
-  --el-text-color-secondary: #94a3b8;
-  --el-text-color-placeholder: #64748b;
-
-  --el-border-color: #475569;
-  --el-border-color-light: #334155;
-  --el-border-color-lighter: #1e293b;
-
-  --el-fill-color: #1e293b;
-  --el-fill-color-light: #1e293b;
-  --el-fill-color-lighter: #0f172a;
-  --el-fill-color-blank: #0f172a;
-
-  --el-mask-color: rgba(0, 0, 0, 0.6);
+  --el-color-primary: var(--co-action-primary);
+  --el-color-success: var(--co-status-success-fg);
+  --el-color-warning: var(--co-status-warning-fg);
+  --el-color-danger: var(--co-status-critical-fg);
+  --el-color-info: var(--co-status-neutral-fg);
+  --el-bg-color: var(--co-bg-surface);
+  --el-bg-color-overlay: var(--co-bg-overlay);
+  --el-bg-color-page: var(--co-bg-canvas);
+  --el-text-color-primary: var(--co-text-primary);
+  --el-text-color-regular: var(--co-text-secondary);
+  --el-text-color-secondary: var(--co-text-muted);
+  --el-text-color-placeholder: #7b8996;
+  --el-border-color: var(--co-border-default);
+  --el-border-color-light: #26333e;
+  --el-border-color-lighter: #202b35;
+  --el-fill-color: var(--co-bg-subtle);
+  --el-fill-color-light: #162029;
+  --el-fill-color-lighter: #10171e;
+  --el-fill-color-blank: var(--co-bg-surface);
+  --el-mask-color: rgb(0 0 0 / 60%);
 
   color-scheme: dark;
 }

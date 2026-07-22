@@ -1,37 +1,59 @@
 :root {
-  --el-color-primary: #3b82f6;
-  --el-color-primary-light-3: #60a5fa;
-  --el-color-primary-light-5: #93c5fd;
-  --el-color-primary-light-7: #bfdbfe;
-  --el-color-primary-light-8: #dbeafe;
-  --el-color-primary-light-9: #eff6ff;
-  --el-color-primary-dark-2: #2563eb;
+  --co-font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --co-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", monospace;
+  --co-text-on-action: #ffffff;
 
-  --el-color-success: #22c55e;
-  --el-color-warning: #f59e0b;
-  --el-color-danger: #ef4444;
-  --el-color-info: #06b6d4;
+  --co-space-1: 4px;
+  --co-space-2: 8px;
+  --co-space-3: 12px;
+  --co-space-4: 16px;
+  --co-space-5: 20px;
+  --co-space-6: 24px;
+  --co-space-8: 32px;
+  --co-space-10: 40px;
 
-  --el-color-success-light-3: #4ade80;
-  --el-color-warning-light-3: #fbbf24;
-  --el-color-danger-light-3: #f87171;
-  --el-color-info-light-3: #22d3ee;
+  --co-radius-control: 4px;
+  --co-radius-panel: 6px;
+  --co-radius-overlay: 8px;
+  --co-radius-pill: 999px;
 
-  --el-border-radius-base: 6px;
-  --el-border-radius-small: 4px;
-  --el-border-radius-round: 20px;
+  --co-shadow-overlay: 0 8px 24px rgb(0 0 0 / 18%);
+  --co-motion-fast: 150ms;
+  --co-motion-standard: 200ms;
+  --co-ease-out: cubic-bezier(0.2, 0, 0, 1);
 
-  --el-font-family: "DM Sans", "PingFang SC", "Microsoft YaHei", -apple-system,
-    BlinkMacSystemFont, sans-serif;
+  --co-header-height: 56px;
+  --co-sidebar-width: 220px;
+  --co-sidebar-rail-width: 64px;
+  --co-content-max-width: 1600px;
+
+  --co-z-base: 0;
+  --co-z-sticky: 20;
+  --co-z-header: 40;
+  --co-z-overlay: 100;
+  --co-z-skip-link: 1000;
+
+  --el-font-family: var(--co-font-sans);
   --el-font-size-base: 14px;
   --el-font-size-small: 13px;
+  --el-border-radius-base: var(--co-radius-control);
+  --el-border-radius-small: var(--co-radius-control);
+  --el-border-radius-round: var(--co-radius-pill);
+  --el-transition-duration: var(--co-motion-standard);
+  --el-transition-duration-fast: var(--co-motion-fast);
+
+  --cloudops-sidebar-width: var(--co-sidebar-width);
+  --cloudops-sidebar-collapsed-width: var(--co-sidebar-rail-width);
+  --cloudops-header-height: var(--co-header-height);
+  --cloudops-radius-sm: var(--co-radius-control);
+  --cloudops-radius-md: var(--co-radius-panel);
+  --cloudops-radius-lg: var(--co-radius-overlay);
   --cloudops-font-size-page-title: 20px;
   --cloudops-font-weight-page-title: 700;
-  --cloudops-font-size-panel-title: 15px;
-  --cloudops-font-weight-panel-title: 600;
+  --cloudops-font-size-panel-title: 18px;
+  --cloudops-font-weight-panel-title: 650;
   --cloudops-font-size-card-title: 14px;
-  --cloudops-font-weight-card-title: 600;
-
-  --el-transition-duration: 0.2s;
-  --el-transition-duration-fast: 0.15s;
+  --cloudops-font-weight-card-title: 650;
 }

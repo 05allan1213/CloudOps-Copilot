@@ -13,14 +13,14 @@ function goHome() {
     <el-result
       icon="warning"
       title="404"
-      sub-title="页面未找到"
+      sub-title="The requested page could not be found."
     >
       <template #extra>
         <el-button
           type="primary"
           @click="goHome"
         >
-          返回首页
+          Return to Incidents
         </el-button>
       </template>
     </el-result>

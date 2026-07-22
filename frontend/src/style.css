@@ -2,13 +2,12 @@
 *::before,
 *::after {
   box-sizing: border-box;
-  margin: 0;
-  padding: 0;
 }
 
 html {
-  font-family: "DM Sans", "PingFang SC", "Microsoft YaHei", -apple-system,
-    BlinkMacSystemFont, sans-serif;
+  min-height: 100%;
+  overflow-x: hidden;
+  font-family: var(--co-font-sans);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -16,11 +15,16 @@ html {
 }
 
 body {
-  min-width: 320px;
-  min-height: 100vh;
-  line-height: 1.6;
-  background: var(--cloudops-bg-primary);
-  color: var(--cloudops-text-primary);
+  margin: 0;
+  min-height: 100dvh;
+  overflow-x: hidden;
+  line-height: 1.5;
+  background: var(--co-bg-canvas);
+  color: var(--co-text-primary);
+}
+
+#app {
+  min-height: 100dvh;
 }
 
 button,
@@ -30,14 +34,53 @@ select {
   font: inherit;
 }
 
+button,
+a,
+input,
+select,
+textarea {
+  touch-action: manipulation;
+}
+
 a {
   color: inherit;
   text-decoration: none;
 }
 
+:focus-visible {
+  outline: 3px solid var(--co-focus-ring);
+  outline-offset: 2px;
+}
+
+h1,
+h2,
+h3 {
+  letter-spacing: 0;
+  text-wrap: balance;
+}
+
+code,
+pre,
+.mono-text {
+  font-family: var(--co-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
@@ -45,17 +88,17 @@ a {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--cloudops-border-color);
-  border-radius: 3px;
+  background: var(--co-border-default);
+  border-radius: var(--co-radius-pill);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--cloudops-border-hover);
+  background: var(--co-border-strong);
 }
 
 .fade-enter-active,
 .fade-leave-active {
-  transition: opacity 150ms ease-out;
+  transition: opacity var(--co-motion-fast) var(--co-ease-out);
 }
 
 .fade-enter-from,
@@ -63,16 +106,20 @@ a {
   opacity: 0;
 }
 
-.el-card {
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+.el-button {
+  min-height: 40px;
+  transition: background-color var(--co-motion-fast) var(--co-ease-out),
+    border-color var(--co-motion-fast) var(--co-ease-out),
+    color var(--co-motion-fast) var(--co-ease-out);
 }
 
-.el-button {
-  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+.el-input__wrapper,
+.el-select__wrapper {
+  min-height: 40px;
 }
 
 .el-table__row {
-  transition: background-color 0.15s ease;
+  transition: background-color var(--co-motion-fast) var(--co-ease-out);
 }
 
 @keyframes page-enter {
@@ -86,8 +133,8 @@ a {
   }
 }
 
-.app-main > section {
-  animation: page-enter 0.2s ease-out;
+.app-main > * {
+  animation: page-enter var(--co-motion-fast) var(--co-ease-out);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -103,5 +150,13 @@ a {
   .fade-enter-active,
   .fade-leave-active {
     transition: none;
+  }
+}
+
+@media (max-width: 767px) {
+  .el-button,
+  .el-input__wrapper,
+  .el-select__wrapper {
+    min-height: 44px;
   }
 }
