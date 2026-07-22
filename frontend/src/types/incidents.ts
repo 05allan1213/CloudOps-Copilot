@@ -32,6 +32,8 @@ export interface ResourceView {
   cycle?: number;
   summary?: string;
   hash?: string;
+  migrated_legacy: boolean;
+  migrated_legacy_context: boolean;
   created_at?: string;
   updated_at?: string;
 }

@@ -1,42 +1,67 @@
 <script setup lang="ts">
 import { onMounted } from "vue";
+import { ArrowLeft } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 
+import ActivityTimeline from "../../components/incidents/ActivityTimeline.vue";
+import AgentActivityPanel from "../../components/incidents/AgentActivityPanel.vue";
+import EvidenceTable from "../../components/incidents/EvidenceTable.vue";
 import IncidentDeliveryPanel from "../../components/incidents/IncidentDeliveryPanel.vue";
 import IncidentHeader from "../../components/incidents/IncidentHeader.vue";
 import IncidentRemediationPanel from "../../components/incidents/IncidentRemediationPanel.vue";
-import IncidentResourceList from "../../components/incidents/IncidentResourceList.vue";
 import IncidentResolutionReport from "../../components/incidents/IncidentResolutionReport.vue";
-import IncidentSectionShell from "../../components/incidents/IncidentSectionShell.vue";
+import IncidentSignalStrip from "../../components/incidents/IncidentSignalStrip.vue";
 import IncidentVerificationPanel from "../../components/incidents/IncidentVerificationPanel.vue";
+import PersistedContextPanel from "../../components/incidents/PersistedContextPanel.vue";
+import StateBlock from "../../components/incidents/StateBlock.vue";
+import ZoneNav, { type IncidentZone } from "../../components/incidents/ZoneNav.vue";
 import { useIncidentDetail } from "../../composables/incidents/useIncidentDetail";
 import { useIncidentRealtime } from "../../composables/incidents/useIncidentRealtime";
 import { useAuthStore } from "../../stores/auth";
-import type { RemediationPlanView } from "../../types/incidents";
+import type { IncidentRealtimeEvent, RemediationPlanView } from "../../types/incidents";
 
 const route = useRoute();
+const router = useRouter();
 const auth = useAuthStore();
 const incidentID = String(route.params.incidentId ?? "");
 const detail = useIncidentDetail(incidentID);
-const realtime = useIncidentRealtime(incidentID, async () => detail.load());
+const realtime = useIncidentRealtime(incidentID, detail.refreshResource);
+const zones: IncidentZone[] = [
+  { id: "what-happened", label: "What Happened", index: "01" },
+  { id: "investigation-zone", label: "Investigation", index: "02" },
+  { id: "remediation-delivery", label: "Remediation & Delivery", index: "03" },
+  { id: "recovery", label: "Recovery", index: "04" },
+];
 
-onMounted(async () => {
+onMounted(loadDetail);
+
+async function loadDetail() {
   await detail.load();
-  if (detail.pageState.value === "ready") realtime.start();
-});
+  if (detail.pageState.value === "ready" && realtime.state.value === "disconnected") realtime.start();
+}
+
+function retryResource(resource: IncidentRealtimeEvent["resource"]) {
+  void detail.refreshResource(resource).catch(() => {
+    // The section retains visible data and renders the normalized request error.
+  });
+}
+
+function returnToIncidents() {
+  void router.push({ name: "incidents" });
+}
 
 async function promptReason(title: string, required: boolean, maxLength = 2048): Promise<string | null> {
   try {
     const result = await ElMessageBox.prompt("This reason is persisted with the V3 command.", title, {
-      confirmButtonText: "Submit",
+      confirmButtonText: "Submit Command",
       cancelButtonText: "Cancel",
       inputType: "textarea",
-      inputPlaceholder: required ? "Required reason" : "Optional bounded reason",
+      inputPlaceholder: required ? "Example: exact evidence supporting this decision…" : "Optional bounded reason…",
       inputValidator: (value) => {
         const text = value.trim();
-        if (required && !text) return "A reason is required";
-        if (text.length > maxLength) return `Reason must be at most ${maxLength} characters`;
+        if (required && !text) return "Enter a reason before submitting this command.";
+        if (text.length > maxLength) return `Keep the reason within ${maxLength} characters.`;
         return true;
       },
     });
@@ -47,19 +72,19 @@ async function promptReason(title: string, required: boolean, maxLength = 2048):
 }
 
 async function runInvestigation() {
-  const reason = await promptReason("Start a bounded re-investigation", false, 1024);
+  const reason = await promptReason("Start Bounded Re-investigation", false, 1024);
   if (reason === null) return;
   await runCommand(async () => detail.investigate(reason, await auth.commandToken()), "Investigation command accepted");
 }
 
 async function runClose() {
-  const reason = await promptReason("Close this Incident", true);
+  const reason = await promptReason("Close This Incident", true);
   if (reason === null) return;
   await runCommand(async () => detail.close(reason, await auth.commandToken()), "Close command accepted");
 }
 
 async function runDecision(plan: RemediationPlanView, decision: "approved" | "rejected") {
-  const reason = await promptReason(`${decision === "approved" ? "Approve" : "Reject"} exact plan`, true, 1024);
+  const reason = await promptReason(`${decision === "approved" ? "Approve" : "Reject"} Exact Plan`, true, 1024);
   if (reason === null) return;
   await runCommand(async () => detail.decide(plan, decision, reason, await auth.commandToken()), `Plan ${decision}`);
 }
@@ -80,135 +105,182 @@ async function runCommand(request: () => Promise<unknown>, success: string) {
       :to="{ name: 'incidents' }"
       class="back-link"
     >
-      ← All incidents
+      <el-icon aria-hidden="true">
+        <ArrowLeft />
+      </el-icon>
+      All Incidents
     </router-link>
-    <div
-      v-if="detail.pageState.value === 'loading'"
-      role="status"
-      aria-live="polite"
-      class="page-message"
-    >
-      Loading incident…
-    </div>
-    <div
-      v-else-if="detail.pageState.value === 'forbidden'"
-      role="alert"
-      class="page-message"
-    >
-      Viewer access is required.
-    </div>
-    <div
-      v-else-if="detail.pageState.value === 'not_found'"
-      role="status"
-      class="page-message"
-    >
-      Incident not found.
-    </div>
-    <div
-      v-else-if="detail.pageState.value !== 'ready' || !detail.incident.value"
-      role="alert"
-      class="page-message"
-    >
-      {{ detail.pageError.value || "Incident unavailable" }}
-      <el-button @click="detail.load">
-        Retry
-      </el-button>
-    </div>
+
+    <template v-if="detail.pageState.value !== 'ready' || !detail.incident.value">
+      <h1 class="visually-hidden">
+        Incident Detail
+      </h1>
+      <StateBlock
+        :state="detail.pageState.value === 'ready' ? 'error' : detail.pageState.value"
+        :title="detail.pageState.value === 'loading' ? 'Loading Incident' : undefined"
+        :message="detail.pageError.value?.message"
+        :request-i-d="detail.pageError.value?.requestID"
+        :trace-i-d="detail.pageError.value?.traceID"
+        :primary-action-label="['error', 'unavailable'].includes(detail.pageState.value) ? 'Retry Incident' : undefined"
+        secondary-action-label="Back to Incidents"
+        @primary-action="loadDetail"
+        @secondary-action="returnToIncidents"
+      />
+    </template>
+
     <template v-else>
       <IncidentHeader
         :incident="detail.incident.value"
         :realtime-state="realtime.state.value"
+        :realtime-notice="realtime.notice.value"
+        :refreshing="detail.refreshing.value"
+        :last-updated-at="detail.lastUpdatedAt.value"
       />
+
+      <div
+        v-if="detail.pageError.value"
+        class="page-refresh-warning"
+        role="status"
+        aria-live="polite"
+      >
+        <strong>The visible Incident remains available.</strong>
+        <span>{{ detail.pageError.value.message }}</span>
+        <code
+          v-if="detail.pageError.value.requestID"
+          translate="no"
+        >Request {{ detail.pageError.value.requestID }}</code>
+      </div>
+
       <div
         v-if="auth.isOperator"
         class="command-bar"
-        aria-label="Operator commands"
+        aria-label="Operator Incident commands"
       >
         <div>
-          <strong>Operator commands</strong>
-          <span>Server-side version, transition, CSRF and idempotency gates remain authoritative.</span>
+          <strong>Operator Commands</strong>
+          <span>Server-side version, transition, CSRF, and idempotency checks remain authoritative.</span>
         </div>
-        <el-button
-          :loading="detail.commandPending.value"
-          @click="runInvestigation"
-        >
-          Re-investigate
-        </el-button>
-        <el-button
-          type="danger"
-          plain
-          :loading="detail.commandPending.value"
-          @click="runClose"
-        >
-          Close
-        </el-button>
+        <div class="command-actions">
+          <el-button
+            :loading="detail.commandPending.value"
+            @click="runInvestigation"
+          >
+            Re-investigate
+          </el-button>
+          <el-button
+            type="danger"
+            plain
+            :loading="detail.commandPending.value"
+            @click="runClose"
+          >
+            Close Incident
+          </el-button>
+        </div>
       </div>
-      <nav
-        aria-label="Incident detail zones"
-        class="section-nav"
-      >
-        <a href="#what-happened">What happened</a>
-        <a href="#investigation-zone">Investigation</a>
-        <a href="#remediation-delivery">Remediation &amp; Delivery</a>
-        <a href="#recovery">Recovery</a>
-      </nav>
+
+      <ZoneNav :zones="zones" />
+
       <div class="zone-stack">
         <section
           id="what-happened"
-          class="zone"
+          class="incident-zone"
+          aria-labelledby="what-happened-title"
         >
-          <header><span>01</span><div><h2>What happened</h2><p>Signals and Timeline are persisted MySQL facts; the browser does not query Kubernetes.</p></div></header>
-          <IncidentResourceList
-            id="signals"
-            title="Signals"
+          <header class="zone-heading">
+            <span aria-hidden="true">01</span>
+            <div>
+              <h2 id="what-happened-title">
+                What Happened
+              </h2>
+              <p>Persisted signals, runtime context, and server-ordered Timeline facts define the observable incident history.</p>
+            </div>
+          </header>
+
+          <IncidentSignalStrip
             :state="detail.signals.state"
             :error="detail.signals.error"
             :items="detail.signals.data"
             :next-cursor="detail.signals.nextCursor"
+            :refreshing="detail.signals.refreshing"
+            :loading-more="detail.signals.loadingMore"
             @load-more="detail.moreSignals"
+            @retry="retryResource('signals')"
           />
-          <IncidentResourceList
-            id="timeline"
-            title="Timeline"
+
+          <PersistedContextPanel
+            :signals="detail.signals.data"
+            :evidence="detail.evidence.data"
+            :timeline="detail.timeline.data"
+          />
+
+          <ActivityTimeline
             :state="detail.timeline.state"
             :error="detail.timeline.error"
             :items="detail.timeline.data"
             :next-cursor="detail.timeline.nextCursor"
+            :refreshing="detail.timeline.refreshing"
+            :loading-more="detail.timeline.loadingMore"
             @load-more="detail.moreTimeline"
+            @retry="retryResource('timeline')"
           />
         </section>
+
         <section
           id="investigation-zone"
-          class="zone"
+          class="incident-zone"
+          aria-labelledby="investigation-zone-title"
         >
-          <header><span>02</span><div><h2>Investigation</h2><p>Bounded Agent runs, Diagnosis summaries and Evidence authority remain server projections.</p></div></header>
-          <IncidentResourceList
-            id="investigations"
-            title="Investigations"
+          <header class="zone-heading">
+            <span aria-hidden="true">02</span>
+            <div>
+              <h2 id="investigation-zone-title">
+                Investigation
+              </h2>
+              <p>Bounded Investigation and Evidence projections are readable without exposing private reasoning or inventing missing relationships.</p>
+            </div>
+          </header>
+
+          <AgentActivityPanel
             :state="detail.investigations.state"
             :error="detail.investigations.error"
             :items="detail.investigations.data"
             :next-cursor="detail.investigations.nextCursor"
+            :refreshing="detail.investigations.refreshing"
+            :loading-more="detail.investigations.loadingMore"
             @load-more="detail.moreInvestigations"
+            @retry="retryResource('investigations')"
           />
-          <IncidentResourceList
-            id="evidence"
-            title="Evidence"
+
+          <EvidenceTable
             :state="detail.evidence.state"
             :error="detail.evidence.error"
             :items="detail.evidence.data"
             :next-cursor="detail.evidence.nextCursor"
+            :refreshing="detail.evidence.refreshing"
+            :loading-more="detail.evidence.loadingMore"
             @load-more="detail.moreEvidence"
+            @retry="retryResource('evidence')"
           />
         </section>
+
         <section
           id="remediation-delivery"
-          class="zone"
+          class="incident-zone"
+          aria-labelledby="remediation-delivery-title"
         >
-          <header><span>03</span><div><h2>Remediation &amp; Delivery</h2><p>Viewer sees the persisted canonical Plan hash and Decision state; only operator can submit Approve/Reject.</p></div></header>
+          <header class="zone-heading">
+            <span aria-hidden="true">03</span>
+            <div>
+              <h2 id="remediation-delivery-title">
+                Remediation &amp; Delivery
+              </h2>
+              <p>The exact persisted Plan, Decision, and delivery identities remain separate from recovery verification.</p>
+            </div>
+          </header>
+
           <IncidentRemediationPanel
             :state="detail.remediationPlans.state"
-            :error="detail.remediationPlans.error"
+            :error="detail.remediationPlans.error?.message || ''"
             :plans="detail.remediationPlans.data"
             :next-cursor="detail.remediationPlans.nextCursor"
             :is-operator="auth.isOperator"
@@ -218,58 +290,147 @@ async function runCommand(request: () => Promise<unknown>, success: string) {
           />
           <IncidentDeliveryPanel
             :state="detail.delivery.state"
-            :error="detail.delivery.error"
+            :error="detail.delivery.error?.message || ''"
             :delivery="detail.delivery.data"
           />
         </section>
+
         <section
           id="recovery"
-          class="zone"
+          class="incident-zone"
+          aria-labelledby="recovery-title"
         >
-          <header><span>04</span><div><h2>Recovery</h2><p>Verification verdicts and the immutable ResolutionReport are displayed without browser recomputation.</p></div></header>
+          <header class="zone-heading">
+            <span aria-hidden="true">04</span>
+            <div>
+              <h2 id="recovery-title">
+                Recovery
+              </h2>
+              <p>Verification outcomes remain distinct from delivery health, and only a persisted Resolution Report establishes resolution.</p>
+            </div>
+          </header>
+
           <IncidentVerificationPanel
             :state="detail.verifications.state"
-            :error="detail.verifications.error"
+            :error="detail.verifications.error?.message || ''"
             :runs="detail.verifications.data"
             :next-cursor="detail.verifications.nextCursor"
             @load-more="detail.moreVerifications"
           />
           <IncidentResolutionReport
             :state="detail.resolutionReport.state"
-            :error="detail.resolutionReport.error"
+            :error="detail.resolutionReport.error?.message || ''"
             :report="detail.resolutionReport.data"
           />
         </section>
       </div>
-      <IncidentSectionShell
-        id="authority-note"
-        title="Workbench authority boundary"
-        state="ready"
-      >
-        <p class="authority-note">
-          This page uses only /api/v3 Query, SSE and the three documented Command families. It stores no OAuth credential or CSRF token outside process memory and sends no Authorization header.
-        </p>
-      </IncidentSectionShell>
     </template>
   </section>
 </template>
 
 <style scoped>
-.incident-detail-view { display: grid; gap: 16px; }
-.back-link { width: fit-content; color: var(--el-color-primary); }
-.page-message { padding: 50px; text-align: center; }
-.command-bar { display: flex; align-items: center; gap: 10px; padding: 14px; border: 1px solid var(--el-color-warning-light-5); border-radius: 9px; background: var(--el-color-warning-light-9); }
-.command-bar > div { display: grid; gap: 3px; margin-right: auto; }
-.command-bar span { color: var(--el-text-color-secondary); font-size: 12px; }
-.section-nav { position: sticky; top: 0; z-index: 5; display: flex; gap: 6px; overflow-x: auto; padding: 10px; border: 1px solid var(--cloudops-border-color); border-radius: 9px; background: var(--cloudops-bg-card); }
-.section-nav a { padding: 6px 9px; color: var(--el-text-color-regular); text-decoration: none; border-radius: 5px; white-space: nowrap; }
-.section-nav a:hover, .section-nav a:focus-visible { background: var(--el-fill-color-light); outline: 2px solid var(--el-color-primary); }
-.zone-stack { display: grid; gap: 22px; }
-.zone { display: grid; gap: 14px; scroll-margin-top: 72px; }
-.zone > header { display: flex; gap: 12px; align-items: start; padding: 4px 2px; }
-.zone > header > span { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; color: white; background: var(--el-color-primary); font-size: 12px; font-weight: 700; }
-.zone h2, .zone p { margin: 0; }
-.zone p { margin-top: 4px; color: var(--el-text-color-secondary); }
-.authority-note { margin: 0; color: var(--el-text-color-secondary); }
-@media (max-width: 760px) { .command-bar { align-items: stretch; flex-direction: column; } .command-bar > div { margin-right: 0; } }
+.incident-detail-view {
+  display: grid;
+  width: min(100%, var(--co-content-max-width));
+  min-width: 0;
+  margin: 0 auto;
+  gap: var(--co-space-4);
+}
+
+.back-link {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 40px;
+  align-items: center;
+  gap: var(--co-space-2);
+  color: var(--co-action-primary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.back-link:hover { color: var(--co-action-hover); text-decoration: underline; text-underline-offset: 3px; }
+
+.page-refresh-warning {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--co-space-2) var(--co-space-4);
+  padding: var(--co-space-3) var(--co-space-4);
+  border-left: 3px solid var(--co-status-warning-fg);
+  color: var(--co-status-warning-fg);
+  background: var(--co-status-warning-bg);
+  font-size: 12px;
+}
+
+.page-refresh-warning code { overflow-wrap: anywhere; }
+
+.command-bar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--co-space-4);
+  padding: var(--co-space-3) 0;
+  border-bottom: 1px solid var(--co-border-default);
+}
+
+.command-bar > div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  margin-right: auto;
+}
+
+.command-bar span { color: var(--co-text-muted); font-size: 12px; }
+.command-actions { display: flex; flex: 0 0 auto; gap: var(--co-space-2); }
+
+.zone-stack {
+  display: grid;
+  min-width: 0;
+  gap: var(--co-space-10);
+}
+
+.incident-zone {
+  display: grid;
+  min-width: 0;
+  gap: 0;
+  scroll-margin-top: 64px;
+}
+
+.zone-heading {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  min-width: 0;
+  gap: var(--co-space-3);
+  padding: var(--co-space-6) 0 var(--co-space-2);
+}
+
+.zone-heading > span {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid var(--co-border-strong);
+  border-radius: var(--co-radius-pill);
+  color: var(--co-text-muted);
+  background: var(--co-bg-surface);
+  font-family: var(--co-font-mono);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.zone-heading h2,
+.zone-heading p { margin: 0; }
+.zone-heading h2 { color: var(--co-text-primary); font-size: 21px; }
+.zone-heading p { max-width: 82ch; margin-top: 3px; color: var(--co-text-secondary); font-size: 13px; }
+
+@media (max-width: 767px) {
+  .back-link { min-height: 44px; }
+  .command-bar { align-items: stretch; flex-direction: column; }
+  .command-bar > div:first-child { margin-right: 0; }
+  .command-actions { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .command-actions :deep(.el-button) { width: 100%; margin-left: 0; }
+  .zone-stack { gap: var(--co-space-8); }
+  .zone-heading { padding-top: var(--co-space-5); }
+}
 </style>

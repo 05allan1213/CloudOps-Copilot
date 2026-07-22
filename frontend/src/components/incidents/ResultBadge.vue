@@ -52,6 +52,7 @@ const icon = computed(() => {
 <style scoped>
 .result-badge {
   display: inline-flex;
+  max-width: 100%;
   min-height: 24px;
   align-items: center;
   gap: 6px;
@@ -62,6 +63,8 @@ const icon = computed(() => {
   background: var(--co-status-neutral-bg);
   font-size: 12px;
   font-weight: 650;
+  overflow-wrap: anywhere;
+  text-align: left;
 }
 
 .result-badge--success { border-color: var(--co-status-success-border); color: var(--co-status-success-fg); background: var(--co-status-success-bg); }

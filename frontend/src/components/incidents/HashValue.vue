@@ -20,7 +20,7 @@ async function copyValue() {
 <template>
   <div class="hash-value">
     <span>{{ label }}</span>
-    <code>{{ value || "Not projected" }}</code>
+    <code translate="no">{{ value || "Not projected" }}</code>
     <button
       v-if="value"
       type="button"
@@ -38,11 +38,11 @@ async function copyValue() {
 </template>
 
 <style scoped>
-.hash-value { display: grid; grid-template-columns: minmax(120px, .42fr) minmax(0, 1fr) 44px; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--cloudops-border-color); }
-.hash-value > span { color: var(--el-text-color-secondary); font-size: 12px; font-weight: 600; }
+.hash-value { display: grid; grid-template-columns: minmax(120px, .42fr) minmax(0, 1fr) 44px; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--co-border-default); }
+.hash-value > span { color: var(--co-text-muted); font-size: 12px; font-weight: 600; }
 code { min-width: 0; overflow-wrap: anywhere; font-size: 11px; }
-.copy-button { display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid var(--cloudops-border-color); border-radius: 7px; color: var(--el-text-color-regular); background: transparent; cursor: pointer; }
-.copy-button:hover, .copy-button:focus-visible { color: var(--el-color-primary); border-color: var(--el-color-primary); outline: 2px solid color-mix(in srgb, var(--el-color-primary) 35%, transparent); outline-offset: 2px; }
-small { grid-column: 2 / -1; min-height: 16px; color: var(--el-color-success); }
+.copy-button { display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); color: var(--co-text-secondary); background: transparent; cursor: pointer; }
+.copy-button:hover { color: var(--co-action-primary); border-color: var(--co-action-primary); background: var(--co-bg-hover); }
+small { grid-column: 2 / -1; min-height: 16px; color: var(--co-status-success-fg); }
 @media (max-width: 640px) { .hash-value { grid-template-columns: minmax(0, 1fr) 44px; } .hash-value > span, code { grid-column: 1; } .copy-button { grid-column: 2; grid-row: 1 / 3; } small { grid-column: 1 / -1; } }
 </style>

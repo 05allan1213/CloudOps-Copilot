@@ -34,7 +34,10 @@ describe("V3 Incident Workbench presentation contract", () => {
     expect(loadStateForStatus(503)).toBe("unavailable");
     expect(statusTone("approved")).toBe("success");
     expect(statusTone("inconclusive")).toBe("inconclusive");
-    expect(statusTone("unavailable")).toBe("neutral");
+    expect(statusTone("unavailable")).toBe("warning");
+    expect(statusTone("partial")).toBe("warning");
+    expect(statusTone("no_data")).toBe("inconclusive");
+    expect(statusTone("superseded")).toBe("neutral");
     expect(statusTone("NOT RUN")).toBe("neutral");
     expect(statusTone("detected")).toBe("danger");
     expect(humanizeCode("evidence_dependency_unavailable")).toBe("Evidence Dependency Unavailable");

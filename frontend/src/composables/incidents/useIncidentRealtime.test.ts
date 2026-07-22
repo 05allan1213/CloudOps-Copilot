@@ -14,6 +14,7 @@ describe("V3 incident SSE refresh hints", () => {
     expect(acceptRealtimeEvent("event-4", event, incidentID)).toBe("event-5");
     expect(acceptRealtimeEvent("event-5", event, incidentID)).toBeNull();
     expect(acceptRealtimeEvent("event-4", { ...event, incident_id: "foreign" }, incidentID)).toBeNull();
+    expect(acceptRealtimeEvent("event-4", { ...event, resource: "private" as never }, incidentID)).toBeNull();
   });
 
   it("parses only the frozen incident.refresh contract", () => {

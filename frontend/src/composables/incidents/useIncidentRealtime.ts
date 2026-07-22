@@ -35,6 +35,10 @@ export function acceptRealtimeEvent(lastCursor: string, event: IncidentRealtimeE
 export function useIncidentRealtime(incidentID: string, resync: (resource: IncidentRealtimeEvent["resource"]) => Promise<void>) {
   const state = ref<RealtimeState>("disconnected");
   const lastCursor = ref("");
+  const notice = ref("");
+  const lastEventAt = ref("");
+  const seenCursors = new Set<string>();
+  const cursorOrder: string[] = [];
   let controller: AbortController | null = null;
   let reconnectTimer: number | null = null;
   let reconnectAttempts = 0;
@@ -65,7 +69,9 @@ export function useIncidentRealtime(incidentID: string, resync: (resource: Incid
         throw new Error("GitHub session expired");
       }
       if (!response.ok || !response.body) throw new Error(`Realtime request failed with status ${response.status}`);
+      const restored = reconnectAttempts > 0;
       state.value = "connected";
+      notice.value = restored ? "Realtime connection restored." : "Realtime connection established.";
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
@@ -79,9 +85,16 @@ export function useIncidentRealtime(incidentID: string, resync: (resource: Incid
           const event = parseRefreshEvent(block);
           if (event) {
             const accepted = acceptRealtimeEvent(lastCursor.value, event, incidentID);
-            if (accepted !== null) {
+            if (accepted !== null && !seenCursors.has(accepted)) {
               lastCursor.value = accepted;
-              await resync(event.resource);
+              rememberCursor(accepted);
+              lastEventAt.value = new Date().toISOString();
+              try {
+                await resync(event.resource);
+                notice.value = `${event.resource.replace(/_/g, " ")} projection updated.`;
+              } catch {
+                notice.value = "An update arrived, but the latest projection could not be refreshed.";
+              }
             }
           }
           separator = buffer.indexOf("\n\n");
@@ -121,10 +134,20 @@ export function useIncidentRealtime(incidentID: string, resync: (resource: Incid
     controller?.abort();
     controller = null;
     state.value = "disconnected";
+    notice.value = "Realtime updates stopped.";
+  }
+
+  function rememberCursor(cursor: string) {
+    if (seenCursors.has(cursor)) return;
+    seenCursors.add(cursor);
+    cursorOrder.push(cursor);
+    if (cursorOrder.length <= 256) return;
+    const oldest = cursorOrder.shift();
+    if (oldest) seenCursors.delete(oldest);
   }
 
   onBeforeUnmount(stop);
-  return { state, lastCursor, start, stop };
+  return { state, lastCursor, notice, lastEventAt, start, stop };
 }
 
 export function parseRefreshEvent(block: string): IncidentRealtimeEvent | null {
