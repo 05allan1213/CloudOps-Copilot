@@ -106,6 +106,7 @@ type markerWriteTx interface {
 	DatabaseSchemaVersion(context.Context) (uint64, error)
 	MarkerStatusesForUpdate(context.Context) ([]string, error)
 	PrerequisiteForUpdate(context.Context, string) (prerequisite, error)
+	ValidatePhase7APreparation(context.Context, WriteRequest) error
 	LegacyActiveLeaseCount(context.Context) (uint64, error)
 	DatabaseTime(context.Context) (time.Time, error)
 	InsertMarker(context.Context, Marker) error
@@ -174,6 +175,9 @@ func (w *MarkerWriter) Write(ctx context.Context, request WriteRequest) (Marker,
 			if err := validatePrerequisite(row, expected.operation, request); err != nil {
 				return err
 			}
+		}
+		if err := tx.ValidatePhase7APreparation(ctx, request); err != nil {
+			return fmt.Errorf("revalidate complete Phase 7A preparation: %w", err)
 		}
 		activeLeases, err := tx.LegacyActiveLeaseCount(ctx)
 		if err != nil {
@@ -246,6 +250,12 @@ func buildMarker(request WriteRequest, now time.Time) Marker {
 		BoundedSummary: fmt.Sprintf("prerequisites passed: quiesce=%s reconciliation=%s converter_audit=%s; legacy_active_leases=0 old_workers=0",
 			request.QuiesceLedgerPublicID, request.ReconciliationLedgerPublicID, request.ConverterAuditLedgerPublicID),
 		SourceExactSHA: request.SourceExactSHA, BinaryImageDigest: request.BinaryImageDigest,
+		ReleaseIdentityHash: releaseIdentityHash(
+			request.SourceExactSHA,
+			request.BinaryImageDigest,
+			request.SourceSchemaVersion,
+			request.TargetSchemaVersion,
+		),
 	}
 }
 
@@ -323,6 +333,28 @@ func (t sqlMarkerTx) PrerequisiteForUpdate(ctx context.Context, publicID string)
 	return row, err
 }
 
+func (t sqlMarkerTx) ValidatePhase7APreparation(ctx context.Context, request WriteRequest) error {
+	prepare := PrepareRequest{
+		PlanVersion: request.PlanVersion, SourceExactSHA: request.SourceExactSHA,
+		BinaryImageDigest: request.BinaryImageDigest, BackfillBatchSize: defaultBackfillBatchSize,
+		ObservedIngressWriters: 0, ObservedMutationWriters: 0, ObservedLegacyWorkers: 0,
+		ObservedUnknownExternalWrite: 0,
+	}
+	report, found, err := existingPreparationV2(ctx, t.tx, prepare, request.TargetSchemaVersion)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return errors.New("complete passed Phase 7A preparation is absent")
+	}
+	if report.QuiesceLedgerPublicID != request.QuiesceLedgerPublicID ||
+		report.ReconciliationLedgerPublicID != request.ReconciliationLedgerPublicID ||
+		report.ConverterAuditLedgerPublicID != request.ConverterAuditLedgerPublicID {
+		return errors.New("Phase 7A preparation ledger IDs differ from the marker request")
+	}
+	return nil
+}
+
 func (t sqlMarkerTx) LegacyActiveLeaseCount(ctx context.Context) (uint64, error) {
 	var count uint64
 	err := t.tx.QueryRowContext(ctx, legacyActiveLeaseCountSQL).Scan(&count)
@@ -340,13 +372,13 @@ func (t sqlMarkerTx) InsertMarker(ctx context.Context, marker Marker) error {
 public_id, plan_version, stage, operation, attempt, previous_ledger_id,
 source_schema_version, target_schema_version, source_table, target_table,
 batch_no, id_min, id_max, source_count, target_count, skipped_count, rejected_count,
-source_hash, target_hash, converter_version, started_at, completed_at, status,
+source_hash, target_hash, canonical_hash_version, release_identity_hash, converter_version, started_at, completed_at, status,
 reason_code, bounded_summary, source_exact_sha, binary_image_digest
-) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)`,
+) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)`,
 		marker.PublicID, marker.PlanVersion, marker.Stage, marker.Operation, marker.Attempt,
 		marker.SourceSchemaVersion, marker.TargetSchemaVersion, marker.SourceTable, marker.TargetTable,
 		marker.BatchNo, marker.SourceCount, marker.TargetCount, marker.SkippedCount, marker.RejectedCount,
-		marker.SourceHash, marker.TargetHash, marker.ConverterVersion, marker.StartedAt, marker.CompletedAt,
+		marker.SourceHash, marker.TargetHash, canonicalHashVersion, marker.ReleaseIdentityHash, marker.ConverterVersion, marker.StartedAt, marker.CompletedAt,
 		marker.Status, marker.BoundedSummary, marker.SourceExactSHA, marker.BinaryImageDigest,
 	)
 	if err != nil {

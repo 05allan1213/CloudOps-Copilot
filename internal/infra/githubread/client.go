@@ -274,7 +274,7 @@ func (c *Client) GetPullRequest(ctx context.Context, repo change.RepositoryRef, 
 	}
 	title, _ := change.RedactText(payload.Title, 1024)
 	body, _ := change.RedactText(payload.Body, 4096)
-	return change.PullRequest{Repository: repo.FullName(), Number: payload.Number, Title: title, Body: body, State: payload.State, Merged: payload.Merged, MergeCommitSHA: payload.MergeCommitSHA, BaseSHA: payload.Base.SHA, HeadSHA: payload.Head.SHA, MergedBy: payload.MergedBy.Login, MergedByType: payload.MergedBy.Type, MergedAt: payload.MergedAt, HTMLURL: payload.HTMLURL}, nil
+	return change.PullRequest{Repository: repo.FullName(), Number: payload.Number, Title: title, Body: body, State: payload.State, Merged: payload.Merged, MergeCommitSHA: payload.MergeCommitSHA, BaseSHA: payload.Base.SHA, HeadSHA: payload.Head.SHA, HeadBranch: payload.Head.Ref, MergedBy: payload.MergedBy.Login, MergedByType: payload.MergedBy.Type, MergedAt: payload.MergedAt, HTMLURL: payload.HTMLURL}, nil
 }
 
 func (c *Client) ListPullRequestsForCommit(ctx context.Context, repo change.RepositoryRef, sha string) ([]change.PullRequest, error) {
@@ -292,7 +292,7 @@ func (c *Client) ListPullRequestsForCommit(ctx context.Context, repo change.Repo
 	for _, item := range payload {
 		title, _ := change.RedactText(item.Title, 1024)
 		body, _ := change.RedactText(item.Body, 4096)
-		result = append(result, change.PullRequest{Repository: repo.FullName(), Number: item.Number, Title: title, Body: body, State: item.State, Merged: item.Merged || item.MergedAt != nil, MergeCommitSHA: item.MergeCommitSHA, BaseSHA: item.Base.SHA, HeadSHA: item.Head.SHA, MergedBy: item.MergedBy.Login, MergedByType: item.MergedBy.Type, MergedAt: item.MergedAt, HTMLURL: item.HTMLURL})
+		result = append(result, change.PullRequest{Repository: repo.FullName(), Number: item.Number, Title: title, Body: body, State: item.State, Merged: item.Merged || item.MergedAt != nil, MergeCommitSHA: item.MergeCommitSHA, BaseSHA: item.Base.SHA, HeadSHA: item.Head.SHA, HeadBranch: item.Head.Ref, MergedBy: item.MergedBy.Login, MergedByType: item.MergedBy.Type, MergedAt: item.MergedAt, HTMLURL: item.HTMLURL})
 	}
 	return result, nil
 }
@@ -729,6 +729,7 @@ type pullResponse struct {
 	} `json:"base"`
 	Head struct {
 		SHA string `json:"sha"`
+		Ref string `json:"ref"`
 	} `json:"head"`
 	MergedBy struct {
 		Login string `json:"login"`

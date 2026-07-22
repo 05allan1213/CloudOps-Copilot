@@ -67,8 +67,9 @@ func (g *V3GitHub) ObservePullRequest(ctx context.Context, request taskhandler.D
 		return taskhandler.DeliveryPullRequestObservation{}, err
 	}
 	result := taskhandler.DeliveryPullRequestObservation{
+		Repository: repository.FullName(), PullRequest: pullRequest.Number,
 		State: pullRequest.State, Merged: pullRequest.Merged, MergeCommitSHA: pullRequest.MergeCommitSHA,
-		BaseSHA: pullRequest.BaseSHA, HeadSHA: pullRequest.HeadSHA, HeadTreeSHA: headCommit.TreeSHA,
+		BaseSHA: pullRequest.BaseSHA, HeadSHA: pullRequest.HeadSHA, HeadBranch: pullRequest.HeadBranch, HeadTreeSHA: headCommit.TreeSHA,
 		HeadPostImageHash: headHash, HumanMerged: pullRequest.MergedBy != "" && strings.EqualFold(pullRequest.MergedByType, "User"),
 		MergedBy: pullRequest.MergedBy, MergedByType: pullRequest.MergedByType, URL: pullRequest.HTMLURL,
 	}

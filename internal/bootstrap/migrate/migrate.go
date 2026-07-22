@@ -13,6 +13,7 @@ import (
 	"github.com/05allan1213/CloudOps-Copilot/internal/bootstrap/logger"
 	"github.com/05allan1213/CloudOps-Copilot/internal/cutover"
 	migrationrunner "github.com/05allan1213/CloudOps-Copilot/internal/migration"
+	"github.com/05allan1213/CloudOps-Copilot/internal/schemaversion"
 )
 
 type command string
@@ -23,14 +24,16 @@ const (
 	commandCutoverWrite   command = "cutover-write"
 	commandCutoverPrepare command = "cutover-prepare"
 	commandCutoverExport  command = "cutover-export"
+	commandBackfillV3     command = "backfill-v3"
 )
 
-const commandUsage = "usage: cloudops-migrate [up|cutover-check|cutover-export|cutover-prepare --plan-version N --source-exact-sha SHA --binary-image-digest sha256:... --observed-ingress-writers 0 --observed-mutation-writers 0 --observed-legacy-workers 0 --observed-unknown-external-writes 0|cutover-write --plan-version N --source-exact-sha SHA --binary-image-digest sha256:... --source-schema-version N --target-schema-version N --quiesce-ledger-id UUID --reconciliation-ledger-id UUID --converter-audit-ledger-id UUID --old-worker-count 0 --confirm-irreversible CUTOVER-V3]"
+const commandUsage = "usage: cloudops-migrate [up|cutover-check|cutover-export|backfill-v3 --plan-version N --source-exact-sha SHA --binary-image-digest sha256:... [--batch-size N]|cutover-prepare --plan-version N --source-exact-sha SHA --binary-image-digest sha256:... [--backfill-batch-size N] --observed-ingress-writers 0 --observed-mutation-writers 0 --observed-legacy-workers 0 --observed-unknown-external-writes 0|cutover-write --plan-version N --source-exact-sha SHA --binary-image-digest sha256:... --source-schema-version N --target-schema-version N --quiesce-ledger-id UUID --reconciliation-ledger-id UUID --converter-audit-ledger-id UUID --old-worker-count 0 --confirm-irreversible CUTOVER-V3]"
 
 type invocation struct {
-	command command
-	write   cutover.WriteRequest
-	prepare cutover.PrepareRequest
+	command  command
+	write    cutover.WriteRequest
+	prepare  cutover.PrepareRequest
+	backfill cutover.BackfillRequest
 }
 
 func Run(ctx context.Context, args []string) (retErr error) {
@@ -87,9 +90,27 @@ func Run(ctx context.Context, args []string) (retErr error) {
 		if err != nil {
 			return fmt.Errorf("initialize phase7a preparer: %w", err)
 		}
+		reconciler, err := newLegacyChangeReconciler(cfg.GitHub)
+		if err != nil {
+			return fmt.Errorf("initialize Phase 7A external reconciliation: %w", err)
+		}
+		preparer.WithLegacyChangeReconciler(reconciler)
 		report, err := preparer.Prepare(commandCtx, operation.prepare)
 		if err != nil {
 			return fmt.Errorf("prepare phase7a cutover: %w", err)
+		}
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(report)
+	}
+	if operation.command == commandBackfillV3 {
+		backfiller, err := cutover.NewPhase7ABackfiller(db, cfg.LockTimeout)
+		if err != nil {
+			return fmt.Errorf("initialize Phase 7A backfiller: %w", err)
+		}
+		report, err := backfiller.Run(commandCtx, operation.backfill)
+		if err != nil {
+			return fmt.Errorf("run BACKFILL-V3: %w", err)
 		}
 		encoder := json.NewEncoder(os.Stdout)
 		encoder.SetIndent("", "  ")
@@ -137,6 +158,7 @@ func parseCommand(args []string) (invocation, error) {
 		flags.Uint64Var(&result.prepare.PlanVersion, "plan-version", 0, "cutover plan version")
 		flags.StringVar(&result.prepare.SourceExactSHA, "source-exact-sha", "", "exact source SHA")
 		flags.StringVar(&result.prepare.BinaryImageDigest, "binary-image-digest", "", "exact binary image digest")
+		flags.Uint64Var(&result.prepare.BackfillBatchSize, "backfill-batch-size", 0, "bounded BACKFILL-V3 batch size")
 		flags.Uint64Var(&result.prepare.ObservedIngressWriters, "observed-ingress-writers", 1, "observed ingress writers")
 		flags.Uint64Var(&result.prepare.ObservedMutationWriters, "observed-mutation-writers", 1, "observed mutation writers")
 		flags.Uint64Var(&result.prepare.ObservedLegacyWorkers, "observed-legacy-workers", 1, "observed legacy workers")
@@ -145,6 +167,24 @@ func parseCommand(args []string) (invocation, error) {
 			return invocation{}, errors.New(commandUsage)
 		}
 		if err := result.prepare.Validate(); err != nil {
+			return invocation{}, fmt.Errorf("%s: %w", commandUsage, err)
+		}
+		return result, nil
+	case commandBackfillV3:
+		var result invocation
+		result.command = commandBackfillV3
+		flags := flag.NewFlagSet(string(commandBackfillV3), flag.ContinueOnError)
+		flags.SetOutput(io.Discard)
+		flags.Uint64Var(&result.backfill.Identity.PlanVersion, "plan-version", 0, "backfill plan version")
+		flags.StringVar(&result.backfill.Identity.SourceExactSHA, "source-exact-sha", "", "exact source SHA")
+		flags.StringVar(&result.backfill.Identity.BinaryImageDigest, "binary-image-digest", "", "exact binary image digest")
+		flags.Uint64Var(&result.backfill.BatchSize, "batch-size", 0, "bounded BACKFILL-V3 batch size")
+		if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 {
+			return invocation{}, errors.New(commandUsage)
+		}
+		result.backfill.Identity.SourceSchema = uint64(schemaversion.Latest - 1)
+		result.backfill.Identity.TargetSchema = uint64(schemaversion.Latest)
+		if err := result.backfill.Validate(); err != nil {
 			return invocation{}, fmt.Errorf("%s: %w", commandUsage, err)
 		}
 		return result, nil

@@ -74,6 +74,7 @@ type Marker struct {
 	BoundedSummary      string
 	SourceExactSHA      string
 	BinaryImageDigest   string
+	ReleaseIdentityHash string
 }
 
 // MarkerReader is the read-only startup boundary used by both runtime
@@ -120,7 +121,7 @@ func (r *SQLMarkerReader) CutoverMarker(ctx context.Context) (Marker, bool, erro
 	  source_count, target_count, skipped_count, rejected_count,
 	  source_hash, target_hash, converter_version,
 	  started_at, completed_at,
-	  status, reason_code, bounded_summary, source_exact_sha, binary_image_digest,
+	  status, reason_code, bounded_summary, source_exact_sha, binary_image_digest, release_identity_hash,
 	  COUNT(*) OVER () AS marker_count
 	FROM migration_ledger
 	WHERE operation = ?
@@ -131,7 +132,7 @@ func (r *SQLMarkerReader) CutoverMarker(ctx context.Context) (Marker, bool, erro
 		&marker.SourceCount, &marker.TargetCount, &marker.SkippedCount, &marker.RejectedCount,
 		&sourceHash, &targetHash, &marker.ConverterVersion,
 		&marker.StartedAt, &completedAt,
-		&marker.Status, &reasonCode, &boundedSummary, &marker.SourceExactSHA, &marker.BinaryImageDigest, &markerCount,
+		&marker.Status, &reasonCode, &boundedSummary, &marker.SourceExactSHA, &marker.BinaryImageDigest, &marker.ReleaseIdentityHash, &markerCount,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Marker{}, false, nil
@@ -314,6 +315,15 @@ func (m Marker) Validate(expectedSchemaVersion int64) error {
 	}
 	if !imageDigestPattern.MatchString(m.BinaryImageDigest) {
 		return errors.New("binary_image_digest must be an exact sha256 digest")
+	}
+	expectedReleaseIdentityHash := releaseIdentityHash(
+		m.SourceExactSHA,
+		m.BinaryImageDigest,
+		m.SourceSchemaVersion,
+		m.TargetSchemaVersion,
+	)
+	if m.ReleaseIdentityHash != expectedReleaseIdentityHash {
+		return errors.New("release_identity_hash does not match marker release identity")
 	}
 	return nil
 }
