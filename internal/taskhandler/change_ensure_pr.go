@@ -481,7 +481,8 @@ func (s *mysqlChangeEnsurePRStore) LoadApprovedPlan(ctx context.Context, task as
 	if err != nil {
 		return changePlanSnapshot{}, err
 	}
-	if snapshot.Plan.CycleNo != uint64(task.CycleNo) || snapshot.Plan.RowVersion != task.ExpectedSubjectVersion || snapshot.Plan.IncidentID != task.IncidentID {
+	if snapshot.Plan.CycleNo != uint64(task.CycleNo) || snapshot.Plan.RowVersion != task.ExpectedSubjectVersion || snapshot.Plan.IncidentID != task.IncidentID ||
+		snapshot.Plan.MigratedLegacy != task.MigratedLegacy || snapshot.Plan.MigratedLegacyContext != task.MigratedLegacyContext {
 		return changePlanSnapshot{}, asyncjob.ErrSubjectVersionMismatch
 	}
 	if err := s.validateDurablePreflight(ctx, s.db, snapshot, now, policyHash, false, remediation.PlanApproved, "awaiting_approval"); err != nil {
@@ -500,10 +501,12 @@ func (s *mysqlChangeEnsurePRStore) LoadChange(ctx context.Context, task asyncjob
 	var snapshot changeSnapshot
 	var writePhase, repository, baseRevision, headBranch, idempotencyKey string
 	var expectedSubjectVersion uint64
+	var migratedLegacy, migratedLegacyContext bool
 	if err := s.db.QueryRowContext(ctx, `
 SELECT id, public_id, plan_id, row_version, COALESCE(v3_status,''), COALESCE(write_phase,''),
        COALESCE(logical_operation_key,''), COALESCE(external_write_marker,''),
        repository, base_revision, head_branch, idempotency_key, expected_subject_version,
+       migrated_legacy, migrated_legacy_context,
        EXISTS (
            SELECT 1 FROM change_request_events e
            WHERE e.change_request_id = change_requests.id
@@ -518,10 +521,11 @@ WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3`
 		Scan(&snapshot.ChangeRequestID, &snapshot.ChangePublicID, &snapshot.PlanSnapshot.Plan.ID,
 			&snapshot.ChangeVersion, &snapshot.ChangeStatus, &writePhase, &snapshot.LogicalOperation,
 			&snapshot.ExternalMarker, &repository, &baseRevision, &headBranch, &idempotencyKey,
-			&expectedSubjectVersion, &snapshot.ExternalWriteStarted); err != nil {
+			&expectedSubjectVersion, &migratedLegacy, &migratedLegacyContext, &snapshot.ExternalWriteStarted); err != nil {
 		return changeSnapshot{}, err
 	}
-	if snapshot.ChangeVersion != task.ExpectedSubjectVersion {
+	if snapshot.ChangeVersion != task.ExpectedSubjectVersion || migratedLegacy != task.MigratedLegacy ||
+		migratedLegacyContext != task.MigratedLegacyContext {
 		return changeSnapshot{}, asyncjob.ErrSubjectVersionMismatch
 	}
 	snapshot.WritePhase = remediation.WritePhase(writePhase)
@@ -531,6 +535,8 @@ WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3`
 		return snapshot, err
 	}
 	if snapshot.PlanSnapshot.Plan.IncidentID != task.IncidentID || snapshot.PlanSnapshot.Plan.CycleNo != uint64(task.CycleNo) ||
+		snapshot.PlanSnapshot.Plan.MigratedLegacy != migratedLegacy ||
+		snapshot.PlanSnapshot.Plan.MigratedLegacyContext != migratedLegacyContext ||
 		snapshot.ChangeStatus != "pending" || expectedSubjectVersion != snapshot.ChangeVersion ||
 		!validWritePhase(snapshot.WritePhase) || snapshot.WritePhase == remediation.WritePhaseComplete {
 		return changeSnapshot{}, fmt.Errorf("%w: ChangeRequest is not writable", asyncjob.ErrInvalidMutation)
@@ -570,13 +576,15 @@ func (s *mysqlChangeEnsurePRStore) ValidateChangePreflight(ctx context.Context, 
 func (s *mysqlChangeEnsurePRStore) SupersedeApprovedPlanIn(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, reason string) error {
 	var cycleNo, rowVersion uint64
 	var publicID, status string
-	if err := tx.QueryRowContext(ctx, `SELECT public_id, cycle_no, row_version, v3_status
+	var migratedLegacy, migratedLegacyContext bool
+	if err := tx.QueryRowContext(ctx, `SELECT public_id, cycle_no, row_version, v3_status, migrated_legacy, migrated_legacy_context
 FROM remediation_plans
 WHERE id = ? AND incident_id = ? AND domain_schema_version = 3 FOR UPDATE`, task.SubjectID, task.IncidentID).
-		Scan(&publicID, &cycleNo, &rowVersion, &status); err != nil {
+		Scan(&publicID, &cycleNo, &rowVersion, &status, &migratedLegacy, &migratedLegacyContext); err != nil {
 		return err
 	}
-	if cycleNo != uint64(task.CycleNo) || rowVersion != task.ExpectedSubjectVersion || status != string(remediation.PlanApproved) {
+	if cycleNo != uint64(task.CycleNo) || rowVersion != task.ExpectedSubjectVersion || status != string(remediation.PlanApproved) ||
+		migratedLegacy != task.MigratedLegacy || migratedLegacyContext != task.MigratedLegacyContext {
 		return asyncjob.ErrSubjectVersionMismatch
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE remediation_plans
@@ -594,7 +602,7 @@ WHERE id = ? AND incident_id = ? AND cycle_no = ? AND row_version = ?
 	if err != nil {
 		return err
 	}
-	if err := appendChangeIncidentEvent(ctx, tx, task.IncidentID, task.CycleNo, "remediation_plan_superseded", publicID, reason); err != nil {
+	if err := appendChangeIncidentEvent(ctx, tx, task, "remediation_plan_superseded", publicID, reason); err != nil {
 		return err
 	}
 	return s.enqueueChangeInvestigation(ctx, tx, task, incidentVersion, reason)
@@ -603,13 +611,15 @@ WHERE id = ? AND incident_id = ? AND cycle_no = ? AND row_version = ?
 func (s *mysqlChangeEnsurePRStore) CreateChangeRequestIn(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, snapshot changePlanSnapshot) error {
 	var cycle, planVersion uint64
 	var planStatus string
+	var planMigratedLegacy, planMigratedLegacyContext bool
 	if err := tx.QueryRowContext(ctx, `
-SELECT cycle_no, row_version, v3_status FROM remediation_plans
+SELECT cycle_no, row_version, v3_status, migrated_legacy, migrated_legacy_context FROM remediation_plans
 WHERE id = ? AND incident_id = ? AND domain_schema_version = 3 FOR UPDATE`,
-		task.SubjectID, task.IncidentID).Scan(&cycle, &planVersion, &planStatus); err != nil {
+		task.SubjectID, task.IncidentID).Scan(&cycle, &planVersion, &planStatus, &planMigratedLegacy, &planMigratedLegacyContext); err != nil {
 		return err
 	}
-	if cycle != uint64(task.CycleNo) || planVersion != task.ExpectedSubjectVersion || planStatus != "approved" {
+	if cycle != uint64(task.CycleNo) || planVersion != task.ExpectedSubjectVersion || planStatus != "approved" ||
+		planMigratedLegacy != task.MigratedLegacy || planMigratedLegacyContext != task.MigratedLegacyContext {
 		return asyncjob.ErrSubjectVersionMismatch
 	}
 	var incidentStatus string
@@ -640,13 +650,14 @@ WHERE id = ? AND incident_id = ? AND domain_schema_version = 3 FOR UPDATE`,
 INSERT INTO change_requests
   (public_id, plan_id, repository, base_revision, head_branch, status, ci_status,
    idempotency_key, row_version, domain_schema_version, incident_id, cycle_no,
-   v3_status, write_phase, expected_subject_version, logical_operation_key,
+   v3_status, migrated_legacy, migrated_legacy_context, write_phase, expected_subject_version, logical_operation_key,
    commit_sha, pr_number, pr_url, lease_owner, attempts, failure_code)
-VALUES (?, ?, ?, ?, ?, 'pending', 'pending', ?, 1, 3, ?, ?, 'pending', 'ensure_branch', 1, ?, '', 0, '', '', 0, '')
+VALUES (?, ?, ?, ?, ?, 'pending', 'pending', ?, 1, 3, ?, ?, 'pending', ?, ?, 'ensure_branch', 1, ?, '', 0, '', '', 0, '')
 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
 		snapshot.ChangeRequestPublicID, snapshot.Plan.ID, snapshot.Plan.TargetRepository,
 		snapshot.Plan.TargetBaseRevision, snapshot.Request.Branch, snapshot.LogicalOperationKey,
-		snapshot.Plan.IncidentID, snapshot.Plan.CycleNo, snapshot.LogicalOperationKey)
+		snapshot.Plan.IncidentID, snapshot.Plan.CycleNo, snapshot.Plan.MigratedLegacy,
+		snapshot.Plan.MigratedLegacyContext, snapshot.LogicalOperationKey)
 	if err != nil {
 		return err
 	}
@@ -684,7 +695,8 @@ WHERE id = ? AND cycle_no = ? AND domain_schema_version = 3 AND v3_status = 'awa
 		SubjectType: "change_request", SubjectID: uint64(changeID), Transition: "change.ensure_pr",
 		ExpectedSubjectVersion: 1, PayloadSchemaVersion: changeEnsurePayloadSchema, Payload: payload,
 		DedupeKey:           hashCanonical("change.ensure_pr", fmt.Sprint(changeID), string(remediation.WritePhaseEnsureBranch), "1"),
-		LogicalOperationKey: snapshot.LogicalOperationKey, Priority: 80, MaxAttempts: changeEnsureMaxAttempts,
+		LogicalOperationKey: snapshot.LogicalOperationKey, MigratedLegacy: snapshot.Plan.MigratedLegacy,
+		MigratedLegacyContext: snapshot.Plan.MigratedLegacyContext, Priority: 80, MaxAttempts: changeEnsureMaxAttempts,
 	})
 	return err
 }
@@ -827,7 +839,7 @@ WHERE id = ? AND cycle_no = ? AND domain_schema_version = 3 AND version = ? AND 
 		if affected, _ := result.RowsAffected(); affected != 1 {
 			return asyncjob.ErrSubjectVersionMismatch
 		}
-		return appendChangeIncidentEvent(ctx, tx, task.IncidentID, task.CycleNo, "approved_change_invalidated", snapshot.ChangePublicID, "change_preflight_rejected")
+		return appendChangeIncidentEvent(ctx, tx, task, "approved_change_invalidated", snapshot.ChangePublicID, "change_preflight_rejected")
 	}
 	nextPhase := observation.Phase
 	updates := `write_phase = ?, expected_subject_version = ?, commit_sha = ?, pr_number = ?, pr_url = ?,
@@ -866,7 +878,8 @@ WHERE id = ? AND cycle_no = ? AND domain_schema_version = 3 AND v3_status = 'del
 			SubjectType: "change_request", SubjectID: task.SubjectID, Transition: "delivery.observe",
 			ExpectedSubjectVersion: version + 1, PayloadSchemaVersion: 1, Payload: payload,
 			DedupeKey:           hashCanonical("delivery.observe", fmt.Sprint(task.SubjectID), fmt.Sprint(version+1)),
-			LogicalOperationKey: snapshot.LogicalOperation, Priority: 70, MaxAttempts: changeEnsureMaxAttempts,
+			LogicalOperationKey: snapshot.LogicalOperation, MigratedLegacy: task.MigratedLegacy,
+			MigratedLegacyContext: task.MigratedLegacyContext, Priority: 70, MaxAttempts: changeEnsureMaxAttempts,
 		})
 		return err
 	}
@@ -876,7 +889,8 @@ WHERE id = ? AND cycle_no = ? AND domain_schema_version = 3 AND v3_status = 'del
 		SubjectType: "change_request", SubjectID: task.SubjectID, Transition: "change.ensure_pr",
 		ExpectedSubjectVersion: version + 1, PayloadSchemaVersion: changeEnsurePayloadSchema, Payload: payload,
 		DedupeKey:           hashCanonical("change.ensure_pr", fmt.Sprint(task.SubjectID), string(nextPhase), fmt.Sprint(version+1)),
-		LogicalOperationKey: snapshot.LogicalOperation, Priority: 80, MaxAttempts: changeEnsureMaxAttempts,
+		LogicalOperationKey: snapshot.LogicalOperation, MigratedLegacy: task.MigratedLegacy,
+		MigratedLegacyContext: task.MigratedLegacyContext, Priority: 80, MaxAttempts: changeEnsureMaxAttempts,
 	})
 	return err
 }
@@ -916,7 +930,7 @@ WHERE id = ? AND cycle_no = ? AND domain_schema_version = 3 AND version = ? AND 
 			return asyncjob.ErrSubjectVersionMismatch
 		}
 	}
-	return appendChangeIncidentEvent(ctx, tx, task.IncidentID, task.CycleNo, "change_reconciliation_blocked", snapshot.ChangePublicID, reason)
+	return appendChangeIncidentEvent(ctx, tx, task, "change_reconciliation_blocked", snapshot.ChangePublicID, reason)
 }
 
 func (s *mysqlChangeEnsurePRStore) InvalidateIn(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, snapshot changeSnapshot, reason string, safeTerminal bool) error {
@@ -1022,7 +1036,7 @@ WHERE id = ? AND cycle_no = ? AND domain_schema_version = 3 AND version = ? AND 
 	if affected, _ := result.RowsAffected(); affected != 1 {
 		return asyncjob.ErrSubjectVersionMismatch
 	}
-	return appendChangeIncidentEvent(ctx, tx, task.IncidentID, task.CycleNo, "approved_change_invalidated", snapshot.ChangePublicID, reason)
+	return appendChangeIncidentEvent(ctx, tx, task, "approved_change_invalidated", snapshot.ChangePublicID, reason)
 }
 
 func (s *mysqlChangeEnsurePRStore) returnIncidentToInvestigating(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, reason string) (uint64, error) {
@@ -1048,7 +1062,7 @@ WHERE id = ? AND cycle_no = ? AND domain_schema_version = 3 AND version = ? AND 
 	if affected, _ := result.RowsAffected(); affected != 1 {
 		return 0, asyncjob.ErrSubjectVersionMismatch
 	}
-	if err := appendChangeIncidentEvent(ctx, tx, task.IncidentID, task.CycleNo, "incident_returned_to_investigating", fmt.Sprint(task.SubjectID), reason); err != nil {
+	if err := appendChangeIncidentEvent(ctx, tx, task, "incident_returned_to_investigating", fmt.Sprint(task.SubjectID), reason); err != nil {
 		return 0, err
 	}
 	return version + 1, nil
@@ -1065,19 +1079,23 @@ func (s *mysqlChangeEnsurePRStore) enqueueChangeInvestigation(ctx context.Contex
 	if !budget.Allowed() {
 		return businessbudget.MarkExhausted(ctx, tx, budget, task.IncidentID, task.CycleNo, "change.ensure_pr")
 	}
-	payload := json.RawMessage(`{"mode":"start"}`)
+	payload, _ := json.Marshal(map[string]any{
+		"mode": "start", "cycle_no": task.CycleNo,
+		"migrated_legacy_context": task.MigratedLegacyContext,
+	})
 	_, err = s.tasks.EnqueueIn(ctx, tx, asyncjob.NewTask{
 		IncidentID: task.IncidentID, CycleNo: task.CycleNo, Type: asyncjob.TaskInvestigationAdvance,
 		SubjectType: "incident", SubjectID: task.IncidentID, Transition: "investigation.start",
 		ExpectedSubjectVersion: incidentVersion, PayloadSchemaVersion: 1, Payload: payload,
 		DedupeKey: hashCanonical("change.ensure_pr", fmt.Sprint(task.IncidentID), fmt.Sprint(task.CycleNo),
 			"investigation.start", fmt.Sprint(incidentVersion), reason),
-		Priority: 80, MaxAttempts: 3,
+		MigratedLegacyContext: task.MigratedLegacyContext,
+		Priority:              80, MaxAttempts: 3,
 	})
 	return err
 }
 
-func appendChangeIncidentEvent(ctx context.Context, tx asyncjob.DBTX, incidentID uint64, cycleNo uint32, eventType, subject, reason string) error {
+func appendChangeIncidentEvent(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, eventType, subject, reason string) error {
 	metadata, err := json.Marshal(map[string]any{
 		"source": "change.ensure_pr", "subject": subject, "reason": reason,
 	})
@@ -1086,11 +1104,12 @@ func appendChangeIncidentEvent(ctx context.Context, tx asyncjob.DBTX, incidentID
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO incident_events
  (public_id, incident_id, domain_schema_version, cycle_no, event_schema_version,
-  event_type, idempotency_key, actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
- VALUES (?, ?, 3, ?, 1, ?, ?, 'system', 'change.ensure_pr', ?, ?, NOW(6), NOW(6))
+  event_type, idempotency_key, migrated_legacy_context, migrated_legacy, actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
+ VALUES (?, ?, 3, ?, 1, ?, ?, ?, ?, 'system', 'change.ensure_pr', ?, ?, NOW(6), NOW(6))
  ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
-		uuid.NewString(), incidentID, cycleNo, eventType,
-		hashCanonical("change.ensure_pr.event", fmt.Sprint(incidentID), fmt.Sprint(cycleNo), eventType, subject, reason),
+		uuid.NewString(), task.IncidentID, task.CycleNo, eventType,
+		hashCanonical("change.ensure_pr.event", fmt.Sprint(task.IncidentID), fmt.Sprint(task.CycleNo), eventType, subject, reason),
+		task.MigratedLegacyContext, task.MigratedLegacy,
 		boundChange(reason, 2048), metadata)
 	return err
 }

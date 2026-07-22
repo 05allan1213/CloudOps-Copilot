@@ -544,13 +544,13 @@ func insertNoChangeVerification(ctx context.Context, tx *sql.Tx, incident *incid
   status, v3_status, trigger_type, trigger_signal_id, target_revision, source_revision, image_digest,
   gitops_revision, plan_json, verification_profile_version, verification_profile_hash,
   verification_contract_version, verification_profile_id, common_stability_window_ms,
-  deadline_at, attempt, row_version, expected_subject_version, created_at, updated_at)
+  deadline_at, attempt, row_version, expected_subject_version, migrated_legacy_context, created_at, updated_at)
 VALUES (?, ?, 3, ?, ?, ?, NULL, NULL, 'pending', 'pending', 'no_change_signal', ?, ?, ?, ?, ?, ?, ?, ?,
-        1, ?, 60000, ?, ?, 1, 1, ?, ?)`,
+        1, ?, 60000, ?, ?, 1, 1, ?, ?, ?)`,
 		runPublicID, incident.id, incident.cycleNo, originatingAgentRunValue, authorizationValue, triggerSignalID,
 		snapshot.Plan.TargetRevision, snapshot.Plan.SourceRevision, snapshot.Plan.ImageDigest, snapshot.Plan.GitOpsRevision,
 		planJSON, snapshot.Plan.ProfileVersion, snapshot.Plan.ProfileHash, snapshot.Plan.ProfileID,
-		now.Add(snapshot.Plan.Deadline), attempt, now, now)
+		now.Add(snapshot.Plan.Deadline), attempt, incident.migratedLegacyContext, now, now)
 	if err != nil {
 		return false, err
 	}
@@ -573,12 +573,13 @@ VALUES (?, ?, 3, ?, ?, ?, NULL, NULL, 'pending', 'pending', 'no_change_signal', 
   status, required_check, subject_json, expected_json, source_reference, lookback_ms,
   stability_window_ms, timeout_ms, poll_interval_ms, check_spec_schema_version, profile_id,
   template_id, template_version, comparison, threshold, source_identity, initial_delay_ms,
-  min_samples, sample_unit, failure_mode, created_at, updated_at)
-VALUES (?, ?, 3, ?, ?, ?, 'pending', ?, ?, ?, '', ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  min_samples, sample_unit, failure_mode, migrated_legacy_context, created_at, updated_at)
+VALUES (?, ?, 3, ?, ?, ?, 'pending', ?, ?, ?, '', ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			uuid.NewString(), runID, incident.id, incident.cycleNo, spec.Type, spec.Required, subjectJSON, spec.Expected,
 			spec.Lookback.Milliseconds(), spec.StabilityWindow.Milliseconds(), spec.Timeout.Milliseconds(), spec.PollInterval.Milliseconds(),
 			spec.ProfileID, spec.TemplateID, spec.TemplateVersion, comparison, threshold, spec.SourceIdentity,
-			spec.InitialDelay.Milliseconds(), spec.MinSamples, spec.SampleUnit, spec.FailureMode, now, now); err != nil {
+			spec.InitialDelay.Milliseconds(), spec.MinSamples, spec.SampleUnit, spec.FailureMode,
+			incident.migratedLegacyContext, now, now); err != nil {
 			return false, err
 		}
 	}
@@ -614,11 +615,11 @@ WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? AND version = ? AND 
 	if _, err := tx.ExecContext(ctx, `INSERT INTO async_tasks
  (public_id, incident_id, cycle_no, queue, task_type, subject_type, subject_id, transition,
   expected_subject_version, payload_schema_version, payload_json, dedupe_key, replay_generation,
-  status, priority, available_at, attempt, max_attempts, lease_generation, created_at, updated_at)
+  migrated_legacy_context,status, priority, available_at, attempt, max_attempts, lease_generation, created_at, updated_at)
 VALUES (?, ?, ?, 'verify', 'verification.advance', 'verification_run', ?, 'verification.advance',
-        1, 1, ?, ?, 0, 'ready', 60, ?, 0, ?, 0, ?, ?)`, uuid.NewString(), incident.id,
+	    1, 1, ?, ?, 0, ?, 'ready', 60, ?, 0, ?, 0, ?, ?)`, uuid.NewString(), incident.id,
 		incident.cycleNo, runID, payload, hashCanonical("verification.advance", fmt.Sprint(runID), "1"),
-		now, verificationTaskMaxAttempts, now, now); err != nil {
+		incident.migratedLegacyContext, now, verificationTaskMaxAttempts, now, now); err != nil {
 		return false, err
 	}
 	return true, nil

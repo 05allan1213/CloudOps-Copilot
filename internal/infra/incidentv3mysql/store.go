@@ -173,6 +173,7 @@ type incidentRow struct {
 	service     string
 	targetKind  string
 	targetName  string
+	migratedLegacyContext bool
 }
 
 func (s *Store) ingestGroup(ctx context.Context, correlationKey string, inputs []SignalInput) ([]IngestResult, error) {
@@ -411,11 +412,11 @@ func selectActiveIncident(ctx context.Context, tx *sql.Tx, key string) (incident
 	var row incidentRow
 	err := tx.QueryRowContext(ctx, `
 SELECT id, public_id, cycle_no, severity, v3_status, version,
-       cluster, environment, namespace, service_name, target_kind, target_name
+       cluster, environment, namespace, service_name, target_kind, target_name, migrated_legacy_context
 FROM incidents
 WHERE domain_schema_version = 3 AND active_correlation_key = CONVERT(? USING binary)
 FOR UPDATE`, key).Scan(&row.id, &row.publicID, &row.cycleNo, &row.severity, &row.status, &row.version,
-		&row.cluster, &row.environment, &row.namespace, &row.service, &row.targetKind, &row.targetName)
+		&row.cluster, &row.environment, &row.namespace, &row.service, &row.targetKind, &row.targetName, &row.migratedLegacyContext)
 	return row, err
 }
 
@@ -423,12 +424,13 @@ func createOrReopenIncident(ctx context.Context, tx *sql.Tx, input SignalInput) 
 	var latest incidentRow
 	var withinWindow bool
 	err := tx.QueryRowContext(ctx, `
-SELECT id, public_id, cycle_no, severity, v3_status, version,
+SELECT id, public_id, cycle_no, severity, v3_status, version, migrated_legacy_context,
        (v3_status = 'resolved' AND terminal_at >= TIMESTAMPADD(MINUTE, -30, NOW(6)))
 FROM incidents
 WHERE domain_schema_version = 3 AND correlation_key = ? AND v3_status IN ('resolved','closed')
 ORDER BY terminal_at DESC, id DESC LIMIT 1 FOR UPDATE`, input.CorrelationKey).
-		Scan(&latest.id, &latest.publicID, &latest.cycleNo, &latest.severity, &latest.status, &latest.version, &withinWindow)
+		Scan(&latest.id, &latest.publicID, &latest.cycleNo, &latest.severity, &latest.status, &latest.version,
+			&latest.migratedLegacyContext, &withinWindow)
 	if err == nil && latest.status == domain.V3StatusResolved && withinWindow {
 		latest.cluster, latest.environment, latest.namespace = input.Cluster, input.Environment, input.Namespace
 		latest.service, latest.targetKind, latest.targetName = input.ServiceName, input.TargetKind, input.TargetName
@@ -523,9 +525,10 @@ func appendEvent(ctx context.Context, tx *sql.Tx, incident incidentRow, eventTyp
 	_, err := tx.ExecContext(ctx, `
 INSERT IGNORE INTO incident_events
     (public_id, incident_id, domain_schema_version, cycle_no, event_schema_version,
-     event_type, idempotency_key, actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
-VALUES (?, ?, 3, ?, 1, ?, ?, ?, ?, ?, ?, COALESCE(?, NOW(6)), NOW(6))`,
-		uuid.NewString(), incident.id, incident.cycleNo, eventType, idempotency, actorType, actorID, summary, metadata, occurredValue)
+     event_type, idempotency_key, migrated_legacy_context, actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
+VALUES (?, ?, 3, ?, 1, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, NOW(6)), NOW(6))`,
+		uuid.NewString(), incident.id, incident.cycleNo, eventType, idempotency, incident.migratedLegacyContext,
+		actorType, actorID, summary, metadata, occurredValue)
 	return err
 }
 
@@ -550,7 +553,8 @@ func enqueueInvestigationStartWithAuthorization(ctx context.Context, tx *sql.Tx,
 		}
 		return false, true, nil
 	}
-	payloadBody := map[string]any{"mode": "start", "incident_public_id": incident.publicID, "cycle_no": incident.cycleNo}
+	payloadBody := map[string]any{"mode": "start", "incident_public_id": incident.publicID, "cycle_no": incident.cycleNo,
+		"migrated_legacy_context": incident.migratedLegacyContext}
 	dedupeParts := []string{"task", incident.publicID, fmt.Sprint(incident.cycleNo), "investigation.start", fmt.Sprint(incident.version)}
 	if authorizationPublicID != "" {
 		payloadBody["business_budget_authorization_id"] = authorizationPublicID
@@ -562,10 +566,11 @@ func enqueueInvestigationStartWithAuthorization(ctx context.Context, tx *sql.Tx,
 INSERT IGNORE INTO async_tasks
     (public_id, incident_id, cycle_no, queue, task_type, subject_type, subject_id, transition,
      expected_subject_version, payload_schema_version, payload_json, dedupe_key,
-     replay_generation, status, priority, available_at, attempt, max_attempts, lease_generation)
+     replay_generation, migrated_legacy_context, status, priority, available_at, attempt, max_attempts, lease_generation)
 VALUES (?, ?, ?, 'investigate', 'investigation.advance', 'incident', ?, 'investigation.start',
-        ?, 1, ?, ?, 0, 'ready', 100, NOW(6), 0, ?, 0)`,
-		uuid.NewString(), incident.id, incident.cycleNo, incident.id, incident.version, payload, dedupe, startTaskMaxAttempts)
+	    ?, 1, ?, ?, 0, ?, 'ready', 100, NOW(6), 0, ?, 0)`,
+		uuid.NewString(), incident.id, incident.cycleNo, incident.id, incident.version, payload, dedupe,
+		incident.migratedLegacyContext, startTaskMaxAttempts)
 	if err != nil {
 		return false, false, err
 	}

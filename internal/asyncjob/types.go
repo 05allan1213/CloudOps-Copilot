@@ -148,6 +148,8 @@ type Task struct {
 	DedupeKey              string
 	ReplayGeneration       uint32
 	LogicalOperationKey    string
+	MigratedLegacy         bool
+	MigratedLegacyContext  bool
 	Status                 Status
 	Priority               int
 	AvailableAt            time.Time
@@ -180,6 +182,8 @@ type NewTask struct {
 	Payload                json.RawMessage
 	DedupeKey              string
 	LogicalOperationKey    string
+	MigratedLegacy         bool
+	MigratedLegacyContext  bool
 	Priority               int
 	AvailableAt            *time.Time
 	MaxAttempts            uint32

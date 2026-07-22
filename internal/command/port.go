@@ -111,20 +111,23 @@ func (p *Port) Execute(ctx context.Context, request apiv3.CommandRequest) (apiv3
 }
 
 type lockedIncident struct {
-	ID       uint64
-	PublicID string
-	CycleNo  uint32
-	Status   string
-	Version  uint64
+	ID                    uint64
+	PublicID              string
+	CycleNo               uint32
+	Status                string
+	Version               uint64
+	MigratedLegacy        bool
+	MigratedLegacyContext bool
 }
 
 func loadIncident(ctx context.Context, tx *sql.Tx, publicID string) (lockedIncident, error) {
 	var incident lockedIncident
 	err := tx.QueryRowContext(ctx, `
-SELECT id, public_id, cycle_no, v3_status, version
+SELECT id, public_id, cycle_no, v3_status, version, migrated_legacy, migrated_legacy_context
 FROM incidents
 WHERE public_id = ? AND domain_schema_version = 3
-FOR UPDATE`, publicID).Scan(&incident.ID, &incident.PublicID, &incident.CycleNo, &incident.Status, &incident.Version)
+FOR UPDATE`, publicID).Scan(&incident.ID, &incident.PublicID, &incident.CycleNo, &incident.Status, &incident.Version,
+		&incident.MigratedLegacy, &incident.MigratedLegacyContext)
 	if errors.Is(err, sql.ErrNoRows) {
 		return lockedIncident{}, apiv3.ErrNotFound
 	}
@@ -166,7 +169,10 @@ func (p *Port) startInvestigation(ctx context.Context, tx *sql.Tx, request apiv3
 		return apiv3.CommandResult{}, apiv3.ErrInvalidTransition
 	}
 	dedupeParts := []string{"task", incident.PublicID, fmt.Sprint(incident.CycleNo), "investigation.start", fmt.Sprint(incident.Version)}
-	payloadBody := map[string]any{"mode": "start", "incident_id": incident.PublicID, "cycle_no": incident.CycleNo}
+	payloadBody := map[string]any{
+		"mode": "start", "incident_id": incident.PublicID, "cycle_no": incident.CycleNo,
+		"migrated_legacy_context": incident.MigratedLegacyContext,
+	}
 	if authorization.ID != 0 {
 		dedupeParts = append(dedupeParts, authorization.PublicID)
 		payloadBody["business_budget_authorization_id"] = authorization.PublicID
@@ -185,6 +191,7 @@ func (p *Port) startInvestigation(ctx context.Context, tx *sql.Tx, request apiv3
 		Type: asyncjob.TaskInvestigationAdvance, SubjectType: "incident", SubjectID: incident.ID,
 		Transition: "investigation.start", ExpectedSubjectVersion: incident.Version,
 		PayloadSchemaVersion: 1, Payload: payload, DedupeKey: dedupe, Priority: 100, MaxAttempts: 5,
+		MigratedLegacyContext: incident.MigratedLegacyContext,
 	})
 	if err != nil {
 		return apiv3.CommandResult{}, err
@@ -420,8 +427,9 @@ func (p *Port) decideRemediation(ctx context.Context, tx *sql.Tx, request apiv3.
 			Type: asyncjob.TaskChangeEnsurePR, SubjectType: "remediation_plan", SubjectID: plan.ID,
 			Transition: "change.ensure_pr", ExpectedSubjectVersion: nextPlanVersion,
 			PayloadSchemaVersion: 1, Payload: payload,
-			DedupeKey: canonicalHash("change.ensure_pr", plan.PublicID, plan.CanonicalPlanHash, fmt.Sprint(nextPlanVersion)),
-			Priority:  90, MaxAttempts: 5,
+			DedupeKey:      canonicalHash("change.ensure_pr", plan.PublicID, plan.CanonicalPlanHash, fmt.Sprint(nextPlanVersion)),
+			MigratedLegacy: plan.MigratedLegacy, MigratedLegacyContext: plan.MigratedLegacyContext,
+			Priority: 90, MaxAttempts: 5,
 		})
 		if err != nil {
 			return apiv3.CommandResult{}, err
@@ -498,10 +506,11 @@ func appendCommandEvent(ctx context.Context, tx *sql.Tx, incident lockedIncident
 	_, err := tx.ExecContext(ctx, `
 INSERT IGNORE INTO incident_events
     (public_id, incident_id, domain_schema_version, cycle_no, event_schema_version,
-     event_type, idempotency_key, actor_type, actor_id, summary, metadata_json,
+     event_type, idempotency_key, migrated_legacy_context, migrated_legacy, actor_type, actor_id, summary, metadata_json,
      occurred_at, created_at)
-VALUES (?, ?, 3, ?, 1, ?, ?, 'user', ?, ?, ?, NOW(6), NOW(6))`,
+VALUES (?, ?, 3, ?, 1, ?, ?, ?, ?, 'user', ?, ?, ?, NOW(6), NOW(6))`,
 		uuid.NewString(), incident.ID, incident.CycleNo, eventType, idempotency,
+		incident.MigratedLegacyContext, incident.MigratedLegacy,
 		actor.Provider+":"+actor.Login, strings.ReplaceAll(eventType, "_", " "), metadata)
 	return err
 }

@@ -16,7 +16,7 @@ const taskColumns = `id, public_id, incident_id, cycle_no, queue, task_type,
 subject_type, subject_id, transition, expected_subject_version,
 payload_schema_version, payload_json, checkpoint_schema_version,
 checkpoint_version, checkpoint_hash, checkpoint_json, dedupe_key,
-replay_generation, logical_operation_key, status, priority, available_at,
+replay_generation, logical_operation_key, migrated_legacy, migrated_legacy_context, status, priority, available_at,
 attempt, max_attempts, lease_owner, lease_generation, lease_expires_at,
 heartbeat_at, last_error_code, last_error_summary, created_at, updated_at,
 started_at, completed_at, dead_at, cancelled_at, replayed_from_task_id`
@@ -249,9 +249,9 @@ func (r *Repository) EnqueueIn(ctx context.Context, executor DBTX, task NewTask)
 	const insertSQL = `INSERT INTO async_tasks (
 public_id, incident_id, cycle_no, queue, task_type, subject_type, subject_id,
 transition, expected_subject_version, payload_schema_version, payload_json,
-dedupe_key, replay_generation, logical_operation_key, status, priority,
+dedupe_key, replay_generation, logical_operation_key, migrated_legacy, migrated_legacy_context, status, priority,
 available_at, attempt, max_attempts, lease_generation, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'ready', ?,
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 'ready', ?,
           COALESCE(?, NOW(6)), 0, ?, 0, NOW(6), NOW(6))
 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`
 	result, err := executor.ExecContext(
@@ -270,6 +270,8 @@ ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`
 		[]byte(payload),
 		task.DedupeKey,
 		nullString(task.LogicalOperationKey),
+		task.MigratedLegacy,
+		task.MigratedLegacyContext,
 		task.Priority,
 		nullTime(task.AvailableAt),
 		task.MaxAttempts,

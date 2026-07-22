@@ -21,7 +21,7 @@ import (
 const v3PlanSelect = `SELECT
     p.id, p.public_id, p.incident_id, i.public_id, p.domain_schema_version,
     p.cycle_no, p.incident_version, ar.public_id, p.business_budget_authorization_id, p.diagnosis_hash,
-    p.plan_version, p.plan_hash, p.status, p.v3_status, p.operation_type,
+    p.plan_version, p.plan_hash, p.status, p.v3_status, p.migrated_legacy, p.migrated_legacy_context, p.operation_type,
     p.target_repository, p.target_base_revision, p.target_base_branch,
     p.last_known_good_sha, p.base_blob_sha, p.file_mode, p.target_path,
     p.target_resource_json, p.target_field_ref, p.parameters_json,
@@ -103,7 +103,8 @@ func (r *V3RemediationRepository) CreatePlanIn(ctx context.Context, executor rem
 		return err
 	}
 	if agentRun.status != "completed" || agentRun.expectedIncidentVersion != plan.IncidentVersion || agentRun.diagnosisHash != plan.DiagnosisHash ||
-		agentRun.budgetAuthorizationID != plan.BusinessBudgetAuthorizationID {
+		agentRun.budgetAuthorizationID != plan.BusinessBudgetAuthorizationID || agentRun.migratedLegacy != plan.MigratedLegacy ||
+		agentRun.migratedLegacyContext != plan.MigratedLegacyContext {
 		return fmt.Errorf("%w: V3 plan is not bound to the completed diagnosis", remediation.ErrConflict)
 	}
 	if err := validateV3PlanEvidence(ctx, executor, plan); err != nil {
@@ -130,7 +131,7 @@ func (r *V3RemediationRepository) CreatePlanIn(ctx context.Context, executor rem
 	result, err := executor.ExecContext(ctx, `INSERT INTO remediation_plans (
     public_id, incident_id, domain_schema_version, cycle_no, incident_version,
     created_by_agent_run_id, business_budget_authorization_id, diagnosis_hash, plan_version, plan_hash, status,
-    v3_status, operation_type, target_repository, target_base_revision,
+    v3_status, migrated_legacy, migrated_legacy_context, operation_type, target_repository, target_base_revision,
     target_base_branch, last_known_good_sha, base_blob_sha, file_mode, target_path,
     target_resource_json, target_field_ref, parameters_json, evidence_references_json,
     risk_level, policy_snapshot_hash, expected_before_hash,
@@ -141,12 +142,13 @@ func (r *V3RemediationRepository) CreatePlanIn(ctx context.Context, executor rem
     evidence_set_hash, hash_schema_version, canonical_plan_hash,
     plan_content_schema_version, row_version, created_at, updated_at, expires_at
 ) VALUES (
-    ?, ?, 3, ?, ?, ?, ?, ?, ?, ?, 'awaiting_approval', 'awaiting_approval',
+    ?, ?, 3, ?, ?, ?, ?, ?, ?, ?, 'awaiting_approval', 'awaiting_approval', ?, ?,
     'restore_required_env', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'low', ?, ?, ?, ?,
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )`,
 		plan.PublicID, plan.IncidentID, plan.CycleNo, plan.IncidentVersion,
 		agentRun.id, nullableBudgetAuthorization(plan.BusinessBudgetAuthorizationID), plan.DiagnosisHash, plan.PlanVersion, plan.PlanHash,
+		plan.MigratedLegacy, plan.MigratedLegacyContext,
 		plan.TargetRepository, plan.TargetBaseRevision, plan.TargetBaseBranch,
 		plan.LastKnownGoodRevision, plan.BaseBlobSHA, plan.FileMode, plan.TargetPath,
 		targetJSON, plan.TargetFieldRef, parametersJSON, evidenceReferencesJSON,
@@ -395,10 +397,13 @@ type v3AgentRunFence struct {
 	expectedIncidentVersion uint64
 	budgetAuthorizationID   uint64
 	diagnosisHash           string
+	migratedLegacy          bool
+	migratedLegacyContext   bool
 }
 
 func resolveV3AgentRun(ctx context.Context, executor remediation.PersistenceTX, publicID string, incidentID, cycleNo uint64, lock bool) (v3AgentRunFence, error) {
-	query := `SELECT id, v3_status, expected_incident_version, business_budget_authorization_id, final_diagnosis
+	query := `SELECT id, v3_status, expected_incident_version, business_budget_authorization_id, final_diagnosis,
+migrated_legacy, migrated_legacy_context
 FROM agent_runs
 WHERE public_id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3`
 	if lock {
@@ -408,7 +413,8 @@ WHERE public_id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_versi
 	var budgetAuthorization sql.NullInt64
 	var diagnosisJSON []byte
 	err := executor.QueryRowContext(ctx, query, publicID, incidentID, cycleNo).
-		Scan(&result.id, &result.status, &result.expectedIncidentVersion, &budgetAuthorization, &diagnosisJSON)
+		Scan(&result.id, &result.status, &result.expectedIncidentVersion, &budgetAuthorization, &diagnosisJSON,
+			&result.migratedLegacy, &result.migratedLegacyContext)
 	if err != nil {
 		return result, classifyV3RemediationError(err)
 	}
@@ -428,15 +434,17 @@ WHERE public_id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_versi
 func validateV3PlanEvidence(ctx context.Context, executor remediation.PersistenceTX, plan *remediation.RemediationPlan) error {
 	for _, binding := range plan.EvidenceBindings {
 		var contentHash sql.NullString
-		var valid, truncated bool
-		err := executor.QueryRowContext(ctx, `SELECT content_hash, valid, truncated
+		var valid, truncated, migratedLegacy, migratedLegacyContext bool
+		err := executor.QueryRowContext(ctx, `SELECT content_hash, valid, truncated, migrated_legacy, migrated_legacy_context
 FROM evidence_items
 WHERE public_id = ? AND incident_id = ? AND domain_schema_version = 3 AND cycle_no = ?
-FOR SHARE`, binding.ID, plan.IncidentID, plan.CycleNo).Scan(&contentHash, &valid, &truncated)
+FOR SHARE`, binding.ID, plan.IncidentID, plan.CycleNo).Scan(
+			&contentHash, &valid, &truncated, &migratedLegacy, &migratedLegacyContext)
 		if err != nil {
 			return classifyV3RemediationError(err)
 		}
-		if !contentHash.Valid || contentHash.String != binding.ContentHash || !valid || truncated {
+		if !contentHash.Valid || contentHash.String != binding.ContentHash || !valid || truncated ||
+			migratedLegacy != plan.MigratedLegacy || migratedLegacyContext != plan.MigratedLegacyContext {
 			return fmt.Errorf("%w: Evidence ownership or content hash mismatch", remediation.ErrConflict)
 		}
 	}
@@ -465,13 +473,14 @@ ORDER BY (p.public_id = ?) DESC, p.id DESC LIMIT 1`
 	var plan remediation.RemediationPlan
 	var budgetAuthorization sql.NullInt64
 	var legacyStatus, v3Status string
+	var migratedLegacy, migratedLegacyContext bool
 	var targetJSON, parametersJSON, evidenceReferencesJSON []byte
 	var manifestJSON, policyJSON, verificationJSON, evidenceBindingsJSON []byte
 	err := executor.QueryRowContext(ctx, query, args...).Scan(
 		&plan.ID, &plan.PublicID, &plan.IncidentID, &plan.IncidentPublicID,
 		&plan.DomainSchemaVersion, &plan.CycleNo, &plan.IncidentVersion,
 		&plan.CreatedByAgentRunID, &budgetAuthorization, &plan.DiagnosisHash, &plan.PlanVersion,
-		&plan.PlanHash, &legacyStatus, &v3Status, &plan.OperationType,
+		&plan.PlanHash, &legacyStatus, &v3Status, &migratedLegacy, &migratedLegacyContext, &plan.OperationType,
 		&plan.TargetRepository, &plan.TargetBaseRevision, &plan.TargetBaseBranch,
 		&plan.LastKnownGoodRevision, &plan.BaseBlobSHA, &plan.FileMode,
 		&plan.TargetPath, &targetJSON, &plan.TargetFieldRef, &parametersJSON,
@@ -492,6 +501,7 @@ ORDER BY (p.public_id = ?) DESC, p.id DESC LIMIT 1`
 		plan.BusinessBudgetAuthorizationID = uint64(budgetAuthorization.Int64)
 	}
 	plan.Status = remediation.PlanStatus(v3Status)
+	plan.MigratedLegacy, plan.MigratedLegacyContext = migratedLegacy, migratedLegacyContext
 	plan.CanonicalChangeManifest, err = canonicalizeStoredV3JSON(manifestJSON)
 	if err != nil {
 		return nil, fmt.Errorf("%w: decode persisted V3 change manifest", remediation.ErrInvalidArgument)
@@ -531,7 +541,8 @@ func sameV3PlanContent(left, right remediation.RemediationPlan) bool {
 		left.CycleNo == right.CycleNo && left.IncidentVersion == right.IncidentVersion &&
 		left.PlanVersion == right.PlanVersion && left.CanonicalPlanHash == right.CanonicalPlanHash &&
 		left.ExpectedPostImageHash == right.ExpectedPostImageHash && left.CreatedByAgentRunID == right.CreatedByAgentRunID &&
-		left.BusinessBudgetAuthorizationID == right.BusinessBudgetAuthorizationID
+		left.BusinessBudgetAuthorizationID == right.BusinessBudgetAuthorizationID &&
+		left.MigratedLegacy == right.MigratedLegacy && left.MigratedLegacyContext == right.MigratedLegacyContext
 }
 
 func nullableBudgetAuthorization(id uint64) any {

@@ -19,10 +19,12 @@ import (
 const remediationPreparePayloadSchema = 1
 
 type RemediationPrepareInput struct {
-	AgentRunID   uint64
-	PlanPublicID string
-	Baseline     RemediationPrepareBaselineFence
-	Request      remediation.RestoreEnvCompileRequest
+	AgentRunID            uint64
+	PlanPublicID          string
+	Baseline              RemediationPrepareBaselineFence
+	Request               remediation.RestoreEnvCompileRequest
+	MigratedLegacy        bool
+	MigratedLegacyContext bool
 }
 
 type RemediationPrepareBaselineFence struct {
@@ -89,6 +91,7 @@ func (o *remediationPrepareOperation) handle(ctx context.Context, execution asyn
 	}
 	request := input.Request
 	if input.AgentRunID != task.SubjectID || request.IncidentID != task.IncidentID || request.CycleNo != uint64(task.CycleNo) ||
+		input.MigratedLegacy != task.MigratedLegacy || input.MigratedLegacyContext != task.MigratedLegacyContext ||
 		request.CreatedByAgentRunID == "" || payload.AgentRunID != request.CreatedByAgentRunID ||
 		input.Baseline.ID == 0 || input.Baseline.RowVersion == 0 || input.Baseline.GitOpsRevision != request.LastKnownGoodRevision ||
 		input.Baseline.ConfigHash == "" || input.Baseline.ObservationID == 0 || input.Baseline.ObservationHash == "" {
@@ -102,6 +105,8 @@ func (o *remediationPrepareOperation) handle(ctx context.Context, execution asyn
 		return asyncjob.Dead("remediation_compile_rejected", boundChange(err.Error(), 2048), nil)
 	}
 	plan.PublicID = input.PlanPublicID
+	plan.MigratedLegacy = input.MigratedLegacy
+	plan.MigratedLegacyContext = input.MigratedLegacyContext
 	if err := remediation.ValidateV3Plan(plan); err != nil {
 		return asyncjob.Dead("remediation_plan_invalid", boundChange(err.Error(), 2048), nil)
 	}
@@ -156,15 +161,19 @@ func (s *mysqlRemediationPrepareStore) PersistIn(ctx context.Context, tx asyncjo
 	}
 	var runPublicID, runStatus string
 	var runVersion, expectedIncidentVersion uint64
+	var runMigratedLegacy, runMigratedLegacyContext bool
 	if err := tx.QueryRowContext(ctx, `
-SELECT public_id, row_version, v3_status, expected_incident_version
+SELECT public_id, row_version, v3_status, expected_incident_version, migrated_legacy, migrated_legacy_context
 FROM agent_runs
 WHERE id = ? AND incident_id = ? AND domain_schema_version = 3 AND cycle_no = ?
 FOR SHARE`, task.SubjectID, task.IncidentID, task.CycleNo).
-		Scan(&runPublicID, &runVersion, &runStatus, &expectedIncidentVersion); err != nil {
+		Scan(&runPublicID, &runVersion, &runStatus, &expectedIncidentVersion, &runMigratedLegacy, &runMigratedLegacyContext); err != nil {
 		return err
 	}
-	if runPublicID != plan.CreatedByAgentRunID || runVersion != task.ExpectedSubjectVersion || runStatus != "completed" || expectedIncidentVersion != plan.IncidentVersion {
+	if runPublicID != plan.CreatedByAgentRunID || runVersion != task.ExpectedSubjectVersion || runStatus != "completed" ||
+		expectedIncidentVersion != plan.IncidentVersion || runMigratedLegacy != task.MigratedLegacy ||
+		runMigratedLegacyContext != task.MigratedLegacyContext || plan.MigratedLegacy != task.MigratedLegacy ||
+		plan.MigratedLegacyContext != task.MigratedLegacyContext {
 		return asyncjob.ErrSubjectVersionMismatch
 	}
 	var baselinePublicID, baselineStatus, baselineRevision, configHash string
@@ -268,10 +277,11 @@ func appendPrepareIncidentEvent(ctx context.Context, tx asyncjob.DBTX, plan *rem
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO incident_events
  (public_id, incident_id, domain_schema_version, cycle_no, event_schema_version,
-  event_type, idempotency_key, actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
-VALUES (?, ?, 3, ?, 1, ?, ?, 'agent', ?, ?, ?, NOW(6), NOW(6))
+  event_type, idempotency_key, migrated_legacy_context, migrated_legacy, actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
+VALUES (?, ?, 3, ?, 1, ?, ?, ?, ?, 'agent', ?, ?, ?, NOW(6), NOW(6))
 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
-		uuid.NewString(), plan.IncidentID, plan.CycleNo, eventType, idempotency, plan.CreatedByAgentRunID,
+		uuid.NewString(), plan.IncidentID, plan.CycleNo, eventType, idempotency,
+		plan.MigratedLegacyContext, plan.MigratedLegacy, plan.CreatedByAgentRunID,
 		"Evidence-backed remediation plan awaits human approval", payload)
 	return err
 }

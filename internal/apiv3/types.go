@@ -53,65 +53,70 @@ type Authenticator interface {
 // IncidentView is a projection DTO. ID is always a public UUID; numeric
 // database keys are intentionally absent from all V3 transport types.
 type IncidentView struct {
-	ID                 string    `json:"id"`
-	Cycle              uint64    `json:"cycle"`
-	Status             string    `json:"status"`
-	Severity           string    `json:"severity"`
-	Summary            string    `json:"summary,omitempty"`
-	Version            uint64    `json:"version"`
-	NeedsAttention     bool      `json:"needs_attention"`
-	BlockingReasonCode string    `json:"blocking_reason_code,omitempty"`
-	CreatedAt          time.Time `json:"created_at,omitempty"`
-	UpdatedAt          time.Time `json:"updated_at,omitempty"`
+	ID                    string    `json:"id"`
+	Cycle                 uint64    `json:"cycle"`
+	Status                string    `json:"status"`
+	Severity              string    `json:"severity"`
+	Summary               string    `json:"summary,omitempty"`
+	Version               uint64    `json:"version"`
+	NeedsAttention        bool      `json:"needs_attention"`
+	BlockingReasonCode    string    `json:"blocking_reason_code,omitempty"`
+	MigratedLegacy        bool      `json:"migrated_legacy"`
+	MigratedLegacyContext bool      `json:"migrated_legacy_context"`
+	CreatedAt             time.Time `json:"created_at,omitempty"`
+	UpdatedAt             time.Time `json:"updated_at,omitempty"`
 }
 
 // ResourceView is the bounded common shape used by Phase 2 child Query
 // skeletons. Future phases can replace it with richer typed projections without
 // changing the read-only Query port boundary.
 type ResourceView struct {
-	ID        string    `json:"id"`
-	Kind      string    `json:"kind"`
-	Status    string    `json:"status,omitempty"`
-	Version   uint64    `json:"version,omitempty"`
-	Cycle     uint64    `json:"cycle,omitempty"`
-	Summary   string    `json:"summary,omitempty"`
-	Hash      string    `json:"hash,omitempty"`
-	CreatedAt time.Time `json:"created_at,omitempty"`
-	UpdatedAt time.Time `json:"updated_at,omitempty"`
+	ID                    string    `json:"id"`
+	Kind                  string    `json:"kind"`
+	Status                string    `json:"status,omitempty"`
+	Version               uint64    `json:"version,omitempty"`
+	Cycle                 uint64    `json:"cycle,omitempty"`
+	Summary               string    `json:"summary,omitempty"`
+	Hash                  string    `json:"hash,omitempty"`
+	MigratedLegacy        bool      `json:"migrated_legacy"`
+	MigratedLegacyContext bool      `json:"migrated_legacy_context"`
+	CreatedAt             time.Time `json:"created_at,omitempty"`
+	UpdatedAt             time.Time `json:"updated_at,omitempty"`
 }
 
 // ResolutionReportView is the immutable, current-cycle recovery projection.
 // Its identifier-bearing fields are public UUIDs only; the bounded JSON
 // sections are sanitized before they cross the Query port boundary.
 type ResolutionReportView struct {
-	ID                  string                            `json:"id"`
-	Kind                string                            `json:"kind"`
-	Status              string                            `json:"status"`
-	Cycle               uint64                            `json:"cycle"`
-	TriggerType         string                            `json:"trigger_type"`
-	ResolutionReason    string                            `json:"resolution_reason"`
-	Service             string                            `json:"service"`
-	Workload            string                            `json:"workload"`
-	Environment         string                            `json:"environment"`
-	ImpactSummary       string                            `json:"impact_summary"`
-	Summary             string                            `json:"summary"`
-	Hash                string                            `json:"hash"`
-	CycleStartedAt      time.Time                         `json:"cycle_started_at"`
-	ResolvedAt          time.Time                         `json:"resolved_at"`
-	MeasuredDurationMS  uint64                            `json:"measured_duration_ms"`
-	GeneratedAt         time.Time                         `json:"generated_at"`
-	Revisions           ResolutionRevisionsView           `json:"revisions"`
-	VerificationProfile ResolutionVerificationProfileView `json:"verification_profile"`
-	Stability           ResolutionStabilityView           `json:"stability"`
-	TriggerSignal       json.RawMessage                   `json:"trigger_signal"`
-	Diagnosis           json.RawMessage                   `json:"diagnosis"`
-	Evidence            json.RawMessage                   `json:"evidence"`
-	RemediationPlan     json.RawMessage                   `json:"remediation_plan"`
-	RemediationDecision json.RawMessage                   `json:"remediation_decision"`
-	Delivery            json.RawMessage                   `json:"delivery"`
-	Verification        json.RawMessage                   `json:"verification"`
-	Timeline            json.RawMessage                   `json:"timeline"`
-	AgentUsage          json.RawMessage                   `json:"agent_usage"`
+	ID                    string                            `json:"id"`
+	Kind                  string                            `json:"kind"`
+	Status                string                            `json:"status"`
+	Cycle                 uint64                            `json:"cycle"`
+	TriggerType           string                            `json:"trigger_type"`
+	ResolutionReason      string                            `json:"resolution_reason"`
+	Service               string                            `json:"service"`
+	Workload              string                            `json:"workload"`
+	Environment           string                            `json:"environment"`
+	ImpactSummary         string                            `json:"impact_summary"`
+	Summary               string                            `json:"summary"`
+	Hash                  string                            `json:"hash"`
+	CycleStartedAt        time.Time                         `json:"cycle_started_at"`
+	ResolvedAt            time.Time                         `json:"resolved_at"`
+	MeasuredDurationMS    uint64                            `json:"measured_duration_ms"`
+	GeneratedAt           time.Time                         `json:"generated_at"`
+	Revisions             ResolutionRevisionsView           `json:"revisions"`
+	VerificationProfile   ResolutionVerificationProfileView `json:"verification_profile"`
+	Stability             ResolutionStabilityView           `json:"stability"`
+	TriggerSignal         json.RawMessage                   `json:"trigger_signal"`
+	Diagnosis             json.RawMessage                   `json:"diagnosis"`
+	Evidence              json.RawMessage                   `json:"evidence"`
+	RemediationPlan       json.RawMessage                   `json:"remediation_plan"`
+	RemediationDecision   json.RawMessage                   `json:"remediation_decision"`
+	Delivery              json.RawMessage                   `json:"delivery"`
+	Verification          json.RawMessage                   `json:"verification"`
+	Timeline              json.RawMessage                   `json:"timeline"`
+	AgentUsage            json.RawMessage                   `json:"agent_usage"`
+	MigratedLegacyContext bool                              `json:"migrated_legacy_context"`
 }
 
 type ResolutionRevisionsView struct {

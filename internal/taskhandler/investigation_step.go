@@ -111,6 +111,8 @@ type investigationSnapshot struct {
 	RunCheckpointSchema     int
 	RunCheckpointHash       string
 	RunVersion              uint64
+	RunMigratedLegacy       bool
+	MigratedLegacyContext   bool
 	ExpectedIncidentVersion uint64
 	CancelRequestedAt       *time.Time
 	DeadlineAt              time.Time
@@ -369,7 +371,8 @@ func (l mysqlInvestigationLoader) Load(ctx context.Context, task asyncjob.Task) 
  r.max_evidence_items, r.used_evidence_items, r.max_runtime_ms, r.tool_timeout_ms,
  r.max_evidence_bytes, r.max_checkpoint_bytes, r.max_step_retries,
  r.current_checkpoint, r.checkpoint_version, r.checkpoint_schema_version, r.checkpoint_hash,
- r.row_version, r.expected_incident_version, r.cancel_requested_at, r.deadline_at, r.created_at,
+ r.row_version, r.migrated_legacy, r.migrated_legacy_context, r.expected_incident_version,
+ r.cancel_requested_at, r.deadline_at, r.created_at,
  i.public_id, i.version, i.correlation_key, i.cluster, i.environment, i.namespace,
  i.service_name, i.target_kind, i.target_name, i.first_seen_at
 FROM agent_runs r
@@ -396,6 +399,7 @@ WHERE r.id = ? AND r.incident_id = ? AND r.domain_schema_version = 3
 		&maxSteps, &usedSteps, &maxTools, &usedTools, &maxModels, &usedModels, &tokenBudget, &inputTokens, &outputTokens,
 		&maxEvidence, &usedEvidence, &maxRuntime, &toolTimeout, &maxEvidenceBytes, &maxCheckpointBytes, &maxRetries,
 		&checkpoint, &checkpointVersion, &checkpointSchema, &checkpointHash, &result.RunVersion,
+		&result.RunMigratedLegacy, &result.MigratedLegacyContext,
 		&result.ExpectedIncidentVersion, &cancelAt, &deadline, &result.RunCreatedAt,
 		&result.IncidentPublicID, &result.IncidentVersion, &result.CorrelationKey, &result.Cluster, &result.Environment,
 		&result.Namespace, &result.ServiceName, &result.TargetKind, &result.TargetName, &firstSeen,
@@ -407,7 +411,8 @@ WHERE r.id = ? AND r.incident_id = ? AND r.domain_schema_version = 3
 	}
 	result.ModelIdentity.PromptVersion = result.PromptVersion
 	if result.RunPublicID == "" || result.IncidentPublicID == "" || result.RunVersion != task.ExpectedSubjectVersion ||
-		result.IncidentVersion != result.ExpectedIncidentVersion {
+		result.IncidentVersion != result.ExpectedIncidentVersion || result.RunMigratedLegacy != task.MigratedLegacy ||
+		result.MigratedLegacyContext != task.MigratedLegacyContext {
 		return investigationSnapshot{}, asyncjob.ErrSubjectVersionMismatch
 	}
 	if status != "PENDING" && status != "RUNNING" || v3Status != "pending" && v3Status != "running" {
@@ -459,7 +464,7 @@ func (l mysqlInvestigationLoader) loadEvidence(ctx context.Context, snapshot *in
  COALESCE(input_sample_ids_json,JSON_ARRAY()), COALESCE(input_hashes_json,JSON_ARRAY()),
  COALESCE(redaction_policy_version,''), COALESCE(redaction_counts_json,JSON_OBJECT()),
  COALESCE(prompt_safety_flags_json,JSON_OBJECT()), COALESCE(safe_raw_reference,raw_ref),
- COALESCE(observed_at,collected_at)
+ COALESCE(observed_at,collected_at), migrated_legacy, migrated_legacy_context
 FROM evidence_items
 WHERE incident_id = ? AND agent_run_id = ? AND domain_schema_version = 3 AND cycle_no = ?
 ORDER BY collected_at, id`
@@ -474,7 +479,7 @@ ORDER BY collected_at, id`
 		var provenanceHash, claimUse, redactionPolicy, safeRawReference string
 		var factsJSON, redactionJSON, provenanceJSON, trustJSON, corroborationJSON []byte
 		var inputEvidenceJSON, inputSampleJSON, inputHashesJSON, redactionCountsJSON, promptFlagsJSON []byte
-		var truncated, valid bool
+		var truncated, valid, migratedLegacy, migratedLegacyContext bool
 		var idempotency sql.NullString
 		var collected, observed time.Time
 		var contractVersion, factSchemaVersion int
@@ -483,7 +488,8 @@ ORDER BY collected_at, id`
 			&truncated, &valid, &idempotency, &collected, &contractVersion, &producerType, &producerID, &producerVersion,
 			&producerKey, &agentStepID, &factSchemaVersion, &factSchemaHash, &provenanceJSON, &provenanceHash, &trustJSON,
 			&claimUse, &corroborationJSON, &inputEvidenceJSON, &inputSampleJSON, &inputHashesJSON, &redactionPolicy,
-			&redactionCountsJSON, &promptFlagsJSON, &safeRawReference, &observed); err != nil {
+			&redactionCountsJSON, &promptFlagsJSON, &safeRawReference, &observed,
+			&migratedLegacy, &migratedLegacyContext); err != nil {
 			return fmt.Errorf("scan investigation evidence: %w", err)
 		}
 		if contractVersion != 0 && contractVersion != evidenceContractVersion {
@@ -536,6 +542,9 @@ ORDER BY collected_at, id`
 		for _, fact := range envelope.Facts {
 			if fact.ID == "" || fact.EvidenceID == "" || fact.IncidentID != snapshot.IncidentPublicID || fact.CycleNo != uint64(snapshot.Task.CycleNo) {
 				continue
+			}
+			if fact.MigratedLegacy != migratedLegacy || migratedLegacyContext != snapshot.MigratedLegacyContext {
+				return fmt.Errorf("%w: investigation Evidence migrated-legacy provenance diverges", asyncjob.ErrInvalidMutation)
 			}
 			snapshot.Facts = append(snapshot.Facts, fact)
 		}
@@ -1273,6 +1282,7 @@ func normalizeObservation(value agent.ToolObservation, snapshot investigationSna
 		fact.EvidenceID = evidenceID
 		fact.IncidentID = snapshot.IncidentPublicID
 		fact.CycleNo = uint64(snapshot.Task.CycleNo)
+		fact.MigratedLegacy = snapshot.RunMigratedLegacy
 		fact.SourceSystem = value.SourceSystem
 		fact.CollectionPath = value.CollectionPath
 		if fact.CollectionStatus == "" {
@@ -1571,12 +1581,13 @@ func (o *investigationStepOperation) applyPrepared(ctx context.Context, tx async
 		providerRequestIDHashes = encoded
 	}
 	stepResult, err := tx.ExecContext(ctx, `INSERT INTO agent_steps
- (public_id, agent_run_id, domain_schema_version, incident_id, cycle_no, sequence, step_type,
+ (public_id, agent_run_id, domain_schema_version, incident_id, cycle_no, migrated_legacy, sequence, step_type,
   short_reason, selected_tool, arguments_json, arguments_hash, result_summary, result_ref,
   evidence_public_id, status, retry_count, duration_ms, input_tokens, output_tokens, provider_request_id_hashes, error_code,
   started_at, finished_at, created_at)
- VALUES (?, ?, 3, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', 0, ?, ?, ?, ?, '', ?, ?, ?)`,
-		stepPublicID, snapshot.Task.SubjectID, snapshot.Task.IncidentID, snapshot.Task.CycleNo, sequence,
+ VALUES (?, ?, 3, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', 0, ?, ?, ?, ?, '', ?, ?, ?)`,
+		stepPublicID, snapshot.Task.SubjectID, snapshot.Task.IncidentID, snapshot.Task.CycleNo,
+		snapshot.RunMigratedLegacy, sequence,
 		stepNode, boundInvestigation(checkpoint.StepSummary, 1024), selectedTool(checkpoint), arguments, argumentsHash,
 		boundInvestigation(checkpoint.StepSummary, 4096), "", evidencePublicID, checkpoint.DurationMS,
 		checkpoint.Usage.InputTokens, checkpoint.Usage.OutputTokens, providerRequestIDHashes,
@@ -1641,11 +1652,12 @@ WHERE id = ? AND incident_id = ? AND domain_schema_version = 3 AND cycle_no = ?
 	})
 	if _, err := tx.ExecContext(ctx, `INSERT INTO incident_events
  (public_id, incident_id, domain_schema_version, cycle_no, event_schema_version, event_type,
-  idempotency_key, actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
- VALUES (?, ?, 3, ?, 1, 'agent_step_completed', ?, 'system', ?, ?, ?, ?, ?)
+  idempotency_key, migrated_legacy_context, migrated_legacy, actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
+ VALUES (?, ?, 3, ?, 1, 'agent_step_completed', ?, ?, ?, 'system', ?, ?, ?, ?, ?)
  ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
 		deterministicPublicID("investigation-event", snapshot.Task.DedupeKey), snapshot.Task.IncidentID, snapshot.Task.CycleNo,
-		hashCanonical("event", snapshot.Task.DedupeKey, "agent_step_completed"), snapshot.RunPublicID,
+		hashCanonical("event", snapshot.Task.DedupeKey, "agent_step_completed"), snapshot.MigratedLegacyContext,
+		snapshot.RunMigratedLegacy, snapshot.RunPublicID,
 		boundInvestigation(checkpoint.StepSummary, 2048), metadata, checkpoint.CapturedAt.UTC(), checkpoint.CapturedAt.UTC()); err != nil {
 		return fmt.Errorf("append investigation step event: %w", err)
 	}
@@ -1686,6 +1698,7 @@ func (o *investigationStepOperation) enqueueRemediationPrepare(ctx context.Conte
 		SubjectType: "agent_run", SubjectID: snapshot.Task.SubjectID, Transition: "remediation.prepare",
 		ExpectedSubjectVersion: nextSubjectVersion, PayloadSchemaVersion: remediationPreparePayloadSchema,
 		Payload: payload, DedupeKey: dedupe, Priority: snapshot.Task.Priority,
+		MigratedLegacy: snapshot.RunMigratedLegacy, MigratedLegacyContext: snapshot.MigratedLegacyContext,
 		AvailableAt: &availableAt, MaxAttempts: snapshot.Task.MaxAttempts,
 	}); err != nil {
 		return fmt.Errorf("enqueue remediation.prepare: %w", err)
@@ -1745,7 +1758,7 @@ func insertInvestigationEvidence(ctx context.Context, tx asyncjob.DBTX, snapshot
 		return fmt.Errorf("build investigation Evidence provenance: %w", err)
 	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO evidence_items
- (public_id, incident_id, domain_schema_version, evidence_contract_version, cycle_no,
+ (public_id, incident_id, domain_schema_version, evidence_contract_version, cycle_no, migrated_legacy, migrated_legacy_context,
   agent_run_id, agent_step_id, type, source, producer_type, producer_id, producer_version,
   producer_dedupe_key, adapter_version, query_template_id, query_template_version,
   scope_snapshot_hash, arguments_hash, tool_name, resource_ref, time_range_json, query_text,
@@ -1754,11 +1767,12 @@ func insertInvestigationEvidence(ctx context.Context, tx asyncjob.DBTX, snapshot
   input_sample_ids_json, input_hashes_json, result_hash, content_hash, raw_ref,
   safe_raw_reference, redaction_json, redaction_policy_version, redaction_counts_json,
   prompt_safety_flags_json, truncated, valid, idempotency_key, collected_at, observed_at, created_at)
- VALUES (?, ?, 3, 1, ?, ?, ?, 'agent_observation', ?, 'agent_step', ?, 'agent-step-evidence/v1',
+ VALUES (?, ?, 3, 1, ?, ?, ?, ?, ?, 'agent_observation', ?, 'agent_step', ?, 'agent-step-evidence/v1',
          ?, 'investigation-read/v1', ?, ?, ?, ?, ?, ?, ?, '', ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?,
          ?, ?, ?, ?, ?, 'v3-observation-redaction/v1', ?, ?, ?, ?, ?, ?, ?, ?)
  ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
-		publicID, snapshot.Task.IncidentID, snapshot.Task.CycleNo, snapshot.Task.SubjectID, stepID,
+		publicID, snapshot.Task.IncidentID, snapshot.Task.CycleNo, snapshot.RunMigratedLegacy,
+		snapshot.MigratedLegacyContext, snapshot.Task.SubjectID, stepID,
 		boundInvestigation(observation.SourceSystem, 128), stepPublicID, producerKey, templateID, templateVersion,
 		scopeHash, argumentsHash, selectedTool(checkpoint), boundInvestigation(observation.CollectionPath, 1024), timeRange,
 		boundInvestigation(observation.Summary, 4096), facts, metadata.FactSchemaHash, metadata.ProvenanceJSON,
@@ -1801,12 +1815,12 @@ func insertInvestigationChangeCandidates(ctx context.Context, tx asyncjob.DBTX, 
 			return fmt.Errorf("encode investigation ChangeCandidate evidence: %w", marshalErr)
 		}
 		result, execErr := tx.ExecContext(ctx, `INSERT INTO change_candidates
- (public_id, domain_schema_version, candidate_schema_version, incident_id, cycle_no, agent_run_id,
+ (public_id, domain_schema_version, candidate_schema_version, incident_id, cycle_no, migrated_legacy, agent_run_id,
   change_ref, source_type, repository, commit_sha, gitops_revision, image_digest, target_path,
   category, change_time, supporting_evidence_json, content_hash, created_at)
- VALUES (?, 3, 1, ?, ?, ?, ?, 'github_commit', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ VALUES (?, 3, 1, ?, ?, ?, ?, ?, 'github_commit', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
  ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
-			candidate.PublicID, snapshot.Task.IncidentID, snapshot.Task.CycleNo, snapshot.Task.SubjectID,
+			candidate.PublicID, snapshot.Task.IncidentID, snapshot.Task.CycleNo, snapshot.RunMigratedLegacy, snapshot.Task.SubjectID,
 			candidate.ChangeRef, candidate.Repository, candidate.Revision, candidate.Revision, candidate.ImageDigest,
 			candidate.TargetPath, candidate.Category, candidate.ChangeTime.UTC(), supporting, candidate.ContentHash,
 			checkpoint.CapturedAt.UTC())
@@ -1910,7 +1924,8 @@ func investigationChangeCandidateContentHash(snapshot investigationSnapshot, can
 func usableInvestigationCandidateFact(fact agent.EvidenceFact, snapshot investigationSnapshot) bool {
 	return fact.ID != "" && fact.EvidenceID != "" && fact.IncidentID == snapshot.IncidentPublicID &&
 		fact.CycleNo == uint64(snapshot.Task.CycleNo) && fact.CollectionStatus == agent.CollectionAvailable &&
-		fact.Integrity == "verified" && fact.ClaimUse != "forbidden" && !fact.Truncated
+		fact.MigratedLegacy == snapshot.RunMigratedLegacy && fact.Integrity == "verified" &&
+		fact.ClaimUse != "forbidden" && !fact.Truncated
 }
 
 func verifyInvestigationChangeCandidate(ctx context.Context, tx asyncjob.DBTX, candidateID uint64, snapshot investigationSnapshot, expected investigationChangeCandidate) error {
@@ -1918,12 +1933,13 @@ func verifyInvestigationChangeCandidate(ctx context.Context, tx asyncjob.DBTX, c
 	var incidentID, cycleNo, agentRunID uint64
 	var domainSchemaVersion, candidateSchemaVersion uint16
 	var sourceType, commitSHA, gitopsRevision string
+	var migratedLegacy bool
 	var supportingJSON []byte
 	if err := tx.QueryRowContext(ctx, `SELECT public_id, domain_schema_version, candidate_schema_version,
- incident_id, cycle_no, agent_run_id, change_ref, source_type, repository, commit_sha,
+ incident_id, cycle_no, migrated_legacy, agent_run_id, change_ref, source_type, repository, commit_sha,
  gitops_revision, image_digest, target_path, category, change_time, supporting_evidence_json, content_hash
 FROM change_candidates WHERE id = ? FOR UPDATE`, candidateID).Scan(
-		&actual.PublicID, &domainSchemaVersion, &candidateSchemaVersion, &incidentID, &cycleNo, &agentRunID,
+		&actual.PublicID, &domainSchemaVersion, &candidateSchemaVersion, &incidentID, &cycleNo, &migratedLegacy, &agentRunID,
 		&actual.ChangeRef, &sourceType, &actual.Repository, &commitSHA, &gitopsRevision, &actual.ImageDigest,
 		&actual.TargetPath, &actual.Category, &actual.ChangeTime, &supportingJSON, &actual.ContentHash); err != nil {
 		return fmt.Errorf("reload investigation ChangeCandidate: %w", err)
@@ -1931,7 +1947,8 @@ FROM change_candidates WHERE id = ? FOR UPDATE`, candidateID).Scan(
 	actual.Revision = gitopsRevision
 	if json.Unmarshal(supportingJSON, &actual.SupportingEvidence) != nil ||
 		domainSchemaVersion != 3 || candidateSchemaVersion != 1 || incidentID != snapshot.Task.IncidentID ||
-		cycleNo != uint64(snapshot.Task.CycleNo) || agentRunID != snapshot.Task.SubjectID || sourceType != "github_commit" ||
+		cycleNo != uint64(snapshot.Task.CycleNo) || migratedLegacy != snapshot.RunMigratedLegacy ||
+		agentRunID != snapshot.Task.SubjectID || sourceType != "github_commit" ||
 		commitSHA != gitopsRevision || actual.PublicID != expected.PublicID ||
 		actual.ChangeRef != expected.ChangeRef || actual.Repository != expected.Repository || actual.Revision != expected.Revision ||
 		actual.ImageDigest != expected.ImageDigest || actual.TargetPath != expected.TargetPath || actual.Category != expected.Category ||
@@ -1945,7 +1962,8 @@ FROM change_candidates WHERE id = ? FOR UPDATE`, candidateID).Scan(
 const investigationChangeValidatorVersion = "required-env-correlation-validator/v1"
 
 type persistedInvestigationChangeCandidate struct {
-	ID uint64
+	ID             uint64
+	MigratedLegacy bool
 	investigationChangeCandidate
 }
 
@@ -1988,7 +2006,7 @@ func assessInvestigationChangeCandidates(ctx context.Context, tx asyncjob.DBTX, 
 }
 
 func loadInvestigationChangeCandidatesForAssessment(ctx context.Context, tx asyncjob.DBTX, snapshot investigationSnapshot) ([]persistedInvestigationChangeCandidate, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT id, public_id, change_ref, repository, commit_sha, gitops_revision,
+	rows, err := tx.QueryContext(ctx, `SELECT id, public_id, migrated_legacy, change_ref, repository, commit_sha, gitops_revision,
  image_digest, target_path, category, change_time, supporting_evidence_json, content_hash
 FROM change_candidates
 WHERE incident_id = ? AND cycle_no = ? AND agent_run_id = ? AND domain_schema_version = 3
@@ -2002,7 +2020,7 @@ ORDER BY id FOR UPDATE`, snapshot.Task.IncidentID, snapshot.Task.CycleNo, snapsh
 		var candidate persistedInvestigationChangeCandidate
 		var commitSHA, gitopsRevision string
 		var supportingJSON []byte
-		if err := rows.Scan(&candidate.ID, &candidate.PublicID, &candidate.ChangeRef, &candidate.Repository,
+		if err := rows.Scan(&candidate.ID, &candidate.PublicID, &candidate.MigratedLegacy, &candidate.ChangeRef, &candidate.Repository,
 			&commitSHA, &gitopsRevision, &candidate.ImageDigest, &candidate.TargetPath, &candidate.Category,
 			&candidate.ChangeTime, &supportingJSON, &candidate.ContentHash); err != nil {
 			return nil, fmt.Errorf("scan investigation ChangeCandidate: %w", err)
@@ -2026,7 +2044,8 @@ ORDER BY id FOR UPDATE`, snapshot.Task.IncidentID, snapshot.Task.CycleNo, snapsh
 }
 
 func validatePersistedInvestigationChangeCandidate(snapshot investigationSnapshot, candidate persistedInvestigationChangeCandidate) error {
-	if candidate.ID == 0 || !validSHA256Text(candidate.ContentHash) || candidate.ChangeTime.IsZero() ||
+	if candidate.ID == 0 || candidate.MigratedLegacy != snapshot.RunMigratedLegacy ||
+		!validSHA256Text(candidate.ContentHash) || candidate.ChangeTime.IsZero() ||
 		!change.ValidExactGitObjectID(candidate.Revision) || !validImageDigest(candidate.ImageDigest) ||
 		strings.Count(candidate.Repository, "/") != 1 || candidate.TargetPath == "" ||
 		strings.HasPrefix(candidate.TargetPath, "../") || change.SensitivePath(candidate.TargetPath, nil) ||
@@ -2174,14 +2193,15 @@ func allInvestigationEvidenceReferenced(required, actual []string) bool {
 func persistInvestigationChangeAssessment(ctx context.Context, tx asyncjob.DBTX, snapshot investigationSnapshot, checkpoint investigationStepCheckpoint, candidate persistedInvestigationChangeCandidate, assessment investigationChangeAssessment) error {
 	var latestID uint64
 	var latestStatus, latestValidator, latestPolicy, latestHash string
+	var latestMigratedLegacy bool
 	var latestSupportingJSON, latestContradictingJSON []byte
 	var latestSupersedes sql.NullInt64
-	err := tx.QueryRowContext(ctx, `SELECT id, status, supporting_evidence_json, contradicting_evidence_json,
+	err := tx.QueryRowContext(ctx, `SELECT id, migrated_legacy, status, supporting_evidence_json, contradicting_evidence_json,
  validator_version, policy_hash, content_hash, supersedes_assessment_id
 FROM change_candidate_assessments
 WHERE candidate_id = ?
 ORDER BY created_at DESC, id DESC LIMIT 1 FOR UPDATE`, candidate.ID).Scan(
-		&latestID, &latestStatus, &latestSupportingJSON, &latestContradictingJSON,
+		&latestID, &latestMigratedLegacy, &latestStatus, &latestSupportingJSON, &latestContradictingJSON,
 		&latestValidator, &latestPolicy, &latestHash, &latestSupersedes)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("load latest ChangeCandidate assessment: %w", err)
@@ -2189,7 +2209,7 @@ ORDER BY created_at DESC, id DESC LIMIT 1 FOR UPDATE`, candidate.ID).Scan(
 	if err == nil {
 		var latestSupporting, latestContradicting []string
 		if json.Unmarshal(latestSupportingJSON, &latestSupporting) != nil || json.Unmarshal(latestContradictingJSON, &latestContradicting) != nil ||
-			latestID == 0 || !validSHA256Text(latestHash) {
+			latestID == 0 || latestMigratedLegacy != snapshot.RunMigratedLegacy || !validSHA256Text(latestHash) {
 			return fmt.Errorf("%w: latest ChangeCandidate assessment is malformed", asyncjob.ErrInvalidMutation)
 		}
 		latestSupersedesID := uint64(0)
@@ -2225,11 +2245,11 @@ ORDER BY created_at DESC, id DESC LIMIT 1 FOR UPDATE`, candidate.ID).Scan(
 		supersedes = supersedesID
 	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO change_candidate_assessments
- (public_id, domain_schema_version, assessment_schema_version, incident_id, cycle_no, candidate_id,
+ (public_id, domain_schema_version, assessment_schema_version, incident_id, cycle_no, migrated_legacy, candidate_id,
   status, supporting_evidence_json, contradicting_evidence_json, validator_version, policy_hash,
   content_hash, supersedes_assessment_id, created_at)
- VALUES (?, 3, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, publicID, snapshot.Task.IncidentID,
-		snapshot.Task.CycleNo, candidate.ID, assessment.Status, supporting, contradicting,
+ VALUES (?, 3, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, publicID, snapshot.Task.IncidentID,
+		snapshot.Task.CycleNo, snapshot.RunMigratedLegacy, candidate.ID, assessment.Status, supporting, contradicting,
 		assessment.ValidatorVersion, assessment.PolicyHash, contentHash, supersedes, checkpoint.CapturedAt.UTC())
 	if err != nil {
 		return fmt.Errorf("persist ChangeCandidate assessment: %w", err)
@@ -2285,7 +2305,9 @@ func (o *investigationStepOperation) enqueueNextInvestigationStep(ctx context.Co
 		IncidentID: snapshot.Task.IncidentID, CycleNo: snapshot.Task.CycleNo, Type: asyncjob.TaskInvestigationAdvance,
 		SubjectType: "agent_run", SubjectID: snapshot.Task.SubjectID, Transition: "investigation.step",
 		ExpectedSubjectVersion: nextSubjectVersion, PayloadSchemaVersion: investigationStepPayloadSchema,
-		Payload: payloadJSON, DedupeKey: dedupe, Priority: snapshot.Task.Priority, MaxAttempts: snapshot.Task.MaxAttempts,
+		Payload: payloadJSON, DedupeKey: dedupe, Priority: snapshot.Task.Priority,
+		MigratedLegacy: snapshot.RunMigratedLegacy, MigratedLegacyContext: snapshot.MigratedLegacyContext,
+		MaxAttempts: snapshot.Task.MaxAttempts,
 	}); err != nil {
 		return fmt.Errorf("enqueue next investigation step: %w", err)
 	}
@@ -2311,12 +2333,13 @@ WHERE id = ? AND incident_id = ? AND domain_schema_version = 3 AND cycle_no = ?
 		metadata, _ := json.Marshal(map[string]any{"agent_run_id": snapshot.RunPublicID, "task_public_id": snapshot.Task.PublicID, "reason": reason})
 		if _, err := tx.ExecContext(ctx, `INSERT INTO incident_events
  (public_id, incident_id, domain_schema_version, cycle_no, event_schema_version, event_type,
-  idempotency_key, actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
- VALUES (?, ?, 3, ?, 1, 'agent_run_failed', ?, 'system', ?, ?, ?, ?, ?)
+  idempotency_key, migrated_legacy_context, migrated_legacy, actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
+ VALUES (?, ?, 3, ?, 1, 'agent_run_failed', ?, ?, ?, 'system', ?, ?, ?, ?, ?)
  ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
 			deterministicPublicID("investigation-failure-event", snapshot.Task.PublicID), snapshot.Task.IncidentID,
 			snapshot.Task.CycleNo, hashCanonical("event", snapshot.Task.PublicID, "agent_run_failed"),
-			snapshot.RunPublicID, "investigation AgentRun failed", metadata, at, at); err != nil {
+			snapshot.MigratedLegacyContext, snapshot.RunMigratedLegacy, snapshot.RunPublicID,
+			"investigation AgentRun failed", metadata, at, at); err != nil {
 			return fmt.Errorf("append investigation failure event: %w", err)
 		}
 		return nil

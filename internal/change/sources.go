@@ -66,6 +66,7 @@ type PullRequest struct {
 	MergeCommitSHA string     `json:"merge_commit_sha"`
 	BaseSHA        string     `json:"base_sha"`
 	HeadSHA        string     `json:"head_sha"`
+	HeadBranch     string     `json:"head_branch"`
 	MergedBy       string     `json:"merged_by,omitempty"`
 	MergedByType   string     `json:"merged_by_type,omitempty"`
 	MergedAt       *time.Time `json:"merged_at"`

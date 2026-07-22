@@ -102,10 +102,10 @@ INSERT INTO agent_runs
      max_steps, max_tool_calls, max_model_calls, token_budget, max_evidence_items,
      max_runtime_ms, tool_timeout_ms, max_evidence_bytes, max_checkpoint_bytes,
      max_step_retries, failure_code, row_version, domain_schema_version, v3_status,
-     cycle_no, expected_incident_version, business_budget_authorization_id, deadline_at, created_at, updated_at)
+	     cycle_no, expected_incident_version, business_budget_authorization_id, migrated_legacy_context, deadline_at, created_at, updated_at)
 VALUES (?, ?, ?, 'PENDING', 'Investigate the current Incident using bounded read-only evidence.',
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 1, 3,
-        'pending', ?, ?, ?, TIMESTAMPADD(MICROSECOND, ?, NOW(6)), NOW(6), NOW(6))
+	        'pending', ?, ?, ?, ?, TIMESTAMPADD(MICROSECOND, ?, NOW(6)), NOW(6), NOW(6))
 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
 		runPublicID, task.IncidentID, runKey,
 		identity.ActualModel, identity.Provider, identity.ActualModel, identity.PromptVersion, identity.PromptHash,
@@ -113,7 +113,8 @@ ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
 		defaultSemanticIterations, defaultToolCalls, defaultModelCalls, defaultModelTokens,
 		defaultEvidenceItems, defaultRuntimeMillis, defaultToolTimeoutMillis,
 		defaultEvidenceBytes, defaultCheckpointBytes, defaultStepRetries,
-		task.CycleNo, task.ExpectedSubjectVersion+1, authorizationValue, int64(defaultRuntimeMillis)*1000)
+		task.CycleNo, task.ExpectedSubjectVersion+1, authorizationValue, task.MigratedLegacyContext,
+		int64(defaultRuntimeMillis)*1000)
 	if err != nil {
 		return fmt.Errorf("create investigation AgentRun: %w", err)
 	}
@@ -126,19 +127,22 @@ ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
 	var runKeyFound, runStatus string
 	var runIdentity agent.RunModelIdentity
 	var runAuthorization sql.NullInt64
+	var runMigratedLegacyContext bool
 	if err := tx.QueryRowContext(ctx, `
 SELECT public_id, incident_id, COALESCE(cycle_no, 0), COALESCE(expected_incident_version, 0),
        COALESCE(idempotency_key, ''), COALESCE(v3_status, ''), business_budget_authorization_id,
        COALESCE(model_provider, ''), COALESCE(actual_model, ''), COALESCE(prompt_version, ''),
-       COALESCE(prompt_hash, ''), COALESCE(tool_schema_version, ''), COALESCE(tool_schema_hash, '')
+	       COALESCE(prompt_hash, ''), COALESCE(tool_schema_version, ''), COALESCE(tool_schema_hash, ''),
+	       migrated_legacy_context
 FROM agent_runs WHERE id = ? FOR UPDATE`, runID).
 		Scan(&runPublicID, &runIncidentID, &runCycle, &runExpectedVersion, &runKeyFound, &runStatus, &runAuthorization,
 			&runIdentity.Provider, &runIdentity.ActualModel, &runIdentity.PromptVersion, &runIdentity.PromptHash,
-			&runIdentity.ToolSchemaVersion, &runIdentity.ToolSchemaHash); err != nil {
+			&runIdentity.ToolSchemaVersion, &runIdentity.ToolSchemaHash, &runMigratedLegacyContext); err != nil {
 		return fmt.Errorf("load investigation AgentRun identity: %w", err)
 	}
 	if runIncidentID != task.IncidentID || runCycle != uint64(task.CycleNo) ||
-		runExpectedVersion != task.ExpectedSubjectVersion+1 || runKeyFound != runKey || runStatus != "pending" || runIdentity != identity {
+		runExpectedVersion != task.ExpectedSubjectVersion+1 || runKeyFound != runKey || runStatus != "pending" ||
+		runIdentity != identity || runMigratedLegacyContext != task.MigratedLegacyContext {
 		return fmt.Errorf("%w: active AgentRun does not match investigation.start", asyncjob.ErrInvalidMutation)
 	}
 	if (budget.AuthorizationID == 0 && runAuthorization.Valid) ||
@@ -171,12 +175,12 @@ WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? AND version = ?
 	if _, err := tx.ExecContext(ctx, `
 INSERT IGNORE INTO incident_events
     (public_id, incident_id, domain_schema_version, cycle_no, event_schema_version,
-     event_type, idempotency_key, actor_type, actor_id, summary, metadata_json,
+     event_type, idempotency_key, migrated_legacy_context, actor_type, actor_id, summary, metadata_json,
      occurred_at, created_at)
-VALUES (?, ?, 3, ?, 1, 'agent_run_created', ?, 'system', 'async-task-handler',
+VALUES (?, ?, 3, ?, 1, 'agent_run_created', ?, ?, 'system', 'async-task-handler',
         'investigation AgentRun created', ?, NOW(6), NOW(6))`,
 		uuid.NewString(), task.IncidentID, task.CycleNo,
-		hashCanonical("event", runPublicID, "agent_run_created"), eventMetadata); err != nil {
+		hashCanonical("event", runPublicID, "agent_run_created"), task.MigratedLegacyContext, eventMetadata); err != nil {
 		return fmt.Errorf("append AgentRun event: %w", err)
 	}
 
@@ -189,31 +193,33 @@ VALUES (?, ?, 3, ?, 1, 'agent_run_created', ?, 'system', 'async-task-handler',
 INSERT INTO async_tasks
     (public_id, incident_id, cycle_no, queue, task_type, subject_type, subject_id,
      transition, expected_subject_version, payload_schema_version, payload_json,
-     dedupe_key, replay_generation, status, priority, available_at, attempt,
+     dedupe_key, replay_generation, migrated_legacy, migrated_legacy_context, status, priority, available_at, attempt,
      max_attempts, lease_generation, created_at, updated_at)
 VALUES (?, ?, ?, 'investigate', 'investigation.advance', 'agent_run', ?,
-        'investigation.step', 1, 1, ?, ?, 0, 'ready', 50, NOW(6), 0, ?, 0, NOW(6), NOW(6))
+        'investigation.step', 1, 1, ?, ?, 0, FALSE, ?, 'ready', 50, NOW(6), 0, ?, 0, NOW(6), NOW(6))
 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
-		uuid.NewString(), task.IncidentID, task.CycleNo, runID, payload, dedupe, defaultStepMaxAttempts); err != nil {
+		uuid.NewString(), task.IncidentID, task.CycleNo, runID, payload, dedupe, task.MigratedLegacyContext, defaultStepMaxAttempts); err != nil {
 		return fmt.Errorf("enqueue investigation.step: %w", err)
 	}
 
 	var stepIncidentID, stepSubjectID, stepExpectedVersion uint64
 	var stepTaskType, stepSubjectType, stepTransition, stepStatus string
+	var stepMigratedLegacy, stepMigratedLegacyContext bool
 	if err := tx.QueryRowContext(ctx, `
 SELECT incident_id, task_type, subject_type, subject_id, transition,
-       expected_subject_version, status
+	       expected_subject_version, migrated_legacy, migrated_legacy_context, status
 FROM async_tasks
 WHERE dedupe_key = ? AND replay_generation = 0
 FOR UPDATE`, dedupe).Scan(
 		&stepIncidentID, &stepTaskType, &stepSubjectType, &stepSubjectID,
-		&stepTransition, &stepExpectedVersion, &stepStatus,
+		&stepTransition, &stepExpectedVersion, &stepMigratedLegacy, &stepMigratedLegacyContext, &stepStatus,
 	); err != nil {
 		return fmt.Errorf("load investigation.step identity: %w", err)
 	}
 	if stepIncidentID != task.IncidentID || stepTaskType != string(asyncjob.TaskInvestigationAdvance) ||
 		stepSubjectType != "agent_run" || stepSubjectID != uint64(runID) ||
-		stepTransition != "investigation.step" || stepExpectedVersion != 1 || stepStatus != "ready" {
+		stepTransition != "investigation.step" || stepExpectedVersion != 1 || stepMigratedLegacy ||
+		stepMigratedLegacyContext != task.MigratedLegacyContext || stepStatus != "ready" {
 		return fmt.Errorf("%w: existing investigation.step task has a different identity", asyncjob.ErrInvalidMutation)
 	}
 	return nil
@@ -225,6 +231,7 @@ type investigationStartPayload struct {
 	IncidentPublicID      string `json:"incident_public_id,omitempty"`
 	CycleNo               uint32 `json:"cycle_no"`
 	AuthorizationPublicID string `json:"business_budget_authorization_id,omitempty"`
+	MigratedLegacyContext bool   `json:"migrated_legacy_context,omitempty"`
 }
 
 func decodeInvestigationStartPayload(task asyncjob.Task) (investigationStartPayload, error) {
@@ -243,7 +250,8 @@ func decodeInvestigationStartPayload(task asyncjob.Task) (investigationStartPayl
 	}
 	if payload.Mode != "start" || payload.CycleNo != 0 && payload.CycleNo != task.CycleNo ||
 		len(payload.IncidentID) > 64 || len(payload.IncidentPublicID) > 64 ||
-		payload.AuthorizationPublicID != "" && len(payload.AuthorizationPublicID) > 64 {
+		payload.AuthorizationPublicID != "" && len(payload.AuthorizationPublicID) > 64 ||
+		payload.MigratedLegacyContext != task.MigratedLegacyContext {
 		return investigationStartPayload{}, errors.New("investigation.start payload identity is invalid")
 	}
 	payload.AuthorizationPublicID = strings.TrimSpace(payload.AuthorizationPublicID)

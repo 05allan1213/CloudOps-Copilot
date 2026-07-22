@@ -113,8 +113,8 @@ func (p *MySQLQueryPort) listIncidents(ctx context.Context, request QueryRequest
 	}
 	args = append(args, request.Limit+1)
 	rows, err := p.db.QueryContext(ctx, `
-SELECT id, public_id, cycle_no, v3_status, severity, summary, version,
-       needs_attention, blocking_reason_code, created_at, updated_at
+	SELECT id, public_id, cycle_no, v3_status, severity, summary, version,
+	       needs_attention, blocking_reason_code, migrated_legacy, migrated_legacy_context, created_at, updated_at
 FROM incidents
 WHERE `+strings.Join(where, " AND ")+`
 ORDER BY updated_at DESC, id DESC
@@ -136,7 +136,8 @@ LIMIT ?`, args...)
 		var blocking sql.NullString
 		if err := rows.Scan(&row.ID, &row.PublicID, &row.View.Cycle, &row.View.Status,
 			&row.View.Severity, &row.View.Summary, &row.View.Version,
-			&row.View.NeedsAttention, &blocking, &row.View.CreatedAt, &row.View.UpdatedAt); err != nil {
+			&row.View.NeedsAttention, &blocking, &row.View.MigratedLegacy, &row.View.MigratedLegacyContext,
+			&row.View.CreatedAt, &row.View.UpdatedAt); err != nil {
 			return QueryResponse{}, fmt.Errorf("scan V3 Incident: %w", err)
 		}
 		row.View.ID = row.PublicID
@@ -172,12 +173,13 @@ func (p *MySQLQueryPort) getIncident(ctx context.Context, publicID string) (Quer
 	var item IncidentView
 	var blocking sql.NullString
 	err = p.db.QueryRowContext(ctx, `
-SELECT public_id, cycle_no, v3_status, severity, summary, version,
-       needs_attention, blocking_reason_code, created_at, updated_at
+	SELECT public_id, cycle_no, v3_status, severity, summary, version,
+	       needs_attention, blocking_reason_code, migrated_legacy, migrated_legacy_context, created_at, updated_at
 FROM incidents
 WHERE public_id = ? AND domain_schema_version = 3`, id).Scan(
 		&item.ID, &item.Cycle, &item.Status, &item.Severity, &item.Summary,
-		&item.Version, &item.NeedsAttention, &blocking, &item.CreatedAt, &item.UpdatedAt,
+		&item.Version, &item.NeedsAttention, &blocking, &item.MigratedLegacy, &item.MigratedLegacyContext,
+		&item.CreatedAt, &item.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return QueryResponse{}, ErrNotFound
@@ -196,43 +198,50 @@ WHERE public_id = ? AND domain_schema_version = 3`, id).Scan(
 }
 
 type mysqlResourceRow struct {
-	ID       uint64
-	PublicID string
-	Cycle    uint64
-	Status   sql.NullString
-	Version  sql.NullInt64
-	Summary  sql.NullString
-	Hash     sql.NullString
-	Created  time.Time
-	Updated  time.Time
-	SortAt   time.Time
+	ID                    uint64
+	PublicID              string
+	Cycle                 uint64
+	Status                sql.NullString
+	Version               sql.NullInt64
+	Summary               sql.NullString
+	Hash                  sql.NullString
+	Created               time.Time
+	Updated               time.Time
+	SortAt                time.Time
+	MigratedLegacy        bool
+	MigratedLegacyContext bool
 }
 
 type resourceQuerySpec struct {
-	Kind       string
-	Table      string
-	Status     string
-	Version    string
-	Summary    string
-	Hash       string
-	CreatedAt  string
-	UpdatedAt  string
-	SortColumn string
+	Kind                  string
+	Table                 string
+	Status                string
+	Version               string
+	Summary               string
+	Hash                  string
+	CreatedAt             string
+	UpdatedAt             string
+	SortColumn            string
+	MigratedLegacy        string
+	MigratedLegacyContext string
 }
 
 var mysqlResourceQueries = map[QueryKind]resourceQuerySpec{
 	QuerySignals: {
 		Kind: "signal", Table: "incident_signals", Status: "status", Version: "NULL",
 		Summary: "summary", Hash: "NULL", CreatedAt: "created_at", UpdatedAt: "created_at", SortColumn: "occurred_at",
+		MigratedLegacy: "migrated_legacy", MigratedLegacyContext: "migrated_legacy_context",
 	},
 	QueryEvidence: {
 		Kind: "evidence", Table: "evidence_items", Status: "CASE WHEN valid THEN 'valid' ELSE 'invalid' END", Version: "NULL",
 		Summary: "summary", Hash: "content_hash", CreatedAt: "created_at", UpdatedAt: "created_at", SortColumn: "collected_at",
+		MigratedLegacy: "migrated_legacy", MigratedLegacyContext: "migrated_legacy_context",
 	},
 	QueryInvestigations: {
 		Kind: "investigation", Table: "agent_runs", Status: "v3_status", Version: "row_version",
 		Summary: "COALESCE(JSON_UNQUOTE(JSON_EXTRACT(final_diagnosis, '$.summary')), failure_summary, failure_code, '')",
 		Hash:    "NULL", CreatedAt: "created_at", UpdatedAt: "updated_at", SortColumn: "created_at",
+		MigratedLegacy: "migrated_legacy", MigratedLegacyContext: "migrated_legacy_context",
 	},
 }
 
@@ -257,12 +266,13 @@ func (p *MySQLQueryPort) listIncidentResources(ctx context.Context, request Quer
 	}
 	args = append(args, request.Limit+1)
 	query := fmt.Sprintf(`
-SELECT id, public_id, cycle_no, %s, %s, %s, %s, %s, %s, %s
+	SELECT id, public_id, cycle_no, %s, %s, %s, %s, %s, %s, %s, %s, %s
 FROM %s
 WHERE %s
 ORDER BY %s DESC, id DESC
 LIMIT ?`, spec.Status, spec.Version, spec.Summary, spec.Hash, spec.CreatedAt, spec.UpdatedAt,
-		spec.SortColumn, spec.Table, strings.Join(where, " AND "), spec.SortColumn)
+		spec.SortColumn, spec.MigratedLegacy, spec.MigratedLegacyContext,
+		spec.Table, strings.Join(where, " AND "), spec.SortColumn)
 	rows, err := p.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return QueryResponse{}, fmt.Errorf("list V3 %s resources: %w", spec.Kind, err)
@@ -292,8 +302,8 @@ func (p *MySQLQueryPort) listTimeline(ctx context.Context, request QueryRequest)
 		}
 	}
 	rows, err := p.db.QueryContext(ctx, `
-SELECT id, public_id, cycle_no, event_type, NULL, summary, NULL,
-       created_at, created_at, occurred_at
+	SELECT id, public_id, cycle_no, event_type, NULL, summary, NULL,
+	       created_at, created_at, occurred_at, migrated_legacy, migrated_legacy_context
 FROM incident_events
 WHERE incident_id = ? AND cycle_no = ? AND domain_schema_version = 3
   AND public_id IS NOT NULL AND id > ?
@@ -326,8 +336,8 @@ SELECT r.public_id, r.report_schema_version, r.cycle_no, r.trigger_type,
        r.common_window_started_at, r.common_window_completed_at,
        r.trigger_signal_json, r.diagnosis_json, r.evidence_json,
        r.remediation_plan_json, r.remediation_decision_json, r.delivery_json,
-       r.verification_json, r.timeline_json, r.agent_usage_json,
-       r.summary, r.content_hash, r.generated_at
+	       r.verification_json, r.timeline_json, r.agent_usage_json,
+	       r.summary, r.content_hash, r.generated_at, r.migrated_legacy_context
 FROM resolution_reports r
 JOIN incidents i
   ON i.id = r.incident_id
@@ -376,6 +386,7 @@ type mysqlResolutionReportRow struct {
 	Summary                 string
 	ContentHash             string
 	GeneratedAt             time.Time
+	MigratedLegacyContext   bool
 }
 
 func (p *MySQLQueryPort) getResolutionReport(ctx context.Context, request QueryRequest) (QueryResponse, error) {
@@ -409,7 +420,7 @@ func scanResolutionReport(scanner resolutionReportScanner) (*ResolutionReportVie
 		&row.TriggerSignalJSON, &row.DiagnosisJSON, &row.EvidenceJSON,
 		&row.RemediationPlanJSON, &row.RemediationDecisionJSON, &row.DeliveryJSON,
 		&row.VerificationJSON, &row.TimelineJSON, &row.AgentUsageJSON,
-		&row.Summary, &row.ContentHash, &row.GeneratedAt,
+		&row.Summary, &row.ContentHash, &row.GeneratedAt, &row.MigratedLegacyContext,
 	); err != nil {
 		return nil, err
 	}
@@ -444,15 +455,16 @@ func scanResolutionReport(scanner resolutionReportScanner) (*ResolutionReportVie
 		Stability: ResolutionStabilityView{
 			CommonWindowStartedAt: row.CommonWindowStartedAt, CommonWindowCompletedAt: row.CommonWindowCompletedAt,
 		},
-		TriggerSignal:       append([]byte(nil), row.TriggerSignalJSON...),
-		Diagnosis:           append([]byte(nil), row.DiagnosisJSON...),
-		Evidence:            append([]byte(nil), row.EvidenceJSON...),
-		RemediationPlan:     append([]byte(nil), row.RemediationPlanJSON...),
-		RemediationDecision: append([]byte(nil), row.RemediationDecisionJSON...),
-		Delivery:            append([]byte(nil), row.DeliveryJSON...),
-		Verification:        append([]byte(nil), row.VerificationJSON...),
-		Timeline:            append([]byte(nil), row.TimelineJSON...),
-		AgentUsage:          append([]byte(nil), row.AgentUsageJSON...),
+		TriggerSignal:         append([]byte(nil), row.TriggerSignalJSON...),
+		Diagnosis:             append([]byte(nil), row.DiagnosisJSON...),
+		Evidence:              append([]byte(nil), row.EvidenceJSON...),
+		RemediationPlan:       append([]byte(nil), row.RemediationPlanJSON...),
+		RemediationDecision:   append([]byte(nil), row.RemediationDecisionJSON...),
+		Delivery:              append([]byte(nil), row.DeliveryJSON...),
+		Verification:          append([]byte(nil), row.VerificationJSON...),
+		Timeline:              append([]byte(nil), row.TimelineJSON...),
+		AgentUsage:            append([]byte(nil), row.AgentUsageJSON...),
+		MigratedLegacyContext: row.MigratedLegacyContext,
 	}
 	if row.BadGitOpsRevision.Valid {
 		item.Revisions.BadGitOpsRevision = row.BadGitOpsRevision.String
@@ -536,7 +548,8 @@ func scanMySQLResourceRows(rows *sql.Rows, kind string, limit int) ([]ResourceVi
 	for rows.Next() {
 		var item mysqlResourceRow
 		if err := rows.Scan(&item.ID, &item.PublicID, &item.Cycle, &item.Status, &item.Version,
-			&item.Summary, &item.Hash, &item.Created, &item.Updated, &item.SortAt); err != nil {
+			&item.Summary, &item.Hash, &item.Created, &item.Updated, &item.SortAt,
+			&item.MigratedLegacy, &item.MigratedLegacyContext); err != nil {
 			return nil, "", fmt.Errorf("scan V3 %s projection: %w", kind, err)
 		}
 		all = append(all, item)
@@ -550,6 +563,7 @@ func scanMySQLResourceRows(rows *sql.Rows, kind string, limit int) ([]ResourceVi
 		item := ResourceView{
 			ID: row.PublicID, Kind: kind, Cycle: row.Cycle,
 			CreatedAt: row.Created.UTC(), UpdatedAt: row.Updated.UTC(),
+			MigratedLegacy: row.MigratedLegacy, MigratedLegacyContext: row.MigratedLegacyContext,
 		}
 		if row.Status.Valid {
 			item.Status = boundProjectionText(row.Status.String, 64)

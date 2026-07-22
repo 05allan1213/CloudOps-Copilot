@@ -94,11 +94,14 @@ type DeliveryObserver interface {
 }
 
 type DeliveryPullRequestObservation struct {
+	Repository          string `json:"repository,omitempty"`
+	PullRequest         int64  `json:"pull_request,omitempty"`
 	State               string `json:"state"`
 	Merged              bool   `json:"merged"`
 	MergeCommitSHA      string `json:"merge_commit_sha"`
 	BaseSHA             string `json:"base_sha"`
 	HeadSHA             string `json:"head_sha"`
+	HeadBranch          string `json:"head_branch,omitempty"`
 	HeadTreeSHA         string `json:"head_tree_sha"`
 	HeadPostImageHash   string `json:"head_post_image_hash"`
 	MergedTreeSHA       string `json:"merged_tree_sha"`
@@ -253,6 +256,8 @@ type DeliveryObserveSnapshot struct {
 	ArgoPath              string
 	Projection            DeliveryProjection
 	RowVersion            uint64
+	MigratedLegacy        bool
+	MigratedLegacyContext bool
 	Now                   time.Time
 }
 
@@ -285,6 +290,9 @@ type LegacyDeliveryObserveSnapshot struct {
 	PRNumber        int64
 	BaseRevision    string
 	HeadCommitSHA   string
+	HeadBranch      string
+	SourcePRState   string
+	SourceMergedSHA string
 	PRURL           string
 	Now             time.Time
 }
@@ -423,12 +431,39 @@ func (o *deliveryObserveOperation) handleLegacyReadOnly(ctx context.Context, exe
 	}
 	pr := *observation.PullRequest
 	state := strings.ToLower(strings.TrimSpace(pr.State))
-	if state != "open" && state != "closed" || pr.HeadSHA == "" || !strings.EqualFold(pr.HeadSHA, snapshot.HeadCommitSHA) {
+	if !validateLegacyPullRequestObservation(snapshot, pr, state) {
 		return asyncjob.RetryAfter(0, "delivery_observation_invalid", "legacy pull request identity is ambiguous", nil)
 	}
 	return asyncjob.Succeeded(func(ctx context.Context, tx asyncjob.DBTX) error {
 		return store.PersistLegacyIn(ctx, tx, execution.Task, snapshot, pr, now)
 	})
+}
+
+func validateLegacyPullRequestObservation(snapshot LegacyDeliveryObserveSnapshot, pr DeliveryPullRequestObservation, state string) bool {
+	if state != "open" && state != "closed" && state != "merged" {
+		return false
+	}
+	if pr.Repository != "" && !strings.EqualFold(pr.Repository, snapshot.Repository) {
+		return false
+	}
+	if pr.PullRequest != 0 && pr.PullRequest != snapshot.PRNumber {
+		return false
+	}
+	if pr.URL == "" || pr.URL != snapshot.PRURL || pr.BaseSHA == "" || !strings.EqualFold(pr.BaseSHA, snapshot.BaseRevision) ||
+		pr.HeadSHA == "" || !strings.EqualFold(pr.HeadSHA, snapshot.HeadCommitSHA) ||
+		strings.TrimSpace(pr.HeadBranch) == "" || pr.HeadBranch != snapshot.HeadBranch {
+		return false
+	}
+	if snapshot.SourcePRState != "" && !strings.EqualFold(snapshot.SourcePRState, state) && !(strings.EqualFold(snapshot.SourcePRState, "merged") && pr.Merged) {
+		return false
+	}
+	if snapshot.SourceMergedSHA != "" && pr.Merged && !strings.EqualFold(snapshot.SourceMergedSHA, pr.MergeCommitSHA) {
+		return false
+	}
+	if pr.Merged || state == "merged" {
+		return pr.MergeCommitSHA != "" && deliveryRevisionPattern.MatchString(strings.ToLower(pr.MergeCommitSHA))
+	}
+	return pr.MergeCommitSHA == ""
 }
 
 func decodeDeliveryObservePayload(task asyncjob.Task) (deliveryObservePayload, error) {
@@ -855,9 +890,12 @@ func (s *mysqlDeliveryObserveStore) Load(ctx context.Context, task asyncjob.Task
 	var resourceHealth []byte
 	var syncStarted, syncCompleted, deliveryStarted, deliveryDeadline, deliveryCompleted, nextPoll, lastObserved sql.NullTime
 	var argoApplication, argoProject string
+	var changeMigratedLegacy, changeMigratedLegacyContext bool
+	var planMigratedLegacy, planMigratedLegacyContext bool
 	row := s.cfg.DB.QueryRowContext(ctx, `
 SELECT cr.id, cr.public_id, cr.incident_id, i.public_id, i.fingerprint, i.version, i.v3_status,
-       cr.cycle_no, p.id, p.public_id, p.plan_version, p.status, p.v3_status,
+	       cr.cycle_no, p.id, p.public_id, p.plan_version, p.status, p.v3_status,
+	       cr.migrated_legacy, cr.migrated_legacy_context, p.migrated_legacy, p.migrated_legacy_context,
        d.decision, d.plan_version, d.approved_base_sha, d.approved_post_image_hash,
        d.approved_tree_hash, d.approved_policy_hash, d.approved_verification_hash, d.approved_evidence_set_hash,
        cr.repository, p.target_base_branch, p.target_path,
@@ -878,6 +916,7 @@ JOIN remediation_decisions d ON d.plan_id = p.id AND d.incident_id = p.incident_
 WHERE cr.id = ? AND cr.incident_id = ? AND cr.cycle_no = ? AND cr.domain_schema_version = 3`, task.SubjectID, task.IncidentID, task.CycleNo)
 	if err := row.Scan(&snapshot.ChangeRequestID, &snapshot.ChangeRequestPublicID, &snapshot.IncidentID, &snapshot.IncidentPublicID, &snapshot.IncidentFingerprint, &snapshot.IncidentVersion, &snapshot.IncidentStatus,
 		&snapshot.CycleNo, &snapshot.PlanID, &snapshot.PlanPublicID, &snapshot.PlanVersion, &planStatus, &planV3Status,
+		&changeMigratedLegacy, &changeMigratedLegacyContext, &planMigratedLegacy, &planMigratedLegacyContext,
 		&decision, &decisionPlanVersion, &approvedBase, &approvedPost, &approvedTree, &approvedPolicy, &approvedVerification, &approvedEvidence,
 		&snapshot.Repository, &snapshot.BaseBranch, &snapshot.TargetPath,
 		&snapshot.BaseRevision, &snapshot.LastKnownGoodSHA, &snapshot.ExpectedBeforeHash, &snapshot.ExpectedPostImageHash,
@@ -892,6 +931,11 @@ WHERE cr.id = ? AND cr.incident_id = ? AND cr.cycle_no = ? AND cr.domain_schema_
 		return DeliveryObserveSnapshot{}, err
 	}
 	snapshot.PlanStatus, snapshot.PlanV3Status, snapshot.Decision, snapshot.DecisionPlanVersion = planStatus, planV3Status, decision, decisionPlanVersion
+	snapshot.MigratedLegacy, snapshot.MigratedLegacyContext = changeMigratedLegacy, changeMigratedLegacyContext
+	if planMigratedLegacy != changeMigratedLegacy || planMigratedLegacyContext != changeMigratedLegacyContext ||
+		changeMigratedLegacy != task.MigratedLegacy || changeMigratedLegacyContext != task.MigratedLegacyContext {
+		return DeliveryObserveSnapshot{}, asyncjob.ErrSubjectVersionMismatch
+	}
 	snapshot.Projection.Status, snapshot.Projection.CIStatus, snapshot.Projection.PRState, snapshot.Projection.PRURL = status, ciStatus, prState, prURL
 	snapshot.Projection.V3Status = v3Status
 	snapshot.Projection.ResourceHealth = cloneJSON(resourceHealth)
@@ -987,17 +1031,19 @@ LIMIT 2`, snapshot.Cluster, snapshot.Environment, snapshot.Namespace, snapshot.W
 }
 
 func (s *mysqlDeliveryObserveStore) LoadLegacy(ctx context.Context, task asyncjob.Task) (LegacyDeliveryObserveSnapshot, error) {
-	if task.SubjectType != "change_request" || task.SubjectID == 0 || task.CycleNo == 0 {
+	if task.SubjectType != "change_request" || task.SubjectID == 0 || task.CycleNo == 0 ||
+		!task.MigratedLegacy || !task.MigratedLegacyContext {
 		return LegacyDeliveryObserveSnapshot{}, asyncjob.ErrInvalidMutation
 	}
 	var snapshot LegacyDeliveryObserveSnapshot
 	err := s.cfg.DB.QueryRowContext(ctx, `SELECT cr.id,cr.incident_id,cr.cycle_no,cr.row_version,i.version,
-cr.repository,cr.pr_number,cr.base_revision,cr.commit_sha,cr.pr_url,UTC_TIMESTAMP(6)
+cr.repository,cr.pr_number,cr.base_revision,cr.commit_sha,cr.head_branch,cr.pr_state,cr.merged_commit_sha,cr.pr_url,UTC_TIMESTAMP(6)
 FROM change_requests cr JOIN incidents i ON i.id=cr.incident_id AND i.domain_schema_version=3
 WHERE cr.id=? AND cr.incident_id=? AND cr.cycle_no=? AND cr.domain_schema_version=3
-AND cr.migrated_legacy=TRUE AND cr.pr_number>0 AND cr.pr_url<>''`, task.SubjectID, task.IncidentID, task.CycleNo).Scan(
+AND cr.migrated_legacy=TRUE AND cr.migrated_legacy_context=TRUE AND cr.pr_number>0 AND cr.pr_url<>''`, task.SubjectID, task.IncidentID, task.CycleNo).Scan(
 		&snapshot.ChangeRequestID, &snapshot.IncidentID, &snapshot.CycleNo, &snapshot.RowVersion, &snapshot.IncidentVersion,
-		&snapshot.Repository, &snapshot.PRNumber, &snapshot.BaseRevision, &snapshot.HeadCommitSHA, &snapshot.PRURL, &snapshot.Now)
+		&snapshot.Repository, &snapshot.PRNumber, &snapshot.BaseRevision, &snapshot.HeadCommitSHA, &snapshot.HeadBranch,
+		&snapshot.SourcePRState, &snapshot.SourceMergedSHA, &snapshot.PRURL, &snapshot.Now)
 	if err != nil {
 		return LegacyDeliveryObserveSnapshot{}, err
 	}
@@ -1014,6 +1060,9 @@ func (s *mysqlDeliveryObserveStore) PersistLegacyIn(ctx context.Context, tx asyn
 	}
 	if incidentVersion != snapshot.IncidentVersion {
 		return asyncjob.ErrSubjectVersionMismatch
+	}
+	if !validateLegacyPullRequestObservation(snapshot, pr, strings.ToLower(strings.TrimSpace(pr.State))) {
+		return asyncjob.ErrInvalidMutation
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE change_requests SET v3_status='superseded',status=CASE WHEN ? THEN 'delivered' ELSE 'failed' END,
 pr_state=?,merged_commit_sha=CASE WHEN ? THEN ? ELSE merged_commit_sha END,failure_code='legacy_delivery_observed',
@@ -1036,8 +1085,18 @@ WHERE id=? AND cycle_no=? AND version=? AND domain_schema_version=3`, at, at, ta
 		return asyncjob.ErrSubjectVersionMismatch
 	}
 	metadata, _ := json.Marshal(map[string]any{"change_request_id": snapshot.ChangeRequestID, "pr_number": snapshot.PRNumber, "pr_state": strings.ToLower(pr.State), "merged": pr.Merged, "migrated_legacy": true})
-	_, err = tx.ExecContext(ctx, `INSERT INTO incident_events (public_id,incident_id,domain_schema_version,cycle_no,event_schema_version,event_type,actor_type,actor_id,summary,metadata_json,occurred_at,created_at)
-VALUES (?, ?,3,?,1,'legacy_delivery_observed','system','phase7a-cutover','Legacy pull request reconciled read-only; Incident returned to investigation',?,?,?)`, uuid.NewString(), task.IncidentID, task.CycleNo, metadata, at, at)
+	inputHash := hashCanonical("legacy-delivery-observed/v2", fmt.Sprint(task.SubjectID), snapshot.Repository,
+		fmt.Sprint(snapshot.PRNumber), snapshot.PRURL, snapshot.BaseRevision, snapshot.HeadCommitSHA, pr.State, pr.MergeCommitSHA)
+	outputHash := hashCanonical("legacy-delivery-observed-result/v2", strings.ToLower(pr.State), fmt.Sprint(pr.Merged))
+	_, err = tx.ExecContext(ctx, `INSERT INTO incident_events (
+public_id,incident_id,domain_schema_version,cycle_no,event_schema_version,event_type,source_status,target_status,
+reason_code,converter_version,conversion_input_hash,conversion_output_hash,migrated_legacy_context,idempotency_key,
+actor_type,actor_id,summary,metadata_json,occurred_at,created_at,migrated_legacy)
+VALUES (?, ?,3,?,1,'legacy_delivery_observed','delivering','investigating','legacy_delivery_observed',
+'delivery-observe/v2',?,?,TRUE,?,'system','phase7a-cutover',?,?,?,?,TRUE)`,
+		uuid.NewSHA1(uuid.NameSpaceOID, []byte(inputHash)).String(), task.IncidentID, task.CycleNo, inputHash,
+		outputHash, hashCanonical("legacy-delivery-event/v2", fmt.Sprint(task.SubjectID), inputHash),
+		"Legacy pull request reconciled read-only; Incident returned to investigation", metadata, at, at)
 	return err
 }
 
@@ -1149,7 +1208,7 @@ func (s *mysqlDeliveryObserveStore) enqueueObserve(ctx context.Context, tx async
 	if err != nil {
 		return err
 	}
-	_, err = s.cfg.Tasks.EnqueueIn(ctx, tx, asyncjob.NewTask{IncidentID: task.IncidentID, CycleNo: task.CycleNo, Type: asyncjob.TaskDeliveryObserve, SubjectType: "change_request", SubjectID: task.SubjectID, Transition: "delivery.observe", ExpectedSubjectVersion: version, PayloadSchemaVersion: deliveryObservePayloadSchema, Payload: payload, DedupeKey: hashCanonical("delivery.observe", fmt.Sprint(task.SubjectID), fmt.Sprint(version)), LogicalOperationKey: task.LogicalOperationKey, Priority: 70, AvailableAt: &next, MaxAttempts: deliveryObserveMaxAttempts})
+	_, err = s.cfg.Tasks.EnqueueIn(ctx, tx, asyncjob.NewTask{IncidentID: task.IncidentID, CycleNo: task.CycleNo, Type: asyncjob.TaskDeliveryObserve, SubjectType: "change_request", SubjectID: task.SubjectID, Transition: "delivery.observe", ExpectedSubjectVersion: version, PayloadSchemaVersion: deliveryObservePayloadSchema, Payload: payload, DedupeKey: hashCanonical("delivery.observe", fmt.Sprint(task.SubjectID), fmt.Sprint(version)), LogicalOperationKey: task.LogicalOperationKey, MigratedLegacy: task.MigratedLegacy, MigratedLegacyContext: task.MigratedLegacyContext, Priority: 70, AvailableAt: &next, MaxAttempts: deliveryObserveMaxAttempts})
 	return err
 }
 
@@ -1179,9 +1238,12 @@ func (s *mysqlDeliveryObserveStore) persistDeliveryFailure(ctx context.Context, 
 	}
 	// A failed delivery starts a fresh bounded investigation only after the
 	// ChangeRequest and Incident transitions are in the same transaction.
-	payload := json.RawMessage(`{"mode":"start"}`)
+	payload, _ := json.Marshal(map[string]any{
+		"mode": "start", "cycle_no": task.CycleNo,
+		"migrated_legacy_context": task.MigratedLegacyContext,
+	})
 	version := incidentVersion + 1
-	_, err = s.cfg.Tasks.EnqueueIn(ctx, tx, asyncjob.NewTask{IncidentID: task.IncidentID, CycleNo: task.CycleNo, Type: asyncjob.TaskInvestigationAdvance, SubjectType: "incident", SubjectID: task.IncidentID, Transition: "investigation.start", ExpectedSubjectVersion: version, PayloadSchemaVersion: 1, Payload: payload, DedupeKey: hashCanonical("delivery.failure", fmt.Sprint(task.IncidentID), fmt.Sprint(task.CycleNo), fmt.Sprint(version)), Priority: 80, MaxAttempts: 3})
+	_, err = s.cfg.Tasks.EnqueueIn(ctx, tx, asyncjob.NewTask{IncidentID: task.IncidentID, CycleNo: task.CycleNo, Type: asyncjob.TaskInvestigationAdvance, SubjectType: "incident", SubjectID: task.IncidentID, Transition: "investigation.start", ExpectedSubjectVersion: version, PayloadSchemaVersion: 1, Payload: payload, DedupeKey: hashCanonical("delivery.failure", fmt.Sprint(task.IncidentID), fmt.Sprint(task.CycleNo), fmt.Sprint(version)), MigratedLegacyContext: task.MigratedLegacyContext, Priority: 80, MaxAttempts: 3})
 	return err
 }
 
@@ -1196,7 +1258,8 @@ func (s *mysqlDeliveryObserveStore) persistDelivered(ctx context.Context, tx asy
 	var runID uint64
 	var runPublicID string
 	var runVersion uint64
-	if err := tx.QueryRowContext(ctx, `SELECT id, public_id, row_version FROM verification_runs WHERE change_request_id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3 AND trigger_type = 'post_delivery' AND target_revision = ? ORDER BY attempt DESC LIMIT 1 FOR UPDATE`, task.SubjectID, task.IncidentID, task.CycleNo, plan.TargetRevision).Scan(&runID, &runPublicID, &runVersion); err != nil {
+	var runMigratedLegacy, runMigratedLegacyContext bool
+	if err := tx.QueryRowContext(ctx, `SELECT id, public_id, row_version, migrated_legacy, migrated_legacy_context FROM verification_runs WHERE change_request_id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3 AND trigger_type = 'post_delivery' AND target_revision = ? ORDER BY attempt DESC LIMIT 1 FOR UPDATE`, task.SubjectID, task.IncidentID, task.CycleNo, plan.TargetRevision).Scan(&runID, &runPublicID, &runVersion, &runMigratedLegacy, &runMigratedLegacyContext); err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
@@ -1231,10 +1294,12 @@ FOR UPDATE`, snapshot.PlanID, task.IncidentID, task.CycleNo).Scan(&originatingAg
  (public_id, incident_id, domain_schema_version, cycle_no, originating_agent_run_id, business_budget_authorization_id,
   remediation_plan_id, change_request_id, status, v3_status, trigger_type,
   target_revision, source_revision, image_digest, gitops_revision, plan_json, verification_profile_version, verification_profile_hash,
-  verification_contract_version, verification_profile_id, common_stability_window_ms, deadline_at, attempt, row_version, expected_subject_version, created_at, updated_at)
- VALUES (?, ?, 3, ?, ?, ?, ?, ?, 'pending', 'pending', 'post_delivery', ?, ?, ?, ?, ?, ?, ?, 1, ?, 60000, ?, 1, 1, 1, ?, ?)`,
+  verification_contract_version, verification_profile_id, common_stability_window_ms, deadline_at, attempt, row_version, expected_subject_version,
+  migrated_legacy, migrated_legacy_context, created_at, updated_at)
+ VALUES (?, ?, 3, ?, ?, ?, ?, ?, 'pending', 'pending', 'post_delivery', ?, ?, ?, ?, ?, ?, ?, 1, ?, 60000, ?, 1, 1, 1, ?, ?, ?, ?)`,
 			runPublicID, task.IncidentID, task.CycleNo, originatingAgentRunID, authorizationValue, snapshot.PlanID, task.SubjectID, plan.TargetRevision, plan.SourceRevision, plan.ImageDigest, plan.GitOpsRevision,
-			planJSON, plan.ProfileVersion, planHash, plan.ProfileID, deadline, outcome.ObservedAt.UTC(), outcome.ObservedAt.UTC())
+			planJSON, plan.ProfileVersion, planHash, plan.ProfileID, deadline,
+			task.MigratedLegacy, task.MigratedLegacyContext, outcome.ObservedAt.UTC(), outcome.ObservedAt.UTC())
 		if insertErr != nil {
 			return insertErr
 		}
@@ -1245,6 +1310,7 @@ FOR UPDATE`, snapshot.PlanID, task.IncidentID, task.CycleNo).Scan(&originatingAg
 		}
 		runID = uint64(insertedID)
 		runVersion = 1
+		runMigratedLegacy, runMigratedLegacyContext = task.MigratedLegacy, task.MigratedLegacyContext
 		if budget.AuthorizationID != 0 {
 			if err := appendDeliveryBudgetLineageEvent(ctx, tx, snapshot, runPublicID, budget, outcome.ObservedAt); err != nil {
 				return err
@@ -1263,14 +1329,19 @@ FOR UPDATE`, snapshot.PlanID, task.IncidentID, task.CycleNo).Scan(&originatingAg
 			if _, err := tx.ExecContext(ctx, `INSERT INTO verification_checks
  (public_id, verification_run_id, domain_schema_version, incident_id, cycle_no, check_type, status, required_check, subject_json, expected_json,
   source_reference, lookback_ms, stability_window_ms, timeout_ms, poll_interval_ms, check_spec_schema_version, profile_id, template_id,
-  template_version, comparison, threshold, source_identity, initial_delay_ms, min_samples, sample_unit, failure_mode, created_at, updated_at)
- VALUES (?, ?, 3, ?, ?, ?, 'pending', ?, ?, ?, '', ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  template_version, comparison, threshold, source_identity, initial_delay_ms, min_samples, sample_unit, failure_mode,
+  migrated_legacy, migrated_legacy_context, created_at, updated_at)
+ VALUES (?, ?, 3, ?, ?, ?, 'pending', ?, ?, ?, '', ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				uuid.NewString(), runID, task.IncidentID, task.CycleNo, spec.Type, spec.Required, subjectJSON, spec.Expected,
 				spec.Lookback.Milliseconds(), spec.StabilityWindow.Milliseconds(), spec.Timeout.Milliseconds(), spec.PollInterval.Milliseconds(), spec.ProfileID, spec.TemplateID,
-				spec.TemplateVersion, comparison, threshold, spec.SourceIdentity, spec.InitialDelay.Milliseconds(), spec.MinSamples, spec.SampleUnit, spec.FailureMode, outcome.ObservedAt.UTC(), outcome.ObservedAt.UTC()); err != nil {
+				spec.TemplateVersion, comparison, threshold, spec.SourceIdentity, spec.InitialDelay.Milliseconds(), spec.MinSamples, spec.SampleUnit, spec.FailureMode,
+				task.MigratedLegacy, task.MigratedLegacyContext, outcome.ObservedAt.UTC(), outcome.ObservedAt.UTC()); err != nil {
 				return err
 			}
 		}
+	}
+	if runMigratedLegacy != task.MigratedLegacy || runMigratedLegacyContext != task.MigratedLegacyContext {
+		return asyncjob.ErrSubjectVersionMismatch
 	}
 	updated, err := tx.ExecContext(ctx, `UPDATE incidents SET status = 'VERIFYING', v3_status = 'verifying', version = version + 1, updated_at = ? WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? AND version = ? AND v3_status = 'delivering'`, outcome.ObservedAt.UTC(), task.IncidentID, task.CycleNo, incidentVersion)
 	if err != nil {
@@ -1286,7 +1357,7 @@ FOR UPDATE`, snapshot.PlanID, task.IncidentID, task.CycleNo).Scan(&originatingAg
 		return err
 	}
 	payload, _ := json.Marshal(map[string]any{"verification_run_id": runPublicID, "cycle_no": task.CycleNo})
-	_, err = s.cfg.Tasks.EnqueueIn(ctx, tx, asyncjob.NewTask{IncidentID: task.IncidentID, CycleNo: task.CycleNo, Type: asyncjob.TaskVerificationAdvance, SubjectType: "verification_run", SubjectID: runID, Transition: "verification.advance", ExpectedSubjectVersion: runVersion, PayloadSchemaVersion: 1, Payload: payload, DedupeKey: hashCanonical("verification.advance", fmt.Sprint(runID), fmt.Sprint(runVersion)), Priority: 60, MaxAttempts: 8})
+	_, err = s.cfg.Tasks.EnqueueIn(ctx, tx, asyncjob.NewTask{IncidentID: task.IncidentID, CycleNo: task.CycleNo, Type: asyncjob.TaskVerificationAdvance, SubjectType: "verification_run", SubjectID: runID, Transition: "verification.advance", ExpectedSubjectVersion: runVersion, PayloadSchemaVersion: 1, Payload: payload, DedupeKey: hashCanonical("verification.advance", fmt.Sprint(runID), fmt.Sprint(runVersion)), MigratedLegacy: task.MigratedLegacy, MigratedLegacyContext: task.MigratedLegacyContext, Priority: 60, MaxAttempts: 8})
 	return err
 }
 
@@ -1303,11 +1374,12 @@ func appendDeliveryBudgetLineageEvent(ctx context.Context, tx asyncjob.DBTX, sna
 	}
 	_, err = tx.ExecContext(ctx, `INSERT IGNORE INTO incident_events
  (public_id, incident_id, domain_schema_version, cycle_no, event_schema_version,
-  event_type, idempotency_key, actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
-VALUES (?, ?, 3, ?, 1, 'verification_budget_lineage_bound', ?, 'system', 'delivery.observe',
-        'post-delivery Verification bound to operator retry authorization', ?, ?, ?)`,
+  event_type, idempotency_key, migrated_legacy_context, migrated_legacy, actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
+VALUES (?, ?, 3, ?, 1, 'verification_budget_lineage_bound', ?, ?, ?, 'system', 'delivery.observe',
+	        'post-delivery Verification bound to operator retry authorization', ?, ?, ?)`,
 		uuid.NewString(), snapshot.IncidentID, snapshot.CycleNo,
-		hashCanonical("delivery-budget-lineage", runPublicID, budget.AuthorizationPublicID), metadata, at.UTC(), at.UTC())
+		hashCanonical("delivery-budget-lineage", runPublicID, budget.AuthorizationPublicID), snapshot.MigratedLegacyContext,
+		snapshot.MigratedLegacy, metadata, at.UTC(), at.UTC())
 	return err
 }
 
@@ -1317,10 +1389,11 @@ func appendDeliveryIncidentEvent(ctx context.Context, tx asyncjob.DBTX, snapshot
 		return asyncjob.ErrInvalidMutation
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO incident_events
- (public_id, incident_id, domain_schema_version, cycle_no, event_schema_version, event_type, idempotency_key, actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
- VALUES (?, ?, 3, ?, 1, ?, ?, 'system', 'delivery.observe', ?, ?, ?, ?)
+ (public_id, incident_id, domain_schema_version, cycle_no, event_schema_version, event_type, idempotency_key, migrated_legacy_context, migrated_legacy, actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
+ VALUES (?, ?, 3, ?, 1, ?, ?, ?, ?, 'system', 'delivery.observe', ?, ?, ?, ?)
  ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`, uuid.NewString(), snapshot.IncidentID, snapshot.CycleNo, eventType,
-		hashCanonical("delivery-event", snapshot.ChangeRequestPublicID, eventType, reason), boundChange(reason, 2048), metadata, at.UTC(), at.UTC())
+		hashCanonical("delivery-event", snapshot.ChangeRequestPublicID, eventType, reason), snapshot.MigratedLegacyContext,
+		snapshot.MigratedLegacy, boundChange(reason, 2048), metadata, at.UTC(), at.UTC())
 	return err
 }
 
@@ -1332,6 +1405,7 @@ func appendDeliveryEvidence(ctx context.Context, tx asyncjob.DBTX, snapshot Deli
 		SourceSystem: outcome.SourceSystem, CollectionPath: "delivery/" + string(outcome.Kind), CorroborationGroup: "delivery/" + snapshot.ChangeRequestPublicID,
 		Authority: deliveryEvidenceAuthority(outcome.Kind), Integrity: "verified", Freshness: "fresh", Completeness: "complete",
 		ClaimUse: "support", CollectionStatus: agent.CollectionAvailable, Direct: true,
+		MigratedLegacy: snapshot.MigratedLegacy,
 		Attributes: map[string]string{"source_revision": snapshot.SourceRevision, "image_digest": snapshot.ImageDigest,
 			"baseline_gitops_revision": snapshot.BaselineGitOpsSHA, "target_gitops_revision": outcome.Projection.TargetRevision,
 			"failure_code": outcome.FailureCode},
@@ -1362,7 +1436,7 @@ func appendDeliveryEvidence(ctx context.Context, tx asyncjob.DBTX, snapshot Deli
 		resourceRef = "kubernetes:" + snapshot.Namespace + "/" + snapshot.WorkloadName
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO evidence_items
- (public_id, incident_id, domain_schema_version, evidence_contract_version, cycle_no,
+ (public_id, incident_id, domain_schema_version, evidence_contract_version, cycle_no, migrated_legacy, migrated_legacy_context,
   change_request_id, type, source, producer_type, producer_id, producer_version,
   producer_dedupe_key, adapter_version, query_template_id, query_template_version,
   scope_snapshot_hash, arguments_hash, tool_name, resource_ref, time_range_json, query_text,
@@ -1372,12 +1446,12 @@ func appendDeliveryEvidence(ctx context.Context, tx asyncjob.DBTX, snapshot Deli
   safe_raw_reference, redaction_json, redaction_policy_version, redaction_counts_json,
   prompt_safety_flags_json, source_revision, resource_version, truncated, valid,
   idempotency_key, collected_at, observed_at, created_at)
- VALUES (?, ?, 3, 1, ?, ?, 'delivery_observation', ?, 'delivery_observation', ?,
+	 VALUES (?, ?, 3, 1, ?, ?, ?, ?, 'delivery_observation', ?, 'delivery_observation', ?,
          'delivery-observation-evidence/v1', ?, 'delivery-observer/v1', ?, 'v1', ?, ?, '', ?,
          NULL, '', ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?,
          'delivery-observation-redaction/v1', ?, ?, ?, ?, FALSE, TRUE, ?, ?, ?, ?)
- ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`, evidencePublicID, snapshot.IncidentID, snapshot.CycleNo,
-		snapshot.ChangeRequestID, outcome.SourceSystem, snapshot.ChangeRequestPublicID, producerKey,
+	 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`, evidencePublicID, snapshot.IncidentID, snapshot.CycleNo,
+		snapshot.MigratedLegacy, snapshot.MigratedLegacyContext, snapshot.ChangeRequestID, outcome.SourceSystem, snapshot.ChangeRequestPublicID, producerKey,
 		"delivery/"+string(outcome.Kind), hashCanonical("delivery-scope", snapshot.IncidentPublicID, fmt.Sprint(snapshot.CycleNo), snapshot.ChangeRequestPublicID),
 		hashCanonical("delivery-arguments", string(outcome.Kind), snapshot.SourceRevision, outcome.Projection.TargetRevision), resourceRef,
 		boundChange(string(outcome.Kind)+" delivery observation", 4096), facts, metadata.FactSchemaHash,

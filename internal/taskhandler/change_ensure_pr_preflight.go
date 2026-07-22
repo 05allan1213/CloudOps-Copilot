@@ -21,7 +21,7 @@ var errChangeApprovalExpired = errors.New("change.ensure_pr approval expired")
 const changeEnsurePlanSelect = `SELECT
     p.id, p.public_id, p.incident_id, i.public_id, p.domain_schema_version,
     p.cycle_no, p.incident_version, ar.public_id, p.diagnosis_hash,
-    p.plan_version, p.plan_hash, p.status, p.v3_status, p.operation_type,
+    p.plan_version, p.plan_hash, p.status, p.v3_status, p.migrated_legacy, p.migrated_legacy_context, p.operation_type,
     p.target_repository, p.target_base_revision, p.target_base_branch,
     p.last_known_good_sha, p.base_blob_sha, p.file_mode, p.target_path,
     p.target_resource_json, p.target_field_ref, p.parameters_json,
@@ -66,7 +66,8 @@ func (s *mysqlChangeEnsurePRStore) loadPlan(ctx context.Context, queryer changeQ
 		&snapshot.Plan.ID, &snapshot.Plan.PublicID, &snapshot.Plan.IncidentID, &snapshot.Plan.IncidentPublicID,
 		&snapshot.Plan.DomainSchemaVersion, &snapshot.Plan.CycleNo, &snapshot.Plan.IncidentVersion,
 		&snapshot.Plan.CreatedByAgentRunID, &snapshot.Plan.DiagnosisHash, &snapshot.Plan.PlanVersion,
-		&snapshot.Plan.PlanHash, &snapshot.LegacyPlanStatus, &v3Status, &snapshot.Plan.OperationType,
+		&snapshot.Plan.PlanHash, &snapshot.LegacyPlanStatus, &v3Status,
+		&snapshot.Plan.MigratedLegacy, &snapshot.Plan.MigratedLegacyContext, &snapshot.Plan.OperationType,
 		&snapshot.Plan.TargetRepository, &snapshot.Plan.TargetBaseRevision, &snapshot.Plan.TargetBaseBranch,
 		&snapshot.Plan.LastKnownGoodRevision, &snapshot.Plan.BaseBlobSHA, &snapshot.Plan.FileMode,
 		&snapshot.Plan.TargetPath, &targetJSON, &snapshot.Plan.TargetFieldRef, &parametersJSON,

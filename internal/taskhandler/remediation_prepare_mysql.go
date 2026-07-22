@@ -58,21 +58,23 @@ func NewMySQLRemediationPrepareLoader(db *sql.DB, git remediation.ExactGitReader
 }
 
 type remediationPrepareDurableFacts struct {
-	IncidentPublicID string
-	IncidentVersion  uint64
-	Cluster          string
-	Environment      string
-	Namespace        string
-	ServiceName      string
-	TargetKind       string
-	TargetName       string
-	AgentRunPublicID string
-	AgentRunVersion  uint64
-	RunCompletedAt   time.Time
-	Diagnosis        agent.DiagnosisRecord
-	Evidence         []remediation.EvidenceBinding
-	Baseline         remediationPrepareBaseline
-	PlanVersion      int
+	IncidentPublicID      string
+	IncidentVersion       uint64
+	Cluster               string
+	Environment           string
+	Namespace             string
+	ServiceName           string
+	TargetKind            string
+	TargetName            string
+	AgentRunPublicID      string
+	AgentRunVersion       uint64
+	MigratedLegacy        bool
+	MigratedLegacyContext bool
+	RunCompletedAt        time.Time
+	Diagnosis             agent.DiagnosisRecord
+	Evidence              []remediation.EvidenceBinding
+	Baseline              remediationPrepareBaseline
+	PlanVersion           int
 }
 
 type remediationPrepareBaseline struct {
@@ -149,10 +151,11 @@ func (l *mysqlRemediationPrepareLoader) Load(ctx context.Context, task asyncjob.
 		BaselineIsAncestor: true, CreatedAt: createdAt, ExpiresAt: expiresAt, PlanVersion: durable.PlanVersion,
 	}
 	return RemediationPrepareInput{
-		AgentRunID:   task.SubjectID,
-		PlanPublicID: uuid.NewSHA1(uuid.NameSpaceOID, []byte("remediation-plan\x00"+task.DedupeKey)).String(),
-		Baseline:     durable.Baseline.RemediationPrepareBaselineFence,
-		Request:      request,
+		AgentRunID:     task.SubjectID,
+		PlanPublicID:   uuid.NewSHA1(uuid.NameSpaceOID, []byte("remediation-plan\x00"+task.DedupeKey)).String(),
+		Baseline:       durable.Baseline.RemediationPrepareBaselineFence,
+		Request:        request,
+		MigratedLegacy: durable.MigratedLegacy, MigratedLegacyContext: durable.MigratedLegacyContext,
 	}, nil
 }
 
@@ -170,6 +173,7 @@ func (l *mysqlRemediationPrepareLoader) loadDurableFacts(ctx context.Context, ta
 	var completedAt sql.NullTime
 	const subjectQuery = `SELECT
  r.public_id, r.row_version, r.status, r.v3_status, r.expected_incident_version,
+	r.migrated_legacy, r.migrated_legacy_context,
  r.final_diagnosis, r.completed_at,
  i.public_id, i.version, i.v3_status, i.cluster, i.environment, i.namespace,
  i.service_name, i.target_kind, i.target_name
@@ -179,6 +183,7 @@ WHERE r.id = ? AND r.incident_id = ? AND r.domain_schema_version = 3 AND r.cycle
   AND i.domain_schema_version = 3 AND i.cycle_no = ?`
 	if err := tx.QueryRowContext(ctx, subjectQuery, task.SubjectID, task.IncidentID, task.CycleNo, task.CycleNo).Scan(
 		&result.AgentRunPublicID, &result.AgentRunVersion, &runLegacyStatus, &runStatus, &expectedIncidentVersion,
+		&result.MigratedLegacy, &result.MigratedLegacyContext,
 		&finalDiagnosis, &completedAt, &result.IncidentPublicID, &result.IncidentVersion, &incidentStatus,
 		&result.Cluster, &result.Environment, &result.Namespace, &result.ServiceName, &result.TargetKind, &result.TargetName,
 	); err != nil {
@@ -188,6 +193,7 @@ WHERE r.id = ? AND r.incident_id = ? AND r.domain_schema_version = 3 AND r.cycle
 		return remediationPrepareDurableFacts{}, fmt.Errorf("load remediation.prepare subject: %w", err)
 	}
 	if result.AgentRunVersion != task.ExpectedSubjectVersion || runLegacyStatus != "COMPLETED" || runStatus != "completed" || !completedAt.Valid ||
+		result.MigratedLegacy != task.MigratedLegacy || result.MigratedLegacyContext != task.MigratedLegacyContext ||
 		incidentStatus != "investigating" || expectedIncidentVersion != result.IncidentVersion ||
 		result.Namespace != l.policy.Namespace || result.TargetKind != "Deployment" || result.TargetName != l.policy.Workload {
 		return remediationPrepareDurableFacts{}, asyncjob.ErrSubjectVersionMismatch
@@ -257,11 +263,13 @@ func loadRemediationDiagnosisEvidence(ctx context.Context, tx *sql.Tx, task asyn
 		var contentHash, resultHash, producerType string
 		var factsJSON []byte
 		var agentRunID sql.NullInt64
-		var valid, truncated bool
-		if err := tx.QueryRowContext(ctx, `SELECT content_hash, result_hash, producer_type, agent_run_id, facts_json, valid, truncated
+		var valid, truncated, migratedLegacy, migratedLegacyContext bool
+		if err := tx.QueryRowContext(ctx, `SELECT content_hash, result_hash, producer_type, agent_run_id, facts_json, valid, truncated,
+migrated_legacy, migrated_legacy_context
 FROM evidence_items
 WHERE public_id = ? AND incident_id = ? AND domain_schema_version = 3 AND cycle_no = ?`,
-			publicID, task.IncidentID, task.CycleNo).Scan(&contentHash, &resultHash, &producerType, &agentRunID, &factsJSON, &valid, &truncated); err != nil {
+			publicID, task.IncidentID, task.CycleNo).Scan(&contentHash, &resultHash, &producerType, &agentRunID,
+			&factsJSON, &valid, &truncated, &migratedLegacy, &migratedLegacyContext); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil, nil, fmt.Errorf("%w: Diagnosis Evidence is absent from the current cycle", asyncjob.ErrPolicyViolation)
 			}
@@ -269,6 +277,7 @@ WHERE public_id = ? AND incident_id = ? AND domain_schema_version = 3 AND cycle_
 		}
 		if !agentRunID.Valid || uint64(agentRunID.Int64) != task.SubjectID ||
 			(producerType != "agent_step" && producerType != "system_enrichment") || !valid || truncated ||
+			migratedLegacy != task.MigratedLegacy || migratedLegacyContext != task.MigratedLegacyContext ||
 			!validSHA256Text(contentHash) || resultHash != contentHash {
 			return nil, nil, fmt.Errorf("%w: Diagnosis Evidence is not a current verified observation", asyncjob.ErrPolicyViolation)
 		}
@@ -280,6 +289,9 @@ WHERE public_id = ? AND incident_id = ? AND domain_schema_version = 3 AND cycle_
 		for _, fact := range envelope.Facts {
 			if fact.EvidenceID != publicID || fact.IncidentID != incidentPublicID || fact.CycleNo != uint64(task.CycleNo) {
 				return nil, nil, fmt.Errorf("%w: Diagnosis Evidence fact ownership is invalid", asyncjob.ErrPolicyViolation)
+			}
+			if fact.MigratedLegacy != migratedLegacy {
+				return nil, nil, fmt.Errorf("%w: Diagnosis Evidence migrated-legacy provenance is invalid", asyncjob.ErrPolicyViolation)
 			}
 			facts = append(facts, fact)
 		}

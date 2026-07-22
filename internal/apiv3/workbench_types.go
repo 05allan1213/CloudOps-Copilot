@@ -44,6 +44,8 @@ type RemediationPlanView struct {
 	Decision                 *RemediationDecisionView `json:"decision,omitempty"`
 	CreatedAt                time.Time                `json:"created_at"`
 	UpdatedAt                time.Time                `json:"updated_at"`
+	MigratedLegacy           bool                     `json:"migrated_legacy"`
+	MigratedLegacyContext    bool                     `json:"migrated_legacy_context"`
 }
 
 type RemediationTargetView struct {
@@ -102,77 +104,81 @@ type RemediationDecisionActorView struct {
 // DeliveryView exposes only persisted delivery facts. Scheduling, lease,
 // fencing, write markers, and provider credentials are intentionally absent.
 type DeliveryView struct {
-	ID                   string          `json:"id"`
-	Kind                 string          `json:"kind"`
-	Cycle                uint64          `json:"cycle"`
-	Status               string          `json:"status"`
-	Version              uint64          `json:"version"`
-	RemediationPlanID    string          `json:"remediation_plan_id"`
-	Repository           string          `json:"repository"`
-	BaseRevision         string          `json:"base_revision"`
-	HeadBranch           string          `json:"head_branch"`
-	CommitSHA            string          `json:"commit_sha,omitempty"`
-	PRNumber             int64           `json:"pr_number,omitempty"`
-	PRURL                string          `json:"pr_url,omitempty"`
-	PRState              string          `json:"pr_state,omitempty"`
-	CIStatus             string          `json:"ci_status"`
-	MergedCommitSHA      string          `json:"merged_commit_sha,omitempty"`
-	TargetRevision       string          `json:"target_revision,omitempty"`
-	DetectedRevision     string          `json:"detected_revision,omitempty"`
-	ArgoApplication      string          `json:"argocd_application,omitempty"`
-	ArgoProject          string          `json:"argocd_project,omitempty"`
-	ArgoSyncStatus       string          `json:"argocd_sync_status,omitempty"`
-	ArgoOperationPhase   string          `json:"argocd_operation_phase,omitempty"`
-	ArgoHealthStatus     string          `json:"argocd_health_status,omitempty"`
-	ResourceHealth       json.RawMessage `json:"resource_health,omitempty"`
-	Cluster              string          `json:"cluster,omitempty"`
-	Environment          string          `json:"environment,omitempty"`
-	Namespace            string          `json:"namespace,omitempty"`
-	WorkloadKind         string          `json:"workload_kind,omitempty"`
-	WorkloadName         string          `json:"workload_name,omitempty"`
-	DeploymentGeneration int64           `json:"deployment_generation,omitempty"`
-	ObservedGeneration   int64           `json:"observed_generation,omitempty"`
-	RolloutRevision      string          `json:"rollout_revision,omitempty"`
-	DesiredReplicas      int64           `json:"desired_replicas"`
-	UpdatedReplicas      int64           `json:"updated_replicas"`
-	AvailableReplicas    int64           `json:"available_replicas"`
-	UnavailableReplicas  int64           `json:"unavailable_replicas"`
-	SyncStartedAt        *time.Time      `json:"sync_started_at,omitempty"`
-	SyncCompletedAt      *time.Time      `json:"sync_completed_at,omitempty"`
-	DeliveryStartedAt    *time.Time      `json:"delivery_started_at,omitempty"`
-	DeliveryDeadlineAt   *time.Time      `json:"delivery_deadline_at,omitempty"`
-	DeliveryCompletedAt  *time.Time      `json:"delivery_completed_at,omitempty"`
-	LastObservedAt       *time.Time      `json:"last_observed_at,omitempty"`
-	FailureCode          string          `json:"failure_code,omitempty"`
-	FailureReason        string          `json:"failure_reason,omitempty"`
-	CreatedAt            time.Time       `json:"created_at"`
-	UpdatedAt            time.Time       `json:"updated_at"`
+	ID                    string          `json:"id"`
+	Kind                  string          `json:"kind"`
+	Cycle                 uint64          `json:"cycle"`
+	Status                string          `json:"status"`
+	Version               uint64          `json:"version"`
+	RemediationPlanID     string          `json:"remediation_plan_id"`
+	Repository            string          `json:"repository"`
+	BaseRevision          string          `json:"base_revision"`
+	HeadBranch            string          `json:"head_branch"`
+	CommitSHA             string          `json:"commit_sha,omitempty"`
+	PRNumber              int64           `json:"pr_number,omitempty"`
+	PRURL                 string          `json:"pr_url,omitempty"`
+	PRState               string          `json:"pr_state,omitempty"`
+	CIStatus              string          `json:"ci_status"`
+	MergedCommitSHA       string          `json:"merged_commit_sha,omitempty"`
+	TargetRevision        string          `json:"target_revision,omitempty"`
+	DetectedRevision      string          `json:"detected_revision,omitempty"`
+	ArgoApplication       string          `json:"argocd_application,omitempty"`
+	ArgoProject           string          `json:"argocd_project,omitempty"`
+	ArgoSyncStatus        string          `json:"argocd_sync_status,omitempty"`
+	ArgoOperationPhase    string          `json:"argocd_operation_phase,omitempty"`
+	ArgoHealthStatus      string          `json:"argocd_health_status,omitempty"`
+	ResourceHealth        json.RawMessage `json:"resource_health,omitempty"`
+	Cluster               string          `json:"cluster,omitempty"`
+	Environment           string          `json:"environment,omitempty"`
+	Namespace             string          `json:"namespace,omitempty"`
+	WorkloadKind          string          `json:"workload_kind,omitempty"`
+	WorkloadName          string          `json:"workload_name,omitempty"`
+	DeploymentGeneration  int64           `json:"deployment_generation,omitempty"`
+	ObservedGeneration    int64           `json:"observed_generation,omitempty"`
+	RolloutRevision       string          `json:"rollout_revision,omitempty"`
+	DesiredReplicas       int64           `json:"desired_replicas"`
+	UpdatedReplicas       int64           `json:"updated_replicas"`
+	AvailableReplicas     int64           `json:"available_replicas"`
+	UnavailableReplicas   int64           `json:"unavailable_replicas"`
+	SyncStartedAt         *time.Time      `json:"sync_started_at,omitempty"`
+	SyncCompletedAt       *time.Time      `json:"sync_completed_at,omitempty"`
+	DeliveryStartedAt     *time.Time      `json:"delivery_started_at,omitempty"`
+	DeliveryDeadlineAt    *time.Time      `json:"delivery_deadline_at,omitempty"`
+	DeliveryCompletedAt   *time.Time      `json:"delivery_completed_at,omitempty"`
+	LastObservedAt        *time.Time      `json:"last_observed_at,omitempty"`
+	FailureCode           string          `json:"failure_code,omitempty"`
+	FailureReason         string          `json:"failure_reason,omitempty"`
+	CreatedAt             time.Time       `json:"created_at"`
+	UpdatedAt             time.Time       `json:"updated_at"`
+	MigratedLegacy        bool            `json:"migrated_legacy"`
+	MigratedLegacyContext bool            `json:"migrated_legacy_context"`
 }
 
 // VerificationRunView nests the bounded durable Check and Sample facts for a
 // current-cycle Run. All relation fields are joined to public UUIDs.
 type VerificationRunView struct {
-	ID                string                       `json:"id"`
-	Kind              string                       `json:"kind"`
-	Cycle             uint64                       `json:"cycle"`
-	Status            string                       `json:"status"`
-	Version           uint64                       `json:"version"`
-	TriggerType       string                       `json:"trigger_type"`
-	RemediationPlanID string                       `json:"remediation_plan_id,omitempty"`
-	ChangeRequestID   string                       `json:"change_request_id,omitempty"`
-	TriggerSignalID   string                       `json:"trigger_signal_id,omitempty"`
-	Attempt           uint64                       `json:"attempt"`
-	Profile           VerificationProfileView      `json:"profile"`
-	Revisions         VerificationRevisionsView    `json:"revisions"`
-	StartedAt         *time.Time                   `json:"started_at,omitempty"`
-	DeadlineAt        time.Time                    `json:"deadline_at"`
-	CompletedAt       *time.Time                   `json:"completed_at,omitempty"`
-	CommonWindow      VerificationCommonWindowView `json:"common_window"`
-	ResultSummary     string                       `json:"result_summary,omitempty"`
-	FailureReason     string                       `json:"failure_reason,omitempty"`
-	Checks            []VerificationCheckView      `json:"checks"`
-	CreatedAt         time.Time                    `json:"created_at"`
-	UpdatedAt         time.Time                    `json:"updated_at"`
+	ID                    string                       `json:"id"`
+	Kind                  string                       `json:"kind"`
+	Cycle                 uint64                       `json:"cycle"`
+	Status                string                       `json:"status"`
+	Version               uint64                       `json:"version"`
+	TriggerType           string                       `json:"trigger_type"`
+	RemediationPlanID     string                       `json:"remediation_plan_id,omitempty"`
+	ChangeRequestID       string                       `json:"change_request_id,omitempty"`
+	TriggerSignalID       string                       `json:"trigger_signal_id,omitempty"`
+	Attempt               uint64                       `json:"attempt"`
+	Profile               VerificationProfileView      `json:"profile"`
+	Revisions             VerificationRevisionsView    `json:"revisions"`
+	StartedAt             *time.Time                   `json:"started_at,omitempty"`
+	DeadlineAt            time.Time                    `json:"deadline_at"`
+	CompletedAt           *time.Time                   `json:"completed_at,omitempty"`
+	CommonWindow          VerificationCommonWindowView `json:"common_window"`
+	ResultSummary         string                       `json:"result_summary,omitempty"`
+	FailureReason         string                       `json:"failure_reason,omitempty"`
+	Checks                []VerificationCheckView      `json:"checks"`
+	CreatedAt             time.Time                    `json:"created_at"`
+	UpdatedAt             time.Time                    `json:"updated_at"`
+	MigratedLegacy        bool                         `json:"migrated_legacy"`
+	MigratedLegacyContext bool                         `json:"migrated_legacy_context"`
 }
 
 type VerificationProfileView struct {
@@ -228,6 +234,8 @@ type VerificationCheckView struct {
 	Samples                 []VerificationSampleView `json:"samples"`
 	CreatedAt               time.Time                `json:"created_at"`
 	UpdatedAt               time.Time                `json:"updated_at"`
+	MigratedLegacy          bool                     `json:"migrated_legacy"`
+	MigratedLegacyContext   bool                     `json:"migrated_legacy_context"`
 }
 
 type VerificationSubjectView struct {
@@ -246,18 +254,20 @@ type VerificationSubjectView struct {
 }
 
 type VerificationSampleView struct {
-	ID              string          `json:"id"`
-	SchemaVersion   uint64          `json:"schema_version"`
-	Sequence        uint64          `json:"sequence"`
-	Status          string          `json:"status"`
-	Observed        json.RawMessage `json:"observed"`
-	SourceReference string          `json:"source_reference,omitempty"`
-	ReasonCode      string          `json:"reason_code,omitempty"`
-	WindowStartAt   *time.Time      `json:"window_start_at,omitempty"`
-	WindowEndAt     *time.Time      `json:"window_end_at,omitempty"`
-	SampledAt       time.Time       `json:"sampled_at"`
-	ContentHash     string          `json:"content_hash"`
-	CreatedAt       time.Time       `json:"created_at"`
+	ID                    string          `json:"id"`
+	SchemaVersion         uint64          `json:"schema_version"`
+	Sequence              uint64          `json:"sequence"`
+	Status                string          `json:"status"`
+	Observed              json.RawMessage `json:"observed"`
+	SourceReference       string          `json:"source_reference,omitempty"`
+	ReasonCode            string          `json:"reason_code,omitempty"`
+	WindowStartAt         *time.Time      `json:"window_start_at,omitempty"`
+	WindowEndAt           *time.Time      `json:"window_end_at,omitempty"`
+	SampledAt             time.Time       `json:"sampled_at"`
+	ContentHash           string          `json:"content_hash"`
+	CreatedAt             time.Time       `json:"created_at"`
+	MigratedLegacy        bool            `json:"migrated_legacy"`
+	MigratedLegacyContext bool            `json:"migrated_legacy_context"`
 }
 
 type remediationPlanPageResponse struct {

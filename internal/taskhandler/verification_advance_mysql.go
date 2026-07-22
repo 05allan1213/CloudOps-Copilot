@@ -116,31 +116,33 @@ func (r *mysqlVerificationAdvanceReader) Load(ctx context.Context, task asyncjob
 		return VerificationAdvanceSnapshot{}, err
 	}
 	var (
-		run               verification.Run
-		status            string
-		cycleNo           uint32
-		triggerType       sql.NullString
-		profileID         sql.NullString
-		profileHash       sql.NullString
-		profileVersion    sql.NullInt64
-		contractVersion   sql.NullInt64
-		commonWindowMS    sql.NullInt64
-		sourceRevision    sql.NullString
-		imageDigest       sql.NullString
-		gitopsRevision    sql.NullString
-		planJSON          []byte
-		startedAt         sql.NullTime
-		deadlineAt        time.Time
-		completedAt       sql.NullTime
-		remediationPlanID nullableUint64
-		changeRequestID   nullableUint64
-		triggerSignalID   nullableUint64
-		rowVersion        uint64
-		createdAt         time.Time
-		updatedAt         time.Time
-		observedNow       time.Time
-		incidentVersion   uint64
-		incidentStatus    string
+		run                   verification.Run
+		status                string
+		cycleNo               uint32
+		triggerType           sql.NullString
+		profileID             sql.NullString
+		profileHash           sql.NullString
+		profileVersion        sql.NullInt64
+		contractVersion       sql.NullInt64
+		commonWindowMS        sql.NullInt64
+		sourceRevision        sql.NullString
+		imageDigest           sql.NullString
+		gitopsRevision        sql.NullString
+		planJSON              []byte
+		startedAt             sql.NullTime
+		deadlineAt            time.Time
+		completedAt           sql.NullTime
+		remediationPlanID     nullableUint64
+		changeRequestID       nullableUint64
+		triggerSignalID       nullableUint64
+		rowVersion            uint64
+		createdAt             time.Time
+		updatedAt             time.Time
+		observedNow           time.Time
+		incidentVersion       uint64
+		incidentStatus        string
+		migratedLegacyContext bool
+		migratedLegacy        bool
 	)
 	err = r.db.QueryRowContext(ctx, `
 SELECT vr.public_id, vr.incident_id, i.public_id, i.version, i.v3_status, vr.remediation_plan_id,
@@ -149,7 +151,8 @@ SELECT vr.public_id, vr.incident_id, i.public_id, i.version, i.v3_status, vr.rem
        vr.created_at, vr.updated_at, vr.cycle_no, vr.trigger_type, vr.trigger_signal_id,
        vr.source_revision, vr.image_digest, vr.gitops_revision,
 		vr.verification_contract_version, vr.verification_profile_id,
-	       vr.verification_profile_hash, vr.verification_profile_version, vr.common_stability_window_ms, NOW(6)
+	       vr.verification_profile_hash, vr.verification_profile_version, vr.common_stability_window_ms,
+		vr.migrated_legacy, vr.migrated_legacy_context, NOW(6)
 FROM verification_runs vr
 JOIN incidents i ON i.id = vr.incident_id AND i.domain_schema_version = 3
 WHERE vr.id = ? AND vr.incident_id = ? AND vr.cycle_no = ? AND vr.domain_schema_version = 3`, task.SubjectID, task.IncidentID, task.CycleNo).Scan(
@@ -157,12 +160,13 @@ WHERE vr.id = ? AND vr.incident_id = ? AND vr.cycle_no = ? AND vr.domain_schema_
 		&changeRequestID, &status, &run.TargetRevision, &planJSON, &startedAt, &deadlineAt,
 		&completedAt, &rowVersion, &createdAt, &updatedAt, &cycleNo, &triggerType,
 		&triggerSignalID, &sourceRevision, &imageDigest, &gitopsRevision, &contractVersion,
-		&profileID, &profileHash, &profileVersion, &commonWindowMS, &observedNow,
+		&profileID, &profileHash, &profileVersion, &commonWindowMS, &migratedLegacy, &migratedLegacyContext, &observedNow,
 	)
 	if err != nil {
 		return VerificationAdvanceSnapshot{}, err
 	}
 	if run.PublicID == "" || run.IncidentID != task.IncidentID || cycleNo != task.CycleNo || rowVersion != task.ExpectedSubjectVersion ||
+		migratedLegacy != task.MigratedLegacy || migratedLegacyContext != task.MigratedLegacyContext ||
 		incidentVersion == 0 || incidentStatus != "verifying" {
 		return VerificationAdvanceSnapshot{}, asyncjob.ErrSubjectVersionMismatch
 	}
@@ -214,7 +218,14 @@ WHERE vr.id = ? AND vr.incident_id = ? AND vr.cycle_no = ? AND vr.domain_schema_
 	}
 	selected := selectVerificationReaderCheck(checks, payload.CheckID, start, run.DeadlineAt)
 	if selected < 0 {
-		return VerificationAdvanceSnapshot{Run: run, Checks: checks, Now: observedNow}, nil
+		return VerificationAdvanceSnapshot{Run: run, Checks: checks, Now: observedNow,
+			CycleNo: cycleNo, IncidentVersion: incidentVersion, IncidentStatus: incidentStatus,
+			TriggerType: triggerType.String, TriggerSignalID: triggerSignalID.value(),
+			RemediationPlanID: remediationPlanID.value(), ChangeRequestID: changeRequestID.value(),
+			SourceRevision: sourceRevision.String, ImageDigest: imageDigest.String, GitOpsRevision: gitopsRevision.String,
+			ProfileID: profileID.String, ProfileHash: profileHash.String, ContractVersion: int(contractVersion.Int64),
+			CommonStabilityWindow: time.Duration(commonWindowMS.Int64) * time.Millisecond,
+			MigratedLegacy:        migratedLegacy, MigratedLegacyContext: migratedLegacyContext}, nil
 	}
 	checks[0], checks[selected] = checks[selected], checks[0]
 	check := checks[0]
@@ -228,6 +239,7 @@ WHERE vr.id = ? AND vr.incident_id = ? AND vr.cycle_no = ? AND vr.domain_schema_
 		SourceRevision: sourceRevision.String, ImageDigest: imageDigest.String, GitOpsRevision: gitopsRevision.String,
 		ProfileID: profileID.String, ProfileHash: profileHash.String, ContractVersion: int(contractVersion.Int64),
 		CommonStabilityWindow: time.Duration(commonWindowMS.Int64) * time.Millisecond,
+		MigratedLegacy:        migratedLegacy, MigratedLegacyContext: migratedLegacyContext,
 	}
 	if !now.Before(deadline) {
 		return snapshot, nil
@@ -266,7 +278,7 @@ SELECT id, public_id, verification_run_id, COALESCE(check_spec_schema_version,0)
        consecutive_success_since, attempt_count, failure_reason,
        COALESCE(profile_id,''), COALESCE(template_id,''), COALESCE(template_version,''),
 	       COALESCE(comparison,''), COALESCE(threshold,0), COALESCE(initial_delay_ms,0),
-	       COALESCE(min_samples,0), COALESCE(sample_unit,''), COALESCE(failure_mode,'')
+	       COALESCE(min_samples,0), COALESCE(sample_unit,''), COALESCE(failure_mode,''), migrated_legacy, migrated_legacy_context
 FROM verification_checks
 WHERE verification_run_id = ? AND incident_id = ? AND cycle_no = ?
 ORDER BY id`, task.SubjectID, task.IncidentID, task.CycleNo)
@@ -277,28 +289,33 @@ ORDER BY id`, task.SubjectID, task.IncidentID, task.CycleNo)
 	checks := make([]verification.Check, 0, 12)
 	for rows.Next() {
 		var (
-			check                 verification.Check
-			status, checkType     string
-			required              bool
-			subjectJSON, expected []byte
-			observed              []byte
-			lookbackMS, windowMS  int64
-			timeoutMS, pollMS     int64
-			first, last, passed   sql.NullTime
-			successSince          sql.NullTime
-			failure, profile      string
-			templateID, templateV string
-			comparison, unit      string
-			threshold             float64
-			initialMS, minSamples int64
-			failureMode           string
+			check                                 verification.Check
+			status, checkType                     string
+			required                              bool
+			subjectJSON, expected                 []byte
+			observed                              []byte
+			lookbackMS, windowMS                  int64
+			timeoutMS, pollMS                     int64
+			first, last, passed                   sql.NullTime
+			successSince                          sql.NullTime
+			failure, profile                      string
+			templateID, templateV                 string
+			comparison, unit                      string
+			threshold                             float64
+			initialMS, minSamples                 int64
+			failureMode                           string
+			migratedLegacy, migratedLegacyContext bool
 		)
 		var checkSchemaVersion int
 		if err := rows.Scan(&check.ID, &check.PublicID, &check.VerificationRunID, &checkSchemaVersion, &checkType, &status, &required,
 			&subjectJSON, &expected, &observed, &check.SourceReference, &check.SourceIdentity, &lookbackMS, &windowMS, &timeoutMS,
 			&pollMS, &first, &last, &passed, &successSince, &check.AttemptCount, &failure, &profile,
-			&templateID, &templateV, &comparison, &threshold, &initialMS, &minSamples, &unit, &failureMode); err != nil {
+			&templateID, &templateV, &comparison, &threshold, &initialMS, &minSamples, &unit, &failureMode,
+			&migratedLegacy, &migratedLegacyContext); err != nil {
 			return nil, err
+		}
+		if migratedLegacy != task.MigratedLegacy || migratedLegacyContext != task.MigratedLegacyContext {
+			return nil, fmt.Errorf("%w: verification check migrated-legacy provenance diverges", asyncjob.ErrInvalidMutation)
 		}
 		if err := json.Unmarshal(subjectJSON, &check.Subject); err != nil {
 			return nil, fmt.Errorf("decode verification subject: %w", err)
@@ -434,16 +451,18 @@ func (s *mysqlVerificationAdvanceStore) PersistIn(ctx context.Context, tx asyncj
 	var storedPlanID, storedChangeID nullableUint64
 	var storedTrigger, storedSource, storedImage, storedGitOps string
 	var storedProfileID, storedProfileHash string
+	var storedMigratedLegacy, storedMigratedLegacyContext bool
 	if err := tx.QueryRowContext(ctx, `
 SELECT row_version, COALESCE(v3_status, status), remediation_plan_id, change_request_id,
        COALESCE(trigger_type,''), COALESCE(source_revision,''), COALESCE(image_digest,''),
-       COALESCE(gitops_revision,''), COALESCE(verification_profile_id,''),
-       COALESCE(verification_profile_hash,'')
+	       COALESCE(gitops_revision,''), COALESCE(verification_profile_id,''),
+	       COALESCE(verification_profile_hash,''), migrated_legacy, migrated_legacy_context
 FROM verification_runs
 WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3
 FOR UPDATE`, task.SubjectID, task.IncidentID, task.CycleNo).Scan(
 		&rowVersion, &currentStatus, &storedPlanID, &storedChangeID, &storedTrigger,
-		&storedSource, &storedImage, &storedGitOps, &storedProfileID, &storedProfileHash); err != nil {
+		&storedSource, &storedImage, &storedGitOps, &storedProfileID, &storedProfileHash,
+		&storedMigratedLegacy, &storedMigratedLegacyContext); err != nil {
 		return err
 	}
 	if rowVersion != task.ExpectedSubjectVersion || (currentStatus != string(verification.RunPending) && currentStatus != string(verification.RunRunning)) {
@@ -451,19 +470,24 @@ FOR UPDATE`, task.SubjectID, task.IncidentID, task.CycleNo).Scan(
 	}
 	if storedPlanID.value() != snapshot.RemediationPlanID || storedChangeID.value() != snapshot.ChangeRequestID ||
 		storedTrigger != snapshot.TriggerType || storedSource != snapshot.SourceRevision || storedImage != snapshot.ImageDigest ||
-		storedGitOps != snapshot.GitOpsRevision || storedProfileID != snapshot.ProfileID || storedProfileHash != snapshot.ProfileHash {
+		storedGitOps != snapshot.GitOpsRevision || storedProfileID != snapshot.ProfileID || storedProfileHash != snapshot.ProfileHash ||
+		storedMigratedLegacy != snapshot.MigratedLegacy || storedMigratedLegacyContext != snapshot.MigratedLegacyContext ||
+		storedMigratedLegacy != task.MigratedLegacy || storedMigratedLegacyContext != task.MigratedLegacyContext {
 		return asyncjob.ErrSubjectVersionMismatch
 	}
 	var storedAttempt int
 	var storedCheckStatus string
+	var storedCheckMigratedLegacy, storedCheckMigratedLegacyContext bool
 	if err := tx.QueryRowContext(ctx, `
-SELECT attempt_count, status
+SELECT attempt_count, status, migrated_legacy, migrated_legacy_context
 FROM verification_checks
 WHERE id = ? AND verification_run_id = ? AND incident_id = ? AND cycle_no = ?
-FOR UPDATE`, check.ID, task.SubjectID, task.IncidentID, task.CycleNo).Scan(&storedAttempt, &storedCheckStatus); err != nil {
+FOR UPDATE`, check.ID, task.SubjectID, task.IncidentID, task.CycleNo).Scan(
+		&storedAttempt, &storedCheckStatus, &storedCheckMigratedLegacy, &storedCheckMigratedLegacyContext); err != nil {
 		return err
 	}
-	if storedAttempt+1 != check.AttemptCount || verification.TerminalCheck(verification.CheckStatus(storedCheckStatus)) {
+	if storedAttempt+1 != check.AttemptCount || verification.TerminalCheck(verification.CheckStatus(storedCheckStatus)) ||
+		storedCheckMigratedLegacy != snapshot.MigratedLegacy || storedCheckMigratedLegacyContext != snapshot.MigratedLegacyContext {
 		return asyncjob.ErrSubjectVersionMismatch
 	}
 	contentHash := hashVerificationSample(sample, check, storedAttempt+1)
@@ -544,12 +568,13 @@ func insertVerificationSample(ctx context.Context, tx asyncjob.DBTX, task asyncj
 	publicID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(fmt.Sprintf("verification-sample\x00%d\x00%d\x00%d\x00%s", task.SubjectID, check.ID, sequence, contentHash))).String()
 	result, err := tx.ExecContext(ctx, `
 INSERT INTO verification_samples
- (public_id, domain_schema_version, sample_schema_version, incident_id, cycle_no,
+ (public_id, domain_schema_version, sample_schema_version, incident_id, cycle_no, migrated_legacy, migrated_legacy_context,
   verification_run_id, verification_check_id, sample_sequence, status, observed_json,
   source_reference, reason_code, window_start_at, window_end_at, sampled_at, content_hash)
-VALUES (?, 3, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, 3, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
-		publicID, verificationSampleSchema, task.IncidentID, task.CycleNo, task.SubjectID, check.ID,
+		publicID, verificationSampleSchema, task.IncidentID, task.CycleNo, task.MigratedLegacy,
+		task.MigratedLegacyContext, task.SubjectID, check.ID,
 		sequence, sample.Status, sample.Observed, boundVerificationText(sample.SourceReference, 1024),
 		boundVerificationText(sample.ReasonCode, 128), nullableTimeValue(windowStart), nullableTimeValue(windowEnd), now, contentHash)
 	if err != nil {
@@ -609,6 +634,7 @@ func enqueueVerificationAdvance(ctx context.Context, tx asyncjob.DBTX, tasks Ver
 		SubjectType: "verification_run", SubjectID: task.SubjectID, Transition: "verification.advance",
 		ExpectedSubjectVersion: expectedVersion, PayloadSchemaVersion: 1, Payload: payload,
 		DedupeKey: hashVerificationTask(runPublicID, expectedVersion), Priority: 50,
+		MigratedLegacy: task.MigratedLegacy, MigratedLegacyContext: task.MigratedLegacyContext,
 		AvailableAt: verificationTimePtr(available.UTC()), MaxAttempts: 5,
 	})
 	return err
@@ -643,10 +669,11 @@ WHERE id = ? AND cycle_no = ? AND domain_schema_version = 3 AND version = ?`,
 	if _, err := tx.ExecContext(ctx, `
 INSERT IGNORE INTO incident_events
  (public_id, incident_id, domain_schema_version, cycle_no, event_schema_version,
-  event_type, idempotency_key, actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
-VALUES (?, ?, 3, ?, 1, 'verification_failed', ?, 'system', 'verification.advance', ?, ?, NOW(6), NOW(6))`,
+  event_type, idempotency_key, migrated_legacy_context, migrated_legacy, actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
+VALUES (?, ?, 3, ?, 1, 'verification_failed', ?, ?, ?, 'system', 'verification.advance', ?, ?, NOW(6), NOW(6))`,
 		uuid.NewString(), task.IncidentID, task.CycleNo,
 		hashVerificationTask("verification_failed", task.SubjectID, status, reason),
+		task.MigratedLegacyContext, task.MigratedLegacy,
 		"Verification did not establish recovery; investigation resumed", metadata); err != nil {
 		return err
 	}
@@ -663,13 +690,17 @@ VALUES (?, ?, 3, ?, 1, 'verification_failed', ?, 'system', 'verification.advance
 	if tasks == nil {
 		return asyncjob.ErrInvalidMutation
 	}
-	payload, _ := json.Marshal(map[string]any{"mode": "start", "cycle_no": task.CycleNo})
+	payload, _ := json.Marshal(map[string]any{
+		"mode": "start", "cycle_no": task.CycleNo,
+		"migrated_legacy_context": task.MigratedLegacyContext,
+	})
 	_, err = tasks.EnqueueIn(ctx, tx, asyncjob.NewTask{
 		IncidentID: task.IncidentID, CycleNo: task.CycleNo, Type: asyncjob.TaskInvestigationAdvance,
 		SubjectType: "incident", SubjectID: task.IncidentID, Transition: "investigation.start",
 		ExpectedSubjectVersion: newIncidentVersion, PayloadSchemaVersion: 1, Payload: payload,
-		DedupeKey: hashVerificationTask(fmt.Sprint(task.IncidentID), newIncidentVersion, "investigation.start"),
-		Priority:  100, MaxAttempts: 5,
+		DedupeKey:             hashVerificationTask(fmt.Sprint(task.IncidentID), newIncidentVersion, "investigation.start"),
+		MigratedLegacyContext: task.MigratedLegacyContext,
+		Priority:              100, MaxAttempts: 5,
 	})
 	return err
 }
@@ -694,10 +725,11 @@ WHERE id = ? AND cycle_no = ? AND domain_schema_version = 3
 	_, err = tx.ExecContext(ctx, `
 INSERT IGNORE INTO incident_events
  (public_id, incident_id, domain_schema_version, cycle_no, event_schema_version,
-  event_type, idempotency_key, actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
-VALUES (?, ?, 3, ?, 1, 'incident_resolved', ?, 'system', 'verification.advance', ?, ?, ?, NOW(6))`,
+  event_type, idempotency_key, migrated_legacy_context, migrated_legacy, actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
+VALUES (?, ?, 3, ?, 1, 'incident_resolved', ?, ?, ?, 'system', 'verification.advance', ?, ?, ?, NOW(6))`,
 		uuid.NewString(), task.IncidentID, task.CycleNo,
 		hashVerificationTask("resolved", fmt.Sprint(task.IncidentID), fmt.Sprint(task.CycleNo), fmt.Sprint(task.SubjectID)),
+		task.MigratedLegacyContext, task.MigratedLegacy,
 		"Incident resolved after a passing verification window", metadata, now)
 	return err
 }
@@ -710,7 +742,8 @@ func persistVerificationFailureEvidence(ctx context.Context, tx asyncjob.DBTX, t
 		SourceSystem: "verification", CollectionPath: "verification/" + string(check.Type), CorroborationGroup: "verification/" + check.PublicID,
 		Authority: "runtime_observation", Integrity: "verified", Freshness: "fresh", Completeness: "complete",
 		ClaimUse: "blocking", CollectionStatus: verificationEvidenceCollectionStatus(sample.Status), Direct: true,
-		Attributes: map[string]string{"check_id": check.PublicID, "check_type": string(check.Type), "sample_status": string(sample.Status), "reason_code": sample.ReasonCode},
+		MigratedLegacy: task.MigratedLegacy,
+		Attributes:     map[string]string{"check_id": check.PublicID, "check_type": string(check.Type), "sample_status": string(sample.Status), "reason_code": sample.ReasonCode},
 	}
 	provenance := map[string]string{"verification_run_id": snapshot.Run.PublicID, "verification_check_id": check.PublicID, "verification_sample_id": samplePublicID, "source_reference": sample.SourceReference}
 	metadata, err := buildDurableEvidenceMetadata([]agent.EvidenceFact{fact}, provenance, nil, []string{samplePublicID}, []string{sampleHash})
@@ -736,7 +769,7 @@ func persistVerificationFailureEvidence(ctx context.Context, tx asyncjob.DBTX, t
 	argumentsHash := hashVerificationTask("verification-arguments", string(check.Type), string(check.Expected), check.SourceIdentity)
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO evidence_items
- (public_id, incident_id, domain_schema_version, evidence_contract_version, cycle_no,
+ (public_id, incident_id, domain_schema_version, evidence_contract_version, cycle_no, migrated_legacy, migrated_legacy_context,
   verification_run_id, verification_check_id, type, source, producer_type, producer_id,
   producer_version, producer_dedupe_key, adapter_version, query_template_id,
   query_template_version, scope_snapshot_hash, arguments_hash, tool_name, resource_ref,
@@ -746,12 +779,13 @@ INSERT INTO evidence_items
   content_hash, raw_ref, safe_raw_reference, redaction_json, redaction_policy_version,
   redaction_counts_json, prompt_safety_flags_json, truncated, valid, idempotency_key,
   collected_at, observed_at, created_at)
-VALUES (?, ?, 3, 1, ?, ?, ?, 'verification_failure', 'verification', 'verification_check', ?,
+VALUES (?, ?, 3, 1, ?, ?, ?, ?, ?, 'verification_failure', 'verification', 'verification_check', ?,
        'verification-check-evidence/v1', ?, 'verification-observer/v1', ?, ?, ?, ?,
        'verification.advance', ?, '', ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
        'verification-redaction/v1', ?, ?, FALSE, TRUE, ?, ?, ?, ?)
 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
-		evidencePublicID, task.IncidentID, task.CycleNo, task.SubjectID, check.ID, check.PublicID,
+		evidencePublicID, task.IncidentID, task.CycleNo, task.MigratedLegacy, task.MigratedLegacyContext,
+		task.SubjectID, check.ID, check.PublicID,
 		producerKey, templateID, templateVersion, scopeHash, argumentsHash, "verification/"+check.PublicID,
 		"Verification check did not establish recovery", facts, metadata.FactSchemaHash, metadata.ProvenanceJSON,
 		metadata.ProvenanceHash, metadata.TrustAxesJSON, metadata.ClaimUse, metadata.CorroborationGroups,
@@ -995,6 +1029,7 @@ FOR UPDATE`, task.IncidentID, task.CycleNo).Scan(
 		string(triggerJSON), string(evidence), string(diagnosis), string(plan), string(decision), string(delivery),
 		string(verificationJSON), string(timeline), string(usage), summary, resolvedAt.Format(time.RFC3339Nano),
 		incidentPublicID, incidentVersion, string(resolutionJSON), snapshot.Run.PublicID,
+		snapshot.MigratedLegacyContext,
 	)
 	insertResult, err := tx.ExecContext(ctx, `
 INSERT INTO resolution_reports
@@ -1007,7 +1042,7 @@ INSERT INTO resolution_reports
   common_window_started_at, common_window_completed_at, trigger_signal_json,
   diagnosis_json, evidence_json, remediation_plan_json, remediation_decision_json,
   delivery_json, verification_json, timeline_json, agent_usage_json, summary,
-  content_hash, generated_at)
+  content_hash, generated_at, migrated_legacy_context)
 	VALUES (?, 3, ?, ?, ?,
 	        ?, ?, ?, ?,
 	        ?, ?, ?, ?,
@@ -1017,7 +1052,7 @@ INSERT INTO resolution_reports
 	        ?, ?, ?,
 	        ?, ?, ?, ?,
 	        ?, ?, ?, ?, ?,
-	        ?, ?)
+	        ?, ?, ?)
 	ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
 		uuid.NewString(), verificationReportSchema, task.IncidentID, task.CycleNo, task.SubjectID,
 		initialID, triggerID, planID, remediationDecisionID, changeID, triggerType, reason,
@@ -1025,7 +1060,7 @@ INSERT INTO resolution_reports
 		verificationNullableString(badRevision), verificationNullableString(fixRevision), snapshot.SourceRevision, snapshot.ImageDigest,
 		snapshot.GitOpsRevision, profileID, profileHash, commonStartedAt, resolvedAt, triggerJSON,
 		verificationNullableJSON(diagnosis), evidence, verificationNullableJSON(plan), verificationNullableJSON(decision), verificationNullableJSON(delivery),
-		verificationJSON, timeline, usage, summary, contentHash, resolvedAt)
+		verificationJSON, timeline, usage, summary, contentHash, resolvedAt, snapshot.MigratedLegacyContext)
 	if err != nil {
 		return err
 	}

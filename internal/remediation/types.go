@@ -126,6 +126,8 @@ type RemediationPlan struct {
 	EvidenceBindings              []EvidenceBinding
 	EvidenceSetHash               string
 	ExpiresAt                     time.Time
+	MigratedLegacy                bool
+	MigratedLegacyContext         bool
 }
 
 type Decision string

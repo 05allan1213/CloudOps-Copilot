@@ -285,7 +285,7 @@ components:
     Incident:
       type: object
       additionalProperties: false
-      required: [id, cycle, status, severity, version, needs_attention]
+      required: [id, cycle, status, severity, version, needs_attention, migrated_legacy, migrated_legacy_context]
       properties:
         id: { type: string, format: uuid }
         cycle: { type: integer, minimum: 1 }
@@ -297,12 +297,14 @@ components:
         version: { type: integer, minimum: 1 }
         needs_attention: { type: boolean }
         blocking_reason_code: { type: string, maxLength: 128 }
+        migrated_legacy: { type: boolean }
+        migrated_legacy_context: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
     Resource:
       type: object
       additionalProperties: false
-      required: [id, kind]
+      required: [id, kind, migrated_legacy, migrated_legacy_context]
       properties:
         id: { type: string, format: uuid }
         kind: { type: string, maxLength: 64 }
@@ -311,6 +313,8 @@ components:
         cycle: { type: integer, minimum: 1 }
         summary: { type: string, maxLength: 2048 }
         hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+        migrated_legacy: { type: boolean }
+        migrated_legacy_context: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
     RemediationPlan:
@@ -351,6 +355,8 @@ components:
         - expires_at
         - created_at
         - updated_at
+        - migrated_legacy
+        - migrated_legacy_context
       properties:
         id: { type: string, format: uuid }
         kind: { type: string, const: remediation_plan }
@@ -399,6 +405,8 @@ components:
         decision: { $ref: "#/components/schemas/RemediationDecision" }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        migrated_legacy: { type: boolean }
+        migrated_legacy_context: { type: boolean }
     RemediationTarget:
       type: object
       additionalProperties: false
@@ -501,6 +509,8 @@ components:
         - unavailable_replicas
         - created_at
         - updated_at
+        - migrated_legacy
+        - migrated_legacy_context
       properties:
         id: { type: string, format: uuid }
         kind: { type: string, const: delivery }
@@ -551,10 +561,12 @@ components:
         failure_reason: { type: string, maxLength: 128 }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        migrated_legacy: { type: boolean }
+        migrated_legacy_context: { type: boolean }
     VerificationRun:
       type: object
       additionalProperties: false
-      required: [id, kind, cycle, status, version, trigger_type, attempt, profile, revisions, deadline_at, common_window, checks, created_at, updated_at]
+      required: [id, kind, cycle, status, version, trigger_type, attempt, profile, revisions, deadline_at, common_window, checks, created_at, updated_at, migrated_legacy, migrated_legacy_context]
       properties:
         id: { type: string, format: uuid }
         kind: { type: string, const: verification }
@@ -581,6 +593,8 @@ components:
           items: { $ref: "#/components/schemas/VerificationCheck" }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        migrated_legacy: { type: boolean }
+        migrated_legacy_context: { type: boolean }
     VerificationProfile:
       type: object
       additionalProperties: false
@@ -634,6 +648,8 @@ components:
         - samples
         - created_at
         - updated_at
+        - migrated_legacy
+        - migrated_legacy_context
       properties:
         id: { type: string, format: uuid }
         spec_schema_version: { type: integer, minimum: 1 }
@@ -674,6 +690,8 @@ components:
           items: { $ref: "#/components/schemas/VerificationSample" }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        migrated_legacy: { type: boolean }
+        migrated_legacy_context: { type: boolean }
     VerificationSubject:
       type: object
       additionalProperties: false
@@ -694,7 +712,7 @@ components:
     VerificationSample:
       type: object
       additionalProperties: false
-      required: [id, schema_version, sequence, status, observed, sampled_at, content_hash, created_at]
+      required: [id, schema_version, sequence, status, observed, sampled_at, content_hash, created_at, migrated_legacy, migrated_legacy_context]
       properties:
         id: { type: string, format: uuid }
         schema_version: { type: integer, minimum: 1 }
@@ -710,6 +728,8 @@ components:
         sampled_at: { type: string, format: date-time }
         content_hash: { $ref: "#/components/schemas/SHA256" }
         created_at: { type: string, format: date-time }
+        migrated_legacy: { type: boolean }
+        migrated_legacy_context: { type: boolean }
     ResolutionReport:
       type: object
       additionalProperties: false
@@ -742,6 +762,7 @@ components:
         - verification
         - timeline
         - agent_usage
+        - migrated_legacy_context
       properties:
         id: { type: string, format: uuid }
         kind: { type: string, const: resolution_report }
@@ -771,6 +792,7 @@ components:
         verification: { type: object }
         timeline: { type: object }
         agent_usage: { type: object }
+        migrated_legacy_context: { type: boolean }
     ResolutionRevisions:
       type: object
       additionalProperties: false

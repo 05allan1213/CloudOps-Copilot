@@ -44,6 +44,8 @@ type VerificationAdvanceSnapshot struct {
 	ProfileHash           string
 	ContractVersion       int
 	CommonStabilityWindow time.Duration
+	MigratedLegacy        bool
+	MigratedLegacyContext bool
 }
 
 type VerificationAdvanceReader interface {

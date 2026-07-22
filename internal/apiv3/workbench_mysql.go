@@ -31,7 +31,7 @@ SELECT p.id, p.public_id, p.cycle_no, p.v3_status, p.row_version,
        d.approved_base_sha, d.approved_post_image_hash,
        d.approved_tree_hash, d.approved_patch_hash,
        d.approved_policy_hash, d.approved_verification_hash,
-       d.approved_evidence_set_hash, d.created_at
+	       d.approved_evidence_set_hash, d.created_at, p.migrated_legacy, p.migrated_legacy_context
 FROM remediation_plans p
 JOIN agent_runs ar
   ON ar.id = p.created_by_agent_run_id
@@ -115,6 +115,8 @@ type mysqlRemediationPlanProjection struct {
 	ApprovedVerificationHash sql.NullString
 	ApprovedEvidenceSetHash  sql.NullString
 	DecisionCreatedAt        sql.NullTime
+	MigratedLegacy           bool
+	MigratedLegacyContext    bool
 }
 
 func (p *MySQLQueryPort) listRemediationPlans(ctx context.Context, request QueryRequest) (QueryResponse, error) {
@@ -190,7 +192,7 @@ func scanRemediationPlanProjection(scanner workbenchScanner) (uint64, Remediatio
 		&row.DecisionExpiresAt, &row.ApprovedHashSchema, &row.ApprovedPlanHash,
 		&row.ApprovedBaseSHA, &row.ApprovedPostImageHash, &row.ApprovedTreeHash,
 		&row.ApprovedPatchHash, &row.ApprovedPolicyHash, &row.ApprovedVerificationHash,
-		&row.ApprovedEvidenceSetHash, &row.DecisionCreatedAt,
+		&row.ApprovedEvidenceSetHash, &row.DecisionCreatedAt, &row.MigratedLegacy, &row.MigratedLegacyContext,
 	); err != nil {
 		return 0, RemediationPlanView{}, err
 	}
@@ -225,6 +227,7 @@ func scanRemediationPlanProjection(scanner workbenchScanner) (uint64, Remediatio
 		VerificationPlanHash: row.VerificationPlanHash, EvidenceBindings: evidence,
 		EvidenceSetHash: row.EvidenceSetHash, ExpiresAt: row.ExpiresAt,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		MigratedLegacy: row.MigratedLegacy, MigratedLegacyContext: row.MigratedLegacyContext,
 	}
 	if row.DecisionPublicID.Valid {
 		if !completeDecisionProjection(row) {
@@ -277,7 +280,8 @@ SELECT cr.public_id, cr.cycle_no, cr.v3_status, cr.row_version, p.public_id,
        cr.updated_replicas, cr.available_replicas, cr.unavailable_replicas,
        cr.sync_started_at, cr.sync_completed_at, cr.delivery_started_at,
        cr.delivery_deadline_at, cr.delivery_completed_at, cr.last_observed_at,
-       cr.failure_code, cr.failure_reason, cr.created_at, cr.updated_at
+	       cr.failure_code, cr.failure_reason, cr.created_at, cr.updated_at,
+	       cr.migrated_legacy, cr.migrated_legacy_context
 FROM change_requests cr
 JOIN remediation_plans p
   ON p.id = cr.plan_id
@@ -325,7 +329,7 @@ func scanDeliveryProjection(scanner workbenchScanner) (*DeliveryView, error) {
 		&item.AvailableReplicas, &item.UnavailableReplicas, &syncStarted,
 		&syncCompleted, &deliveryStarted, &deliveryDeadline, &deliveryCompleted,
 		&lastObserved, &item.FailureCode, &item.FailureReason,
-		&item.CreatedAt, &item.UpdatedAt,
+		&item.CreatedAt, &item.UpdatedAt, &item.MigratedLegacy, &item.MigratedLegacyContext,
 	); err != nil {
 		return nil, err
 	}
@@ -352,7 +356,7 @@ SELECT vr.id, vr.public_id, vr.cycle_no, vr.v3_status, vr.row_version,
        vr.gitops_revision, vr.started_at, vr.deadline_at, vr.completed_at,
        vr.common_stability_window_ms, vr.common_success_since,
        vr.common_window_completed_at, vr.result_summary, vr.failure_reason,
-       vr.created_at, vr.updated_at
+	       vr.created_at, vr.updated_at, vr.migrated_legacy, vr.migrated_legacy_context
 FROM verification_runs vr
 LEFT JOIN remediation_plans p
   ON p.id = vr.remediation_plan_id
@@ -467,7 +471,7 @@ func scanVerificationRunProjection(scanner workbenchScanner) (mysqlVerificationR
 		&row.StartedAt, &view.DeadlineAt, &row.CompletedAt,
 		&view.CommonWindow.StabilityWindowMS, &row.CommonSuccessSince,
 		&row.CommonWindowComplete, &view.ResultSummary, &view.FailureReason,
-		&view.CreatedAt, &view.UpdatedAt,
+		&view.CreatedAt, &view.UpdatedAt, &view.MigratedLegacy, &view.MigratedLegacyContext,
 	); err != nil {
 		return mysqlVerificationRunProjection{}, err
 	}
@@ -505,7 +509,7 @@ SELECT id, public_id, verification_run_id, check_spec_schema_version,
        poll_interval_ms, min_samples, sample_unit, failure_mode,
        first_checked_at, last_checked_at, passed_at,
        consecutive_success_since, attempt_count, failure_reason,
-       created_at, updated_at, row_no
+	       created_at, updated_at, migrated_legacy, migrated_legacy_context, row_no
 FROM (
     SELECT vc.id, vc.public_id, vc.verification_run_id,
            vc.check_spec_schema_version, vc.check_type, vc.status,
@@ -517,7 +521,8 @@ FROM (
            vc.poll_interval_ms, vc.min_samples, vc.sample_unit,
            vc.failure_mode, vc.first_checked_at, vc.last_checked_at,
            vc.passed_at, vc.consecutive_success_since, vc.attempt_count,
-           vc.failure_reason, vc.created_at, vc.updated_at,
+	           vc.failure_reason, vc.created_at, vc.updated_at, vc.migrated_legacy,
+	           vc.migrated_legacy_context,
            ROW_NUMBER() OVER (PARTITION BY vc.verification_run_id ORDER BY vc.id) AS row_no
     FROM verification_checks vc
     WHERE vc.incident_id = ? AND vc.cycle_no = ?
@@ -572,7 +577,7 @@ func scanVerificationCheckProjection(scanner workbenchScanner) (uint64, uint64, 
 		&item.TimeoutMS, &item.PollIntervalMS, &item.MinSamples,
 		&item.SampleUnit, &item.FailureMode, &firstChecked, &lastChecked,
 		&passedAt, &consecutiveSuccess, &item.AttemptCount, &item.FailureReason,
-		&item.CreatedAt, &item.UpdatedAt, &rowNo,
+		&item.CreatedAt, &item.UpdatedAt, &item.MigratedLegacy, &item.MigratedLegacyContext, &rowNo,
 	); err != nil {
 		return 0, 0, VerificationCheckView{}, 0, err
 	}
@@ -611,13 +616,13 @@ func (p *MySQLQueryPort) loadVerificationSamples(
 SELECT public_id, verification_run_id, verification_check_id,
        sample_schema_version, sample_sequence, status, observed_json,
        source_reference, reason_code, window_start_at, window_end_at,
-       sampled_at, content_hash, created_at, row_no
+	       sampled_at, content_hash, created_at, migrated_legacy, migrated_legacy_context, row_no
 FROM (
     SELECT vs.public_id, vs.verification_run_id, vs.verification_check_id,
            vs.sample_schema_version, vs.sample_sequence, vs.status,
            vs.observed_json, vs.source_reference, vs.reason_code,
            vs.window_start_at, vs.window_end_at, vs.sampled_at,
-           vs.content_hash, vs.created_at,
+	           vs.content_hash, vs.created_at, vs.migrated_legacy, vs.migrated_legacy_context,
            ROW_NUMBER() OVER (
                PARTITION BY vs.verification_run_id
                ORDER BY vs.verification_check_id, vs.sample_sequence, vs.id
@@ -671,7 +676,7 @@ func scanVerificationSampleProjection(scanner workbenchScanner) (uint64, uint64,
 		&item.ID, &runID, &checkID, &item.SchemaVersion, &item.Sequence,
 		&item.Status, &observed, &item.SourceReference, &item.ReasonCode,
 		&windowStart, &windowEnd, &item.SampledAt, &item.ContentHash,
-		&item.CreatedAt, &rowNo,
+		&item.CreatedAt, &item.MigratedLegacy, &item.MigratedLegacyContext, &rowNo,
 	); err != nil {
 		return 0, 0, VerificationSampleView{}, 0, err
 	}
