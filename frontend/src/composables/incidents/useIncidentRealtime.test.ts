@@ -5,6 +5,7 @@ import {
   maximumReconnectAttempts,
   parseRefreshEvent,
   reconnectDelayForAttempt,
+  successfulStreamPollDelay,
 } from "./useIncidentRealtime";
 
 describe("V3 incident SSE refresh hints", () => {
@@ -29,5 +30,6 @@ describe("V3 incident SSE refresh hints", () => {
     const delays = Array.from({ length: maximumReconnectAttempts }, (_, attempt) => reconnectDelayForAttempt(attempt));
     expect(delays).toEqual([1000, 2000, 4000, 8000, 16000, 30000, 30000, 30000]);
     expect(reconnectDelayForAttempt(maximumReconnectAttempts)).toBeNull();
+    expect(successfulStreamPollDelay).toBeGreaterThanOrEqual(1000);
   });
 });

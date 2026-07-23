@@ -2,7 +2,16 @@ import { computed, ref } from "vue";
 import { defineStore } from "pinia";
 
 import { fetchSession, oauthSignOutURL } from "../api/auth";
+import { isApiError } from "../api/client";
 import type { SessionActor } from "../types";
+
+export interface SessionError {
+  message: string;
+  status: number | null;
+  code: string;
+  requestID: string;
+  traceID: string;
+}
 
 export const useAuthStore = defineStore("auth", () => {
   const actor = ref<SessionActor | null>(null);
@@ -10,7 +19,7 @@ export const useAuthStore = defineStore("auth", () => {
   const csrfExpiresAt = ref("");
   const initialized = ref(false);
   const loading = ref(false);
-  const error = ref("");
+  const error = ref<SessionError | null>(null);
 
   const isAuthenticated = computed(() => actor.value !== null);
   const isOperator = computed(() => actor.value?.role === "operator");
@@ -23,7 +32,7 @@ export const useAuthStore = defineStore("auth", () => {
   async function loadSession(force = false): Promise<void> {
     if (!force && initialized.value && tokenFresh()) return;
     loading.value = true;
-    error.value = "";
+    error.value = null;
     try {
       const session = await fetchSession();
       actor.value = session.actor;
@@ -32,7 +41,14 @@ export const useAuthStore = defineStore("auth", () => {
       initialized.value = true;
     } catch (err) {
       clearSession();
-      error.value = err instanceof Error ? err.message : "Unable to establish the GitHub session";
+      const apiError = isApiError(err) ? err : null;
+      error.value = {
+        message: err instanceof Error ? err.message : "Unable to establish the GitHub session",
+        status: apiError?.status ?? null,
+        code: apiError?.code ?? "",
+        requestID: apiError?.requestID ?? "",
+        traceID: apiError?.traceID ?? "",
+      };
       throw err;
     } finally {
       loading.value = false;

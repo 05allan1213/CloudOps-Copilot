@@ -393,6 +393,7 @@ tbody tr:last-child td {
 
 .mobile-incident-list {
   display: none;
+  min-width: 0;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -430,6 +431,7 @@ tbody tr:last-child td {
 
   .mobile-incident-list article {
     display: grid;
+    min-width: 0;
     gap: var(--co-space-3);
     padding: var(--co-space-4);
   }
@@ -443,20 +445,25 @@ tbody tr:last-child td {
 
   .mobile-incident-link {
     display: grid;
+    min-width: 0;
     min-height: 44px;
     gap: var(--co-space-1);
     align-content: center;
   }
 
   .mobile-incident-link strong {
+    min-width: 0;
     color: var(--co-text-primary);
     font-size: 16px;
     line-height: 1.35;
+    overflow-wrap: anywhere;
   }
 
   .mobile-incident-link > span {
+    min-width: 0;
     color: var(--co-text-muted);
     font-size: 12px;
+    overflow-wrap: anywhere;
   }
 
   .mobile-incident-list dl {

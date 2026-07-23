@@ -4,14 +4,15 @@ export const fixtureOrigin = "http://127.0.0.1:18082";
 export const incidentID = "00000000-0000-4000-8000-000000000001";
 
 export interface FixtureOptions {
+  session?: "ready" | "expired" | "forbidden" | "error";
   role?: "viewer" | "operator";
   command?: "202" | "403" | "409" | "422" | "501" | "503" | "timeout";
   plan?: "valid" | "expired" | "stale";
-  verification?: "passed" | "failed" | "timed_out" | "inconclusive" | "not_run";
-  list?: "ready" | "loading" | "empty" | "error" | "forbidden";
+  verification?: "passed" | "failed" | "timed_out" | "inconclusive" | "not_run" | "no_change";
+  list?: "ready" | "loading" | "timeout" | "empty" | "error" | "forbidden" | "one" | "twenty" | "fifty" | "long" | "paginated";
   detail?: "ready" | "loading" | "error" | "forbidden";
-  sections?: "ready" | "empty" | "error";
-  sse?: "connected" | "reconnect" | "offline";
+  sections?: "ready" | "empty" | "error" | "states" | "paged";
+  sse?: "connected" | "reconnect" | "finite" | "offline";
 }
 
 export async function configureFixture(request: APIRequestContext, options: FixtureOptions = {}) {
@@ -84,6 +85,7 @@ export async function expectNoLayoutOverflow(page: Page) {
         || element.closest(allowedContainers)) return false;
       if (element.scrollWidth <= element.clientWidth + 1) return false;
       const style = getComputedStyle(element);
+      if (style.textOverflow === "ellipsis" && ["hidden", "clip"].includes(style.overflowX)) return false;
       return style.overflowX !== "auto" && style.overflowX !== "scroll";
     }).slice(0, 30).map(describe);
     const main = document.querySelector<HTMLElement>(".app-main");

@@ -1,12 +1,13 @@
 import http from "node:http";
 
-const fixtureSchemaVersion = 1;
+const fixtureSchemaVersion = 2;
 const port = Number(process.env.CLOUDOPS_E2E_FIXTURE_PORT || 18082);
 const appOrigin = process.env.CLOUDOPS_E2E_APP_ORIGIN || "http://127.0.0.1:4173";
 const incidentID = "00000000-0000-4000-8000-000000000001";
 const planID = "00000050-0000-4000-8000-000000000001";
 const deliveryID = "00000060-0000-4000-8000-000000000001";
 const defaultFixture = Object.freeze({
+  session: "ready",
   role: "operator",
   command: "202",
   plan: "valid",
@@ -20,6 +21,9 @@ const defaultFixture = Object.freeze({
 const fixture = { ...defaultFixture };
 const metrics = {
   commands: [],
+  sessionRequests: 0,
+  listRequests: 0,
+  timelineRequests: 0,
   eventConnections: 0,
   sseAttempts: 0,
   lastEventID: "",
@@ -54,9 +58,16 @@ function cors(request) {
 }
 
 function problem(url, status, code, detail) {
+  const titles = {
+    401: "Authentication required",
+    403: "Forbidden",
+    404: "Not found",
+    409: "Command conflict",
+    422: "Invalid transition",
+  };
   return {
     type: "about:blank",
-    title: status === 403 ? "Forbidden" : status === 409 ? "Command conflict" : status === 422 ? "Invalid transition" : "Service unavailable",
+    title: titles[status] || "Service unavailable",
     status,
     detail,
     instance: url.pathname,
@@ -84,15 +95,16 @@ async function requestBody(request) {
 }
 
 function currentIncident() {
+  const noChange = fixture.verification === "no_change";
   return {
     id: incidentID,
     cycle: 3,
-    status: "awaiting_approval",
+    status: noChange ? "resolved" : "awaiting_approval",
     severity: "critical",
     summary: "Checkout API recovery requires an exact, hash-bound GitOps remediation decision",
     version: 7,
-    needs_attention: true,
-    blocking_reason_code: "approval_required",
+    needs_attention: !noChange,
+    blocking_reason_code: noChange ? "" : "approval_required",
     migrated_legacy: false,
     migrated_legacy_context: false,
     created_at: at(0),
@@ -100,36 +112,36 @@ function currentIncident() {
   };
 }
 
-function listedIncidents() {
-  return [
-    currentIncident(),
-    {
-      ...currentIncident(),
-      id: publicID(1, 2),
-      cycle: 1,
-      status: "investigating",
-      severity: "warning",
-      summary: "Payments worker retry saturation is under bounded evidence-first investigation",
-      version: 4,
-      needs_attention: false,
-      blocking_reason_code: "",
-      created_at: at(-7200),
-      updated_at: at(480),
-    },
-    {
-      ...currentIncident(),
-      id: publicID(1, 3),
-      cycle: 2,
-      status: "resolved",
-      severity: "info",
-      summary: "Inventory API recovery was proved by a complete deterministic verification window",
-      version: 12,
-      needs_attention: false,
-      blocking_reason_code: "",
-      created_at: at(-14400),
-      updated_at: at(240),
-    },
-  ];
+function listedIncidents(count = 3, longContent = false) {
+  const statuses = ["awaiting_approval", "investigating", "resolved", "detected", "delivering", "verifying", "closed"];
+  const severities = ["critical", "warning", "info", "unknown"];
+  return Array.from({ length: count }, (_, index) => {
+    const base = currentIncident();
+    if (index === 0) {
+      return {
+        ...base,
+        summary: longContent
+          ? `结账服务在跨区域恢复演练中需要核对完整的不可变证据链 ${"long-unbroken-operational-identity-".repeat(5)} ${gitSHA("a")}`
+          : base.summary,
+      };
+    }
+    const needsAttention = index % 5 === 0;
+    return {
+      ...base,
+      id: publicID(1, index + 1),
+      cycle: (index % 4) + 1,
+      status: statuses[index % statuses.length],
+      severity: severities[index % severities.length],
+      summary: longContent && index === 1
+        ? `Payments worker ${"extremely-long-unbroken-namespace-segment-".repeat(5)} remains evidence-bound without clipping.`
+        : `Incident ${String(index + 1).padStart(2, "0")} preserves server-owned lifecycle facts for the loaded cursor page.`,
+      version: index + 2,
+      needs_attention: needsAttention,
+      blocking_reason_code: needsAttention ? "verification_attention_required" : "",
+      created_at: at(-index * 300),
+      updated_at: at(900 - index * 12),
+    };
+  });
 }
 
 const generic = {
@@ -154,6 +166,53 @@ const generic = {
     migrated_legacy: false, migrated_legacy_context: false, created_at: at(4), updated_at: at(4),
   }],
 };
+
+function resourceStateItems(resource) {
+  if (resource === "evidence") {
+    return ["available", "partial", "no_data", "unavailable", "invalid", "superseded"].map((status, index) => ({
+      ...generic.evidence[0],
+      id: publicID(40, index + 1),
+      status,
+      version: index + 1,
+      summary: `Persisted Evidence state ${status} remains explicit and is never inferred from color.`,
+      hash: sha256(String((index + 3) % 10)),
+      updated_at: at(10 + index),
+    }));
+  }
+  if (resource === "investigations") {
+    return ["pending", "running", "diagnosed", "insufficient", "failed", "cancelled"].map((status, index) => ({
+      ...generic.investigations[0],
+      id: publicID(30, index + 1),
+      status,
+      version: index + 1,
+      summary: `Bounded Investigation state ${status} exposes persisted execution facts without private reasoning.`,
+      hash: sha256(String((index + 4) % 10)),
+      updated_at: at(20 + index),
+    }));
+  }
+  return generic[resource];
+}
+
+function timelineEvents(count = 205) {
+  return Array.from({ length: count }, (_, index) => ({
+    ...generic.timeline[0],
+    id: publicID(20, index + 1),
+    status: index % 3 === 0 ? "investigating" : index % 3 === 1 ? "awaiting_approval" : "verifying",
+    version: index + 1,
+    summary: `Persisted Timeline event ${String(index + 1).padStart(3, "0")} remains in the exact server page order.`,
+    hash: sha256(String((index + 2) % 10)),
+    created_at: at(index + 2),
+    updated_at: at(index + 2),
+  }));
+}
+
+function timelinePage(afterID) {
+  const all = timelineEvents();
+  const start = afterID ? Math.max(0, all.findIndex((item) => item.id === afterID) + 1) : 0;
+  const items = all.slice(start, start + 100);
+  const nextCursor = start + items.length < all.length ? items[items.length - 1]?.id : "";
+  return { items, ...(nextCursor ? { next_cursor: nextCursor } : {}) };
+}
 
 function longDiff() {
   const lines = [
@@ -419,6 +478,7 @@ function verificationRun(attempt, status, trigger = "post_delivery") {
 
 function verifications() {
   if (fixture.verification === "not_run") return [];
+  if (fixture.verification === "no_change") return [verificationRun(1, "passed", "no_change_signal")];
   return [
     verificationRun(1, "timed_out"),
     verificationRun(2, "inconclusive", "no_change_signal"),
@@ -427,18 +487,21 @@ function verifications() {
 }
 
 function resolutionReport() {
+  const noChange = fixture.verification === "no_change";
   return {
     id: publicID(90, 1),
     kind: "resolution_report",
     status: "resolved",
     cycle: 3,
-    trigger_type: "post_delivery",
-    resolution_reason: "verification_passed",
+    trigger_type: noChange ? "no_change_signal" : "post_delivery",
+    resolution_reason: noChange ? "no_change_verification_passed" : "verification_passed",
     service: "checkout-api",
     workload: "Deployment/checkout-api",
     environment: "demo",
     impact_summary: "Checkout error rate returned below the persisted threshold and remained stable for the complete common window.",
-    summary: "Checkout API recovered after the exact approved GitOps remediation was delivered and deterministically verified.",
+    summary: noChange
+      ? "Checkout API recovery was proved without a change after the persisted no-change Verification passed."
+      : "Checkout API recovered after the exact approved GitOps remediation was delivered and deterministically verified.",
     hash: sha256("9"),
     cycle_started_at: at(0),
     resolved_at: at(130),
@@ -456,10 +519,10 @@ function resolutionReport() {
     trigger_signal: { id: publicID(10, 1), status: "firing" },
     diagnosis: { summary: "Required environment variable was absent from the GitOps manifest." },
     evidence: { ids: [publicID(40, 1), publicID(40, 2)] },
-    remediation_plan: { id: planID, hash: sha256("a") },
-    remediation_decision: { decision: "approved", actor: "demo-operator" },
-    delivery: { id: deliveryID, target_revision: gitSHA("3") },
-    verification: { run_id: publicID(70, 103), status: "passed" },
+    remediation_plan: noChange ? null : { id: planID, hash: sha256("a") },
+    remediation_decision: noChange ? null : { decision: "approved", actor: "demo-operator" },
+    delivery: noChange ? null : { id: deliveryID, target_revision: gitSHA("3") },
+    verification: { run_id: noChange ? publicID(70, 101) : publicID(70, 103), status: "passed" },
     timeline: { terminal_event: "incident_resolved" },
     agent_usage: { runs: 1, private_reasoning_exposed: false },
     migrated_legacy_context: false,
@@ -478,11 +541,14 @@ const server = http.createServer(async (request, response) => {
     if (url.searchParams.get("reset") === "1") {
       Object.assign(fixture, defaultFixture);
       metrics.commands = [];
+      metrics.sessionRequests = 0;
+      metrics.listRequests = 0;
+      metrics.timelineRequests = 0;
       metrics.eventConnections = 0;
       metrics.sseAttempts = 0;
       metrics.lastEventID = "";
     }
-    for (const key of ["role", "command", "plan", "verification", "list", "detail", "sections", "sse"]) {
+    for (const key of ["session", "role", "command", "plan", "verification", "list", "detail", "sections", "sse"]) {
       const value = url.searchParams.get(key);
       if (value) fixture[key] = value;
     }
@@ -501,6 +567,19 @@ const server = http.createServer(async (request, response) => {
   }
 
   if (url.pathname === "/api/v3/session/csrf") {
+    metrics.sessionRequests += 1;
+    if (fixture.session === "expired") {
+      json(request, response, 401, problem(url, 401, "AUTHENTICATION_REQUIRED", "The GitHub session has expired and must be established again."));
+      return;
+    }
+    if (fixture.session === "forbidden") {
+      json(request, response, 403, problem(url, 403, "ROLE_FORBIDDEN", "The authenticated GitHub identity has no Workbench role."));
+      return;
+    }
+    if (fixture.session === "error") {
+      json(request, response, 503, problem(url, 503, "SESSION_UNAVAILABLE", "The trusted session service is temporarily unavailable."));
+      return;
+    }
     json(request, response, 200, {
       token: "fixture-csrf-token",
       expires_at: "2099-01-01T00:00:00Z",
@@ -510,7 +589,9 @@ const server = http.createServer(async (request, response) => {
   }
 
   if (url.pathname === "/api/v3/incidents") {
+    metrics.listRequests += 1;
     if (fixture.list === "loading") await new Promise((resolve) => setTimeout(resolve, 1200));
+    if (fixture.list === "timeout") await new Promise((resolve) => setTimeout(resolve, 11000));
     if (fixture.list === "forbidden") {
       json(request, response, 403, problem(url, 403, "LIST_FORBIDDEN", "The current GitHub identity cannot read Incident projections."));
       return;
@@ -519,7 +600,20 @@ const server = http.createServer(async (request, response) => {
       json(request, response, 503, problem(url, 503, "LIST_UNAVAILABLE", "The Incident list projection is temporarily unavailable."));
       return;
     }
-    json(request, response, 200, { items: fixture.list === "empty" ? [] : listedIncidents() });
+    if (fixture.list === "empty") {
+      json(request, response, 200, { items: [] });
+      return;
+    }
+    if (fixture.list === "paginated") {
+      const cursor = url.searchParams.get("cursor") || "";
+      const all = listedIncidents(50);
+      json(request, response, 200, cursor
+        ? { items: all.slice(20) }
+        : { items: all.slice(0, 20), next_cursor: publicID(1, 20) });
+      return;
+    }
+    const count = fixture.list === "one" ? 1 : fixture.list === "twenty" ? 20 : fixture.list === "fifty" ? 50 : fixture.list === "long" ? 20 : 3;
+    json(request, response, 200, { items: listedIncidents(count, fixture.list === "long") });
     return;
   }
 
@@ -556,7 +650,7 @@ const server = http.createServer(async (request, response) => {
       return;
     }
     if (fixture.command === "501") {
-      json(request, response, 501, problem(url, 501, "NOT_IMPLEMENTED", "Domain command remains the Phase 2 skeleton."));
+      json(request, response, 501, problem(url, 501, "NOT_IMPLEMENTED", "The fixture is simulating a NOT_IMPLEMENTED response for presentation coverage."));
       return;
     }
     if (fixture.command === "503") {
@@ -610,6 +704,19 @@ const server = http.createServer(async (request, response) => {
         Connection: "keep-alive",
       });
       response.write(": connected\n\n");
+      if (fixture.sse === "finite") {
+        if (metrics.sseAttempts === 1) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          const cursor = publicID(95, 1);
+          const foreignCursor = publicID(95, 2);
+          const data = JSON.stringify({ incident_id: incidentID, resource: "timeline" });
+          response.write(`id: ${cursor}\nevent: incident.refresh\ndata: ${data}\n\n`);
+          response.write(`id: ${cursor}\nevent: incident.refresh\ndata: ${data}\n\n`);
+          response.write(`id: ${foreignCursor}\nevent: incident.refresh\ndata: ${JSON.stringify({ incident_id: publicID(99, 1), resource: "evidence" })}\n\n`);
+        }
+        response.end();
+        return;
+      }
       activeStreams.add(response);
       request.on("close", () => {
         activeStreams.delete(response);
@@ -622,15 +729,39 @@ const server = http.createServer(async (request, response) => {
       return;
     }
     if (resource in generic) {
-      json(request, response, 200, { items: fixture.sections === "empty" ? [] : generic[resource] });
+      if (resource === "timeline") metrics.timelineRequests += 1;
+      if (fixture.sections === "empty") {
+        json(request, response, 200, { items: [] });
+        return;
+      }
+      if (resource === "timeline" && fixture.sections === "paged") {
+        json(request, response, 200, timelinePage(url.searchParams.get("after_id") || ""));
+        return;
+      }
+      if (resource === "timeline" && fixture.sse === "finite" && metrics.sseAttempts > 0) {
+        const appended = {
+          ...generic.timeline[0],
+          id: publicID(20, 2),
+          status: "verifying",
+          version: 2,
+          summary: "A finite SSE refresh hint appended this persisted Timeline event without replacing visible content.",
+          hash: sha256("5"),
+          created_at: at(5),
+          updated_at: at(5),
+        };
+        const afterID = url.searchParams.get("after_id") || "";
+        json(request, response, 200, { items: afterID ? [appended] : [generic.timeline[0], appended] });
+        return;
+      }
+      json(request, response, 200, { items: fixture.sections === "states" ? resourceStateItems(resource) : generic[resource] });
       return;
     }
     if (resource === "remediation-plans") {
-      json(request, response, 200, { items: fixture.sections === "empty" ? [] : [remediationPlan()] });
+      json(request, response, 200, { items: fixture.sections === "empty" || fixture.verification === "no_change" ? [] : [remediationPlan()] });
       return;
     }
     if (resource === "delivery") {
-      if (fixture.sections === "empty") {
+      if (fixture.sections === "empty" || fixture.verification === "no_change") {
         json(request, response, 404, problem(url, 404, "DELIVERY_NOT_FOUND", "No Delivery projection exists for this cycle."));
         return;
       }
@@ -642,7 +773,7 @@ const server = http.createServer(async (request, response) => {
       return;
     }
     if (resource === "resolution-report") {
-      if (fixture.sections === "empty") {
+      if (fixture.sections === "empty" || !["passed", "no_change"].includes(fixture.verification)) {
         json(request, response, 404, problem(url, 404, "RESOLUTION_REPORT_NOT_FOUND", "No ResolutionReport exists for this cycle."));
         return;
       }

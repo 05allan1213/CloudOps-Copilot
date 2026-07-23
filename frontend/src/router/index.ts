@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from "vue-router";
 
+import { isApiError } from "../api/client";
 import { useAuthStore } from "../stores/auth";
 import { appRoutes } from "./routes";
 
@@ -23,8 +24,11 @@ router.beforeEach(async (to, from) => {
   try {
     await auth.loadSession();
     return true;
-  } catch {
-    return false;
+  } catch (cause) {
+    // A 401 interceptor already sent the browser to OAuth. Keep that
+    // navigation cancelled; other failures must render the shell boundary so
+    // the user can see the problem identity and retry without a blank route.
+    return isApiError(cause) && cause.status === 401 ? false : true;
   }
 });
 

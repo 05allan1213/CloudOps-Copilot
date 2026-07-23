@@ -7,6 +7,7 @@ import type { IncidentRealtimeEvent } from "../../types/incidents";
 export type RealtimeState = "connecting" | "connected" | "reconnecting" | "disconnected";
 
 export const maximumReconnectAttempts = 8;
+export const successfulStreamPollDelay = 2000;
 
 const refreshResources = new Set([
   "incident",
@@ -43,6 +44,7 @@ export function useIncidentRealtime(incidentID: string, resync: (resource: Incid
   let reconnectTimer: number | null = null;
   let reconnectAttempts = 0;
   let stopped = false;
+  let hasConnected = false;
 
   function clearTimer() {
     if (reconnectTimer !== null) {
@@ -54,8 +56,9 @@ export function useIncidentRealtime(incidentID: string, resync: (resource: Incid
   async function connect() {
     if (stopped || controller) return;
     clearTimer();
-    state.value = reconnectAttempts === 0 ? "connecting" : "reconnecting";
+    if (!hasConnected) state.value = reconnectAttempts === 0 ? "connecting" : "reconnecting";
     controller = new AbortController();
+    let failed = false;
     try {
       const headers: Record<string, string> = { Accept: "text/event-stream" };
       if (lastCursor.value) headers["Last-Event-ID"] = lastCursor.value;
@@ -65,13 +68,19 @@ export function useIncidentRealtime(incidentID: string, resync: (resource: Incid
         signal: controller.signal,
       });
       if (response.status === 401) {
+        stopped = true;
+        state.value = "disconnected";
         redirectToOAuth();
-        throw new Error("GitHub session expired");
+        return;
       }
       if (!response.ok || !response.body) throw new Error(`Realtime request failed with status ${response.status}`);
-      const restored = reconnectAttempts > 0;
+      const wasConnected = hasConnected;
+      const restored = wasConnected && reconnectAttempts > 0;
+      reconnectAttempts = 0;
+      hasConnected = true;
       state.value = "connected";
-      notice.value = restored ? "Realtime connection restored." : "Realtime connection established.";
+      if (restored) notice.value = "Realtime connection restored.";
+      else if (!wasConnected) notice.value = "Realtime connection established.";
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
@@ -103,11 +112,14 @@ export function useIncidentRealtime(incidentID: string, resync: (resource: Incid
       }
     } catch (cause) {
       if (!stopped && !(cause instanceof DOMException && cause.name === "AbortError")) {
-        // Reconnect below. Query refresh remains server-authoritative.
+        failed = true;
       }
     } finally {
       controller = null;
-      if (!stopped) scheduleReconnect();
+      if (!stopped) {
+        if (failed) scheduleReconnect();
+        else scheduleSuccessfulPoll();
+      }
     }
   }
 
@@ -122,9 +134,16 @@ export function useIncidentRealtime(incidentID: string, resync: (resource: Incid
     reconnectTimer = window.setTimeout(() => void connect(), delay);
   }
 
+  function scheduleSuccessfulPoll() {
+    if (stopped) return;
+    state.value = "connected";
+    reconnectTimer = window.setTimeout(() => void connect(), successfulStreamPollDelay);
+  }
+
   function start() {
     stopped = false;
     reconnectAttempts = 0;
+    hasConnected = false;
     void connect();
   }
 
