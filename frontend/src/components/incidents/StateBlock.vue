@@ -20,6 +20,7 @@ const props = withDefaults(defineProps<{
   message?: string;
   requestID?: string;
   traceID?: string;
+  busy?: boolean;
   primaryActionLabel?: string;
   secondaryActionLabel?: string;
 }>(), {
@@ -28,6 +29,7 @@ const props = withDefaults(defineProps<{
   message: "",
   requestID: "",
   traceID: "",
+  busy: false,
   primaryActionLabel: "",
   secondaryActionLabel: "",
 });
@@ -94,12 +96,15 @@ const role = computed(() => ["error", "forbidden", "unavailable"].includes(props
         <el-button
           v-if="primaryActionLabel"
           type="primary"
+          :loading="busy"
+          :disabled="busy"
           @click="$emit('primaryAction')"
         >
           {{ primaryActionLabel }}
         </el-button>
         <el-button
           v-if="secondaryActionLabel"
+          :disabled="busy"
           @click="$emit('secondaryAction')"
         >
           {{ secondaryActionLabel }}
@@ -182,6 +187,10 @@ const role = computed(() => ["error", "forbidden", "unavailable"].includes(props
   flex-wrap: wrap;
   gap: var(--co-space-2);
   margin-top: var(--co-space-4);
+}
+
+.state-actions :deep(.el-button) {
+  min-height: 44px;
 }
 
 @media (max-width: 560px) {

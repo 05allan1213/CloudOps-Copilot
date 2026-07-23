@@ -182,7 +182,7 @@ watch(
   width: 100%;
   max-width: 100%;
   min-width: 0;
-  min-height: 40px;
+  min-height: 44px;
   overflow: hidden;
   padding: 0 34px 0 var(--co-space-3);
   border: 1px solid var(--co-border-default);

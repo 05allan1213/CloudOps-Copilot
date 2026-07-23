@@ -36,7 +36,7 @@ async function submitDecision(page: Page, decision: "approved" | "rejected" = "a
 }
 
 test("Incident List is keyboard navigable and URL-synced", async ({ page, request }) => {
-  const browser = monitorBrowser(page);
+  const browser = monitorBrowser(page, { allowedFailures: [/\/events: net::ERR_ABORTED$/] });
   await configureFixture(request, { list: "ready" });
   await page.setViewportSize({ width: 1440, height: 900 });
   await openList(page);
@@ -62,6 +62,11 @@ test("Incident List is keyboard navigable and URL-synced", async ({ page, reques
   const firstIncident = page.locator(".desktop-table-wrap tbody a").first();
   await firstIncident.click();
   await expect(page.locator(".incident-detail-view h1")).toBeFocused();
+  await page.locator('.desktop-zone-list a[href="#investigation-zone"]').click();
+  await expect(page).toHaveURL(/#investigation-zone$/);
+  await expect(page.locator('.desktop-zone-list a[aria-current="location"]')).toHaveAttribute("href", "#investigation-zone");
+  await page.goBack();
+  await expect(page.locator("#incident-list-title")).toBeVisible();
   browser.expectClean();
 });
 
@@ -173,9 +178,11 @@ test("Incident Detail keeps the four-zone chain, dialog focus, and responsive la
   await expectMinimumTarget(page, ".approve-button, .reject-button");
   await expectMinimumTarget(page, ".copy-button");
 
+  await page.locator('.desktop-zone-list a[href="#investigation-zone"]').click();
+  await expect(page).toHaveURL(/#investigation-zone$/);
   const inspectEvidence = page.locator(".evidence-desktop .inspect-button").first();
   await inspectEvidence.click();
-  await expect(page).toHaveURL(/evidence=00000040-0000-4000-8000-000000000001/);
+  await expect(page).toHaveURL(/evidence=00000040-0000-4000-8000-000000000001#investigation-zone$/);
   const evidenceDrawer = page.locator("dialog.evidence-drawer");
   await expect(evidenceDrawer).toHaveAttribute("open", "");
   await expect(evidenceDrawer.locator(".drawer-close")).toBeFocused();
@@ -191,6 +198,13 @@ test("Incident Detail keeps the four-zone chain, dialog focus, and responsive la
   await page.keyboard.press("Escape");
   await expect(decisionDialog).not.toHaveAttribute("open", "");
   await expect(approve).toBeFocused();
+
+  const zonePopupPromise = page.context().waitForEvent("page");
+  await page.locator('.desktop-zone-list a[href="#remediation-delivery"]').click({ modifiers: ["Control"] });
+  const zonePopup = await zonePopupPromise;
+  await zonePopup.waitForLoadState("domcontentloaded");
+  await expect(zonePopup).toHaveURL(/#remediation-delivery$/);
+  await zonePopup.close();
 
   for (const [width, height] of [[320, 812], [375, 812], [414, 896], [667, 375], [720, 900], [768, 900], [1024, 768], [1440, 1000]]) {
     await page.setViewportSize({ width, height });
@@ -410,6 +424,7 @@ test("themes, motion, contrast, zoom-equivalent width, and visual baselines rema
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.emulateMedia({ colorScheme: "dark", reducedMotion: "no-preference" });
   await openList(page);
+  await expect(page.locator('meta[name="viewport"]')).toHaveAttribute("content", /viewport-fit=cover/);
   await expect(page).toHaveScreenshot("incident-list-dark-1440.png");
 
   await page.getByRole("button", { name: "Switch to light theme" }).click();

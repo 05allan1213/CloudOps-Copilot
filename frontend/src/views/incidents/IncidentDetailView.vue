@@ -155,6 +155,7 @@ async function refreshIncidentAfterConflict() {
       <StateBlock
         :state="detail.pageState.value === 'ready' ? 'error' : detail.pageState.value"
         :heading-level="2"
+        :busy="detail.refreshing.value || detail.pageState.value === 'loading'"
         :title="detail.pageState.value === 'loading' ? 'Loading Incident' : undefined"
         :message="detail.pageError.value?.message"
         :request-i-d="detail.pageError.value?.requestID"
@@ -401,7 +402,7 @@ async function refreshIncidentAfterConflict() {
 .back-link {
   display: inline-flex;
   width: fit-content;
-  min-height: 40px;
+  min-height: 44px;
   align-items: center;
   gap: var(--co-space-2);
   color: var(--co-action-primary);

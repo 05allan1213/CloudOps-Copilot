@@ -345,7 +345,11 @@ function handleUserCommand(command: string) {
 
 @media (max-width: 767px) {
   .app-header {
+    min-height: calc(var(--co-header-height) + env(safe-area-inset-top) + env(safe-area-inset-bottom));
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
     padding-left: max(var(--co-space-2), env(safe-area-inset-left));
+    padding-right: max(var(--co-space-2), env(safe-area-inset-right));
   }
 
   .icon-button.mobile-navigation-trigger {

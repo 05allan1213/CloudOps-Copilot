@@ -121,7 +121,7 @@ const role = computed(() => {
 .command-feedback dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
 .conflict-guidance { font-weight: 650; }
 .feedback-actions { display: flex; flex-wrap: wrap; gap: var(--co-space-2); }
-.command-feedback button { width: fit-content; min-height: 40px; padding: 0 var(--co-space-3); border: 1px solid currentcolor; border-radius: var(--co-radius-control); color: inherit; background: transparent; cursor: pointer; }
+.command-feedback button { width: fit-content; min-height: 44px; padding: 0 var(--co-space-3); border: 1px solid currentcolor; border-radius: var(--co-radius-control); color: inherit; background: transparent; cursor: pointer; }
 .command-feedback button:hover { background: var(--co-bg-hover); }
 .command-feedback button:disabled { cursor: wait; opacity: .65; }
 

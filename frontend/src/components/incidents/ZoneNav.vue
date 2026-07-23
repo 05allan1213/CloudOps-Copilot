@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 
 export interface IncidentZone {
   id: string;
@@ -13,6 +13,7 @@ const props = defineProps<{
 }>();
 
 const route = useRoute();
+const router = useRouter();
 const activeZone = ref(zoneFromHash(route.hash) || props.zones[0]?.id || "");
 let observer: IntersectionObserver | null = null;
 
@@ -28,12 +29,25 @@ function navigateToZone(zoneID: string) {
   replaceZoneHash(zoneID);
 }
 
+function onDesktopZoneClick(event: MouseEvent, zoneID: string) {
+  // Keep native anchor behavior for Cmd/Ctrl-click, middle-click, and other
+  // modified clicks so users can open a deep-linked zone in another tab.
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  navigateToZone(zoneID);
+}
+
 function replaceZoneHash(zoneID: string) {
   const nextHash = `#${zoneID}`;
-  if (window.location.hash === nextHash) return;
-  const url = new URL(window.location.href);
-  url.hash = nextHash;
-  window.history.replaceState(window.history.state, "", url);
+  if (route.hash === nextHash) return;
+  void router.replace({
+    path: route.path,
+    query: route.query,
+    hash: nextHash,
+  }).catch(() => {
+    // The visible scroll and active state remain useful if a navigation guard
+    // rejects a cosmetic hash update.
+  });
 }
 
 function onZoneSelect(event: Event) {
@@ -90,7 +104,7 @@ onBeforeUnmount(() => observer?.disconnect());
         <a
           :href="`#${zone.id}`"
           :aria-current="activeZone === zone.id ? 'location' : undefined"
-          @click.prevent="navigateToZone(zone.id)"
+          @click="onDesktopZoneClick($event, zone.id)"
         >
           <span aria-hidden="true">{{ zone.index }}</span>
           {{ zone.label }}

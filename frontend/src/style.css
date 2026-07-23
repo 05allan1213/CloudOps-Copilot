@@ -107,7 +107,7 @@ pre,
 }
 
 .el-button {
-  min-height: 40px;
+  min-height: 44px;
   transition: background-color var(--co-motion-fast) var(--co-ease-out),
     border-color var(--co-motion-fast) var(--co-ease-out),
     color var(--co-motion-fast) var(--co-ease-out);

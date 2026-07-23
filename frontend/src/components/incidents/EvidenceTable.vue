@@ -55,7 +55,7 @@ function replaceEvidenceQuery(evidenceID: string) {
   const query = { ...route.query };
   if (evidenceID) query.evidence = evidenceID;
   else delete query.evidence;
-  return router.replace({ path: route.path, query, hash: window.location.hash });
+  return router.replace({ path: route.path, query, hash: route.hash });
 }
 
 function openEvidence(item: ResourceView, event: MouseEvent) {
@@ -358,7 +358,7 @@ td code { font-size: 10px; }
 .evidence-desktop :deep(.result-badge) { white-space: nowrap; }
 
 .inspect-button {
-  min-height: 40px;
+  min-height: 44px;
   padding: 0 var(--co-space-3);
   border: 1px solid var(--co-border-default);
   border-radius: var(--co-radius-control);
@@ -394,6 +394,8 @@ td code { font-size: 10px; }
 .evidence-drawer {
   position: fixed;
   inset: 0 0 0 auto;
+  display: none;
+  flex-direction: column;
   width: min(560px, 94vw);
   max-width: none;
   height: 100dvh;
@@ -407,6 +409,8 @@ td code { font-size: 10px; }
   overscroll-behavior: contain;
 }
 
+.evidence-drawer[open] { display: flex; }
+
 .evidence-drawer::backdrop { background: rgb(0 0 0 / 52%); }
 
 .drawer-header {
@@ -414,11 +418,11 @@ td code { font-size: 10px; }
   top: 0;
   z-index: 1;
   display: flex;
-  min-height: 64px;
+  min-height: calc(64px + env(safe-area-inset-top));
   align-items: center;
   justify-content: space-between;
   gap: var(--co-space-4);
-  padding: var(--co-space-3) var(--co-space-5);
+  padding: max(var(--co-space-3), env(safe-area-inset-top)) max(var(--co-space-5), env(safe-area-inset-right)) var(--co-space-3) max(var(--co-space-5), env(safe-area-inset-left));
   border-bottom: 1px solid var(--co-border-default);
   background: var(--co-bg-overlay);
 }
@@ -431,8 +435,10 @@ td code { font-size: 10px; }
 .drawer-body {
   display: grid;
   gap: var(--co-space-5);
-  height: calc(100dvh - 64px);
-  padding: var(--co-space-5);
+  flex: 1;
+  min-height: 0;
+  height: auto;
+  padding: var(--co-space-5) max(var(--co-space-5), env(safe-area-inset-right)) max(var(--co-space-5), env(safe-area-inset-bottom)) max(var(--co-space-5), env(safe-area-inset-left));
   overflow-y: auto;
   overscroll-behavior: contain;
 }

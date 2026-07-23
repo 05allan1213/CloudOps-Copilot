@@ -127,6 +127,7 @@ onMounted(() => {
     <StateBlock
       v-else-if="state === 'forbidden'"
       state="forbidden"
+      :busy="loading"
       :message="error?.message"
       :request-i-d="error?.requestID"
       :trace-i-d="error?.traceID"
@@ -137,6 +138,7 @@ onMounted(() => {
     <StateBlock
       v-else-if="state === 'error' || state === 'unavailable'"
       :state="state"
+      :busy="loading"
       :message="error?.message"
       :request-i-d="error?.requestID"
       :trace-i-d="error?.traceID"
@@ -147,6 +149,7 @@ onMounted(() => {
     <StateBlock
       v-else-if="state === 'empty'"
       state="empty"
+      :busy="loading"
       :primary-action-label="hasActiveFilters ? 'Clear Filters' : 'Retry Incidents'"
       :secondary-action-label="hasActiveFilters ? 'Retry' : undefined"
       @primary-action="recoverEmptyState"
@@ -157,6 +160,7 @@ onMounted(() => {
       <StateBlock
         v-if="error"
         state="error"
+        :busy="loading"
         title="Additional results could not be loaded"
         :message="error.message"
         :request-i-d="error.requestID"

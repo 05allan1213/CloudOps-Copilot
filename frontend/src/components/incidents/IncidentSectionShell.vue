@@ -105,9 +105,10 @@ const traceID = computed(() => typeof props.error === "string" ? "" : props.erro
         v-if="retryable"
         type="button"
         class="section-retry"
+        :disabled="refreshing || loadingMore"
         @click="emit('retry')"
       >
-        {{ retryLabel }}
+        {{ refreshing || loadingMore ? "Retrying…" : retryLabel }}
       </button>
     </div>
     <div
@@ -142,9 +143,10 @@ const traceID = computed(() => typeof props.error === "string" ? "" : props.erro
         v-if="retryable"
         type="button"
         class="section-retry"
+        :disabled="refreshing || loadingMore"
         @click="emit('retry')"
       >
-        {{ retryLabel }}
+        {{ refreshing || loadingMore ? "Retrying…" : retryLabel }}
       </button>
     </div>
     <div
@@ -171,9 +173,10 @@ const traceID = computed(() => typeof props.error === "string" ? "" : props.erro
         v-if="retryable"
         type="button"
         class="section-retry"
+        :disabled="refreshing || loadingMore"
         @click="emit('retry')"
       >
-        {{ retryLabel }}
+        {{ refreshing || loadingMore ? "Retrying…" : retryLabel }}
       </button>
     </div>
     <div
@@ -294,7 +297,7 @@ const traceID = computed(() => typeof props.error === "string" ? "" : props.erro
 
 .section-retry {
   width: fit-content;
-  min-height: 40px;
+  min-height: 44px;
   margin-top: var(--co-space-2);
   padding: 0 var(--co-space-3);
   border: 1px solid currentcolor;
@@ -305,6 +308,7 @@ const traceID = computed(() => typeof props.error === "string" ? "" : props.erro
 }
 
 .section-retry:hover { background: var(--co-bg-hover); }
+.section-retry:disabled { cursor: wait; opacity: .65; }
 
 @keyframes section-pulse {
   50% { opacity: 0.55; }

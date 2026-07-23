@@ -83,6 +83,7 @@ watch(
           <StateBlock
             state="loading"
             :heading-level="2"
+            :busy="auth.loading"
             title="Establishing GitHub session"
             message="Checking the trusted session and issuing a short-lived CSRF token."
           />
@@ -101,6 +102,7 @@ watch(
           <StateBlock
             :state="authBoundaryState"
             :heading-level="2"
+            :busy="auth.loading"
             :title="authBoundaryState === 'forbidden' ? 'Workbench access is forbidden' : 'Workbench session unavailable'"
             :message="auth.error.message"
             :request-i-d="auth.error.requestID"
@@ -197,7 +199,10 @@ watch(
 .app-main {
   flex: 1;
   min-width: 0;
-  padding: clamp(16px, 2vw, 32px);
+  padding: clamp(16px, 2vw, 32px)
+    max(clamp(16px, 2vw, 32px), env(safe-area-inset-right))
+    max(clamp(16px, 2vw, 32px), env(safe-area-inset-bottom))
+    max(clamp(16px, 2vw, 32px), env(safe-area-inset-left));
   overflow: auto;
   overscroll-behavior: contain;
   background: var(--co-bg-canvas);
@@ -250,14 +255,14 @@ watch(
 :global(.mobile-navigation .el-drawer__header) {
   min-height: var(--co-header-height);
   margin: 0;
-  padding: 0 var(--co-space-4);
+  padding: 0 max(var(--co-space-4), env(safe-area-inset-right)) 0 max(var(--co-space-4), env(safe-area-inset-left));
   border-bottom: 1px solid var(--co-border-default);
   color: var(--co-text-primary);
   font-weight: 700;
 }
 
 :global(.mobile-navigation .el-drawer__body) {
-  padding: var(--co-space-4) var(--co-space-2);
+  padding: var(--co-space-4) max(var(--co-space-2), env(safe-area-inset-right)) max(var(--co-space-4), env(safe-area-inset-bottom)) max(var(--co-space-2), env(safe-area-inset-left));
   overscroll-behavior: contain;
 }
 
@@ -269,7 +274,10 @@ watch(
 
 @media (max-width: 767px) {
   .app-main {
-    padding: var(--co-space-4);
+    padding: var(--co-space-4)
+      max(var(--co-space-4), env(safe-area-inset-right))
+      max(var(--co-space-4), env(safe-area-inset-bottom))
+      max(var(--co-space-4), env(safe-area-inset-left));
     overflow-x: hidden;
   }
 }

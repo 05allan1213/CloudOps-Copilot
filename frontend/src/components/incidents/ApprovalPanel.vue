@@ -586,11 +586,11 @@ function submitDecision() {
 }
 
 .decision-dialog::backdrop { background: rgb(0 0 0 / 56%); }
-.decision-dialog > header { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: var(--co-space-4); padding: var(--co-space-4) var(--co-space-5); border-bottom: 1px solid var(--co-border-default); }
+.decision-dialog > header { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: var(--co-space-4); padding: max(var(--co-space-4), env(safe-area-inset-top)) max(var(--co-space-5), env(safe-area-inset-right)) var(--co-space-4) max(var(--co-space-5), env(safe-area-inset-left)); border-bottom: 1px solid var(--co-border-default); }
 .decision-dialog h4 { margin: 2px 0 0; font-size: 18px; }
 .dialog-close { display: grid; width: 44px; height: 44px; flex: 0 0 auto; place-items: center; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); color: var(--co-text-primary); background: transparent; cursor: pointer; }
 .dialog-close:hover { background: var(--co-bg-hover); }
-.dialog-body { display: grid; gap: var(--co-space-3); max-height: calc(100dvh - 104px); padding: var(--co-space-5); overflow-y: auto; overscroll-behavior: contain; }
+.dialog-body { display: grid; gap: var(--co-space-3); max-height: calc(100dvh - 104px - env(safe-area-inset-top)); padding: var(--co-space-5) max(var(--co-space-5), env(safe-area-inset-right)) max(var(--co-space-5), env(safe-area-inset-bottom)) max(var(--co-space-5), env(safe-area-inset-left)); overflow-y: auto; overscroll-behavior: contain; }
 .dialog-body > p { margin: 0; color: var(--co-text-secondary); overflow-wrap: anywhere; }
 .dialog-body label { font-weight: 700; }
 .dialog-body textarea { width: 100%; min-height: 132px; resize: vertical; padding: var(--co-space-3); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); color: var(--co-text-primary); background: var(--co-bg-surface); font-size: 16px; }

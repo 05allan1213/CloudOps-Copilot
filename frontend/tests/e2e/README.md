@@ -10,6 +10,10 @@ The Node fixture server is presentation-only. It returns deterministic, contract
 
 The production command path is implemented and wired in `internal/startup/container.go`, `internal/bootstrap/api/api.go`, and `internal/command/port.go`. The fixture's optional `501` response is only a frontend presentation state and must not be described as the production backend behavior.
 
+### Current V3 projection boundary
+
+The browser deliberately renders only fields that are present in the current V3 contract. `IncidentView`/the `Incident` schema do not project `service` or `workload`; the List therefore keeps the exact `service` query filter but labels those response fields as unavailable instead of deriving them from the summary or resource name. The generic `ResourceView` used by Investigation and Evidence also does not project `AgentStep`, `Observation`, `Claim`, `Diagnosis`, or trust axes such as authority/freshness. Those cells and drawer facts remain explicitly `Not projected`, and no fixture value is promoted to integration evidence. Contract-level population of these fields is `NOT RUN` in this frontend-only validation slice.
+
 ## Exact commands
 
 Validated in this workspace with the installed Chromium binary:
@@ -62,25 +66,26 @@ The emitted files in local `frontend/dist` and image `/app/static` were then com
 | Reduced-motion matrix | PASS | animation and transition durations collapse to at most 1 ms |
 | Layout-shift / interaction budget | PASS | CLS `0`; interaction `13 ms`; maximum observed long task `96 ms` |
 | External font requests | PASS | no Google Fonts, Typekit, or Adobe Fonts requests |
-| Direct local CDP runtime probe | PASS | 414x812, 3 rows, document/main widths 414/414, semantic 404 `A[href="/incidents"]`, no console or page errors |
+| Direct local CDP runtime probe | PASS | 414x812, fixture list rendered, document width 414/414 and `.app-main` 406/406 (scrollbar included, no overflow), semantic 404 `main a[href="/incidents"]`, no console or page errors |
 | Docker `cloudops-api` target | PASS | frontend rebuilt in the pinned Node image and copied into `/app/static` |
 | Local build vs image static parity | PASS (12/12) | relative paths and SHA-256 values matched exactly |
 | Playwright browser MCP | NOT RUN | MCP requires missing `/opt/google/chrome/chrome` |
 | Chrome DevTools MCP | NOT RUN | MCP initialization returns `Target.setDiscoverTargets: Target closed` |
 | Real OAuth/API/SSE/command integration | NOT RUN | live API containers reset all requests while restarting on Docker DNS and kubeconfig-permission failures |
+| V3 service/workload and AgentStep/Evidence trust projection parity | NOT RUN | current `Incident`/`Resource` DTOs do not expose those fields; UI keeps the boundary explicit |
 
 ## Authoritative 19-test browser matrix
 
 | # | Browser contract | Result |
 | ---: | --- | --- |
-| 1 | Keyboard navigation, skip link, URL-synced filters, loaded-row sorting, and detail focus | PASS |
+| 1 | Keyboard navigation, skip link, URL-synced filters (including the exact service query), loaded-row sorting, and detail focus | PASS |
 | 2 | List loading, empty, forbidden, and unavailable states | PASS |
 | 3 | OAuth redirect on 401 and recoverable session boundaries on 403/503 | PASS |
 | 4 | 1/20/50-row datasets, long content, cursor append, native Ctrl-click, and back/scroll restoration | PASS |
 | 5 | Stable retryable list timeout | PASS |
 | 6 | Four-zone detail chain, dialog focus restoration, responsive layout, and 414px long-content containment | PASS |
 | 7 | Viewer permissions and projection failures fail closed without hiding recovery truth | PASS |
-| 8 | Every frozen Investigation and Evidence presentation state | PASS |
+| 8 | Every frozen Investigation and Evidence presentation state, with explicit `Not projected` AgentStep/trust boundaries | PASS (presentation only) |
 | 9 | Timeline cursor append beyond 200 persisted events without replacement | PASS |
 | 10 | Finite SSE resume with `Last-Event-ID`, dedupe, foreign-event rejection, focus, and scroll preservation | PASS |
 | 11 | Bounded reconnect keeps the projection visible and restores Live state | PASS |
