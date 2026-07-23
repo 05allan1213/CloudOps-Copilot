@@ -210,7 +210,7 @@ check_llm() {
   require_env GOLDEN_LLM_API_KEY_FILE; require_env GOLDEN_LLM_API_URL; require_env GOLDEN_LLM_MODEL
   [[ "${GOLDEN_LLM_API_URL}" == https://* ]] || fail llm "LLM API URL must use HTTPS"
   key="$(read_secret "${GOLDEN_LLM_API_KEY_FILE}")"
-  payload="$(jq -cn --arg model "${GOLDEN_LLM_MODEL}" '{model:$model,temperature:0,max_tokens:8,messages:[{role:"user",content:"Reply only with OK."}]}')"
+  payload="$(jq -cn --arg model "${GOLDEN_LLM_MODEL}" '{model:$model,temperature:0,max_tokens:64,messages:[{role:"user",content:"Reply only with OK."}]}')"
   response="$(curl --fail --silent --show-error --max-time 60 -H 'Content-Type: application/json' -H "Authorization: Bearer ${key}" --data-binary "${payload}" "${GOLDEN_LLM_API_URL}")"; unset key
   jq -e '.choices[0].message.content|type=="string" and length>0' <<<"${response}" >/dev/null || fail llm "live LLM response contract failed"
   MODEL_PROVIDER="${GOLDEN_LLM_PROVIDER:-unknown}"; MODEL_NAME="${GOLDEN_LLM_MODEL}"
