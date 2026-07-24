@@ -1884,13 +1884,6 @@ func selectedTool(checkpoint investigationStepCheckpoint) string {
 
 func insertInvestigationEvidence(ctx context.Context, tx asyncjob.DBTX, snapshot investigationSnapshot, checkpoint investigationStepCheckpoint, stepID uint64, stepPublicID, publicID string) error {
 	observation := *checkpoint.Observation
-	facts, err := evidenceEnvelope(observation)
-	if err != nil {
-		return fmt.Errorf("encode investigation Evidence: %w", err)
-	}
-	if len(facts) > snapshot.Limits.MaxEvidenceBytes {
-		return fmt.Errorf("%w: investigation Evidence exceeds its bound", asyncjob.ErrBusinessBudgetExceeded)
-	}
 	producerKey := hashCanonical("agent-step", snapshot.RunPublicID, observation.SourceSystem, observation.CollectionPath, observation.TemplateVersion, observation.ContentHash)
 	idempotencyKey := hashCanonical("agent-evidence", snapshot.Task.DedupeKey, observation.ContentHash)
 	templateID, templateVersion, err := evidenceTemplateIdentity(observation.TemplateVersion)
@@ -1900,14 +1893,23 @@ func insertInvestigationEvidence(ctx context.Context, tx asyncjob.DBTX, snapshot
 	_, argumentsHash := stepArguments(checkpoint)
 	timeRange, _ := canonicalEvidenceJSON(map[string]any{"from": snapshot.State.Window.From.UTC(), "to": snapshot.State.Window.To.UTC()})
 	scopeHash := hashCanonical("evidence-scope", snapshot.IncidentPublicID, fmt.Sprint(snapshot.Task.CycleNo), snapshot.ScopeRef)
-	provenance := map[string]string{
-		"source_system": observation.SourceSystem, "collection_path": observation.CollectionPath,
-		"agent_run_id": snapshot.RunPublicID, "agent_step_id": stepPublicID,
-	}
+	provenance := make(map[string]string, len(observation.Provenance)+4)
 	for key, value := range observation.Provenance {
 		provenance[key] = value
 	}
-	metadata, err := buildDurableEvidenceMetadata(observation.Facts, provenance, observation.InputEvidenceIDs, observation.InputSampleIDs, observation.InputHashes)
+	provenance["source_system"] = observation.SourceSystem
+	provenance["collection_path"] = observation.CollectionPath
+	provenance["agent_run_id"] = snapshot.RunPublicID
+	provenance["agent_step_id"] = stepPublicID
+	observation.Provenance = provenance
+	facts, err := evidenceEnvelope(observation)
+	if err != nil {
+		return fmt.Errorf("encode investigation Evidence: %w", err)
+	}
+	if len(facts) > snapshot.Limits.MaxEvidenceBytes {
+		return fmt.Errorf("%w: investigation Evidence exceeds its bound", asyncjob.ErrBusinessBudgetExceeded)
+	}
+	metadata, err := buildDurableEvidenceMetadata(observation.Facts, observation.Provenance, observation.InputEvidenceIDs, observation.InputSampleIDs, observation.InputHashes)
 	if err != nil {
 		return fmt.Errorf("build investigation Evidence provenance: %w", err)
 	}

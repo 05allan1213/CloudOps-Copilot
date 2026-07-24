@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -98,6 +99,11 @@ VALUES (?, ?, 'RUNNING', 'fixture-model', 'incident-agent-v3', 10, NULL, '', 1, 
 			Status: agent.CollectionAvailable, SourceSystem: "argocd", CollectionPath: "argocd/deployment-context",
 			TemplateVersion: "deployment-context/v1", Summary: "exact deployment context",
 			Facts: deploymentFacts, ContentHash: hashBytesInvestigation([]byte("candidate-deployment-observation")),
+			Provenance: map[string]string{
+				"agent_run_id": "provider-forged-run", "agent_step_id": "provider-forged-step",
+				"source_system": "provider-forged-source", "collection_path": "provider-forged-path",
+				"provider": "fixture",
+			},
 		},
 	}
 	tx, err := db.BeginTx(ctx, nil)
@@ -144,6 +150,35 @@ VALUES (?, ?, 'RUNNING', 'fixture-model', 'incident-agent-v3', 10, NULL, '', 1, 
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
+	}
+
+	reloaded := snapshot
+	reloaded.Facts = nil
+	reloaded.Evidence = make(map[string]agent.EvidenceRecord)
+	if err := (mysqlInvestigationLoader{db: db}).loadEvidence(ctx, &reloaded); err != nil {
+		t.Fatalf("reload durable investigation Evidence: %v", err)
+	}
+	if len(reloaded.Evidence) != 2 || len(reloaded.Facts) != len(deploymentFacts)+len(detailFacts) {
+		t.Fatalf("reloaded Evidence/facts=%d/%d, want 2/%d", len(reloaded.Evidence), len(reloaded.Facts), len(deploymentFacts)+len(detailFacts))
+	}
+	expectedProvenance := map[string]map[string]string{
+		deploymentEvidenceID: {
+			"source_system": "argocd", "collection_path": "argocd/deployment-context",
+			"agent_run_id": agentRunPublicID, "agent_step_id": deploymentStepPublicID, "provider": "fixture",
+		},
+		detailEvidenceID: {
+			"source_system": "github", "collection_path": "github/change-detail",
+			"agent_run_id": agentRunPublicID, "agent_step_id": detailStepPublicID,
+		},
+	}
+	for evidenceID, want := range expectedProvenance {
+		var got map[string]string
+		if err := json.Unmarshal(reloaded.Evidence[evidenceID].Provenance, &got); err != nil {
+			t.Fatalf("decode Evidence %s provenance: %v", evidenceID, err)
+		}
+		if !maps.Equal(got, want) {
+			t.Fatalf("Evidence %s provenance=%v, want=%v", evidenceID, got, want)
+		}
 	}
 
 	snapshot.Facts = append(append([]agent.EvidenceFact(nil), deploymentFacts...), detailFacts...)
