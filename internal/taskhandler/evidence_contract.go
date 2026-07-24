@@ -1,8 +1,10 @@
 package taskhandler
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"slices"
 	"strings"
 
@@ -95,6 +97,26 @@ func canonicalEvidenceJSON(value any) (json.RawMessage, error) {
 		return nil, errors.New("durable Evidence metadata is not canonical JSON")
 	}
 	return encoded, nil
+}
+
+// canonicalEvidenceRawJSON normalizes JSON read from MySQL before it is
+// compared or hashed. MySQL JSON columns may reorder keys and add whitespace
+// even when the persisted contract was written from compact Go JSON.
+func canonicalEvidenceRawJSON(raw []byte) (json.RawMessage, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, errors.New("durable Evidence JSON is invalid")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return nil, errors.New("durable Evidence JSON contains multiple values")
+		}
+		return nil, errors.New("durable Evidence JSON has trailing data")
+	}
+	return canonicalEvidenceJSON(value)
 }
 
 func nonNilStringMap(value map[string]string) map[string]string {

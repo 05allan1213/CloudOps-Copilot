@@ -493,6 +493,34 @@ ORDER BY collected_at, id`
 			&migratedLegacy, &migratedLegacyContext); err != nil {
 			return fmt.Errorf("scan investigation evidence: %w", err)
 		}
+		canonicalize := func(name string, raw []byte) ([]byte, error) {
+			canonical, canonicalErr := canonicalEvidenceRawJSON(raw)
+			if canonicalErr != nil {
+				return nil, fmt.Errorf("canonicalize %s: %w", name, canonicalErr)
+			}
+			return canonical, nil
+		}
+		jsonFields := []struct {
+			name   string
+			target *[]byte
+		}{
+			{name: "facts", target: &factsJSON},
+			{name: "provenance", target: &provenanceJSON},
+			{name: "trust axes", target: &trustJSON},
+			{name: "corroboration groups", target: &corroborationJSON},
+			{name: "input evidence IDs", target: &inputEvidenceJSON},
+			{name: "input sample IDs", target: &inputSampleJSON},
+			{name: "input hashes", target: &inputHashesJSON},
+			{name: "redaction counts", target: &redactionCountsJSON},
+			{name: "prompt safety flags", target: &promptFlagsJSON},
+		}
+		for _, field := range jsonFields {
+			canonical, canonicalErr := canonicalize(field.name, *field.target)
+			if canonicalErr != nil {
+				return canonicalErr
+			}
+			*field.target = canonical
+		}
 		if contractVersion != 0 && contractVersion != evidenceContractVersion {
 			return fmt.Errorf("%w: investigation Evidence contract version is unsupported", asyncjob.ErrInvalidMutation)
 		}

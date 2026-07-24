@@ -1,6 +1,7 @@
 package taskhandler
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -22,6 +23,24 @@ func TestBuildDurableEvidenceMetadataFreezesTrustAndDerivedInputs(t *testing.T) 
 	}
 	if jsonArrayLength(metadata.InputEvidenceIDs) != 1 || jsonArrayLength(metadata.InputSampleIDs) != 1 || jsonArrayLength(metadata.InputHashes) != 2 {
 		t.Fatalf("derived inputs evidence=%s samples=%s hashes=%s", metadata.InputEvidenceIDs, metadata.InputSampleIDs, metadata.InputHashes)
+	}
+}
+
+func TestCanonicalEvidenceRawJSONNormalizesMySQLEncoding(t *testing.T) {
+	fromGo := json.RawMessage(`{"agent_step_id":"step-1","cycle_no":9007199254740993,"source_system":"kubernetes"}`)
+	fromMySQL := []byte(`{ "source_system": "kubernetes", "cycle_no": 9007199254740993, "agent_step_id": "step-1" }`)
+	canonical, err := canonicalEvidenceRawJSON(fromMySQL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(canonical, fromGo) {
+		t.Fatalf("canonical=%s want=%s", canonical, fromGo)
+	}
+	if hashBytesInvestigation(canonical) != hashBytesInvestigation(fromGo) {
+		t.Fatal("canonical MySQL JSON hash differs from the persisted Go JSON hash")
+	}
+	if _, err := canonicalEvidenceRawJSON([]byte(`{"source_system":"kubernetes"} {"extra":true}`)); err == nil {
+		t.Fatal("multiple JSON values were accepted")
 	}
 }
 
