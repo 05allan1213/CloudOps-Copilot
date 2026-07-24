@@ -710,13 +710,13 @@ func postDeliveryRemediationCompileRequest(incidentID uint64, incidentPublicID, 
 	current := []byte(`apiVersion: apps/v1
 kind: Deployment
 metadata:
-	  name: demo
-	  namespace: demo
+  name: demo
+  namespace: demo
 spec:
   template:
     spec:
       containers:
-	        - name: demo
+        - name: demo
           image: example/cloudops-demo@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
 `)
 	baseline := append(append([]byte(nil), current...), []byte("          env:\n            - name: REQUIRED_ENV\n              value: healthy\n")...)

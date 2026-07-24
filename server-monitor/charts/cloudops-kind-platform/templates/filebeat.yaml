@@ -22,6 +22,11 @@ spec:
           node: ${NODE_NAME}
           scope: node
           namespace: {{ .Values.observability.namespaces.cloudops | quote }}
+          add_resource_metadata:
+            node:
+              enabled: false
+            namespace:
+              enabled: false
           hints.enabled: false
           templates:
             - condition:
@@ -47,6 +52,11 @@ spec:
           node: ${NODE_NAME}
           scope: node
           namespace: {{ .Values.observability.namespaces.demo | quote }}
+          add_resource_metadata:
+            node:
+              enabled: false
+            namespace:
+              enabled: false
           hints.enabled: false
           templates:
             - condition:

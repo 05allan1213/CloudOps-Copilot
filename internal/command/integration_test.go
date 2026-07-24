@@ -310,6 +310,32 @@ func TestMySQLInvestigationRetryAuthorizationIsDurableConcurrentAndHardBounded(t
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks WHERE incident_id = ? AND transition = 'investigation.start'`, 1, incidentID)
 	})
 
+	t.Run("active run rejects a second start without orphan work", func(t *testing.T) {
+		incidentID, publicID := insertCommandBudgetIncident(t, ctx, db, 0)
+		if _, err := db.ExecContext(ctx, `INSERT INTO agent_runs
+ (public_id, incident_id, status, model, prompt_version, max_steps, failure_code,
+  row_version, domain_schema_version, v3_status, cycle_no, expected_incident_version)
+VALUES (?, ?, 'PENDING', 'fixture-model', 'incident-agent-v3', 1, '', 1, 3, 'pending', 1, 1)`,
+			uuid.NewString(), incidentID); err != nil {
+			t.Fatal(err)
+		}
+
+		request := newInvestigationStartRequest(publicID, 1, "active-run-conflict", actor, "wait for the active run")
+		blocked, err := port.Execute(ctx, request)
+		if !errors.Is(err, apiv3.ErrConflict) || blocked.Replayed {
+			t.Fatalf("active run command=%+v error=%v", blocked, err)
+		}
+		request.RequestID = uuid.NewString()
+		replayed, err := port.Execute(ctx, request)
+		if !errors.Is(err, apiv3.ErrConflict) || !replayed.Replayed {
+			t.Fatalf("active run replay=%+v error=%v", replayed, err)
+		}
+
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks WHERE incident_id = ?`, 0, incidentID)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_cycle_budget_authorizations WHERE incident_id = ?`, 0, incidentID)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_events WHERE incident_id = ? AND event_type = 'investigation_requested'`, 0, incidentID)
+	})
+
 	t.Run("concurrent slot four creates one Decision and one task", func(t *testing.T) {
 		incidentID, publicID := insertCommandBudgetIncident(t, ctx, db, 3)
 		requests := []apiv3.CommandRequest{

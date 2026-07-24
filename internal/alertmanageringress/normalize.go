@@ -39,16 +39,17 @@ var (
 )
 
 type envelope struct {
-	Version           string            `json:"version"`
-	GroupKey          string            `json:"groupKey"`
-	TruncatedAlerts   int               `json:"truncatedAlerts"`
-	Status            string            `json:"status"`
-	Receiver          string            `json:"receiver"`
-	GroupLabels       map[string]string `json:"groupLabels"`
-	CommonLabels      map[string]string `json:"commonLabels"`
-	CommonAnnotations map[string]string `json:"commonAnnotations"`
-	ExternalURL       string            `json:"externalURL"`
-	Alerts            []alert           `json:"alerts"`
+	Version            string            `json:"version"`
+	GroupKey           string            `json:"groupKey"`
+	TruncatedAlerts    int               `json:"truncatedAlerts"`
+	Status             string            `json:"status"`
+	Receiver           string            `json:"receiver"`
+	NotificationReason string            `json:"notification_reason"`
+	GroupLabels        map[string]string `json:"groupLabels"`
+	CommonLabels       map[string]string `json:"commonLabels"`
+	CommonAnnotations  map[string]string `json:"commonAnnotations"`
+	ExternalURL        string            `json:"externalURL"`
+	Alerts             []alert           `json:"alerts"`
 }
 
 type alert struct {
@@ -99,7 +100,8 @@ func validateExactEnvelopeFields(contents []byte) error {
 	}
 	envelopeFields := map[string]struct{}{
 		"version": {}, "groupKey": {}, "truncatedAlerts": {}, "status": {}, "receiver": {},
-		"groupLabels": {}, "commonLabels": {}, "commonAnnotations": {}, "externalURL": {}, "alerts": {},
+		"notification_reason": {},
+		"groupLabels":         {}, "commonLabels": {}, "commonAnnotations": {}, "externalURL": {}, "alerts": {},
 	}
 	for field := range rawEnvelope {
 		if _, allowed := envelopeFields[field]; !allowed {

@@ -15,6 +15,7 @@ import (
 	drivermysql "github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 
+	"github.com/05allan1213/CloudOps-Copilot/internal/agent"
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
 	"github.com/05allan1213/CloudOps-Copilot/internal/businessbudget"
 	domain "github.com/05allan1213/CloudOps-Copilot/internal/incident"
@@ -193,7 +194,7 @@ func TestMySQLIncidentV3AgentRunBudgetStopsConcurrentStarts(t *testing.T) {
 	resolveErrors := make([]error, len(executions))
 	wait = sync.WaitGroup{}
 	for index, execution := range executions {
-		result := taskhandler.New(taskhandler.Config{})[asyncjob.TaskInvestigationAdvance].Handle(ctx, *execution)
+		result := taskhandler.New(taskhandler.Config{AgentRunIdentity: incidentIntegrationRunIdentity()})[asyncjob.TaskInvestigationAdvance].Handle(ctx, *execution)
 		if result.Disposition != asyncjob.DispositionSucceeded || result.Mutate == nil {
 			t.Fatalf("budget start handler %d result=%+v", index, result)
 		}
@@ -1016,7 +1017,7 @@ func processOneIncidentStart(t *testing.T, ctx context.Context, db *sql.DB, inci
 	if claimed == nil || noTask != 1 {
 		t.Fatalf("concurrent start claim claimed=%+v no_task=%d", claimed, noTask)
 	}
-	handler := taskhandler.New(taskhandler.Config{})[asyncjob.TaskInvestigationAdvance]
+	handler := taskhandler.New(taskhandler.Config{AgentRunIdentity: incidentIntegrationRunIdentity()})[asyncjob.TaskInvestigationAdvance]
 	result := handler.Handle(ctx, *claimed)
 	if result.Disposition != asyncjob.DispositionSucceeded || result.Mutate == nil {
 		t.Fatalf("investigation.start handler result=%+v", result)
@@ -1247,7 +1248,7 @@ func resolveConcurrentBudgetStarts(t *testing.T, ctx context.Context, repository
 	errs := make([]error, count)
 	var wait sync.WaitGroup
 	for index := range executions {
-		result := taskhandler.New(taskhandler.Config{})[asyncjob.TaskInvestigationAdvance].Handle(ctx, *executions[index])
+		result := taskhandler.New(taskhandler.Config{AgentRunIdentity: incidentIntegrationRunIdentity()})[asyncjob.TaskInvestigationAdvance].Handle(ctx, *executions[index])
 		if result.Disposition != asyncjob.DispositionSucceeded || result.Mutate == nil {
 			t.Fatalf("authorized start result=%+v", result)
 		}
@@ -1291,6 +1292,13 @@ func incidentIntegrationSignal(sequence int, correlationKey string) SignalInput 
 		ServiceName: "checkout", TargetKind: "Deployment", TargetName: "checkout", Category: "readiness",
 		StartsAt: startsAt, OccurredAt: startsAt, Summary: "workload is not ready",
 		Labels: []byte(`{"alertname":"WorkloadNotReady"}`), Annotations: []byte(`{"summary":"not ready"}`),
+	}
+}
+
+func incidentIntegrationRunIdentity() agent.RunModelIdentity {
+	return agent.RunModelIdentity{
+		Provider: "fixture", ActualModel: "fixture-model", PromptVersion: "incident-agent-v3",
+		PromptHash: strings.Repeat("a", 64), ToolSchemaVersion: "tools/v1", ToolSchemaHash: strings.Repeat("b", 64),
 	}
 }
 

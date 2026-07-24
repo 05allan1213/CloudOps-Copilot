@@ -30,6 +30,11 @@ PORT_FORWARD_LOG="${TMPDIR:-/tmp}/cloudops-v3-prometheus-${CLUSTER_NAME}.log"
 DEMO_PORT_FORWARD_LOG="${TMPDIR:-/tmp}/cloudops-v3-demo-${CLUSTER_NAME}.log"
 TEMPO_PORT_FORWARD_LOG="${TMPDIR:-/tmp}/cloudops-v3-tempo-${CLUSTER_NAME}.log"
 ELASTICSEARCH_PORT_FORWARD_LOG="${TMPDIR:-/tmp}/cloudops-v3-elasticsearch-${CLUSTER_NAME}.log"
+LOCAL_PORT_OFFSET=$(( $$ % 500 ))
+ELASTICSEARCH_LOCAL_PORT=$((19200 + LOCAL_PORT_OFFSET))
+TEMPO_LOCAL_PORT=$((13200 + LOCAL_PORT_OFFSET))
+DEMO_LOCAL_PORT=$((18081 + LOCAL_PORT_OFFSET))
+PROMETHEUS_LOCAL_PORT=$((19090 + LOCAL_PORT_OFFSET))
 port_forward_pid=""
 demo_port_forward_pid=""
 tempo_port_forward_pid=""
@@ -447,7 +452,7 @@ install_demo() {
 
 prometheus_service() {
   kubectl -n "${MONITORING_NAMESPACE}" get svc -o json | jq -r --arg instance "${MONITORING_RELEASE}" \
-    '[.items[] | select(.metadata.labels["app.kubernetes.io/name"] == "prometheus" and .metadata.labels["app.kubernetes.io/instance"] == $instance) | .metadata.name][0] // empty'
+    '[.items[] | select(.metadata.labels["app.kubernetes.io/instance"] == $instance and .spec.selector["app.kubernetes.io/name"] == "prometheus") | .metadata.name][0] // empty'
 }
 
 auth_can_i() {
@@ -477,14 +482,25 @@ check_namespace_rbac() {
 
 check_platform_observability() {
   local elasticsearch_name kibana_name filebeat_name otel_name tempo_name
-  local collector_config tempo_config collector_json tempo_json elastic_password elastic_result trace_result
+  local collector_config tempo_config collector_json tempo_json elastic_password elastic_result trace_result elastic_health elastic_host
   elasticsearch_name="$(yq -r '.observability.elastic.elasticsearch.name' "${PLATFORM_VALUES}")"
   kibana_name="$(yq -r '.observability.elastic.kibana.name' "${PLATFORM_VALUES}")"
   filebeat_name="$(yq -r '.observability.elastic.filebeat.name' "${PLATFORM_VALUES}")"
   otel_name="$(yq -r '.observability.otelCollector.name' "${PLATFORM_VALUES}")"
   tempo_name="$(yq -r '.observability.tempo.name' "${PLATFORM_VALUES}")"
 
-  kubectl -n "${APP_NAMESPACE}" wait --for="jsonpath={.status.health}=green" --timeout=15m "elasticsearch/${elasticsearch_name}"
+  # A single-node Elasticsearch cluster is Ready but necessarily yellow while
+  # replica shards remain unassigned. Red is the only unhealthy state here.
+  kubectl -n "${APP_NAMESPACE}" wait --for="jsonpath={.status.phase}=Ready" --timeout=15m "elasticsearch/${elasticsearch_name}"
+  elastic_health=""
+  for _ in $(seq 1 90); do
+    elastic_health="$(kubectl -n "${APP_NAMESPACE}" get "elasticsearch/${elasticsearch_name}" -o jsonpath='{.status.health}' 2>/dev/null || true)"
+    if [[ "${elastic_health}" == "green" || "${elastic_health}" == "yellow" ]]; then
+      break
+    fi
+    sleep 2
+  done
+  [[ "${elastic_health}" == "green" || "${elastic_health}" == "yellow" ]] || die "Elasticsearch resource health is not ready (health=${elastic_health:-unknown})"
   kubectl -n "${APP_NAMESPACE}" wait --for="jsonpath={.status.health}=green" --timeout=15m "kibana/${kibana_name}"
   kubectl -n "${APP_NAMESPACE}" wait --for="jsonpath={.status.health}=green" --timeout=15m "beat/${filebeat_name}"
   kubectl -n "${APP_NAMESPACE}" rollout status "deployment/${otel_name}" --timeout=180s
@@ -514,41 +530,48 @@ check_platform_observability() {
   kubectl -n "${APP_NAMESPACE}" get secret "${elasticsearch_name}-es-http-certs-public" \
     -o go-template='{{ index .data "tls.crt" | base64decode }}' >"${secret_dir}/elasticsearch-ca.crt"
   elastic_password="$(kubectl -n "${APP_NAMESPACE}" get secret "${elasticsearch_name}-es-elastic-user" -o go-template='{{ index .data "elastic" | base64decode }}')"
+  # Keep certificate hostname verification while the local port-forward points
+  # at 127.0.0.1: use the service DNS name from the ECK certificate SAN.
+  elastic_host="${elasticsearch_name}-es-http.${APP_NAMESPACE}.svc"
   chmod 600 "${secret_dir}/elasticsearch-ca.crt"
-  kubectl -n "${APP_NAMESPACE}" port-forward "svc/${elasticsearch_name}-es-http" 19200:9200 >"${ELASTICSEARCH_PORT_FORWARD_LOG}" 2>&1 &
+  kubectl -n "${APP_NAMESPACE}" port-forward "svc/${elasticsearch_name}-es-http" "${ELASTICSEARCH_LOCAL_PORT}:9200" >"${ELASTICSEARCH_PORT_FORWARD_LOG}" 2>&1 &
   elasticsearch_port_forward_pid="$!"
   for _ in $(seq 1 60); do
-    elastic_result="$(curl --fail --silent --cacert "${secret_dir}/elasticsearch-ca.crt" --user "elastic:${elastic_password}" \
-      "https://127.0.0.1:19200/_cluster/health" 2>/dev/null || true)"
-    if jq -e '.status == "green"' <<<"${elastic_result}" >/dev/null 2>&1; then break; fi
+    elastic_result="$(curl --noproxy '*' --fail --silent --cacert "${secret_dir}/elasticsearch-ca.crt" \
+      --resolve "${elastic_host}:${ELASTICSEARCH_LOCAL_PORT}:127.0.0.1" --user "elastic:${elastic_password}" \
+      "https://${elastic_host}:${ELASTICSEARCH_LOCAL_PORT}/_cluster/health" 2>/dev/null || true)"
+    if jq -e '(.status == "green" or .status == "yellow")' <<<"${elastic_result}" >/dev/null 2>&1; then break; fi
     sleep 2
   done
-  jq -e '.status == "green"' <<<"${elastic_result}" >/dev/null || die "Elasticsearch query path is not healthy"
-  elastic_result="$(curl --fail --silent --cacert "${secret_dir}/elasticsearch-ca.crt" --user "elastic:${elastic_password}" \
-    "https://127.0.0.1:19200/_security/role/cloudops_reader")"
+  jq -e '(.status == "green" or .status == "yellow")' <<<"${elastic_result}" >/dev/null || die "Elasticsearch query path is not healthy"
+  # ECK installs this as a file-realm role, so the native Role API correctly
+  # returns 404. Verify the configuration actually mounted into Elasticsearch.
+  elastic_result="$(kubectl -n "${APP_NAMESPACE}" exec "statefulset/${elasticsearch_name}-es-default" \
+    -c elasticsearch -- cat /usr/share/elasticsearch/config/roles.yml | yq -o=json '.')"
   jq -e '.cloudops_reader.cluster == ["monitor"] and (.cloudops_reader.indices | length == 1) and .cloudops_reader.indices[0].names == ["logs-cloudops-*"] and (.cloudops_reader.indices[0].privileges | sort) == ["read", "view_index_metadata"]' \
     <<<"${elastic_result}" >/dev/null || die "CloudOps Elasticsearch read role drifted"
   for _ in $(seq 1 60); do
-    elastic_result="$(curl --fail --silent --cacert "${secret_dir}/elasticsearch-ca.crt" --user "elastic:${elastic_password}" \
-      "https://127.0.0.1:19200/_data_stream/logs-cloudops-*" 2>/dev/null || true)"
+    elastic_result="$(curl --noproxy '*' --fail --silent --cacert "${secret_dir}/elasticsearch-ca.crt" \
+      --resolve "${elastic_host}:${ELASTICSEARCH_LOCAL_PORT}:127.0.0.1" --user "elastic:${elastic_password}" \
+      "https://${elastic_host}:${ELASTICSEARCH_LOCAL_PORT}/_data_stream/logs-cloudops-*" 2>/dev/null || true)"
     if jq -e '.data_streams | length > 0' <<<"${elastic_result}" >/dev/null 2>&1; then break; fi
     sleep 2
   done
   jq -e '.data_streams | length > 0' <<<"${elastic_result}" >/dev/null || die "Filebeat did not create the bounded CloudOps data stream"
   elastic_password=""
 
-  kubectl -n "${APP_NAMESPACE}" port-forward "svc/${tempo_name}" 13200:3200 >"${TEMPO_PORT_FORWARD_LOG}" 2>&1 &
+  kubectl -n "${APP_NAMESPACE}" port-forward "svc/${tempo_name}" "${TEMPO_LOCAL_PORT}:3200" >"${TEMPO_PORT_FORWARD_LOG}" 2>&1 &
   tempo_port_forward_pid="$!"
   for _ in $(seq 1 60); do
-    if curl --fail --silent http://127.0.0.1:13200/ready >/dev/null 2>&1; then break; fi
+    if curl --fail --silent "http://127.0.0.1:${TEMPO_LOCAL_PORT}/ready" >/dev/null 2>&1; then break; fi
     sleep 2
   done
-  curl --fail --silent http://127.0.0.1:13200/ready >/dev/null || die "Tempo query path is not healthy"
+  curl --fail --silent "http://127.0.0.1:${TEMPO_LOCAL_PORT}/ready" >/dev/null || die "Tempo query path is not healthy"
   for _ in $(seq 1 60); do
     trace_result="$(curl --fail --silent --get \
       --data-urlencode 'q={ resource.service.name = "demo" }' \
       --data-urlencode 'limit=20' \
-      http://127.0.0.1:13200/api/search 2>/dev/null || true)"
+      "http://127.0.0.1:${TEMPO_LOCAL_PORT}/api/search" 2>/dev/null || true)"
     if jq -e '.traces | length > 0' <<<"${trace_result}" >/dev/null 2>&1; then break; fi
     sleep 2
   done
@@ -561,28 +584,38 @@ check_observability() {
   kubectl -n "${APP_NAMESPACE}" get servicemonitor/cloudops-api prometheusrule/cloudops-api >/dev/null
   kubectl -n "${DEMO_NAMESPACE}" wait --for=condition=available --timeout=180s deployment/demo
   kubectl -n "${DEMO_NAMESPACE}" get podmonitor/demo prometheusrule/demo >/dev/null
-  kubectl -n "${DEMO_NAMESPACE}" port-forward svc/demo 18081:8080 >"${DEMO_PORT_FORWARD_LOG}" 2>&1 &
+  kubectl -n "${DEMO_NAMESPACE}" port-forward svc/demo "${DEMO_LOCAL_PORT}:8080" >"${DEMO_PORT_FORWARD_LOG}" 2>&1 &
   demo_port_forward_pid="$!"
   for _ in $(seq 1 30); do
-    if curl --fail --silent http://127.0.0.1:18081/readyz >/dev/null 2>&1; then break; fi
+    if curl --fail --silent "http://127.0.0.1:${DEMO_LOCAL_PORT}/readyz" >/dev/null 2>&1; then break; fi
     sleep 2
   done
-  curl --fail --silent http://127.0.0.1:18081/readyz >/dev/null || die "Demo workload did not become ready"
+  curl --fail --silent "http://127.0.0.1:${DEMO_LOCAL_PORT}/readyz" >/dev/null || die "Demo workload did not become ready"
   revision="$(git -C "${ROOT_DIR}" rev-parse HEAD)"
-  version_result="$(curl --fail --silent http://127.0.0.1:18081/version)"
+  version_result="$(curl --fail --silent "http://127.0.0.1:${DEMO_LOCAL_PORT}/version")"
   jq -e --arg revision "${revision}" '.source_revision == $revision and .version == $revision' <<<"${version_result}" >/dev/null || die "Demo /version does not match the built source revision"
-  curl --fail --silent http://127.0.0.1:18081/ >/dev/null || die "Demo baseline business request failed"
+  curl --fail --silent "http://127.0.0.1:${DEMO_LOCAL_PORT}/" >/dev/null || die "Demo baseline business request failed"
   check_platform_observability
   service_name="$(prometheus_service)"
   [[ -n "${service_name}" ]] || die "Prometheus service was not found"
-  kubectl -n "${MONITORING_NAMESPACE}" port-forward "svc/${service_name}" 19090:9090 >"${PORT_FORWARD_LOG}" 2>&1 &
+  kubectl -n "${MONITORING_NAMESPACE}" port-forward "svc/${service_name}" "${PROMETHEUS_LOCAL_PORT}:9090" >"${PORT_FORWARD_LOG}" 2>&1 &
   port_forward_pid="$!"
   for _ in $(seq 1 30); do
-    if curl --fail --silent http://127.0.0.1:19090/-/ready >/dev/null 2>&1; then break; fi
+    if curl --fail --silent "http://127.0.0.1:${PROMETHEUS_LOCAL_PORT}/-/ready" >/dev/null 2>&1; then break; fi
     sleep 2
   done
-  curl --fail --silent http://127.0.0.1:19090/-/ready >/dev/null || die "Prometheus did not become ready"
-  query_result="$(curl --fail --silent http://127.0.0.1:19090/api/v1/targets)"
+  curl --fail --silent "http://127.0.0.1:${PROMETHEUS_LOCAL_PORT}/-/ready" >/dev/null || die "Prometheus did not become ready"
+  query_result=""
+  for _ in $(seq 1 60); do
+    query_result="$(curl --fail --silent "http://127.0.0.1:${PROMETHEUS_LOCAL_PORT}/api/v1/targets" 2>/dev/null || true)"
+    if jq -e --arg service "cloudops-api-internal" --arg namespace "${DEMO_NAMESPACE}" '
+      ([.data.activeTargets[] | select(.labels.service == $service and .health == "up")] | length > 0) and
+      ([.data.activeTargets[] | select(.labels.namespace == $namespace and .health == "up")] | length >= 2)
+    ' <<<"${query_result}" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 2
+  done
   jq -e --arg service "cloudops-api-internal" \
     '[.data.activeTargets[] | select(.labels.service == $service and .health == "up")] | length > 0' \
     <<<"${query_result}" >/dev/null || {
@@ -593,7 +626,17 @@ check_observability() {
   jq -e --arg namespace "${DEMO_NAMESPACE}" \
     '[.data.activeTargets[] | select(.labels.namespace == $namespace and .health == "up")] | length >= 2' \
     <<<"${query_result}" >/dev/null || die "both Demo PodMonitor targets are not healthy"
-  query_result="$(curl --fail --silent http://127.0.0.1:19090/api/v1/rules)"
+  query_result=""
+  for _ in $(seq 1 60); do
+    query_result="$(curl --fail --silent "http://127.0.0.1:${PROMETHEUS_LOCAL_PORT}/api/v1/rules" 2>/dev/null || true)"
+    if jq -e '
+      ([.data.groups[].rules[] | select(.name == "CloudOpsAPIAvailability")] | length == 1) and
+      ([.data.groups[].rules[] | select(.name == "CloudOpsDemoRequiredEnvMissing" or .name == "CloudOpsDemoErrorRateHigh")] | length == 2)
+    ' <<<"${query_result}" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 2
+  done
   jq -e '[.data.groups[].rules[] | select(.name == "CloudOpsAPIAvailability")] | length == 1' \
     <<<"${query_result}" >/dev/null || die "CloudOps PrometheusRule was not loaded"
   jq -e '[.data.groups[].rules[] | select(.name == "CloudOpsDemoRequiredEnvMissing" or .name == "CloudOpsDemoErrorRateHigh")] | length == 2' \

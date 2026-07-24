@@ -124,7 +124,10 @@ func TestPhase1MigrationFreshExistingParityAndLock(t *testing.T) {
 		db1, db2 := openSQL(t, dsn), openSQL(t, dsn)
 		defer func() { _ = db1.Close() }()
 		defer func() { _ = db2.Close() }()
-		runners := []*Runner{newTestRunner(t, ctx, db1, 10*time.Second), newTestRunner(t, ctx, db2, 10*time.Second)}
+		// MySQL 8 may spend more than ten seconds applying the forward DDL batch
+		// on a loaded disposable instance; the competing runner must wait for
+		// that legitimate migration rather than turn load into a false failure.
+		runners := []*Runner{newTestRunner(t, ctx, db1, 60*time.Second), newTestRunner(t, ctx, db2, 60*time.Second)}
 		start := make(chan struct{})
 		errorsByRunner := make([]error, len(runners))
 		var wait sync.WaitGroup

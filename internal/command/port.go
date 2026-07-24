@@ -149,6 +149,13 @@ func (p *Port) startInvestigation(ctx context.Context, tx *sql.Tx, request apiv3
 	if incident.Status != "detected" && incident.Status != "investigating" {
 		return apiv3.CommandResult{}, apiv3.ErrInvalidTransition
 	}
+	activeRunID, err := businessbudget.ActiveAgentRunForCycle(ctx, tx, incident.ID, incident.CycleNo)
+	if err != nil {
+		return apiv3.CommandResult{}, err
+	}
+	if activeRunID != 0 {
+		return apiv3.CommandResult{}, apiv3.ErrConflict
+	}
 	authorization, budget, err := businessbudget.AuthorizeAgentRun(ctx, tx, incident.ID, incident.CycleNo, businessbudget.Actor{
 		Provider: request.Actor.Provider, Login: request.Actor.Login, Role: request.Actor.Role,
 		Reason: body.Reason, RequestID: request.RequestID,

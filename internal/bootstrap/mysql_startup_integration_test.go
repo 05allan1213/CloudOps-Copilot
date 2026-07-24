@@ -19,6 +19,7 @@ import (
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
 	apibootstrap "github.com/05allan1213/CloudOps-Copilot/internal/bootstrap/api"
 	appconfig "github.com/05allan1213/CloudOps-Copilot/internal/config"
+	"github.com/05allan1213/CloudOps-Copilot/internal/cutover"
 	"github.com/05allan1213/CloudOps-Copilot/internal/taskhandler"
 )
 
@@ -93,7 +94,7 @@ func runtimeApplication(t *testing.T, dsn string) appconfig.Config {
 func exerciseRuntime(t *testing.T, application appconfig.Config, verifier *sql.DB, expectedReadiness int) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	api, err := apibootstrap.NewAPI(ctx, apibootstrap.APIConfig{Application: application})
+	api, err := apibootstrap.NewAPI(ctx, apibootstrap.APIConfig{Application: application, RuntimeGeneration: cutover.RuntimeCompatibility})
 	if err != nil {
 		t.Fatalf("start API with DML-only user: %v", err)
 	}
@@ -139,6 +140,7 @@ func exerciseRuntime(t *testing.T, application appconfig.Config, verifier *sql.D
 	workerConfig := WorkerConfig{
 		Application:       application,
 		TaskOperations:    testRuntimeTaskOperations(),
+		RuntimeGeneration: cutover.RuntimeCompatibility,
 		ManagementAddr:    "127.0.0.1:18081",
 		ReadHeaderTimeout: time.Second,
 		ReadTimeout:       time.Second,

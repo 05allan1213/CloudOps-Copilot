@@ -100,7 +100,8 @@ jq -e '
 
 jq -e '
   [.[] | select(.kind == "ConfigMap" and .metadata.name == "cloudops-mysql-bootstrap")][0]
-  | .data["10-cloudops-identities.sh"] as $script
+  | .data["10-cloudops-identities.sh"] as $raw_script
+  | ($raw_script | gsub("\\\\`"; "`")) as $script
   | ($script | contains("GRANT SELECT, INSERT, UPDATE, DELETE ON `cloudops`.* TO ${api_user}@'\''%'\'';"))
   and ($script | contains("GRANT SELECT, INSERT, UPDATE, DELETE ON `cloudops`.* TO ${worker_user}@'\''%'\'';"))
   and ($script | contains("GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, DROP, INDEX, REFERENCES ON `cloudops`.* TO ${migrate_user}@'\''%'\'';"))
@@ -186,6 +187,8 @@ jq -e '
   and (($beat.spec.config["filebeat.autodiscover"].providers | map(.scope) | unique) == ["node"])
   and (($beat.spec.config["filebeat.autodiscover"].providers | map(.namespace) | sort) == ["cloudops-system", "demo"])
   and all($beat.spec.config["filebeat.autodiscover"].providers[];
+    .add_resource_metadata.node.enabled == false and
+    .add_resource_metadata.namespace.enabled == false and
     (.["hints.enabled"] == false) and
     all(.templates[].config[];
       .type == "filestream" and

@@ -361,6 +361,7 @@ test("operator command contract presents 202, 403, 409, and 422 without unsafe r
     await expect(page.locator(".command-feedback").first()).toContainText(code);
     await expect(page.locator(".approve-button")).toBeDisabled();
     if (mode === "409") {
+      await expect(page.locator(".command-feedback--conflict").first()).toContainText("Refresh the current projection before trying again");
       await failedDialog.getByRole("button", { name: "Refresh Current Projection" }).click();
       await expect(page.locator(".command-feedback")).toHaveCount(0);
       await expect(page.locator(".approve-button")).toBeEnabled();

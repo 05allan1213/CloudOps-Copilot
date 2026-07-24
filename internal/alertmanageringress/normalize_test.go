@@ -1,6 +1,7 @@
 package alertmanageringress
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -33,6 +34,18 @@ func TestCanonicalV2IdentitiesAndMultiAlertCorrelation(t *testing.T) {
 	}
 	if left.Category == right.Category {
 		t.Fatal("test setup did not vary the alert symptom category")
+	}
+}
+
+func TestAlertmanagerV33NotificationReasonIsAccepted(t *testing.T) {
+	input := testEnvelope(testAlert("firing", "abc123", "WorkloadNotReady", "critical"))
+	input.NotificationReason = "new_group"
+	decoded, err := decodeEnvelope(bytes.NewReader(marshalEnvelope(t, input)))
+	if err != nil {
+		t.Fatalf("Alertmanager v0.33 envelope was rejected: %v", err)
+	}
+	if _, err := normalizeEnvelope(decoded, mustTargets(t)); err != nil {
+		t.Fatalf("Alertmanager v0.33 notification_reason was rejected: %v", err)
 	}
 }
 

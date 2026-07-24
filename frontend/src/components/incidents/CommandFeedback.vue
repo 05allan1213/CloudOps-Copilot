@@ -65,7 +65,7 @@ const role = computed(() => {
       v-if="feedback.state === 'conflict'"
       class="conflict-guidance"
     >
-      This command is fail-closed. Refresh the current Incident and Plan before making a new decision; the old approval payload is not replayed.
+      This command is fail-closed. Refresh the current projection before trying again; the rejected payload is not replayed.
     </p>
     <div class="feedback-actions">
       <button
