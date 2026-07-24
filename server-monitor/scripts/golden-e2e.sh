@@ -23,7 +23,8 @@ WRITE_MANIFEST=false
 FAILURE_REASON=""
 
 declare -a COMMANDS=()
-declare -a GATES=(source agent_quality human_gh github_apps kind argo llm oauth images regression_pr regression_ci argo_bad incident agent plan_approval remediation_pr remediation_ci argo_fix verification resolution resources)
+declare -a GATES=(source agent_quality human_gh github_apps kind argo llm oauth environment_clean images regression_pr regression_ci argo_bad incident agent plan_approval remediation_pr remediation_ci argo_fix verification resolution resources)
+declare -a REQUIRED_PASS_GATES=(source agent_quality human_gh github_apps kind argo llm oauth environment_clean images regression_pr regression_ci argo_bad incident agent plan_approval remediation_pr remediation_ci argo_fix verification resolution)
 declare -A STATUS DETAIL
 for gate in "${GATES[@]}"; do STATUS["${gate}"]="NOT RUN"; DETAIL["${gate}"]="not reached"; done
 
@@ -49,9 +50,33 @@ cleanup() {
 }
 trap cleanup EXIT
 
+interrupted() {
+  local signal="$1" code="$2"
+  FAILURE_REASON="interrupted by ${signal}"
+  trap - INT TERM
+  exit "${code}"
+}
+trap 'interrupted SIGINT 130' INT
+trap 'interrupted SIGTERM 143' TERM
+
 write_manifest() {
-  local exit_code="$1" overall="FAIL" generated command gate
-  if [[ "${exit_code}" -eq 0 ]]; then overall="PASS"; fi
+  local exit_code="$1" overall="FAIL" generated command gate versions incomplete=""
+  if [[ "${exit_code}" -eq 0 ]]; then
+    overall="PASS"
+    for gate in "${REQUIRED_PASS_GATES[@]}"; do
+      if [[ "${STATUS[$gate]}" != PASS ]]; then
+        overall="FAIL"
+        incomplete="${incomplete}${incomplete:+,}${gate}:${STATUS[$gate]}"
+      fi
+    done
+    if [[ "${overall}" != PASS && -z "${FAILURE_REASON}" ]]; then
+      FAILURE_REASON="incomplete Golden gate ledger: ${incomplete}"
+    fi
+  fi
+  versions="${VERSIONS_MD:-}"
+  if [[ -z "${versions}" ]]; then
+    printf -v versions '| Component | Version |\n|---|---|\n| cluster versions | NOT RUN |'
+  fi
   mkdir -p "${EVIDENCE_DIR}"
   generated="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   {
@@ -83,7 +108,7 @@ write_manifest() {
     printf '| Agent tool calls / model calls / tokens | `%s` / `%s` / `%s` |\n' "${TOOL_CALLS:-NOT RUN}" "${MODEL_CALLS:-NOT RUN}" "${TOKENS:-NOT RUN}"
     printf '| Observed resource peak | `%s` |\n' "$(md "${RESOURCE_PEAK:-NOT RUN}")"
     printf '| Bootstrap / image download / model latency / human waits | `NOT RUN unless explicitly represented above; never inferred` |\n'
-    printf '\n## Versions\n\n%s\n' "${VERSIONS_MD:-| Component | Version |\n|---|---|\n| cluster versions | NOT RUN |}"
+    printf '\n## Versions\n\n%s\n' "${versions}"
     printf '\n## Commands\n\n'
     for command in "${COMMANDS[@]}"; do printf -- '- `%s`\n' "$(md "${command}")"; done
     printf '\n## Known limitations and NOT RUN\n\n- Credentials and provider raw responses are never persisted.\n- Human PR merges and remediation approval are intentionally outside this harness.\n- A gate without authoritative live evidence remains `NOT RUN`; fixture or mock output is never substituted.\n- `CONTRACT-V3` and Phase 7B cleanup are `NOT RUN`.\n'
@@ -228,6 +253,14 @@ check_oauth() {
   pass oauth "authenticated GitHub OAuth session reached the API without persisting its token"
 }
 
+check_environment_clean() {
+  local incidents active
+  incidents="$(api_get "/api/v3/incidents?service=${GOLDEN_TARGET_SERVICE:-demo}&limit=100")"
+  active="$(jq -r '[.items[] | select((.migrated_legacy | not) and (.migrated_legacy_context | not) and (.status != "resolved" and .status != "closed"))] | length' <<<"${incidents}")"
+  [[ "${active}" == 0 ]] || fail environment_clean "Golden target has ${active} active native Incident(s); resolve test residue before fault injection"
+  pass environment_clean "no active native Incident exists for the Golden target"
+}
+
 check_images() {
   local service image image_id digest revision
   for service in api worker; do
@@ -267,13 +300,13 @@ wait_for_json() {
 collect_versions() {
   local kube kind_v helm_v argo_v
   kube="$(kubectl version -o json | jq -r '.serverVersion.gitVersion')"; kind_v="$(kind version | tr '\n' ' ')"; helm_v="$(helm version --short)"; argo_v="$(argocd version --client --short 2>/dev/null | tr '\n' ' ')"
-  VERSIONS_MD="| Component | Version |\n|---|---|\n| Kubernetes | ${kube} |\n| kind | ${kind_v} |\n| Helm | ${helm_v} |\n| Argo CD CLI | ${argo_v} |"
+  printf -v VERSIONS_MD '| Component | Version |\n|---|---|\n| Kubernetes | %s |\n| kind | %s |\n| Helm | %s |\n| Argo CD CLI | %s |' "${kube}" "${kind_v}" "${helm_v}" "${argo_v}"
 }
 
 run_preflight() {
   local command
   for command in git jq curl gh kubectl kind helm argocd docker sha256sum sed date; do require_cmd "${command}"; done
-  check_source; check_agent_quality; check_human_gh; check_github_apps; check_kind_argo; check_llm; check_oauth; check_images; collect_versions
+  check_source; check_agent_quality; check_human_gh; check_github_apps; check_kind_argo; check_llm; check_oauth; check_environment_clean; check_images; collect_versions
   record_command "make e2e-gitops"
   record_command "gh run list / gh pr checks --required (read-only)"
   record_command "argocd app get / argocd account can-i (read-only)"
@@ -348,9 +381,15 @@ run_golden() {
   printf 'PASS: Golden E2E verified; manifest will be written at %s\n' "${MANIFEST}"
 }
 
-case "${1:-}" in
-  scenario-open-regression-pr) scenario_open_regression_pr ;;
-  preflight) TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cloudops-golden.XXXXXX")"; run_preflight; printf 'PASS: Golden E2E preflight\n' ;;
-  run) run_golden ;;
-  *) printf 'usage: %s {preflight|scenario-open-regression-pr|run}\n' "$0" >&2; exit 64 ;;
-esac
+main() {
+  case "${1:-}" in
+    scenario-open-regression-pr) scenario_open_regression_pr ;;
+    preflight) TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cloudops-golden.XXXXXX")"; run_preflight; printf 'PASS: Golden E2E preflight\n' ;;
+    run) run_golden ;;
+    *) printf 'usage: %s {preflight|scenario-open-regression-pr|run}\n' "$0" >&2; return 64 ;;
+  esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

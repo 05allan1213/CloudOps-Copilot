@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2016 # Contract needles intentionally contain literal shell placeholders.
+# shellcheck disable=SC2016,SC2034,SC2154 # Sourced runner globals are exercised dynamically below.
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -31,6 +31,11 @@ for required in \
   'current Kubernetes context is not kind' \
   'live LLM response contract failed' \
   '/api/v3/session/csrf' \
+  'no active native Incident exists for the Golden target' \
+  'incomplete Golden gate ledger' \
+  "interrupted SIGINT 130" \
+  "interrupted SIGTERM 143" \
+  'printf -v VERSIONS_MD' \
   'org.opencontainers.image.revision' \
   'required --json name,state,link' \
   'status.operationState.syncResult.revision' \
@@ -88,6 +93,29 @@ fixture_revision="$(yq -r '.spec.template.spec.containers[] | select(.name == "d
 git -C "${ROOT_DIR}" cat-file -e "${fixture_revision}^{commit}" || die "healthy fixture source revision is not a repository commit"
 if rg -n 'contract-fixture' "${HEALTHY_DIR}" "${REGRESSION_DIR}" >/dev/null; then
   die "fixtures contain a sentinel"
+fi
+
+manifest_test_root="$(mktemp -d "${TMPDIR:-/tmp}/cloudops-golden-manifest-contract.XXXXXX")"
+cleanup_manifest_contract() { rm -rf "${manifest_test_root}"; }
+trap cleanup_manifest_contract EXIT
+# shellcheck source=server-monitor/scripts/golden-e2e.sh
+source "${RUNNER}"
+EVIDENCE_DIR="${manifest_test_root}/evidence"
+MANIFEST="${EVIDENCE_DIR}/manifest.md"
+for gate in "${GATES[@]}"; do STATUS["${gate}"]="PASS"; DETAIL["${gate}"]="contract fixture"; done
+STATUS[incident]="NOT RUN"
+FAILURE_REASON=""
+write_manifest 0
+grep -Fq 'Overall: `FAIL`' "${MANIFEST}" || die "incomplete zero-exit manifest was not failed"
+grep -Fq 'incomplete Golden gate ledger: incident:NOT RUN' "${MANIFEST}" || die "incomplete manifest reason is missing"
+STATUS[incident]="PASS"
+FAILURE_REASON=""
+printf -v VERSIONS_MD '| Component | Version |\n|---|---|\n| contract | test |'
+write_manifest 0
+grep -Fq 'Overall: `PASS`' "${MANIFEST}" || die "complete zero-exit manifest did not pass"
+grep -Fxq '| contract | test |' "${MANIFEST}" || die "version table did not render real lines"
+if grep -Fq '\n' "${MANIFEST}"; then
+  die "manifest contains literal newline escapes"
 fi
 
 printf 'PASS: Golden E2E shell and evidence contracts\n'
