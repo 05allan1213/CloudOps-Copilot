@@ -164,6 +164,7 @@ type investigationStepCheckpoint struct {
 	NextAction              *agent.ProposedAction    `json:"next_action,omitempty"`
 	DurationMS              int64                    `json:"duration_ms"`
 	ProviderRequestIDHashes []string                 `json:"provider_request_id_hashes,omitempty"`
+	ErrorCode               string                   `json:"error_code,omitempty"`
 	CapturedAt              time.Time                `json:"captured_at"`
 }
 
@@ -279,6 +280,13 @@ func validateInvestigationPolicy(claim agent.ClaimPolicy, actions map[string]age
 		if strings.TrimSpace(name) == "" || len(policy.TemplateIDs) == 0 || len(policy.ExpectedFactTypes) == 0 {
 			return fmt.Errorf("invalid investigation tool policy %q", name)
 		}
+		for key, spec := range policy.ParameterSpecs {
+			if !slices.Contains(policy.ParameterKeys, key) ||
+				(spec.Type != agent.ParameterString && spec.Type != agent.ParameterInteger && spec.Type != agent.ParameterBoolean) ||
+				(len(spec.Enum) > 0 && spec.Type != agent.ParameterString) {
+				return fmt.Errorf("invalid investigation parameter policy %q.%q", name, key)
+			}
+		}
 	}
 	return nil
 }
@@ -297,14 +305,8 @@ func validateInvestigationToolAction(action agent.ProposedAction, snapshot inves
 	if len(action.BoundedParameters) == 0 || !json.Valid(action.BoundedParameters) {
 		return fmt.Errorf("%w: action parameters must be valid JSON", agent.ErrInvalidArgument)
 	}
-	var parameters map[string]json.RawMessage
-	if err := json.Unmarshal(action.BoundedParameters, &parameters); err != nil || parameters == nil {
-		return fmt.Errorf("%w: action parameters must be a JSON object", agent.ErrInvalidArgument)
-	}
-	for key := range parameters {
-		if !slices.Contains(policy.ParameterKeys, key) {
-			return fmt.Errorf("%w: action parameter %q is not allowlisted", agent.ErrPermission, key)
-		}
+	if err := agent.ValidateActionParameters(action.BoundedParameters, policy); err != nil {
+		return err
 	}
 	if strings.TrimSpace(action.PurposeSummary) == "" || len(action.ExpectedFactTypes) == 0 {
 		return fmt.Errorf("%w: action purpose and expected facts are required", agent.ErrInvalidArgument)
@@ -686,7 +688,7 @@ func (o *investigationStepOperation) statePolicy(snapshot investigationSnapshot)
 	for name, policy := range o.cfg.ActionPolicies {
 		actions[name] = agent.ToolActionPolicy{
 			TemplateIDs: slices.Clone(policy.TemplateIDs), ParameterKeys: slices.Clone(policy.ParameterKeys),
-			ExpectedFactTypes: slices.Clone(policy.ExpectedFactTypes),
+			ParameterSpecs: cloneInvestigationParameterSpecs(policy.ParameterSpecs), ExpectedFactTypes: slices.Clone(policy.ExpectedFactTypes),
 		}
 	}
 	scopes := map[string]struct{}{snapshot.ScopeRef: {}}
@@ -1193,11 +1195,71 @@ func (o *investigationStepOperation) executionFailure(ctx context.Context, snaps
 	if errors.Is(executionErr, asyncjob.ErrExternalDeadlineMissing) {
 		return asyncjob.Dead("external_deadline_missing", "investigation external-call deadline is not configured", o.failRunMutation(snapshot, "external_deadline_missing"))
 	}
-	prepared, err := o.prepareInsufficient(snapshot, payload, "step_execution_unavailable", o.cfg.Now())
+	errorCode := investigationExecutionErrorCode(executionErr)
+	prepared, err := o.prepareInsufficient(snapshot, payload, errorCode, o.cfg.Now())
 	if err != nil {
 		return asyncjob.Dead("investigation_step_failed", boundInvestigation(executionErr.Error(), 2048), nil)
 	}
+	prepared.checkpoint.ErrorCode = errorCode
 	return o.persistAndResolve(ctx, execution, snapshot, prepared)
+}
+
+func investigationExecutionErrorCode(err error) string {
+	var runtimeErr *agent.RuntimeError
+	if errors.As(err, &runtimeErr) {
+		suffix := map[agent.ErrorCode]string{
+			agent.ErrorValidation:       "invalid_argument",
+			agent.ErrorPermission:       "permission",
+			agent.ErrorNotFound:         "not_found",
+			agent.ErrorTimeout:          "timeout",
+			agent.ErrorRateLimit:        "rate_limit",
+			agent.ErrorTemporary:        "temporary_dependency",
+			agent.ErrorModelUnavailable: "model_unavailable",
+			agent.ErrorMalformedModel:   "malformed_model_output",
+			agent.ErrorBudgetExceeded:   "budget_exceeded",
+			agent.ErrorCancelled:        "cancelled",
+			agent.ErrorInvariant:        "internal_invariant",
+			agent.ErrorLeaseLost:        "lease_lost",
+		}[runtimeErr.Code]
+		if suffix != "" {
+			return "step_execution_" + suffix
+		}
+	}
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "step_execution_timeout"
+	case errors.Is(err, context.Canceled), errors.Is(err, agent.ErrCancelled):
+		return "step_execution_cancelled"
+	case errors.Is(err, agent.ErrPermission), errors.Is(err, change.ErrPermission), errors.Is(err, change.ErrNotAllowed):
+		return "step_execution_permission"
+	case errors.Is(err, agent.ErrInvalidArgument), errors.Is(err, change.ErrInvalidArgument):
+		return "step_execution_invalid_argument"
+	case errors.Is(err, agent.ErrNotFound), errors.Is(err, change.ErrNotFound):
+		return "step_execution_not_found"
+	case errors.Is(err, agent.ErrConflict), errors.Is(err, change.ErrConflict):
+		return "step_execution_conflict"
+	case errors.Is(err, agent.ErrBudgetExceeded):
+		return "step_execution_budget_exceeded"
+	case errors.Is(err, agent.ErrLeaseLost), errors.Is(err, asyncjob.ErrLeaseLost):
+		return "step_execution_lease_lost"
+	case errors.Is(err, agent.ErrUnavailable), errors.Is(err, change.ErrUnavailable):
+		return "step_execution_unavailable"
+	default:
+		return "step_execution_internal"
+	}
+}
+
+func validInvestigationExecutionErrorCode(value string) bool {
+	switch value {
+	case "step_execution_invalid_argument", "step_execution_permission", "step_execution_not_found", "step_execution_conflict",
+		"step_execution_timeout", "step_execution_rate_limit", "step_execution_temporary_dependency",
+		"step_execution_model_unavailable", "step_execution_malformed_model_output", "step_execution_budget_exceeded",
+		"step_execution_cancelled", "step_execution_internal_invariant", "step_execution_lease_lost",
+		"step_execution_unavailable", "step_execution_internal":
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizedModelUsage(value agent.ModelUsage, input, output []byte) agent.Usage {
@@ -1560,7 +1622,7 @@ func cloneActionPolicies(values map[string]agent.ToolActionPolicy) map[string]ag
 	for name, policy := range values {
 		result[name] = agent.ToolActionPolicy{
 			TemplateIDs: slices.Clone(policy.TemplateIDs), ParameterKeys: slices.Clone(policy.ParameterKeys),
-			ExpectedFactTypes: slices.Clone(policy.ExpectedFactTypes),
+			ParameterSpecs: cloneInvestigationParameterSpecs(policy.ParameterSpecs), ExpectedFactTypes: slices.Clone(policy.ExpectedFactTypes),
 		}
 	}
 	return result
@@ -1579,8 +1641,21 @@ func modelActionSchemas(values map[string]agent.ToolActionPolicy) []agent.ModelA
 		parameters := stableUniqueInvestigation(policy.ParameterKeys)
 		facts := stableUniqueInvestigation(policy.ExpectedFactTypes)
 		result = append(result, agent.ModelActionSchema{
-			Tool: name, TemplateIDs: templates, ParameterKeys: parameters, ExpectedFactTypes: facts,
+			Tool: name, TemplateIDs: templates, ParameterKeys: parameters,
+			ParameterSpecs: cloneInvestigationParameterSpecs(policy.ParameterSpecs), ExpectedFactTypes: facts,
 		})
+	}
+	return result
+}
+
+func cloneInvestigationParameterSpecs(values map[string]agent.ParameterSpec) map[string]agent.ParameterSpec {
+	if len(values) == 0 {
+		return nil
+	}
+	result := make(map[string]agent.ParameterSpec, len(values))
+	for key, spec := range values {
+		spec.Enum = stableUniqueInvestigation(spec.Enum)
+		result[key] = spec
 	}
 	return result
 }
@@ -1599,6 +1674,10 @@ func validateDecodedPrepared(snapshot investigationSnapshot, checkpoint investig
 	}
 	if !slices.Equal(checkpoint.ProviderRequestIDHashes, normalizedProviderRequestIDHashes(checkpoint.ProviderRequestIDHashes)) {
 		return errors.New("task checkpoint provider request identity hashes are invalid")
+	}
+	if checkpoint.ErrorCode != "" && (!validInvestigationExecutionErrorCode(checkpoint.ErrorCode) ||
+		checkpoint.TerminalOutcome != "insufficient_evidence" || !slices.Contains(checkpoint.Sufficiency.ReasonCodes, checkpoint.ErrorCode)) {
+		return errors.New("task checkpoint execution error code is invalid")
 	}
 	if checkpoint.TerminalOutcome != "" {
 		if checkpoint.NextMode != "" || checkpoint.NextAction != nil || checkpoint.State.NextNode != agent.NodeEnd {
@@ -1660,12 +1739,12 @@ func (o *investigationStepOperation) applyPrepared(ctx context.Context, tx async
   short_reason, selected_tool, arguments_json, arguments_hash, result_summary, result_ref,
   evidence_public_id, status, retry_count, duration_ms, input_tokens, output_tokens, provider_request_id_hashes, error_code,
   started_at, finished_at, created_at)
- VALUES (?, ?, 3, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', 0, ?, ?, ?, ?, '', ?, ?, ?)`,
+	 VALUES (?, ?, 3, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'COMPLETED', 0, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		stepPublicID, snapshot.Task.SubjectID, snapshot.Task.IncidentID, snapshot.Task.CycleNo,
 		snapshot.RunMigratedLegacy, sequence,
 		stepNode, boundInvestigation(checkpoint.StepSummary, 1024), selectedTool(checkpoint), arguments, argumentsHash,
 		boundInvestigation(checkpoint.StepSummary, 4096), "", evidencePublicID, checkpoint.DurationMS,
-		checkpoint.Usage.InputTokens, checkpoint.Usage.OutputTokens, providerRequestIDHashes,
+		checkpoint.Usage.InputTokens, checkpoint.Usage.OutputTokens, providerRequestIDHashes, checkpoint.ErrorCode,
 		checkpoint.CapturedAt.UTC(), checkpoint.CapturedAt.UTC(), checkpoint.CapturedAt.UTC())
 	if err != nil {
 		return fmt.Errorf("persist investigation AgentStep: %w", err)

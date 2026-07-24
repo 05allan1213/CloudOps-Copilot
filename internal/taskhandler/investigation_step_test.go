@@ -101,8 +101,31 @@ func TestInvestigationStepDoesNotRetryAfterTypedModelRepairFails(t *testing.T) {
 	if err := json.Unmarshal(store.singleCheckpoint(t).Payload, &checkpoint); err != nil {
 		t.Fatal(err)
 	}
-	if checkpoint.TerminalOutcome != "insufficient_evidence" || !slices.Contains(checkpoint.Sufficiency.ReasonCodes, "step_execution_unavailable") {
+	if checkpoint.TerminalOutcome != "insufficient_evidence" || checkpoint.ErrorCode != "step_execution_malformed_model_output" ||
+		!slices.Contains(checkpoint.Sufficiency.ReasonCodes, checkpoint.ErrorCode) {
 		t.Fatalf("checkpoint=%+v", checkpoint)
+	}
+}
+
+func TestInvestigationExecutionErrorCodeIsBoundedAndStable(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "invalid argument", err: agent.ErrInvalidArgument, want: "step_execution_invalid_argument"},
+		{name: "permission", err: agent.ErrPermission, want: "step_execution_permission"},
+		{name: "timeout", err: context.DeadlineExceeded, want: "step_execution_timeout"},
+		{name: "typed malformed model", err: agent.NewRuntimeError(agent.ErrorMalformedModel, "provider detail must not persist", agent.ErrInvalidArgument), want: "step_execution_malformed_model_output"},
+		{name: "unknown", err: errors.New("credential-shaped provider detail must not persist"), want: "step_execution_internal"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := investigationExecutionErrorCode(test.err)
+			if got != test.want || !validInvestigationExecutionErrorCode(got) || strings.Contains(got, "provider") {
+				t.Fatalf("code=%q want=%q", got, test.want)
+			}
+		})
 	}
 }
 

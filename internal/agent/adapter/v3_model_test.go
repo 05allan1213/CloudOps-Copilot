@@ -40,6 +40,27 @@ func TestV3StructuredModelRepairsDomainInvalidDeltaOnce(t *testing.T) {
 	}
 }
 
+func TestV3StructuredModelRepairsStructuredWindowParameter(t *testing.T) {
+	invalid := `{"schema_version":1,"basis_checkpoint_version":4,"proposed_action":{"tool":"query_metrics","scope_ref":"scope-1","template_id":"metric/v1","bounded_parameters":{"window":{"from":"2026-07-24T11:03:47Z","to":"2026-07-24T11:04:07Z"}},"expected_fact_types":["metric.symptom"],"purpose_summary":"inspect"},"proposed_stop":"continue"}`
+	valid := `{"schema_version":1,"basis_checkpoint_version":4,"proposed_action":{"tool":"query_metrics","scope_ref":"scope-1","template_id":"metric/v1","bounded_parameters":{"window":"15m"},"expected_fact_types":["metric.symptom"],"purpose_summary":"inspect"},"proposed_stop":"continue"}`
+	model, calls := newV3StructuredTestModel(t, []string{invalid, valid})
+	delta, _, err := model.ProposeDelta(context.Background(), agent.ModelView{
+		State: agent.InvestigationState{
+			SchemaVersion: agent.InvestigationStateSchemaVersion, IncidentID: "incident-1", CycleNo: 1,
+			CheckpointVersion: 4, Limits: agent.Limits{MaxCheckpointSize: 64 * 1024},
+		},
+		ScopeRef: "scope-1",
+		AllowedActions: []agent.ModelActionSchema{{
+			Tool: "query_metrics", TemplateIDs: []string{"metric/v1"}, ParameterKeys: []string{"window"},
+			ParameterSpecs:    map[string]agent.ParameterSpec{"window": {Type: agent.ParameterString, Enum: []string{"1m", "5m", "15m", "30m"}}},
+			ExpectedFactTypes: []string{"metric.symptom"},
+		}},
+	})
+	if err != nil || delta.ProposedAction == nil || string(delta.ProposedAction.BoundedParameters) != `{"window":"15m"}` || calls() != 2 {
+		t.Fatalf("delta=%+v calls=%d err=%v", delta, calls(), err)
+	}
+}
+
 func TestRuntimeModelIdentityUsesActualAdapterModelAndStableMaterials(t *testing.T) {
 	client := llm.NewClient(llm.Options{APIKey: "fixture", APIURL: "https://provider.example/v1/chat/completions", Model: "actual-model-v7"})
 	model, err := NewLLMModel(client)

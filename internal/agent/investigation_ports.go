@@ -22,11 +22,28 @@ type ModelView struct {
 // action policy. It contains no endpoint, credential, query language, or
 // provider-specific authorization data.
 type ModelActionSchema struct {
-	Tool              string   `json:"tool"`
-	TemplateIDs       []string `json:"template_ids"`
-	ParameterKeys     []string `json:"parameter_keys"`
-	ExpectedFactTypes []string `json:"expected_fact_types"`
+	Tool              string                   `json:"tool"`
+	TemplateIDs       []string                 `json:"template_ids"`
+	ParameterKeys     []string                 `json:"parameter_keys"`
+	ParameterSpecs    map[string]ParameterSpec `json:"parameter_specs,omitempty"`
+	ExpectedFactTypes []string                 `json:"expected_fact_types"`
 }
+
+// ParameterSpec is the provider-visible value contract for one bounded action
+// parameter. It deliberately describes only scalar shape and a small enum;
+// provider queries, endpoints, and credentials never cross this boundary.
+type ParameterSpec struct {
+	Type ParameterType `json:"type"`
+	Enum []string      `json:"enum,omitempty"`
+}
+
+type ParameterType string
+
+const (
+	ParameterString  ParameterType = "string"
+	ParameterInteger ParameterType = "integer"
+	ParameterBoolean ParameterType = "boolean"
+)
 
 // DiagnosisView is the bounded input for a diagnosis synthesis step.
 // Sufficiency is calculated by project code and is not delegated to the model.

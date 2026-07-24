@@ -37,7 +37,7 @@ func (t *Toolset) deploymentContext(ctx context.Context, request agent.Investiga
 	if err != nil {
 		return unavailable(request.Action, "argocd", "argocd/deployment-context", err), nil
 	}
-	if application.Name != t.cfg.Target.ArgoApplication || application.Project != t.cfg.Target.ArgoProject || application.Repository != "" && !sameRepositoryURL(application.Repository, t.cfg.Target.Repository) || application.Path != "" && application.Path != t.cfg.Target.GitOpsPath {
+	if !deploymentApplicationMatches(application, t.cfg.Target) {
 		return agent.ToolObservation{}, agent.ErrPermission
 	}
 	runtimes, err := t.cfg.Runtime.ResolveRuntime(ctx, t.cfg.Target.Namespace, "Deployment", t.cfg.Target.Workload)
@@ -123,6 +123,9 @@ func (t *Toolset) changeDetail(ctx context.Context, request agent.InvestigationT
 	application, err := t.cfg.Argo.GetApplication(ctx, t.cfg.Target.ArgoApplication, t.cfg.Target.ArgoProject)
 	if err != nil {
 		return unavailable(request.Action, "argocd", "argocd/change-ref", err), nil
+	}
+	if !deploymentApplicationMatches(application, t.cfg.Target) {
+		return agent.ToolObservation{}, agent.ErrPermission
 	}
 	revision := ""
 	for _, item := range application.History {
@@ -228,4 +231,10 @@ func exactRuntime(values []change.ContainerRuntime, container string) (change.Co
 func sameRepositoryURL(raw string, repository change.RepositoryRef) bool {
 	value := strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(raw), "/"), ".git")
 	return strings.HasSuffix(strings.ToLower(value), "/"+strings.ToLower(repository.FullName()))
+}
+
+func deploymentApplicationMatches(application change.ArgoApplication, target Target) bool {
+	return application.Name == target.ArgoApplication && application.Project == target.ArgoProject &&
+		(application.Repository == "" || sameRepositoryURL(application.Repository, target.Repository)) &&
+		application.Path == target.ArgoPath
 }

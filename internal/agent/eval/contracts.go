@@ -53,7 +53,7 @@ func EvaluationContracts(datasetID string) Contracts {
 		policy := policies[name]
 		actions = append(actions, agent.ModelActionSchema{
 			Tool: name, TemplateIDs: stableStrings(policy.TemplateIDs),
-			ParameterKeys:     stableStrings(policy.ParameterKeys),
+			ParameterKeys: stableStrings(policy.ParameterKeys), ParameterSpecs: stableParameterSpecs(policy.ParameterSpecs),
 			ExpectedFactTypes: stableStrings(policy.ExpectedFactTypes),
 		})
 	}
@@ -74,5 +74,17 @@ func stableStrings(values []string) []string {
 		result = append(result, value)
 	}
 	slices.Sort(result)
+	return result
+}
+
+func stableParameterSpecs(values map[string]agent.ParameterSpec) map[string]agent.ParameterSpec {
+	if len(values) == 0 {
+		return nil
+	}
+	result := make(map[string]agent.ParameterSpec, len(values))
+	for key, spec := range values {
+		spec.Enum = stableStrings(spec.Enum)
+		result[key] = spec
+	}
 	return result
 }

@@ -162,6 +162,7 @@ type StateDelta struct {
 type ToolActionPolicy struct {
 	TemplateIDs       []string
 	ParameterKeys     []string
+	ParameterSpecs    map[string]ParameterSpec
 	ExpectedFactTypes []string
 }
 
@@ -341,14 +342,8 @@ func validateStateDelta(delta StateDelta, state InvestigationState, policy Reduc
 		if len(action.BoundedParameters) == 0 || !json.Valid(action.BoundedParameters) {
 			return fmt.Errorf("%w: action parameters must be valid JSON", ErrInvalidArgument)
 		}
-		var values map[string]json.RawMessage
-		if err := json.Unmarshal(action.BoundedParameters, &values); err != nil || values == nil {
-			return fmt.Errorf("%w: action parameters must be a JSON object", ErrInvalidArgument)
-		}
-		for key := range values {
-			if !containsString(config.ParameterKeys, key) {
-				return fmt.Errorf("%w: action parameter %q is not allowlisted", ErrPermission, key)
-			}
+		if err := ValidateActionParameters(action.BoundedParameters, config); err != nil {
+			return err
 		}
 		if strings.TrimSpace(action.PurposeSummary) == "" || len(action.ExpectedFactTypes) == 0 {
 			return fmt.Errorf("%w: action purpose and expected facts are required", ErrInvalidArgument)
@@ -374,6 +369,67 @@ func validateStateDelta(delta StateDelta, state InvestigationState, policy Reduc
 	}
 	if err := state.Usage.CanCharge(policy.StepUsage, state.Limits); err != nil {
 		return err
+	}
+	return nil
+}
+
+// ValidateActionParameters checks both the fixed key allowlist and the scalar
+// value contracts exposed to the model. It is shared by the durable reducer
+// and task execution so an action cannot pass one boundary and fail another
+// for a different reason.
+func ValidateActionParameters(raw json.RawMessage, policy ToolActionPolicy) error {
+	var values map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &values); err != nil || values == nil {
+		return fmt.Errorf("%w: action parameters must be a JSON object", ErrInvalidArgument)
+	}
+	for key := range values {
+		if !containsString(policy.ParameterKeys, key) {
+			return fmt.Errorf("%w: action parameter %q is not allowlisted", ErrPermission, key)
+		}
+		if spec, ok := policy.ParameterSpecs[key]; ok {
+			if err := validateParameterValue(values[key], spec); err != nil {
+				return fmt.Errorf("%w: action parameter %q %v", ErrInvalidArgument, key, err)
+			}
+		}
+	}
+	return nil
+}
+
+func validateParameterValue(raw json.RawMessage, spec ParameterSpec) error {
+	if spec.Type != ParameterString && spec.Type != ParameterInteger && spec.Type != ParameterBoolean {
+		return fmt.Errorf("has an unsupported type contract")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return fmt.Errorf("is not a JSON scalar")
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err == nil {
+		return fmt.Errorf("contains multiple JSON values")
+	}
+	switch spec.Type {
+	case ParameterString:
+		text, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("must be a string")
+		}
+		if len(spec.Enum) > 0 && !containsString(spec.Enum, text) {
+			return fmt.Errorf("is outside the allowed enum")
+		}
+	case ParameterInteger:
+		number, ok := value.(json.Number)
+		if !ok {
+			return fmt.Errorf("must be an integer")
+		}
+		if _, err := number.Int64(); err != nil {
+			return fmt.Errorf("must be an integer")
+		}
+	case ParameterBoolean:
+		if _, ok := value.(bool); !ok {
+			return fmt.Errorf("must be a boolean")
+		}
 	}
 	return nil
 }

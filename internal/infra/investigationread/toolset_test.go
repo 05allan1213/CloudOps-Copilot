@@ -37,7 +37,7 @@ func TestInspectWorkloadResolvesOnlyServerOwnedScope(t *testing.T) {
 		GitHub: githubStub{}, Argo: argoStub{}, Runtime: runtimeStub{}, Registry: registryStub{}, Runbooks: runbookStub{},
 		Target: Target{Service: "demo", Cluster: "kind", Environment: "local", Namespace: "demo", Workload: "demo", Container: "app",
 			Repository: change.RepositoryRef{Owner: "acme", Name: "gitops"}, BaseBranch: "main", GitOpsPath: "demo/deployment.yaml",
-			ArgoApplication: "demo", ArgoProject: "demo", EnvKey: "REQUIRED_ENV"},
+			ArgoPath: "demo", ArgoApplication: "demo", ArgoProject: "demo", EnvKey: "REQUIRED_ENV"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -71,7 +71,31 @@ func TestGoldenActionPoliciesFreezeEightToolsWithoutQueryLanguages(t *testing.T)
 			case "promql", "dsl", "traceql", "url", "namespace", "repository", "sha":
 				t.Fatalf("tool %s exposes forbidden key %s", name, key)
 			}
+			spec, ok := policy.ParameterSpecs[key]
+			if !ok {
+				t.Fatalf("tool %s parameter %s has no scalar value contract", name, key)
+			}
+			if key == "window" && (spec.Type != agent.ParameterString || len(spec.Enum) != 4) {
+				t.Fatalf("tool %s window contract=%+v", name, spec)
+			}
 		}
+	}
+}
+
+func TestDeploymentApplicationMatchesArgoDirectoryNotGitOpsFile(t *testing.T) {
+	target := Target{
+		Repository: change.RepositoryRef{Owner: "acme", Name: "gitops"}, GitOpsPath: "apps/demo/deployment.yaml",
+		ArgoPath: "apps/demo", ArgoApplication: "cloudops-demo", ArgoProject: "cloudops-demo",
+	}
+	application := change.ArgoApplication{
+		Name: "cloudops-demo", Project: "cloudops-demo", Repository: "https://github.com/acme/gitops.git", Path: "apps/demo",
+	}
+	if !deploymentApplicationMatches(application, target) {
+		t.Fatal("valid Argo directory identity was rejected")
+	}
+	application.Path = target.GitOpsPath
+	if deploymentApplicationMatches(application, target) {
+		t.Fatal("GitOps manifest file was accepted as the Argo Application path")
 	}
 }
 

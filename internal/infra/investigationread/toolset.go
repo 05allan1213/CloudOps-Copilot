@@ -78,6 +78,7 @@ type Target struct {
 	Repository      change.RepositoryRef
 	BaseBranch      string
 	GitOpsPath      string
+	ArgoPath        string
 	ArgoApplication string
 	ArgoProject     string
 	EnvKey          string
@@ -132,14 +133,15 @@ func New(config Config) (*Toolset, error) {
 
 func validateTarget(target Target) error {
 	values := []string{target.Service, target.Cluster, target.Environment, target.Namespace, target.Workload, target.Container,
-		target.Repository.Owner, target.Repository.Name, target.BaseBranch, target.GitOpsPath,
+		target.Repository.Owner, target.Repository.Name, target.BaseBranch, target.GitOpsPath, target.ArgoPath,
 		target.ArgoApplication, target.ArgoProject, target.EnvKey}
 	for _, value := range values {
 		if strings.TrimSpace(value) == "" || len(value) > 1024 {
 			return errors.New("V3 investigation target identity is incomplete")
 		}
 	}
-	if target.Repository.FullName() == "/" || !regexp.MustCompile(`^[A-Z_][A-Z0-9_]{0,127}$`).MatchString(target.EnvKey) {
+	if target.Repository.FullName() == "/" || strings.Trim(target.ArgoPath, "/") == strings.Trim(target.GitOpsPath, "/") ||
+		!regexp.MustCompile(`^[A-Z_][A-Z0-9_]{0,127}$`).MatchString(target.EnvKey) {
 		return errors.New("V3 investigation target policy is invalid")
 	}
 	for _, raw := range []string{target.GrafanaURL, target.KibanaURL, target.TempoURL} {
@@ -158,33 +160,54 @@ func GoldenActionPolicies() map[string]agent.ToolActionPolicy {
 		},
 		ToolInspectKubernetesEvents: {
 			TemplateIDs: []string{TemplateEventsV1}, ParameterKeys: []string{"window", "limit"},
+			ParameterSpecs: map[string]agent.ParameterSpec{
+				"window": windowParameterSpec(), "limit": {Type: agent.ParameterInteger},
+			},
 			ExpectedFactTypes: []string{"kubernetes.warning_events_present", "kubernetes.no_warning_events"},
 		},
 		ToolQueryMetrics: {
 			TemplateIDs: []string{TemplateMetricsV1}, ParameterKeys: []string{"window"},
+			ParameterSpecs:    map[string]agent.ParameterSpec{"window": windowParameterSpec()},
 			ExpectedFactTypes: []string{"metric.readiness_or_5xx_failure", "metric.symptom_absent"},
 		},
 		ToolQueryLogs: {
 			TemplateIDs: []string{TemplateLogsV1}, ParameterKeys: []string{"window", "severity", "keyword", "trace_id", "limit"},
+			ParameterSpecs: map[string]agent.ParameterSpec{
+				"window": windowParameterSpec(), "severity": {Type: agent.ParameterString}, "keyword": {Type: agent.ParameterString},
+				"trace_id": {Type: agent.ParameterString}, "limit": {Type: agent.ParameterInteger},
+			},
 			ExpectedFactTypes: []string{"log.required_env_missing", "log.required_env_missing_absent"},
 		},
 		ToolQueryTraces: {
 			TemplateIDs: []string{TemplateTracesV1}, ParameterKeys: []string{"window", "status", "trace_id", "limit"},
+			ParameterSpecs: map[string]agent.ParameterSpec{
+				"window": windowParameterSpec(), "status": {Type: agent.ParameterString, Enum: []string{"error", "all"}},
+				"trace_id": {Type: agent.ParameterString}, "limit": {Type: agent.ParameterInteger},
+			},
 			ExpectedFactTypes: []string{"trace.request_failure", "trace.request_failure_absent"},
 		},
 		ToolGetDeploymentContext: {
 			TemplateIDs: []string{TemplateDeploymentContextV1}, ParameterKeys: []string{"window"},
+			ParameterSpecs:    map[string]agent.ParameterSpec{"window": windowParameterSpec()},
 			ExpectedFactTypes: []string{"argocd.bad_revision_deployed", "argocd.bad_revision_not_deployed", "source_revision.unchanged", "image_digest.unchanged", "deployment.source_and_image_changed", "deployment.change_ref"},
 		},
 		ToolGetChangeDetail: {
 			TemplateIDs: []string{TemplateChangeDetailV1}, ParameterKeys: []string{"change_ref"},
+			ParameterSpecs:    map[string]agent.ParameterSpec{"change_ref": {Type: agent.ParameterString}},
 			ExpectedFactTypes: []string{"gitops.required_env_removed", "gitops.required_env_not_removed", "change.ci_succeeded", "change.ci_not_succeeded"},
 		},
 		ToolSearchRunbooks: {
 			TemplateIDs: []string{TemplateRunbookV1}, ParameterKeys: []string{"query", "limit"},
+			ParameterSpecs: map[string]agent.ParameterSpec{
+				"query": {Type: agent.ParameterString}, "limit": {Type: agent.ParameterInteger},
+			},
 			ExpectedFactTypes: []string{"runbook.guidance_found", "runbook.guidance_not_found"},
 		},
 	}
+}
+
+func windowParameterSpec() agent.ParameterSpec {
+	return agent.ParameterSpec{Type: agent.ParameterString, Enum: []string{"1m", "5m", "15m", "30m"}}
 }
 
 func RequiredSources() []string {

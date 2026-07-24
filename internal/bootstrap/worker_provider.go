@@ -44,6 +44,7 @@ type V3WorkerTargetConfig struct {
 	Service, Workload, Container    string
 	RepositoryOwner, RepositoryName string
 	BaseBranch, GitOpsPath          string
+	ArgoPath                        string
 	ArgoApplication, ArgoProject    string
 	ArgoRepositoryURL               string
 	RequiredEnvKey                  string
@@ -88,8 +89,9 @@ func LoadV3WorkerProviderConfig(application appconfig.Config) (V3WorkerProviderC
 			Namespace: configutil.String("V3_TARGET_NAMESPACE", "demo"), Service: configutil.String("V3_TARGET_SERVICE", "demo"),
 			Workload: configutil.String("V3_TARGET_WORKLOAD", "demo"), Container: configutil.String("V3_TARGET_CONTAINER", "demo"),
 			RepositoryOwner: owner, RepositoryName: name, BaseBranch: configutil.String("V3_TARGET_BASE_BRANCH", "main"),
-			GitOpsPath: configutil.String("V3_TARGET_GITOPS_PATH", ""), ArgoApplication: configutil.String("V3_TARGET_ARGO_APPLICATION", "cloudops-demo"),
-			ArgoProject: configutil.String("V3_TARGET_ARGO_PROJECT", "cloudops-demo"), ArgoRepositoryURL: configutil.String("V3_TARGET_ARGO_REPOSITORY_URL", ""),
+			GitOpsPath: configutil.String("V3_TARGET_GITOPS_PATH", ""), ArgoPath: configutil.String("V3_TARGET_ARGO_PATH", ""),
+			ArgoApplication: configutil.String("V3_TARGET_ARGO_APPLICATION", "cloudops-demo"),
+			ArgoProject:     configutil.String("V3_TARGET_ARGO_PROJECT", "cloudops-demo"), ArgoRepositoryURL: configutil.String("V3_TARGET_ARGO_REPOSITORY_URL", ""),
 			RequiredEnvKey: configutil.String("V3_TARGET_REQUIRED_ENV_KEY", "REQUIRED_ENV"),
 			ReadyURL:       configutil.String("V3_TARGET_READY_URL", "http://demo-diagnostics.demo.svc:8080/readyz"),
 			GrafanaURL:     configutil.String("V3_GRAFANA_URL", ""), KibanaURL: configutil.String("V3_KIBANA_URL", ""), TempoURL: configutil.String("V3_TEMPO_URL", ""),
@@ -113,13 +115,19 @@ func (c V3WorkerProviderConfig) Validate() error {
 	for name, value := range map[string]string{
 		"cluster": t.Cluster, "environment": t.Environment, "namespace": t.Namespace, "service": t.Service,
 		"workload": t.Workload, "container": t.Container, "repository owner": t.RepositoryOwner,
-		"repository name": t.RepositoryName, "base branch": t.BaseBranch, "GitOps path": t.GitOpsPath,
+		"repository name": t.RepositoryName, "base branch": t.BaseBranch, "GitOps path": t.GitOpsPath, "Argo path": t.ArgoPath,
 		"Argo application": t.ArgoApplication, "Argo project": t.ArgoProject, "Argo repository URL": t.ArgoRepositoryURL,
 		"required env key": t.RequiredEnvKey, "ready URL": t.ReadyURL,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("V3 worker target %s is required", name)
 		}
+	}
+	argoPath := strings.Trim(strings.TrimSpace(t.ArgoPath), "/")
+	gitOpsPath := strings.Trim(strings.TrimSpace(t.GitOpsPath), "/")
+	if argoPath == gitOpsPath || argoPath != strings.TrimSpace(t.ArgoPath) || gitOpsPath != strings.TrimSpace(t.GitOpsPath) ||
+		strings.Contains(argoPath, "..") || strings.Contains(gitOpsPath, "..") {
+		return errors.New("V3 worker Argo directory and GitOps file paths must be distinct bounded paths")
 	}
 	if !slices.Contains(c.Application.K8SAllowedNamespaces, t.Namespace) && !slices.Contains(c.Application.K8SAllowedNamespaces, "*") {
 		return errors.New("V3 worker target namespace is not in K8S_ALLOWED_NAMESPACES")
@@ -305,7 +313,7 @@ func (f ProductionTaskOperationFactory) Build(ctx context.Context, db *sql.DB, t
 		Target: investigationread.Target{
 			Service: target.Service, Cluster: target.Cluster, Environment: target.Environment, Namespace: target.Namespace,
 			Workload: target.Workload, Container: target.Container, Repository: changeRepository(target), BaseBranch: target.BaseBranch,
-			GitOpsPath: target.GitOpsPath, ArgoApplication: target.ArgoApplication, ArgoProject: target.ArgoProject,
+			GitOpsPath: target.GitOpsPath, ArgoPath: target.ArgoPath, ArgoApplication: target.ArgoApplication, ArgoProject: target.ArgoProject,
 			EnvKey: target.RequiredEnvKey, GrafanaURL: target.GrafanaURL, KibanaURL: target.KibanaURL, TempoURL: target.TempoURL,
 		}, RequestTimeout: c.K8SRequestTimeout,
 	})
@@ -371,7 +379,7 @@ func (f ProductionTaskOperationFactory) Build(ctx context.Context, db *sql.DB, t
 		ClaimPolicy: agent.GoldenRequiredEnvClaimPolicy(), ActionPolicies: actionPolicies, AgentRunIdentity: modelIdentity,
 		RequiredSources: investigationread.RequiredSources(), MaxCheckpointBytes: f.Config.MaxCheckpointBytes,
 		CurrentPolicyHash:    policyHash,
-		DeliveryTarget:       taskhandler.DeliveryObserveTarget{ArgoApplication: target.ArgoApplication, ArgoProject: target.ArgoProject, ArgoRepository: target.ArgoRepositoryURL, ArgoPath: target.GitOpsPath, DesiredReplicas: 2},
+		DeliveryTarget:       taskhandler.DeliveryObserveTarget{ArgoApplication: target.ArgoApplication, ArgoProject: target.ArgoProject, ArgoRepository: target.ArgoRepositoryURL, ArgoPath: target.ArgoPath, DesiredReplicas: 2},
 		DeliveryPollInterval: c.DeliveryPollInterval, DeliveryTimeout: c.DeliveryTimeout, MaxAgentRuns: taskhandler.DefaultAgentRunBudget,
 	}, WorkerOperationDependencies{
 		InvestigationModel: model, InvestigationTools: investigationTools,

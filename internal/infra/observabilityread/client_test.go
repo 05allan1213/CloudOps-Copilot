@@ -2,6 +2,7 @@ package observabilityread
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -122,6 +123,72 @@ func TestLokiAndTempoBoundedFacts(t *testing.T) {
 	traces, err := tempo.ObserveTraceErrorRate(context.Background(), query(verification.CheckTraceLatencyP95Below))
 	if err != nil || traces.Observation.Value != .125 || traces.Observation.SampleCount != 1 {
 		t.Fatalf("traces=%+v err=%v", traces, err)
+	}
+}
+
+func TestTempoErrorRateUsesCompleteTraceQLMetricCounts(t *testing.T) {
+	var requests atomic.Int32
+	var firstStart, firstEnd string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.Method != http.MethodGet || r.URL.Path != "/api/metrics/query" || r.URL.Query().Has("limit") {
+			t.Errorf("unexpected Tempo request: %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+		}
+		traceQL := r.URL.Query().Get("q")
+		if !strings.HasSuffix(traceQL, " | count_over_time()") || !strings.Contains(traceQL, `resource.deployment.environment.name = "staging"`) {
+			t.Errorf("query is not the frozen exact-count template: %s", traceQL)
+		}
+		if firstStart == "" {
+			firstStart, firstEnd = r.URL.Query().Get("start"), r.URL.Query().Get("end")
+		} else if r.URL.Query().Get("start") != firstStart || r.URL.Query().Get("end") != firstEnd {
+			t.Errorf("error and total counts used different windows")
+		}
+		value := 200
+		if strings.Contains(traceQL, "status = error") {
+			value = 2
+		}
+		_, _ = fmt.Fprintf(w, `{"series":[{"value":%d}],"metrics":{"completedJobs":3,"totalJobs":3}}`, value)
+	}))
+	defer server.Close()
+	tempo, err := NewTempo(testConfig(server))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := tempo.ObserveTraceErrorRate(context.Background(), query(verification.CheckTraceErrorRateBelow))
+	if err != nil || requests.Load() != 2 || result.Observation.Value != .01 || result.Observation.Numerator != 2 ||
+		result.Observation.Denominator != 200 || result.Observation.MatchedCount != 2 || result.Observation.SampleCount != 200 ||
+		result.Observation.Truncated || result.Observation.Status != verification.ObservationAvailable {
+		t.Fatalf("result=%+v requests=%d err=%v", result, requests.Load(), err)
+	}
+}
+
+func TestTempoErrorRateTreatsMissingErrorValueAsZeroAndIncompleteJobsAsUnavailable(t *testing.T) {
+	complete := true
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Query().Get("q"), "status = error") {
+			if complete {
+				_, _ = w.Write([]byte(`{"series":[{}],"metrics":{"completedJobs":1,"totalJobs":1}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"series":[{}],"metrics":{"completedJobs":1,"totalJobs":2}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"series":[{"value":50}],"metrics":{"completedJobs":1,"totalJobs":1}}`))
+	}))
+	defer server.Close()
+	tempo, err := NewTempo(testConfig(server))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := tempo.ObserveTraceErrorRate(context.Background(), query(verification.CheckTraceErrorRateBelow))
+	if err != nil || result.Observation.Status != verification.ObservationAvailable || result.Observation.Value != 0 || result.Observation.Denominator != 50 {
+		t.Fatalf("zero-error result=%+v err=%v", result, err)
+	}
+	complete = false
+	result, err = tempo.ObserveTraceErrorRate(context.Background(), query(verification.CheckTraceErrorRateBelow))
+	if !errors.Is(err, verification.ErrUnavailable) || result.Observation.Status != verification.ObservationUnavailable ||
+		!result.Truncated || !result.Observation.Truncated || result.Observation.ReasonCode != "tempo_query_incomplete" {
+		t.Fatalf("incomplete result=%+v err=%v", result, err)
 	}
 }
 

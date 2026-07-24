@@ -107,6 +107,27 @@ func TestReduceStateDeltaRequiresActionOnlyForContinue(t *testing.T) {
 	}
 }
 
+func TestValidateActionParametersRejectsStructuredWindowBeforeExecution(t *testing.T) {
+	policy := ToolActionPolicy{
+		ParameterKeys: []string{"window"},
+		ParameterSpecs: map[string]ParameterSpec{
+			"window": {Type: ParameterString, Enum: []string{"1m", "5m", "15m", "30m"}},
+		},
+	}
+	if err := ValidateActionParameters(json.RawMessage(`{"window":"15m"}`), policy); err != nil {
+		t.Fatalf("valid duration rejected: %v", err)
+	}
+	for _, raw := range []string{
+		`{"window":{"from":"2026-07-24T11:03:47Z","to":"2026-07-24T11:04:07Z"}}`,
+		`{"window":"20m"}`,
+		`{"window":15}`,
+	} {
+		if err := ValidateActionParameters(json.RawMessage(raw), policy); !errors.Is(err, ErrInvalidArgument) {
+			t.Fatalf("parameters=%s error=%v want invalid argument", raw, err)
+		}
+	}
+}
+
 func reducerState() InvestigationState {
 	return InvestigationState{
 		SchemaVersion: InvestigationStateSchemaVersion, RunID: "run-1", IncidentID: "incident-1", CycleNo: 3,

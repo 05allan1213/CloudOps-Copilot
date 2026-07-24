@@ -118,6 +118,7 @@ jq -e \
   .worker.env.K8S_ALLOWED_NAMESPACES == $demo_namespace and
   .worker.env.K8S_DEFAULT_NAMESPACE == $demo_namespace and
   .worker.env.V3_TARGET_NAMESPACE == $demo_namespace and
+  .worker.env.V3_TARGET_ARGO_PATH == $application_path and
   .baselineVerifier.demoNamespace == $demo_namespace and
   .baselineVerifier.env.K8S_ALLOWED_NAMESPACES == $demo_namespace and
   .baselineVerifier.env.K8S_DEFAULT_NAMESPACE == $demo_namespace and

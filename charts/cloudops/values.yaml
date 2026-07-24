@@ -169,6 +169,7 @@ worker:
     K8S_ALLOWED_NAMESPACES: demo
     K8S_DEFAULT_NAMESPACE: demo
     V3_TARGET_NAMESPACE: demo
+    V3_TARGET_ARGO_PATH: apps/demo
   resources:
     requests:
       cpu: 50m
