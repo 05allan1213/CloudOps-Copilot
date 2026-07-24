@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2016,SC2034,SC2154 # Sourced runner globals are exercised dynamically below.
+# shellcheck disable=SC1090,SC1091,SC2016,SC2034,SC2154 # Sourced runner globals are exercised dynamically below.
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -98,7 +98,6 @@ fi
 manifest_test_root="$(mktemp -d "${TMPDIR:-/tmp}/cloudops-golden-manifest-contract.XXXXXX")"
 cleanup_manifest_contract() { rm -rf "${manifest_test_root}"; }
 trap cleanup_manifest_contract EXIT
-# shellcheck source=server-monitor/scripts/golden-e2e.sh
 source "${RUNNER}"
 EVIDENCE_DIR="${manifest_test_root}/evidence"
 MANIFEST="${EVIDENCE_DIR}/manifest.md"
