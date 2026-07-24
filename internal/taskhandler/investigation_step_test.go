@@ -1,6 +1,7 @@
 package taskhandler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -178,7 +179,10 @@ func TestInvestigationStepTakeoverReusesTaskCheckpointWithoutRepeatingModelCall(
 	replayTask.CheckpointSchema = persisted.SchemaVersion
 	replayTask.CheckpointVersion = persisted.Version
 	replayTask.CheckpointHash = persisted.Hash
-	replayTask.Checkpoint = append([]byte(nil), persisted.Payload...)
+	replayTask.Checkpoint = reverseTopLevelJSONForTest(t, persisted.Payload)
+	if bytes.Equal(replayTask.Checkpoint, persisted.Payload) {
+		t.Fatal("test fixture did not simulate MySQL JSON key reordering")
+	}
 	snapshot.Task = replayTask
 	replayModel := &stepTestModel{proposeErr: errors.New("model must not be called during takeover")}
 	replayStore := &stepTestTaskStore{}
@@ -189,6 +193,66 @@ func TestInvestigationStepTakeoverReusesTaskCheckpointWithoutRepeatingModelCall(
 	}
 	if replayModel.proposeCalls != 0 || replayStore.checkpointCount() != 0 {
 		t.Fatalf("takeover repeated work: model=%d checkpoints=%d", replayModel.proposeCalls, replayStore.checkpointCount())
+	}
+
+	var tampered map[string]any
+	if err := json.Unmarshal(replayTask.Checkpoint, &tampered); err != nil {
+		t.Fatal(err)
+	}
+	tampered["step_summary"] = "tampered after persistence"
+	tamperedTask := replayTask
+	tamperedTask.Checkpoint, _ = json.Marshal(tampered)
+	var payload investigationStepPayload
+	if err := json.Unmarshal(tamperedTask.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := decodeInvestigationTaskCheckpoint(tamperedTask, snapshot, payload); err == nil || !strings.Contains(err.Error(), "hash does not match") {
+		t.Fatalf("tampered task checkpoint error=%v", err)
+	}
+}
+
+func TestDecodeRunStateAcceptsMySQLJSONKeyReorderingAndRejectsTampering(t *testing.T) {
+	state := testInvestigationState()
+	state.CheckpointVersion = 1
+	state.Usage = agent.Usage{Steps: 1, ModelCalls: 1, InputTokens: 9007199254740993}
+	encoded, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, err := hashInvestigationJSON(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reordered := reverseTopLevelJSONForTest(t, encoded)
+	if bytes.Equal(reordered, encoded) {
+		t.Fatal("test fixture did not simulate MySQL JSON key reordering")
+	}
+	snapshot := testInvestigationSnapshot(t, stepModeDecide, nil)
+	snapshot.RunCheckpoint = reordered
+	snapshot.RunCheckpointVersion = state.CheckpointVersion
+	snapshot.RunCheckpointSchema = investigationRunCheckpointSchema
+	snapshot.RunCheckpointHash = hash
+	snapshot.Usage = state.Usage
+	snapshot.Limits = state.Limits
+
+	decoded, decodedHash, err := decodeRunState(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decodedHash != hash || decoded.Usage.InputTokens != 9007199254740993 {
+		t.Fatalf("decoded hash=%s usage=%+v", decodedHash, decoded.Usage)
+	}
+
+	var tampered map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(reordered))
+	decoder.UseNumber()
+	if err := decoder.Decode(&tampered); err != nil {
+		t.Fatal(err)
+	}
+	tampered["objective"] = "tampered after persistence"
+	snapshot.RunCheckpoint, _ = json.Marshal(tampered)
+	if _, _, err := decodeRunState(snapshot); err == nil || !strings.Contains(err.Error(), "hash does not match") {
+		t.Fatalf("tampered run checkpoint error=%v", err)
 	}
 }
 
@@ -638,7 +702,7 @@ func testInvestigationOperation(snapshot investigationSnapshot, model agent.Inve
 	snapshot.State.Coverage.ClaimPolicyVersion = claimPolicy.Version
 	snapshot.State.Coverage.ClaimPolicyHash = hashBytesInvestigation(claimJSON)
 	snapshot.State.Coverage.ActionPolicyHash = hashBytesInvestigation(actionJSON)
-	stateJSON, _ := json.Marshal(snapshot.State)
+	stateJSON, _ := canonicalInvestigationJSON(snapshot.State)
 	snapshot.StateHash = hashBytesInvestigation(stateJSON)
 	return &investigationStepOperation{
 		cfg: InvestigationStepConfig{
@@ -694,9 +758,41 @@ func testInvestigationAction() agent.ProposedAction {
 
 func stateHashForTest(t *testing.T, state agent.InvestigationState) string {
 	t.Helper()
-	encoded, err := json.Marshal(state)
+	encoded, err := canonicalInvestigationJSON(state)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return hashBytesInvestigation(encoded)
+}
+
+func reverseTopLevelJSONForTest(t *testing.T, value []byte) []byte {
+	t.Helper()
+	var fields map[string]json.RawMessage
+	decoder := json.NewDecoder(bytes.NewReader(value))
+	decoder.UseNumber()
+	if err := decoder.Decode(&fields); err != nil {
+		t.Fatal(err)
+	}
+	keys := make([]string, 0, len(fields))
+	for key := range fields {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	slices.Reverse(keys)
+	var output bytes.Buffer
+	output.WriteByte('{')
+	for index, key := range keys {
+		if index > 0 {
+			output.WriteByte(',')
+		}
+		encodedKey, err := json.Marshal(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		output.Write(encodedKey)
+		output.WriteByte(':')
+		output.Write(fields[key])
+	}
+	output.WriteByte('}')
+	return output.Bytes()
 }

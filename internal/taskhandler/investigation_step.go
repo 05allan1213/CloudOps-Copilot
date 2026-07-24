@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"slices"
 	"strconv"
@@ -250,7 +251,7 @@ func (o *investigationStepOperation) bindPolicy(snapshot *investigationSnapshot)
 			ClaimPolicyHash: claimHash, ActionPolicyHash: actionHash,
 			RequiredFacets: facets, RequiredSources: requiredSources,
 		}
-		encoded, err := json.Marshal(snapshot.State)
+		encoded, err := canonicalInvestigationJSON(snapshot.State)
 		if err != nil {
 			return err
 		}
@@ -598,7 +599,7 @@ func decodeRunState(snapshot investigationSnapshot) (agent.InvestigationState, s
 		if state.Window.To.Before(state.Window.From) {
 			state.Window.From = state.Window.To
 		}
-		encoded, err := json.Marshal(state)
+		encoded, err := canonicalInvestigationJSON(state)
 		if err != nil {
 			return agent.InvestigationState{}, "", fmt.Errorf("encode initial investigation state: %w", err)
 		}
@@ -610,7 +611,11 @@ func decodeRunState(snapshot investigationSnapshot) (agent.InvestigationState, s
 	if snapshot.RunCheckpointVersion == 0 || snapshot.RunCheckpointHash == "" {
 		return agent.InvestigationState{}, "", errors.New("run checkpoint has incomplete metadata")
 	}
-	if hashBytesInvestigation(snapshot.RunCheckpoint) != snapshot.RunCheckpointHash {
+	runCheckpointHash, err := hashInvestigationJSON(snapshot.RunCheckpoint)
+	if err != nil {
+		return agent.InvestigationState{}, "", fmt.Errorf("canonicalize run checkpoint: %w", err)
+	}
+	if runCheckpointHash != snapshot.RunCheckpointHash {
 		return agent.InvestigationState{}, "", errors.New("run checkpoint hash does not match payload")
 	}
 	var state agent.InvestigationState
@@ -668,7 +673,11 @@ func decodeInvestigationTaskCheckpoint(task asyncjob.Task, snapshot investigatio
 	if task.CheckpointSchema != investigationTaskCheckpointSchema || task.CheckpointVersion == 0 || task.CheckpointHash == "" {
 		return preparedInvestigationStep{}, errors.New("task checkpoint metadata is incomplete")
 	}
-	if hashBytesInvestigation(task.Checkpoint) != task.CheckpointHash {
+	taskCheckpointHash, err := hashInvestigationJSON(task.Checkpoint)
+	if err != nil {
+		return preparedInvestigationStep{}, fmt.Errorf("canonicalize task checkpoint: %w", err)
+	}
+	if taskCheckpointHash != task.CheckpointHash {
 		return preparedInvestigationStep{}, errors.New("task checkpoint hash does not match payload")
 	}
 	var checkpoint investigationStepCheckpoint
@@ -683,7 +692,7 @@ func decodeInvestigationTaskCheckpoint(task asyncjob.Task, snapshot investigatio
 		checkpoint.State.SchemaVersion != investigationRunCheckpointSchema {
 		return preparedInvestigationStep{}, errors.New("task checkpoint basis or identity is stale")
 	}
-	encodedState, err := json.Marshal(checkpoint.State)
+	encodedState, err := canonicalInvestigationJSON(checkpoint.State)
 	if err != nil || hashBytesInvestigation(encodedState) != checkpoint.StateHash {
 		return preparedInvestigationStep{}, errors.New("task checkpoint state hash is invalid")
 	}
@@ -714,6 +723,44 @@ type preparedInvestigationStep struct {
 func hashBytesInvestigation(value []byte) string {
 	sum := sha256.Sum256(value)
 	return hex.EncodeToString(sum[:])
+}
+
+func canonicalInvestigationJSON(value any) ([]byte, error) {
+	var encoded []byte
+	switch typed := value.(type) {
+	case []byte:
+		encoded = typed
+	case json.RawMessage:
+		encoded = typed
+	default:
+		var err error
+		encoded, err = json.Marshal(value)
+		if err != nil {
+			return nil, err
+		}
+	}
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.UseNumber()
+	var decoded any
+	if err := decoder.Decode(&decoded); err != nil {
+		return nil, err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return nil, errors.New("JSON contains multiple values")
+		}
+		return nil, err
+	}
+	return json.Marshal(decoded)
+}
+
+func hashInvestigationJSON(value any) (string, error) {
+	canonical, err := canonicalInvestigationJSON(value)
+	if err != nil {
+		return "", err
+	}
+	return hashBytesInvestigation(canonical), nil
 }
 
 func minInvestigation(left, right int) int {
@@ -1039,7 +1086,7 @@ func consecutiveToolFailures(attempts []agent.ToolAttempt) int {
 }
 
 func finalizePrepared(checkpoint investigationStepCheckpoint, state agent.InvestigationState) (preparedInvestigationStep, error) {
-	encoded, err := json.Marshal(state)
+	encoded, err := canonicalInvestigationJSON(state)
 	if err != nil {
 		return preparedInvestigationStep{}, fmt.Errorf("encode investigation state: %w", err)
 	}
@@ -1049,11 +1096,11 @@ func finalizePrepared(checkpoint investigationStepCheckpoint, state agent.Invest
 }
 
 func (o *investigationStepOperation) persistAndResolve(ctx context.Context, execution asyncjob.Execution, snapshot investigationSnapshot, prepared preparedInvestigationStep) asyncjob.Result {
-	stateJSON, stateErr := json.Marshal(prepared.state)
+	stateJSON, stateErr := canonicalInvestigationJSON(prepared.state)
 	if stateErr != nil || len(stateJSON) > snapshot.Limits.MaxCheckpointSize {
 		return asyncjob.Dead("run_checkpoint_too_large", "investigation Run checkpoint exceeds its bounded size", o.failRunMutation(snapshot, "run_checkpoint_too_large"))
 	}
-	encoded, err := json.Marshal(prepared.checkpoint)
+	encoded, err := canonicalInvestigationJSON(prepared.checkpoint)
 	if err != nil || len(encoded) > o.cfg.MaxCheckpointBytes {
 		return asyncjob.Dead("checkpoint_too_large", "investigation task checkpoint exceeds its bounded size", o.failRunMutation(snapshot, "checkpoint_too_large"))
 	}
@@ -1547,7 +1594,7 @@ func (o *investigationStepOperation) applyPrepared(ctx context.Context, tx async
 	if checkpoint.SubjectVersion != snapshot.Task.ExpectedSubjectVersion || checkpoint.BasisCheckpointVersion != snapshot.State.CheckpointVersion || checkpoint.BasisCheckpointHash != snapshot.StateHash {
 		return asyncjob.ErrSubjectVersionMismatch
 	}
-	stateJSON, err := json.Marshal(state)
+	stateJSON, err := canonicalInvestigationJSON(state)
 	if err != nil || len(stateJSON) > snapshot.Limits.MaxCheckpointSize {
 		return fmt.Errorf("%w: run checkpoint exceeds its persisted bound", asyncjob.ErrBusinessBudgetExceeded)
 	}
