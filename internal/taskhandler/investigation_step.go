@@ -182,7 +182,7 @@ func (o *investigationStepOperation) handle(ctx context.Context, execution async
 
 	snapshot, err := o.loader.Load(ctx, task)
 	if err != nil {
-		return investigationLoadFailure(err)
+		return investigationLoadFailure(task, err, o.cfg.Now())
 	}
 	if snapshot.ModelIdentity != o.cfg.AgentRunIdentity {
 		return asyncjob.Dead("model_identity_mismatch", "AgentRun is bound to a different provider/model/prompt/tool identity", nil)
@@ -1158,14 +1158,68 @@ func (o *investigationStepOperation) resolvePrepared(snapshot investigationSnaps
 	})
 }
 
-func investigationLoadFailure(err error) asyncjob.Result {
+func investigationLoadFailure(task asyncjob.Task, err error, at time.Time) asyncjob.Result {
 	switch {
 	case errors.Is(err, asyncjob.ErrSubjectVersionMismatch):
 		return asyncjob.Dead("subject_version_mismatch", "investigation AgentRun no longer matches the task", nil)
 	case errors.Is(err, asyncjob.ErrInvalidMutation):
-		return asyncjob.Dead("invalid_agent_run_state", boundInvestigation(err.Error(), 2048), nil)
+		summary := boundInvestigation(err.Error(), 2048)
+		return asyncjob.Dead("invalid_agent_run_state", summary, failInvestigationRunFromTask(task, "invalid_agent_run_state", summary, at))
 	default:
 		return asyncjob.RetryAfter(0, "investigation_load_failed", boundInvestigation(err.Error(), 2048), nil)
+	}
+}
+
+func failInvestigationRunFromTask(task asyncjob.Task, reason, summary string, at time.Time) asyncjob.Mutation {
+	at = at.UTC()
+	return func(ctx context.Context, tx asyncjob.DBTX) error {
+		var runPublicID string
+		var rowVersion uint64
+		var legacyStatus, v3Status string
+		if err := tx.QueryRowContext(ctx, `SELECT public_id, row_version, status, v3_status
+		FROM agent_runs
+		WHERE id = ? AND incident_id = ? AND domain_schema_version = 3 AND cycle_no = ?
+		FOR UPDATE`, task.SubjectID, task.IncidentID, task.CycleNo).
+			Scan(&runPublicID, &rowVersion, &legacyStatus, &v3Status); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return asyncjob.ErrSubjectVersionMismatch
+			}
+			return fmt.Errorf("load failed investigation AgentRun: %w", err)
+		}
+		if rowVersion != task.ExpectedSubjectVersion ||
+			(legacyStatus != "PENDING" && legacyStatus != "RUNNING") ||
+			(v3Status != "pending" && v3Status != "running") {
+			return asyncjob.ErrSubjectVersionMismatch
+		}
+
+		result, err := tx.ExecContext(ctx, `UPDATE agent_runs
+		SET status = 'FAILED', v3_status = 'failed', failure_code = ?, failure_summary = ?,
+		    completed_at = ?, row_version = row_version + 1, updated_at = ?
+		WHERE id = ? AND incident_id = ? AND domain_schema_version = 3 AND cycle_no = ?
+		  AND row_version = ? AND status IN ('PENDING','RUNNING') AND v3_status IN ('pending','running')`,
+			reason, summary, at, at, task.SubjectID, task.IncidentID, task.CycleNo, task.ExpectedSubjectVersion)
+		if err != nil {
+			return fmt.Errorf("mark invalid investigation AgentRun failed: %w", err)
+		}
+		if affected, _ := result.RowsAffected(); affected != 1 {
+			return asyncjob.ErrSubjectVersionMismatch
+		}
+		metadata, _ := json.Marshal(map[string]any{
+			"agent_run_id": runPublicID, "task_public_id": task.PublicID,
+			"reason": reason, "failure_summary": summary,
+		})
+		if _, err := tx.ExecContext(ctx, `INSERT INTO incident_events
+		 (public_id, incident_id, domain_schema_version, cycle_no, event_schema_version, event_type,
+		  idempotency_key, migrated_legacy_context, migrated_legacy, actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
+		 VALUES (?, ?, 3, ?, 1, 'agent_run_failed', ?, ?, ?, 'system', ?, ?, ?, ?, ?)
+		 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
+			deterministicPublicID("investigation-failure-event", task.PublicID), task.IncidentID,
+			task.CycleNo, hashCanonical("event", task.PublicID, "agent_run_failed"),
+			task.MigratedLegacyContext, task.MigratedLegacy, runPublicID,
+			"investigation AgentRun failed", metadata, at, at); err != nil {
+			return fmt.Errorf("append invalid investigation failure event: %w", err)
+		}
+		return nil
 	}
 }
 

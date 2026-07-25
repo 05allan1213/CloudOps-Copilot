@@ -71,7 +71,10 @@ func TestResolutionReportHandlerReturnsCompleteSanitizedPostDeliveryProjection(t
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	got := body.Resource
+	if body.Resource == nil {
+		t.Fatal("resolution report response resource is nil")
+	}
+	got := *body.Resource
 	if got.ID != resolutionReportID || got.Kind != string(QueryResolutionReport) || got.Status != "resolved" || got.Cycle != 3 {
 		t.Fatalf("identity=%+v", got)
 	}
@@ -130,7 +133,7 @@ func TestResolutionReportNoChangeKeepsOptionalSectionsNull(t *testing.T) {
 	if err := validateResolutionReportView(report); err != nil {
 		t.Fatal(err)
 	}
-	encoded, err := json.Marshal(resolutionReportResponse{Resource: *report})
+	encoded, err := json.Marshal(resolutionReportResponse{Resource: report})
 	if err != nil {
 		t.Fatal(err)
 	}

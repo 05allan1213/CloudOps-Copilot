@@ -336,6 +336,94 @@ VALUES (?, ?, 'PENDING', 'fixture-model', 'incident-agent-v3', 1, '', 1, 3, 'pen
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_events WHERE incident_id = ? AND event_type = 'investigation_requested'`, 0, incidentID)
 	})
 
+	t.Run("dead current investigation task is reconciled before a new business run", func(t *testing.T) {
+		incidentID, publicID := insertCommandBudgetIncident(t, ctx, db, 0)
+		runPublicID := uuid.NewString()
+		runResult, err := db.ExecContext(ctx, `INSERT INTO agent_runs
+	 (public_id, incident_id, status, model, prompt_version, max_steps, failure_code,
+	  row_version, domain_schema_version, v3_status, cycle_no, expected_incident_version)
+	VALUES (?, ?, 'RUNNING', 'fixture-model', 'incident-agent-v3', 1, '', 3, 3, 'running', 1, 1)`,
+			runPublicID, incidentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		runID, _ := runResult.LastInsertId()
+		taskPublicID := uuid.NewString()
+		if _, err := db.ExecContext(ctx, `INSERT INTO async_tasks
+	 (public_id, incident_id, cycle_no, queue, task_type, subject_type, subject_id, transition,
+	  expected_subject_version, payload_schema_version, payload_json, dedupe_key, replay_generation,
+	  status, priority, available_at, attempt, max_attempts, lease_generation,
+	  last_error_code, last_error_summary, dead_at, created_at, updated_at)
+	VALUES (?, ?, 1, 'investigate', 'investigation.advance', 'agent_run', ?, 'investigation.step',
+	        3, 1, JSON_OBJECT('mode','synthesize','agent_run_id',?,'cycle_no',1), ?, 0,
+	        'dead', 50, NOW(6), 1, 5, 1,
+	        'invalid_agent_run_state', 'durable Evidence provenance is invalid', NOW(6), NOW(6), NOW(6))`,
+			taskPublicID, incidentID, runID, runPublicID, canonicalHash("dead-investigation", taskPublicID)); err != nil {
+			t.Fatal(err)
+		}
+
+		request := newInvestigationStartRequest(publicID, 1, "reconcile-dead-run", actor, "retry after terminal task failure")
+		accepted, err := port.Execute(ctx, request)
+		if err != nil || accepted.Status != "accepted" {
+			t.Fatalf("reconciled investigation command=%+v error=%v", accepted, err)
+		}
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM agent_runs
+		WHERE id = ? AND status = 'FAILED' AND v3_status = 'failed' AND row_version = 4
+		  AND failure_code = 'invalid_agent_run_state'`, 1, runID)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks
+		WHERE incident_id = ? AND transition = 'investigation.start' AND status = 'ready'`, 1, incidentID)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_events
+		WHERE incident_id = ? AND event_type = 'agent_run_failed'`, 1, incidentID)
+	})
+
+	t.Run("live technical replay keeps the active run conflict", func(t *testing.T) {
+		incidentID, publicID := insertCommandBudgetIncident(t, ctx, db, 0)
+		runPublicID := uuid.NewString()
+		runResult, err := db.ExecContext(ctx, `INSERT INTO agent_runs
+	 (public_id, incident_id, status, model, prompt_version, max_steps, failure_code,
+	  row_version, domain_schema_version, v3_status, cycle_no, expected_incident_version)
+	VALUES (?, ?, 'RUNNING', 'fixture-model', 'incident-agent-v3', 1, '', 3, 3, 'running', 1, 1)`,
+			runPublicID, incidentID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		runID, _ := runResult.LastInsertId()
+		dedupe := canonicalHash("replayed-investigation", runPublicID)
+		deadResult, err := db.ExecContext(ctx, `INSERT INTO async_tasks
+	 (public_id, incident_id, cycle_no, queue, task_type, subject_type, subject_id, transition,
+	  expected_subject_version, payload_schema_version, payload_json, dedupe_key, replay_generation,
+	  status, priority, available_at, attempt, max_attempts, lease_generation,
+	  last_error_code, last_error_summary, dead_at, created_at, updated_at)
+	VALUES (?, ?, 1, 'investigate', 'investigation.advance', 'agent_run', ?, 'investigation.step',
+	        3, 1, JSON_OBJECT('mode','synthesize','agent_run_id',?,'cycle_no',1), ?, 0,
+	        'dead', 50, NOW(6), 1, 5, 1, 'dependency_failed', 'retryable failure', NOW(6), NOW(6), NOW(6))`,
+			uuid.NewString(), incidentID, runID, runPublicID, dedupe)
+		if err != nil {
+			t.Fatal(err)
+		}
+		deadTaskID, _ := deadResult.LastInsertId()
+		if _, err := db.ExecContext(ctx, `INSERT INTO async_tasks
+	 (public_id, incident_id, cycle_no, queue, task_type, subject_type, subject_id, transition,
+	  expected_subject_version, payload_schema_version, payload_json, dedupe_key, replay_generation,
+	  status, priority, available_at, attempt, max_attempts, lease_generation, replayed_from_task_id,
+	  created_at, updated_at)
+	VALUES (?, ?, 1, 'investigate', 'investigation.advance', 'agent_run', ?, 'investigation.step',
+	        3, 1, JSON_OBJECT('mode','synthesize','agent_run_id',?,'cycle_no',1), ?, 1,
+	        'ready', 50, NOW(6), 0, 5, 0, ?, NOW(6), NOW(6))`,
+			uuid.NewString(), incidentID, runID, runPublicID, dedupe, deadTaskID); err != nil {
+			t.Fatal(err)
+		}
+
+		request := newInvestigationStartRequest(publicID, 1, "live-replay-conflict", actor, "wait for technical replay")
+		if _, err := port.Execute(ctx, request); !errors.Is(err, apiv3.ErrConflict) {
+			t.Fatalf("live replay start error=%v", err)
+		}
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM agent_runs
+		WHERE id = ? AND status = 'RUNNING' AND v3_status = 'running' AND row_version = 3`, 1, runID)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks
+		WHERE incident_id = ? AND transition = 'investigation.start'`, 0, incidentID)
+	})
+
 	t.Run("concurrent slot four creates one Decision and one task", func(t *testing.T) {
 		incidentID, publicID := insertCommandBudgetIncident(t, ctx, db, 3)
 		requests := []apiv3.CommandRequest{

@@ -245,7 +245,7 @@ func RefuseCompatibilityRuntime(ctx context.Context, reader MarkerReader) error 
 	if !exists {
 		return nil
 	}
-	if err := marker.Validate(schemaversion.Latest); err != nil {
+	if err := marker.ValidateForRuntime(schemaversion.Latest); err != nil {
 		return errors.Join(ErrCompatibilityRefused, fmt.Errorf("invalid cutover marker: %w", err))
 	}
 	return fmt.Errorf("%w: source_exact_sha=%s binary_image_digest=%s", ErrCompatibilityRefused, marker.SourceExactSHA, marker.BinaryImageDigest)
@@ -264,7 +264,7 @@ func RequireV3Runtime(ctx context.Context, reader MarkerReader) (Marker, error) 
 	if !exists {
 		return Marker{}, ErrMarkerRequired
 	}
-	if err := marker.Validate(schemaversion.Latest); err != nil {
+	if err := marker.ValidateForRuntime(schemaversion.Latest); err != nil {
 		return Marker{}, errors.Join(ErrMarkerRequired, fmt.Errorf("invalid cutover marker: %w", err))
 	}
 	return marker, nil
@@ -325,6 +325,23 @@ func (m Marker) Validate(expectedSchemaVersion int64) error {
 		return errors.New("release_identity_hash does not match marker release identity")
 	}
 	return nil
+}
+
+// ValidateForRuntime preserves the immutable schema identity recorded at
+// cutover while allowing later forward migrations. A marker from a future
+// schema or one that crossed different source/target versions remains invalid.
+func (m Marker) ValidateForRuntime(currentSchemaVersion int64) error {
+	if currentSchemaVersion <= 0 {
+		return errors.New("current schema version must be positive")
+	}
+	current := uint64(currentSchemaVersion)
+	if m.SourceSchemaVersion == 0 || m.SourceSchemaVersion != m.TargetSchemaVersion {
+		return fmt.Errorf("marker schema source=%d target=%d must match", m.SourceSchemaVersion, m.TargetSchemaVersion)
+	}
+	if m.TargetSchemaVersion > current {
+		return fmt.Errorf("marker schema version=%d is newer than runtime schema=%d", m.TargetSchemaVersion, current)
+	}
+	return m.Validate(int64(m.TargetSchemaVersion))
 }
 
 func isSHA256(value string) bool {

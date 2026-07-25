@@ -300,7 +300,7 @@ func (p *MySQLQueryPort) getDeliveryProjection(ctx context.Context, request Quer
 	}
 	item, err := scanDeliveryProjection(p.db.QueryRowContext(ctx, deliveryProjectionQuery, incident.ID, incident.CycleNo))
 	if errors.Is(err, sql.ErrNoRows) {
-		return QueryResponse{}, ErrNotFound
+		return QueryResponse{}, nil
 	}
 	if err != nil {
 		return QueryResponse{}, fmt.Errorf("get V3 delivery projection: %w", err)

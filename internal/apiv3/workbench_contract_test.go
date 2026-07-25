@@ -73,6 +73,31 @@ func TestTypedWorkbenchProjectionEndpoints(t *testing.T) {
 	}
 }
 
+func TestOptionalWorkbenchProjectionsReturnExplicitEmptyResources(t *testing.T) {
+	projection := NewMemoryQueryPort()
+	if err := projection.PutIncident(IncidentView{
+		ID: contractIncidentID, Cycle: 1, Status: "investigating", Severity: "warning", Version: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	engine := newContractEngine(NewHandler(Config{Queries: projection}))
+	for _, path := range []string{
+		"/api/v3/incidents/" + contractIncidentID + "/delivery",
+		"/api/v3/incidents/" + contractIncidentID + "/resolution-report",
+	} {
+		t.Run(path, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			engine.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+			if response.Code != http.StatusOK || response.Header().Get("Content-Type") != JSONMediaType {
+				t.Fatalf("status/content-type=%d/%q body=%s", response.Code, response.Header().Get("Content-Type"), response.Body.String())
+			}
+			if strings.TrimSpace(response.Body.String()) != `{"resource":null}` {
+				t.Fatalf("optional resource body=%s", response.Body.String())
+			}
+		})
+	}
+}
+
 func TestTypedWorkbenchProjectionRejectsUnsafeOrUnboundedData(t *testing.T) {
 	plan := validRemediationPlanFixture()
 	plan.PolicySnapshot = json.RawMessage(`{"raw_prompt":"do not expose"}`)

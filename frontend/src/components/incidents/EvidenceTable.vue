@@ -369,6 +369,7 @@ td code { font-size: 10px; }
 }
 
 .inspect-button:hover { border-color: var(--co-action-primary); background: var(--co-bg-hover); }
+.evidence-desktop .inspect-button { width: 100%; padding-inline: var(--co-space-2); white-space: nowrap; }
 
 .evidence-mobile { display: none; }
 

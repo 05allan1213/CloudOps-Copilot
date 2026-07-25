@@ -331,7 +331,7 @@ export function useIncidentDetail(incidentID: string) {
   async function loadResource<T extends Identified>(
     identity: number,
     section: Section<T | null>,
-    loader: (signal: AbortSignal) => Promise<T>,
+    loader: (signal: AbortSignal) => Promise<T | null>,
     preserve: boolean,
     signal: AbortSignal,
   ): Promise<boolean> {
@@ -344,7 +344,7 @@ export function useIncidentDetail(incidentID: string) {
       const result = await loader(signal);
       if (!isCurrentSectionRequest(identity, section, sectionIdentity, signal)) return false;
       section.data = result;
-      section.state = "ready";
+      section.state = result === null ? "empty" : "ready";
       section.lastUpdatedAt = new Date().toISOString();
       return true;
     } catch (cause) {

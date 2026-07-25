@@ -154,7 +154,13 @@ func (p *Port) startInvestigation(ctx context.Context, tx *sql.Tx, request apiv3
 		return apiv3.CommandResult{}, err
 	}
 	if activeRunID != 0 {
-		return apiv3.CommandResult{}, apiv3.ErrConflict
+		reconciled, reconcileErr := reconcileDeadInvestigationRun(ctx, tx, incident, activeRunID)
+		if reconcileErr != nil {
+			return apiv3.CommandResult{}, reconcileErr
+		}
+		if !reconciled {
+			return apiv3.CommandResult{}, apiv3.ErrConflict
+		}
 	}
 	authorization, budget, err := businessbudget.AuthorizeAgentRun(ctx, tx, incident.ID, incident.CycleNo, businessbudget.Actor{
 		Provider: request.Actor.Provider, Login: request.Actor.Login, Role: request.Actor.Role,
@@ -213,6 +219,76 @@ func (p *Port) startInvestigation(ctx context.Context, tx *sql.Tx, request apiv3
 		return apiv3.CommandResult{}, err
 	}
 	return apiv3.CommandResult{HTTPStatus: http.StatusAccepted, ResourceID: incident.PublicID, Status: "accepted", Version: incident.Version, Cycle: uint64(incident.CycleNo)}, nil
+}
+
+// reconcileDeadInvestigationRun converts a technical dead task into a terminal
+// business Run only when an operator has explicitly chosen a new investigation.
+// A live replay for the same Run version always wins and preserves the conflict.
+func reconcileDeadInvestigationRun(ctx context.Context, tx *sql.Tx, incident lockedIncident, runID uint64) (bool, error) {
+	var runPublicID, taskPublicID string
+	var rowVersion uint64
+	var errorCode, errorSummary sql.NullString
+	err := tx.QueryRowContext(ctx, `SELECT r.public_id, r.row_version, dead.public_id,
+	       dead.last_error_code, dead.last_error_summary
+	FROM agent_runs r
+	JOIN async_tasks dead
+	  ON dead.subject_type = 'agent_run' AND dead.subject_id = r.id
+	 AND dead.transition = 'investigation.step' AND dead.status = 'dead'
+	 AND dead.expected_subject_version = r.row_version
+	LEFT JOIN async_tasks live
+	  ON live.subject_type = 'agent_run' AND live.subject_id = r.id
+	 AND live.transition = 'investigation.step' AND live.status IN ('ready','running')
+	 AND live.expected_subject_version = r.row_version
+	WHERE r.id = ? AND r.incident_id = ? AND r.cycle_no = ? AND r.domain_schema_version = 3
+	  AND r.status IN ('PENDING','RUNNING') AND r.v3_status IN ('pending','running')
+	  AND live.id IS NULL
+	ORDER BY dead.replay_generation DESC, dead.id DESC
+	LIMIT 1
+	FOR UPDATE`, runID, incident.ID, incident.CycleNo).
+		Scan(&runPublicID, &rowVersion, &taskPublicID, &errorCode, &errorSummary)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("load dead investigation task for reconciliation: %w", err)
+	}
+	reason := strings.TrimSpace(errorCode.String)
+	if reason == "" {
+		reason = "investigation_task_dead"
+	}
+	summary := strings.TrimSpace(errorSummary.String)
+	if summary == "" {
+		summary = "investigation task entered dead state before the AgentRun reached a terminal state"
+	}
+
+	result, err := tx.ExecContext(ctx, `UPDATE agent_runs
+	SET status = 'FAILED', v3_status = 'failed', failure_code = ?, failure_summary = ?,
+	    completed_at = NOW(6), row_version = row_version + 1, updated_at = NOW(6)
+	WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3
+	  AND row_version = ? AND status IN ('PENDING','RUNNING') AND v3_status IN ('pending','running')`,
+		reason, summary, runID, incident.ID, incident.CycleNo, rowVersion)
+	if err != nil {
+		return false, fmt.Errorf("reconcile dead investigation AgentRun: %w", err)
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return false, apiv3.ErrConflict
+	}
+	metadata, _ := json.Marshal(map[string]any{
+		"agent_run_id": runPublicID, "task_public_id": taskPublicID,
+		"reason": reason, "reconciled_before_command": string(apiv3.CommandStartInvestigation),
+	})
+	if _, err := tx.ExecContext(ctx, `INSERT IGNORE INTO incident_events
+	    (public_id, incident_id, domain_schema_version, cycle_no, event_schema_version,
+	     event_type, idempotency_key, migrated_legacy_context, migrated_legacy,
+	     actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
+	VALUES (?, ?, 3, ?, 1, 'agent_run_failed', ?, ?, ?, 'system', 'command-reconciler',
+	        'investigation AgentRun reconciled after terminal task', ?, NOW(6), NOW(6))`,
+		uuid.NewString(), incident.ID, incident.CycleNo,
+		canonicalHash("event", taskPublicID, "agent_run_failed"),
+		incident.MigratedLegacyContext, incident.MigratedLegacy, metadata); err != nil {
+		return false, fmt.Errorf("append reconciled AgentRun failure event: %w", err)
+	}
+	return true, nil
 }
 
 type startInvestigationCommandBody struct {

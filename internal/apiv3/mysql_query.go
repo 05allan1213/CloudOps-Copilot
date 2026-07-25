@@ -394,9 +394,12 @@ func (p *MySQLQueryPort) getResolutionReport(ctx context.Context, request QueryR
 	if err != nil {
 		return QueryResponse{}, err
 	}
+	if _, err := p.incidentRef(ctx, id); err != nil {
+		return QueryResponse{}, err
+	}
 	item, err := scanResolutionReport(p.db.QueryRowContext(ctx, resolutionReportQuery, id))
 	if errors.Is(err, sql.ErrNoRows) {
-		return QueryResponse{}, ErrNotFound
+		return QueryResponse{}, nil
 	}
 	if err != nil {
 		return QueryResponse{}, fmt.Errorf("get V3 ResolutionReport: %w", err)

@@ -276,7 +276,7 @@ type remediationPlanPageResponse struct {
 }
 
 type deliveryResponse struct {
-	Resource DeliveryView `json:"resource"`
+	Resource *DeliveryView `json:"resource"`
 }
 
 type verificationRunPageResponse struct {

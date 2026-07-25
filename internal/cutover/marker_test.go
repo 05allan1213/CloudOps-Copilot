@@ -101,6 +101,43 @@ func TestMarkerValidateRequiresCompleteIrreversibleLedgerUnit(t *testing.T) {
 	}
 }
 
+func TestRuntimeMarkerAllowsLaterForwardSchemaAndRejectsFutureOrMismatchedSchema(t *testing.T) {
+	marker := validMarker()
+	marker.SourceSchemaVersion--
+	marker.TargetSchemaVersion--
+	marker.ReleaseIdentityHash = releaseIdentityHash(
+		marker.SourceExactSHA,
+		marker.BinaryImageDigest,
+		marker.SourceSchemaVersion,
+		marker.TargetSchemaVersion,
+	)
+	if err := marker.ValidateForRuntime(schemaversion.Latest); err != nil {
+		t.Fatalf("prior-schema marker rejected after forward migration: %v", err)
+	}
+	if err := marker.Validate(schemaversion.Latest); err == nil {
+		t.Fatal("exact cutover writer validation accepted a prior-schema marker")
+	}
+
+	future := validMarker()
+	future.SourceSchemaVersion++
+	future.TargetSchemaVersion++
+	future.ReleaseIdentityHash = releaseIdentityHash(
+		future.SourceExactSHA,
+		future.BinaryImageDigest,
+		future.SourceSchemaVersion,
+		future.TargetSchemaVersion,
+	)
+	if err := future.ValidateForRuntime(schemaversion.Latest); err == nil {
+		t.Fatal("runtime accepted a future-schema marker")
+	}
+
+	mismatched := validMarker()
+	mismatched.SourceSchemaVersion--
+	if err := mismatched.ValidateForRuntime(schemaversion.Latest); err == nil {
+		t.Fatal("runtime accepted a marker with different source and target schemas")
+	}
+}
+
 func TestRuntimeGenerationGuardsFailClosed(t *testing.T) {
 	valid := validMarker()
 	absent := markerReaderFunc(func(context.Context) (Marker, bool, error) { return Marker{}, false, nil })

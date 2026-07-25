@@ -1,6 +1,6 @@
 # V3 Migration Ledger
 
-> Status: expand migrations through schema 16 and the Phase 7A archive/converter/ledger tooling are implemented; live deployed-data preparation, irreversible marker, Golden, and Phase 7B contract deletion remain `NOT RUN`
+> Status: forward migrations through schema 18 and the Phase 7A archive/converter/ledger tooling are implemented; live deployed-data preparation, irreversible marker, Golden, and Phase 7B contract deletion remain `NOT RUN`
 >
 > Normative source: [`CloudOps-Incident-Agent-V3-Refactor-Design.md`](CloudOps-Incident-Agent-V3-Refactor-Design.md)
 >
@@ -39,6 +39,7 @@ The Git blob is the repository content address. SHA-256 is recorded for external
 | 00008 | `migrations/00008_expand_v3_async_runtime.sql` | 583 | `1a1e413be591f6dd7d6dd649e1fb56f19a656aec` | `a769354179532733b6216fbfde699cf756744f72dd75c98cf730feb2e093e96e` | Additive V3 compatibility columns/generated keys and the five Phase 2 tables: `async_tasks`, `async_task_attempts`, `signal_rejections`, `command_idempotency_records`, `migration_ledger` | Phase 2 `EXPAND-INCIDENT-TASK`; no DML, backfill, outbox/task conversion, legacy deletion, Down section or `CUTOVER_V3` marker |
 | 00009 | `migrations/00009_expand_v3_remediation_verification.sql` | 526 | `7c5ab3bef5edee0b38dcb8f54a84fe732fbe88f9` | `944ca629c190fe82a77e36ac7b35bfff4017fb8b59f3fb4db333918337d9c927` | Adds complete immutable Plan bindings, V3 `remediation_decisions`, append-only ChangeRequest events, frozen verification profile/check fields, `verification_samples` and `resolution_reports`; old approvals/Postmortems remain untouched | Phase 5/6 expand; nullable contract versions preserve 00008 partial rows; no backfill, cutover marker, legacy deletion or Goose Down |
 | 00016 | `migrations/00016_phase7a_cutover_archives.sql` | 160 | `a6b61d2015a47223755add12c987e18fa7672e10` | `69884451e4f6b2b6031469bd41c160acf9f79cdc3858dff5cc1f9fb6e03dc629` | Adds quiesce controls, outbox/Incident/Agent/Change/Verification/Postmortem archives, conversion records and `migrated_legacy` provenance | Phase 7A tooling only; forward-only, retains every legacy source table/lease, writes no marker and performs no live conversion by itself |
+| 00018 | `migrations/00018_reconcile_dead_investigation_runs.sql` | 84 | `87e86e966379dc81ce0e0c7c7fdf03d6a3e6d8d1` | `e76d724b619a692a9991794e82775533fb6d543c2d351b9c1972f2580f660f8f` | Reconciles current-version AgentRuns left active after their matching `investigation.step` Task reached `dead`; appends an idempotent failure event before making the Run terminal | Forward-only historical repair; a current ready/running technical replay prevents reconciliation, and no external write or cutover marker is involved |
 
 All migrations use Goose `NO TRANSACTION`; DDL is not atomically rolled back. `00007` is restartable because every statement is an additive `CREATE TABLE IF NOT EXISTS`; later forward migrations rely on Goose version ownership plus the canonical schema check below. Every release must verify pre/post schema and ledger state explicitly.
 
@@ -270,6 +271,8 @@ Any failed count/hash, unknown event type, incompatible generated expression, ex
 | 00007 path, purpose, blob and SHA-256 recorded | PASS |
 | 00008 path, purpose, blob and SHA-256 recorded | PASS |
 | 00009 path, purpose, blob and SHA-256 recorded | PASS |
+| 00018 path, reconciliation purpose, blob and SHA-256 recorded | PASS |
+| 00018 orphaned-Run reconciliation and live-replay preservation on MySQL 8 | PASS |
 | 00001-00007 remained byte-identical during Phase 2 | PASS |
 | Legacy state/lease/outbox ownership recorded | PASS |
 | AutoMigrate table risk recorded | PASS |

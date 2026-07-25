@@ -49,15 +49,13 @@ func (h *Handler) getDelivery(c *gin.Context) {
 		h.writeQueryError(c, err)
 		return
 	}
-	if result.Delivery == nil {
-		h.writeProblem(c, http.StatusNotFound, "RESOURCE_NOT_FOUND", "resource was not found")
-		return
+	if result.Delivery != nil {
+		if err := validateDeliveryView(result.Delivery); err != nil {
+			h.writeProblem(c, http.StatusInternalServerError, "INVALID_PROJECTION", "query projection violated the bounded Workbench contract")
+			return
+		}
 	}
-	if err := validateDeliveryView(result.Delivery); err != nil {
-		h.writeProblem(c, http.StatusInternalServerError, "INVALID_PROJECTION", "query projection violated the bounded Workbench contract")
-		return
-	}
-	h.writeJSON(c, http.StatusOK, deliveryResponse{Resource: *result.Delivery})
+	h.writeJSON(c, http.StatusOK, deliveryResponse{Resource: result.Delivery})
 }
 
 func (h *Handler) listVerifications(c *gin.Context) {

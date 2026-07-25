@@ -914,14 +914,16 @@ components:
                 items: { $ref: "#/components/schemas/RemediationPlan" }
               next_cursor: { type: string, format: uuid }
     DeliveryProjection:
-      description: Latest current-cycle delivery projection
+      description: Latest current-cycle delivery projection; resource is null before delivery exists
       content:
         application/json:
           schema:
             type: object
             required: [resource]
             properties:
-              resource: { $ref: "#/components/schemas/Delivery" }
+              resource:
+                allOf: [{ $ref: "#/components/schemas/Delivery" }]
+                nullable: true
     VerificationRunPage:
       description: Bounded current-cycle verification run page with nested checks and samples
       content:
@@ -936,14 +938,16 @@ components:
                 items: { $ref: "#/components/schemas/VerificationRun" }
               next_cursor: { type: string, format: uuid }
     ResolutionReportProjection:
-      description: Immutable current-cycle ResolutionReport projection
+      description: Immutable current-cycle ResolutionReport projection; resource is null before resolution
       content:
         application/json:
           schema:
             type: object
             required: [resource]
             properties:
-              resource: { $ref: "#/components/schemas/ResolutionReport" }
+              resource:
+                allOf: [{ $ref: "#/components/schemas/ResolutionReport" }]
+                nullable: true
     CommandAccepted:
       description: Command persisted and queued
       headers:

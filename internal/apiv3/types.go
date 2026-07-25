@@ -261,7 +261,7 @@ type resourceResponse struct {
 }
 
 type resolutionReportResponse struct {
-	Resource ResolutionReportView `json:"resource"`
+	Resource *ResolutionReportView `json:"resource"`
 }
 
 // SessionActor is the bounded identity projection exposed to the browser. The

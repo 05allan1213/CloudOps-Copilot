@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -73,6 +74,58 @@ func TestMySQLTypedWorkbenchProjections(t *testing.T) {
 		verifications.Verifications[0].Checks[0].ID != fixture.checkPublicID ||
 		verifications.Verifications[0].Checks[0].Samples[0].ID != fixture.samplePublicID {
 		t.Fatalf("verification projection=%+v", verifications.Verifications)
+	}
+}
+
+func TestMySQLTypedWorkbenchOptionalResourcesDistinguishAbsentFromMissingIncident(t *testing.T) {
+	adminDSN := os.Getenv("CLOUDOPS_TEST_MYSQL_ADMIN_DSN")
+	if adminDSN == "" {
+		t.Skip("CLOUDOPS_TEST_MYSQL_ADMIN_DSN is not set; requires disposable MySQL 8 admin scope")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	db := openWorkbenchIntegrationDB(t, ctx, adminDSN)
+
+	incidentPublicID := uuid.NewString()
+	if _, err := db.ExecContext(ctx, `INSERT INTO incidents (
+public_id, fingerprint, correlation_key, correlation_key_version, cluster,
+namespace, service_name, environment, target_kind, target_name, severity,
+status, summary, first_seen_at, last_seen_at, version,
+domain_schema_version, v3_status, cycle_no
+) VALUES (?, ?, ?, 2, 'kind-local', 'demo', 'demo', 'local',
+          'Deployment', 'demo', 'critical', 'DIAGNOSING',
+          'optional Workbench resources fixture', NOW(6), NOW(6), 1,
+          3, 'investigating', 1)`, incidentPublicID,
+		"workbench-optional-"+incidentPublicID,
+		"v2:"+strings.Repeat("a", 64)); err != nil {
+		t.Fatal(err)
+	}
+	port, err := NewMySQLQueryPort(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	delivery, err := port.Query(ctx, QueryRequest{Kind: QueryDelivery, IncidentID: incidentPublicID})
+	if err != nil {
+		t.Fatalf("existing Incident without Delivery: %v", err)
+	}
+	if delivery.Delivery != nil {
+		t.Fatalf("existing Incident without Delivery returned %+v", delivery.Delivery)
+	}
+	report, err := port.Query(ctx, QueryRequest{Kind: QueryResolutionReport, IncidentID: incidentPublicID})
+	if err != nil {
+		t.Fatalf("existing Incident without ResolutionReport: %v", err)
+	}
+	if report.ResolutionReport != nil {
+		t.Fatalf("existing Incident without ResolutionReport returned %+v", report.ResolutionReport)
+	}
+
+	missingIncidentID := uuid.NewString()
+	for _, kind := range []QueryKind{QueryDelivery, QueryResolutionReport} {
+		_, err := port.Query(ctx, QueryRequest{Kind: kind, IncidentID: missingIncidentID})
+		if !errors.Is(err, ErrNotFound) {
+			t.Errorf("%s for missing Incident error=%v, want ErrNotFound", kind, err)
+		}
 	}
 }
 

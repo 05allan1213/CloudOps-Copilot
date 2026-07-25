@@ -65,11 +65,11 @@ export function listIncidentVerifications(
   return listTypedResources<VerificationRunView>(incidentID, "verifications", cursor, signal);
 }
 
-export async function getIncidentDelivery(incidentID: string, signal?: AbortSignal): Promise<DeliveryView> {
+export async function getIncidentDelivery(incidentID: string, signal?: AbortSignal): Promise<DeliveryView | null> {
   return getTypedResource<DeliveryView>(incidentID, "delivery", signal);
 }
 
-export async function getIncidentResolutionReport(incidentID: string, signal?: AbortSignal): Promise<ResolutionReportView> {
+export async function getIncidentResolutionReport(incidentID: string, signal?: AbortSignal): Promise<ResolutionReportView | null> {
   return getTypedResource<ResolutionReportView>(incidentID, "resolution-report", signal);
 }
 
@@ -134,8 +134,8 @@ function listTypedResources<T>(
   );
 }
 
-async function getTypedResource<T>(incidentID: string, resource: string, signal?: AbortSignal): Promise<T> {
-  const response = await getJSON<ResourceResponse<T>>(`${base}/${encodeURIComponent(incidentID)}/${resource}`, { signal });
+async function getTypedResource<T>(incidentID: string, resource: string, signal?: AbortSignal): Promise<T | null> {
+  const response = await getJSON<ResourceResponse<T | null>>(`${base}/${encodeURIComponent(incidentID)}/${resource}`, { signal });
   return response.resource;
 }
 
