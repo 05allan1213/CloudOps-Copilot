@@ -1,6 +1,8 @@
 # CloudOps Incident Agent V3 重构设计
 
-> 状态：FROZEN TARGET DESIGN — 当前工作树内 V3 实施的唯一规范入口；Phase 0 基线已提交，当前阶段边界修订随 owning phase 提交
+> **SUPERSEDED：** 本文件使用的产品代际与 Incident-only 边界已经失效。CloudOps 当前只有一个 V1 产品契约；后续实施必须使用 [`CloudOps-Implementation-Spec.md`](CloudOps-Implementation-Spec.md)。本文件仅作为尚待整合的历史迁移输入，不得作为实施 authority 或完成证明。
+
+> 历史状态：本文件曾被冻结为目标设计；该状态已由上方 `SUPERSEDED` 声明终止，不代表当前规范、当前产品代际或当前实施状态
 > 日期：2026-07-17
 > 源码审计基线：main@2f7e426d69a4ed7d8d32ec3ca83c13af0c71586e
 > 文档 revision：Phase 0 基线由本地提交 `1ea0c3a21ed3ed1f822399f205afac225b1d5464` 承载；后续修订由外部 Evidence Manifest 记录承载 commit，并用 `git rev-parse COMMIT:docs/CloudOps-Incident-Agent-V3-Refactor-Design.md` 固化 blob ID，本文不自嵌入当前提交 SHA

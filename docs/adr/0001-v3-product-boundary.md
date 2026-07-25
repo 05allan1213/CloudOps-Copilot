@@ -1,6 +1,6 @@
 # ADR 0001: V3 Product Boundary and One Incident Flow
 
-- Status: Accepted target decision; implementation NOT RUN
+- Status: Superseded by ADR 0018; retained as the historical Incident-only decision
 - Date: 2026-07-18
 - Owner: Phase 0, enforced by every later Gate
 - Supersedes: V2 product-scope and execution-spec decisions

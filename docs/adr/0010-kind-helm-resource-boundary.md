@@ -3,6 +3,7 @@
 - Status: Accepted target decision; implementation NOT RUN
 - Date: 2026-07-18
 - Owner: Phase 3 and Phase 7
+- Refined by: ADR 0040
 
 ## Context
 

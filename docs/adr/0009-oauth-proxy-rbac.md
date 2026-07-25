@@ -1,6 +1,6 @@
 # ADR 0009: GitHub OAuth, oauth2-proxy, CSRF and RBAC
 
-- Status: Accepted target decision; implementation NOT RUN
+- Status: Superseded by ADR 0024 for the target local-only product; retained as the historical deployable OAuth decision
 - Date: 2026-07-18
 - Owner: Phase 5
 
