@@ -6,18 +6,18 @@
 >
 > Task 0 开工基线：`10a1f2b659b4ee9adb1a3efcb7725f83504b9d1f`
 >
-> 最后更新：2026-07-26 09:20（Asia/Shanghai）
+> 最后更新：2026-07-26 11:47（Asia/Shanghai）
 
 ## 状态总览
 
 | 任务 | 状态 | 硬依赖判断 | 当前结论 |
 |---|---|---|---|
 | 任务 0：语义基线与本地生命周期 | `DONE_WITH_NOT_RUN` | 无 | 本地 UI -> `/api/v1` -> MySQL、数据迁移及生命周期完成；外部 Provider 明确 `NOT RUN` |
-| 任务 1：平台 Shell 与 Settings | `READY` | 任务 0 API、数据和生命周期契约 | 唯一 `/api/v1`、schema 1、Make/Helm/MySQL 契约已稳定 |
-| 任务 2：Infrastructure 与 Atlas | `BLOCKED` | 任务 0；任务 1 Scope/Shell | 等待任务 1 Operational Scope 与 Shell contract |
-| 任务 3：Monitoring | `BLOCKED` | 任务 0；任务 1 Provider/Scope/Query | 等待任务 1 Provider、Scope 与 Query contract |
+| 任务 1：平台 Shell 与 Settings | `DONE_WITH_NOT_RUN` | 任务 0 API、数据和生命周期契约 | Shell、Settings、revision、secret、notification 与 Worker activation 已完成真实联调；外部 Provider 调用明确 `NOT RUN` |
+| 任务 2：Infrastructure 与 Atlas | `READY` | 任务 0；任务 1 Scope/Shell | Operational Scope、Shell、Context Link 与 Provider health contract 已落地 |
+| 任务 3：Monitoring | `READY` | 任务 0；任务 1 Provider/Scope/Query | Provider、Scope、Query policy 与公共时间范围已落地 |
 | 任务 4：Logs 与 Traces | `BLOCKED` | 任务 1；任务 2/3 context contract | 等待任务 1-3 的 resource/time contract |
-| 任务 5：Alerts | `BLOCKED` | 任务 0；任务 1 notification/Settings/Context Link | 等待任务 1 公共契约 |
+| 任务 5：Alerts | `READY` | 任务 0；任务 1 notification/Settings/Context Link | notification、Settings 与 Context Link 公共契约已落地 |
 | 任务 6：Agent | `BLOCKED` | 任务 1；任务 2-5 真实 Evidence source | 前置 Evidence Plane 尚未完成 |
 | 任务 7：Incidents 与 Verify | `BLOCKED` | 任务 5、6；任务 2-4 Context Link | 前置领域尚未完成 |
 | 任务 8：Operations 与 DevOps | `BLOCKED` | 任务 6；Incident 链另需任务 7 | authority contract 尚未完成 |
@@ -116,3 +116,84 @@ Chrome 首次连接 `18081` 时，命令执行器已经回收 `local-up` 的后�
 - GitHub、Argo CD 外部读取/写入及 hosted publish/sign/attest：无当前任务运行授权或凭据，`NOT RUN`。
 - 真实 LLM Agent Quality：未配置真实模型凭据，`NOT RUN`；确定性 fixture/guardrail 不替代模型调用。
 - PR、tag、默认分支、force push、production/staging：`NOT RUN`。
+
+## 任务 1：平台 Shell 与 Settings
+
+### 实施结果
+
+- 十个 Workspace 收敛到同一 responsive Shell；桌面侧栏、移动端 bottom navigation、More 导航、document scrolling、浏览器历史和 Context Link 使用同一语义路由。
+- Overview、Settings、Notification Inbox 与 SSE 已接入唯一 `/api/v1`；无并行版本 API、generation-labelled route 或 numbered runtime profile。
+- Settings 实现 draft validate、不可变 Configuration Revision、activate、history、restore、Provider health/test、write-only secret、Operational Scope 与 Query policy。
+- validate 结果绑定 canonical draft hash；修改已验证 draft 后 apply 返回 `409 STALE_VALIDATION`，不会创建或激活 revision。
+- Worker 通过数据库任务边界观察新 revision；活动 revision、activation task、async task 均保存 revision identity/hash，避免 API 内联伪造激活成功。
+- `migrations/00002_platform_foundation.sql` 将 schema 提升到 version 2；configuration、scope、provider health、secret metadata、notification 与 data lifecycle 均持久化到真实 MySQL/PVC。
+- `make local-up` 构建并加载固定 local image 后会滚动 API/Worker，确保 Pod 使用当前 bundle；Helm release `cloudops` 当前 revision 12。
+
+### Runtime 与数据审计
+
+| 项目 | 结果 | 当前证据 |
+|---|---|---|
+| Build/runtime | `PASS` | `make local-up` 完成；API、Worker、MySQL 均 Ready；API/Worker 当前 Pod 均为最新 rollout 且 0 restart |
+| Schema | `PASS` | `goose_db_version=2`；`migrations/00002_platform_foundation.sql` 已应用 |
+| Configuration | `PASS` | active revision `2`，public ID `ce892417-88b8-4053-8376-de78fb818b42`，hash `ce569e83cc3aaf92a6f802e567936f18a8e4927b8e3918419a803809057c998c` |
+| Worker boundary | `PASS` | activation `succeeded`，attempt `1`，observed hash 与 revision hash 相等 |
+| Stale protection | `PASS` | validation `b7752cda-67c7-4852-998d-e52ec4ca85ec` 的 `applied_revision_id=NULL`；active revision 仍为 `2` |
+| Secret storage | `PASS` | secret metadata count `1`；API response 不含 value；private directory `0700`、secret file `0600` |
+| Data lifecycle | `PASS` | PVC `cloudops-data` Bound、1Gi；MySQL PVC `data-mysql-0` Bound、2Gi |
+
+活动 Revision 2 的实际值：summary `Task 1 live UI validation`，LLM model `deepseek-reasoner`；activation worker identity `cloudops-worker-d5dffc6d7-5p9ll`。该 identity 是完成 activation 时的真实 Worker，后续 `make local-up` rollout 不改写历史任务归属。
+
+### MCP 联调证据
+
+验收 URL：`http://127.0.0.1:18082/settings`；Chrome DevTools MCP isolated context `cloudops-task1-final`。
+
+| 维度 | 结果 | 证据 |
+|---|---|---|
+| Browser | `PASS` | 1440px、390px、320px 实测；十个 Workspace 均可达；320px `scrollWidth=320`，五个 bottom-nav 控件均在 viewport 内，More 可达其余六个 Workspace；Agent <-> Overview 浏览器 Back/Forward 正常；Settings 的 scrolling element 为 `document.documentElement` |
+| Network | `PASS` | UI validate `200`、revision create `201`、stale apply `409`、secret create `201`、SSE `/api/v1/notification-events` `200`；当前业务请求全部为 `/api/v1` |
+| Data | `PASS` | UI 显示 Configuration Revision #2、model `deepseek-reasoner` 和 activation succeeded；与上面的 MySQL active revision/hash/task projection 一致 |
+| Provider | `PASS` | MySQL 与 Worker 为真实 release Provider；`POST /api/v1/providers/llm/tests` 返回 `200 disabled`，request/trace `dk86sd7130ir-95`，detail `Provider 在当前配置中未启用` |
+| Failure/unavailable | `PASS` | 修改已验证 draft 后得到 `409 STALE_VALIDATION` 且无 revision 写入；浏览器通知拒绝显示 `BROWSER_NOTIFICATION_PERMISSION_DENIED`；disabled LLM 未被显示为 available |
+| Console | `PASS` | 干净 isolated context 的最终页面无 console message、Vue warning 或未处理异常 |
+| Task result | `DONE_WITH_NOT_RUN` | Task 1 本地核心纵向能力完成；未配置的外部 Provider 与 hosted 环境分支如下列为 `NOT RUN` |
+
+### 检查结果
+
+`PASS`：
+
+- `npm exec -- vue-tsc --noEmit`
+- `npm run lint -- --quiet`
+- `npm test`：12 files / 50 tests
+- `npm run build`：initial JS gzip `137.59 KiB`
+- `go test ./internal/api ./internal/notification ./internal/settings`
+- `bash scripts/check-runtime-render.sh`
+- `bash -n scripts/local-lifecycle.sh`
+- `git diff --check`
+- `/livez`、`/readyz`、`/api/v1/bootstrap`、`/api/v1/settings`
+
+### 实际文件清单
+
+- Shell 与 navigation：`frontend/index.html`、`frontend/package*.json`、`frontend/src/components/layout/**`、`frontend/src/navigation*`、`frontend/src/router/**`、`frontend/src/pages/NotFoundPage.vue`、`frontend/src/style.css`、`frontend/src/types/index.ts`。
+- Platform UI：`frontend/src/api/{client,notifications,platform}.ts`、`frontend/src/utils/contextLink*`、`frontend/src/views/{overview,settings,workspaces}/**`。
+- 现有 Incident UI contract 对齐：`frontend/src/views/incidents/**` 与 `frontend/src/components/incidents/**`。
+- V1/backend：`docs/api-v1-openapi.yaml`、`internal/api/{handler,types,platform_handler,openapi_contract_test}.go`、`internal/router/{api,dependencies}.go`、`internal/notification/**`、`internal/settings/**`。
+- Revision propagation/Worker：`internal/{asyncjob,bootstrap,config,di,startup}/**` 相关文件、`internal/taskhandler/investigation_start.go`、`internal/command/integration_test.go`、`internal/infra/incidentstore/no_change.go`。
+- Data contract：`migrations/00002_platform_foundation.sql`、`migrations/baseline_test.go`、`internal/schemaversion/version.go`、`internal/migration/evidence_supersession_test.go`。
+- Helm/Make lifecycle：`charts/cloudops/templates/{_helpers,api,worker,data}.yaml`、`charts/cloudops/{values,values.schema}.yaml`、`scripts/{check-runtime-render,local-lifecycle}.sh`。
+- 当前 Task 1 范围共 86 个工作树文件：85 个 implementation 文件加本状态文件；implementation 精确逐文件清单可由 `git diff-tree --name-status -r 47145aef04e64f9cef1d70d8d168c7e88ce2bc42` 重放。
+
+### Delivery record
+
+| 项目 | 结果 | 证据 |
+|---|---|---|
+| Remote | `PASS` | `origin` = `https://github.com/05allan1213/CloudOps-Copilot.git` |
+| Branch | `PASS` | `codex/v3-refactor`；非默认实施分支 |
+| Implementation commit | `PASS` | 85 个精确 implementation 文件；local = remote = `47145aef04e64f9cef1d70d8d168c7e88ce2bc42` |
+| Push | `PASS` | normal fast-forward `f5a459f..47145ae`；未 force push、未推 tag、未触碰默认分支 |
+
+### NOT RUN
+
+- 真实外部 LLM 调用：当前 LLM Provider 为 disabled，未配置或使用模型 secret；disabled path 已真实联调，但不替代 LLM Provider 成功调用。
+- Kubernetes、Prometheus、Alertmanager、Elasticsearch、Tempo、GitHub、Argo CD Provider 的成功查询：不属于 Task 1；按后续 READY 任务分别实施和验收。
+- 浏览器系统通知成功投递：当前环境权限为 denied；产品错误码路径已验证，系统级成功通知 `NOT RUN`。
+- hosted/staging/production、PR、tag、默认分支、force push：`NOT RUN`。
