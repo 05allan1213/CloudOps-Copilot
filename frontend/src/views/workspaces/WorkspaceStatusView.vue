@@ -5,6 +5,7 @@ import { useRoute } from "vue-router";
 
 import { isApiError } from "../../api/client";
 import { getBootstrap, type BootstrapSnapshot, type ProviderHealth, type ProviderIdentity } from "../../api/platform";
+import { OPERATIONAL_SCOPE_CHANGED_EVENT } from "../../utils/operationalScope";
 
 const route = useRoute();
 const bootstrap = ref<BootstrapSnapshot | null>(null);
@@ -37,8 +38,14 @@ async function loadStatus() {
   }
 }
 
-onMounted(loadStatus);
-onBeforeUnmount(() => controller?.abort());
+onMounted(() => {
+  window.addEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT, loadStatus);
+  void loadStatus();
+});
+onBeforeUnmount(() => {
+  window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT, loadStatus);
+  controller?.abort();
+});
 </script>
 
 <template>

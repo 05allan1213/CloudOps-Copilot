@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func (s *Service) testProvider(ctx context.Context, config ProviderConfiguration, refs []SecretReference) ProviderResult {
+func (s *Service) testProvider(ctx context.Context, config ProviderConfiguration, refs []SecretReference, clusterID string) ProviderResult {
 	result := ProviderResult{Provider: config.Provider}
 	if !config.Enabled {
 		result.State = "disabled"
@@ -21,8 +21,20 @@ func (s *Service) testProvider(ctx context.Context, config ProviderConfiguration
 	now := s.now().UTC()
 	result.CheckedAt = &now
 	if config.Provider == ProviderKubernetes {
-		result.State = "unavailable"
-		result.Detail = "Kubernetes 连接测试需要 worker Provider Gateway；当前尚未启用"
+		probe := s.providerProbes[ProviderKubernetes]
+		if probe == nil {
+			result.State = "unavailable"
+			result.Detail = "Kubernetes typed Provider Gateway 未装配"
+			return result
+		}
+		detail, err := probe(ctx, strings.TrimSpace(clusterID))
+		if err != nil {
+			result.State = "unavailable"
+			result.Detail = "Kubernetes typed Provider Gateway 连接失败"
+			return result
+		}
+		result.State = "available"
+		result.Detail = detail
 		return result
 	}
 	endpoint, err := providerProbeURL(config)
@@ -71,6 +83,31 @@ func (s *Service) testProvider(ctx context.Context, config ProviderConfiguration
 	result.State = "available"
 	result.Detail = "Provider 有界连接测试通过"
 	return result
+}
+
+func (s *Service) testKubernetesScopes(ctx context.Context, config ProviderConfiguration, refs []SecretReference, scopes []OperationalScope) (ProviderResult, []FieldError) {
+	result := ProviderResult{Provider: ProviderKubernetes, State: "available"}
+	var fieldErrors []FieldError
+	available := 0
+	for index, scope := range scopes {
+		probeResult := s.testProvider(ctx, config, refs, scope.ClusterID)
+		result.CheckedAt = probeResult.CheckedAt
+		if probeResult.State == "available" {
+			available++
+			continue
+		}
+		fieldErrors = append(fieldErrors, FieldError{
+			Field: fmt.Sprintf("scopes.%d.cluster_id", index), Code: "KUBERNETES_READER_UNAVAILABLE",
+			Message: fmt.Sprintf("Cluster %q 未注册可用的 Kubernetes typed reader", scope.ClusterID),
+		})
+	}
+	if len(fieldErrors) > 0 {
+		result.State = "unavailable"
+		result.Detail = fmt.Sprintf("Kubernetes typed readers %d/%d 可用", available, len(scopes))
+		return result, fieldErrors
+	}
+	result.Detail = fmt.Sprintf("Kubernetes typed readers %d/%d 可用", available, len(scopes))
+	return result, nil
 }
 
 func providerProbeURL(config ProviderConfiguration) (string, error) {

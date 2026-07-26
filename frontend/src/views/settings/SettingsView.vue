@@ -4,10 +4,12 @@ import {
   CheckCircle2,
   FlaskConical,
   KeyRound,
+  Plus,
   RefreshCw,
   RotateCcw,
   Save,
   ShieldCheck,
+  Trash2,
 } from "lucide-vue-next";
 import { onBeforeRouteLeave } from "vue-router";
 
@@ -29,6 +31,7 @@ import {
   type SettingsSnapshot,
   type StorageStatus,
 } from "../../api/platform";
+import { OPERATIONAL_SCOPE_CHANGED_EVENT } from "../../utils/operationalScope";
 
 const settings = ref<SettingsSnapshot | null>(null);
 const storage = ref<StorageStatus | null>(null);
@@ -47,6 +50,7 @@ const statusMessage = ref("");
 const secretProvider = ref<ProviderIdentity>("llm");
 const secretPurpose = ref("api_key");
 const secretValue = ref("");
+const selectedScopeIndex = ref(0);
 let mounted = true;
 
 const providerLabels: Record<ProviderIdentity | "mysql", string> = {
@@ -76,12 +80,6 @@ const numberFormatter = new Intl.NumberFormat("zh-CN");
 const hasUnsavedChanges = computed(() => Boolean(draft.value && baselineDraftJSON.value && JSON.stringify(draft.value) !== baselineDraftJSON.value));
 const validationStaleLocally = computed(() => Boolean(validation.value && draft.value && JSON.stringify(draft.value) !== validatedDraftJSON.value));
 const activeRevision = computed(() => settings.value?.active_revision ?? null);
-const namespaceText = computed({
-  get: () => draft.value?.scope.namespaces.join(", ") ?? "",
-  set: (value: string) => {
-    if (draft.value) draft.value.scope.namespaces = value.split(",").map((item) => item.trim()).filter(Boolean);
-  },
-});
 
 function stateLabel(state: ProviderState): string {
   return ({ available: "可用", partial: "部分可用", unavailable: "不可用", disabled: "已停用", not_configured: "未配置" } satisfies Record<ProviderState, string>)[state];
@@ -140,14 +138,73 @@ async function loadSettings(resetDraft = true) {
 }
 
 function setDraftFromRevision(revision: ConfigurationRevision) {
-  draft.value = configurationDraft(toRaw(revision));
+  const next = configurationDraft(toRaw(revision));
+  selectedScopeIndex.value = Math.max(0, next.scopes.findIndex((scope) => scope.id === next.scope.id));
+  draft.value = next;
+  syncDefaultScope();
   baselineDraftJSON.value = JSON.stringify(draft.value);
   validatedDraftJSON.value = "";
   validation.value = null;
   providerResults.value = {};
 }
 
+function syncDefaultScope() {
+  const scopes = draft.value?.scopes;
+  if (!draft.value || !scopes?.length) return;
+  selectedScopeIndex.value = Math.min(Math.max(selectedScopeIndex.value, 0), scopes.length - 1);
+  draft.value.scope = structuredClone(toRaw(scopes[selectedScopeIndex.value]));
+}
+
+function selectDefaultScope(index: number) {
+  selectedScopeIndex.value = index;
+  syncDefaultScope();
+}
+
+function isDefaultScope(index: number): boolean {
+  return index === selectedScopeIndex.value;
+}
+
+function updateScopeNamespaces(index: number, event: Event) {
+  const scope = draft.value?.scopes[index];
+  if (!scope) return;
+  scope.namespaces = (event.currentTarget as HTMLInputElement).value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+async function addScope() {
+  if (!draft.value || draft.value.scopes.length >= 10) return;
+  const current = draft.value.scopes[selectedScopeIndex.value] ?? draft.value.scope;
+  draft.value.scopes.push({
+    name: "",
+    cluster_id: "",
+    environment: current.environment || "local",
+    namespaces: [...current.namespaces],
+    active: false,
+  });
+  const index = draft.value.scopes.length - 1;
+  await nextTick();
+  document.querySelector<HTMLInputElement>(`[data-field="scopes.${index}.name"]`)?.focus();
+}
+
+function removeScope(index: number) {
+  if (!draft.value || draft.value.scopes.length <= 1) return;
+  const scope = draft.value.scopes[index];
+  if (!window.confirm(`从当前草稿删除集群 ${scope.cluster_id || index + 1}？`)) return;
+  draft.value.scopes.splice(index, 1);
+  if (selectedScopeIndex.value > index) selectedScopeIndex.value -= 1;
+  else if (selectedScopeIndex.value === index) selectedScopeIndex.value = Math.min(index, draft.value.scopes.length - 1);
+  syncDefaultScope();
+}
+
+function scopeErrors(index: number) {
+  const prefix = `scopes.${index}.`;
+  return validation.value?.errors.filter((item) => item.field.startsWith(prefix)) ?? [];
+}
+
 function draftSnapshot(): ConfigurationDraft | null {
+  syncDefaultScope();
   return draft.value ? structuredClone(toRaw(draft.value)) : null;
 }
 
@@ -162,7 +219,10 @@ async function focusFirstError() {
   await nextTick();
   const first = validation.value?.errors[0];
   if (!first) return;
-  document.querySelector<HTMLElement>(`[data-field="${first.field}"]`)?.focus();
+  let field = first.field;
+  if (field === "scope") field = `scopes.${selectedScopeIndex.value}.cluster_id`;
+  else if (field.startsWith("scope.")) field = `scopes.${selectedScopeIndex.value}.${field.slice("scope.".length)}`;
+  document.querySelector<HTMLElement>(`[data-field="${field}"]`)?.focus();
 }
 
 async function runValidation() {
@@ -197,6 +257,7 @@ async function runProviderTest(provider: ProviderIdentity) {
     const result = await testProvider(
       configuration,
       snapshot.secret_references.filter((item) => item.provider === provider),
+      snapshot.scope.cluster_id,
     );
     providerResults.value = { ...providerResults.value, [provider]: result };
   } catch (reason) {
@@ -318,14 +379,22 @@ watch(secretProvider, (provider) => {
   secretPurpose.value = provider === "llm" ? "api_key" : provider === "kubernetes" ? "credential" : "token";
 });
 
+watch(() => draft.value?.scopes, syncDefaultScope, { deep: true });
+
+function handleOperationalScopeChanged() {
+  void loadSettings(false);
+}
+
 onBeforeRouteLeave(guardUnsavedChanges);
 onMounted(() => {
   window.addEventListener("beforeunload", handleBeforeUnload);
+  window.addEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT, handleOperationalScopeChanged);
   void loadSettings(true);
 });
 onBeforeUnmount(() => {
   mounted = false;
   window.removeEventListener("beforeunload", handleBeforeUnload);
+  window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT, handleOperationalScopeChanged);
 });
 </script>
 
@@ -378,16 +447,54 @@ onBeforeUnmount(() => {
 
       <form id="settings-form" novalidate @submit.prevent="runValidation">
         <section id="operational-scope" class="settings-section" aria-labelledby="scope-heading">
-          <header><div><p class="eyebrow">Scope</p><h2 id="scope-heading">Operational Scope</h2></div></header>
-          <div class="form-grid">
-            <label><span>变更摘要</span><input v-model="draft.summary" data-field="summary" name="summary" type="text" autocomplete="off" maxlength="255" placeholder="例如：更新本地 LLM model…"></label>
-            <label><span>Scope 名称</span><input v-model="draft.scope.name" data-field="scope.name" name="scope_name" type="text" autocomplete="off" maxlength="128" placeholder="例如：本地 CloudOps…"></label>
-            <label><span>Cluster identity</span><input v-model="draft.scope.cluster_id" data-field="scope.cluster_id" name="cluster_id" type="text" autocomplete="off" spellcheck="false" placeholder="例如：cloudops-local…"></label>
-            <label><span>Environment</span><input v-model="draft.scope.environment" data-field="scope.environment" name="environment" type="text" autocomplete="off" spellcheck="false" placeholder="例如：local…"></label>
-            <label class="span-two"><span>Namespaces（逗号分隔）</span><input v-model="namespaceText" data-field="scope.namespaces" name="namespaces" type="text" autocomplete="off" spellcheck="false" placeholder="例如：demo, monitoring…"></label>
+          <header>
+            <div><p class="eyebrow">Scope</p><h2 id="scope-heading">Operational Scope</h2></div>
+            <button type="button" class="secondary-action" data-field="scopes" :disabled="draft.scopes.length >= 10" @click="addScope">
+              <Plus :size="17" aria-hidden="true" />添加集群
+            </button>
+          </header>
+          <div class="form-grid scope-summary">
+            <label class="span-two"><span>变更摘要</span><input v-model="draft.summary" data-field="summary" name="summary" type="text" autocomplete="off" maxlength="255" placeholder="例如：更新集群连接与 Provider 配置…"></label>
           </div>
-          <ul v-if="validation?.errors.some((item) => item.field === 'summary' || item.field.startsWith('scope.'))" class="field-error-list">
-            <li v-for="item in validation.errors.filter((candidate) => candidate.field === 'summary' || candidate.field.startsWith('scope.'))" :key="`${item.field}-${item.code}`"><code>{{ item.code }}</code> {{ item.message }}</li>
+          <div class="scope-list">
+            <article v-for="(scope, index) in draft.scopes" :key="scope.id || `draft-scope-${index}`" class="scope-item" :class="{ 'is-default': isDefaultScope(index) }">
+              <header>
+                <label class="scope-default">
+                  <input
+                  type="radio"
+                  autocomplete="off"
+                    name="default_scope"
+                    :checked="isDefaultScope(index)"
+                    :value="index"
+                    @change="selectDefaultScope(index)"
+                  >
+                  <span>Revision 默认</span>
+                </label>
+                <span v-if="scope.active" class="active-scope-state">当前活动</span>
+                <button
+                  type="button"
+                  class="scope-remove"
+                  :disabled="draft.scopes.length <= 1"
+                  :aria-label="`删除集群 ${scope.cluster_id || index + 1}`"
+                  title="删除集群"
+                  @click="removeScope(index)"
+                >
+                  <Trash2 :size="17" aria-hidden="true" />
+                </button>
+              </header>
+              <div class="form-grid">
+                <label><span>Scope 名称</span><input v-model="scope.name" :data-field="`scopes.${index}.name`" :name="`scope_${index}_name`" type="text" autocomplete="off" maxlength="128" placeholder="例如：本地 CloudOps…"></label>
+                <label><span>Cluster identity</span><input v-model="scope.cluster_id" :data-field="`scopes.${index}.cluster_id`" :name="`scope_${index}_cluster_id`" type="text" autocomplete="off" maxlength="128" spellcheck="false" placeholder="例如：cloudops-local…"></label>
+                <label><span>Environment</span><input v-model="scope.environment" :data-field="`scopes.${index}.environment`" :name="`scope_${index}_environment`" type="text" autocomplete="off" maxlength="64" spellcheck="false" placeholder="例如：local…"></label>
+                <label><span>Namespaces（逗号分隔）</span><input :value="scope.namespaces.join(', ')" :data-field="`scopes.${index}.namespaces`" :name="`scope_${index}_namespaces`" type="text" autocomplete="off" spellcheck="false" placeholder="例如：demo, monitoring…" @input="updateScopeNamespaces(index, $event)"></label>
+              </div>
+              <ul v-if="scopeErrors(index).length" class="field-error-list">
+                <li v-for="item in scopeErrors(index)" :key="`${item.field}-${item.code}`"><code>{{ item.code }}</code> {{ item.message }}</li>
+              </ul>
+            </article>
+          </div>
+          <ul v-if="validation?.errors.some((item) => item.field === 'summary' || item.field === 'scope' || item.field === 'scopes' || item.field.startsWith('scope.'))" class="field-error-list">
+            <li v-for="item in validation.errors.filter((candidate) => candidate.field === 'summary' || candidate.field === 'scope' || candidate.field === 'scopes' || candidate.field.startsWith('scope.'))" :key="`${item.field}-${item.code}`"><code>{{ item.code }}</code> {{ item.message }}</li>
           </ul>
         </section>
 
@@ -543,13 +650,23 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 #settings-form { display: grid; gap: var(--co-space-8); }
 .settings-section { display: grid; gap: var(--co-space-4); padding-block: var(--co-space-5); border-block: 1px solid var(--co-border-default); }
 .settings-section h2 { font-size: 20px; }
+.scope-summary { max-width: 900px; }
+.scope-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--co-space-4); }
+.scope-item { display: grid; min-width: 0; gap: var(--co-space-4); padding: var(--co-space-4); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-panel); background: var(--co-bg-surface); }
+.scope-item.is-default { border-color: var(--co-status-info-border); }
+.scope-item > header { display: flex; min-height: 36px; align-items: center; gap: var(--co-space-3); padding-bottom: var(--co-space-3); border-bottom: 1px solid var(--co-border-default); }
+.scope-default { display: inline-flex; min-height: 36px; align-items: center; gap: var(--co-space-2); color: var(--co-text-primary); cursor: pointer; font-size: 12px; font-weight: 750; }
+.active-scope-state { margin-left: auto; padding: 3px var(--co-space-2); border: 1px solid var(--co-status-success-border); border-radius: var(--co-radius-pill); color: var(--co-status-success-fg); background: var(--co-status-success-bg); font-size: 10px; font-weight: 750; }
+.scope-remove { display: grid; width: 36px; height: 36px; flex: 0 0 36px; place-items: center; margin-left: auto; padding: 0; border: 1px solid transparent; border-radius: var(--co-radius-control); color: var(--co-text-muted); background: transparent; cursor: pointer; }
+.active-scope-state + .scope-remove { margin-left: 0; }
+.scope-remove:hover { border-color: var(--co-status-critical-border); color: var(--co-status-critical-fg); background: var(--co-status-critical-bg); }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--co-space-4); }
 .form-grid--three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .form-grid label, .secret-editor label { display: grid; min-width: 0; gap: 6px; color: var(--co-text-secondary); font-size: 12px; font-weight: 700; }
 .form-grid .span-two { grid-column: span 2; }
 input, select { width: 100%; min-width: 0; min-height: 42px; padding: 0 var(--co-space-3); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); color: var(--co-text-primary); background: var(--co-bg-surface); }
 input:hover, select:hover { border-color: var(--co-border-strong); }
-input[type="checkbox"] { width: 18px; min-height: 18px; padding: 0; accent-color: var(--co-action-primary); }
+input[type="checkbox"], input[type="radio"] { width: 18px; min-height: 18px; padding: 0; accent-color: var(--co-action-primary); }
 .toggle-row { display: flex; flex-wrap: wrap; gap: var(--co-space-5); }
 .toggle-row label, .provider-toggle { display: inline-flex; min-height: 44px; align-items: center; gap: var(--co-space-2); color: var(--co-text-secondary); cursor: pointer; font-size: 13px; font-weight: 700; }
 .field-error-list { display: grid; gap: var(--co-space-1); margin: 0; padding: var(--co-space-3) var(--co-space-4); border: 1px solid var(--co-status-critical-border); border-radius: var(--co-radius-panel); color: var(--co-status-critical-fg); background: var(--co-status-critical-bg); list-style-position: inside; font-size: 12px; }
@@ -588,7 +705,7 @@ td { overflow-wrap: anywhere; }
 .facts-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; border: 1px solid var(--co-border-default); background: var(--co-bg-surface); }
 .facts-grid div { min-width: 0; padding: var(--co-space-4); border-right: 1px solid var(--co-border-default); border-bottom: 1px solid var(--co-border-default); }
 .facts-grid--bootstrap { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-@media (max-width: 1050px) { .provider-list { grid-template-columns: 1fr; } .secret-editor { grid-template-columns: repeat(2, minmax(0, 1fr)); } .secret-value { grid-column: 1 / -1; } .facts-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 1050px) { .scope-list, .provider-list { grid-template-columns: 1fr; } .secret-editor { grid-template-columns: repeat(2, minmax(0, 1fr)); } .secret-value { grid-column: 1 / -1; } .facts-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 767px) { .settings-view { gap: var(--co-space-5); } .page-heading { align-items: flex-start; flex-direction: column; } .page-heading h1 { font-size: 25px; } .action-bar { align-items: stretch; flex-direction: column; } .action-bar > div { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); } .action-bar button { min-width: 0; padding-inline: var(--co-space-2); font-size: 11px; } .revision-summary { flex-direction: column; } .revision-summary dl { min-width: 0; border-top: 1px solid var(--co-border-default); border-left: 0; } .form-grid, .form-grid--three, .form-grid--provider { grid-template-columns: 1fr; } .form-grid .span-two { grid-column: auto; } .provider-item > footer { align-items: stretch; flex-direction: column; } .provider-item > footer button { width: 100%; } .secret-editor { grid-template-columns: 1fr; } .secret-value { grid-column: auto; } .secret-references li { grid-template-columns: 1fr; } .validation-identity { grid-template-columns: 1fr; } .validation-providers { grid-template-columns: 1fr; } }
 @media (max-width: 420px) { .action-bar > div { grid-template-columns: 1fr; } .revision-summary dl, .facts-grid, .facts-grid--bootstrap { grid-template-columns: 1fr; } }
 </style>

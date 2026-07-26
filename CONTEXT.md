@@ -84,6 +84,22 @@ _Avoid_: Mutable global settings, latest environment variables, unversioned secr
 The currently selected cluster, environment, namespace set and time range that constrains native Workspace queries and Context Links.
 _Avoid_: Global implicit context, merged multi-cluster graph, provider home page
 
+**Workload**:
+A Kubernetes controller-level operating identity, currently a Deployment, StatefulSet or DaemonSet, whose Pods realize the desired runtime state.
+_Avoid_: Pod, Service, arbitrary Kubernetes object
+
+**Kubernetes Resource Projection**:
+A bounded, sanitized and typed CloudOps representation of a real Kubernetes resource within one Operational Scope.
+_Avoid_: Raw YAML, unstructured object dump, fabricated resource
+
+**Topology Relationship**:
+An attributable structural relationship between Kubernetes Resource Projections, derived from ownership, selection, endpoints, scheduling or backend references.
+_Avoid_: Visual proximity, inferred dependency, telemetry correlation
+
+**Topology Snapshot**:
+A bounded observation of resource projections and topology relationships collected from one active cluster at a known time and Configuration Revision.
+_Avoid_: Kubernetes authority, telemetry archive, multi-cluster graph
+
 **Operations Atlas**:
 The real-resource topology view of one active cluster, progressively revealing Kubernetes structure while telemetry and Agent activity remain identifiable overlays.
 _Avoid_: Decorative 3D scene, synthetic dependency graph, multi-cluster hairball

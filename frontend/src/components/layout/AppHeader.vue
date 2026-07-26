@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { Activity, Bell, ChevronRight, Moon, Network, Sun, UserRound } from "lucide-vue-next";
+import { Activity, Bell, ChevronRight, LoaderCircle, Moon, Network, Sun, UserRound } from "lucide-vue-next";
 
 import type { OperationalScope, ProviderHealth } from "../../api/platform";
 import { useTheme } from "../../composables/useTheme";
@@ -9,22 +9,33 @@ const props = defineProps<{
   pageTitle: string;
   unreadCount: number;
   activeScope?: OperationalScope;
+  scopes: OperationalScope[];
+  selectedScopeId: string;
+  scopeSwitching: boolean;
   providerHealth?: ProviderHealth[];
 }>();
-const emit = defineEmits<{ openNotifications: [trigger: HTMLElement] }>();
+const emit = defineEmits<{
+  changeScope: [scopeID: string];
+  openNotifications: [trigger: HTMLElement];
+}>();
 
 const { isDark, toggleTheme } = useTheme();
 const environmentLabel = import.meta.env.VITE_ENVIRONMENT_LABEL || "Demo / kind";
 const themeActionLabel = computed(() => (isDark.value ? "切换浅色主题" : "切换深色主题"));
-const scopeLabel = computed(() => props.activeScope?.cluster_id || environmentLabel);
 const scopeDetail = computed(() => props.activeScope
   ? `${props.activeScope.environment} · ${props.activeScope.namespaces.join(", ")}`
   : "Operational Scope 暂不可用");
+const selectableScopes = computed(() => props.scopes.filter((scope): scope is OperationalScope & { id: string } => Boolean(scope.id)));
 const availableProviders = computed(() => props.providerHealth?.filter((item) => item.state === "available").length ?? 0);
 const providerCount = computed(() => props.providerHealth?.length ?? 0);
 
 function openNotifications(event: MouseEvent) {
   emit("openNotifications", event.currentTarget as HTMLElement);
+}
+
+function changeScope(event: Event) {
+  const scopeID = (event.currentTarget as HTMLSelectElement).value;
+  if (scopeID && scopeID !== props.activeScope?.id) emit("changeScope", scopeID);
 }
 </script>
 
@@ -42,11 +53,25 @@ function openNotifications(event: MouseEvent) {
       </nav>
     </div>
     <div class="header-actions">
-      <RouterLink class="environment-boundary" to="/settings#operational-scope" :title="scopeDetail">
+      <label class="environment-boundary" :title="scopeDetail">
         <Network :size="15" aria-hidden="true" />
-        <span>{{ scopeLabel }}</span>
+        <span class="visually-hidden">活动集群</span>
+        <select
+          aria-label="活动集群"
+          autocomplete="off"
+          name="active_cluster"
+          :disabled="scopeSwitching || selectableScopes.length < 2"
+          :value="selectedScopeId || activeScope?.id || ''"
+          @change="changeScope"
+        >
+          <option v-if="!selectableScopes.length" value="">{{ activeScope?.cluster_id || environmentLabel }}</option>
+          <option v-for="scope in selectableScopes" :key="scope.id" :value="scope.id">
+            {{ scope.cluster_id }} · {{ scope.environment }}
+          </option>
+        </select>
+        <LoaderCircle v-if="scopeSwitching" class="scope-spinner" :size="14" aria-hidden="true" />
         <small v-if="providerCount">{{ availableProviders }}/{{ providerCount }}</small>
-      </RouterLink>
+      </label>
       <button type="button" class="icon-button notification-button" aria-label="打开通知收件箱" title="通知" @click="openNotifications">
         <Bell :size="19" aria-hidden="true" />
         <span v-if="unreadCount" class="notification-count">{{ unreadCount > 99 ? "99+" : unreadCount }}</span>
@@ -72,10 +97,13 @@ function openNotifications(event: MouseEvent) {
 .breadcrumb { min-width: 0; gap: var(--co-space-2); padding-left: var(--co-space-4); border-left: 1px solid var(--co-border-default); color: var(--co-text-muted); font-size: 13px; white-space: nowrap; }
 .breadcrumb a { color: var(--co-action-primary); }
 .breadcrumb span { overflow: hidden; text-overflow: ellipsis; }
-.environment-boundary { min-height: 30px; max-width: 260px; gap: var(--co-space-2); padding: 0 var(--co-space-3); border: 1px solid var(--co-status-info-border); border-radius: var(--co-radius-pill); color: var(--co-status-info-fg); background: var(--co-status-info-bg); font-size: 11px; font-weight: 700; }
-.environment-boundary:hover { border-color: var(--co-action-primary); background: var(--co-bg-active); }
-.environment-boundary span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.environment-boundary { min-height: 34px; max-width: 280px; gap: var(--co-space-2); padding: 0 var(--co-space-2); border: 1px solid var(--co-status-info-border); border-radius: var(--co-radius-pill); color: var(--co-status-info-fg); background: var(--co-status-info-bg); font-size: 11px; font-weight: 700; }
+.environment-boundary:hover, .environment-boundary:focus-within { border-color: var(--co-action-primary); background: var(--co-bg-active); }
+.environment-boundary select { min-width: 0; max-width: 170px; border: 0; color: var(--co-status-info-fg); background-color: var(--co-status-info-bg); cursor: pointer; font-size: 11px; font-weight: 750; text-overflow: ellipsis; }
+.environment-boundary option { color: var(--co-text-primary); background-color: var(--co-bg-surface); }
+.environment-boundary select:disabled { cursor: default; opacity: 1; }
 .environment-boundary small { padding-left: var(--co-space-2); border-left: 1px solid var(--co-status-info-border); font-family: var(--co-font-mono); font-size: 10px; }
+.scope-spinner { flex: 0 0 auto; animation: scope-spin 0.8s linear infinite; }
 .icon-button { position: relative; display: grid; width: 38px; height: 38px; flex: 0 0 38px; place-items: center; padding: 0; border: 1px solid transparent; border-radius: var(--co-radius-control); color: var(--co-text-secondary); background: transparent; cursor: pointer; }
 .icon-button:hover { border-color: var(--co-border-default); color: var(--co-text-primary); background: var(--co-bg-hover); }
 .notification-count { position: absolute; top: 2px; right: 1px; min-width: 17px; height: 17px; padding: 0 4px; border: 2px solid var(--co-bg-surface); border-radius: var(--co-radius-pill); color: #fff; background: var(--co-status-critical-fg); font-size: 9px; font-weight: 800; line-height: 13px; }
@@ -83,6 +111,9 @@ function openNotifications(event: MouseEvent) {
 .user-avatar { width: 31px; height: 31px; }
 .user-copy { display: grid; line-height: 1.1; }
 .user-copy strong { font-size: 12px; }.user-copy small { color: var(--co-text-muted); font-size: 10px; }
-@media (max-width: 900px) { .environment-boundary, .user-copy, .product-mark strong { display: none; } .breadcrumb { padding-left: 0; border-left: 0; } }
-@media (max-width: 767px) { .app-header { padding-inline: max(var(--co-space-3), env(safe-area-inset-left)) max(var(--co-space-3), env(safe-area-inset-right)); } .product-mark { display: none; } .header-leading { overflow: hidden; } .breadcrumb a, .breadcrumb svg { display: none; } .breadcrumb span { color: var(--co-text-primary); font-weight: 750; } }
+@keyframes scope-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .scope-spinner { animation: none; } }
+@media (max-width: 900px) { .user-copy, .product-mark strong { display: none; } .breadcrumb { padding-left: 0; border-left: 0; } .environment-boundary small { display: none; } }
+@media (max-width: 767px) { .app-header { padding-inline: max(var(--co-space-3), env(safe-area-inset-left)) max(var(--co-space-3), env(safe-area-inset-right)); } .product-mark, .user-trigger { display: none; } .header-leading { overflow: hidden; } .breadcrumb a, .breadcrumb svg { display: none; } .breadcrumb span { color: var(--co-text-primary); font-weight: 750; } .environment-boundary { max-width: 118px; padding-inline: var(--co-space-2); } .environment-boundary select { width: 84px; font-size: 16px; } }
+@media (max-width: 359px) { .header-actions { gap: var(--co-space-1); } .environment-boundary { max-width: 108px; } .environment-boundary select { width: 74px; } }
 </style>

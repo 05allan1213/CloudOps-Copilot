@@ -71,7 +71,9 @@ func (s *Service) Scopes(ctx context.Context) ([]OperationalScope, error) {
 	if err != nil {
 		return nil, err
 	}
-	return []OperationalScope{active.Scope}, nil
+	result := make([]OperationalScope, len(active.Scopes))
+	copy(result, active.Scopes)
+	return result, nil
 }
 
 func (s *Service) loadRevision(ctx context.Context, db queryer, where string, args ...any) (revisionRecord, error) {
@@ -100,19 +102,57 @@ WHERE ` + where
 	}
 	record.revision.CreatedAt = record.revision.CreatedAt.UTC()
 
-	var namespacesJSON []byte
-	if err := db.QueryRowContext(ctx, `SELECT public_id, name, cluster_id, environment, namespaces_json
-FROM operational_scopes WHERE configuration_revision_id = ?`, record.internalID).Scan(
-		&record.revision.Scope.ID, &record.revision.Scope.Name, &record.revision.Scope.ClusterID,
-		&record.revision.Scope.Environment, &namespacesJSON,
-	); err != nil {
-		return revisionRecord{}, fmt.Errorf("load operational scope: %w", err)
+	scopeRows, err := db.QueryContext(ctx, `SELECT scope.public_id, scope.name, scope.cluster_id,
+	scope.environment, scope.namespaces_json, scope.is_default,
+	(scope.id = selected.operational_scope_id) AS is_selected
+	FROM operational_scopes AS scope
+	LEFT JOIN active_operational_scope AS selected ON selected.singleton_id = 1
+	WHERE scope.configuration_revision_id = ? ORDER BY scope.cluster_id, scope.id`, record.internalID)
+	if err != nil {
+		return revisionRecord{}, fmt.Errorf("load operational scopes: %w", err)
 	}
-	if err := json.Unmarshal(namespacesJSON, &record.revision.Scope.Namespaces); err != nil {
-		return revisionRecord{}, fmt.Errorf("decode operational scope namespaces: %w", err)
+	record.revision.Scopes = []OperationalScope{}
+	var defaultScope *OperationalScope
+	var selectedScope *OperationalScope
+	for scopeRows.Next() {
+		var scope OperationalScope
+		var namespacesJSON []byte
+		var isDefault, isSelected bool
+		if err := scopeRows.Scan(&scope.ID, &scope.Name, &scope.ClusterID, &scope.Environment, &namespacesJSON, &isDefault, &isSelected); err != nil {
+			_ = scopeRows.Close()
+			return revisionRecord{}, fmt.Errorf("scan operational scope: %w", err)
+		}
+		if err := json.Unmarshal(namespacesJSON, &scope.Namespaces); err != nil {
+			_ = scopeRows.Close()
+			return revisionRecord{}, fmt.Errorf("decode operational scope namespaces: %w", err)
+		}
+		scope.RevisionID = record.revision.ID
+		scope.RevisionHash = record.revision.Hash
+		scope.Active = record.revision.Active && isSelected
+		record.revision.Scopes = append(record.revision.Scopes, scope)
+		if isDefault {
+			value := scope
+			defaultScope = &value
+		}
+		if scope.Active {
+			value := scope
+			selectedScope = &value
+		}
 	}
-	record.revision.Scope.RevisionID = record.revision.ID
-	record.revision.Scope.RevisionHash = record.revision.Hash
+	if err := scopeRows.Close(); err != nil {
+		return revisionRecord{}, err
+	}
+	if len(record.revision.Scopes) == 0 {
+		return revisionRecord{}, fmt.Errorf("load operational scopes: %w", ErrNotFound)
+	}
+	switch {
+	case selectedScope != nil:
+		record.revision.Scope = *selectedScope
+	case defaultScope != nil:
+		record.revision.Scope = *defaultScope
+	default:
+		record.revision.Scope = record.revision.Scopes[0]
+	}
 
 	providerRows, err := db.QueryContext(ctx, `SELECT provider, enabled, endpoint, model,
 timeout_ms, max_results, context_link_base

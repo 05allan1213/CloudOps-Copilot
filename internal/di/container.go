@@ -12,6 +12,7 @@ import (
 	eventbus "github.com/05allan1213/CloudOps-Copilot/internal/infra/kafka"
 	promclient "github.com/05allan1213/CloudOps-Copilot/internal/infra/prometheus"
 	rediscache "github.com/05allan1213/CloudOps-Copilot/internal/infra/redis"
+	"github.com/05allan1213/CloudOps-Copilot/internal/infrastructure"
 	"github.com/05allan1213/CloudOps-Copilot/internal/middleware"
 	"github.com/05allan1213/CloudOps-Copilot/internal/notification"
 	"github.com/05allan1213/CloudOps-Copilot/internal/router"
@@ -29,13 +30,14 @@ type Infra struct {
 
 type Container struct {
 	Infra
-	Metrics       *middleware.Metrics
-	Handler       *handler.Handler
-	Queries       api.QueryPort
-	Commands      api.CommandPort
-	Alertmanager  *alertmanageringress.Handler
-	Settings      *settings.Service
-	Notifications *notification.Repository
+	Metrics        *middleware.Metrics
+	Handler        *handler.Handler
+	Queries        api.QueryPort
+	Commands       api.CommandPort
+	Alertmanager   *alertmanageringress.Handler
+	Settings       *settings.Service
+	Notifications  *notification.Repository
+	Infrastructure *infrastructure.Service
 }
 
 func NewContainer(infra *Infra) *Container {
@@ -44,13 +46,14 @@ func NewContainer(infra *Infra) *Container {
 
 func (c *Container) Dependencies() router.Dependencies {
 	return router.Dependencies{
-		Metrics:       c.Metrics,
-		CacheClient:   c.RedisClient,
-		Handler:       c.Handler,
-		Queries:       c.Queries,
-		Commands:      c.Commands,
-		Alertmanager:  c.Alertmanager,
-		Settings:      c.Settings,
-		Notifications: c.Notifications,
+		Metrics:        c.Metrics,
+		CacheClient:    c.RedisClient,
+		Handler:        c.Handler,
+		Queries:        c.Queries,
+		Commands:       c.Commands,
+		Alertmanager:   c.Alertmanager,
+		Settings:       c.Settings,
+		Notifications:  c.Notifications,
+		Infrastructure: c.Infrastructure,
 	}
 }

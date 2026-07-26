@@ -125,7 +125,9 @@ worker:
   enabled: true
   replicas: 1
   managementPort: 8081
-  providerNamespace: demo
+  providerNamespaces:
+    - cloudops-system
+    - demo
   # When empty and PROVIDER_GATEWAY_ENABLED=false, the Worker stays ready in
   # standby and deliberately does not claim Provider-backed work.
   providerConfigSecretName: ""
@@ -136,11 +138,13 @@ worker:
   env:
     WORKER_MANAGEMENT_ADDR: ":8081"
     PROVIDER_GATEWAY_ENABLED: "false"
-    K8S_ENABLED: "false"
+    K8S_ENABLED: "true"
     K8S_WRITE_ENABLED: "false"
     K8S_IN_CLUSTER: "true"
-    K8S_ALLOWED_NAMESPACES: demo
-    K8S_DEFAULT_NAMESPACE: demo
+    K8S_CLUSTER_ID: cloudops-local
+    K8S_CONNECTIONS_JSON: ""
+    K8S_ALLOWED_NAMESPACES: cloudops-system,demo
+    K8S_DEFAULT_NAMESPACE: cloudops-system
   resources:
     requests:
       cpu: 50m

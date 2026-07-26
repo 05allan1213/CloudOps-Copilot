@@ -7,8 +7,10 @@ import {
   ScanSearch,
   Server,
   Settings,
+  TriangleAlert,
+  X,
 } from "lucide-vue-next";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 
 import {
   getNotifications,
@@ -18,14 +20,22 @@ import {
   type OwnerNotification,
 } from "../../api/notifications";
 import { isApiError } from "../../api/client";
-import { getBootstrap, type BootstrapSnapshot } from "../../api/platform";
+import {
+  activateScope,
+  getBootstrap,
+  getScopes,
+  type BootstrapSnapshot,
+  type OperationalScope,
+} from "../../api/platform";
 import { mobileMoreNavigation, type NavigationIcon } from "../../navigation";
+import { dispatchOperationalScopeChange, queryForScopeChange } from "../../utils/operationalScope";
 import AppHeader from "./AppHeader.vue";
 import AppSidebar from "./AppSidebar.vue";
 import MobileBottomNav from "./MobileBottomNav.vue";
 import NotificationInbox from "./NotificationInbox.vue";
 
 const route = useRoute();
+const router = useRouter();
 const sidebarCollapsed = ref(readCollapsedPreference());
 const notificationsOpen = ref(false);
 const moreOpen = ref(false);
@@ -36,6 +46,10 @@ const unreadCount = ref(0);
 const notificationLoading = ref(false);
 const notificationError = ref("");
 const bootstrap = ref<BootstrapSnapshot | null>(null);
+const scopes = ref<OperationalScope[]>([]);
+const selectedScopeID = ref("");
+const scopeSwitching = ref(false);
+const scopeSwitchError = ref("");
 const streamState = ref<"connected" | "reconnecting" | "stopped">("stopped");
 let closeNotificationStream: (() => void) | undefined;
 let streamStartedAt = 0;
@@ -102,12 +116,94 @@ async function refreshNotifications() {
   }
 }
 
-async function refreshBootstrap() {
+async function readPlatformContext(): Promise<BootstrapSnapshot> {
+  const [bootstrapResult, scopesResult] = await Promise.allSettled([getBootstrap(), getScopes()]);
+  if (bootstrapResult.status === "rejected") throw bootstrapResult.reason;
+  const next = bootstrapResult.value;
+  const registeredScopes = scopesResult.status === "fulfilled" && scopesResult.value.length
+    ? scopesResult.value
+    : next.active_revision.scopes;
+  bootstrap.value = next;
+  scopes.value = registeredScopes;
+  selectedScopeID.value = next.active_scope.id
+    ?? registeredScopes.find((scope) => scope.cluster_id === next.active_scope.cluster_id)?.id
+    ?? "";
+  return next;
+}
+
+async function refreshBootstrap(): Promise<BootstrapSnapshot | null> {
   try {
-    bootstrap.value = await getBootstrap();
+    return await readPlatformContext();
   } catch {
-    bootstrap.value = null;
+    if (!bootstrap.value) bootstrap.value = null;
+    return null;
   }
+}
+
+function describeScopeSwitchError(reason: unknown): string {
+  if (!isApiError(reason)) return "活动集群切换失败，请检查 Kubernetes Provider 与 API 状态。";
+  const next = reason.nextSteps.length ? `；下一步：${reason.nextSteps.join("；")}` : "";
+  return `${reason.code || "SCOPE_ACTIVATION_FAILED"}：${reason.message}${next}`;
+}
+
+async function pushScopeContext(scope: OperationalScope) {
+  await router.push({
+    path: route.path,
+    query: queryForScopeChange(route.query, scope.cluster_id),
+    hash: route.hash,
+  });
+}
+
+function applyLocalScope(scope: OperationalScope) {
+  const activeScope = { ...scope, active: true };
+  scopes.value = scopes.value.map((item) => ({ ...item, active: item.id === activeScope.id }));
+  selectedScopeID.value = activeScope.id ?? "";
+  if (bootstrap.value) {
+    bootstrap.value = {
+      ...bootstrap.value,
+      active_scope: activeScope,
+      active_revision: {
+        ...bootstrap.value.active_revision,
+        scope: activeScope,
+        scopes: scopes.value,
+      },
+    };
+  }
+}
+
+async function changeActiveScope(scopeID: string) {
+  if (scopeSwitching.value || !scopeID || scopeID === bootstrap.value?.active_scope.id) return;
+  const previousScope = bootstrap.value?.active_scope;
+  selectedScopeID.value = scopeID;
+  scopeSwitching.value = true;
+  scopeSwitchError.value = "";
+  let activatedScope: OperationalScope | null = null;
+  try {
+    activatedScope = await activateScope(scopeID);
+    const next = await readPlatformContext();
+    await pushScopeContext(next.active_scope);
+    dispatchOperationalScopeChange(next.active_scope);
+  } catch (reason) {
+    if (!activatedScope) {
+      selectedScopeID.value = previousScope?.id ?? "";
+      scopeSwitchError.value = describeScopeSwitchError(reason);
+      return;
+    }
+    applyLocalScope(activatedScope);
+    await pushScopeContext(activatedScope);
+    dispatchOperationalScopeChange(activatedScope);
+    scopeSwitchError.value = "活动集群已切换，但 Bootstrap 状态刷新失败；请重试刷新。";
+  } finally {
+    scopeSwitching.value = false;
+  }
+}
+
+async function handleConfigurationApplied() {
+  const previousCluster = bootstrap.value?.active_scope.cluster_id;
+  const next = await refreshBootstrap();
+  if (!next) return;
+  if (previousCluster !== next.active_scope.cluster_id) await pushScopeContext(next.active_scope);
+  dispatchOperationalScopeChange(next.active_scope);
 }
 
 function receiveNotification(item: OwnerNotification) {
@@ -176,13 +272,13 @@ onMounted(async () => {
   }, () => {
     streamState.value = "connected";
   });
-  window.addEventListener("cloudops:configuration-applied", refreshBootstrap);
+  window.addEventListener("cloudops:configuration-applied", handleConfigurationApplied);
 });
 
 onBeforeUnmount(() => {
   closeNotificationStream?.();
   streamState.value = "stopped";
-  window.removeEventListener("cloudops:configuration-applied", refreshBootstrap);
+  window.removeEventListener("cloudops:configuration-applied", handleConfigurationApplied);
 });
 </script>
 
@@ -195,9 +291,20 @@ onBeforeUnmount(() => {
         :page-title="pageTitle"
         :unread-count="unreadCount"
         :active-scope="bootstrap?.active_scope"
+        :scopes="scopes"
+        :selected-scope-id="selectedScopeID"
+        :scope-switching="scopeSwitching"
         :provider-health="bootstrap?.provider_health"
+        @change-scope="changeActiveScope"
         @open-notifications="openNotifications"
       />
+      <div v-if="scopeSwitchError" class="scope-switch-alert" role="alert" aria-live="polite">
+        <TriangleAlert :size="18" aria-hidden="true" />
+        <span>{{ scopeSwitchError }}</span>
+        <button type="button" aria-label="关闭集群切换错误" title="关闭" @click="scopeSwitchError = ''">
+          <X :size="17" aria-hidden="true" />
+        </button>
+      </div>
       <main id="main-content" class="app-main" :class="{ 'app-main--full-bleed': isFullBleed }">
         <RouterView v-slot="{ Component }">
           <Transition name="fade" mode="out-in" @after-enter="focusRouteHeading">
@@ -264,6 +371,9 @@ onBeforeUnmount(() => {
 <style scoped>
 .skip-link { position: fixed; top: var(--co-space-2); left: var(--co-space-2); z-index: var(--co-z-skip-link); padding: var(--co-space-3) var(--co-space-4); border-radius: var(--co-radius-control); color: var(--co-text-on-action); background: var(--co-action-primary); box-shadow: var(--co-shadow-overlay); transform: translateY(calc(-100% - var(--co-space-4))); transition: transform var(--co-motion-fast) var(--co-ease-out); }
 .skip-link:focus-visible { transform: translateY(0); }
+.scope-switch-alert { position: fixed; top: calc(var(--co-header-height) + var(--co-space-3)); right: max(var(--co-space-4), env(safe-area-inset-right)); z-index: var(--co-z-overlay); display: grid; width: min(440px, calc(100vw - 32px)); min-height: 48px; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--co-space-3); padding: var(--co-space-3); border: 1px solid var(--co-status-critical-border); border-radius: var(--co-radius-panel); color: var(--co-status-critical-fg); background: var(--co-status-critical-bg); box-shadow: var(--co-shadow-overlay); overflow-wrap: anywhere; font-size: 12px; }
+.scope-switch-alert button { display: grid; width: 36px; height: 36px; place-items: center; padding: 0; border: 0; border-radius: var(--co-radius-control); color: inherit; background: transparent; cursor: pointer; }
+.scope-switch-alert button:hover { background: var(--co-bg-hover); }
 .app-shell { display: flex; min-width: 0; min-height: 100dvh; align-items: flex-start; background: var(--co-bg-canvas); }
 .app-frame { flex: 1; min-width: 0; min-height: 100dvh; }
 .app-main { min-width: 0; min-height: calc(100dvh - var(--co-header-height)); padding: clamp(16px, 2vw, 32px) max(clamp(16px, 2vw, 32px), env(safe-area-inset-right)) max(clamp(24px, 3vw, 48px), env(safe-area-inset-bottom)) max(clamp(16px, 2vw, 32px), env(safe-area-inset-left)); background: var(--co-bg-canvas); }
@@ -278,6 +388,7 @@ onBeforeUnmount(() => {
 :global(.more-workspaces-sheet .el-drawer__body) { padding: var(--co-space-5) max(var(--co-space-4), env(safe-area-inset-right)) max(var(--co-space-5), env(safe-area-inset-bottom)) max(var(--co-space-4), env(safe-area-inset-left)); overscroll-behavior: contain; }
 :global(.notification-drawer .el-drawer__close-btn), :global(.more-workspaces-sheet .el-drawer__close-btn) { width: 44px; height: 44px; border-radius: var(--co-radius-control); }
 @media (max-width: 767px) {
+  .scope-switch-alert { right: max(var(--co-space-3), env(safe-area-inset-right)); left: max(var(--co-space-3), env(safe-area-inset-left)); width: auto; }
   .app-main { min-height: calc(100dvh - var(--co-header-height)); padding: var(--co-space-4) max(var(--co-space-4), env(safe-area-inset-right)) calc(82px + env(safe-area-inset-bottom)) max(var(--co-space-4), env(safe-area-inset-left)); overflow-x: hidden; }
   .app-main--full-bleed { height: calc(100dvh - var(--co-header-height) - 58px - env(safe-area-inset-bottom)); padding: 0; }
   :global(.notification-drawer .el-drawer__body) { padding: var(--co-space-4); }

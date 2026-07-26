@@ -1,4 +1,5 @@
 import { getJSON, postJSON } from "./client";
+import type { TopologySnapshot } from "./infrastructure";
 
 export type ProviderIdentity =
   | "llm"
@@ -26,6 +27,7 @@ export interface OperationalScope {
   namespaces: string[];
   configuration_revision_id?: string;
   configuration_revision_hash?: string;
+  active: boolean;
 }
 
 export interface ProviderConfiguration {
@@ -50,6 +52,7 @@ export interface ConfigurationDraft {
   summary: string;
   general: GeneralConfiguration;
   scope: OperationalScope;
+  scopes: OperationalScope[];
   providers: ProviderConfiguration[];
   secret_references: SecretReference[];
 }
@@ -103,6 +106,10 @@ export interface SettingsSnapshot {
   provider_health: ProviderHealth[];
 }
 
+export interface ScopePage {
+  items: OperationalScope[];
+}
+
 export interface BootstrapSnapshot {
   product: "CloudOps";
   contract: "V1";
@@ -117,6 +124,7 @@ export interface BootstrapSnapshot {
 export interface OverviewSnapshot {
   bootstrap: BootstrapSnapshot;
   unread_notifications: number;
+  atlas: TopologySnapshot;
 }
 
 export interface FieldError {
@@ -169,6 +177,15 @@ export function getSettings(signal?: AbortSignal): Promise<SettingsSnapshot> {
   return getJSON("/api/v1/settings", { signal });
 }
 
+export async function getScopes(signal?: AbortSignal): Promise<OperationalScope[]> {
+  const page = await getJSON<ScopePage>("/api/v1/scopes", { signal });
+  return page.items;
+}
+
+export function activateScope(id: string): Promise<OperationalScope> {
+  return postJSON(`/api/v1/scopes/${encodeURIComponent(id)}/activate`);
+}
+
 export function getStorageStatus(signal?: AbortSignal): Promise<StorageStatus> {
   return getJSON("/api/v1/storage-status", { signal });
 }
@@ -185,18 +202,21 @@ export function createSecret(input: { provider: ProviderIdentity; purpose: strin
   return postJSON("/api/v1/secrets", input);
 }
 
-export function testProvider(configuration: ProviderConfiguration, secretReferences: SecretReference[]): Promise<ProviderResult> {
+export function testProvider(configuration: ProviderConfiguration, secretReferences: SecretReference[], clusterID = ""): Promise<ProviderResult> {
   return postJSON(`/api/v1/providers/${encodeURIComponent(configuration.provider)}/tests`, {
     configuration,
     secret_references: secretReferences,
+    cluster_id: clusterID,
   });
 }
 
 export function configurationDraft(revision: ConfigurationRevision): ConfigurationDraft {
+  const scopes = revision.scopes?.length ? revision.scopes : [revision.scope];
   return {
     summary: revision.summary,
     general: structuredClone(revision.general),
     scope: structuredClone(revision.scope),
+    scopes: structuredClone(scopes),
     providers: structuredClone(revision.providers),
     secret_references: structuredClone(revision.secret_references),
   };

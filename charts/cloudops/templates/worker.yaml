@@ -25,7 +25,7 @@ spec:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
     spec:
       serviceAccountName: cloudops-worker
-      automountServiceAccountToken: {{ eq (index .Values.worker.env "K8S_ENABLED" | toString) "true" }}
+      automountServiceAccountToken: {{ eq (include "cloudops.kubernetesInClusterEnabled" .) "true" }}
       enableServiceLinks: false
       terminationGracePeriodSeconds: 65
       securityContext:

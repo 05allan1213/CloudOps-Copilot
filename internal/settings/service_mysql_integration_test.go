@@ -49,9 +49,12 @@ func TestMySQLConfigurationRevisionSecretAndWorkerBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	draft := Draft{
-		Summary:    "Update local LLM model",
-		General:    initial.General,
-		Scope:      initial.Scope,
+		Summary: "Update local LLM model",
+		General: initial.General,
+		Scope:   initial.Scope,
+		Scopes: append(append([]OperationalScope{}, initial.Scopes...), OperationalScope{
+			Name: "Secondary cluster", ClusterID: "cluster-secondary", Environment: "test", Namespaces: []string{"demo"},
+		}),
 		Providers:  initial.Providers,
 		SecretRefs: initial.SecretRefs,
 	}
@@ -73,6 +76,22 @@ func TestMySQLConfigurationRevisionSecretAndWorkerBoundary(t *testing.T) {
 	}
 	if !revision.Active || revision.Number != initial.Number+1 || revision.Hash != validation.DraftHash {
 		t.Fatalf("applied revision=%+v initial=%+v", revision, initial)
+	}
+	if len(revision.Scopes) != 2 || revision.Scope.ClusterID != initial.Scope.ClusterID {
+		t.Fatalf("revision scopes=%+v active=%+v", revision.Scopes, revision.Scope)
+	}
+	var secondaryID string
+	for _, scope := range revision.Scopes {
+		if scope.ClusterID == "cluster-secondary" {
+			secondaryID = scope.ID
+		}
+	}
+	selected, err := service.ActivateScope(ctx, secondaryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.ClusterID != "cluster-secondary" || !selected.Active {
+		t.Fatalf("selected scope=%+v", selected)
 	}
 	replayed, err := service.Apply(ctx, validation.ID, draft)
 	if err != nil {

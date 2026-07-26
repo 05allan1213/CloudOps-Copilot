@@ -12,6 +12,8 @@ import (
 	"github.com/05allan1213/CloudOps-Copilot/internal/di"
 	"github.com/05allan1213/CloudOps-Copilot/internal/handler"
 	"github.com/05allan1213/CloudOps-Copilot/internal/infra/incidentstore"
+	"github.com/05allan1213/CloudOps-Copilot/internal/infra/infrastructuregateway"
+	"github.com/05allan1213/CloudOps-Copilot/internal/infrastructure"
 	"github.com/05allan1213/CloudOps-Copilot/internal/middleware"
 	"github.com/05allan1213/CloudOps-Copilot/internal/notification"
 	"github.com/05allan1213/CloudOps-Copilot/internal/settings"
@@ -49,6 +51,19 @@ func InitAPIContainer(cfg *config.Config, infra *di.Infra, runtimeReadiness hand
 		if err != nil {
 			return nil, fmt.Errorf("notification repository init failed: %w", err)
 		}
+		gatewayClient, gatewayErr := infrastructuregateway.NewClient(cfg.WorkerManagementTarget, cfg.K8SRequestTimeout)
+		if gatewayErr != nil {
+			return nil, fmt.Errorf("Kubernetes Provider Gateway client init failed: %w", gatewayErr)
+		}
+		snapshotRepository, repositoryErr := infrastructure.NewMySQLRepository(infra.MySQL.SQLDB())
+		if repositoryErr != nil {
+			return nil, fmt.Errorf("infrastructure repository init failed: %w", repositoryErr)
+		}
+		container.Infrastructure, err = infrastructure.NewService(container.Settings, gatewayClient, snapshotRepository, nil)
+		if err != nil {
+			return nil, fmt.Errorf("infrastructure service init failed: %w", err)
+		}
+		container.Settings.SetProviderProbe(settings.ProviderKubernetes, container.Infrastructure.ProbeCluster)
 	}
 
 	h, err := handler.NewHandler(handler.Config{

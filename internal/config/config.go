@@ -288,6 +288,16 @@ type Config struct {
 	// 默认值：false
 	K8SEnabled bool
 
+	// K8SClusterID is the stable Operational Scope identity served by this
+	// bounded client. It is not inferred from an untrusted request.
+	K8SClusterID string
+
+	// K8SConnectionsJSON registers additional bounded topology readers. It
+	// contains only cluster identities and credential file references, never
+	// inline kubeconfig or token material. An empty value preserves the legacy
+	// single-reader configuration above and below.
+	K8SConnectionsJSON string
+
 	// K8SWriteEnabled 是否启用审批后的真实 K8s 写操作
 	// 默认值：false
 	K8SWriteEnabled bool
@@ -416,8 +426,9 @@ type Config struct {
 }
 
 type K8SClusterConfig struct {
-	Name              string
+	ClusterID         string
 	Kubeconfig        string
+	Context           string
 	InCluster         bool
 	AllowedNamespaces []string
 	DefaultNamespace  string
@@ -647,6 +658,8 @@ func Load() Config {
 		LLMTimeout:                 configutil.DurationSeconds("LLM_TIMEOUT_SECONDS", 60),
 		LLMMaxTokens:               configutil.PositiveInt("LLM_MAX_TOKENS", 800),
 		K8SEnabled:                 configutil.Bool("K8S_ENABLED", false),
+		K8SClusterID:               configutil.String("K8S_CLUSTER_ID", "cloudops-local"),
+		K8SConnectionsJSON:         configutil.String("K8S_CONNECTIONS_JSON", ""),
 		K8SWriteEnabled:            configutil.Bool("K8S_WRITE_ENABLED", false),
 		K8SInCluster:               configutil.Bool("K8S_IN_CLUSTER", true),
 		K8SKubeconfig:              configutil.String("K8S_KUBECONFIG", ""),
@@ -878,6 +891,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("K8S_WRITE_ENABLED is reserved for the guarded local Demonstration Scenario")
 		}
 	}
+	if clusterID := strings.TrimSpace(c.K8SClusterID); clusterID == "" || len(clusterID) > 128 || !regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`).MatchString(clusterID) {
+		return fmt.Errorf("K8S_CLUSTER_ID must contain 1-128 letters, digits, dots, underscores or hyphens")
+	}
 	if err := checkK8SNamespace("K8S_DEFAULT_NAMESPACE", c.K8SDefaultNamespace); err != nil {
 		return err
 	}
@@ -893,6 +909,9 @@ func (c *Config) Validate() error {
 	}
 	if c.K8SRequestTimeout < time.Second || c.K8SRequestTimeout > 60*time.Second {
 		return fmt.Errorf("K8S_REQUEST_TIMEOUT_SECONDS must be in range 1-60, got %v", c.K8SRequestTimeout)
+	}
+	if _, err := c.KubernetesTopologyConnections(); err != nil {
+		return err
 	}
 	if c.K8SLogTailLines < 1 || c.K8SLogTailLines > 1000 {
 		return fmt.Errorf("K8S_LOG_TAIL_LINES must be in range 1-1000, got %d", c.K8SLogTailLines)

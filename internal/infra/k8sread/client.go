@@ -44,7 +44,9 @@ func loadRESTConfig(cfg Config) (*rest.Config, error) {
 		}
 		kubeconfig = filepath.Join(home, ".kube", "config")
 	}
-	restConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	loadingRules := &clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfig}
+	overrides := &clientcmd.ConfigOverrides{CurrentContext: stringsTrim(cfg.Context)}
+	restConfig, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, overrides).ClientConfig()
 	if err != nil {
 		return nil, fmt.Errorf("load k8s kubeconfig: %w", err)
 	}

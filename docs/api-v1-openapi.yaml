@@ -37,20 +37,159 @@ paths:
                     items: { $ref: "#/components/schemas/OperationalScope" }
         "501": { $ref: "#/components/responses/Problem" }
         default: { $ref: "#/components/responses/Problem" }
+  /api/v1/scopes/{id}/activate:
+    post:
+      operationId: activateOperationalScope
+      description: Atomically select one registered Cluster Scope from the active Configuration Revision.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - { $ref: "#/components/parameters/Origin" }
+      responses:
+        "200":
+          description: Newly active Operational Scope
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OperationalScope" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
   /api/v1/overview:
     get:
       operationId: getOverview
       responses:
         "200":
-          description: Overview foundation state
+          description: Overview foundation state and real active-cluster Atlas projection
           content:
             application/json:
               schema:
                 type: object
-                required: [bootstrap, unread_notifications]
+                required: [bootstrap, unread_notifications, atlas]
                 properties:
                   bootstrap: { $ref: "#/components/schemas/BootstrapSnapshot" }
                   unread_notifications: { type: integer, minimum: 0 }
+                  atlas: { $ref: "#/components/schemas/TopologySnapshot" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/topology:
+    get:
+      operationId: getKubernetesTopology
+      description: Bounded typed topology for the single active cluster and Operational Scope.
+      parameters:
+        - { $ref: "#/components/parameters/InfrastructureCluster" }
+        - { $ref: "#/components/parameters/InfrastructureNamespace" }
+        - { $ref: "#/components/parameters/InfrastructureFrom" }
+        - { $ref: "#/components/parameters/InfrastructureTo" }
+        - { $ref: "#/components/parameters/InfrastructureLimit" }
+      responses:
+        "200":
+          description: Real Kubernetes topology or an explicit structured unavailable state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TopologySnapshot" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/topology/events:
+    get:
+      operationId: streamKubernetesTopologyEvents
+      description: Bounded topology refresh hints for the active Operational Scope.
+      parameters:
+        - name: Last-Event-ID
+          in: header
+          schema: { type: string, maxLength: 128 }
+        - { $ref: "#/components/parameters/InfrastructureCluster" }
+        - { $ref: "#/components/parameters/InfrastructureNamespace" }
+        - { $ref: "#/components/parameters/InfrastructureFrom" }
+        - { $ref: "#/components/parameters/InfrastructureTo" }
+      responses:
+        "200":
+          description: Topology refresh SSE
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "400": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/resources:
+    get:
+      operationId: listKubernetesResources
+      description: Searchable bounded Kubernetes Resource Projections from the current topology snapshot.
+      parameters:
+        - { $ref: "#/components/parameters/InfrastructureCluster" }
+        - { $ref: "#/components/parameters/InfrastructureNamespace" }
+        - { $ref: "#/components/parameters/InfrastructureFrom" }
+        - { $ref: "#/components/parameters/InfrastructureTo" }
+        - { $ref: "#/components/parameters/InfrastructureLimit" }
+        - { $ref: "#/components/parameters/InfrastructureCursor" }
+        - name: kind
+          in: query
+          schema:
+            type: array
+            maxItems: 16
+            items: { type: string, maxLength: 64 }
+        - name: search
+          in: query
+          schema: { type: string, maxLength: 128 }
+      responses:
+        "200":
+          description: Bounded structured resource page
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KubernetesResourcePage" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/resources/{id}:
+    parameters:
+      - { $ref: "#/components/parameters/KubernetesResourceID" }
+    get:
+      operationId: getKubernetesResource
+      description: Typed resource detail with owners, selectors, endpoints, scheduling, conditions and Context Links.
+      parameters:
+        - { $ref: "#/components/parameters/InfrastructureCluster" }
+        - { $ref: "#/components/parameters/InfrastructureNamespace" }
+        - { $ref: "#/components/parameters/InfrastructureFrom" }
+        - { $ref: "#/components/parameters/InfrastructureTo" }
+      responses:
+        "200":
+          description: Typed Kubernetes resource detail
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KubernetesResourceDetail" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/resources/{id}/events:
+    parameters:
+      - { $ref: "#/components/parameters/KubernetesResourceID" }
+    get:
+      operationId: listKubernetesResourceEvents
+      description: Recent bounded Kubernetes Events for one exact Resource Projection.
+      parameters:
+        - { $ref: "#/components/parameters/InfrastructureCluster" }
+        - { $ref: "#/components/parameters/InfrastructureNamespace" }
+        - { $ref: "#/components/parameters/InfrastructureFrom" }
+        - { $ref: "#/components/parameters/InfrastructureTo" }
+        - { $ref: "#/components/parameters/InfrastructureLimit" }
+      responses:
+        "200":
+          description: Bounded Kubernetes Event page
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KubernetesEventPage" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
         "501": { $ref: "#/components/responses/Problem" }
         default: { $ref: "#/components/responses/Problem" }
   /api/v1/settings:
@@ -494,6 +633,35 @@ components:
       in: header
       required: true
       schema: { type: string, format: uri, maxLength: 2048 }
+    KubernetesResourceID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, pattern: "^k8s_[A-Za-z0-9_-]+$", maxLength: 512 }
+    InfrastructureCluster:
+      name: cluster
+      in: query
+      schema: { type: string, maxLength: 128 }
+    InfrastructureNamespace:
+      name: namespace
+      in: query
+      schema: { type: string, maxLength: 253 }
+    InfrastructureFrom:
+      name: from
+      in: query
+      schema: { type: string, format: date-time }
+    InfrastructureTo:
+      name: to
+      in: query
+      schema: { type: string, format: date-time }
+    InfrastructureLimit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
+    InfrastructureCursor:
+      name: cursor
+      in: query
+      schema: { type: string, maxLength: 2048 }
   schemas:
     ProviderIdentity:
       type: string
@@ -524,6 +692,7 @@ components:
           items: { type: string, minLength: 1, maxLength: 253 }
         configuration_revision_id: { type: string, format: uuid }
         configuration_revision_hash: { $ref: "#/components/schemas/SHA256" }
+        active: { type: boolean }
     ProviderConfiguration:
       type: object
       additionalProperties: false
@@ -554,6 +723,11 @@ components:
         summary: { type: string, minLength: 3, maxLength: 255 }
         general: { $ref: "#/components/schemas/GeneralConfiguration" }
         scope: { $ref: "#/components/schemas/OperationalScope" }
+        scopes:
+          type: array
+          minItems: 1
+          maxItems: 10
+          items: { $ref: "#/components/schemas/OperationalScope" }
         providers:
           type: array
           minItems: 8
@@ -577,7 +751,7 @@ components:
     ConfigurationRevision:
       type: object
       additionalProperties: false
-      required: [id, number, hash, summary, general, scope, providers, secret_references, created_by, created_at, active]
+      required: [id, number, hash, summary, general, scope, scopes, providers, secret_references, created_by, created_at, active]
       properties:
         id: { type: string, format: uuid }
         number: { type: integer, minimum: 1 }
@@ -585,6 +759,11 @@ components:
         summary: { type: string, maxLength: 255 }
         general: { $ref: "#/components/schemas/GeneralConfiguration" }
         scope: { $ref: "#/components/schemas/OperationalScope" }
+        scopes:
+          type: array
+          minItems: 1
+          maxItems: 10
+          items: { $ref: "#/components/schemas/OperationalScope" }
         providers:
           type: array
           items: { $ref: "#/components/schemas/ProviderConfiguration" }
@@ -675,6 +854,244 @@ components:
           type: array
           items: { type: string }
         collected_at: { type: string, format: date-time }
+    KubernetesProviderState:
+      type: string
+      enum: [available, partial, unavailable, disabled]
+    KubernetesHealthState:
+      type: string
+      enum: [healthy, warning, critical, unknown]
+    KubernetesProviderSource:
+      type: object
+      additionalProperties: false
+      required: [provider, cluster_id, identity, collected_at]
+      properties:
+        provider: { type: string, const: kubernetes }
+        cluster_id: { type: string, maxLength: 128 }
+        identity: { type: string, maxLength: 255 }
+        server_version: { type: string, maxLength: 128 }
+        collected_at: { type: string, format: date-time }
+    KubernetesFreshness:
+      type: object
+      additionalProperties: false
+      required: [state, fresh_until, age_seconds]
+      properties:
+        state: { type: string, enum: [fresh, stale, unavailable] }
+        fresh_until: { type: string, format: date-time }
+        age_seconds: { type: integer, minimum: 0 }
+    KubernetesResourceHealth:
+      type: object
+      additionalProperties: false
+      required: [state, summary]
+      properties:
+        state: { $ref: "#/components/schemas/KubernetesHealthState" }
+        summary: { type: string, maxLength: 512 }
+    KubernetesResourceReference:
+      type: object
+      additionalProperties: false
+      required: [kind, name]
+      properties:
+        id: { type: string, maxLength: 512 }
+        kind: { type: string, maxLength: 64 }
+        namespace: { type: string, maxLength: 253 }
+        name: { type: string, maxLength: 253 }
+    KubernetesResourcePort:
+      type: object
+      additionalProperties: false
+      required: [protocol, port]
+      properties:
+        name: { type: string, maxLength: 63 }
+        protocol: { type: string, maxLength: 16 }
+        port: { type: integer, minimum: 0, maximum: 65535 }
+        target_port: { type: string, maxLength: 64 }
+    KubernetesResourceEndpoint:
+      type: object
+      additionalProperties: false
+      required: [address]
+      properties:
+        address: { type: string, maxLength: 256 }
+        ready: { type: [boolean, "null"] }
+        target_id: { type: string, maxLength: 512 }
+        target_ref: { type: string, maxLength: 320 }
+    KubernetesResourceCondition:
+      type: object
+      additionalProperties: false
+      required: [type, status]
+      properties:
+        type: { type: string, maxLength: 128 }
+        status: { type: string, maxLength: 32 }
+        reason: { type: string, maxLength: 128 }
+        message: { type: string, maxLength: 512 }
+        last_transition_time: { type: string, format: date-time }
+    KubernetesContextLink:
+      type: object
+      additionalProperties: false
+      required: [kind, label, href, target, availability]
+      properties:
+        kind: { type: string, enum: [internal, provider, source, operation] }
+        label: { type: string, maxLength: 128 }
+        href: { type: string, maxLength: 2048 }
+        target: { type: string, enum: [current, external] }
+        provider: { type: string, maxLength: 64 }
+        resource_ref: { type: string, maxLength: 512 }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        availability: { type: string, enum: [available, unavailable, misconfigured] }
+    KubernetesResource:
+      type: object
+      additionalProperties: false
+      required: [id, api_version, kind, layer, name, health, owner_references, selector, labels, endpoints, ports, conditions, addresses, links]
+      properties:
+        id: { type: string, pattern: "^k8s_[A-Za-z0-9_-]+$", maxLength: 512 }
+        source_uid: { type: string, maxLength: 128 }
+        api_version: { type: string, maxLength: 128 }
+        kind: { type: string, enum: [Namespace, Service, Deployment, StatefulSet, DaemonSet, Pod, Node, Ingress] }
+        layer: { type: string, enum: [namespace, service, workload, pod, node, gateway] }
+        namespace: { type: string, maxLength: 253 }
+        name: { type: string, maxLength: 253 }
+        status: { type: string, maxLength: 128 }
+        health: { $ref: "#/components/schemas/KubernetesResourceHealth" }
+        owner_references:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesResourceReference" }
+        selector:
+          type: object
+          additionalProperties: { type: string, maxLength: 256 }
+        labels:
+          type: object
+          maxProperties: 64
+          additionalProperties: { type: string, maxLength: 256 }
+        endpoints:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesResourceEndpoint" }
+        ports:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesResourcePort" }
+        conditions:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesResourceCondition" }
+        node_name: { type: string, maxLength: 253 }
+        addresses:
+          type: array
+          items: { type: string, maxLength: 256 }
+        created_at: { type: string, format: date-time }
+        links:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesContextLink" }
+    TopologyEdge:
+      type: object
+      additionalProperties: false
+      required: [id, source_id, target_id, relation, source_fact]
+      properties:
+        id: { type: string, pattern: "^edge_[0-9a-f]{24}$" }
+        source_id: { type: string, maxLength: 512 }
+        target_id: { type: string, maxLength: 512 }
+        relation: { type: string, enum: [contains, owns, selects, routes_to, scheduled_on, backend_ref] }
+        source_fact: { type: string, maxLength: 128 }
+    KubernetesProviderIssue:
+      type: object
+      additionalProperties: false
+      required: [operation, code, detail]
+      properties:
+        namespace: { type: string, maxLength: 253 }
+        operation: { type: string, maxLength: 128 }
+        code: { type: string, maxLength: 128 }
+        detail: { type: string, maxLength: 512 }
+    TopologySnapshot:
+      type: object
+      additionalProperties: false
+      required: [configuration_revision_id, scope, provider_state, provider_detail, source, freshness, nodes, edges, issues, partial, truncated, collected_at]
+      properties:
+        id: { type: string, format: uuid }
+        content_hash: { $ref: "#/components/schemas/SHA256" }
+        configuration_revision_id: { type: string, format: uuid }
+        scope: { $ref: "#/components/schemas/OperationalScope" }
+        provider_state: { $ref: "#/components/schemas/KubernetesProviderState" }
+        provider_detail: { type: string, maxLength: 512 }
+        source: { $ref: "#/components/schemas/KubernetesProviderSource" }
+        freshness: { $ref: "#/components/schemas/KubernetesFreshness" }
+        nodes:
+          type: array
+          maxItems: 500
+          items: { $ref: "#/components/schemas/KubernetesResource" }
+        edges:
+          type: array
+          maxItems: 2000
+          items: { $ref: "#/components/schemas/TopologyEdge" }
+        issues:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesProviderIssue" }
+        partial: { type: boolean }
+        truncated: { type: boolean }
+        collected_at: { type: string, format: date-time }
+    KubernetesResourcePage:
+      type: object
+      additionalProperties: false
+      required: [scope, provider_state, source, freshness, items, partial, truncated, collected_at]
+      properties:
+        snapshot_id: { type: string, format: uuid }
+        scope: { $ref: "#/components/schemas/OperationalScope" }
+        provider_state: { $ref: "#/components/schemas/KubernetesProviderState" }
+        source: { $ref: "#/components/schemas/KubernetesProviderSource" }
+        freshness: { $ref: "#/components/schemas/KubernetesFreshness" }
+        items:
+          type: array
+          maxItems: 500
+          items: { $ref: "#/components/schemas/KubernetesResource" }
+        next_cursor: { type: string, maxLength: 2048 }
+        partial: { type: boolean }
+        truncated: { type: boolean }
+        collected_at: { type: string, format: date-time }
+    KubernetesResourceDetail:
+      type: object
+      additionalProperties: false
+      required: [snapshot_id, scope, provider_state, source, freshness, resource, related, edges, partial, collected_at]
+      properties:
+        snapshot_id: { type: string, format: uuid }
+        scope: { $ref: "#/components/schemas/OperationalScope" }
+        provider_state: { $ref: "#/components/schemas/KubernetesProviderState" }
+        source: { $ref: "#/components/schemas/KubernetesProviderSource" }
+        freshness: { $ref: "#/components/schemas/KubernetesFreshness" }
+        resource: { $ref: "#/components/schemas/KubernetesResource" }
+        related:
+          type: array
+          items: { $ref: "#/components/schemas/KubernetesResource" }
+        edges:
+          type: array
+          items: { $ref: "#/components/schemas/TopologyEdge" }
+        partial: { type: boolean }
+        collected_at: { type: string, format: date-time }
+    KubernetesEvent:
+      type: object
+      additionalProperties: false
+      required: [id, resource_kind, resource_name, observed_at, collected_at]
+      properties:
+        id: { type: string, maxLength: 512 }
+        type: { type: string, maxLength: 32 }
+        reason: { type: string, maxLength: 128 }
+        message: { type: string, maxLength: 512 }
+        count: { type: integer, minimum: 0 }
+        resource_kind: { type: string, maxLength: 64 }
+        resource_name: { type: string, maxLength: 253 }
+        namespace: { type: string, maxLength: 253 }
+        observed_at: { type: string, format: date-time }
+        collected_at: { type: string, format: date-time }
+    KubernetesEventPage:
+      type: object
+      additionalProperties: false
+      required: [snapshot_id, scope, provider_state, source, resource_id, items, partial, truncated, collected_at]
+      properties:
+        snapshot_id: { type: string, format: uuid }
+        scope: { $ref: "#/components/schemas/OperationalScope" }
+        provider_state: { $ref: "#/components/schemas/KubernetesProviderState" }
+        source: { $ref: "#/components/schemas/KubernetesProviderSource" }
+        resource_id: { type: string, maxLength: 512 }
+        items:
+          type: array
+          maxItems: 100
+          items: { $ref: "#/components/schemas/KubernetesEvent" }
+        partial: { type: boolean }
+        truncated: { type: boolean }
+        collected_at: { type: string, format: date-time }
     ApplyConfiguration:
       type: object
       additionalProperties: false
@@ -713,6 +1130,7 @@ components:
         secret_references:
           type: array
           items: { $ref: "#/components/schemas/SecretReference" }
+        cluster_id: { type: string, minLength: 1, maxLength: 128 }
     StorageStatus:
       type: object
       additionalProperties: false

@@ -17,11 +17,12 @@ import (
 const validationLifetime = 10 * time.Minute
 
 type Service struct {
-	db          *sql.DB
-	dataDir     string
-	bootstrap   BootstrapDiagnostics
-	now         func() time.Time
-	httpTimeout time.Duration
+	db             *sql.DB
+	dataDir        string
+	bootstrap      BootstrapDiagnostics
+	now            func() time.Time
+	httpTimeout    time.Duration
+	providerProbes map[Provider]func(context.Context, string) (string, error)
 }
 
 func NewService(db *sql.DB, dataDir string, bootstrap BootstrapDiagnostics) (*Service, error) {
@@ -35,7 +36,17 @@ func NewService(db *sql.DB, dataDir string, bootstrap BootstrapDiagnostics) (*Se
 	return &Service{
 		db: db, dataDir: dataDir, bootstrap: bootstrap,
 		now: time.Now, httpTimeout: 5 * time.Second,
+		providerProbes: make(map[Provider]func(context.Context, string) (string, error)),
 	}, nil
+}
+
+// SetProviderProbe installs a bounded runtime-owned connection probe during
+// process assembly. It does not expose Provider credentials to Settings.
+func (s *Service) SetProviderProbe(provider Provider, probe func(context.Context, string) (string, error)) {
+	if s == nil || !provider.Operational() || probe == nil {
+		return
+	}
+	s.providerProbes[provider] = probe
 }
 
 func (s *Service) Validate(ctx context.Context, input Draft) (Validation, error) {
@@ -49,12 +60,22 @@ func (s *Service) Validate(ctx context.Context, input Draft) (Validation, error)
 			})
 			continue
 		}
-		result := s.testProvider(ctx, provider, draft.SecretRefs)
+		result := ProviderResult{}
+		var clusterErrors []FieldError
+		if provider.Provider == ProviderKubernetes {
+			result, clusterErrors = s.testKubernetesScopes(ctx, provider, draft.SecretRefs, draft.Scopes)
+		} else {
+			result = s.testProvider(ctx, provider, draft.SecretRefs, draft.Scope.ClusterID)
+		}
 		providerResults = append(providerResults, result)
 		if result.State != "available" {
-			fieldErrors = append(fieldErrors, FieldError{
-				Field: "providers." + string(provider.Provider), Code: "PROVIDER_UNAVAILABLE", Message: result.Detail,
-			})
+			if len(clusterErrors) > 0 {
+				fieldErrors = append(fieldErrors, clusterErrors...)
+			} else {
+				fieldErrors = append(fieldErrors, FieldError{
+					Field: "providers." + string(provider.Provider), Code: "PROVIDER_UNAVAILABLE", Message: result.Detail,
+				})
+			}
 		}
 	}
 	if fieldErrors == nil {
@@ -181,11 +202,25 @@ configuration_revision_id, provider, enabled, endpoint, model, timeout_ms, max_r
 			return Revision{}, fmt.Errorf("insert %s provider configuration: %w", provider.Provider, err)
 		}
 	}
-	namespacesJSON, _ := json.Marshal(draft.Scope.Namespaces)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO operational_scopes (
-public_id, configuration_revision_id, name, cluster_id, environment, namespaces_json
-) VALUES (?, ?, ?, ?, ?, ?)`, uuid.NewString(), revisionID, draft.Scope.Name, draft.Scope.ClusterID, draft.Scope.Environment, namespacesJSON); err != nil {
-		return Revision{}, fmt.Errorf("insert operational scope: %w", err)
+	var activeScopeID int64
+	for _, scope := range draft.Scopes {
+		namespacesJSON, _ := json.Marshal(scope.Namespaces)
+		isDefault := scope.ClusterID == draft.Scope.ClusterID
+		scopeResult, err := tx.ExecContext(ctx, `INSERT INTO operational_scopes (
+	public_id, configuration_revision_id, name, cluster_id, environment, namespaces_json, is_default
+	) VALUES (?, ?, ?, ?, ?, ?, ?)`, uuid.NewString(), revisionID, scope.Name, scope.ClusterID, scope.Environment, namespacesJSON, isDefault)
+		if err != nil {
+			return Revision{}, fmt.Errorf("insert %s operational scope: %w", scope.ClusterID, err)
+		}
+		if isDefault {
+			activeScopeID, err = scopeResult.LastInsertId()
+			if err != nil || activeScopeID <= 0 {
+				return Revision{}, fmt.Errorf("read active operational scope id: %w", err)
+			}
+		}
+	}
+	if activeScopeID <= 0 {
+		return Revision{}, errors.New("active operational scope was not inserted")
 	}
 	for _, ref := range draft.SecretRefs {
 		var secretID uint64
@@ -203,8 +238,12 @@ configuration_revision_id, provider, purpose, secret_version_id
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE active_configuration
-SET configuration_revision_id = ?, updated_at = NOW(6) WHERE singleton_id = 1`, revisionID); err != nil {
+	SET configuration_revision_id = ?, updated_at = NOW(6) WHERE singleton_id = 1`, revisionID); err != nil {
 		return Revision{}, fmt.Errorf("activate configuration revision: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE active_operational_scope
+	SET operational_scope_id = ?, updated_at = NOW(6) WHERE singleton_id = 1`, activeScopeID); err != nil {
+		return Revision{}, fmt.Errorf("activate operational scope: %w", err)
 	}
 	for _, provider := range draft.Providers {
 		state := "disabled"
@@ -243,6 +282,88 @@ SET applied_revision_id = ? WHERE public_id = ? AND applied_revision_id IS NULL`
 		return Revision{}, fmt.Errorf("commit configuration apply: %w", err)
 	}
 	return s.Revision(ctx, publicID)
+}
+
+func (s *Service) ActivateScope(ctx context.Context, publicID string) (OperationalScope, error) {
+	publicID = strings.TrimSpace(publicID)
+	if len(publicID) != 36 {
+		return OperationalScope{}, ErrNotFound
+	}
+	active, err := s.ActiveRevision(ctx)
+	if err != nil {
+		return OperationalScope{}, err
+	}
+	var candidate *OperationalScope
+	for index := range active.Scopes {
+		if active.Scopes[index].ID == publicID {
+			value := active.Scopes[index]
+			candidate = &value
+			break
+		}
+	}
+	if candidate == nil {
+		return OperationalScope{}, ErrNotFound
+	}
+	var probeDetail string
+	var probeCheckedAt *time.Time
+	if kubernetesEnabled(active) {
+		probe := s.providerProbes[ProviderKubernetes]
+		if probe == nil {
+			return OperationalScope{}, ErrUnavailable
+		}
+		detail, probeErr := probe(ctx, candidate.ClusterID)
+		if probeErr != nil {
+			return OperationalScope{}, fmt.Errorf("%w: selected Kubernetes cluster is unavailable", ErrUnavailable)
+		}
+		now := s.now().UTC()
+		probeDetail = detail
+		probeCheckedAt = &now
+	}
+
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		return OperationalScope{}, fmt.Errorf("begin scope activation: %w", err)
+	}
+	defer rollback(tx)
+	var scopeID uint64
+	if err := tx.QueryRowContext(ctx, `SELECT scope.id
+	FROM operational_scopes AS scope
+	JOIN configuration_revisions AS revision ON revision.id = scope.configuration_revision_id
+	JOIN active_configuration AS active ON active.singleton_id = 1 AND active.configuration_revision_id = revision.id
+	WHERE scope.public_id = ? FOR UPDATE`, publicID).Scan(&scopeID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return OperationalScope{}, ErrNotFound
+		}
+		return OperationalScope{}, fmt.Errorf("lock operational scope: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE active_operational_scope
+	SET operational_scope_id = ?, updated_at = NOW(6) WHERE singleton_id = 1`, scopeID); err != nil {
+		return OperationalScope{}, fmt.Errorf("activate operational scope: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return OperationalScope{}, fmt.Errorf("commit operational scope activation: %w", err)
+	}
+	if probeCheckedAt != nil {
+		_, _ = s.db.ExecContext(ctx, `UPDATE provider_health AS health
+	JOIN configuration_revisions AS revision ON revision.public_id = ?
+	JOIN active_configuration AS active ON active.singleton_id = 1 AND active.configuration_revision_id = revision.id
+	SET health.configuration_revision_id = revision.id, health.state = 'available', health.detail = ?, health.checked_at = ?, health.updated_at = NOW(6)
+	WHERE health.provider = 'kubernetes'`, active.ID, probeDetail, *probeCheckedAt)
+	}
+	revision, err := s.ActiveRevision(ctx)
+	if err != nil {
+		return OperationalScope{}, err
+	}
+	return revision.Scope, nil
+}
+
+func kubernetesEnabled(revision Revision) bool {
+	for _, provider := range revision.Providers {
+		if provider.Provider == ProviderKubernetes {
+			return provider.Enabled
+		}
+	}
+	return false
 }
 
 func fieldErrorsError(values []FieldError) error {
@@ -287,7 +408,7 @@ func (s *Service) Bootstrap(ctx context.Context) (BootstrapSnapshot, error) {
 	return BootstrapSnapshot{
 		Product: "CloudOps", Contract: "V1", ActiveRevision: active, ActiveScope: active.Scope,
 		ProviderHealth: health, ScenarioState: "inactive",
-		Capabilities: []string{"settings", "operational_scope", "notifications", "incidents"},
+		Capabilities: []string{"settings", "operational_scope", "notifications", "incidents", "infrastructure", "operations_atlas"},
 		CollectedAt:  s.now().UTC(),
 	}, nil
 }
@@ -346,6 +467,36 @@ ORDER BY FIELD(health.provider, 'mysql','kubernetes','prometheus','alertmanager'
 	return result, rows.Err()
 }
 
+// ObserveProviderHealth records a bounded runtime observation only while the
+// referenced immutable Configuration Revision remains active.
+func (s *Service) ObserveProviderHealth(ctx context.Context, revisionPublicID string, result ProviderResult) error {
+	if !result.Provider.Operational() || strings.TrimSpace(revisionPublicID) == "" {
+		return ErrInvalidDraft
+	}
+	switch result.State {
+	case "available", "partial", "unavailable", "disabled", "not_configured":
+	default:
+		return ErrInvalidDraft
+	}
+	detail := strings.TrimSpace(result.Detail)
+	if detail == "" || len(detail) > 512 {
+		return ErrInvalidDraft
+	}
+	queryResult, err := s.db.ExecContext(ctx, `UPDATE provider_health AS health
+JOIN configuration_revisions AS revision ON revision.public_id = ?
+JOIN active_configuration AS active ON active.singleton_id = 1 AND active.configuration_revision_id = revision.id
+SET health.configuration_revision_id = revision.id, health.state = ?, health.detail = ?,
+health.checked_at = ?, health.updated_at = NOW(6)
+WHERE health.provider = ?`, strings.TrimSpace(revisionPublicID), result.State, detail, result.CheckedAt, result.Provider)
+	if err != nil {
+		return fmt.Errorf("observe %s provider health: %w", result.Provider, err)
+	}
+	if rows, _ := queryResult.RowsAffected(); rows == 0 {
+		return ErrValidationStale
+	}
+	return nil
+}
+
 func (s *Service) refreshMySQLHealth(ctx context.Context) error {
 	state, detail := "available", "MySQL schema and durable configuration are available"
 	if err := s.db.PingContext(ctx); err != nil {
@@ -362,14 +513,22 @@ WHERE health.provider = 'mysql'`, state, detail)
 	return nil
 }
 
-func (s *Service) TestProvider(ctx context.Context, config ProviderConfiguration, refs []SecretReference) (ProviderResult, error) {
+func (s *Service) TestProvider(ctx context.Context, config ProviderConfiguration, refs []SecretReference, clusterID string) (ProviderResult, error) {
 	if !config.Provider.Operational() {
 		return ProviderResult{}, ErrInvalidDraft
+	}
+	clusterID = strings.TrimSpace(clusterID)
+	if clusterID == "" {
+		active, err := s.ActiveRevision(ctx)
+		if err != nil {
+			return ProviderResult{}, err
+		}
+		clusterID = active.Scope.ClusterID
 	}
 	draft := Draft{
 		Summary:   "Provider connection test",
 		General:   GeneralConfiguration{QueryMaxLookbackSeconds: 3600, QueryMaxResults: 100, TelemetryRetentionDays: 7},
-		Scope:     OperationalScope{Name: "Connection test", ClusterID: "cloudops-local", Environment: "local", Namespaces: []string{"demo"}},
+		Scope:     OperationalScope{Name: "Connection test", ClusterID: clusterID, Environment: "local", Namespaces: []string{"demo"}},
 		Providers: []ProviderConfiguration{config}, SecretRefs: refs,
 	}
 	_, fieldErrors, _ := normalizeDraft(draft)
@@ -378,7 +537,7 @@ func (s *Service) TestProvider(ctx context.Context, config ProviderConfiguration
 			return ProviderResult{}, errors.Join(ErrInvalidDraft, errors.New(fieldError.Message))
 		}
 	}
-	result := s.testProvider(ctx, config, normalizeSecretReferences(refs))
+	result := s.testProvider(ctx, config, normalizeSecretReferences(refs), draft.Scope.ClusterID)
 	if result.State == "available" {
 		_, _ = s.db.ExecContext(ctx, `UPDATE provider_health AS health
 JOIN active_configuration AS active ON active.singleton_id = 1

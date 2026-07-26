@@ -168,16 +168,25 @@ func NewWorker(ctx context.Context, cfg WorkerConfig) (*Worker, error) {
 		}
 	}
 	metrics := middleware.NewMetrics()
+	providerGateway, err := infrastructureGatewayHandler(application)
+	if err != nil {
+		_ = mysql.Close()
+		return nil, fmt.Errorf("initialize Kubernetes Provider Gateway: %w", err)
+	}
 	worker := &Worker{
 		cfg: cfg, mysql: mysql, runner: runner, activation: activation,
 		mysqlReady: mysql.Ready,
 	}
+	healthHandler := health.NewHandler(health.Options{
+		Process: "cloudops-worker", Timeout: application.ReadyTimeout,
+		Ready: worker.readiness, Metrics: metrics.HTTPHandler(),
+	})
+	managementMux := http.NewServeMux()
+	managementMux.Handle("/internal/providers/kubernetes/", providerGateway)
+	managementMux.Handle("/", healthHandler)
 	worker.management = &http.Server{
-		Addr: cfg.ManagementAddr,
-		Handler: health.NewHandler(health.Options{
-			Process: "cloudops-worker", Timeout: application.ReadyTimeout,
-			Ready: worker.readiness, Metrics: metrics.HTTPHandler(),
-		}),
+		Addr:              cfg.ManagementAddr,
+		Handler:           managementMux,
 		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
 		ReadTimeout:       cfg.ReadTimeout,
 		WriteTimeout:      cfg.WriteTimeout,

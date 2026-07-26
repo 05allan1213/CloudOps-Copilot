@@ -21,13 +21,20 @@ var (
 func normalizeDraft(input Draft) (Draft, []FieldError, string) {
 	result := input
 	result.Summary = strings.TrimSpace(result.Summary)
-	result.Scope.ID = ""
-	result.Scope.RevisionID = ""
-	result.Scope.RevisionHash = ""
-	result.Scope.Name = strings.TrimSpace(result.Scope.Name)
-	result.Scope.ClusterID = strings.TrimSpace(result.Scope.ClusterID)
-	result.Scope.Environment = strings.TrimSpace(result.Scope.Environment)
-	result.Scope.Namespaces = normalizeStrings(result.Scope.Namespaces)
+	result.Scope = normalizeScope(result.Scope)
+	if len(result.Scopes) == 0 {
+		result.Scopes = []OperationalScope{result.Scope}
+	} else {
+		for index := range result.Scopes {
+			result.Scopes[index] = normalizeScope(result.Scopes[index])
+		}
+	}
+	sort.Slice(result.Scopes, func(i, j int) bool {
+		if result.Scopes[i].ClusterID != result.Scopes[j].ClusterID {
+			return result.Scopes[i].ClusterID < result.Scopes[j].ClusterID
+		}
+		return result.Scopes[i].Name < result.Scopes[j].Name
+	})
 	result.SecretRefs = normalizeSecretReferences(result.SecretRefs)
 
 	providers := make(map[Provider]ProviderConfiguration, len(result.Providers))
@@ -54,6 +61,18 @@ func normalizeDraft(input Draft) (Draft, []FieldError, string) {
 	}
 	digest := sha256.Sum256(encoded)
 	return result, errors, hex.EncodeToString(digest[:])
+}
+
+func normalizeScope(value OperationalScope) OperationalScope {
+	value.ID = ""
+	value.RevisionID = ""
+	value.RevisionHash = ""
+	value.Active = false
+	value.Name = strings.TrimSpace(value.Name)
+	value.ClusterID = strings.TrimSpace(value.ClusterID)
+	value.Environment = strings.TrimSpace(value.Environment)
+	value.Namespaces = normalizeStrings(value.Namespaces)
+	return value
 }
 
 func normalizeStrings(values []string) []string {
@@ -102,22 +121,47 @@ func validateNormalizedDraft(draft Draft) []FieldError {
 	if len(draft.Summary) < 3 || len(draft.Summary) > 255 {
 		add("summary", "INVALID_LENGTH", "变更摘要需为 3 至 255 个字符")
 	}
-	if len(draft.Scope.Name) < 2 || len(draft.Scope.Name) > 128 {
-		add("scope.name", "INVALID_SCOPE_NAME", "Scope 名称需为 2 至 128 个字符")
-	}
-	if !clusterIdentityPattern.MatchString(draft.Scope.ClusterID) {
-		add("scope.cluster_id", "INVALID_CLUSTER", "Cluster identity 格式无效")
-	}
-	if !clusterIdentityPattern.MatchString(draft.Scope.Environment) || len(draft.Scope.Environment) > 64 {
-		add("scope.environment", "INVALID_ENVIRONMENT", "Environment identity 格式无效")
-	}
-	if len(draft.Scope.Namespaces) < 1 || len(draft.Scope.Namespaces) > 100 {
-		add("scope.namespaces", "INVALID_NAMESPACE_COUNT", "至少选择 1 个且最多选择 100 个 Namespace")
-	}
-	for _, namespace := range draft.Scope.Namespaces {
-		if !namespacePattern.MatchString(namespace) {
-			add("scope.namespaces", "INVALID_NAMESPACE", fmt.Sprintf("Namespace %q 格式无效", namespace))
+	validateScope := func(prefix string, scope OperationalScope) {
+		if len(scope.Name) < 2 || len(scope.Name) > 128 {
+			add(prefix+".name", "INVALID_SCOPE_NAME", "Scope 名称需为 2 至 128 个字符")
 		}
+		if !clusterIdentityPattern.MatchString(scope.ClusterID) {
+			add(prefix+".cluster_id", "INVALID_CLUSTER", "Cluster identity 格式无效")
+		}
+		if !clusterIdentityPattern.MatchString(scope.Environment) || len(scope.Environment) > 64 {
+			add(prefix+".environment", "INVALID_ENVIRONMENT", "Environment identity 格式无效")
+		}
+		if len(scope.Namespaces) < 1 || len(scope.Namespaces) > 100 {
+			add(prefix+".namespaces", "INVALID_NAMESPACE_COUNT", "至少选择 1 个且最多选择 100 个 Namespace")
+		}
+		for _, namespace := range scope.Namespaces {
+			if !namespacePattern.MatchString(namespace) {
+				add(prefix+".namespaces", "INVALID_NAMESPACE", fmt.Sprintf("Namespace %q 格式无效", namespace))
+			}
+		}
+	}
+	validateScope("scope", draft.Scope)
+	if len(draft.Scopes) < 1 || len(draft.Scopes) > 10 {
+		add("scopes", "INVALID_SCOPE_COUNT", "必须注册 1 至 10 个 Cluster Scope")
+	}
+	seenClusters := make(map[string]struct{}, len(draft.Scopes))
+	activeMatches := 0
+	for index, scope := range draft.Scopes {
+		prefix := fmt.Sprintf("scopes.%d", index)
+		validateScope(prefix, scope)
+		if _, exists := seenClusters[scope.ClusterID]; exists {
+			add(prefix+".cluster_id", "DUPLICATE_CLUSTER", "同一 Configuration Revision 只能注册 1 个同名 Cluster")
+		}
+		seenClusters[scope.ClusterID] = struct{}{}
+		if scope.ClusterID == draft.Scope.ClusterID {
+			activeMatches++
+			if scope.Name != draft.Scope.Name || scope.Environment != draft.Scope.Environment || !slices.Equal(scope.Namespaces, draft.Scope.Namespaces) {
+				add("scope", "ACTIVE_SCOPE_MISMATCH", "活动 Scope 必须与注册的 Cluster Scope 完全一致")
+			}
+		}
+	}
+	if activeMatches != 1 {
+		add("scope.cluster_id", "ACTIVE_SCOPE_NOT_REGISTERED", "活动 Cluster 必须精确匹配 1 个已注册 Scope")
 	}
 	if draft.General.QueryMaxLookbackSeconds < 60 || draft.General.QueryMaxLookbackSeconds > 30*24*60*60 {
 		add("general.query_max_lookback_seconds", "INVALID_QUERY_BOUND", "查询时间范围需为 60 至 2592000 秒")

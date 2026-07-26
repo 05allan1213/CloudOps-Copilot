@@ -28,6 +28,7 @@ type Config struct {
 	Commands       CommandPort
 	Settings       SettingsPort
 	Notifications  NotificationPort
+	Infrastructure InfrastructurePort
 	AllowedOrigins []string
 	Now            func() time.Time
 }
@@ -37,6 +38,7 @@ type Handler struct {
 	commands       CommandPort
 	settings       SettingsPort
 	notifications  NotificationPort
+	infrastructure InfrastructurePort
 	allowedOrigins map[string]struct{}
 	now            func() time.Time
 	idempotency    *idempotencyStore
@@ -52,11 +54,15 @@ func NewHandler(config Config) *Handler {
 	if config.Now == nil {
 		config.Now = time.Now
 	}
+	if config.Infrastructure == nil {
+		config.Infrastructure = unavailableInfrastructurePort{}
+	}
 	return &Handler{
 		queries:        config.Queries,
 		commands:       config.Commands,
 		settings:       config.Settings,
 		notifications:  config.Notifications,
+		infrastructure: config.Infrastructure,
 		allowedOrigins: normalizeOrigins(config.AllowedOrigins),
 		now:            config.Now,
 		idempotency:    newIdempotencyStore(config.Now),
@@ -71,7 +77,13 @@ type RouteSpec struct {
 var routes = []RouteSpec{
 	{Method: http.MethodGet, Path: "/api/v1/bootstrap"},
 	{Method: http.MethodGet, Path: "/api/v1/scopes"},
+	{Method: http.MethodPost, Path: "/api/v1/scopes/:id/activate"},
 	{Method: http.MethodGet, Path: "/api/v1/overview"},
+	{Method: http.MethodGet, Path: "/api/v1/topology"},
+	{Method: http.MethodGet, Path: "/api/v1/topology/events"},
+	{Method: http.MethodGet, Path: "/api/v1/resources"},
+	{Method: http.MethodGet, Path: "/api/v1/resources/:id"},
+	{Method: http.MethodGet, Path: "/api/v1/resources/:id/events"},
 	{Method: http.MethodGet, Path: "/api/v1/settings"},
 	{Method: http.MethodPost, Path: "/api/v1/settings/validate"},
 	{Method: http.MethodGet, Path: "/api/v1/configuration-revisions"},
@@ -116,6 +128,11 @@ func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	queries.GET("/bootstrap", handler.getBootstrap)
 	queries.GET("/scopes", handler.listScopes)
 	queries.GET("/overview", handler.getOverview)
+	queries.GET("/topology", handler.getTopology)
+	queries.GET("/topology/events", handler.streamTopologyEvents)
+	queries.GET("/resources", handler.listInfrastructureResources)
+	queries.GET("/resources/:id", handler.getInfrastructureResource)
+	queries.GET("/resources/:id/events", handler.listInfrastructureEvents)
 	queries.GET("/settings", handler.getSettings)
 	queries.GET("/configuration-revisions", handler.listConfigurationRevisions)
 	queries.GET("/storage-status", handler.getStorageStatus)
@@ -135,6 +152,7 @@ func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 
 	commands := group.Group("")
 	commands.Use(handler.requireMutationOrigin)
+	commands.POST("/scopes/:id/activate", handler.activateScope)
 	commands.POST("/settings/validate", handler.validateSettings)
 	commands.POST("/configuration-revisions", handler.createConfigurationRevision)
 	commands.POST("/secrets", handler.createSecret)

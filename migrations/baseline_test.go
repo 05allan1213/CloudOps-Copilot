@@ -17,8 +17,10 @@ func TestSemanticMigrationContract(t *testing.T) {
 			migrationNames = append(migrationNames, entry.Name())
 		}
 	}
-	if len(migrationNames) != 2 || migrationNames[0] != "00001_cloudops_baseline.sql" || migrationNames[1] != "00002_platform_foundation.sql" {
-		t.Fatalf("embedded migrations=%v, want semantic baseline and platform foundation", migrationNames)
+	if len(migrationNames) != 4 || migrationNames[0] != "00001_cloudops_baseline.sql" ||
+		migrationNames[1] != "00002_platform_foundation.sql" || migrationNames[2] != "00003_infrastructure_topology.sql" ||
+		migrationNames[3] != "00004_operational_scope_registry.sql" {
+		t.Fatalf("embedded migrations=%v, want semantic baseline, platform foundation, infrastructure topology, and operational scope registry", migrationNames)
 	}
 
 	contents, err := FS.ReadFile(migrationNames[0])
@@ -92,6 +94,48 @@ func TestSemanticMigrationContract(t *testing.T) {
 	for _, forbidden := range []string{"secret_value", "raw_secret", "v2", "v3", "phase_1", "phase 1"} {
 		if strings.Contains(strings.ToLower(platformSQL), forbidden) {
 			t.Errorf("platform foundation retains forbidden implementation identity %q", forbidden)
+		}
+	}
+
+	infrastructureContents, err := FS.ReadFile(migrationNames[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	infrastructureSQL := string(infrastructureContents)
+	if !strings.HasPrefix(infrastructureSQL, "-- +goose Up\n-- +goose NO TRANSACTION") || strings.Contains(infrastructureSQL, "-- +goose Down") {
+		t.Fatal("infrastructure topology must be an explicit forward-only Goose migration")
+	}
+	for _, required := range []string{
+		"CREATE TABLE `topology_snapshots`", "CREATE TABLE `resource_identities`",
+		"fk_topology_snapshots_revision", "fk_resource_identities_snapshot",
+		"projection_json", "content_hash", "source_uid", "last_observed_at",
+	} {
+		if !strings.Contains(infrastructureSQL, required) {
+			t.Errorf("infrastructure topology missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"raw_yaml", "secret_value", "v2", "v3", "phase_2", "phase 2"} {
+		if strings.Contains(strings.ToLower(infrastructureSQL), forbidden) {
+			t.Errorf("infrastructure topology retains forbidden implementation identity %q", forbidden)
+		}
+	}
+
+	scopeRegistryContents, err := FS.ReadFile(migrationNames[3])
+	if err != nil {
+		t.Fatal(err)
+	}
+	scopeRegistrySQL := string(scopeRegistryContents)
+	for _, required := range []string{
+		"CREATE TABLE `active_operational_scope`", "uk_operational_scopes_revision_cluster",
+		"fk_active_operational_scope_scope", "is_default", "DROP INDEX `uk_operational_scopes_revision`",
+	} {
+		if !strings.Contains(scopeRegistrySQL, required) {
+			t.Errorf("operational scope registry missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"kubeconfig_data", "secret_value", "raw_yaml", "v2", "v3", "phase_2", "phase 2"} {
+		if strings.Contains(strings.ToLower(scopeRegistrySQL), forbidden) {
+			t.Errorf("operational scope registry retains forbidden implementation identity %q", forbidden)
 		}
 	}
 }

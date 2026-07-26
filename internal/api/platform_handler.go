@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/05allan1213/CloudOps-Copilot/internal/infrastructure"
 	"github.com/05allan1213/CloudOps-Copilot/internal/notification"
 	"github.com/05allan1213/CloudOps-Copilot/internal/settings"
 	"github.com/gin-gonic/gin"
@@ -18,12 +19,13 @@ import (
 type SettingsPort interface {
 	Bootstrap(context.Context) (settings.BootstrapSnapshot, error)
 	Scopes(context.Context) ([]settings.OperationalScope, error)
+	ActivateScope(context.Context, string) (settings.OperationalScope, error)
 	Settings(context.Context) (settings.SettingsSnapshot, error)
 	Validate(context.Context, settings.Draft) (settings.Validation, error)
 	Apply(context.Context, string, settings.Draft) (settings.Revision, error)
 	Revisions(context.Context, int) ([]settings.Revision, error)
 	WriteSecret(context.Context, settings.SecretInput) (settings.SecretVersion, error)
-	TestProvider(context.Context, settings.ProviderConfiguration, []settings.SecretReference) (settings.ProviderResult, error)
+	TestProvider(context.Context, settings.ProviderConfiguration, []settings.SecretReference, string) (settings.ProviderResult, error)
 	StorageStatus(context.Context) (settings.StorageStatus, error)
 }
 
@@ -35,8 +37,9 @@ type NotificationPort interface {
 }
 
 type overviewResponse struct {
-	Bootstrap           settings.BootstrapSnapshot `json:"bootstrap"`
-	UnreadNotifications int                        `json:"unread_notifications"`
+	Bootstrap           settings.BootstrapSnapshot      `json:"bootstrap"`
+	UnreadNotifications int                             `json:"unread_notifications"`
+	Atlas               infrastructure.TopologySnapshot `json:"atlas"`
 }
 
 type scopePage struct {
@@ -55,6 +58,7 @@ type applyConfigurationRequest struct {
 type providerTestRequest struct {
 	Configuration    settings.ProviderConfiguration `json:"configuration"`
 	SecretReferences []settings.SecretReference     `json:"secret_references"`
+	ClusterID        string                         `json:"cluster_id"`
 }
 
 type readAllNotificationsRequest struct {
@@ -92,8 +96,34 @@ func (h *Handler) listScopes(c *gin.Context) {
 	h.writeJSON(c, http.StatusOK, scopePage{Items: items})
 }
 
+func (h *Handler) activateScope(c *gin.Context) {
+	if !h.requireSettings(c) {
+		return
+	}
+	id, err := ParsePublicUUID(c.Param("id"))
+	if err != nil {
+		h.writeProblem(c, http.StatusBadRequest, "INVALID_PUBLIC_ID", "id must be a public UUID")
+		return
+	}
+	value, err := h.settings.ActivateScope(c.Request.Context(), id)
+	if err != nil {
+		h.writeSettingsError(c, err)
+		return
+	}
+	h.writeJSON(c, http.StatusOK, value)
+}
+
 func (h *Handler) getOverview(c *gin.Context) {
 	if !h.requireSettings(c) || !h.requireNotifications(c) {
+		return
+	}
+	query, ok := h.infrastructureQuery(c)
+	if !ok {
+		return
+	}
+	atlas, err := h.infrastructure.Topology(c.Request.Context(), query)
+	if err != nil {
+		h.writeInfrastructureError(c, err)
 		return
 	}
 	bootstrap, err := h.settings.Bootstrap(c.Request.Context())
@@ -106,7 +136,7 @@ func (h *Handler) getOverview(c *gin.Context) {
 		h.writeNotificationError(c, err)
 		return
 	}
-	h.writeJSON(c, http.StatusOK, overviewResponse{Bootstrap: bootstrap, UnreadNotifications: page.UnreadCount})
+	h.writeJSON(c, http.StatusOK, overviewResponse{Bootstrap: bootstrap, UnreadNotifications: page.UnreadCount, Atlas: atlas})
 }
 
 func (h *Handler) getSettings(c *gin.Context) {
@@ -211,7 +241,7 @@ func (h *Handler) testProvider(c *gin.Context) {
 		h.writeProblem(c, http.StatusBadRequest, "INVALID_PROVIDER", "provider path and configuration identity must match")
 		return
 	}
-	value, err := h.settings.TestProvider(c.Request.Context(), request.Configuration, request.SecretReferences)
+	value, err := h.settings.TestProvider(c.Request.Context(), request.Configuration, request.SecretReferences, strings.TrimSpace(request.ClusterID))
 	if err != nil {
 		h.writeSettingsError(c, err)
 		return
@@ -383,6 +413,8 @@ func (h *Handler) writeSettingsError(c *gin.Context, err error) {
 		h.writeProblem(c, http.StatusBadRequest, "INVALID_CONFIGURATION", "operational configuration is invalid")
 	case errors.Is(err, settings.ErrNotFound):
 		h.writeProblem(c, http.StatusNotFound, "SETTINGS_RESOURCE_NOT_FOUND", "settings resource was not found")
+	case errors.Is(err, settings.ErrUnavailable):
+		h.writeProblem(c, http.StatusServiceUnavailable, "SCOPE_PROVIDER_UNAVAILABLE", "selected Operational Scope is not served by an available Provider connection")
 	default:
 		h.writeProblem(c, http.StatusServiceUnavailable, "SETTINGS_UNAVAILABLE", "durable Settings state is unavailable")
 	}

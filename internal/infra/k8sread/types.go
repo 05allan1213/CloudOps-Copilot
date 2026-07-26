@@ -22,6 +22,7 @@ type Config struct {
 	WriteEnabled      bool
 	InCluster         bool
 	Kubeconfig        string
+	Context           string
 	AllowedNamespaces []string
 	DefaultNamespace  string
 	RequestTimeout    time.Duration

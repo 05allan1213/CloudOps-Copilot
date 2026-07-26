@@ -71,6 +71,7 @@ type OperationalScope struct {
 	Namespaces   []string `json:"namespaces"`
 	RevisionID   string   `json:"configuration_revision_id,omitempty"`
 	RevisionHash string   `json:"configuration_revision_hash,omitempty"`
+	Active       bool     `json:"active"`
 }
 
 type ProviderConfiguration struct {
@@ -95,6 +96,7 @@ type Draft struct {
 	Summary    string                  `json:"summary"`
 	General    GeneralConfiguration    `json:"general"`
 	Scope      OperationalScope        `json:"scope"`
+	Scopes     []OperationalScope      `json:"scopes"`
 	Providers  []ProviderConfiguration `json:"providers"`
 	SecretRefs []SecretReference       `json:"secret_references"`
 }
@@ -129,6 +131,7 @@ type Revision struct {
 	Summary        string                  `json:"summary"`
 	General        GeneralConfiguration    `json:"general"`
 	Scope          OperationalScope        `json:"scope"`
+	Scopes         []OperationalScope      `json:"scopes"`
 	Providers      []ProviderConfiguration `json:"providers"`
 	SecretRefs     []SecretReference       `json:"secret_references"`
 	CreatedBy      string                  `json:"created_by"`
