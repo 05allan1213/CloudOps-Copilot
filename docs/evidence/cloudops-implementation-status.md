@@ -98,7 +98,17 @@ Chrome 首次连接 `18081` 时，命令执行器已经回收 `local-up` 的后�
 - Active documentation：`README.md`、`docs/{architecture,api,security,agent-runtime,reliability,migration-ledger,demo,risk-register}.md`、`docs/evidence/golden-e2e-harness.md`。
 - Removed parallel implementation：`server-monitor/**`、旧 `migrations/00001` 至 `00018`、`internal/apiv3/**`、generation/phase compatibility packages、旧 Compose/raw manifests/parallel Charts。
 
-完整逐文件清单以 Task 0 提交的 `git diff-tree --name-status` 为准；提交与 push SHA 在本任务提交完成后补记。
+完整逐文件清单可由 `git diff-tree --name-status -r 602a67748b932922e5859379def040013bf489b1` 重放。
+
+### Delivery record
+
+| 项目 | 结果 | 证据 |
+|---|---|---|
+| Remote | `PASS` | `origin` = `https://github.com/05allan1213/CloudOps-Copilot.git` |
+| Branch | `PASS` | `codex/v3-refactor`；默认分支为 `origin/main` |
+| Implementation commit | `PASS` | local = remote = `602a67748b932922e5859379def040013bf489b1` |
+| Push policy | `PASS` | normal fast-forward `10a1f2b..602a677`；未 force push、未推 tag、未触碰默认分支 |
+| Commit scope | `PASS` | Task 0 精确差异 545 files；提交前无 unstaged/untracked 文件，cached diff check PASS |
 
 ### NOT RUN
 
