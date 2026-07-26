@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { ArrowDown, ArrowUp } from "@element-plus/icons-vue";
+import { ArrowDown, ArrowUp } from "lucide-vue-next";
 
 import { humanizeCode, incidentDetailPath } from "../../models/incidents";
 import type { IncidentView } from "../../types/incidents";

@@ -29,6 +29,12 @@ MIN_INOTIFY_INSTANCES=512
 BACKUP_FORMAT_VERSION=2
 BACKUP_CONTRACT="cloudops-semantic"
 RESTORE_STAGING_DATABASE="cloudops_restore_staging"
+LATEST_SCHEMA_VERSION=2
+DATA_CLAIM="cloudops-data"
+DATA_MOUNT_PATH="/var/lib/cloudops"
+DATA_DIRECTORY="${DATA_MOUNT_PATH}/data"
+DATA_TRANSFER_POD="cloudops-data-transfer"
+DATA_TRANSFER_ACTIVE=0
 
 RESTORE_CLEANUP_POD=""
 RESTORE_CLEANUP_STAGING=0
@@ -37,6 +43,10 @@ RESTORE_API_REPLICAS=0
 RESTORE_WORKER_REPLICAS=0
 
 die() {
+  if [[ "${DATA_TRANSFER_ACTIVE:-0}" == "1" ]] && context_exists; then
+    kube -n "${NAMESPACE}" delete pod "${DATA_TRANSFER_POD}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+    DATA_TRANSFER_ACTIVE=0
+  fi
   printf 'FAIL: %s\n' "$*" >&2
   exit 1
 }
@@ -353,6 +363,8 @@ install_runtime() {
   note "reconciling API, Worker, Migrate, and MySQL"
   helm upgrade --install "${RELEASE_NAME}" "${CHART_DIR}" "${helm_args[@]}" \
     --wait --wait-for-jobs
+  note "restarting API and Worker to consume freshly loaded local images"
+  kube -n "${NAMESPACE}" rollout restart deployment/cloudops-api deployment/cloudops-worker >/dev/null
   kube -n "${NAMESPACE}" rollout status deployment/cloudops-api --timeout=5m
   kube -n "${NAMESPACE}" rollout status deployment/cloudops-worker --timeout=5m
 }
@@ -449,6 +461,121 @@ validate_secret_relative_path() {
     die "unsafe secret backup path: ${path}"
 }
 
+stop_data_transfer_pod() {
+  if context_exists; then
+    kube -n "${NAMESPACE}" delete pod "${DATA_TRANSFER_POD}" --ignore-not-found --wait=true >/dev/null 2>&1 || true
+  fi
+  DATA_TRANSFER_ACTIVE=0
+}
+
+start_data_transfer_pod() {
+  local image existing_component
+  [[ "$(kube -n "${NAMESPACE}" get pvc "${DATA_CLAIM}" -o jsonpath='{.status.phase}' 2>/dev/null || true)" == "Bound" ]] ||
+    die "operational data PVC is not Bound: ${DATA_CLAIM}"
+  image="$(kube -n "${NAMESPACE}" get deployment cloudops-api -o jsonpath='{.spec.template.spec.containers[?(@.name=="cloudops-api")].image}' 2>/dev/null || true)"
+  [[ "${image}" =~ ^[A-Za-z0-9._/:@-]+$ ]] || die "could not resolve the exact CloudOps API image for data transfer"
+  existing_component="$(kube -n "${NAMESPACE}" get pod "${DATA_TRANSFER_POD}" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/component}' 2>/dev/null || true)"
+  if [[ -n "${existing_component}" ]]; then
+    [[ "${existing_component}" == "operational-data-transfer" ]] ||
+      die "refusing to replace unmanaged Pod ${DATA_TRANSFER_POD}"
+    stop_data_transfer_pod
+  fi
+  kube -n "${NAMESPACE}" apply -f - >/dev/null <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${DATA_TRANSFER_POD}
+  labels:
+    app.kubernetes.io/instance: ${RELEASE_NAME}
+    app.kubernetes.io/component: operational-data-transfer
+    cloudops.io/managed-by: cloudops-local
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  enableServiceLinks: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    fsGroup: 65532
+    fsGroupChangePolicy: OnRootMismatch
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: transfer
+      image: "${image}"
+      imagePullPolicy: IfNotPresent
+      command: ["/bin/sh", "-ec", "trap 'exit 0' TERM INT; sleep 600 & wait"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+      volumeMounts:
+        - name: operational-data
+          mountPath: ${DATA_MOUNT_PATH}
+        - name: tmp
+          mountPath: /tmp
+  volumes:
+    - name: operational-data
+      persistentVolumeClaim:
+        claimName: ${DATA_CLAIM}
+    - name: tmp
+      emptyDir: {}
+EOF
+  DATA_TRANSFER_ACTIVE=1
+  if ! kube -n "${NAMESPACE}" wait --for=condition=Ready "pod/${DATA_TRANSFER_POD}" --timeout=120s >/dev/null; then
+    kube -n "${NAMESPACE}" describe pod "${DATA_TRANSFER_POD}" >&2 || true
+    die "operational data transfer Pod did not become ready"
+  fi
+}
+
+sync_operational_secrets_from_runtime() {
+  local staged previous
+  staged="$(mktemp -d "${STATE_DIR}/.secrets.sync.XXXXXX")"
+  previous="${STATE_DIR}/.secrets.previous.$$"
+  [[ ! -e "${previous}" ]] || die "stale operational secret sync directory exists: ${previous}"
+  start_data_transfer_pod
+  # Expansion belongs to the shell inside the data-transfer Pod.
+  # shellcheck disable=SC2016
+  if ! kube -n "${NAMESPACE}" exec "${DATA_TRANSFER_POD}" -- sh -ec \
+    'root="$1"; mkdir -p "${root}"; test ! -L "${root}"; cd "${root}"; exec tar -cf - .' \
+    cloudops-data "${DATA_DIRECTORY}/secrets" | tar -xf - -C "${staged}"; then
+    stop_data_transfer_pod
+    rm -rf "${staged}"
+    die "could not read operational secret files from ${DATA_CLAIM}"
+  fi
+  stop_data_transfer_pod
+  [[ -z "$(find "${staged}" -type l -print -quit)" ]] || die "runtime operational secret directory contains a symbolic link"
+  [[ -z "$(find "${staged}" ! -type d ! -type f -print -quit)" ]] || die "runtime operational secret directory contains a special file"
+  find "${staged}" -type d -exec chmod 700 {} +
+  find "${staged}" -type f -exec chmod 600 {} +
+  mv "${SECRET_DIR}" "${previous}"
+  mv "${staged}" "${SECRET_DIR}"
+  rm -rf "${previous}"
+}
+
+sync_operational_secrets_to_runtime() {
+  local source_dir="$1"
+  [[ -d "${source_dir}" && ! -L "${source_dir}" ]] || die "operational secret restore source is unavailable"
+  start_data_transfer_pod
+  # Expansion belongs to the shell inside the data-transfer Pod.
+  # shellcheck disable=SC2016
+  if ! tar -C "${source_dir}" -cf - . | kube -n "${NAMESPACE}" exec -i "${DATA_TRANSFER_POD}" -- sh -ec \
+    'root="$1"; target="${root}/secrets"; staged="${root}/.secrets.restore.$$"; previous="${root}/.secrets.previous.$$";
+     test ! -L "${root}"; mkdir -p "${root}"; rm -rf "${staged}" "${previous}"; mkdir "${staged}";
+     tar -xf - -C "${staged}"; test -z "$(find "${staged}" -type l -print -quit)";
+     test -z "$(find "${staged}" ! -type d ! -type f -print -quit)";
+     find "${staged}" -type d -exec chmod 700 {} +; find "${staged}" -type f -exec chmod 600 {} +;
+     if test -e "${target}"; then test ! -L "${target}"; mv "${target}" "${previous}"; fi;
+     mv "${staged}" "${target}"; rm -rf "${previous}"' \
+    cloudops-data "${DATA_DIRECTORY}"; then
+    stop_data_transfer_pod
+    die "could not restore operational secret files to ${DATA_CLAIM}"
+  fi
+  stop_data_transfer_pod
+}
+
 write_secret_manifest() {
   local source_dir="$1" output="$2" relative hash
   [[ -z "$(find "${source_dir}" -type l -print -quit)" ]] ||
@@ -517,16 +644,16 @@ verify_row_counts() {
 }
 
 restore_operational_secrets() {
-  local backup="$1" staged previous
-  staged="$(mktemp -d "${STATE_DIR}/.secrets.restore.XXXXXX")"
-  previous="${STATE_DIR}/.secrets.previous.$$"
-  [[ ! -e "${previous}" ]] || die "stale secret restore directory exists: ${previous}"
-  cp -a "${backup}/secret-files/." "${staged}/"
-  chmod -R go-rwx "${staged}"
-  mv "${SECRET_DIR}" "${previous}"
-  mv "${staged}" "${SECRET_DIR}"
-  chmod 700 "${SECRET_DIR}"
-  rm -rf "${previous}"
+  local backup="$1" verified_manifest
+  sync_operational_secrets_to_runtime "${backup}/secret-files"
+  sync_operational_secrets_from_runtime
+  verified_manifest="$(mktemp "${STATE_DIR}/.secret-manifest.XXXXXX")"
+  write_secret_manifest "${SECRET_DIR}" "${verified_manifest}"
+  if ! cmp -s "${backup}/secret-manifest.tsv" "${verified_manifest}"; then
+    rm -f "${verified_manifest}"
+    die "restored operational secret manifest does not match the backup"
+  fi
+  rm -f "${verified_manifest}"
 }
 
 wait_for_deployment_scale_zero() {
@@ -588,8 +715,8 @@ create_backup() {
   pod="$(mysql_pod)"
   database_exists "${pod}" "${DATABASE_NAME}" || die "database does not exist: ${DATABASE_NAME}"
   version="$(schema_version "${pod}" "${DATABASE_NAME}")"
-  [[ "${version}" == "1" ]] ||
-    die "refusing non-semantic backup schema_version=${version}; expected 1"
+  [[ "${version}" == "${LATEST_SCHEMA_VERSION}" ]] ||
+    die "refusing unsupported backup schema_version=${version}; expected ${LATEST_SCHEMA_VERSION}"
 
   umask 077
   tmp_dir="$(mktemp -d "${BACKUP_ROOT}/.incomplete.XXXXXX")"
@@ -611,6 +738,7 @@ create_backup() {
   chmod 600 "${tmp_dir}/database.sql" "${tmp_dir}/schema.sql"
 
   write_row_counts "${pod}" "${DATABASE_NAME}" "${tmp_dir}/row-counts.tsv"
+  sync_operational_secrets_from_runtime
   mkdir "${tmp_dir}/secret-files"
   cp -a "${SECRET_DIR}/." "${tmp_dir}/secret-files/"
   chmod -R go-rwx "${tmp_dir}/secret-files"
@@ -654,6 +782,11 @@ create_backup() {
   [[ ! -e "${target}" ]] || die "backup already exists: ${target}"
   mv "${tmp_dir}" "${target}"
   trap - RETURN
+  mysql_exec "${pod}" "${DATABASE_NAME}" -e "INSERT INTO backup_records
+    (public_id, backup_name, schema_version, schema_identity, source_commit, created_at)
+    VALUES (UUID(), '${target##*/}', ${version}, 'sha256:${schema_id}', '${exact_sha}',
+            STR_TO_DATE('$(jq -r '.created_at' "${target}/metadata.json")', '%Y-%m-%dT%H:%i:%sZ'))
+    ON DUPLICATE KEY UPDATE backup_name = VALUES(backup_name)" >/dev/null
   pass "backup=${target} schema_version=${version} schema_identity=sha256:${schema_id}"
 }
 
@@ -676,7 +809,7 @@ validate_backup() {
   contract="$(jq -r '.contract' "${backup}/metadata.json")"
   [[ "${contract}" == "${BACKUP_CONTRACT}" ]] || die "unsupported backup contract: ${contract}"
   version="$(jq -r '.schema_version' "${backup}/metadata.json")"
-  [[ "${version}" == "1" ]] || die "backup schema is not the semantic baseline: ${version}"
+  [[ "${version}" == "${LATEST_SCHEMA_VERSION}" ]] || die "backup schema is not current: ${version}"
   source_database="$(jq -r '.database' "${backup}/metadata.json")"
   [[ "${source_database}" == "${DATABASE_NAME}" ]] ||
     die "backup database identity is not ${DATABASE_NAME}"
@@ -720,7 +853,7 @@ validate_backup() {
 restore_backup() {
   local backup="${1:-}" pod source_database target_database active_restore=0
   local restored_version api_replicas worker_replicas
-  for command_name in kubectl jq sha256sum realpath; do
+  for command_name in kubectl jq sha256sum realpath cmp; do
     require_command "${command_name}"
   done
   validate_fixed_boundaries
@@ -750,8 +883,8 @@ restore_backup() {
   mysql_exec "${pod}" -e "DROP DATABASE IF EXISTS \`${RESTORE_STAGING_DATABASE}\`; CREATE DATABASE \`${RESTORE_STAGING_DATABASE}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
   mysql_import "${pod}" "${RESTORE_STAGING_DATABASE}" "${backup}/database.sql"
   restored_version="$(schema_version "${pod}" "${RESTORE_STAGING_DATABASE}")"
-  [[ "${restored_version}" == "1" ]] ||
-    die "staging restore schema_version=${restored_version}; expected 1"
+	[[ "${restored_version}" == "${LATEST_SCHEMA_VERSION}" ]] ||
+		die "staging restore schema_version=${restored_version}; expected ${LATEST_SCHEMA_VERSION}"
   verify_row_counts "${pod}" "${RESTORE_STAGING_DATABASE}" "${backup}/row-counts.tsv"
 
   if [[ "${target_database}" == "${DATABASE_NAME}" ]]; then
@@ -774,8 +907,8 @@ restore_backup() {
   mysql_exec "${pod}" -e "DROP DATABASE IF EXISTS \`${target_database}\`; CREATE DATABASE \`${target_database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
   mysql_import "${pod}" "${target_database}" "${backup}/database.sql"
   restored_version="$(schema_version "${pod}" "${target_database}")"
-  [[ "${restored_version}" == "1" ]] ||
-    die "target restore schema_version=${restored_version}; expected 1"
+	[[ "${restored_version}" == "${LATEST_SCHEMA_VERSION}" ]] ||
+		die "target restore schema_version=${restored_version}; expected ${LATEST_SCHEMA_VERSION}"
   verify_row_counts "${pod}" "${target_database}" "${backup}/row-counts.tsv"
 
   if [[ "${active_restore}" == "1" ]]; then
@@ -965,14 +1098,17 @@ local_reset() {
     create_backup
   fi
   stop_port_forward
-  pvc_names="$(kube -n "${NAMESPACE}" get pvc \
-    -l app.kubernetes.io/instance="${RELEASE_NAME}",app.kubernetes.io/component=database \
+	pvc_names="$(kube -n "${NAMESPACE}" get pvc \
+		-l app.kubernetes.io/instance="${RELEASE_NAME}" \
     -o name 2>/dev/null || true)"
   helm --kube-context "${KUBE_CONTEXT}" -n "${NAMESPACE}" uninstall "${RELEASE_NAME}" --wait || true
   if [[ -n "${pvc_names}" ]]; then
     while IFS= read -r pvc; do
-      [[ "${pvc}" == persistentvolumeclaim/data-mysql-0 ]] || die "refusing unexpected PVC reset target: ${pvc}"
-      kube -n "${NAMESPACE}" delete "${pvc}" --wait=true
+			case "${pvc}" in
+				persistentvolumeclaim/data-mysql-0|persistentvolumeclaim/cloudops-data) ;;
+				*) die "refusing unexpected PVC reset target: ${pvc}" ;;
+			esac
+			kube -n "${NAMESPACE}" delete "${pvc}" --ignore-not-found --wait=true
     done <<<"${pvc_names}"
   fi
   kube -n "${NAMESPACE}" delete secret \
@@ -1022,10 +1158,10 @@ doctor() {
   if release_exists; then
     printf 'PASS Helm release %s available\n' "${RELEASE_NAME}"
     pod="$(mysql_pod_if_running || true)"
-    if [[ -n "${pod}" ]] && [[ "$(schema_version "${pod}" "${DATABASE_NAME}")" == "1" ]]; then
-      printf 'PASS semantic schema version 1 available\n'
-    else
-      printf 'FAIL semantic schema version 1 unavailable\n'
+		if [[ -n "${pod}" ]] && [[ "$(schema_version "${pod}" "${DATABASE_NAME}")" == "${LATEST_SCHEMA_VERSION}" ]]; then
+			printf 'PASS semantic schema version %s available\n' "${LATEST_SCHEMA_VERSION}"
+		else
+			printf 'FAIL semantic schema version %s unavailable\n' "${LATEST_SCHEMA_VERSION}"
       failed=1
     fi
   else

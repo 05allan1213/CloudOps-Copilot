@@ -1,18 +1,18 @@
 <script setup lang="ts">
 import { computed, markRaw, type Component } from "vue";
 import {
-  CircleCheckFilled,
-  CircleCloseFilled,
-  Clock,
-  DataLine,
-  InfoFilled,
-  Loading,
-  Promotion,
-  QuestionFilled,
-  RemoveFilled,
-  Search,
-  WarningFilled,
-} from "@element-plus/icons-vue";
+	ChartNoAxesCombined as DataLine,
+	CircleCheck as CircleCheckFilled,
+	CircleHelp as QuestionFilled,
+	CircleMinus as RemoveFilled,
+	CircleX as CircleCloseFilled,
+	Clock,
+	Info as InfoFilled,
+	LoaderCircle as Loading,
+	Rocket as Promotion,
+	Search,
+	TriangleAlert as WarningFilled,
+} from "lucide-vue-next";
 
 import { incidentStatusLabel, statusTone } from "../../models/incidents";
 

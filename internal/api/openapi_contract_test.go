@@ -35,7 +35,7 @@ func TestHandwrittenOpenAPIMatchesRoutes(t *testing.T) {
 		}
 	}
 	for _, route := range Routes() {
-		path := strings.ReplaceAll(route.Path, ":id", "{id}")
+		path := documentedPath(route.Path)
 		key := route.Method + " " + path
 		if !actual[key] {
 			t.Errorf("OpenAPI is missing %s", key)
@@ -100,7 +100,7 @@ func TestOpenAPICommandAndSafetyContractsMatchRuntime(t *testing.T) {
 		if route.Method != "GET" {
 			continue
 		}
-		path := strings.ReplaceAll(route.Path, ":id", "{id}")
+		path := documentedPath(route.Path)
 		operation := document.Paths[path].Get
 		if operation == nil || operation.Responses["501"] == nil {
 			t.Errorf("unwired Query response is not documented for %s", path)
@@ -130,6 +130,11 @@ func TestOpenAPICommandAndSafetyContractsMatchRuntime(t *testing.T) {
 	}
 	assertSchemaMatchesJSONFields(t, document.Components.Schemas["Incident"], reflect.TypeOf(IncidentView{}))
 	assertSchemaMatchesJSONFields(t, document.Components.Schemas["Resource"], reflect.TypeOf(ResourceView{}))
+}
+
+func documentedPath(path string) string {
+	path = strings.ReplaceAll(path, ":id", "{id}")
+	return strings.ReplaceAll(path, ":provider", "{provider}")
 }
 
 type openAPIContract struct {

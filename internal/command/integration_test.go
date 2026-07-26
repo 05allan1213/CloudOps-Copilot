@@ -352,11 +352,12 @@ func TestMySQLInvestigationRetryAuthorizationIsDurableConcurrentAndHardBounded(t
 		taskPublicID := uuid.NewString()
 		if _, err := db.ExecContext(ctx, `INSERT INTO async_tasks
 	 (public_id, incident_id, cycle_no, queue, task_type, subject_type, subject_id, transition,
-	  expected_subject_version, payload_schema_version, payload_json, dedupe_key, replay_generation,
+	  expected_subject_version, payload_schema_version, payload_json, configuration_revision_id, dedupe_key, replay_generation,
 	  status, priority, available_at, attempt, max_attempts, lease_generation,
 	  last_error_code, last_error_summary, dead_at, created_at, updated_at)
 	VALUES (?, ?, 1, 'investigate', 'investigation.advance', 'agent_run', ?, 'investigation.step',
-	        3, 1, JSON_OBJECT('mode','synthesize','agent_run_id',?,'cycle_no',1), ?, 0,
+	        3, 1, JSON_OBJECT('mode','synthesize','agent_run_id',?,'cycle_no',1),
+	        (SELECT configuration_revision_id FROM active_configuration WHERE singleton_id = 1), ?, 0,
 	        'dead', 50, NOW(6), 1, 5, 1,
 	        'invalid_agent_run_state', 'durable Evidence provenance is invalid', NOW(6), NOW(6), NOW(6))`,
 			taskPublicID, incidentID, runID, runPublicID, canonicalHash("dead-investigation", taskPublicID)); err != nil {
@@ -392,11 +393,12 @@ func TestMySQLInvestigationRetryAuthorizationIsDurableConcurrentAndHardBounded(t
 		dedupe := canonicalHash("replayed-investigation", runPublicID)
 		deadResult, err := db.ExecContext(ctx, `INSERT INTO async_tasks
 	 (public_id, incident_id, cycle_no, queue, task_type, subject_type, subject_id, transition,
-	  expected_subject_version, payload_schema_version, payload_json, dedupe_key, replay_generation,
+	  expected_subject_version, payload_schema_version, payload_json, configuration_revision_id, dedupe_key, replay_generation,
 	  status, priority, available_at, attempt, max_attempts, lease_generation,
 	  last_error_code, last_error_summary, dead_at, created_at, updated_at)
 	VALUES (?, ?, 1, 'investigate', 'investigation.advance', 'agent_run', ?, 'investigation.step',
-	        3, 1, JSON_OBJECT('mode','synthesize','agent_run_id',?,'cycle_no',1), ?, 0,
+	        3, 1, JSON_OBJECT('mode','synthesize','agent_run_id',?,'cycle_no',1),
+	        (SELECT configuration_revision_id FROM active_configuration WHERE singleton_id = 1), ?, 0,
 	        'dead', 50, NOW(6), 1, 5, 1, 'dependency_failed', 'retryable failure', NOW(6), NOW(6), NOW(6))`,
 			uuid.NewString(), incidentID, runID, runPublicID, dedupe)
 		if err != nil {
@@ -405,11 +407,12 @@ func TestMySQLInvestigationRetryAuthorizationIsDurableConcurrentAndHardBounded(t
 		deadTaskID, _ := deadResult.LastInsertId()
 		if _, err := db.ExecContext(ctx, `INSERT INTO async_tasks
 	 (public_id, incident_id, cycle_no, queue, task_type, subject_type, subject_id, transition,
-	  expected_subject_version, payload_schema_version, payload_json, dedupe_key, replay_generation,
+	  expected_subject_version, payload_schema_version, payload_json, configuration_revision_id, dedupe_key, replay_generation,
 	  status, priority, available_at, attempt, max_attempts, lease_generation, replayed_from_task_id,
 	  created_at, updated_at)
 	VALUES (?, ?, 1, 'investigate', 'investigation.advance', 'agent_run', ?, 'investigation.step',
-	        3, 1, JSON_OBJECT('mode','synthesize','agent_run_id',?,'cycle_no',1), ?, 1,
+	        3, 1, JSON_OBJECT('mode','synthesize','agent_run_id',?,'cycle_no',1),
+	        (SELECT configuration_revision_id FROM active_configuration WHERE singleton_id = 1), ?, 1,
 	        'ready', 50, NOW(6), 0, 5, 0, ?, NOW(6), NOW(6))`,
 			uuid.NewString(), incidentID, runID, runPublicID, dedupe, deadTaskID); err != nil {
 			t.Fatal(err)

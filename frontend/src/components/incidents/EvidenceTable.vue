@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
-import { Close } from "@element-plus/icons-vue";
+import { X as Close } from "lucide-vue-next";
 import { useRoute, useRouter } from "vue-router";
 
 import type { SectionError } from "../../composables/incidents/useIncidentDetail";

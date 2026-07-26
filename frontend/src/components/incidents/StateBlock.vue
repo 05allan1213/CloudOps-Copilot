@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { computed, markRaw, type Component } from "vue";
 import {
-  CircleCloseFilled,
-  InfoFilled,
-  Lock,
-  Refresh,
-  RemoveFilled,
-  WarningFilled,
-} from "@element-plus/icons-vue";
+	CircleMinus as RemoveFilled,
+	CircleX as CircleCloseFilled,
+	Info as InfoFilled,
+	Lock,
+	RefreshCw as Refresh,
+	TriangleAlert as WarningFilled,
+} from "lucide-vue-next";
 
 import type { LoadState } from "../../types/incidents";
 

@@ -56,6 +56,7 @@ h1,
 h2,
 h3 {
   letter-spacing: 0;
+  scroll-margin-top: calc(var(--co-header-height) + var(--co-space-4));
   text-wrap: balance;
 }
 

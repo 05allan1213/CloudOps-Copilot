@@ -1,19 +1,19 @@
 <template>
   <div class="not-found-page">
     <h1 class="visually-hidden">
-      Page not found
+      页面不存在
     </h1>
     <el-result
       icon="warning"
       title="404"
-      sub-title="The requested page could not be found."
+      sub-title="找不到请求的页面。"
     >
       <template #extra>
         <RouterLink
           class="not-found-action"
-          to="/incidents"
+          to="/overview"
         >
-          Return to Incidents
+          返回总览
         </RouterLink>
       </template>
     </el-result>

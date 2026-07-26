@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Close } from "@element-plus/icons-vue";
+import { X as Close } from "lucide-vue-next";
 
 import type { CommandFeedback as CommandFeedbackState } from "../../models/commands";
 import { resourceProvenance } from "../../models/incidentResources";

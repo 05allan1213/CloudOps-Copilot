@@ -615,9 +615,10 @@ WHERE id = ? AND cycle_no = ? AND version = ? AND status = 'investigating'`,
 	if _, err := tx.ExecContext(ctx, `INSERT INTO async_tasks
  (public_id, incident_id, cycle_no, queue, task_type, subject_type, subject_id, transition,
   expected_subject_version, payload_schema_version, payload_json, dedupe_key, replay_generation,
+  configuration_revision_id,
   migrated_legacy_context,status, priority, available_at, attempt, max_attempts, lease_generation, created_at, updated_at)
 VALUES (?, ?, ?, 'verify', 'verification.advance', 'verification_run', ?, 'verification.advance',
-	    1, 1, ?, ?, 0, ?, 'ready', 60, ?, 0, ?, 0, ?, ?)`, uuid.NewString(), incident.id,
+	    1, 1, ?, ?, 0, (SELECT configuration_revision_id FROM active_configuration WHERE singleton_id = 1), ?, 'ready', 60, ?, 0, ?, 0, ?, ?)`, uuid.NewString(), incident.id,
 		incident.cycleNo, runID, payload, hashCanonical("verification.advance", fmt.Sprint(runID), "1"),
 		incident.migratedLegacyContext, now, verificationTaskMaxAttempts, now, now); err != nil {
 		return false, err

@@ -16,6 +16,7 @@ export class ApiError extends Error {
   readonly requestID: string;
   readonly traceID: string;
   readonly idempotentReplay: boolean;
+  readonly nextSteps: readonly string[];
 
   constructor(
     message: string,
@@ -24,6 +25,7 @@ export class ApiError extends Error {
     requestID = "",
     traceID = "",
     idempotentReplay = false,
+    nextSteps: readonly string[] = [],
   ) {
     super(message);
     this.name = "ApiError";
@@ -32,6 +34,7 @@ export class ApiError extends Error {
     this.requestID = requestID;
     this.traceID = traceID;
     this.idempotentReplay = idempotentReplay;
+    this.nextSteps = nextSteps;
   }
 }
 
@@ -112,6 +115,7 @@ function normalizeAxiosError(err: AxiosError<ProblemDetails>): ApiError {
       problem.request_id || requestID,
       problem.trace_id || traceID,
       replayed,
+      Array.isArray(problem.next_steps) ? problem.next_steps.filter((step): step is string => typeof step === "string") : [],
     );
   }
 
@@ -124,6 +128,11 @@ function normalizeAxiosError(err: AxiosError<ProblemDetails>): ApiError {
   }
 
   return new ApiError(err.message || "Request failed");
+}
+
+export function apiURL(path: string): string {
+  const base = apiBaseUrl.replace(/\/$/, "");
+  return `${base}${path}`;
 }
 
 function responseHeader(headers: unknown, name: string): string {

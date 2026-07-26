@@ -22,3 +22,10 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 {{- define "cloudops.apiServiceName" -}}cloudops-api{{- end }}
 {{- define "cloudops.apiManagementServiceName" -}}cloudops-api-management{{- end }}
 {{- define "cloudops.workerName" -}}cloudops-worker{{- end }}
+{{- define "cloudops.dataClaimName" -}}
+{{- if .Values.data.persistence.existingClaim -}}
+{{- .Values.data.persistence.existingClaim -}}
+{{- else -}}
+cloudops-data
+{{- end -}}
+{{- end }}

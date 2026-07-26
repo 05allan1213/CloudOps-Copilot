@@ -262,7 +262,18 @@ func (r *Runner) execute(pool PoolConfig, execution Execution, semaphore chan st
 		heartbeatDone <- err
 	}()
 
-	result, panicErr := callHandler(handlerCtx, r.cfg.Handlers[execution.Task.Type], execution)
+	var result Result
+	var panicErr error
+	if r.cfg.Boundary != nil {
+		boundCtx, boundaryErr := r.cfg.Boundary.Bind(handlerCtx, execution)
+		if boundaryErr != nil {
+			result = RetryAfter(0, "configuration_unavailable", "bound Configuration Revision could not be observed", nil)
+		} else {
+			result, panicErr = callHandler(boundCtx, r.cfg.Handlers[execution.Task.Type], execution)
+		}
+	} else {
+		result, panicErr = callHandler(handlerCtx, r.cfg.Handlers[execution.Task.Type], execution)
+	}
 	cancelHeartbeat()
 	heartbeatErr := <-heartbeatDone
 	if heartbeatErr != nil {

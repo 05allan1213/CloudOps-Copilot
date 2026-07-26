@@ -14,8 +14,9 @@ import (
 
 const taskColumns = `id, public_id, incident_id, cycle_no, queue, task_type,
 subject_type, subject_id, transition, expected_subject_version,
-payload_schema_version, payload_json, checkpoint_schema_version,
-checkpoint_version, checkpoint_hash, checkpoint_json, dedupe_key,
+payload_schema_version, payload_json, configuration_revision_id,
+configuration_observed_at, checkpoint_schema_version, checkpoint_version,
+checkpoint_hash, checkpoint_json, dedupe_key,
 replay_generation, logical_operation_key, migrated_legacy, migrated_legacy_context, status, priority, available_at,
 attempt, max_attempts, lease_owner, lease_generation, lease_expires_at,
 heartbeat_at, last_error_code, last_error_summary, created_at, updated_at,
@@ -249,10 +250,12 @@ func (r *Repository) EnqueueIn(ctx context.Context, executor DBTX, task NewTask)
 	const insertSQL = `INSERT INTO async_tasks (
 public_id, incident_id, cycle_no, queue, task_type, subject_type, subject_id,
 transition, expected_subject_version, payload_schema_version, payload_json,
+configuration_revision_id,
 dedupe_key, replay_generation, logical_operation_key, migrated_legacy, migrated_legacy_context, status, priority,
 available_at, attempt, max_attempts, lease_generation, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 'ready', ?,
-          COALESCE(?, NOW(6)), 0, ?, 0, NOW(6), NOW(6))
+) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, active.configuration_revision_id, ?, 0, ?, ?, ?, 'ready', ?,
+          COALESCE(?, NOW(6)), 0, ?, 0, NOW(6), NOW(6)
+FROM active_configuration AS active WHERE active.singleton_id = 1
 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`
 	result, err := executor.ExecContext(
 		ctx,

@@ -41,6 +41,16 @@ type taskStoreReadinessFunc func(context.Context) error
 
 func (f taskStoreReadinessFunc) Ready(ctx context.Context) error { return f(ctx) }
 
+type testActivationRunner struct {
+	readyErr error
+}
+
+func (*testActivationRunner) Start(context.Context) error { return nil }
+func (*testActivationRunner) Stop(context.Context) error  { return nil }
+func (r *testActivationRunner) Ready(context.Context) error {
+	return r.readyErr
+}
+
 func TestWorkerOwnsAsyncRunnerAndShutsDown(t *testing.T) {
 	runner := &testTaskRunner{}
 	worker := testWorker(runner, DefaultAsyncWorkerConfig())
@@ -80,6 +90,10 @@ func TestWorkerReadinessRequiresClaimLoopsMySQLAndQueue(t *testing.T) {
 	worker.stateMu.Lock()
 	worker.runnerStarted = true
 	worker.stateMu.Unlock()
+	if err := worker.readiness(context.Background()); err == nil || !strings.Contains(err.Error(), "activation") {
+		t.Fatalf("missing activation readiness err=%v", err)
+	}
+	worker.activation = &testActivationRunner{}
 	if err := worker.readiness(context.Background()); err != nil {
 		t.Fatalf("ready worker err=%v", err)
 	}
@@ -167,6 +181,7 @@ func testWorker(runner taskRunner, asyncConfig AsyncWorkerConfig) *Worker {
 	worker := &Worker{
 		cfg:        WorkerConfig{Async: asyncConfig},
 		runner:     runner,
+		activation: &testActivationRunner{},
 		mysqlReady: func(context.Context) error { return nil },
 	}
 	worker.management = &http.Server{Handler: health.NewHandler(health.Options{Process: "cloudops-worker", Ready: worker.readiness})}

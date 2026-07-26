@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { Link as LinkIcon } from "@element-plus/icons-vue";
+import { Link as LinkIcon } from "lucide-vue-next";
 
 import { resourceProvenance } from "../../models/incidentResources";
 import { safeExternalURL } from "../../models/workbench";

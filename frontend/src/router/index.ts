@@ -11,3 +11,8 @@ export const router = createRouter({
     return { top: 0 };
   },
 });
+
+router.afterEach((to) => {
+  const title = typeof to.meta.title === "string" ? to.meta.title : "CloudOps";
+  document.title = `${title} | CloudOps`;
+});

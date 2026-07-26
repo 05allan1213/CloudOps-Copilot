@@ -64,7 +64,6 @@ watch(
 
 onMounted(async () => {
   await nextTick();
-  const scrollRoot = document.querySelector<HTMLElement>(".app-main");
   if (typeof IntersectionObserver === "function") {
     observer = new IntersectionObserver((entries) => {
       const visible = entries
@@ -75,7 +74,7 @@ onMounted(async () => {
       activeZone.value = next;
       replaceZoneHash(next);
     }, {
-      root: scrollRoot,
+      root: null,
       rootMargin: "-12px 0px -68% 0px",
       threshold: [0, 0.01, 0.2],
     });

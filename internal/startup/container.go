@@ -13,6 +13,8 @@ import (
 	"github.com/05allan1213/CloudOps-Copilot/internal/handler"
 	"github.com/05allan1213/CloudOps-Copilot/internal/infra/incidentstore"
 	"github.com/05allan1213/CloudOps-Copilot/internal/middleware"
+	"github.com/05allan1213/CloudOps-Copilot/internal/notification"
+	"github.com/05allan1213/CloudOps-Copilot/internal/settings"
 )
 
 func InitAPIContainer(cfg *config.Config, infra *di.Infra, runtimeReadiness handler.RuntimeReadiness) (*di.Container, error) {
@@ -34,6 +36,18 @@ func InitAPIContainer(cfg *config.Config, infra *di.Infra, runtimeReadiness hand
 		container.Alertmanager, err = initAlertmanagerIngress(cfg, infra.MySQL.SQLDB(), runtimeReadiness)
 		if err != nil {
 			return nil, fmt.Errorf("alertmanager ingress init failed: %w", err)
+		}
+		container.Settings, err = settings.NewService(infra.MySQL.SQLDB(), cfg.DataDir, settings.BootstrapDiagnostics{
+			ListenBoundary: cfg.ListenAddr, MySQLDatabase: cfg.MySQLDatabase,
+			DataDirectory: cfg.DataDir, WorkerManagementTarget: cfg.WorkerManagementTarget,
+			Lifecycle: "make local-*",
+		})
+		if err != nil {
+			return nil, fmt.Errorf("settings service init failed: %w", err)
+		}
+		container.Notifications, err = notification.NewRepository(infra.MySQL.SQLDB())
+		if err != nil {
+			return nil, fmt.Errorf("notification repository init failed: %w", err)
 		}
 	}
 

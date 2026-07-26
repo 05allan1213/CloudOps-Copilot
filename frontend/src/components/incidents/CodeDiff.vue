@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, useId } from "vue";
-import { CopyDocument } from "@element-plus/icons-vue";
+import { Copy as CopyDocument } from "lucide-vue-next";
 
 const props = withDefaults(defineProps<{
   value: string;

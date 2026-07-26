@@ -218,14 +218,15 @@ type CommandPort interface {
 
 // Problem is the stable RFC 9457-compatible error envelope.
 type Problem struct {
-	Type      string `json:"type"`
-	Title     string `json:"title"`
-	Status    int    `json:"status"`
-	Detail    string `json:"detail"`
-	Instance  string `json:"instance"`
-	Code      string `json:"code"`
-	RequestID string `json:"request_id"`
-	TraceID   string `json:"trace_id"`
+	Type      string   `json:"type"`
+	Title     string   `json:"title"`
+	Status    int      `json:"status"`
+	Detail    string   `json:"detail"`
+	Instance  string   `json:"instance"`
+	Code      string   `json:"code"`
+	RequestID string   `json:"request_id"`
+	TraceID   string   `json:"trace_id"`
+	NextSteps []string `json:"next_steps"`
 }
 
 type commandResponse struct {

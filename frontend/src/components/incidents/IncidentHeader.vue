@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, markRaw, type Component } from "vue";
 import {
-  CircleCheckFilled,
-  CircleCloseFilled,
-  Connection,
-  Loading,
-} from "@element-plus/icons-vue";
+	CircleCheck as CircleCheckFilled,
+	CircleX as CircleCloseFilled,
+	LoaderCircle as Loading,
+	Network as Connection,
+} from "lucide-vue-next";
 
 import { humanizeCode } from "../../models/incidents";
 import type { IncidentView } from "../../types/incidents";

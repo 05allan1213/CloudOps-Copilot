@@ -1,10 +1,6 @@
-<script lang="ts">
-const scrollPositions = new Map<string, number>();
-</script>
-
 <script setup lang="ts">
-import { computed, nextTick, onMounted } from "vue";
-import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
+import { computed, onMounted } from "vue";
+import { useRoute, useRouter } from "vue-router";
 
 import IncidentFilterBar from "../../components/incidents/IncidentFilterBar.vue";
 import IncidentTable from "../../components/incidents/IncidentTable.vue";
@@ -46,20 +42,8 @@ function recoverEmptyState() {
   return hasActiveFilters.value ? reset() : load(false);
 }
 
-onBeforeRouteLeave((_to, from) => {
-  const main = document.querySelector<HTMLElement>("#incident-content");
-  if (main) scrollPositions.set(from.fullPath, main.scrollTop);
-});
-
-onMounted(async () => {
+onMounted(() => {
   if (!hydratedFromCache) void load(false);
-  const savedScrollTop = scrollPositions.get(route.fullPath);
-  if (savedScrollTop === undefined) return;
-  await nextTick();
-  window.requestAnimationFrame(() => {
-    const main = document.querySelector<HTMLElement>("#incident-content");
-    if (main) main.scrollTop = savedScrollTop;
-  });
 });
 </script>
 

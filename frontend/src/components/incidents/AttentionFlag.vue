@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { CircleCheckFilled, WarningFilled } from "@element-plus/icons-vue";
+import { CircleCheck as CircleCheckFilled, TriangleAlert as WarningFilled } from "lucide-vue-next";
 
 defineProps<{
   active: boolean;

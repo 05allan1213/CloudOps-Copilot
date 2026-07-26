@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -394,6 +395,13 @@ type Config struct {
 	// 默认值：空
 	StaticDir string
 
+	// DataDir stores backend-owned, revision-addressable secret files.
+	// It is Bootstrap Configuration and is never editable through Settings.
+	DataDir string
+
+	// WorkerManagementTarget is a read-only Bootstrap diagnostic endpoint.
+	WorkerManagementTarget string
+
 	// TraceOTLPEndpoint OpenTelemetry OTLP gRPC 导出端点，格式为 host:port
 	// 默认值：空（禁用链路追踪）
 	TraceOTLPEndpoint string
@@ -665,6 +673,8 @@ func Load() Config {
 		MySQLStartupTimeout:        configutil.DurationSeconds("MYSQL_STARTUP_TIMEOUT_SECONDS", 5),
 		MySQLPingTimeout:           configutil.DurationSeconds("MYSQL_PING_TIMEOUT_SECONDS", 3),
 		StaticDir:                  configutil.String("STATIC_DIR", ""),
+		DataDir:                    configutil.String("CLOUDOPS_DATA_DIR", "/var/lib/cloudops"),
+		WorkerManagementTarget:     configutil.String("WORKER_MANAGEMENT_TARGET", "http://cloudops-worker-management:8081"),
 		TraceOTLPEndpoint:          configutil.NonEmptyString("TRACE_OTLP_ENDPOINT", ""),
 		TraceSampleRate:            configutil.FloatRange("TRACE_SAMPLE_RATE", 1.0, 0, 1),
 		KafkaBrokers:               configutil.List("KAFKA_BROKERS"),
@@ -681,6 +691,12 @@ func (c *Config) Validate() error {
 	}
 	if c.ListenAddr == "" {
 		return fmt.Errorf("LISTEN_ADDR is required")
+	}
+	if dataDir := filepath.Clean(strings.TrimSpace(c.DataDir)); dataDir == "." || !filepath.IsAbs(dataDir) || dataDir == string(filepath.Separator) {
+		return fmt.Errorf("CLOUDOPS_DATA_DIR must be a non-root absolute path")
+	}
+	if err := configutil.ValidateHTTPURL("WORKER_MANAGEMENT_TARGET", c.WorkerManagementTarget); err != nil {
+		return err
 	}
 	if err := configutil.ValidateListenAddr("LISTEN_ADDR", c.ListenAddr); err != nil {
 		return err

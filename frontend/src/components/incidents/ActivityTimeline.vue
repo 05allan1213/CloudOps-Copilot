@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Clock } from "@element-plus/icons-vue";
+import { Clock } from "lucide-vue-next";
 
 import type { SectionError } from "../../composables/incidents/useIncidentDetail";
 import {

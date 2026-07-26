@@ -14,6 +14,7 @@ import (
 	"github.com/05allan1213/CloudOps-Copilot/internal/bootstrap/logger"
 	"github.com/05allan1213/CloudOps-Copilot/internal/infra/database"
 	"github.com/05allan1213/CloudOps-Copilot/internal/middleware"
+	"github.com/05allan1213/CloudOps-Copilot/internal/settings"
 	"github.com/05allan1213/CloudOps-Copilot/internal/taskhandler"
 )
 
@@ -21,6 +22,12 @@ type taskRunner interface {
 	Start(context.Context) error
 	StopClaims()
 	Shutdown(context.Context) error
+	Ready(context.Context) error
+}
+
+type activationRunner interface {
+	Start(context.Context) error
+	Stop(context.Context) error
 	Ready(context.Context) error
 }
 
@@ -69,6 +76,7 @@ type Worker struct {
 	cfg        WorkerConfig
 	mysql      *database.MySQL
 	runner     taskRunner
+	activation activationRunner
 	management *http.Server
 	ready      atomic.Bool
 	mysqlReady func(context.Context) error
@@ -106,6 +114,20 @@ func NewWorker(ctx context.Context, cfg WorkerConfig) (*Worker, error) {
 		_ = mysql.Close()
 		return nil, err
 	}
+	settingsService, err := settings.NewService(mysql.SQLDB(), application.DataDir, settings.BootstrapDiagnostics{
+		ListenBoundary: application.ListenAddr, MySQLDatabase: application.MySQLDatabase,
+		DataDirectory: application.DataDir, WorkerManagementTarget: application.WorkerManagementTarget,
+		Lifecycle: "make local-*",
+	})
+	if err != nil {
+		_ = mysql.Close()
+		return nil, fmt.Errorf("initialize worker configuration: %w", err)
+	}
+	activation, err := settings.NewActivationRunner(settingsService, cfg.Async.WorkerID)
+	if err != nil {
+		_ = mysql.Close()
+		return nil, fmt.Errorf("initialize configuration activation runner: %w", err)
+	}
 	var runner taskRunner
 	var handlers map[asyncjob.TaskType]asyncjob.Handler
 	if hasInlineOperations {
@@ -136,6 +158,9 @@ func NewWorker(ctx context.Context, cfg WorkerConfig) (*Worker, error) {
 			Pools:        asyncPoolConfigs(cfg.Async),
 			DrainTimeout: cfg.Async.DrainTimeout,
 			CancelWait:   cfg.Async.ExitDeadline - cfg.Async.DrainTimeout,
+			Boundary: asyncjob.BoundaryFunc(func(boundaryCtx context.Context, execution asyncjob.Execution) (context.Context, error) {
+				return settingsService.ObserveTaskBoundary(boundaryCtx, execution.Task.ID, execution.Task.ConfigurationRevisionID)
+			}),
 		})
 		if err != nil {
 			_ = mysql.Close()
@@ -144,7 +169,7 @@ func NewWorker(ctx context.Context, cfg WorkerConfig) (*Worker, error) {
 	}
 	metrics := middleware.NewMetrics()
 	worker := &Worker{
-		cfg: cfg, mysql: mysql, runner: runner,
+		cfg: cfg, mysql: mysql, runner: runner, activation: activation,
 		mysqlReady: mysql.Ready,
 	}
 	worker.management = &http.Server{
@@ -209,6 +234,12 @@ func (w *Worker) readiness(ctx context.Context) error {
 	if err := w.runner.Ready(ctx); err != nil {
 		return fmt.Errorf("async task runtime readiness: %w", err)
 	}
+	if w.activation == nil {
+		return errors.New("configuration activation runner is not initialized")
+	}
+	if err := w.activation.Ready(ctx); err != nil {
+		return fmt.Errorf("configuration activation readiness: %w", err)
+	}
 	return nil
 }
 
@@ -231,6 +262,12 @@ func (w *Worker) Serve(ctx context.Context, listener net.Listener) error {
 		defer cancel()
 		return errors.Join(fmt.Errorf("start async task runtime: %w", runnerErr), w.management.Shutdown(shutdownCtx), w.mysql.Close())
 	}
+	if activationErr := w.activation.Start(ctx); activationErr != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), w.cfg.Async.ExitDeadline)
+		defer cancel()
+		w.runner.StopClaims()
+		return errors.Join(fmt.Errorf("start configuration activation runtime: %w", activationErr), w.runner.Shutdown(shutdownCtx), w.management.Shutdown(shutdownCtx), w.mysql.Close())
+	}
 	w.ready.Store(true)
 
 	var runErr error
@@ -251,11 +288,12 @@ func (w *Worker) Serve(ctx context.Context, listener net.Listener) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), w.cfg.Async.ExitDeadline)
 	defer cancel()
 	serverShutdownErr := w.management.Shutdown(shutdownCtx)
+	activationShutdownErr := w.activation.Stop(shutdownCtx)
 	var runnerShutdownErr error
 	if started {
 		runnerShutdownErr = w.runner.Shutdown(shutdownCtx)
 	}
-	return errors.Join(runErr, serverShutdownErr, runnerShutdownErr, w.mysql.Close())
+	return errors.Join(runErr, serverShutdownErr, activationShutdownErr, runnerShutdownErr, w.mysql.Close())
 }
 
 func RunWorker(ctx context.Context) error {

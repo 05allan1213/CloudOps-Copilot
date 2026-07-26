@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, markRaw, type Component } from "vue";
 import {
-  CircleCloseFilled,
-  InfoFilled,
-  QuestionFilled,
-  WarningFilled,
-} from "@element-plus/icons-vue";
+	CircleHelp as QuestionFilled,
+	CircleX as CircleCloseFilled,
+	Info as InfoFilled,
+	TriangleAlert as WarningFilled,
+} from "lucide-vue-next";
 
 import { severityLabel } from "../../models/incidents";
 import type { IncidentSeverity } from "../../types/incidents";

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { Box, Connection, Promotion } from "@element-plus/icons-vue";
+import { Box, Network as Connection, Rocket as Promotion } from "lucide-vue-next";
 
 import {
   deterministicResourceSummary,

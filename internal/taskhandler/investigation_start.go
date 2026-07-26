@@ -193,12 +193,13 @@ VALUES (?, ?, ?, 1, 'agent_run_created', ?, ?, 'system', 'async-task-handler',
 INSERT INTO async_tasks
     (public_id, incident_id, cycle_no, queue, task_type, subject_type, subject_id,
      transition, expected_subject_version, payload_schema_version, payload_json,
+     configuration_revision_id,
      dedupe_key, replay_generation, migrated_legacy, migrated_legacy_context, status, priority, available_at, attempt,
      max_attempts, lease_generation, created_at, updated_at)
 VALUES (?, ?, ?, 'investigate', 'investigation.advance', 'agent_run', ?,
-        'investigation.step', 1, 1, ?, ?, 0, FALSE, ?, 'ready', 50, NOW(6), 0, ?, 0, NOW(6), NOW(6))
+        'investigation.step', 1, 1, ?, ?, ?, 0, FALSE, ?, 'ready', 50, NOW(6), 0, ?, 0, NOW(6), NOW(6))
 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
-		uuid.NewString(), task.IncidentID, task.CycleNo, runID, payload, dedupe, task.MigratedLegacyContext, defaultStepMaxAttempts); err != nil {
+		uuid.NewString(), task.IncidentID, task.CycleNo, runID, payload, task.ConfigurationRevisionID, dedupe, task.MigratedLegacyContext, defaultStepMaxAttempts); err != nil {
 		return fmt.Errorf("enqueue investigation.step: %w", err)
 	}
 

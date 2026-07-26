@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestSingleSemanticBaselineContract(t *testing.T) {
+func TestSemanticMigrationContract(t *testing.T) {
 	entries, err := FS.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
@@ -17,8 +17,8 @@ func TestSingleSemanticBaselineContract(t *testing.T) {
 			migrationNames = append(migrationNames, entry.Name())
 		}
 	}
-	if len(migrationNames) != 1 || migrationNames[0] != "00001_cloudops_baseline.sql" {
-		t.Fatalf("embedded migrations=%v, want one semantic baseline", migrationNames)
+	if len(migrationNames) != 2 || migrationNames[0] != "00001_cloudops_baseline.sql" || migrationNames[1] != "00002_platform_foundation.sql" {
+		t.Fatalf("embedded migrations=%v, want semantic baseline and platform foundation", migrationNames)
 	}
 
 	contents, err := FS.ReadFile(migrationNames[0])
@@ -66,5 +66,32 @@ func TestSingleSemanticBaselineContract(t *testing.T) {
 	}
 	if match := regexp.MustCompile(`(?i)(^|[^a-z0-9])(v2|v3|phase[_ -]?[0-9]+)([^a-z0-9]|$)`).FindString(sqlText); match != "" {
 		t.Errorf("baseline retains generation identity %q", match)
+	}
+
+	platformContents, err := FS.ReadFile(migrationNames[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	platformSQL := string(platformContents)
+	if !strings.HasPrefix(platformSQL, "-- +goose Up\n-- +goose NO TRANSACTION") || strings.Contains(platformSQL, "-- +goose Down") {
+		t.Fatal("platform foundation must be an explicit forward-only Goose migration")
+	}
+	for _, required := range []string{
+		"CREATE TABLE `configuration_revisions`", "CREATE TABLE `secret_versions`",
+		"CREATE TABLE `provider_configurations`", "CREATE TABLE `operational_scopes`",
+		"CREATE TABLE `active_configuration`", "CREATE TABLE `configuration_validations`",
+		"CREATE TABLE `provider_health`", "CREATE TABLE `configuration_activation_tasks`",
+		"CREATE TABLE `owner_notifications`", "CREATE TABLE `backup_records`",
+		"ADD COLUMN `configuration_revision_id`", "fk_async_tasks_configuration_revision",
+		"fk_async_task_attempts_configuration_revision", "applied_revision_id",
+	} {
+		if !strings.Contains(platformSQL, required) {
+			t.Errorf("platform foundation missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"secret_value", "raw_secret", "v2", "v3", "phase_1", "phase 1"} {
+		if strings.Contains(strings.ToLower(platformSQL), forbidden) {
+			t.Errorf("platform foundation retains forbidden implementation identity %q", forbidden)
+		}
 	}
 }

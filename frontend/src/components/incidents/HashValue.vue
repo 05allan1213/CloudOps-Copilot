@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref } from "vue";
-import { CopyDocument } from "@element-plus/icons-vue";
+import { Copy as CopyDocument } from "lucide-vue-next";
 
 const props = defineProps<{ label: string; value?: string }>();
 const copyStatus = ref("");

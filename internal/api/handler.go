@@ -26,6 +26,8 @@ var localOwnerIdentity = OwnerIdentity{
 type Config struct {
 	Queries        QueryPort
 	Commands       CommandPort
+	Settings       SettingsPort
+	Notifications  NotificationPort
 	AllowedOrigins []string
 	Now            func() time.Time
 }
@@ -33,6 +35,8 @@ type Config struct {
 type Handler struct {
 	queries        QueryPort
 	commands       CommandPort
+	settings       SettingsPort
+	notifications  NotificationPort
 	allowedOrigins map[string]struct{}
 	now            func() time.Time
 	idempotency    *idempotencyStore
@@ -51,6 +55,8 @@ func NewHandler(config Config) *Handler {
 	return &Handler{
 		queries:        config.Queries,
 		commands:       config.Commands,
+		settings:       config.Settings,
+		notifications:  config.Notifications,
 		allowedOrigins: normalizeOrigins(config.AllowedOrigins),
 		now:            config.Now,
 		idempotency:    newIdempotencyStore(config.Now),
@@ -63,6 +69,20 @@ type RouteSpec struct {
 }
 
 var routes = []RouteSpec{
+	{Method: http.MethodGet, Path: "/api/v1/bootstrap"},
+	{Method: http.MethodGet, Path: "/api/v1/scopes"},
+	{Method: http.MethodGet, Path: "/api/v1/overview"},
+	{Method: http.MethodGet, Path: "/api/v1/settings"},
+	{Method: http.MethodPost, Path: "/api/v1/settings/validate"},
+	{Method: http.MethodGet, Path: "/api/v1/configuration-revisions"},
+	{Method: http.MethodPost, Path: "/api/v1/configuration-revisions"},
+	{Method: http.MethodPost, Path: "/api/v1/secrets"},
+	{Method: http.MethodPost, Path: "/api/v1/providers/:provider/tests"},
+	{Method: http.MethodGet, Path: "/api/v1/storage-status"},
+	{Method: http.MethodGet, Path: "/api/v1/notifications"},
+	{Method: http.MethodPost, Path: "/api/v1/notifications/:id/read"},
+	{Method: http.MethodPost, Path: "/api/v1/notifications/read-all"},
+	{Method: http.MethodGet, Path: "/api/v1/notification-events"},
 	{Method: http.MethodGet, Path: "/api/v1/incidents"},
 	{Method: http.MethodGet, Path: "/api/v1/incidents/:id"},
 	{Method: http.MethodGet, Path: "/api/v1/incidents/:id/signals"},
@@ -93,6 +113,14 @@ func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	group.Use(handler.requestIdentity, handler.recoverProblems)
 
 	queries := group.Group("")
+	queries.GET("/bootstrap", handler.getBootstrap)
+	queries.GET("/scopes", handler.listScopes)
+	queries.GET("/overview", handler.getOverview)
+	queries.GET("/settings", handler.getSettings)
+	queries.GET("/configuration-revisions", handler.listConfigurationRevisions)
+	queries.GET("/storage-status", handler.getStorageStatus)
+	queries.GET("/notifications", handler.listNotifications)
+	queries.GET("/notification-events", handler.streamNotificationEvents)
 	queries.GET("/incidents", handler.listIncidents)
 	queries.GET("/incidents/:id", handler.getIncident)
 	queries.GET("/incidents/:id/signals", handler.listResources(QuerySignals))
@@ -107,6 +135,12 @@ func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 
 	commands := group.Group("")
 	commands.Use(handler.requireMutationOrigin)
+	commands.POST("/settings/validate", handler.validateSettings)
+	commands.POST("/configuration-revisions", handler.createConfigurationRevision)
+	commands.POST("/secrets", handler.createSecret)
+	commands.POST("/providers/:provider/tests", handler.testProvider)
+	commands.POST("/notifications/read-all", handler.readAllNotifications)
+	commands.POST("/notifications/:id/read", handler.readNotification)
 	commands.POST("/incidents/:id/investigations", handler.startInvestigation)
 	commands.POST("/incidents/:id/close", handler.closeIncident)
 	commands.POST("/remediation-plans/:id/decisions", handler.decideRemediation)
@@ -510,6 +544,7 @@ func (h *Handler) problemResponse(c *gin.Context, status int, code, detail strin
 		Code:      code,
 		RequestID: requestID,
 		TraceID:   traceID,
+		NextSteps: problemNextSteps(code),
 	}
 	body, err := json.Marshal(problem)
 	if err != nil {
@@ -521,26 +556,43 @@ func (h *Handler) problemResponse(c *gin.Context, status int, code, detail strin
 
 func problemTitle(code string) string {
 	switch code {
-	case "INVALID_PUBLIC_ID", "INVALID_CURSOR", "INVALID_EVENT_CURSOR", "INVALID_FILTER", "INVALID_QUERY", "INVALID_REQUEST", "IDEMPOTENCY_KEY_REQUIRED", "EXPECTED_VERSION_REQUIRED", "EXPECTED_HASH_REQUIRED", "REQUEST_TOO_LARGE":
+	case "INVALID_PUBLIC_ID", "INVALID_CURSOR", "INVALID_EVENT_CURSOR", "INVALID_FILTER", "INVALID_QUERY", "INVALID_REQUEST", "INVALID_CONFIGURATION", "INVALID_PROVIDER", "IDEMPOTENCY_KEY_REQUIRED", "EXPECTED_VERSION_REQUIRED", "EXPECTED_HASH_REQUIRED", "REQUEST_TOO_LARGE":
 		return "Invalid request"
 	case "UNSUPPORTED_MEDIA_TYPE":
 		return "Unsupported media type"
 	case "COMMAND_FORBIDDEN", "ORIGIN_REQUIRED", "ORIGIN_FORBIDDEN":
 		return "Forbidden"
-	case "RESOURCE_NOT_FOUND", "ROUTE_NOT_FOUND":
+	case "RESOURCE_NOT_FOUND", "ROUTE_NOT_FOUND", "SETTINGS_RESOURCE_NOT_FOUND", "NOTIFICATION_NOT_FOUND":
 		return "Resource not found"
-	case "IDEMPOTENCY_KEY_REUSED", "STALE_EXPECTATION", "COMMAND_CONFLICT":
+	case "IDEMPOTENCY_KEY_REUSED", "STALE_EXPECTATION", "STALE_VALIDATION", "VALIDATION_EXPIRED", "COMMAND_CONFLICT":
 		return "Command conflict"
-	case "INVALID_TRANSITION":
+	case "INVALID_TRANSITION", "VALIDATION_FAILED":
 		return "Invalid transition"
 	case "NOT_IMPLEMENTED":
 		return "Not implemented"
 	case "RATE_LIMITED":
 		return "Rate limit exceeded"
-	case "QUERY_UNAVAILABLE", "COMMAND_UNAVAILABLE":
+	case "QUERY_UNAVAILABLE", "COMMAND_UNAVAILABLE", "SETTINGS_UNAVAILABLE", "NOTIFICATIONS_UNAVAILABLE":
 		return "Service unavailable"
 	default:
 		return "Internal error"
+	}
+}
+
+func problemNextSteps(code string) []string {
+	switch code {
+	case "STALE_VALIDATION", "VALIDATION_EXPIRED":
+		return []string{"重新验证当前配置草稿", "确认 validation_id 与未修改的草稿匹配后再次应用"}
+	case "VALIDATION_FAILED", "INVALID_CONFIGURATION":
+		return []string{"检查响应中的字段错误", "修正配置或 Provider 状态后重新验证"}
+	case "SETTINGS_UNAVAILABLE", "NOTIFICATIONS_UNAVAILABLE", "QUERY_UNAVAILABLE", "COMMAND_UNAVAILABLE":
+		return []string{"检查 Bootstrap diagnostics 与 Provider health", "确认 MySQL、API 和 worker 均已就绪后重试"}
+	case "INVALID_PROVIDER":
+		return []string{"使用 Settings 返回的 Provider identity", "确认路径 Provider 与请求配置一致"}
+	case "RESOURCE_NOT_FOUND", "SETTINGS_RESOURCE_NOT_FOUND", "NOTIFICATION_NOT_FOUND":
+		return []string{"刷新当前 Workspace 数据", "确认 Context Link 或 public UUID 仍然有效"}
+	default:
+		return []string{"根据 code 修正请求后重试", "使用 request_id 和 trace_id 定位对应日志"}
 	}
 }
 

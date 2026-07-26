@@ -7,6 +7,7 @@
     "images",
     "commonEnv",
     "database",
+    "data",
     "mysql",
     "webhook",
     "api",
@@ -35,6 +36,30 @@
         "api": { "$ref": "#/definitions/mysqlIdentity" },
         "worker": { "$ref": "#/definitions/mysqlIdentity" },
         "migrate": { "$ref": "#/definitions/mysqlIdentity" }
+      }
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mountPath", "dataDir", "persistence"],
+      "properties": {
+        "mountPath": { "$ref": "#/definitions/absolutePath" },
+        "dataDir": { "$ref": "#/definitions/absolutePath" },
+        "persistence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["existingClaim", "size", "storageClassName"],
+          "properties": {
+            "existingClaim": {
+              "oneOf": [
+                { "type": "string", "maxLength": 0 },
+                { "$ref": "#/definitions/kubernetesName" }
+              ]
+            },
+            "size": { "type": "string", "pattern": "^[1-9][0-9]*(Mi|Gi|Ti)$" },
+            "storageClassName": { "type": "string" }
+          }
+        }
       }
     },
     "mysql": {

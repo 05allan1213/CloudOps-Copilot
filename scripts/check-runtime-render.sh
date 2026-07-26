@@ -38,6 +38,7 @@ expect_one() {
 expect_one Deployment cloudops-api
 expect_one Deployment cloudops-worker
 expect_one StatefulSet mysql
+expect_one PersistentVolumeClaim cloudops-data
 expect_one Service cloudops-api
 expect_one Service cloudops-api-management
 expect_one Service cloudops-worker-management
@@ -54,6 +55,11 @@ expect_one Service cloudops-worker-management
 
 [[ "$(jq -r '[.[] | select(.kind == "Deployment" and .metadata.name == "cloudops-worker") | .spec.template.spec | select(.automountServiceAccountToken == false)] | length' "${objects}")" == "1" ]] || {
   printf 'FAIL: standby Worker must not mount a Kubernetes token\n' >&2
+  exit 1
+}
+
+[[ "$(jq -r '[.[] | select(.kind == "Deployment" and (.metadata.name == "cloudops-api" or .metadata.name == "cloudops-worker")) | .spec.template.spec | select(.securityContext.runAsUser == 65532 and .securityContext.runAsGroup == 65532 and .securityContext.fsGroup == 65532) | select(any(.volumes[]; .name == "operational-data" and .persistentVolumeClaim.claimName == "cloudops-data")) | select(any(.containers[0].volumeMounts[]; .name == "operational-data" and .mountPath == "/var/lib/cloudops"))] | length' "${objects}")" == "2" ]] || {
+  printf 'FAIL: API and Worker must share the private operational-data PVC as uid/gid 65532\n' >&2
   exit 1
 }
 

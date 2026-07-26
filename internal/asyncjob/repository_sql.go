@@ -77,23 +77,24 @@ type scanner interface {
 
 func scanTask(row scanner) (Task, error) {
 	var (
-		task                Task
-		payload             []byte
-		checkpointSchema    sql.NullInt64
-		checkpointVersion   sql.NullInt64
-		checkpointHash      sql.NullString
-		checkpoint          []byte
-		logicalOperationKey sql.NullString
-		leaseOwner          sql.NullString
-		leaseExpiresAt      sql.NullTime
-		heartbeatAt         sql.NullTime
-		lastErrorCode       sql.NullString
-		lastErrorSummary    sql.NullString
-		startedAt           sql.NullTime
-		completedAt         sql.NullTime
-		deadAt              sql.NullTime
-		cancelledAt         sql.NullTime
-		replayedFromTaskID  sql.NullInt64
+		task                    Task
+		payload                 []byte
+		checkpointSchema        sql.NullInt64
+		checkpointVersion       sql.NullInt64
+		checkpointHash          sql.NullString
+		checkpoint              []byte
+		logicalOperationKey     sql.NullString
+		leaseOwner              sql.NullString
+		leaseExpiresAt          sql.NullTime
+		heartbeatAt             sql.NullTime
+		configurationObservedAt sql.NullTime
+		lastErrorCode           sql.NullString
+		lastErrorSummary        sql.NullString
+		startedAt               sql.NullTime
+		completedAt             sql.NullTime
+		deadAt                  sql.NullTime
+		cancelledAt             sql.NullTime
+		replayedFromTaskID      sql.NullInt64
 	)
 	err := row.Scan(
 		&task.ID,
@@ -108,6 +109,8 @@ func scanTask(row scanner) (Task, error) {
 		&task.ExpectedSubjectVersion,
 		&task.PayloadSchemaVersion,
 		&payload,
+		&task.ConfigurationRevisionID,
+		&configurationObservedAt,
 		&checkpointSchema,
 		&checkpointVersion,
 		&checkpointHash,
@@ -140,6 +143,7 @@ func scanTask(row scanner) (Task, error) {
 		return Task{}, err
 	}
 	task.Payload = payload
+	task.ConfigurationObservedAt = timePointer(configurationObservedAt)
 	task.CheckpointSchema = uint32(checkpointSchema.Int64)
 	task.CheckpointVersion = uint64(checkpointVersion.Int64)
 	task.CheckpointHash = checkpointHash.String
@@ -172,8 +176,8 @@ func timePointer(value sql.NullTime) *time.Time {
 func insertAttempt(ctx context.Context, tx *sql.Tx, task Task, claimKind string) error {
 	result, err := tx.ExecContext(ctx, `INSERT INTO async_task_attempts (
 public_id, task_id, attempt, lease_owner, lease_generation, claim_kind,
-expected_subject_version, status, started_at, last_heartbeat_at, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, 'running', NOW(6), NOW(6), NOW(6))`, uuid.NewString(), task.ID, task.Attempt, task.LeaseOwner, task.LeaseGeneration, claimKind, task.ExpectedSubjectVersion)
+configuration_revision_id, expected_subject_version, status, started_at, last_heartbeat_at, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'running', NOW(6), NOW(6), NOW(6))`, uuid.NewString(), task.ID, task.Attempt, task.LeaseOwner, task.LeaseGeneration, claimKind, task.ConfigurationRevisionID, task.ExpectedSubjectVersion)
 	if err != nil {
 		return fmt.Errorf("insert async task attempt: %w", err)
 	}
@@ -560,11 +564,12 @@ FOR UPDATE`, source.DedupeKey, nextGeneration))
 	result, err := tx.ExecContext(ctx, `INSERT INTO async_tasks (
 public_id, incident_id, cycle_no, queue, task_type, subject_type, subject_id,
 transition, expected_subject_version, payload_schema_version, payload_json,
+configuration_revision_id,
 checkpoint_schema_version, checkpoint_version, checkpoint_hash, checkpoint_json,
 dedupe_key, replay_generation, logical_operation_key, migrated_legacy, migrated_legacy_context, status, priority,
 available_at, attempt, max_attempts, lease_generation, replayed_from_task_id,
 created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?,
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?,
           NOW(6), 0, ?, 0, ?, NOW(6), NOW(6))
 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
 		publicID,
@@ -578,6 +583,7 @@ ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
 		source.ExpectedSubjectVersion,
 		source.PayloadSchemaVersion,
 		source.Payload,
+		source.ConfigurationRevisionID,
 		nullUint32(source.CheckpointSchema),
 		source.CheckpointVersion,
 		nullString(source.CheckpointHash),

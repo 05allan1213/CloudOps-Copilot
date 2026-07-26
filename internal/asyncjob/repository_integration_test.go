@@ -729,10 +729,13 @@ terminal_at, version, status, cycle_no, migrated_legacy, migrated_legacy_context
 		poisonResult, err := db.ExecContext(ctx, `INSERT INTO async_tasks (
 public_id, incident_id, cycle_no, queue, task_type, subject_type, subject_id,
 transition, expected_subject_version, payload_schema_version, payload_json,
+configuration_revision_id,
 dedupe_key, replay_generation, migrated_legacy, migrated_legacy_context, status, priority, available_at, attempt,
 max_attempts, lease_generation, created_at, updated_at
 ) VALUES (?, ?, 1, 'investigate', 'investigation.advance', 'incident', ?,
-          'investigation.start', 1, 1, JSON_OBJECT(), ?, 0, TRUE, TRUE, 'ready', 100,
+          'investigation.start', 1, 1, JSON_OBJECT(),
+          (SELECT configuration_revision_id FROM active_configuration WHERE singleton_id = 1),
+          ?, 0, TRUE, TRUE, 'ready', 100,
           NOW(6), 1, 1, 0, NOW(6), NOW(6))`,
 			poisonPublicID, importedID, importedID, integrationHash("imported-poison:"+poisonPublicID))
 		if err != nil {
@@ -1165,9 +1168,12 @@ func assertAsyncTaskContractRejected(t *testing.T, ctx context.Context, db *sql.
 	_, err = tx.ExecContext(ctx, `INSERT INTO async_tasks (
 public_id, incident_id, cycle_no, queue, task_type, subject_type, subject_id,
 transition, expected_subject_version, payload_schema_version, payload_json,
+configuration_revision_id,
 dedupe_key, replay_generation, status, priority, available_at, attempt,
 max_attempts, lease_generation, created_at, updated_at
-) VALUES (?, ?, 1, ?, ?, ?, ?, ?, 1, 1, JSON_OBJECT(), ?, 0, 'ready', 0,
+) VALUES (?, ?, 1, ?, ?, ?, ?, ?, 1, 1, JSON_OBJECT(),
+          (SELECT configuration_revision_id FROM active_configuration WHERE singleton_id = 1),
+          ?, 0, 'ready', 0,
           NOW(6), 0, 3, 0, NOW(6), NOW(6))`, uuid.NewString(), incidentID, queue, taskType, subjectType, incidentID, transition, integrationHash(identity))
 	if err == nil {
 		t.Fatalf("database accepted invalid async task contract %s/%s/%s/%s", queue, taskType, subjectType, transition)

@@ -48,6 +48,14 @@ database:
     secretName: cloudops-migrate-database
     passwordKey: MYSQL_PASSWORD
 
+data:
+  mountPath: /var/lib/cloudops
+  dataDir: /var/lib/cloudops/data
+  persistence:
+    existingClaim: ""
+    size: 1Gi
+    storageClassName: ""
+
 mysql:
   enabled: true
   image:

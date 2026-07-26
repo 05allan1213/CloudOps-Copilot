@@ -9,6 +9,247 @@ info:
 servers:
   - url: /
 paths:
+  /api/v1/bootstrap:
+    get:
+      operationId: getBootstrap
+      responses:
+        "200":
+          description: Product capabilities and active operational state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BootstrapSnapshot" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/scopes:
+    get:
+      operationId: listOperationalScopes
+      responses:
+        "200":
+          description: Active Operational Scope page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/OperationalScope" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/overview:
+    get:
+      operationId: getOverview
+      responses:
+        "200":
+          description: Overview foundation state
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [bootstrap, unread_notifications]
+                properties:
+                  bootstrap: { $ref: "#/components/schemas/BootstrapSnapshot" }
+                  unread_notifications: { type: integer, minimum: 0 }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/settings:
+    get:
+      operationId: getSettings
+      responses:
+        "200":
+          description: Bootstrap diagnostics and Operational Configuration
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SettingsSnapshot" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/settings/validate:
+    post:
+      operationId: validateSettings
+      description: Local Owner validation of a typed draft and bounded Provider construction.
+      parameters:
+        - { $ref: "#/components/parameters/Origin" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ConfigurationDraft" }
+      responses:
+        "200":
+          description: Persisted validation identity and results
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConfigurationValidation" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/configuration-revisions:
+    get:
+      operationId: listConfigurationRevisions
+      parameters: [{ $ref: "#/components/parameters/Limit" }]
+      responses:
+        "200":
+          description: Immutable configuration revision history
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/ConfigurationRevision" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: createConfigurationRevision
+      description: Local Owner atomic activation of the exact validated draft.
+      parameters:
+        - { $ref: "#/components/parameters/Origin" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ApplyConfiguration" }
+      responses:
+        "201":
+          description: Active immutable configuration revision
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConfigurationRevision" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/secrets:
+    post:
+      operationId: createSecretVersion
+      description: Local Owner write-only secret version creation; the value is never returned.
+      parameters:
+        - { $ref: "#/components/parameters/Origin" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SecretInput" }
+      responses:
+        "201":
+          description: Secret metadata without the submitted value
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SecretVersion" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/providers/{provider}/tests:
+    parameters:
+      - name: provider
+        in: path
+        required: true
+        schema: { $ref: "#/components/schemas/ProviderIdentity" }
+    post:
+      operationId: testProvider
+      description: Local Owner bounded connection test for the submitted Provider configuration.
+      parameters:
+        - { $ref: "#/components/parameters/Origin" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProviderTestRequest" }
+      responses:
+        "200":
+          description: Truthful Provider availability result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProviderResult" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/storage-status:
+    get:
+      operationId: getStorageStatus
+      responses:
+        "200":
+          description: Retention, capacity, and latest backup state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StorageStatus" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/notifications:
+    get:
+      operationId: listNotifications
+      parameters: [{ $ref: "#/components/parameters/Cursor" }, { $ref: "#/components/parameters/Limit" }]
+      responses:
+        "200":
+          description: Durable Owner Notification Inbox
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotificationPage" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/notifications/{id}/read:
+    parameters:
+      - { $ref: "#/components/parameters/PublicID" }
+    post:
+      operationId: readNotification
+      description: Local Owner marks one durable notification read.
+      parameters:
+        - { $ref: "#/components/parameters/Origin" }
+      responses:
+        "204": { description: Notification marked read }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/notifications/read-all:
+    post:
+      operationId: readAllNotifications
+      description: Local Owner marks unread notifications through an optional current cursor.
+      parameters:
+        - { $ref: "#/components/parameters/Origin" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReadAllNotifications" }
+      responses:
+        "200":
+          description: Number of notifications updated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [updated]
+                properties:
+                  updated: { type: integer, minimum: 0 }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/notification-events:
+    get:
+      operationId: streamNotificationEvents
+      parameters:
+        - name: Last-Event-ID
+          in: header
+          schema: { type: string, format: uuid, maxLength: 36 }
+      responses:
+        "200":
+          description: Owner Notification stream with resumable public UUID cursor
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
   /api/v1/incidents:
     get:
       operationId: listIncidents
@@ -254,6 +495,279 @@ components:
       required: true
       schema: { type: string, format: uri, maxLength: 2048 }
   schemas:
+    ProviderIdentity:
+      type: string
+      enum: [llm, kubernetes, prometheus, alertmanager, elasticsearch, tempo, github, argocd]
+    GeneralConfiguration:
+      type: object
+      additionalProperties: false
+      required: [query_max_lookback_seconds, query_max_results, telemetry_retention_days, browser_notifications_enabled, automatic_escalation_enabled]
+      properties:
+        query_max_lookback_seconds: { type: integer, minimum: 60, maximum: 2592000 }
+        query_max_results: { type: integer, minimum: 1, maximum: 10000 }
+        telemetry_retention_days: { type: integer, minimum: 1, maximum: 365 }
+        browser_notifications_enabled: { type: boolean }
+        automatic_escalation_enabled: { type: boolean, const: false }
+    OperationalScope:
+      type: object
+      additionalProperties: false
+      required: [name, cluster_id, environment, namespaces]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, minLength: 2, maxLength: 128 }
+        cluster_id: { type: string, minLength: 1, maxLength: 128 }
+        environment: { type: string, minLength: 1, maxLength: 64 }
+        namespaces:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { type: string, minLength: 1, maxLength: 253 }
+        configuration_revision_id: { type: string, format: uuid }
+        configuration_revision_hash: { $ref: "#/components/schemas/SHA256" }
+    ProviderConfiguration:
+      type: object
+      additionalProperties: false
+      required: [provider, enabled, endpoint, model, timeout_ms, max_results, context_link_base]
+      properties:
+        provider: { $ref: "#/components/schemas/ProviderIdentity" }
+        enabled: { type: boolean }
+        endpoint: { type: string, maxLength: 2048 }
+        model: { type: string, maxLength: 255 }
+        timeout_ms: { type: integer, minimum: 1000, maximum: 60000 }
+        max_results: { type: integer, minimum: 1, maximum: 10000 }
+        context_link_base: { type: string, maxLength: 2048 }
+    SecretReference:
+      type: object
+      additionalProperties: false
+      required: [provider, purpose, secret_version_id]
+      properties:
+        provider: { $ref: "#/components/schemas/ProviderIdentity" }
+        purpose: { type: string, pattern: "^[a-z][a-z0-9_]{0,63}$" }
+        secret_version_id: { type: string, format: uuid }
+        state: { type: string, enum: [configured, invalid] }
+        fingerprint: { type: string, pattern: "^[0-9a-f]{20}$" }
+    ConfigurationDraft:
+      type: object
+      additionalProperties: false
+      required: [summary, general, scope, providers, secret_references]
+      properties:
+        summary: { type: string, minLength: 3, maxLength: 255 }
+        general: { $ref: "#/components/schemas/GeneralConfiguration" }
+        scope: { $ref: "#/components/schemas/OperationalScope" }
+        providers:
+          type: array
+          minItems: 8
+          maxItems: 8
+          items: { $ref: "#/components/schemas/ProviderConfiguration" }
+        secret_references:
+          type: array
+          items: { $ref: "#/components/schemas/SecretReference" }
+    ActivationStatus:
+      type: object
+      additionalProperties: false
+      required: [task_id, revision_id, status]
+      properties:
+        task_id: { type: string, format: uuid }
+        revision_id: { type: string, format: uuid }
+        status: { type: string, enum: [ready, running, succeeded, failed] }
+        worker_id: { type: string, maxLength: 128 }
+        observed_hash: { $ref: "#/components/schemas/SHA256" }
+        observed_at: { type: string, format: date-time }
+        last_error: { type: string, maxLength: 1024 }
+    ConfigurationRevision:
+      type: object
+      additionalProperties: false
+      required: [id, number, hash, summary, general, scope, providers, secret_references, created_by, created_at, active]
+      properties:
+        id: { type: string, format: uuid }
+        number: { type: integer, minimum: 1 }
+        hash: { $ref: "#/components/schemas/SHA256" }
+        summary: { type: string, maxLength: 255 }
+        general: { $ref: "#/components/schemas/GeneralConfiguration" }
+        scope: { $ref: "#/components/schemas/OperationalScope" }
+        providers:
+          type: array
+          items: { $ref: "#/components/schemas/ProviderConfiguration" }
+        secret_references:
+          type: array
+          items: { $ref: "#/components/schemas/SecretReference" }
+        created_by: { type: string, maxLength: 64 }
+        created_at: { type: string, format: date-time }
+        active: { type: boolean }
+        worker_boundary: { $ref: "#/components/schemas/ActivationStatus" }
+    ProviderResult:
+      type: object
+      additionalProperties: false
+      required: [provider, state, detail]
+      properties:
+        provider: { $ref: "#/components/schemas/ProviderIdentity" }
+        state: { type: string, enum: [available, partial, unavailable, disabled, not_configured] }
+        detail: { type: string, maxLength: 1024 }
+        checked_at: { type: string, format: date-time }
+    ProviderHealth:
+      allOf:
+        - { $ref: "#/components/schemas/ProviderResult" }
+        - type: object
+          required: [updated_at]
+          properties:
+            configuration_revision_id: { type: string, format: uuid }
+            updated_at: { type: string, format: date-time }
+    ConfigurationValidation:
+      type: object
+      additionalProperties: false
+      required: [id, draft_hash, valid, errors, provider_results, created_at, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        draft_hash: { $ref: "#/components/schemas/SHA256" }
+        valid: { type: boolean }
+        errors:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [field, code, message]
+            properties:
+              field: { type: string }
+              code: { type: string }
+              message: { type: string }
+        provider_results:
+          type: array
+          items: { $ref: "#/components/schemas/ProviderResult" }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+    BootstrapDiagnostics:
+      type: object
+      additionalProperties: false
+      required: [listen_boundary, mysql_database, data_directory, worker_management_target, lifecycle]
+      properties:
+        listen_boundary: { type: string }
+        mysql_database: { type: string }
+        data_directory: { type: string }
+        worker_management_target: { type: string }
+        lifecycle: { type: string }
+    SettingsSnapshot:
+      type: object
+      additionalProperties: false
+      required: [bootstrap, active_revision, history, provider_health]
+      properties:
+        bootstrap: { $ref: "#/components/schemas/BootstrapDiagnostics" }
+        active_revision: { $ref: "#/components/schemas/ConfigurationRevision" }
+        history:
+          type: array
+          items: { $ref: "#/components/schemas/ConfigurationRevision" }
+        provider_health:
+          type: array
+          items: { $ref: "#/components/schemas/ProviderHealth" }
+    BootstrapSnapshot:
+      type: object
+      additionalProperties: false
+      required: [product, contract, active_revision, active_scope, provider_health, scenario_state, capabilities, collected_at]
+      properties:
+        product: { type: string, const: CloudOps }
+        contract: { type: string, const: V1 }
+        active_revision: { $ref: "#/components/schemas/ConfigurationRevision" }
+        active_scope: { $ref: "#/components/schemas/OperationalScope" }
+        provider_health:
+          type: array
+          items: { $ref: "#/components/schemas/ProviderHealth" }
+        scenario_state: { type: string }
+        capabilities:
+          type: array
+          items: { type: string }
+        collected_at: { type: string, format: date-time }
+    ApplyConfiguration:
+      type: object
+      additionalProperties: false
+      required: [validation_id, draft]
+      properties:
+        validation_id: { type: string, format: uuid }
+        draft: { $ref: "#/components/schemas/ConfigurationDraft" }
+    SecretInput:
+      type: object
+      additionalProperties: false
+      required: [provider, purpose, value]
+      properties:
+        provider: { $ref: "#/components/schemas/ProviderIdentity" }
+        purpose: { type: string, pattern: "^[a-z][a-z0-9_]{0,63}$" }
+        value: { type: string, minLength: 1, maxLength: 65536, writeOnly: true }
+    SecretVersion:
+      type: object
+      additionalProperties: false
+      required: [id, provider, purpose, state, fingerprint, created_at, referenced_by]
+      properties:
+        id: { type: string, format: uuid }
+        provider: { $ref: "#/components/schemas/ProviderIdentity" }
+        purpose: { type: string }
+        state: { type: string, enum: [configured, invalid] }
+        fingerprint: { type: string, pattern: "^[0-9a-f]{20}$" }
+        created_at: { type: string, format: date-time }
+        referenced_by:
+          type: array
+          items: { type: string, format: uuid }
+    ProviderTestRequest:
+      type: object
+      additionalProperties: false
+      required: [configuration, secret_references]
+      properties:
+        configuration: { $ref: "#/components/schemas/ProviderConfiguration" }
+        secret_references:
+          type: array
+          items: { $ref: "#/components/schemas/SecretReference" }
+    StorageStatus:
+      type: object
+      additionalProperties: false
+      required: [database_tables, configuration_count, notification_count, secret_version_count, data_capacity_bytes, data_available_bytes, telemetry_retention_days]
+      properties:
+        database_tables: { type: integer, minimum: 0 }
+        configuration_count: { type: integer, minimum: 0 }
+        notification_count: { type: integer, minimum: 0 }
+        secret_version_count: { type: integer, minimum: 0 }
+        data_capacity_bytes: { type: integer, minimum: 0 }
+        data_available_bytes: { type: integer, minimum: 0 }
+        latest_backup_name: { type: string }
+        latest_backup_at: { type: string, format: date-time }
+        telemetry_retention_days: { type: integer, minimum: 1, maximum: 365 }
+    ContextLink:
+      type: object
+      additionalProperties: false
+      required: [workspace, path, query, operational_scope_id, external]
+      properties:
+        workspace: { type: string, enum: [overview, infrastructure, monitoring, alerts, logs, traces, agent, incidents, devops, settings] }
+        path: { type: string, pattern: "^/" }
+        query:
+          type: object
+          additionalProperties: { type: string }
+        operational_scope_id: { type: string, format: uuid }
+        external: { type: boolean, const: false }
+    OwnerNotification:
+      type: object
+      additionalProperties: false
+      required: [id, source_type, source_id, source_state, severity, reason, context_link, read, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        source_type: { type: string, maxLength: 64 }
+        source_id: { type: string, format: uuid }
+        source_state: { type: string, maxLength: 64 }
+        severity: { type: string, enum: [P1, P2, P3, info] }
+        reason: { type: string, maxLength: 2048 }
+        context_link: { $ref: "#/components/schemas/ContextLink" }
+        read: { type: boolean }
+        created_at: { type: string, format: date-time }
+    NotificationPage:
+      type: object
+      additionalProperties: false
+      required: [items, unread_count]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/OwnerNotification" }
+        next_cursor: { type: string, maxLength: 64 }
+        unread_count: { type: integer, minimum: 0 }
+    ReadAllNotifications:
+      type: object
+      additionalProperties: false
+      properties:
+        cursor: { type: string, maxLength: 64 }
     Incident:
       type: object
       additionalProperties: false
@@ -824,7 +1338,7 @@ components:
     Problem:
       type: object
       additionalProperties: false
-      required: [type, title, status, detail, instance, code, request_id, trace_id]
+      required: [type, title, status, detail, instance, code, request_id, trace_id, next_steps]
       properties:
         type: { type: string, format: uri-reference }
         title: { type: string }
@@ -834,6 +1348,10 @@ components:
         code: { type: string }
         request_id: { type: string }
         trace_id: { type: string }
+        next_steps:
+          type: array
+          minItems: 1
+          items: { type: string }
   responses:
     ResourcePage:
       description: Bounded resource page

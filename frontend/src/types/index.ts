@@ -7,4 +7,5 @@ export interface ProblemDetails {
   code: string;
   request_id: string;
   trace_id: string;
+  next_steps: string[];
 }

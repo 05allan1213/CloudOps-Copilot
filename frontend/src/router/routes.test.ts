@@ -3,23 +3,25 @@ import { describe, expect, it } from "vitest";
 import { appRoutes } from "./routes";
 
 describe("CloudOps product routes", () => {
-  it("registers only Incident Workbench and not-found routes", () => {
+  it("registers all ten Workspace routes and Incident deep links", () => {
     const paths = new Set(appRoutes.map((route) => route.path));
-    for (const path of ["/", "/incidents", "/incidents/:incidentId", "/:pathMatch(.*)*"]) {
+    for (const path of [
+      "/overview", "/infrastructure", "/monitoring", "/alerts", "/logs",
+      "/traces", "/agent", "/incidents", "/devops", "/settings",
+      "/incidents/:incidentId",
+    ]) {
       expect(paths.has(path), `${path} route missing`).toBe(true);
     }
-    expect(paths.size).toBe(4);
     expect(paths.has("/login")).toBe(false);
   });
 
-  it("makes the Incident Workbench the default product entry", () => {
-	const root = appRoutes.find((route) => route.path === "/");
-	expect(root?.redirect).toBe("/incidents");
+  it("makes Overview the default product entry", () => {
+    expect(appRoutes.find((route) => route.path === "/")?.redirect).toBe("/overview");
   });
 
   it("does not register removed legacy product routes", () => {
     const paths = new Set(appRoutes.map((route) => route.path));
-    for (const path of ["/copilot", "/diagnosis", "/actions", "/hosts", "/k8s", "/settings/alert-rules", "/settings/channels", "/settings/users", "/audit-logs"]) {
+    for (const path of ["/copilot", "/diagnosis", "/actions", "/hosts", "/k8s", "/settings/users", "/audit-logs"]) {
       expect(paths.has(path), `${path} must be removed`).toBe(false);
     }
   });

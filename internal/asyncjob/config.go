@@ -1,6 +1,7 @@
 package asyncjob
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -86,6 +87,19 @@ type RunnerConfig struct {
 	PollInterval time.Duration
 	DrainTimeout time.Duration
 	CancelWait   time.Duration
+	Boundary     Boundary
+}
+
+// Boundary binds immutable execution context after a task is claimed and
+// before its handler runs. It must not perform an external Provider call.
+type Boundary interface {
+	Bind(context.Context, Execution) (context.Context, error)
+}
+
+type BoundaryFunc func(context.Context, Execution) (context.Context, error)
+
+func (f BoundaryFunc) Bind(ctx context.Context, execution Execution) (context.Context, error) {
+	return f(ctx, execution)
 }
 
 func (c *RunnerConfig) applyDefaults() {

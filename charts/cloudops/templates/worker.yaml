@@ -30,6 +30,10 @@ spec:
       terminationGracePeriodSeconds: 65
       securityContext:
         runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -66,6 +70,8 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            - name: CLOUDOPS_DATA_DIR
+              value: {{ .Values.data.dataDir | quote }}
             - name: MYSQL_USER
               value: {{ .Values.database.worker.user | quote }}
             - name: MYSQL_PASSWORD
@@ -106,6 +112,8 @@ spec:
             {{- end }}
             - name: worker-tmp
               mountPath: /tmp
+            - name: operational-data
+              mountPath: {{ .Values.data.mountPath }}
       volumes:
         {{- if gt (len .Values.worker.credentials.files) 0 }}
         - name: worker-credentials
@@ -119,6 +127,9 @@ spec:
         {{- end }}
         - name: worker-tmp
           emptyDir: {}
+        - name: operational-data
+          persistentVolumeClaim:
+            claimName: {{ include "cloudops.dataClaimName" . }}
 ---
 apiVersion: v1
 kind: Service

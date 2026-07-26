@@ -20,8 +20,8 @@ export default defineConfig({
     proxy: {
       "/api": {
         target: apiProxyTarget,
-        // Keep the browser origin and Host aligned so the V3 same-origin
-        // command guard can validate proxied requests in local development.
+        // Keep the browser origin and Host aligned so the same-origin command
+        // guard can validate proxied requests in local development.
         changeOrigin: false,
       },
       "/healthz": {

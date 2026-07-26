@@ -1,14 +1,14 @@
 <script setup lang="ts">
 import { computed, markRaw, type Component } from "vue";
 import {
-  CircleCheckFilled,
-  CircleCloseFilled,
-  Clock,
-  InfoFilled,
-  QuestionFilled,
-  RemoveFilled,
-  WarningFilled,
-} from "@element-plus/icons-vue";
+	CircleCheck as CircleCheckFilled,
+	CircleHelp as QuestionFilled,
+	CircleMinus as RemoveFilled,
+	CircleX as CircleCloseFilled,
+	Clock,
+	Info as InfoFilled,
+	TriangleAlert as WarningFilled,
+} from "lucide-vue-next";
 
 import { humanizeCode, statusTone, type StatusTone } from "../../models/incidents";
 
