@@ -25,4 +25,10 @@ describe("CloudOps product routes", () => {
       expect(paths.has(path), `${path} must be removed`).toBe(false);
     }
   });
+
+  it("uses native Logs and Traces Workspace components", () => {
+    const placeholder = appRoutes.find((route) => route.path === "/alerts")?.component;
+    expect(appRoutes.find((route) => route.path === "/logs")?.component).not.toBe(placeholder);
+    expect(appRoutes.find((route) => route.path === "/traces")?.component).not.toBe(placeholder);
+  });
 });

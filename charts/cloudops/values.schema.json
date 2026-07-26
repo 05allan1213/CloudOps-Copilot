@@ -199,7 +199,7 @@
         "stack": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["enabled", "clusterID", "environment", "scrapeInterval", "scrapeTimeout", "prometheus", "grafana"],
+          "required": ["enabled", "clusterID", "environment", "scrapeInterval", "scrapeTimeout", "prometheus", "grafana", "elasticsearch", "filebeat", "tempo", "otelCollector"],
           "properties": {
             "enabled": { "type": "boolean" },
             "clusterID": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
@@ -229,6 +229,55 @@
                 "anonymousRole": { "type": "string", "enum": ["Viewer", "Editor"] },
                 "resources": { "$ref": "#/definitions/resources" }
               }
+            },
+            "elasticsearch": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["image", "port", "jvmHeap", "retentionDays", "rolloverMaxSize", "persistence", "resources"],
+              "properties": {
+                "image": { "$ref": "#/definitions/image" },
+                "port": { "type": "integer", "enum": [9200] },
+                "jvmHeap": { "type": "string", "pattern": "^[1-9][0-9]*(m|g)$" },
+                "retentionDays": { "type": "integer", "minimum": 1, "maximum": 30 },
+                "rolloverMaxSize": { "type": "string", "pattern": "^[1-9][0-9]*(kb|mb|gb)$" },
+                "persistence": { "$ref": "#/definitions/persistence" },
+                "resources": { "$ref": "#/definitions/resources" }
+              }
+            },
+            "filebeat": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["image", "resources"],
+              "properties": {
+                "image": { "$ref": "#/definitions/image" },
+                "resources": { "$ref": "#/definitions/resources" }
+              }
+            },
+            "tempo": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["image", "httpPort", "otlpGRPCPort", "retention", "persistence", "resources"],
+              "properties": {
+                "image": { "$ref": "#/definitions/image" },
+                "httpPort": { "type": "integer", "enum": [3200] },
+                "otlpGRPCPort": { "type": "integer", "enum": [4317] },
+                "retention": { "$ref": "#/definitions/duration" },
+                "persistence": { "$ref": "#/definitions/persistence" },
+                "resources": { "$ref": "#/definitions/resources" }
+              }
+            },
+            "otelCollector": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["image", "grpcPort", "httpPort", "healthPort", "memoryLimitMiB", "resources"],
+              "properties": {
+                "image": { "$ref": "#/definitions/image" },
+                "grpcPort": { "type": "integer", "enum": [4317] },
+                "httpPort": { "type": "integer", "enum": [4318] },
+                "healthPort": { "type": "integer", "enum": [13133] },
+                "memoryLimitMiB": { "type": "integer", "minimum": 64, "maximum": 2048 },
+                "resources": { "$ref": "#/definitions/resources" }
+              }
             }
           }
         }
@@ -239,6 +288,15 @@
     "nonEmptyString": { "type": "string", "minLength": 1 },
     "absolutePath": { "type": "string", "pattern": "^/[^[:space:]]+$" },
     "duration": { "type": "string", "pattern": "^[1-9][0-9]*(ms|s|m|h)$" },
+    "persistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["size", "storageClassName"],
+      "properties": {
+        "size": { "type": "string", "pattern": "^[1-9][0-9]*(Mi|Gi|Ti)$" },
+        "storageClassName": { "type": "string" }
+      }
+    },
     "kubernetesName": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", "maxLength": 63 },
     "mysqlName": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$" },
     "image": {

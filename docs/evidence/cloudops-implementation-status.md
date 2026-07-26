@@ -6,7 +6,7 @@
 >
 > Task 0 开工基线：`10a1f2b659b4ee9adb1a3efcb7725f83504b9d1f`
 >
-> 最后更新：2026-07-26 22:27（Asia/Shanghai）
+> 最后更新：2026-07-27 03:12（Asia/Shanghai）
 
 ## 状态总览
 
@@ -16,9 +16,9 @@
 | 任务 1：平台 Shell 与 Settings | `DONE_WITH_NOT_RUN` | 任务 0 API、数据和生命周期契约 | Shell、Settings、revision、secret、notification 与 Worker activation 已完成真实联调；外部 Provider 调用明确 `NOT RUN` |
 | 任务 2：Infrastructure 与 Atlas | `DONE_WITH_NOT_RUN` | 任务 0；任务 1 Scope/Shell | 真实 Kubernetes typed reader、Infrastructure、Operations Atlas、多 Scope contract 与 Context Link 已完成；第二真实集群及 MCP 维度明确 `NOT RUN` |
 | 任务 3：Monitoring | `DONE_WITH_NOT_RUN` | 任务 0；任务 1 Provider/Scope/Query | 真实 UI -> `/api/v1` -> Prometheus、bounded query、Definition/Execution/Authorization、审计、Workspace 与精确 Context Link 已完成；外部环境与真实 Agent runtime 明确 `NOT RUN` |
-| 任务 4：Logs 与 Traces | `READY` | 任务 1；任务 2/3 context contract | 任务 2 resource 与任务 3 query/resource/time Context Link 均已落地 |
+| 任务 4：Logs 与 Traces | `DONE_WITH_NOT_RUN` | 任务 1；任务 2/3 context contract | 真实 UI -> `/api/v1` -> Elasticsearch/Tempo、Kubernetes correlation、Evidence 与不可变 Context Snapshot 已完成；缺少的专用 MCP 与外部控制台明确 `NOT RUN` |
 | 任务 5：Alerts | `READY` | 任务 0；任务 1 notification/Settings/Context Link | notification、Settings 与 Context Link 公共契约已落地 |
-| 任务 6：Agent | `BLOCKED` | 任务 1；任务 2-5 真实 Evidence source | 任务 2/3 已完成；任务 4/5 的真实 Evidence source 尚未完成 |
+| 任务 6：Agent | `BLOCKED` | 任务 1；任务 2-5 真实 Evidence source | 任务 2/3/4 已完成；任务 5 的真实 Alert Evidence source 尚未完成 |
 | 任务 7：Incidents 与 Verify | `BLOCKED` | 任务 5、6；任务 2-4 Context Link | 前置领域尚未完成 |
 | 任务 8：Operations 与 DevOps | `BLOCKED` | 任务 6；Incident 链另需任务 7 | authority contract 尚未完成 |
 | 任务 9：Scenario 与最终收敛 | `BLOCKED` | 任务 0-8 本地必需能力 | 前置任务尚未完成 |
@@ -357,3 +357,85 @@ Chrome 首次连接 `18081` 时，命令执行器已经回收 `local-up` 的后�
 - 真实 Agent runtime/LLM 发起的 PromQL：Agent 属于任务 6，当前未启用真实模型调用；共享 bounded contract、浏览器 actor 隔离、一次性授权及撤销已由实现、自动化测试和真实 Owner UI 验证，但不冒充 Agent runtime PASS。
 - 长时间运行查询的 live cancellation：本地查询在取消操作前已完成；cancellation API、持久状态与 Worker context 已实现并通过完整编译/静态门禁，但真实 in-flight cancellation 为 `NOT RUN`。
 - hosted/staging/production、外部 Prometheus、PR、push、tag、默认分支：`NOT RUN`。
+
+## 任务 4：Logs 与 Traces
+
+### 实施结果
+
+- 复用了任务 1 的 Configuration Revision、Operational Scope、Provider health、bounded query、Worker gateway、Shell 与通知合同；任务 2 的 Kubernetes resource identity 和任务 3 的绝对 UTC time range/query execution 可无损进入 Logs、Traces 与 Workload。
+- Worker 持有 Elasticsearch 与 Tempo 只读 adapter；API 只调用固定内部 gateway。浏览器不接触 Provider credential，不直连 Elasticsearch，也不把完整日志或 Trace 数据复制到 MySQL。
+- Logs Workspace 实现 guided/expert query、固定 bounds、histogram、field projection、bounded tail、查询历史、虚拟化长列表、`trace_id` 关联与精确 Kibana link 生成合同。
+- Traces Workspace 实现 bounded TraceQL search、Trace detail、waterfall/span tree、critical path、字段检查、查询历史、Kubernetes resource correlation 与精确 Tempo link。
+- 只有 Owner 显式选择的有界 log/span 片段保存为 Evidence；Consultation 在单事务内保存引用 query execution、Evidence、resource、time range 与 Configuration Revision 的不可变 Context Snapshot。
+- `migrations/00006_telemetry_evidence_context.sql` 将 schema 提升到 version 6；扩展共享 Query Definition/Execution/Authorization provider enum，并增加 query-scoped Evidence、Consultation 与 Context Snapshot。
+
+### Runtime 与数据审计
+
+| 项目 | 结果 | 当前证据 |
+|---|---|---|
+| 前置合同 | `PASS` | 任务 1 shared contract、任务 2 resource context、任务 3 query/resource/time context 均由当前 API、URL 和持久 execution identity 实际复用 |
+| Build/runtime | `PASS` | `kind-cloudops-local` / `cloudops-system` / Helm `cloudops` revision `21`；API、Worker、MySQL、Elasticsearch、Filebeat、OTel Collector、Tempo、Prometheus 均 Ready |
+| Final images | `PASS` | API manifest `sha256:6b13748af8b4f96a8c6da4e6b9e0fc5cd42e286ad83265d458d9e6d6cf154554`，Worker manifest `sha256:079f2643097efe9dc722049163ba8049668d8e295b4f78ff8516f24150c12091`；Pod 内 binary hash 与最终本地镜像一致 |
+| Schema | `PASS` | `goose_db_version=6`；`00006_telemetry_evidence_context.sql` 已应用 |
+| Elasticsearch chain | `PASS` | 真实 Elasticsearch `9.4.3` 与 Filebeat `9.4.3`；当前 MySQL 有 `7` 次 succeeded、`3` 次 fail-closed execution，Filebeat 最终采集批次持续 ack |
+| Tempo chain | `PASS` | 真实 Tempo `3.0.2` 与 OTel Collector `0.156.0`；当前 MySQL 有 `9` 次 succeeded、`4` 次 fail-closed execution，目标 trace detail 多次由 Tempo 返回 `200` |
+| Bounded persistence | `PASS` | query-scoped Evidence 为 `3` 条 Elasticsearch log selection、`4` 条 Tempo trace selection；`3` 个 Consultation 与 `3` 个 Context Snapshot；`query_executions` 不含 raw result/provider response 列 |
+| Empty/truncated | `PASS` | empty execution `c5346ee9-5e24-4062-9f59-b2dced513233` 为 `0 rows / 161 B / truncated=false`；execution `b2b10f3b-3035-4157-8cad-36d2e327560e` 为 `200 rows / 95297 B / truncated=true` |
+| Provider unavailable | `PASS` | Elasticsearch/Tempo 分别 scale `0` 后 catalog 显示 unavailable、UI 禁用查询、直接请求返回 `503 TELEMETRY_PROVIDER_UNAVAILABLE`；failed executions `f020b5a6-7723-4ac6-978b-8c759ba6d7b1` 与 `7e1af181-aa7d-4a18-829a-affb71b94be4` 保存 `PROVIDER_UNAVAILABLE`；两者均已恢复 `1/1` |
+
+### MCP 联调证据
+
+验收 URL：`http://127.0.0.1:18080`。Chrome DevTools MCP 与 Kubernetes MCP 操作当前 `kind-cloudops-local` / `cloudops-system` runtime；工具面没有独立 Logs、Traces、Elasticsearch 或 Tempo MCP，未把产品链或 `kubectl` 冒充专用 MCP。
+
+| 维度 | 结果 | 证据 |
+|---|---|---|
+| Monitoring -> Logs | `PASS` | Prometheus execution `5c40829e-98a2-4ea7-b291-2aa70c04780d` 为 `1 series / 31 samples`；从选定时间点进入同一 `cloudops-api` Deployment 的 Logs，bounded execution `b2b10f3b-3035-4157-8cad-36d2e327560e` 返回真实 Elasticsearch 日志 |
+| Logs -> trace_id | `PASS` | 日志行携带 `trace_id=59de591edc477ffb218ecea260672177`；UI 保持 resource/time context 并打开 Trace；最终镜像复跑使用 trace `1a463bde076b49353ff543ba8f3ed70a` 与 Logs execution `e9025a57-9ce8-47f4-b53b-807aa3ba0235` |
+| Trace waterfall | `PASS` | Tempo execution `3f20f1bb-cf1d-4cb7-9a60-a06c378954cd` 返回 root `cloudops-api · GET /metrics`、span `940043a3733d8025`、`0.917 ms`；最终镜像 trace detail 为 `cloudops-api · GET /api/v1/bootstrap`、span `84ff237f8a5dd11e`、`2.46 ms` |
+| Workload correlation | `PASS` | Kubernetes MCP 与 UI 均确认 Deployment `cloudops-api` -> Pod `cloudops-api-6f9b7f9bc5-m5wpl`；Service `cloudops-api` 通过 EndpointSlice/selector 路由到该 Pod，并显示 Deployment rollout Events |
+| Evidence | `PASS` | 初次 Log/Trace Evidence 为 `cfca4ca2-7cf7-4b25-b3d6-0fda845dce2d` / `07ee7f56-d03d-4c96-95aa-6532884d429a`；最终镜像复跑保存 `cfbb7210-8091-4f1d-93c5-310b02cc243c` / `ab1c5235-7896-4a13-8d45-f43fe3e235cc`，均只包含 1 个显式选择项 |
+| Frozen context | `PASS` | Consultation `711bea8c-3bfe-4c7e-8572-670cdfe38550` 创建 Snapshot `1ad71a5b-b4f3-4f1d-8265-1623a8d3b59e`，hash `1580b8f4acce94f7432f33cfb7f698caf88f5fd17d1032226001adf182c596c8`，引用 exact execution `17faf25f-b4a8-4441-a68f-988ce947f8b4` 与 Evidence `ab1c5235-7896-4a13-8d45-f43fe3e235cc` |
+| Browser health | `PASS` | 最终硬刷新后 21 个 document/asset/API 请求全部 `200`，目标 Tempo detail 为 `200`；console 无 message、Vue warning 或未处理异常 |
+| Provider logs | `PASS` | Kubernetes MCP 读取当前 API、Filebeat、Tempo Pod：Evidence/Consultation routes 为 `201`，Filebeat published/acked 持续前进，Tempo 对目标 trace 的 detail query 为 `200` |
+| Task result | `DONE_WITH_NOT_RUN` | 本地真实 UI -> API -> Elasticsearch/Tempo -> Kubernetes -> Evidence/Snapshot 核心链与 unavailable 分支完成；未运行项如下 |
+
+`web-design-guidelines` Skill 用于核对 Logs/Traces 的可访问名称、键盘可选行、稳定长列表/waterfall 尺寸、无横向溢出和跨 Workspace 导航。当前技能面没有独立可观测性 Skill，因此没有虚构该维度的执行证据。
+
+### 检查结果
+
+`PASS`：
+
+- `go test -count=1 ./...`。
+- gofmt、goimports、dependency、structure、`go vet` 与 `golangci-lint run --max-same-issues=0 --max-issues-per-linter=0 ./...`（`0 issues`）。
+- frontend lint（exit `0`、`0 errors / 1493 warnings`）、Vue typecheck、Vitest `14 files / 54 tests`、production build。
+- 专项 Playwright `frontend/tests/e2e/telemetry-navigation.spec.ts`：`1/1`。
+- actionlint、ShellCheck、Helm strict lint/template/runtime contracts、kubeconform `35/35`。
+- Elasticsearch/Tempo unavailable 与恢复、8 轮并发 topology/resource 回归、最终 Chrome network/console 检查。
+
+`FAIL`：
+
+- `make local-doctor`：本轮用于浏览器验收的 tmux port-forward 未登记为 lifecycle managed PID；最新保留 backup 仍为 schema `1`，而当前 runtime schema 为 `6`。命令真实返回非零；未新建 backup 掩盖该结果。
+
+### 实际文件清单
+
+- Domain/data：`internal/telemetry/**`、`migrations/00006_telemetry_evidence_context.sql`、schema/migration/Evidence contract tests。
+- Provider boundary：`internal/infra/{telemetryread,telemetrygateway}/**`、`internal/bootstrap/worker_telemetry.go` 与 Worker/API wiring。
+- API/contract：`internal/api/telemetry_handler*`、router/dependency wiring、`docs/api-v1-openapi.yaml`。
+- Frontend：`frontend/src/api/telemetry.ts`、`frontend/src/models/telemetry*`、`frontend/src/views/{logs,traces}/**`、telemetry workspace styles、Monitoring Context Link 与 router/layout tests。
+- Runtime：`charts/cloudops/templates/telemetry-stack.yaml`、Chart values/schema/runtime validation、`scripts/{check-runtime-render,local-lifecycle}.sh`。
+- Task 4 implementation 为 `48` 个精确文件；本状态文件不计入 implementation 数。
+
+### Delivery record
+
+| 项目 | 结果 | 证据 |
+|---|---|---|
+| Branch/base | `PASS` | `codex/v3-refactor`；当前 HEAD `84f62be65eba0494dd6d6a24e342eaf9960a4abd` |
+| Worktree preservation | `PASS` | 保留任务开始时及本轮全部未提交成果；未 reset、revert 或清理 |
+| Local commit | `PASS` | Task 4 implementation 与本状态节纳入同一本地提交；精确 SHA 以提交完成后的 Git HEAD 为准 |
+| Push | `NOT RUN` | 未创建 PR/tag，未 push，未触碰默认分支 |
+
+### NOT RUN
+
+- 独立 Logs、Traces、Elasticsearch、Tempo MCP：当前工具面未提供；Chrome DevTools/Kubernetes MCP 与真实产品 Provider 链不冒充这些专用 MCP。
+- Kibana 实例与外部 Elasticsearch/Tempo：当前本地 release 没有 Kibana；精确 Kibana link 生成合同已实现，但真实 Kibana 打开 `NOT RUN`。本轮 PASS 仅属于实际运行的本地 Elasticsearch、Tempo、Prometheus 与 Kubernetes 链。
+- hosted/staging/production、外部 Provider、真实 Agent/LLM 消费 Evidence、PR、push、tag、默认分支：`NOT RUN`。

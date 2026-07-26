@@ -133,8 +133,13 @@ func TestOpenAPICommandAndSafetyContractsMatchRuntime(t *testing.T) {
 }
 
 func documentedPath(path string) string {
-	path = strings.ReplaceAll(path, ":id", "{id}")
-	return strings.ReplaceAll(path, ":provider", "{provider}")
+	parts := strings.Split(path, "/")
+	for index, part := range parts {
+		if strings.HasPrefix(part, ":") && len(part) > 1 {
+			parts[index] = "{" + strings.TrimPrefix(part, ":") + "}"
+		}
+	}
+	return strings.Join(parts, "/")
 }
 
 type openAPIContract struct {

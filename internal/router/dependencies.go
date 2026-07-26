@@ -10,6 +10,7 @@ import (
 	"github.com/05allan1213/CloudOps-Copilot/internal/notification"
 	"github.com/05allan1213/CloudOps-Copilot/internal/observability"
 	"github.com/05allan1213/CloudOps-Copilot/internal/settings"
+	"github.com/05allan1213/CloudOps-Copilot/internal/telemetry"
 )
 
 type Dependencies struct {
@@ -23,4 +24,5 @@ type Dependencies struct {
 	Notifications  *notification.Repository
 	Infrastructure *infrastructure.Service
 	Monitoring     *observability.Service
+	Telemetry      *telemetry.Service
 }

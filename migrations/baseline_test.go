@@ -17,9 +17,10 @@ func TestSemanticMigrationContract(t *testing.T) {
 			migrationNames = append(migrationNames, entry.Name())
 		}
 	}
-	if len(migrationNames) != 5 || migrationNames[0] != "00001_cloudops_baseline.sql" ||
+	if len(migrationNames) != 6 || migrationNames[0] != "00001_cloudops_baseline.sql" ||
 		migrationNames[1] != "00002_platform_foundation.sql" || migrationNames[2] != "00003_infrastructure_topology.sql" ||
-		migrationNames[3] != "00004_operational_scope_registry.sql" || migrationNames[4] != "00005_observability_queries.sql" {
+		migrationNames[3] != "00004_operational_scope_registry.sql" || migrationNames[4] != "00005_observability_queries.sql" ||
+		migrationNames[5] != "00006_telemetry_evidence_context.sql" {
 		t.Fatalf("embedded migrations=%v, want semantic baseline through observability queries", migrationNames)
 	}
 
@@ -158,6 +159,27 @@ func TestSemanticMigrationContract(t *testing.T) {
 	for _, forbidden := range []string{"raw_result", "secret_value", "bearer", "v2", "v3", "phase_3", "phase 3"} {
 		if strings.Contains(strings.ToLower(observabilitySQL), forbidden) {
 			t.Errorf("observability queries migration retains forbidden implementation or telemetry field %q", forbidden)
+		}
+	}
+
+	telemetryContents, err := FS.ReadFile(migrationNames[5])
+	if err != nil {
+		t.Fatal(err)
+	}
+	telemetrySQL := string(telemetryContents)
+	for _, required := range []string{
+		"CREATE TABLE `agent_consultations`", "CREATE TABLE `context_snapshots`",
+		"ADD COLUMN `query_execution_id`", "fk_evidence_items_query_execution",
+		"uk_evidence_items_query_content", "'prometheus',_ascii'elasticsearch',_ascii'tempo'",
+		"query_execution_refs_json", "evidence_refs_json", "content_hash",
+	} {
+		if !strings.Contains(telemetrySQL, required) {
+			t.Errorf("telemetry Evidence/context migration missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"raw_result", "provider_response", "secret_value", "bearer", "fixture", "phase_4", "phase 4"} {
+		if strings.Contains(strings.ToLower(telemetrySQL), forbidden) {
+			t.Errorf("telemetry Evidence/context migration retains forbidden telemetry field or implementation identity %q", forbidden)
 		}
 	}
 }

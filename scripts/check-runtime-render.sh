@@ -47,14 +47,25 @@ expect_one Deployment cloudops-api
 expect_one Deployment cloudops-worker
 expect_one Deployment prometheus
 expect_one Deployment grafana
+expect_one Deployment otel-collector
 expect_one StatefulSet mysql
+expect_one StatefulSet elasticsearch
+expect_one StatefulSet tempo
+expect_one DaemonSet filebeat
 expect_one PersistentVolumeClaim cloudops-data
 expect_one Service cloudops-api
 expect_one Service cloudops-api-management
 expect_one Service cloudops-worker-management
 expect_one Service prometheus
 expect_one Service grafana
+expect_one Service elasticsearch
+expect_one Service tempo
+expect_one Service otel-collector
 expect_one ConfigMap cloudops-monitoring
+expect_one ConfigMap cloudops-telemetry
+expect_one ServiceAccount filebeat
+expect_one ClusterRole cloudops-filebeat-metadata-readonly
+expect_one ClusterRoleBinding cloudops-filebeat-metadata-readonly
 
 [[ "$(jq -r '[.[] | select(.kind == "Job" and (.metadata.name | startswith("cloudops-migrate-")))] | length' "${objects}")" == "1" ]] || {
   printf 'FAIL: expected one release-revision migration Job\n' >&2
@@ -78,6 +89,36 @@ expect_one ConfigMap cloudops-monitoring
 
 [[ "$(jq -r '[.[] | select(.kind == "Deployment" and (.metadata.name == "prometheus" or .metadata.name == "grafana")) | .spec.template.spec | select(.automountServiceAccountToken == false) | .containers[0] | select(.securityContext.readOnlyRootFilesystem == true and .imagePullPolicy == "Never")] | length' "${objects}")" == "2" ]] || {
   printf 'FAIL: native Monitoring providers must be non-root, tokenless, read-only, and use preloaded images\n' >&2
+  exit 1
+}
+
+[[ "$(jq -r '[.[] | select(.kind == "ConfigMap" and .metadata.name == "cloudops-config") | .data.TRACE_OTLP_ENDPOINT | select(. == "otel-collector.cloudops-system.svc:4317")] | length' "${objects}")" == "1" ]] || {
+  printf 'FAIL: API and Worker must export traces to the in-cluster OTel Collector\n' >&2
+  exit 1
+}
+
+[[ "$(jq -r '[.[] | select(.kind == "StatefulSet" and (.metadata.name == "elasticsearch" or .metadata.name == "tempo")) | select(.spec.persistentVolumeClaimRetentionPolicy.whenDeleted == "Retain" and .spec.persistentVolumeClaimRetentionPolicy.whenScaled == "Retain") | .spec.template.spec | select(.automountServiceAccountToken == false) | .containers[0] | select(.securityContext.readOnlyRootFilesystem == true and .imagePullPolicy == "Never")] | length' "${objects}")" == "2" ]] || {
+  printf 'FAIL: Elasticsearch and Tempo must use retained bounded storage, tokenless Pods, and preloaded images\n' >&2
+  exit 1
+}
+
+[[ "$(jq -r '[.[] | select(.kind == "StatefulSet" and .metadata.name == "elasticsearch") | select(.spec.volumeClaimTemplates[0].spec.resources.requests.storage == "1Gi") | select(any(.spec.template.spec.initContainers[]; .name == "prepare-config" and (.command | join(" ") | contains("file=/tmp/elasticsearch-gc.log")) and .securityContext.readOnlyRootFilesystem == true and any(.volumeMounts[]; .name == "config" and .mountPath == "/writable-config"))) | select(any(.spec.template.spec.containers[0].volumeMounts[]; .name == "config" and .mountPath == "/usr/share/elasticsearch/config")) | .spec.template.spec.containers[0].env | select(any(.[]; .name == "ES_JAVA_OPTS" and .value == "-Xms384m -Xmx384m"))] | length' "${objects}")" == "1" ]] || {
+  printf 'FAIL: Elasticsearch must render fixed JVM/disk ceilings and a bounded writable config volume\n' >&2
+  exit 1
+}
+
+[[ "$(jq -r '[.[] | select(.kind == "ConfigMap" and .metadata.name == "cloudops-telemetry") | select(.data["elasticsearch-policy.json"] | contains("\"min_age\": \"7d\"")) | select(.data["filebeat.yml"] | contains("/var/log/containers/*_cloudops-system_*.log") and contains("add_kubernetes_metadata") and contains("deployment: true") and contains("trace_id")) | select(.data["tempo.yaml"] | contains("backend_scheduler:") and contains("backend_worker:") and contains("block_retention: 72h"))] | length' "${objects}")" == "1" ]] || {
+  printf 'FAIL: telemetry configuration must preserve log correlation and bounded raw retention\n' >&2
+  exit 1
+}
+
+[[ "$(jq -r '[.[] | select(.kind == "DaemonSet" and .metadata.name == "filebeat") | .spec.template.spec | select(.automountServiceAccountToken == true) | .containers[0] | select(.imagePullPolicy == "Never" and .securityContext.allowPrivilegeEscalation == false and .securityContext.readOnlyRootFilesystem == true and .securityContext.runAsUser == 0) | select(any(.volumeMounts[]; .name == "container-logs" and .readOnly == true)) | select(any(.volumeMounts[]; .name == "pod-logs" and .readOnly == true))] | length' "${objects}")" == "1" ]] || {
+  printf 'FAIL: Filebeat must use bounded read-only Kubernetes host-log access and its metadata ServiceAccount\n' >&2
+  exit 1
+}
+
+[[ "$(jq -r '[.[] | select(.kind == "Deployment" and .metadata.name == "otel-collector") | .spec.template.spec | select(.automountServiceAccountToken == false) | .containers[0] | select(.imagePullPolicy == "Never" and .securityContext.readOnlyRootFilesystem == true)] | length' "${objects}")" == "1" ]] || {
+  printf 'FAIL: OTel Collector must be tokenless, read-only, and use a preloaded image\n' >&2
   exit 1
 }
 

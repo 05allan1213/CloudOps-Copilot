@@ -79,6 +79,18 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.database.worker.secretName }}
                   key: {{ .Values.database.worker.passwordKey }}
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            - name: WORKLOAD_KIND
+              value: Deployment
+            - name: WORKLOAD_NAME
+              value: cloudops-worker
           ports:
             - name: management
               containerPort: {{ .Values.worker.managementPort }}

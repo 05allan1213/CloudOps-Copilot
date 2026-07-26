@@ -782,6 +782,191 @@ paths:
         "404": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
         default: { $ref: "#/components/responses/Problem" }
+  /api/v1/logs/catalog:
+    get:
+      operationId: getLogsCatalog
+      description: Elasticsearch availability and enforced bounds for one exact Workload in the active Operational Scope.
+      parameters:
+        - { $ref: "#/components/parameters/MonitoringCluster" }
+        - { $ref: "#/components/parameters/MonitoringNamespace" }
+        - { $ref: "#/components/parameters/MonitoringResourceID" }
+        - { $ref: "#/components/parameters/MonitoringResourceKind" }
+        - { $ref: "#/components/parameters/MonitoringResourceName" }
+      responses:
+        "200": { description: Bounded Elasticsearch catalog and Provider state }
+        "422": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/logs/queries:
+    get:
+      operationId: listLogQueries
+      description: Durable Elasticsearch Query Execution metadata; Provider rows are never copied into query history.
+      parameters: [{ $ref: "#/components/parameters/Limit" }]
+      responses:
+        "200": { description: Bounded Logs Query Execution history }
+        "400": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: startLogQuery
+      description: Local Owner runs one guided or restricted Elasticsearch query through the Worker-owned Provider adapter.
+      parameters: [{ $ref: "#/components/parameters/Origin" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "202": { description: Completed bounded Logs projection and Query Execution metadata }
+        "403": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/logs/queries/{id}:
+    parameters: [{ $ref: "#/components/parameters/PublicID" }]
+    get:
+      operationId: getLogQuery
+      description: Exact Logs Query Execution with short-lived in-process rows when still available.
+      responses:
+        "200": { description: Bounded Logs projection }
+        "404": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/logs/queries/{id}/evidence:
+    parameters: [{ $ref: "#/components/parameters/PublicID" }]
+    post:
+      operationId: retainLogEvidence
+      description: Persist only explicitly selected, sanitized log facts as Evidence.
+      parameters: [{ $ref: "#/components/parameters/Origin" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [item_ids], properties: { item_ids: { type: array, minItems: 1, maxItems: 32, items: { type: string } } } }
+      responses:
+        "201": { description: Retained bounded Evidence }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "410": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/traces/catalog:
+    get:
+      operationId: getTracesCatalog
+      description: Tempo availability and enforced bounds for one exact Workload in the active Operational Scope.
+      parameters:
+        - { $ref: "#/components/parameters/MonitoringCluster" }
+        - { $ref: "#/components/parameters/MonitoringNamespace" }
+        - { $ref: "#/components/parameters/MonitoringResourceID" }
+        - { $ref: "#/components/parameters/MonitoringResourceKind" }
+        - { $ref: "#/components/parameters/MonitoringResourceName" }
+      responses:
+        "200": { description: Bounded Tempo catalog and Provider state }
+        "422": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/traces/searches:
+    get:
+      operationId: listTraceSearches
+      description: Durable Tempo Query Execution metadata; full Trace results are not retained in query history.
+      parameters: [{ $ref: "#/components/parameters/Limit" }]
+      responses:
+        "200": { description: Bounded Trace Search history }
+        "400": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: startTraceSearch
+      description: Local Owner runs one guided or bounded TraceQL search through the Worker-owned Provider adapter.
+      parameters: [{ $ref: "#/components/parameters/Origin" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "202": { description: Completed bounded Trace Search projection and Query Execution metadata }
+        "403": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/traces/searches/{id}:
+    parameters: [{ $ref: "#/components/parameters/PublicID" }]
+    get:
+      operationId: getTraceSearch
+      description: Exact Trace Search with short-lived in-process summaries when still available.
+      responses:
+        "200": { description: Bounded Trace Search projection }
+        "404": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/traces/{trace_id}:
+    get:
+      operationId: getTraceDetail
+      description: Bounded Tempo Trace detail revalidated against the requested Kubernetes resource and time range.
+      parameters:
+        - name: trace_id
+          in: path
+          required: true
+          schema: { type: string, pattern: "^[0-9a-f]{32}$" }
+      responses:
+        "200": { description: Bounded Trace waterfall and span projection }
+        "404": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/traces/searches/{id}/traces/{trace_id}/evidence:
+    parameters:
+      - { $ref: "#/components/parameters/PublicID" }
+      - name: trace_id
+        in: path
+        required: true
+        schema: { type: string, pattern: "^[0-9a-f]{32}$" }
+    post:
+      operationId: retainTraceEvidence
+      description: Persist only explicitly selected, sanitized spans as Evidence.
+      parameters: [{ $ref: "#/components/parameters/Origin" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [item_ids], properties: { item_ids: { type: array, minItems: 1, maxItems: 32, items: { type: string } } } }
+      responses:
+        "201": { description: Retained bounded Trace Evidence }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "410": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/agent/consultations:
+    post:
+      operationId: createTelemetryConsultation
+      description: Local Owner creates a Consultation with one immutable Context Snapshot from exact query and Evidence references.
+      parameters: [{ $ref: "#/components/parameters/Origin" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "201": { description: Consultation and immutable initial Context Snapshot }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
 components:
   parameters:
     PublicID:

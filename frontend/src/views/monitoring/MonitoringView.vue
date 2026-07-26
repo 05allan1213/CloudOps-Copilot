@@ -10,6 +10,7 @@ import {
   History,
   LineChart,
   LoaderCircle,
+  Logs,
   Play,
   RefreshCw,
   Save,
@@ -595,6 +596,22 @@ function linkTarget(link?: MonitoringContextLink): "_blank" | "_self" {
   return link?.target === "external" ? "_blank" : "_self";
 }
 
+function logsLocationAt(value: string) {
+  const execution = currentExecution.value;
+  const timestamp = new Date(value).getTime();
+  if (!execution || !Number.isFinite(timestamp)) return { path: "/logs" };
+  return {
+    path: "/logs",
+    query: {
+      cluster: execution.scope.cluster_id,
+      namespace: execution.resource.namespace,
+      resource: execution.resource.id,
+      from: new Date(timestamp - 5 * 60_000).toISOString(),
+      to: new Date(timestamp + 5 * 60_000).toISOString(),
+    },
+  };
+}
+
 function receiveScopeChange() {
   currentExecution.value = null;
   void loadWorkspace();
@@ -868,7 +885,7 @@ onBeforeUnmount(() => {
               <div class="result-table-wrap">
                 <table>
                   <thead>
-                    <tr><th>Labels</th><th>最新值</th><th>时间</th><th>Samples</th></tr>
+                    <tr><th>Labels</th><th>最新值</th><th>时间</th><th>Samples</th><th>相关</th></tr>
                   </thead>
                   <tbody>
                     <tr v-for="row in tableRows" :key="row.key">
@@ -876,6 +893,7 @@ onBeforeUnmount(() => {
                       <td class="numeric-cell">{{ row.latestValue === null ? "无" : numberFormatter.format(row.latestValue) }}</td>
                       <td>{{ formatTime(row.latestAt) }}</td>
                       <td class="numeric-cell">{{ row.series.points.length }}</td>
+                      <td><RouterLink class="point-context-link" :to="logsLocationAt(row.latestAt)"><Logs :size="14" aria-hidden="true" />日志</RouterLink></td>
                     </tr>
                   </tbody>
                 </table>
@@ -1426,6 +1444,7 @@ th, td { padding: 10px 9px; border-bottom: 1px solid var(--co-border-default); t
 th { color: var(--co-text-muted); font-weight: 650; }
 .series-label { max-width: 520px; overflow-wrap: anywhere; font-family: var(--co-font-mono); }
 .numeric-cell { text-align: right; font-variant-numeric: tabular-nums; }
+.point-context-link { display: inline-flex; min-height: 30px; align-items: center; gap: 5px; color: var(--co-action-primary); font-size: 11px; font-weight: 700; }
 
 .audit-section ol {
   display: grid;

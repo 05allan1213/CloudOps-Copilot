@@ -53,8 +53,23 @@
 {{- if eq (lower (.Values.observability.stack.grafana.image.tag | toString)) "latest" -}}
 {{- fail "observability.stack.grafana.image.tag must not be latest" -}}
 {{- end -}}
+{{- if eq (lower (.Values.observability.stack.elasticsearch.image.tag | toString)) "latest" -}}
+{{- fail "observability.stack.elasticsearch.image.tag must not be latest" -}}
+{{- end -}}
+{{- if eq (lower (.Values.observability.stack.filebeat.image.tag | toString)) "latest" -}}
+{{- fail "observability.stack.filebeat.image.tag must not be latest" -}}
+{{- end -}}
+{{- if eq (lower (.Values.observability.stack.tempo.image.tag | toString)) "latest" -}}
+{{- fail "observability.stack.tempo.image.tag must not be latest" -}}
+{{- end -}}
+{{- if eq (lower (.Values.observability.stack.otelCollector.image.tag | toString)) "latest" -}}
+{{- fail "observability.stack.otelCollector.image.tag must not be latest" -}}
+{{- end -}}
 {{- if and .Values.observability.enabled .Values.observability.stack.enabled -}}
 {{- fail "Operator-managed and native local observability modes are mutually exclusive" -}}
+{{- end -}}
+{{- if and .Values.observability.stack.enabled (eq (trim (index .Values.commonEnv "TRACE_OTLP_ENDPOINT" | toString)) "") -}}
+{{- fail "the native telemetry stack requires TRACE_OTLP_ENDPOINT" -}}
 {{- end -}}
 
 {{- if ne (index .Values.worker.env "K8S_WRITE_ENABLED" | toString) "false" -}}

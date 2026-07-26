@@ -83,7 +83,15 @@ public_id, configuration_revision_id, cluster_id, environment, namespaces_json,
 scope_hash, content_hash, provider_state, source_identity, server_version,
 partial, truncated, node_count, edge_count, projection_json,
 collected_at, fresh_until, last_observed_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON DUPLICATE KEY UPDATE
+id = LAST_INSERT_ID(id), cluster_id = VALUES(cluster_id), environment = VALUES(environment),
+namespaces_json = VALUES(namespaces_json), provider_state = VALUES(provider_state),
+source_identity = VALUES(source_identity), server_version = VALUES(server_version),
+partial = VALUES(partial), truncated = VALUES(truncated), node_count = VALUES(node_count),
+edge_count = VALUES(edge_count), projection_json = VALUES(projection_json),
+collected_at = VALUES(collected_at), fresh_until = VALUES(fresh_until),
+last_observed_at = VALUES(last_observed_at)`,
 			snapshotPublicID, revisionID, snapshot.Scope.ClusterID, snapshot.Scope.Environment, namespacesJSON,
 			scopeHash, contentHash, snapshot.ProviderState, snapshot.Source.Identity, snapshot.Source.ServerVersion,
 			snapshot.Partial, snapshot.Truncated, len(snapshot.Nodes), len(snapshot.Edges), projectionJSON,
@@ -96,6 +104,9 @@ collected_at, fresh_until, last_observed_at
 			return fmt.Errorf("read topology snapshot identity: %w", insertErr)
 		}
 		snapshotID = uint64(insertedID)
+		if err := tx.QueryRowContext(ctx, `SELECT public_id FROM topology_snapshots WHERE id = ?`, snapshotID).Scan(&snapshotPublicID); err != nil {
+			return fmt.Errorf("read concurrent topology snapshot public identity: %w", err)
+		}
 	case err != nil:
 		return fmt.Errorf("load topology snapshot: %w", err)
 	default:

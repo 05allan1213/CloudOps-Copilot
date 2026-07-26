@@ -178,6 +178,11 @@ func NewWorker(ctx context.Context, cfg WorkerConfig) (*Worker, error) {
 		_ = mysql.Close()
 		return nil, fmt.Errorf("initialize Prometheus Provider Gateway: %w", err)
 	}
+	telemetryGateway, err := telemetryGatewayHandler(settingsService)
+	if err != nil {
+		_ = mysql.Close()
+		return nil, fmt.Errorf("initialize telemetry Provider Gateway: %w", err)
+	}
 	worker := &Worker{
 		cfg: cfg, mysql: mysql, runner: runner, activation: activation,
 		mysqlReady: mysql.Ready,
@@ -189,6 +194,7 @@ func NewWorker(ctx context.Context, cfg WorkerConfig) (*Worker, error) {
 	managementMux := http.NewServeMux()
 	managementMux.Handle("/internal/providers/kubernetes/", providerGateway)
 	managementMux.Handle("/internal/providers/prometheus/", monitoringGateway)
+	managementMux.Handle("/internal/providers/telemetry/", telemetryGateway)
 	managementMux.Handle("/", healthHandler)
 	worker.management = &http.Server{
 		Addr:              cfg.ManagementAddr,

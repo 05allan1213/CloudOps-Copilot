@@ -33,6 +33,8 @@ commonEnv:
   MYSQL_PING_TIMEOUT_SECONDS: "3"
   TRACE_OTLP_ENDPOINT: ""
   TRACE_SAMPLE_RATE: "1.0"
+  SERVICE_VERSION: local
+  SOURCE_REVISION: local-worktree
 
 database:
   api:
@@ -193,6 +195,75 @@ observability:
         requests:
           cpu: 50m
           memory: 128Mi
+        limits:
+          cpu: 300m
+          memory: 256Mi
+    elasticsearch:
+      image:
+        repository: docker.elastic.co/elasticsearch/elasticsearch
+        tag: 9.4.3
+        digest: sha256:851ff5f9615ab7d2f00931114f6db32850f0208ec9fe7e841f135ac78f5f13d5
+        pullPolicy: IfNotPresent
+      port: 9200
+      jvmHeap: 384m
+      retentionDays: 7
+      rolloverMaxSize: 128mb
+      persistence:
+        size: 1Gi
+        storageClassName: ""
+      resources:
+        requests:
+          cpu: 200m
+          memory: 640Mi
+        limits:
+          cpu: "1"
+          memory: 1Gi
+    filebeat:
+      image:
+        repository: docker.elastic.co/beats/filebeat
+        tag: 9.4.3
+        digest: sha256:61bf789ac881c88c0edee6d490434e7a6d464d5f46a2bb1f5540a2301d4bdec3
+        pullPolicy: IfNotPresent
+      resources:
+        requests:
+          cpu: 50m
+          memory: 96Mi
+        limits:
+          cpu: 300m
+          memory: 256Mi
+    tempo:
+      image:
+        repository: grafana/tempo
+        tag: 3.0.2
+        digest: sha256:cda87c212d8c584dc0b89e337e7ed648a5100feb657e5d528480ee4fa03dbbe3
+        pullPolicy: IfNotPresent
+      httpPort: 3200
+      otlpGRPCPort: 4317
+      retention: 72h
+      persistence:
+        size: 1Gi
+        storageClassName: ""
+      resources:
+        requests:
+          cpu: 100m
+          memory: 192Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+    otelCollector:
+      image:
+        repository: otel/opentelemetry-collector-contrib
+        tag: 0.156.0
+        digest: sha256:125bdbeb7590cc1952c5b3430ecf14063568980c2c93d5b38676cc0446ed8108
+        pullPolicy: IfNotPresent
+      grpcPort: 4317
+      httpPort: 4318
+      healthPort: 13133
+      memoryLimitMiB: 192
+      resources:
+        requests:
+          cpu: 50m
+          memory: 96Mi
         limits:
           cpu: 300m
           memory: 256Mi

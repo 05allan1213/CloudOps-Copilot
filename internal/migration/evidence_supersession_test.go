@@ -8,8 +8,8 @@ import (
 )
 
 func TestBaselineEvidenceSupersessionIsCycleBound(t *testing.T) {
-	if LatestVersion != 5 {
-		t.Fatalf("latest migration=%d, want 5", LatestVersion)
+	if LatestVersion != 6 {
+		t.Fatalf("latest migration=%d, want 6", LatestVersion)
 	}
 	contents, err := migrations.FS.ReadFile("00001_cloudops_baseline.sql")
 	if err != nil {

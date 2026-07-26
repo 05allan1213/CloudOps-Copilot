@@ -17,6 +17,7 @@ mysql:
 
 commonEnv:
   APP_ENV: local
+  TRACE_OTLP_ENDPOINT: otel-collector.cloudops-system.svc:4317
 
 observability:
   stack:
@@ -27,6 +28,22 @@ observability:
         pullPolicy: Never
     grafana:
       anonymousRole: Editor
+      image:
+        digest: ""
+        pullPolicy: Never
+    elasticsearch:
+      image:
+        digest: ""
+        pullPolicy: Never
+    filebeat:
+      image:
+        digest: ""
+        pullPolicy: Never
+    tempo:
+      image:
+        digest: ""
+        pullPolicy: Never
+    otelCollector:
       image:
         digest: ""
         pullPolicy: Never

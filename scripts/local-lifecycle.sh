@@ -20,10 +20,14 @@ LOCAL_PORT="${CLOUDOPS_LOCAL_PORT:-18080}"
 LOCAL_URL="http://127.0.0.1:${LOCAL_PORT}"
 GRAFANA_LOCAL_PORT="${CLOUDOPS_GRAFANA_PORT:-18081}"
 GRAFANA_LOCAL_URL="http://127.0.0.1:${GRAFANA_LOCAL_PORT}"
+TEMPO_LOCAL_PORT="${CLOUDOPS_TEMPO_PORT:-18084}"
+TEMPO_LOCAL_URL="http://127.0.0.1:${TEMPO_LOCAL_PORT}"
 PORT_FORWARD_PID_FILE="${RUNTIME_DIR}/api-port-forward.pid"
 PORT_FORWARD_LOG="${RUNTIME_DIR}/api-port-forward.log"
 GRAFANA_PORT_FORWARD_PID_FILE="${RUNTIME_DIR}/grafana-port-forward.pid"
 GRAFANA_PORT_FORWARD_LOG="${RUNTIME_DIR}/grafana-port-forward.log"
+TEMPO_PORT_FORWARD_PID_FILE="${RUNTIME_DIR}/tempo-port-forward.pid"
+TEMPO_PORT_FORWARD_LOG="${RUNTIME_DIR}/tempo-port-forward.log"
 KIND_NODE_IMAGE="kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5"
 MYSQL_IMAGE="mysql:8.0.46"
 MYSQL_REPOSITORY="mysql"
@@ -39,11 +43,27 @@ GRAFANA_REPOSITORY="grafana/grafana"
 GRAFANA_DIGEST="sha256:2175aaa91c96733d86d31cf270d5310b278654b03f5718c59de12a865380a31f"
 GRAFANA_AMD64_DIGEST="sha256:7c064e627d9cb50c3485c9ded5ca0222de89a08e41403322a0c3ca6f1777a8d1"
 GRAFANA_PRELOAD_IMAGE="cloudops-preload/grafana-amd64:12.3.1"
+ELASTICSEARCH_IMAGE="docker.elastic.co/elasticsearch/elasticsearch:9.4.3"
+ELASTICSEARCH_REPOSITORY="docker.elastic.co/elasticsearch/elasticsearch"
+ELASTICSEARCH_DIGEST="sha256:851ff5f9615ab7d2f00931114f6db32850f0208ec9fe7e841f135ac78f5f13d5"
+ELASTICSEARCH_PRELOAD_IMAGE="cloudops-preload/elasticsearch-amd64:9.4.3"
+FILEBEAT_IMAGE="docker.elastic.co/beats/filebeat:9.4.3"
+FILEBEAT_REPOSITORY="docker.elastic.co/beats/filebeat"
+FILEBEAT_DIGEST="sha256:61bf789ac881c88c0edee6d490434e7a6d464d5f46a2bb1f5540a2301d4bdec3"
+FILEBEAT_PRELOAD_IMAGE="cloudops-preload/filebeat-amd64:9.4.3"
+TEMPO_IMAGE="grafana/tempo:3.0.2"
+TEMPO_REPOSITORY="grafana/tempo"
+TEMPO_DIGEST="sha256:cda87c212d8c584dc0b89e337e7ed648a5100feb657e5d528480ee4fa03dbbe3"
+TEMPO_PRELOAD_IMAGE="cloudops-preload/tempo-amd64:3.0.2"
+OTEL_COLLECTOR_IMAGE="otel/opentelemetry-collector-contrib:0.156.0"
+OTEL_COLLECTOR_REPOSITORY="otel/opentelemetry-collector-contrib"
+OTEL_COLLECTOR_DIGEST="sha256:125bdbeb7590cc1952c5b3430ecf14063568980c2c93d5b38676cc0446ed8108"
+OTEL_COLLECTOR_PRELOAD_IMAGE="cloudops-preload/otel-collector-contrib-amd64:0.156.0"
 MIN_INOTIFY_INSTANCES=512
 BACKUP_FORMAT_VERSION=2
 BACKUP_CONTRACT="cloudops-semantic"
 RESTORE_STAGING_DATABASE="cloudops_restore_staging"
-LATEST_SCHEMA_VERSION=5
+LATEST_SCHEMA_VERSION=6
 DATA_CLAIM="cloudops-data"
 DATA_MOUNT_PATH="/var/lib/cloudops"
 DATA_DIRECTORY="${DATA_MOUNT_PATH}/data"
@@ -88,8 +108,13 @@ validate_local_port() {
   if [[ ! "${GRAFANA_LOCAL_PORT}" =~ ^[0-9]+$ ]] || ((GRAFANA_LOCAL_PORT < 1024 || GRAFANA_LOCAL_PORT > 65535)); then
     die "CLOUDOPS_GRAFANA_PORT must be an unprivileged TCP port"
   fi
-  [[ "${LOCAL_PORT}" != "${GRAFANA_LOCAL_PORT}" ]] ||
-    die "CLOUDOPS_LOCAL_PORT and CLOUDOPS_GRAFANA_PORT must be different"
+  if [[ ! "${TEMPO_LOCAL_PORT}" =~ ^[0-9]+$ ]] || ((TEMPO_LOCAL_PORT < 1024 || TEMPO_LOCAL_PORT > 65535)); then
+    die "CLOUDOPS_TEMPO_PORT must be an unprivileged TCP port"
+  fi
+  [[ "${LOCAL_PORT}" != "${GRAFANA_LOCAL_PORT}" &&
+     "${LOCAL_PORT}" != "${TEMPO_LOCAL_PORT}" &&
+     "${GRAFANA_LOCAL_PORT}" != "${TEMPO_LOCAL_PORT}" ]] ||
+    die "CloudOps, Grafana, and Tempo loopback ports must be different"
 }
 
 validate_fixed_boundaries() {
@@ -349,16 +374,44 @@ verify_observability_images() {
   verify_observability_image \
     "${GRAFANA_IMAGE}" "${GRAFANA_REPOSITORY}" "${GRAFANA_DIGEST}" \
     "${GRAFANA_AMD64_DIGEST}" "${GRAFANA_PRELOAD_IMAGE}"
+  verify_pinned_provider_image \
+    "${ELASTICSEARCH_IMAGE}" "${ELASTICSEARCH_REPOSITORY}" "${ELASTICSEARCH_DIGEST}" "${ELASTICSEARCH_PRELOAD_IMAGE}"
+  verify_pinned_provider_image \
+    "${FILEBEAT_IMAGE}" "${FILEBEAT_REPOSITORY}" "${FILEBEAT_DIGEST}" "${FILEBEAT_PRELOAD_IMAGE}"
+  verify_pinned_provider_image \
+    "${TEMPO_IMAGE}" "${TEMPO_REPOSITORY}" "${TEMPO_DIGEST}" "${TEMPO_PRELOAD_IMAGE}"
+  verify_pinned_provider_image \
+    "${OTEL_COLLECTOR_IMAGE}" "${OTEL_COLLECTOR_REPOSITORY}" "${OTEL_COLLECTOR_DIGEST}" "${OTEL_COLLECTOR_PRELOAD_IMAGE}"
+}
+
+verify_pinned_provider_image() {
+  local image="$1" repository="$2" digest="$3" preload_image="$4" image_id platform
+  if ! docker image inspect "${repository}@${digest}" >/dev/null 2>&1; then
+    docker pull --platform "${MYSQL_PLATFORM}" "${repository}@${digest}" >/dev/null
+  fi
+  docker tag "${repository}@${digest}" "${image}"
+  docker tag "${repository}@${digest}" "${preload_image}"
+  image_id="$(docker image inspect "${preload_image}" --format '{{.Id}}')"
+  platform="$(docker image inspect "${preload_image}" --format '{{.Os}}/{{.Architecture}}')"
+  [[ "${image_id}" == "${digest}" ]] ||
+    die "local ${preload_image} does not match pinned image digest ${digest}"
+  [[ "${platform}" == "${MYSQL_PLATFORM}" ]] ||
+    die "local ${preload_image} platform=${platform}; expected ${MYSQL_PLATFORM}"
 }
 
 load_observability_image() {
   local preload_image="$1" runtime_image="$2" node source_ref target_ref
-  kind load docker-image "${preload_image}" --name "${CLUSTER_NAME}"
   source_ref="docker.io/${preload_image}"
   target_ref="${runtime_image}"
   [[ "${target_ref}" == */*/* ]] || target_ref="docker.io/${target_ref}"
   while IFS= read -r node; do
+    note "loading ${runtime_image} into ${node} for ${MYSQL_PLATFORM}"
+    docker save "${preload_image}" |
+      docker exec --privileged -i "${node}" ctr --namespace=k8s.io images import \
+        --platform "${MYSQL_PLATFORM}" --snapshotter=overlayfs - >/dev/null
     docker exec "${node}" ctr --namespace=k8s.io images tag --force "${source_ref}" "${target_ref}" >/dev/null
+    [[ "$(docker exec "${node}" ctr --namespace=k8s.io images list --quiet "name==${target_ref}")" == "${target_ref}" ]] ||
+      die "runtime image ${target_ref} was not loaded into ${node}"
   done < <(kind get nodes --name "${CLUSTER_NAME}")
 }
 
@@ -387,11 +440,16 @@ load_runtime_images() {
   local image
   verify_mysql_image
   verify_observability_images
-  for image in cloudops-api:local cloudops-worker:local cloudops-migrate:local "${MYSQL_IMAGE}"; do
+  for image in \
+    cloudops-api:local cloudops-worker:local cloudops-migrate:local "${MYSQL_IMAGE}"; do
     kind load docker-image "${image}" --name "${CLUSTER_NAME}"
   done
   load_observability_image "${PROMETHEUS_PRELOAD_IMAGE}" "${PROMETHEUS_IMAGE}"
   load_observability_image "${GRAFANA_PRELOAD_IMAGE}" "${GRAFANA_IMAGE}"
+  load_observability_image "${ELASTICSEARCH_PRELOAD_IMAGE}" "${ELASTICSEARCH_IMAGE}"
+  load_observability_image "${FILEBEAT_PRELOAD_IMAGE}" "${FILEBEAT_IMAGE}"
+  load_observability_image "${TEMPO_PRELOAD_IMAGE}" "${TEMPO_IMAGE}"
+  load_observability_image "${OTEL_COLLECTOR_PRELOAD_IMAGE}" "${OTEL_COLLECTOR_IMAGE}"
 }
 
 reconcile_mysql_identities() {
@@ -410,7 +468,7 @@ install_runtime() {
     --kube-context "${KUBE_CONTEXT}"
     --namespace "${NAMESPACE}"
     --values "${VALUES_FILE}"
-    --timeout 8m
+    --timeout 12m
   )
   current_status="$(release_status 2>/dev/null || true)"
   if [[ "${current_status}" != "deployed" ]]; then
@@ -426,7 +484,7 @@ install_runtime() {
 
   reconcile_mysql_identities
 
-  note "reconciling API, Worker, Migrate, and MySQL"
+  note "reconciling API, Worker, Migrate, MySQL, and bounded telemetry Providers"
   helm upgrade --install "${RELEASE_NAME}" "${CHART_DIR}" "${helm_args[@]}" \
     --wait --wait-for-jobs
   note "restarting API and Worker to consume freshly loaded local images"
@@ -435,6 +493,10 @@ install_runtime() {
   kube -n "${NAMESPACE}" rollout status deployment/cloudops-worker --timeout=5m
   kube -n "${NAMESPACE}" rollout status deployment/prometheus --timeout=5m
   kube -n "${NAMESPACE}" rollout status deployment/grafana --timeout=5m
+  kube -n "${NAMESPACE}" rollout status statefulset/elasticsearch --timeout=8m
+  kube -n "${NAMESPACE}" rollout status daemonset/filebeat --timeout=5m
+  kube -n "${NAMESPACE}" rollout status statefulset/tempo --timeout=5m
+  kube -n "${NAMESPACE}" rollout status deployment/otel-collector --timeout=5m
 }
 
 port_forward_pid() {
@@ -556,6 +618,66 @@ start_grafana_port_forward() {
   die "Grafana loopback access did not become ready"
 }
 
+tempo_port_forward_pid() {
+  [[ -f "${TEMPO_PORT_FORWARD_PID_FILE}" ]] || return 1
+  tr -d '[:space:]' <"${TEMPO_PORT_FORWARD_PID_FILE}"
+}
+
+tempo_port_forward_process_matches() {
+  local pid="$1" command_line
+  [[ "${pid}" =~ ^[0-9]+$ && -r "/proc/${pid}/cmdline" ]] || return 1
+  command_line="$(tr '\0' ' ' <"/proc/${pid}/cmdline")"
+  [[ "${command_line}" == *"kubectl"* &&
+     "${command_line}" == *"${KUBE_CONTEXT}"* &&
+     "${command_line}" == *"${NAMESPACE}"* &&
+     "${command_line}" == *"service/tempo"* &&
+     "${command_line}" == *"${TEMPO_LOCAL_PORT}:3200"* ]]
+}
+
+stop_tempo_port_forward() {
+  local pid
+  pid="$(tempo_port_forward_pid 2>/dev/null || true)"
+  if [[ -n "${pid}" ]] && tempo_port_forward_process_matches "${pid}"; then
+    kill "${pid}"
+    for _attempt in {1..20}; do
+      kill -0 "${pid}" 2>/dev/null || break
+      sleep 0.1
+    done
+  fi
+  rm -f "${TEMPO_PORT_FORWARD_PID_FILE}"
+}
+
+start_tempo_port_forward() {
+  local pid
+  ensure_private_directories
+  pid="$(tempo_port_forward_pid 2>/dev/null || true)"
+  if [[ -n "${pid}" ]] && tempo_port_forward_process_matches "${pid}" &&
+     curl --noproxy '*' --fail --silent --max-time 2 "${TEMPO_LOCAL_URL}/ready" >/dev/null 2>&1; then
+    note "reusing Tempo loopback process pid=${pid}"
+    return
+  fi
+  stop_tempo_port_forward
+  : >"${TEMPO_PORT_FORWARD_LOG}"
+  chmod 600 "${TEMPO_PORT_FORWARD_LOG}"
+  nohup kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" \
+    port-forward --address=127.0.0.1 service/tempo "${TEMPO_LOCAL_PORT}:3200" \
+    </dev/null >"${TEMPO_PORT_FORWARD_LOG}" 2>&1 &
+  pid="$!"
+  printf '%s\n' "${pid}" >"${TEMPO_PORT_FORWARD_PID_FILE}"
+  chmod 600 "${TEMPO_PORT_FORWARD_PID_FILE}"
+  for _attempt in {1..60}; do
+    if curl --noproxy '*' --fail --silent --max-time 2 "${TEMPO_LOCAL_URL}/ready" >/dev/null 2>&1; then
+      pass "tempo_url=${TEMPO_LOCAL_URL}"
+      return
+    fi
+    kill -0 "${pid}" 2>/dev/null || break
+    sleep 0.5
+  done
+  stop_tempo_port_forward
+  tail -n 40 "${TEMPO_PORT_FORWARD_LOG}" >&2 || true
+  die "Tempo loopback access did not become ready"
+}
+
 local_up() {
   preflight
   ensure_private_directories
@@ -567,6 +689,7 @@ local_up() {
   install_runtime
   start_port_forward
   start_grafana_port_forward
+  start_tempo_port_forward
   print_status
 }
 
@@ -577,6 +700,7 @@ local_open() {
   release_exists || die "CloudOps release is unavailable; run make local-up"
   start_port_forward
   start_grafana_port_forward
+  start_tempo_port_forward
   printf '%s\n' "${LOCAL_URL}"
   if [[ "${CLOUDOPS_NO_OPEN:-0}" != "1" ]] && command -v xdg-open >/dev/null 2>&1; then
     nohup xdg-open "${LOCAL_URL}" </dev/null >/dev/null 2>&1 &
@@ -1113,14 +1237,14 @@ validate_bootstrap_secret_directory() {
 }
 
 print_status() {
-  local pod version pid grafana_pid gateway
+  local pod version pid grafana_pid tempo_pid gateway
   require_command kubectl
   require_command jq
   validate_fixed_boundaries
   validate_local_port
   validate_identifier "${DATABASE_NAME}"
-  printf 'cluster_name=%s\nkube_context=%s\nnamespace=%s\nrelease=%s\nurl=%s\ngrafana_url=%s\n' \
-    "${CLUSTER_NAME}" "${KUBE_CONTEXT}" "${NAMESPACE}" "${RELEASE_NAME}" "${LOCAL_URL}" "${GRAFANA_LOCAL_URL}"
+  printf 'cluster_name=%s\nkube_context=%s\nnamespace=%s\nrelease=%s\nurl=%s\ngrafana_url=%s\ntempo_url=%s\n' \
+    "${CLUSTER_NAME}" "${KUBE_CONTEXT}" "${NAMESPACE}" "${RELEASE_NAME}" "${LOCAL_URL}" "${GRAFANA_LOCAL_URL}" "${TEMPO_LOCAL_URL}"
   secret_directory_summary
   if ! context_exists; then
     printf 'runtime=unavailable\nreason=context_not_found\n'
@@ -1135,7 +1259,7 @@ print_status() {
   printf 'runtime=available\n'
   helm --kube-context "${KUBE_CONTEXT}" -n "${NAMESPACE}" status "${RELEASE_NAME}" \
     -o json | jq -r '"release_status=" + .info.status + "\nrelease_revision=" + (.version|tostring)'
-  kube -n "${NAMESPACE}" get deployments,statefulsets,jobs \
+  kube -n "${NAMESPACE}" get deployments,statefulsets,daemonsets,jobs \
     -l app.kubernetes.io/instance="${RELEASE_NAME}" \
     -o custom-columns='KIND:.kind,NAME:.metadata.name,READY:.status.readyReplicas,SUCCEEDED:.status.succeeded' --no-headers 2>/dev/null || true
   pod="$(mysql_pod_if_running || true)"
@@ -1160,6 +1284,12 @@ print_status() {
   else
     printf 'grafana_loopback=stopped\n'
   fi
+  tempo_pid="$(tempo_port_forward_pid 2>/dev/null || true)"
+  if [[ -n "${tempo_pid}" ]] && tempo_port_forward_process_matches "${tempo_pid}"; then
+    printf 'tempo_loopback=available\ntempo_loopback_pid=%s\n' "${tempo_pid}"
+  else
+    printf 'tempo_loopback=stopped\n'
+  fi
   kube -n "${NAMESPACE}" get pvc -l app.kubernetes.io/instance="${RELEASE_NAME}" \
     -o custom-columns='PVC:.metadata.name,STATUS:.status.phase,CAPACITY:.status.capacity.storage' --no-headers 2>/dev/null || true
   backup_summary
@@ -1175,6 +1305,10 @@ local_logs() {
     worker) kube -n "${NAMESPACE}" logs deployment/cloudops-worker --all-containers --tail="${lines}" ;;
     prometheus) kube -n "${NAMESPACE}" logs deployment/prometheus --all-containers --tail="${lines}" ;;
     grafana) kube -n "${NAMESPACE}" logs deployment/grafana --all-containers --tail="${lines}" ;;
+    elasticsearch) kube -n "${NAMESPACE}" logs statefulset/elasticsearch --all-containers --tail="${lines}" ;;
+    filebeat) kube -n "${NAMESPACE}" logs daemonset/filebeat --all-containers --tail="${lines}" ;;
+    tempo) kube -n "${NAMESPACE}" logs statefulset/tempo --all-containers --tail="${lines}" ;;
+    otel-collector) kube -n "${NAMESPACE}" logs deployment/otel-collector --all-containers --tail="${lines}" ;;
     mysql) kube -n "${NAMESPACE}" logs statefulset/mysql --all-containers --tail="${lines}" ;;
     migrate)
       job="$(kube -n "${NAMESPACE}" get jobs -l app.kubernetes.io/component=migrate \
@@ -1183,32 +1317,64 @@ local_logs() {
       kube -n "${NAMESPACE}" logs "job/${job}" --all-containers --tail="${lines}"
       ;;
     all)
-      for component in api worker prometheus grafana migrate mysql; do
+      for component in api worker prometheus grafana elasticsearch filebeat tempo otel-collector migrate mysql; do
         printf '== %s ==\n' "${component}"
         local_logs "${component}" || true
       done
       ;;
-    *) die "COMPONENT must be api, worker, prometheus, grafana, migrate, mysql, or empty" ;;
+    *) die "COMPONENT must be api, worker, prometheus, grafana, elasticsearch, filebeat, tempo, otel-collector, migrate, mysql, or empty" ;;
   esac
+}
+
+resume_filebeat() {
+  local suspended
+  kube -n "${NAMESPACE}" get daemonset/filebeat >/dev/null 2>&1 || return 0
+  suspended="$(kube -n "${NAMESPACE}" get daemonset/filebeat -o jsonpath='{.spec.template.spec.nodeSelector.cloudops\.io/runtime-stopped}' 2>/dev/null || true)"
+  if [[ "${suspended}" == "true" ]]; then
+    kube -n "${NAMESPACE}" patch daemonset/filebeat --type=json \
+      -p='[{"op":"remove","path":"/spec/template/spec/nodeSelector/cloudops.io~1runtime-stopped"}]' >/dev/null
+  fi
+}
+
+suspend_filebeat() {
+  local remaining
+  kube -n "${NAMESPACE}" get daemonset/filebeat >/dev/null 2>&1 || return 0
+  kube -n "${NAMESPACE}" patch daemonset/filebeat --type=merge \
+    -p='{"spec":{"template":{"spec":{"nodeSelector":{"cloudops.io/runtime-stopped":"true"}}}}}' >/dev/null
+  for _attempt in {1..60}; do
+    remaining="$(kube -n "${NAMESPACE}" get pods -l app.kubernetes.io/name=filebeat --no-headers 2>/dev/null | wc -l)"
+    [[ "${remaining}" == "0" ]] && return 0
+    sleep 0.5
+  done
+  die "Filebeat did not stop within the bounded shutdown window"
 }
 
 local_restart() {
   validate_fixed_boundaries
   context_exists || die "Kubernetes context is unavailable: ${KUBE_CONTEXT}"
   release_exists || die "CloudOps release is unavailable; run make local-up"
-  kube -n "${NAMESPACE}" scale statefulset/mysql --replicas=1 >/dev/null
+  kube -n "${NAMESPACE}" scale statefulset/mysql statefulset/elasticsearch statefulset/tempo --replicas=1 >/dev/null
   kube -n "${NAMESPACE}" rollout status statefulset/mysql --timeout=5m
+  kube -n "${NAMESPACE}" rollout status statefulset/elasticsearch --timeout=8m
+  kube -n "${NAMESPACE}" rollout status statefulset/tempo --timeout=5m
   kube -n "${NAMESPACE}" scale \
-    deployment/cloudops-api deployment/cloudops-worker deployment/prometheus deployment/grafana \
+    deployment/cloudops-api deployment/cloudops-worker deployment/prometheus deployment/grafana deployment/otel-collector \
     --replicas=1 >/dev/null
+  resume_filebeat
   kube -n "${NAMESPACE}" rollout restart \
-    deployment/cloudops-api deployment/cloudops-worker deployment/prometheus deployment/grafana >/dev/null
+    deployment/cloudops-api deployment/cloudops-worker deployment/prometheus deployment/grafana deployment/otel-collector \
+    statefulset/elasticsearch statefulset/tempo daemonset/filebeat >/dev/null
+  kube -n "${NAMESPACE}" rollout status statefulset/elasticsearch --timeout=8m
+  kube -n "${NAMESPACE}" rollout status statefulset/tempo --timeout=5m
+  kube -n "${NAMESPACE}" rollout status deployment/otel-collector --timeout=5m
+  kube -n "${NAMESPACE}" rollout status daemonset/filebeat --timeout=5m
   kube -n "${NAMESPACE}" rollout status deployment/cloudops-api --timeout=5m
   kube -n "${NAMESPACE}" rollout status deployment/cloudops-worker --timeout=5m
   kube -n "${NAMESPACE}" rollout status deployment/prometheus --timeout=5m
   kube -n "${NAMESPACE}" rollout status deployment/grafana --timeout=5m
   start_port_forward
   start_grafana_port_forward
+  start_tempo_port_forward
   pass "CloudOps runtime restarted with persistent state preserved"
 }
 
@@ -1216,14 +1382,16 @@ local_down() {
   validate_fixed_boundaries
   stop_port_forward
   stop_grafana_port_forward
+  stop_tempo_port_forward
   if ! context_exists || ! release_exists; then
     note "CloudOps runtime is already stopped"
     return
   fi
   kube -n "${NAMESPACE}" scale \
-    deployment/cloudops-api deployment/cloudops-worker deployment/prometheus deployment/grafana \
+    deployment/cloudops-api deployment/cloudops-worker deployment/prometheus deployment/grafana deployment/otel-collector \
     --replicas=0 >/dev/null
-  kube -n "${NAMESPACE}" scale statefulset/mysql --replicas=0 >/dev/null
+  suspend_filebeat
+  kube -n "${NAMESPACE}" scale statefulset/mysql statefulset/elasticsearch statefulset/tempo --replicas=0 >/dev/null
   pass "CloudOps workloads stopped; PVC and local secrets preserved"
 }
 
@@ -1246,6 +1414,7 @@ local_reset() {
   fi
   stop_port_forward
   stop_grafana_port_forward
+  stop_tempo_port_forward
 	pvc_names="$(kube -n "${NAMESPACE}" get pvc \
 		-l app.kubernetes.io/instance="${RELEASE_NAME}" \
     -o name 2>/dev/null || true)"
@@ -1253,7 +1422,7 @@ local_reset() {
   if [[ -n "${pvc_names}" ]]; then
     while IFS= read -r pvc; do
 			case "${pvc}" in
-				persistentvolumeclaim/data-mysql-0|persistentvolumeclaim/cloudops-data) ;;
+					persistentvolumeclaim/data-mysql-0|persistentvolumeclaim/data-elasticsearch-0|persistentvolumeclaim/data-tempo-0|persistentvolumeclaim/cloudops-data) ;;
 				*) die "refusing unexpected PVC reset target: ${pvc}" ;;
 			esac
 			kube -n "${NAMESPACE}" delete "${pvc}" --ignore-not-found --wait=true
@@ -1267,7 +1436,7 @@ local_reset() {
 }
 
 doctor() {
-  local failed=0 command_name pid grafana_pid pod latest_backup
+  local failed=0 command_name pid grafana_pid tempo_pid pod latest_backup
   validate_fixed_boundaries
   validate_local_port
   validate_state_directory
@@ -1329,6 +1498,38 @@ doctor() {
     printf 'PASS Grafana loopback process available pid=%s\n' "${grafana_pid}"
   else
     printf 'FAIL Grafana loopback process unavailable\n'
+    failed=1
+  fi
+  tempo_pid="$(tempo_port_forward_pid 2>/dev/null || true)"
+  if [[ -n "${tempo_pid}" ]] && tempo_port_forward_process_matches "${tempo_pid}" &&
+     curl --noproxy '*' --fail --silent --max-time 2 "${TEMPO_LOCAL_URL}/ready" >/dev/null 2>&1; then
+    printf 'PASS Tempo loopback process available pid=%s\n' "${tempo_pid}"
+  else
+    printf 'FAIL Tempo loopback process unavailable\n'
+    failed=1
+  fi
+  if [[ "$(kube -n "${NAMESPACE}" get statefulset/elasticsearch -o json 2>/dev/null | jq -r '(.spec.replicas == 1) and (.status.readyReplicas == 1)' 2>/dev/null || true)" == "true" ]]; then
+    printf 'PASS Elasticsearch bounded logs Provider ready\n'
+  else
+    printf 'FAIL Elasticsearch bounded logs Provider unavailable\n'
+    failed=1
+  fi
+  if [[ "$(kube -n "${NAMESPACE}" get statefulset/tempo -o json 2>/dev/null | jq -r '(.spec.replicas == 1) and (.status.readyReplicas == 1)' 2>/dev/null || true)" == "true" ]]; then
+    printf 'PASS Tempo traces Provider ready\n'
+  else
+    printf 'FAIL Tempo traces Provider unavailable\n'
+    failed=1
+  fi
+  if [[ "$(kube -n "${NAMESPACE}" get deployment/otel-collector -o json 2>/dev/null | jq -r '(.spec.replicas == 1) and (.status.readyReplicas == 1)' 2>/dev/null || true)" == "true" ]]; then
+    printf 'PASS OpenTelemetry Collector ready\n'
+  else
+    printf 'FAIL OpenTelemetry Collector unavailable\n'
+    failed=1
+  fi
+  if [[ "$(kube -n "${NAMESPACE}" get daemonset/filebeat -o json 2>/dev/null | jq -r '(.status.desiredNumberScheduled > 0) and (.status.numberReady == .status.desiredNumberScheduled)' 2>/dev/null || true)" == "true" ]]; then
+    printf 'PASS Filebeat Kubernetes log collection ready\n'
+  else
+    printf 'FAIL Filebeat Kubernetes log collection unavailable\n'
     failed=1
   fi
   backup_summary

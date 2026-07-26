@@ -16,11 +16,13 @@ import (
 	"github.com/05allan1213/CloudOps-Copilot/internal/infra/incidentstore"
 	"github.com/05allan1213/CloudOps-Copilot/internal/infra/infrastructuregateway"
 	"github.com/05allan1213/CloudOps-Copilot/internal/infra/monitoringgateway"
+	"github.com/05allan1213/CloudOps-Copilot/internal/infra/telemetrygateway"
 	"github.com/05allan1213/CloudOps-Copilot/internal/infrastructure"
 	"github.com/05allan1213/CloudOps-Copilot/internal/middleware"
 	"github.com/05allan1213/CloudOps-Copilot/internal/notification"
 	"github.com/05allan1213/CloudOps-Copilot/internal/observability"
 	"github.com/05allan1213/CloudOps-Copilot/internal/settings"
+	"github.com/05allan1213/CloudOps-Copilot/internal/telemetry"
 )
 
 func InitAPIContainer(cfg *config.Config, infra *di.Infra, runtimeReadiness handler.RuntimeReadiness) (*di.Container, error) {
@@ -79,6 +81,18 @@ func InitAPIContainer(cfg *config.Config, infra *di.Infra, runtimeReadiness hand
 		container.Monitoring, err = observability.NewService(context.Background(), monitoringRepository, container.Settings, monitoringClient)
 		if err != nil {
 			return nil, fmt.Errorf("monitoring service init failed: %w", err)
+		}
+		telemetryClient, gatewayErr := telemetrygateway.NewClient(cfg.WorkerManagementTarget, cfg.ObservabilityRequestTimeout+2*time.Second)
+		if gatewayErr != nil {
+			return nil, fmt.Errorf("telemetry Provider Gateway client init failed: %w", gatewayErr)
+		}
+		telemetryRepository, repositoryErr := telemetry.NewRepository(infra.MySQL.SQLDB())
+		if repositoryErr != nil {
+			return nil, fmt.Errorf("telemetry repository init failed: %w", repositoryErr)
+		}
+		container.Telemetry, err = telemetry.NewService(telemetryRepository, container.Settings, telemetryClient)
+		if err != nil {
+			return nil, fmt.Errorf("telemetry service init failed: %w", err)
 		}
 	}
 

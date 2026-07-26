@@ -307,7 +307,7 @@ onBeforeUnmount(() => {
       </div>
       <main id="main-content" class="app-main" :class="{ 'app-main--full-bleed': isFullBleed }">
         <RouterView v-slot="{ Component }">
-          <Transition name="fade" mode="out-in" @after-enter="focusRouteHeading">
+          <Transition name="fade" @after-enter="focusRouteHeading">
             <component :is="Component" :key="route.path" />
           </Transition>
         </RouterView>

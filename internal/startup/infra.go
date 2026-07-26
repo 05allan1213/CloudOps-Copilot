@@ -3,6 +3,7 @@ package startup
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -73,9 +74,11 @@ func InitInfra(ctx context.Context, cfg config.Config, options InfraOptions) (*d
 
 func initTracer(ctx context.Context, cfg config.Config, serviceName string) func(context.Context) error {
 	shutdownTracer, err := tracer.Init(ctx, tracer.Config{
-		ServiceName:  serviceName,
-		OTLPEndpoint: cfg.TraceOTLPEndpoint,
-		SampleRate:   cfg.TraceSampleRate,
+		ServiceName: serviceName, ServiceVersion: strings.TrimSpace(os.Getenv("SERVICE_VERSION")),
+		Environment: cfg.AppEnv, Cluster: cfg.K8SClusterID, Namespace: strings.TrimSpace(os.Getenv("POD_NAMESPACE")),
+		PodUID: strings.TrimSpace(os.Getenv("POD_UID")), WorkloadKind: strings.TrimSpace(os.Getenv("WORKLOAD_KIND")),
+		WorkloadName: strings.TrimSpace(os.Getenv("WORKLOAD_NAME")), SourceRevision: strings.TrimSpace(os.Getenv("SOURCE_REVISION")),
+		OTLPEndpoint: cfg.TraceOTLPEndpoint, SampleRate: cfg.TraceSampleRate,
 	})
 	if err != nil {
 		zap.L().Warn("tracer init failed; tracing disabled",

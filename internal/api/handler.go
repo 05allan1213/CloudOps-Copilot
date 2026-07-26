@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/05allan1213/CloudOps-Copilot/internal/telemetry"
 )
 
 const (
@@ -30,6 +32,7 @@ type Config struct {
 	Notifications  NotificationPort
 	Infrastructure InfrastructurePort
 	Monitoring     MonitoringPort
+	Telemetry      TelemetryPort
 	AllowedOrigins []string
 	Now            func() time.Time
 }
@@ -41,6 +44,7 @@ type Handler struct {
 	notifications  NotificationPort
 	infrastructure InfrastructurePort
 	monitoring     MonitoringPort
+	telemetry      TelemetryPort
 	allowedOrigins map[string]struct{}
 	now            func() time.Time
 	idempotency    *idempotencyStore
@@ -66,6 +70,7 @@ func NewHandler(config Config) *Handler {
 		notifications:  config.Notifications,
 		infrastructure: config.Infrastructure,
 		monitoring:     config.Monitoring,
+		telemetry:      config.Telemetry,
 		allowedOrigins: normalizeOrigins(config.AllowedOrigins),
 		now:            config.Now,
 		idempotency:    newIdempotencyStore(config.Now),
@@ -122,6 +127,18 @@ var routes = []RouteSpec{
 	{Method: http.MethodGet, Path: "/api/v1/monitoring/query-authorizations"},
 	{Method: http.MethodPost, Path: "/api/v1/monitoring/query-authorizations"},
 	{Method: http.MethodPost, Path: "/api/v1/monitoring/query-authorizations/:id/revoke"},
+	{Method: http.MethodGet, Path: "/api/v1/logs/catalog"},
+	{Method: http.MethodGet, Path: "/api/v1/logs/queries"},
+	{Method: http.MethodPost, Path: "/api/v1/logs/queries"},
+	{Method: http.MethodGet, Path: "/api/v1/logs/queries/:id"},
+	{Method: http.MethodPost, Path: "/api/v1/logs/queries/:id/evidence"},
+	{Method: http.MethodGet, Path: "/api/v1/traces/catalog"},
+	{Method: http.MethodGet, Path: "/api/v1/traces/searches"},
+	{Method: http.MethodPost, Path: "/api/v1/traces/searches"},
+	{Method: http.MethodGet, Path: "/api/v1/traces/searches/:id"},
+	{Method: http.MethodGet, Path: "/api/v1/traces/:trace_id"},
+	{Method: http.MethodPost, Path: "/api/v1/traces/searches/:id/traces/:trace_id/evidence"},
+	{Method: http.MethodPost, Path: "/api/v1/agent/consultations"},
 }
 
 func Routes() []RouteSpec {
@@ -167,6 +184,13 @@ func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	queries.GET("/monitoring/queries/:id", handler.getMonitoringQuery)
 	queries.GET("/monitoring/query-definitions", handler.listQueryDefinitions)
 	queries.GET("/monitoring/query-authorizations", handler.listQueryAuthorizations)
+	queries.GET("/logs/catalog", handler.getLogCatalog)
+	queries.GET("/logs/queries", handler.listLogQueries)
+	queries.GET("/logs/queries/:id", handler.getLogQuery)
+	queries.GET("/traces/catalog", handler.getTraceCatalog)
+	queries.GET("/traces/searches", handler.listTraceSearches)
+	queries.GET("/traces/searches/:id", handler.getTraceSearch)
+	queries.GET("/traces/:trace_id", handler.getTraceDetail)
 
 	commands := group.Group("")
 	commands.Use(handler.requireMutationOrigin)
@@ -185,7 +209,14 @@ func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	commands.POST("/monitoring/query-definitions", handler.saveQueryDefinition)
 	commands.POST("/monitoring/query-authorizations", handler.createQueryAuthorization)
 	commands.POST("/monitoring/query-authorizations/:id/revoke", handler.revokeQueryAuthorization)
+	commands.POST("/logs/queries", handler.startLogQuery)
+	commands.POST("/logs/queries/:id/evidence", handler.saveLogEvidence)
+	commands.POST("/traces/searches", handler.startTraceSearch)
+	commands.POST("/traces/searches/:id/traces/:trace_id/evidence", handler.saveTraceEvidence)
+	commands.POST("/agent/consultations", handler.createTelemetryConsultation)
 }
+
+var _ TelemetryPort = (*telemetry.Service)(nil)
 
 func (h *Handler) listIncidents(c *gin.Context) {
 	cursor, afterID, limit, err := parseListOptions(c.Request)
