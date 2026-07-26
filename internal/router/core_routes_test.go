@@ -14,7 +14,6 @@ import (
 func TestCoreRouterDoesNotRegisterLegacyProducts(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := config.Load()
-	cfg.AuthEnabled = false
 	cfg.RateLimit.Enabled = false
 	cfg.StaticDir = ""
 	cfg.FastDemoEnabled = false
@@ -32,9 +31,9 @@ func TestCoreRouterDoesNotRegisterLegacyProducts(t *testing.T) {
 			}
 		}
 	}
-	for _, required := range []string{"/api/v2/webhook/alertmanager", "/api/v2/workbench/incidents", "/api/v2/workbench/incidents/:id", "/api/v2/workbench/incidents/:id/resources", "/api/v2/workbench/incidents/:id/realtime"} {
+	for _, required := range []string{"/api/v1/incidents", "/api/v1/incidents/:id", "/api/v1/incidents/:id/signals", "/api/v1/incidents/:id/events"} {
 		if !present[required] {
-			t.Fatalf("required V2 route missing: %s", required)
+			t.Fatalf("required V1 route missing: %s", required)
 		}
 	}
 }

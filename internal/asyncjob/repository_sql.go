@@ -419,17 +419,16 @@ error_summary, created_at
 }
 
 func markIncidentNeedsAttention(ctx context.Context, tx *sql.Tx, task Task, reason, errorCode string) error {
-	var domainVersion, incidentCycle sql.NullInt64
+	var incidentCycle uint64
 	var incidentVersion uint64
-	var incidentStatus sql.NullString
-	if err := tx.QueryRowContext(ctx, `SELECT domain_schema_version, cycle_no, version, v3_status
+	var incidentStatus string
+	if err := tx.QueryRowContext(ctx, `SELECT cycle_no, version, status
 FROM incidents
 WHERE id = ?
-FOR UPDATE`, task.IncidentID).Scan(&domainVersion, &incidentCycle, &incidentVersion, &incidentStatus); err != nil {
+FOR UPDATE`, task.IncidentID).Scan(&incidentCycle, &incidentVersion, &incidentStatus); err != nil {
 		return fmt.Errorf("lock async task Incident attention state: %w", err)
 	}
-	isV3 := domainVersion.Valid && domainVersion.Int64 == 3 && incidentCycle.Valid && incidentStatus.Valid
-	currentActiveCycle := isV3 && uint64(incidentCycle.Int64) == uint64(task.CycleNo) && isActiveIncidentStatus(incidentStatus.String)
+	currentActiveCycle := incidentCycle == uint64(task.CycleNo) && isActiveIncidentStatus(incidentStatus)
 	if currentActiveCycle {
 		result, err := tx.ExecContext(ctx, `UPDATE incidents
 SET needs_attention = TRUE,
@@ -438,8 +437,7 @@ SET needs_attention = TRUE,
     version = version + 1,
     updated_at = NOW(6)
 WHERE id = ?
-  AND domain_schema_version = 3
-	  AND version = ?`, reason, task.IncidentID, incidentVersion)
+  AND version = ?`, reason, task.IncidentID, incidentVersion)
 		if err != nil {
 			return fmt.Errorf("mark async task Incident needs_attention: %w", err)
 		}
@@ -454,8 +452,8 @@ WHERE id = ?
 		"subject_type":             task.SubjectType,
 		"transition":               task.Transition,
 		"expected_subject_version": task.ExpectedSubjectVersion,
-		"incident_cycle_no":        nullInt64Value(incidentCycle),
-		"incident_status":          incidentStatus.String,
+		"incident_cycle_no":        incidentCycle,
+		"incident_status":          incidentStatus,
 		"reason_code":              reason,
 		"error_code":               errorCode,
 	})
@@ -463,29 +461,16 @@ WHERE id = ?
 		return fmt.Errorf("encode async task dead Incident event: %w", err)
 	}
 	idempotencyKey := fmt.Sprintf("%x", sha256.Sum256([]byte("async-task-dead\x00"+task.PublicID)))
-	var eventDomainVersion, eventCycle, eventSchemaVersion any
-	if isV3 {
-		eventDomainVersion = 3
-		eventCycle = task.CycleNo
-		eventSchemaVersion = 1
-	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO incident_events (
-public_id, incident_id, domain_schema_version, cycle_no, event_schema_version,
+public_id, incident_id, cycle_no, event_schema_version,
 event_type, idempotency_key, actor_type, actor_id, summary, metadata_json,
 occurred_at, created_at
-) VALUES (?, ?, ?, ?, ?, 'async_task_dead', ?, 'system', 'asyncjob',
+) VALUES (?, ?, ?, 1, 'async_task_dead', ?, 'system', 'asyncjob',
 	          'async task entered dead state', ?, NOW(6), NOW(6))`,
-		uuid.NewString(), task.IncidentID, eventDomainVersion, eventCycle, eventSchemaVersion, idempotencyKey, metadata); err != nil {
+		uuid.NewString(), task.IncidentID, task.CycleNo, idempotencyKey, metadata); err != nil {
 		return fmt.Errorf("append async task dead Incident event: %w", err)
 	}
 	return nil
-}
-
-func nullInt64Value(value sql.NullInt64) any {
-	if !value.Valid {
-		return nil
-	}
-	return value.Int64
 }
 
 func isActiveIncidentStatus(status string) bool {

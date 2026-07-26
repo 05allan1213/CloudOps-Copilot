@@ -192,7 +192,7 @@ func (c *Client) GetCommit(ctx context.Context, repo change.RepositoryRef, ref s
 }
 
 // GetFileContent reads one allowlisted file at an exact commit. It is an
-// additive V3 delivery port and intentionally is not part of the broader
+// exact delivery port and intentionally is not part of the broader
 // change.GitHubReader interface used by legacy correlation.
 func (c *Client) GetFileContent(ctx context.Context, repo change.RepositoryRef, revision, filePath string) (change.FileContent, error) {
 	if err := c.authorize(repo); err != nil {
@@ -220,12 +220,12 @@ func (c *Client) GetFileContent(ctx context.Context, repo change.RepositoryRef, 
 	}
 	payload.SHA = strings.ToLower(strings.TrimSpace(payload.SHA))
 	if payload.Type != "file" || payload.Path != filePath || payload.Encoding != "base64" ||
-		!change.ValidExactGitObjectID(payload.SHA) || payload.Size <= 0 || payload.Size > remediation.MaxV3PostImageBytes {
+		!change.ValidExactGitObjectID(payload.SHA) || payload.Size <= 0 || payload.Size > remediation.MaxPostImageBytes {
 		return change.FileContent{}, change.ErrInvalidArgument
 	}
 	encoded := strings.NewReplacer("\n", "", "\r", "").Replace(payload.Content)
 	contents, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil || len(contents) != payload.Size || len(contents) > remediation.MaxV3PostImageBytes {
+	if err != nil || len(contents) != payload.Size || len(contents) > remediation.MaxPostImageBytes {
 		return change.FileContent{}, change.ErrInvalidArgument
 	}
 	computedBlob, err := change.GitBlobObjectID(contents, len(payload.SHA))

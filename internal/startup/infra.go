@@ -58,10 +58,12 @@ func InitInfra(ctx context.Context, cfg config.Config, options InfraOptions) (*d
 	}
 	infra := &di.Infra{
 		ShutdownTracer: shutdownTracer,
-		PromClient:     promclient.NewClient(cfg.PrometheusURL, cfg.RequestTimeout),
 		RedisClient:    redisClient,
 		MySQL:          mysqlClient,
 		DB:             dbFromMySQL(mysqlClient),
+	}
+	if strings.TrimSpace(cfg.PrometheusURL) != "" {
+		infra.PromClient = promclient.NewClient(cfg.PrometheusURL, cfg.RequestTimeout)
 	}
 	if options.EnableKafka {
 		infra.KafkaProducer = initKafkaProducer(cfg)

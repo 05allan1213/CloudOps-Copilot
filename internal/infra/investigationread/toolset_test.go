@@ -101,7 +101,7 @@ func TestDeploymentApplicationMatchesArgoDirectoryNotGitOpsFile(t *testing.T) {
 
 type promStub struct{}
 
-func (promStub) ObserveV3(context.Context, observabilityread.V3MetricQuery) (verification.Observation, error) {
+func (promStub) ObserveBoundedMetric(context.Context, observabilityread.MetricQuery) (verification.Observation, error) {
 	return verification.Observation{}, nil
 }
 

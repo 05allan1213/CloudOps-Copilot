@@ -45,24 +45,24 @@ func TestChangeEnsurePRPlanModeCreatesOnlyDurableChangeRequest(t *testing.T) {
 	}
 }
 
-func TestBuildPhasedDeliveryRequestBindsApprovedPlan(t *testing.T) {
+func TestBuildChangeWriteRequestBindsApprovedPlan(t *testing.T) {
 	plan := changeTestPlan()
-	request := buildPhasedDeliveryRequest(plan, strings.Repeat("9", 64))
+	request := buildChangeWriteRequest(plan, strings.Repeat("9", 64))
 	if request.Repository != plan.TargetRepository || request.BaseRevision != plan.TargetBaseRevision ||
 		request.BaseBlobSHA != plan.BaseBlobSHA || request.ExpectedBeforeHash != plan.ExpectedBeforeHash ||
 		request.ExpectedPostImageHash != plan.ExpectedPostImageHash || request.ExpectedTreeHash != plan.ExpectedTreeHash ||
 		string(request.Content) != string(plan.PostImage) || !strings.Contains(request.PRBody, plan.CanonicalPlanHash) ||
 		!strings.Contains(request.PRBody, plan.EvidenceBindings[0].ID) ||
-		request.Branch != remediation.V3GitOpsBranch(plan.IncidentPublicID, plan.CanonicalPlanHash) {
+		request.Branch != remediation.GitOpsBranch(plan.IncidentPublicID, plan.CanonicalPlanHash) {
 		t.Fatalf("request is not fully bound: %+v", request)
 	}
-	if !validWriteAdvance(remediation.WritePhaseEnsureBranch, remediation.WritePhaseEnsureCommit) ||
-		validWriteAdvance(remediation.WritePhaseEnsureDraftPR, remediation.WritePhaseEnsureCommit) {
-		t.Fatal("write phase ordering is not monotonic")
+	if !validWriteAdvance(remediation.OperationStepEnsureBranch, remediation.OperationStepEnsureCommit) ||
+		validWriteAdvance(remediation.OperationStepEnsureDraftPR, remediation.OperationStepEnsureCommit) {
+		t.Fatal("operation step ordering is not monotonic")
 	}
 }
 
-func TestChangeEnsurePRRejectsSupersededEvidenceBeforeWritePhase(t *testing.T) {
+func TestChangeEnsurePRRejectsSupersededEvidenceBeforeOperationStep(t *testing.T) {
 	plan := changeTestPlan()
 	store := &changeTestStore{loadChangeErr: errApprovedEvidenceSuperseded}
 	operation := &changeEnsurePROperation{
@@ -76,7 +76,7 @@ func TestChangeEnsurePRRejectsSupersededEvidenceBeforeWritePhase(t *testing.T) {
 		ID: 12, IncidentID: plan.IncidentID, CycleNo: uint32(plan.CycleNo), Queue: asyncjob.QueueDeliver,
 		Type: asyncjob.TaskChangeEnsurePR, SubjectType: "change_request", SubjectID: 31,
 		Transition: "change.ensure_pr", ExpectedSubjectVersion: 4, PayloadSchemaVersion: changeEnsurePayloadSchema,
-		Payload: []byte(`{"plan_id":"` + plan.PublicID + `","change_request_id":"44444444-4444-4444-8444-444444444444","write_phase":"ensure_commit"}`),
+		Payload: []byte(`{"plan_id":"` + plan.PublicID + `","change_request_id":"44444444-4444-4444-8444-444444444444","operation_step":"ensure_commit"}`),
 	}
 	result := operation.handle(context.Background(), asyncjob.Execution{
 		Task:  task,
@@ -120,18 +120,18 @@ func TestChangeEnsurePRRejectsSupersededEvidenceBeforeCreatingChangeRequest(t *t
 
 func TestChangeEnsurePRRevalidatesEvidenceBeforeEveryWriteMarker(t *testing.T) {
 	plan := changeTestPlan()
-	for _, phase := range []remediation.WritePhase{
-		remediation.WritePhaseEnsureBranch,
-		remediation.WritePhaseEnsureCommit,
-		remediation.WritePhaseEnsureDraftPR,
+	for _, step := range []remediation.OperationStep{
+		remediation.OperationStepEnsureBranch,
+		remediation.OperationStepEnsureCommit,
+		remediation.OperationStepEnsureDraftPR,
 	} {
-		t.Run(string(phase), func(t *testing.T) {
+		t.Run(string(step), func(t *testing.T) {
 			changeID := "44444444-4444-4444-8444-444444444444"
 			store := &changeTestStore{
 				change: changeSnapshot{
 					PlanSnapshot:    changePlanSnapshot{Plan: plan},
 					ChangeRequestID: 31, ChangePublicID: changeID, ChangeVersion: 4,
-					WritePhase: phase, LogicalOperation: strings.Repeat("9", 64),
+					OperationStep: step, LogicalOperation: strings.Repeat("9", 64),
 				},
 				markErr: errApprovedEvidenceSuperseded,
 			}
@@ -146,7 +146,7 @@ func TestChangeEnsurePRRevalidatesEvidenceBeforeEveryWriteMarker(t *testing.T) {
 				ID: 14, IncidentID: plan.IncidentID, CycleNo: uint32(plan.CycleNo), Queue: asyncjob.QueueDeliver,
 				Type: asyncjob.TaskChangeEnsurePR, SubjectType: "change_request", SubjectID: 31,
 				Transition: "change.ensure_pr", ExpectedSubjectVersion: 4, PayloadSchemaVersion: changeEnsurePayloadSchema,
-				Payload: []byte(`{"plan_id":"` + plan.PublicID + `","change_request_id":"` + changeID + `","write_phase":"` + string(phase) + `"}`),
+				Payload: []byte(`{"plan_id":"` + plan.PublicID + `","change_request_id":"` + changeID + `","operation_step":"` + string(step) + `"}`),
 			}
 			result := operation.handle(context.Background(), asyncjob.Execution{
 				Task:  task,
@@ -166,7 +166,7 @@ func TestChangeEnsurePRNoWritePreflightFailureInvalidatesWithoutCallingWriter(t 
 	store := &changeTestStore{
 		change: changeSnapshot{
 			PlanSnapshot: changePlanSnapshot{Plan: plan}, ChangeRequestID: 31,
-			ChangePublicID: changeID, ChangeVersion: 4, WritePhase: remediation.WritePhaseEnsureCommit,
+			ChangePublicID: changeID, ChangeVersion: 4, OperationStep: remediation.OperationStepEnsureCommit,
 			LogicalOperation: strings.Repeat("9", 64),
 		},
 		validateErr: fmt.Errorf("%w: policy drift", asyncjob.ErrPolicyViolation),
@@ -180,7 +180,7 @@ func TestChangeEnsurePRNoWritePreflightFailureInvalidatesWithoutCallingWriter(t 
 		ID: 15, IncidentID: plan.IncidentID, CycleNo: uint32(plan.CycleNo), Queue: asyncjob.QueueDeliver,
 		Type: asyncjob.TaskChangeEnsurePR, SubjectType: "change_request", SubjectID: 31,
 		Transition: "change.ensure_pr", ExpectedSubjectVersion: 4, PayloadSchemaVersion: changeEnsurePayloadSchema,
-		Payload: []byte(`{"plan_id":"` + plan.PublicID + `","change_request_id":"` + changeID + `","write_phase":"ensure_commit"}`),
+		Payload: []byte(`{"plan_id":"` + plan.PublicID + `","change_request_id":"` + changeID + `","operation_step":"ensure_commit"}`),
 	}
 	result := operation.handle(context.Background(), asyncjob.Execution{
 		Task: task, Lease: asyncjob.Lease{TaskID: task.ID, Owner: "worker", Generation: 1, ExpectedSubjectVersion: 4, Attempt: 1, MaxAttempts: 5},
@@ -196,13 +196,13 @@ func TestChangeEnsurePRNoWritePreflightFailureInvalidatesWithoutCallingWriter(t 
 	}
 }
 
-func TestChangeEnsurePRWriterSelectionReconcilesMarkerAndEnsuresExactlyOnePhase(t *testing.T) {
+func TestChangeEnsurePRWriterSelectionReconcilesMarkerAndEnsuresExactlyOneStep(t *testing.T) {
 	plan := changeTestPlan()
-	request := buildPhasedDeliveryRequest(plan, strings.Repeat("9", 64))
-	markerWriter := &changeWriterSpy{observation: remediation.WriteObservation{Phase: remediation.WritePhaseEnsureDraftPR, Reconciled: true}}
+	request := buildChangeWriteRequest(plan, strings.Repeat("9", 64))
+	markerWriter := &changeWriterSpy{observation: remediation.WriteObservation{Step: remediation.OperationStepEnsureDraftPR, Reconciled: true}}
 	operation := &changeEnsurePROperation{cfg: ChangeEnsurePRConfig{Writer: markerWriter}}
 	if _, err := operation.callReconciler(context.Background(), changeSnapshot{
-		PlanSnapshot: changePlanSnapshot{Request: request}, WritePhase: remediation.WritePhaseEnsureCommit,
+		PlanSnapshot: changePlanSnapshot{Request: request}, OperationStep: remediation.OperationStepEnsureCommit,
 		ExternalMarker: strings.Repeat("8", 64),
 	}); err != nil {
 		t.Fatal(err)
@@ -211,44 +211,44 @@ func TestChangeEnsurePRWriterSelectionReconcilesMarkerAndEnsuresExactlyOnePhase(
 		t.Fatalf("marker writer calls=%+v", markerWriter)
 	}
 
-	for _, phase := range []remediation.WritePhase{
-		remediation.WritePhaseEnsureBranch,
-		remediation.WritePhaseEnsureCommit,
-		remediation.WritePhaseEnsureDraftPR,
+	for _, step := range []remediation.OperationStep{
+		remediation.OperationStepEnsureBranch,
+		remediation.OperationStepEnsureCommit,
+		remediation.OperationStepEnsureDraftPR,
 	} {
-		t.Run(string(phase), func(t *testing.T) {
-			writer := &changeWriterSpy{observation: remediation.WriteObservation{Phase: remediation.WritePhaseComplete}}
+		t.Run(string(step), func(t *testing.T) {
+			writer := &changeWriterSpy{observation: remediation.WriteObservation{Step: remediation.OperationStepComplete}}
 			operation := &changeEnsurePROperation{cfg: ChangeEnsurePRConfig{Writer: writer}}
-			if _, err := operation.callPhaseWriter(context.Background(), changeSnapshot{
-				PlanSnapshot: changePlanSnapshot{Request: request}, WritePhase: phase,
+			if _, err := operation.callStepWriter(context.Background(), changeSnapshot{
+				PlanSnapshot: changePlanSnapshot{Request: request}, OperationStep: step,
 			}); err != nil {
 				t.Fatal(err)
 			}
 			if writer.reconcileCalls != 0 || writer.totalCalls() != 1 {
-				t.Fatalf("phase=%s calls=%+v", phase, writer)
+				t.Fatalf("step=%s calls=%+v", step, writer)
 			}
 		})
 	}
 }
 
-func TestChangeEnsurePRMarkerPassRunsPhaseWriterAfterFreshPreflight(t *testing.T) {
+func TestChangeEnsurePRMarkerPassRunsStepWriterAfterFreshPreflight(t *testing.T) {
 	plan := changeTestPlan()
 	changeID := "44444444-4444-4444-8444-444444444444"
 	store := &changeTestStore{change: changeSnapshot{
 		PlanSnapshot: changePlanSnapshot{Plan: plan}, ChangeRequestID: 31, ChangePublicID: changeID,
-		ChangeVersion: 4, WritePhase: remediation.WritePhaseEnsureCommit,
+		ChangeVersion: 4, OperationStep: remediation.OperationStepEnsureCommit,
 		LogicalOperation: strings.Repeat("9", 64), ExternalMarker: strings.Repeat("8", 64),
 	}}
 	commit := strings.Repeat("d", 40)
 	writer := &changeWriterSpy{observation: remediation.WriteObservation{
-		Phase: remediation.WritePhaseEnsureDraftPR, BaseSHA: plan.TargetBaseRevision,
+		Step: remediation.OperationStepEnsureDraftPR, BaseSHA: plan.TargetBaseRevision,
 		BranchSHA: commit, CommitSHA: commit, TreeSHA: plan.ExpectedTreeHash,
 	}}
 	operation := &changeEnsurePROperation{
 		cfg:   ChangeEnsurePRConfig{Writer: writer, CurrentPolicyHash: plan.PolicySnapshotHash, Now: func() time.Time { return plan.CreatedAt.Add(time.Minute) }},
 		store: store, externalContext: passthroughExternalContext,
 	}
-	task := changeRequestTask(plan, changeID, remediation.WritePhaseEnsureCommit)
+	task := changeRequestTask(plan, changeID, remediation.OperationStepEnsureCommit)
 	result := operation.handle(context.Background(), asyncjob.Execution{Task: task, Lease: asyncjob.Lease{
 		TaskID: task.ID, Owner: "worker", Generation: 1, ExpectedSubjectVersion: task.ExpectedSubjectVersion, Attempt: 1, MaxAttempts: 5,
 	}})
@@ -262,15 +262,15 @@ func TestChangeEnsurePRMarkerPreflightFailureReconcilesAndInvalidates(t *testing
 	changeID := "44444444-4444-4444-8444-444444444444"
 	store := &changeTestStore{change: changeSnapshot{
 		PlanSnapshot: changePlanSnapshot{Plan: plan}, ChangeRequestID: 31, ChangePublicID: changeID,
-		ChangeVersion: 4, WritePhase: remediation.WritePhaseEnsureCommit,
+		ChangeVersion: 4, OperationStep: remediation.OperationStepEnsureCommit,
 		LogicalOperation: strings.Repeat("9", 64), ExternalMarker: strings.Repeat("8", 64),
 	}, validateErr: fmt.Errorf("%w: Evidence superseded", asyncjob.ErrPolicyViolation)}
-	writer := &changeWriterSpy{observation: remediation.WriteObservation{Phase: remediation.WritePhaseEnsureCommit, Reconciled: true}}
+	writer := &changeWriterSpy{observation: remediation.WriteObservation{Step: remediation.OperationStepEnsureCommit, Reconciled: true}}
 	operation := &changeEnsurePROperation{
 		cfg:   ChangeEnsurePRConfig{Writer: writer, CurrentPolicyHash: plan.PolicySnapshotHash, Now: func() time.Time { return plan.CreatedAt.Add(time.Minute) }},
 		store: store, externalContext: passthroughExternalContext,
 	}
-	task := changeRequestTask(plan, changeID, remediation.WritePhaseEnsureCommit)
+	task := changeRequestTask(plan, changeID, remediation.OperationStepEnsureCommit)
 	result := operation.handle(context.Background(), asyncjob.Execution{Task: task, Lease: asyncjob.Lease{
 		TaskID: task.ID, Owner: "worker", Generation: 1, ExpectedSubjectVersion: task.ExpectedSubjectVersion, Attempt: 1, MaxAttempts: 5,
 	}})
@@ -290,12 +290,12 @@ func TestChangeEnsurePRExpiredApprovalAcceptsOnlyExistingCompleteDraftPR(t *test
 	changeID := "44444444-4444-4444-8444-444444444444"
 	store := &changeTestStore{change: changeSnapshot{
 		PlanSnapshot: changePlanSnapshot{Plan: plan}, ChangeRequestID: 31, ChangePublicID: changeID,
-		ChangeVersion: 4, WritePhase: remediation.WritePhaseEnsureDraftPR,
+		ChangeVersion: 4, OperationStep: remediation.OperationStepEnsureDraftPR,
 		LogicalOperation: strings.Repeat("9", 64), ExternalMarker: strings.Repeat("8", 64),
 	}, validateErr: fmt.Errorf("%w: %w", asyncjob.ErrPolicyViolation, errChangeApprovalExpired)}
 	commit := strings.Repeat("d", 40)
 	writer := &changeWriterSpy{observation: remediation.WriteObservation{
-		Phase: remediation.WritePhaseComplete, BaseSHA: plan.TargetBaseRevision,
+		Step: remediation.OperationStepComplete, BaseSHA: plan.TargetBaseRevision,
 		BranchSHA: commit, CommitSHA: commit, TreeSHA: plan.ExpectedTreeHash,
 		PRNumber: 17, PRURL: "https://github.example/acme/gitops/pull/17", Reconciled: true,
 	}}
@@ -303,7 +303,7 @@ func TestChangeEnsurePRExpiredApprovalAcceptsOnlyExistingCompleteDraftPR(t *test
 		cfg:   ChangeEnsurePRConfig{Writer: writer, CurrentPolicyHash: plan.PolicySnapshotHash, Now: func() time.Time { return plan.ExpiresAt.Add(time.Minute) }},
 		store: store, externalContext: passthroughExternalContext,
 	}
-	task := changeRequestTask(plan, changeID, remediation.WritePhaseEnsureDraftPR)
+	task := changeRequestTask(plan, changeID, remediation.OperationStepEnsureDraftPR)
 	result := operation.handle(context.Background(), asyncjob.Execution{Task: task, Lease: asyncjob.Lease{
 		TaskID: task.ID, Owner: "worker", Generation: 1, ExpectedSubjectVersion: task.ExpectedSubjectVersion, Attempt: 1, MaxAttempts: 5,
 	}})
@@ -324,19 +324,19 @@ func TestChangeEnsurePRInvalidatedPlanNeverEnqueuesAnotherWrite(t *testing.T) {
 	changeID := "44444444-4444-4444-8444-444444444444"
 	store := &changeTestStore{change: changeSnapshot{
 		PlanSnapshot: changePlanSnapshot{Plan: plan}, ChangeRequestID: 31, ChangePublicID: changeID,
-		ChangeVersion: 4, WritePhase: remediation.WritePhaseEnsureCommit,
+		ChangeVersion: 4, OperationStep: remediation.OperationStepEnsureCommit,
 		LogicalOperation: strings.Repeat("9", 64), ExternalMarker: strings.Repeat("8", 64),
 	}}
 	commit := strings.Repeat("d", 40)
 	writer := &changeWriterSpy{observation: remediation.WriteObservation{
-		Phase: remediation.WritePhaseEnsureDraftPR, BaseSHA: plan.TargetBaseRevision,
+		Step: remediation.OperationStepEnsureDraftPR, BaseSHA: plan.TargetBaseRevision,
 		BranchSHA: commit, CommitSHA: commit, TreeSHA: plan.ExpectedTreeHash, Reconciled: true,
 	}}
 	operation := &changeEnsurePROperation{
 		cfg:   ChangeEnsurePRConfig{Writer: writer, Now: func() time.Time { return plan.CreatedAt.Add(time.Minute) }},
 		store: store, externalContext: passthroughExternalContext,
 	}
-	task := changeRequestTask(plan, changeID, remediation.WritePhaseEnsureCommit)
+	task := changeRequestTask(plan, changeID, remediation.OperationStepEnsureCommit)
 	result := operation.handle(context.Background(), asyncjob.Execution{Task: task, Lease: asyncjob.Lease{
 		TaskID: task.ID, Owner: "worker", Generation: 1, ExpectedSubjectVersion: task.ExpectedSubjectVersion, Attempt: 1, MaxAttempts: 5,
 	}})
@@ -357,15 +357,15 @@ func TestChangeEnsurePRInvalidatedPlanNeverEnqueuesAnotherWrite(t *testing.T) {
 func TestChangeEnsurePRReconciliationClassification(t *testing.T) {
 	tests := []struct {
 		name        string
-		current     remediation.WritePhase
+		current     remediation.OperationStep
 		observation remediation.WriteObservation
 		want        changeReconciliationAction
 	}{
-		{"advanced", remediation.WritePhaseEnsureCommit, remediation.WriteObservation{Phase: remediation.WritePhaseEnsureDraftPR, Reconciled: true}, changeReconciliationAdvance},
-		{"safely absent", remediation.WritePhaseEnsureDraftPR, remediation.WriteObservation{Phase: remediation.WritePhaseEnsureBranch, Reconciled: true}, changeReconciliationAbsent},
-		{"present", remediation.WritePhaseEnsureDraftPR, remediation.WriteObservation{Phase: remediation.WritePhaseEnsureCommit, Reconciled: true}, changeReconciliationPending},
-		{"ambiguous", remediation.WritePhaseEnsureCommit, remediation.WriteObservation{Phase: remediation.WritePhaseEnsureCommit, Reconciled: true}, changeReconciliationPending},
-		{"invalid", remediation.WritePhaseEnsureCommit, remediation.WriteObservation{Phase: remediation.WritePhaseEnsureDraftPR}, changeReconciliationInvalid},
+		{"advanced", remediation.OperationStepEnsureCommit, remediation.WriteObservation{Step: remediation.OperationStepEnsureDraftPR, Reconciled: true}, changeReconciliationAdvance},
+		{"safely absent", remediation.OperationStepEnsureDraftPR, remediation.WriteObservation{Step: remediation.OperationStepEnsureBranch, Reconciled: true}, changeReconciliationAbsent},
+		{"present", remediation.OperationStepEnsureDraftPR, remediation.WriteObservation{Step: remediation.OperationStepEnsureCommit, Reconciled: true}, changeReconciliationPending},
+		{"ambiguous", remediation.OperationStepEnsureCommit, remediation.WriteObservation{Step: remediation.OperationStepEnsureCommit, Reconciled: true}, changeReconciliationPending},
+		{"invalid", remediation.OperationStepEnsureCommit, remediation.WriteObservation{Step: remediation.OperationStepEnsureDraftPR}, changeReconciliationInvalid},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -391,7 +391,7 @@ func TestChangeEnsurePRExternalWriteHistoryControlsInvalidationBoundary(t *testi
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			got := classifyChangeInvalidation(test.externalStarted, test.safeTerminal)
-			if got.Terminal != test.terminal || got.V3Status != test.v3Status {
+			if got.Terminal != test.terminal || got.Status != test.v3Status {
 				t.Fatalf("decision=%+v", got)
 			}
 		})
@@ -400,12 +400,12 @@ func TestChangeEnsurePRExternalWriteHistoryControlsInvalidationBoundary(t *testi
 
 func TestChangeEnsurePRRejectsCompletePlanHashTamperingAndPolicyDrift(t *testing.T) {
 	plan, _ := completeChangeTestPlanAndGit(t)
-	if err := remediation.ValidateV3Plan(plan); err != nil {
+	if err := remediation.ValidatePlan(plan); err != nil {
 		t.Fatal(err)
 	}
 	tampered := plan
 	tampered.BoundedDiff += "# tampered\n"
-	if err := remediation.ValidateV3Plan(tampered); err == nil || !isTerminalChangePreflight(err) {
+	if err := remediation.ValidatePlan(tampered); err == nil || !isTerminalChangePreflight(err) {
 		t.Fatalf("tampered plan error=%v", err)
 	}
 	if err := validateCurrentChangePolicy(plan, strings.Repeat("f", 64)); err == nil || !isTerminalChangePreflight(err) {
@@ -426,7 +426,7 @@ func TestChangeEnsurePRRejectsDiagnosisAndSufficiencyDrift(t *testing.T) {
 	for _, fact := range facts {
 		factIDs = append(factIDs, fact.ID)
 	}
-	diagnosis, err := validateV3Diagnosis(agent.DiagnosisCandidate{
+	diagnosis, err := validateDiagnosis(agent.DiagnosisCandidate{
 		ClaimType: policy.ClaimType, Summary: "The required environment node is absent from the deployed GitOps revision.",
 		Confidence: agent.DiagnosisConfirmed, EvidenceFactIDs: factIDs, RemediationHint: agent.RemediationRestoreRequiredEnv,
 	}, investigationSnapshot{IncidentPublicID: incidentID, Task: asyncjob.Task{CycleNo: 2}, Facts: facts}, policy, sufficiency)
@@ -558,31 +558,31 @@ func passthroughExternalContext(ctx context.Context) (context.Context, context.C
 	return ctx, func() {}, nil
 }
 
-func changeRequestTask(plan remediation.RemediationPlan, changeID string, phase remediation.WritePhase) asyncjob.Task {
+func changeRequestTask(plan remediation.RemediationPlan, changeID string, step remediation.OperationStep) asyncjob.Task {
 	return asyncjob.Task{
 		ID: 16, IncidentID: plan.IncidentID, CycleNo: uint32(plan.CycleNo), Queue: asyncjob.QueueDeliver,
 		Type: asyncjob.TaskChangeEnsurePR, SubjectType: "change_request", SubjectID: 31,
 		Transition: "change.ensure_pr", ExpectedSubjectVersion: 4, PayloadSchemaVersion: changeEnsurePayloadSchema,
-		Payload: []byte(`{"plan_id":"` + plan.PublicID + `","change_request_id":"` + changeID + `","write_phase":"` + string(phase) + `"}`),
+		Payload: []byte(`{"plan_id":"` + plan.PublicID + `","change_request_id":"` + changeID + `","operation_step":"` + string(step) + `"}`),
 	}
 }
 
-func (s *changeWriterSpy) ReconcileDraftPR(context.Context, remediation.PhasedDeliveryRequest) (remediation.WriteObservation, error) {
+func (s *changeWriterSpy) ReconcileDraftPR(context.Context, remediation.ChangeWriteRequest) (remediation.WriteObservation, error) {
 	s.reconcileCalls++
 	return s.observation, s.err
 }
 
-func (s *changeWriterSpy) EnsureBranch(context.Context, remediation.PhasedDeliveryRequest) (remediation.WriteObservation, error) {
+func (s *changeWriterSpy) EnsureBranch(context.Context, remediation.ChangeWriteRequest) (remediation.WriteObservation, error) {
 	s.ensureBranchCalls++
 	return s.observation, s.err
 }
 
-func (s *changeWriterSpy) EnsureCommit(context.Context, remediation.PhasedDeliveryRequest) (remediation.WriteObservation, error) {
+func (s *changeWriterSpy) EnsureCommit(context.Context, remediation.ChangeWriteRequest) (remediation.WriteObservation, error) {
 	s.ensureCommitCalls++
 	return s.observation, s.err
 }
 
-func (s *changeWriterSpy) EnsureDraftPR(context.Context, remediation.PhasedDeliveryRequest) (remediation.WriteObservation, error) {
+func (s *changeWriterSpy) EnsureDraftPR(context.Context, remediation.ChangeWriteRequest) (remediation.WriteObservation, error) {
 	s.ensurePRCalls++
 	return s.observation, s.err
 }

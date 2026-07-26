@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -20,7 +21,7 @@ import (
 type options struct {
 	mode        string
 	root        string
-	revision    string
+	dataset     string
 	out         string
 	report      string
 	baseline    string
@@ -36,7 +37,7 @@ func main() {
 	var value options
 	flag.StringVar(&value.mode, "mode", "validate", "freeze, validate, baseline, guardrail, model, or gate")
 	flag.StringVar(&value.root, "root", ".", "repository root")
-	flag.StringVar(&value.revision, "revision", "v6", "frozen evaluation revision, for example v5 or v6")
+	flag.StringVar(&value.dataset, "dataset", "", "dataset SHA-256; defaults to the address in eval/index.json")
 	flag.StringVar(&value.out, "out", "", "report output path; stdout when empty")
 	flag.StringVar(&value.report, "report", "", "measured model report required by gate mode")
 	flag.StringVar(&value.baseline, "baseline", "", "fixed-pipeline baseline report required by gate mode")
@@ -54,8 +55,11 @@ func main() {
 }
 
 func run(options options) error {
-	paths, err := evalPaths(options.root, options.revision)
+	paths, err := evalPaths(options.root, options.dataset)
 	if err != nil {
+		return err
+	}
+	if err := verifyDatasetAddress(paths.dataset, paths.datasetAddress); err != nil {
 		return err
 	}
 	dataset, err := eval.LoadDataset(paths.dataset)
@@ -153,24 +157,47 @@ func run(options options) error {
 }
 
 type evalPathsValue struct {
+	datasetAddress                                                         string
 	dataset, oracle, split, metrics, manifest, thresholds, reducer, runner string
 	runtimeSources                                                         []string
 }
 
-func evalPaths(root, revision string) (evalPathsValue, error) {
-	revision = strings.TrimSpace(revision)
-	if !validEvalRevision(revision) {
-		return evalPathsValue{}, fmt.Errorf("invalid evaluation revision %q", revision)
+type datasetIndex struct {
+	SchemaVersion       int    `json:"schema_version"`
+	ActiveDatasetSHA256 string `json:"active_dataset_sha256"`
+}
+
+func evalPaths(root, address string) (evalPathsValue, error) {
+	address = strings.TrimSpace(address)
+	if address == "" {
+		indexPath := filepath.Join(root, "eval", "index.json")
+		encoded, err := os.ReadFile(indexPath)
+		if err != nil {
+			return evalPathsValue{}, fmt.Errorf("read Agent Eval index: %w", err)
+		}
+		var index datasetIndex
+		if err := json.Unmarshal(encoded, &index); err != nil {
+			return evalPathsValue{}, fmt.Errorf("decode Agent Eval index: %w", err)
+		}
+		if index.SchemaVersion != 1 {
+			return evalPathsValue{}, fmt.Errorf("unsupported Agent Eval index schema version %d", index.SchemaVersion)
+		}
+		address = strings.TrimSpace(index.ActiveDatasetSHA256)
 	}
+	if !validDatasetAddress(address) {
+		return evalPathsValue{}, fmt.Errorf("invalid dataset SHA-256 %q", address)
+	}
+	directory := filepath.Join(root, "eval", "sha256-"+address)
 	paths := evalPathsValue{
-		dataset:    filepath.Join(root, "eval", revision, "dataset.json"),
-		oracle:     filepath.Join(root, "eval", revision, "oracle.json"),
-		split:      filepath.Join(root, "eval", revision, "split.json"),
-		metrics:    filepath.Join(root, "eval", revision, "metrics.json"),
-		manifest:   filepath.Join(root, "eval", revision, "manifest.json"),
-		thresholds: filepath.Join(root, "eval", revision, "thresholds.json"),
-		reducer:    filepath.Join(root, "internal", "agent", "state_delta.go"),
-		runner:     filepath.Join(root, "internal", "agent"),
+		datasetAddress: address,
+		dataset:        filepath.Join(directory, "dataset.json"),
+		oracle:         filepath.Join(directory, "oracle.json"),
+		split:          filepath.Join(directory, "split.json"),
+		metrics:        filepath.Join(directory, "metrics.json"),
+		manifest:       filepath.Join(directory, "manifest.json"),
+		thresholds:     filepath.Join(directory, "thresholds.json"),
+		reducer:        filepath.Join(root, "internal", "agent", "state_delta.go"),
+		runner:         filepath.Join(root, "internal", "agent"),
 	}
 	paths.runtimeSources = []string{
 		filepath.Join(root, "internal", "taskhandler", "investigation_start.go"),
@@ -179,21 +206,33 @@ func evalPaths(root, revision string) (evalPathsValue, error) {
 		filepath.Join(root, "internal", "bootstrap", "worker_operations.go"),
 		filepath.Join(root, "internal", "bootstrap", "worker_provider.go"),
 		filepath.Join(root, "internal", "config", "config.go"),
-		filepath.Join(root, "migrations", "00013_agent_run_model_identity.sql"),
+		filepath.Join(root, "migrations", "00001_cloudops_baseline.sql"),
 	}
 	return paths, nil
 }
 
-func validEvalRevision(value string) bool {
-	if len(value) < 2 || value[0] != 'v' || value[1] == '0' {
+func validDatasetAddress(value string) bool {
+	if len(value) != sha256.Size*2 {
 		return false
 	}
-	for _, character := range value[1:] {
-		if character < '0' || character > '9' {
+	for _, character := range value {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
 			return false
 		}
 	}
 	return true
+}
+
+func verifyDatasetAddress(path, expected string) error {
+	encoded, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read content-addressed Agent Eval dataset: %w", err)
+	}
+	actual := fmt.Sprintf("%x", sha256.Sum256(encoded))
+	if actual != expected {
+		return fmt.Errorf("Agent Eval dataset address mismatch: expected sha256:%s, got sha256:%s", expected, actual)
+	}
+	return nil
 }
 
 func splitCaseIDs(raw string) []string {
@@ -216,7 +255,7 @@ func runOptionsWithIdentity(value eval.RunOptions, provider, model string) eval.
 func loadModel() (*adapter.LLMModel, string, string, bool, error) {
 	key := strings.TrimSpace(os.Getenv("LLM_API_KEY"))
 	if key == "" {
-		if path := strings.TrimSpace(os.Getenv("V3_LLM_API_KEY_FILE")); path != "" {
+		if path := strings.TrimSpace(os.Getenv("LLM_API_KEY_FILE")); path != "" {
 			data, err := os.ReadFile(path)
 			if err != nil {
 				return nil, "", "", false, fmt.Errorf("read configured model key file: %w", err)
@@ -230,7 +269,7 @@ func loadModel() (*adapter.LLMModel, string, string, bool, error) {
 	}
 	modelName := strings.TrimSpace(os.Getenv("LLM_MODEL"))
 	if modelName == "" {
-		modelName = strings.TrimSpace(os.Getenv("V3_LLM_MODEL"))
+		modelName = strings.TrimSpace(os.Getenv("LLM_MODEL"))
 	}
 	if modelName == "" {
 		modelName = "deepseek-chat"

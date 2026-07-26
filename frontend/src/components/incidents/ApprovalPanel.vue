@@ -17,7 +17,6 @@ const props = defineProps<{
   plan: RemediationPlanView;
   incidentVersion: number;
   incidentStatus: IncidentStatus;
-  isOperator: boolean;
   commandPending: boolean;
   commandFeedback: CommandFeedbackState | null;
 }>();
@@ -39,7 +38,6 @@ let clockTimer: number | null = null;
 
 const relevantFeedback = computed(() => props.commandFeedback?.resourceID === props.plan.id ? props.commandFeedback : null);
 const decisionState = computed(() => planDecisionAvailability(props.plan, {
-  isOperator: props.isOperator,
   incidentVersion: props.incidentVersion,
   incidentStatus: props.incidentStatus,
   nowMs: now.value,
@@ -297,7 +295,7 @@ function submitDecision() {
     >
       <div class="subsection-heading">
         <div>
-          <span>Immutable Operator Decision</span>
+          <span>Immutable Owner Decision</span>
           <h4 :id="`persisted-decision-${plan.id}`">
             {{ plan.decision.decision }}
           </h4>
@@ -395,7 +393,7 @@ function submitDecision() {
     >
       <header>
         <div>
-          <span>Operator Command</span>
+          <span>Owner Command</span>
           <h4 :id="dialogTitleID">
             {{ decision === "approved" ? "Approve Exact Plan" : "Reject Plan" }}
           </h4>
@@ -414,7 +412,7 @@ function submitDecision() {
       <div class="dialog-body">
         <p>
           This submits Plan version <strong>{{ plan.version }}</strong> with canonical hash
-          <code translate="no">{{ plan.canonical_plan_hash }}</code>. The server revalidates role, CSRF, expiry, status, version, hash, and idempotency.
+          <code translate="no">{{ plan.canonical_plan_hash }}</code>. The server revalidates Origin, expiry, status, version, hash, and idempotency.
         </p>
         <label :for="reasonID">Decision Reason</label>
         <textarea

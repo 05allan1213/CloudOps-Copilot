@@ -19,7 +19,7 @@ import (
 )
 
 type prometheusReader interface {
-	ObserveV3(context.Context, observabilityread.V3MetricQuery) (verification.Observation, error)
+	ObserveBoundedMetric(context.Context, observabilityread.MetricQuery) (verification.Observation, error)
 }
 
 type logReader interface {
@@ -56,7 +56,7 @@ type Config struct {
 	Now           func() time.Time
 }
 
-// Source performs exactly one fixed read bundle for one frozen V3 check. It
+// Source performs exactly one fixed read bundle for one frozen verification check. It
 // has no generic query-language or mutable-endpoint surface.
 type Source struct {
 	cfg      Config
@@ -68,18 +68,18 @@ var _ taskhandler.VerificationObservationSource = (*Source)(nil)
 func New(config Config) (*Source, error) {
 	if config.DB == nil || config.Prometheus == nil || config.Elasticsearch == nil || config.Tempo == nil ||
 		config.Argo == nil || config.Rollout == nil || config.Runtime == nil || config.Registry == nil {
-		return nil, errors.New("V3 verification source requires MySQL and every bounded read provider")
+		return nil, errors.New("verification source requires MySQL and every bounded read provider")
 	}
 	for _, value := range []string{config.Target.Cluster, config.Target.Environment, config.Target.Namespace, config.Target.Service,
 		config.Target.Workload, config.Target.Container, config.Target.ArgoApplication, config.Target.ArgoProject, config.Target.ReadyURL} {
 		if strings.TrimSpace(value) == "" {
-			return nil, errors.New("V3 verification target identity is incomplete")
+			return nil, errors.New("verification target identity is incomplete")
 		}
 	}
 	readyURL, err := url.Parse(config.Target.ReadyURL)
 	if err != nil || readyURL.Host == "" || readyURL.User != nil || readyURL.RawQuery != "" || readyURL.Fragment != "" ||
 		(readyURL.Scheme != "http" && readyURL.Scheme != "https") || readyURL.Path != "/readyz" {
-		return nil, errors.New("V3 verification readyz endpoint must be fixed")
+		return nil, errors.New("verification readyz endpoint must be fixed")
 	}
 	if config.HTTPClient == nil {
 		config.HTTPClient = &http.Client{
@@ -108,16 +108,16 @@ func (s *Source) Observe(ctx context.Context, run verification.Run, check verifi
 		return s.observeArgo(ctx, run, false)
 	case verification.CheckDeploymentObserved:
 		return s.observeRollout(ctx, check, rolloutObserved)
-	case verification.CheckDeploymentRolloutV3:
+	case verification.CheckDeploymentRolloutComplete:
 		return s.observeRollout(ctx, check, rolloutComplete)
 	case verification.CheckWorkloadReady:
 		return s.observeWorkloadReady(ctx, check)
 	case verification.CheckIncidentAlertsResolved:
 		return s.observeAlerts(ctx, run, check)
 	case verification.CheckMetricErrorRateBelow:
-		return s.observeMetric(ctx, check, observabilityread.V3MetricErrorRate)
+		return s.observeMetric(ctx, check, observabilityread.MetricErrorRate)
 	case verification.CheckMetricAvailabilityAbove:
-		return s.observeMetric(ctx, check, observabilityread.V3MetricAvailability)
+		return s.observeMetric(ctx, check, observabilityread.MetricAvailability)
 	case verification.CheckLogRequiredEnvAbsent:
 		return s.observeLogs(ctx, check)
 	case verification.CheckTraceErrorRateBelow:
@@ -186,8 +186,8 @@ func (s *Source) observeWorkloadReady(ctx context.Context, check verification.Ch
 	return observation, nil
 }
 
-func (s *Source) observeMetric(ctx context.Context, check verification.Check, kind observabilityread.V3MetricKind) (verification.Observation, error) {
-	observation, err := s.cfg.Prometheus.ObserveV3(ctx, observabilityread.V3MetricQuery{
+func (s *Source) observeMetric(ctx context.Context, check verification.Check, kind observabilityread.MetricKind) (verification.Observation, error) {
+	observation, err := s.cfg.Prometheus.ObserveBoundedMetric(ctx, observabilityread.MetricQuery{
 		Kind: kind, Service: check.Subject.Service, Namespace: check.Subject.Namespace,
 		Environment: s.cfg.Target.Environment, WorkloadName: check.Subject.WorkloadName, Lookback: check.Lookback,
 	})
@@ -229,24 +229,24 @@ func (s *Source) observeAlerts(ctx context.Context, run verification.Run, check 
 		return verification.Observation{}, verification.ErrInvalidArgument
 	}
 	var cycle uint64
-	if err := s.cfg.DB.QueryRowContext(ctx, `SELECT cycle_no FROM verification_runs WHERE id = ? AND incident_id = ? AND domain_schema_version = 3`, run.ID, run.IncidentID).Scan(&cycle); err != nil || cycle == 0 {
+	if err := s.cfg.DB.QueryRowContext(ctx, `SELECT cycle_no FROM verification_runs WHERE id = ? AND incident_id = ?`, run.ID, run.IncidentID).Scan(&cycle); err != nil || cycle == 0 {
 		return unavailable("incident_signal", err), nil
 	}
 	var unresolved int
 	err := s.cfg.DB.QueryRowContext(ctx, `SELECT COUNT(*)
 FROM incident_signals firing
-WHERE firing.incident_id = ? AND firing.cycle_no = ? AND firing.domain_schema_version = 3 AND firing.status = 'firing'
+WHERE firing.incident_id = ? AND firing.cycle_no = ? AND firing.status = 'firing'
   AND NOT EXISTS (
     SELECT 1 FROM incident_signals resolved
     WHERE resolved.incident_id = firing.incident_id AND resolved.cycle_no = firing.cycle_no
-      AND resolved.domain_schema_version = 3 AND resolved.alert_instance_key = firing.alert_instance_key
+      AND resolved.alert_instance_key = firing.alert_instance_key
       AND resolved.status = 'resolved'
   )`, run.IncidentID, cycle).Scan(&unresolved)
 	if err != nil {
 		return unavailable("incident_signal", err), nil
 	}
-	prometheus, err := s.cfg.Prometheus.ObserveV3(ctx, observabilityread.V3MetricQuery{
-		Kind: observabilityread.V3MetricFiringAlerts, Service: check.Subject.Service, Namespace: check.Subject.Namespace,
+	prometheus, err := s.cfg.Prometheus.ObserveBoundedMetric(ctx, observabilityread.MetricQuery{
+		Kind: observabilityread.MetricFiringAlerts, Service: check.Subject.Service, Namespace: check.Subject.Namespace,
 		Environment: check.Subject.Environment, WorkloadName: check.Subject.WorkloadName, Cluster: check.Subject.Cluster,
 		AlertNames: expected.AlertNames, Lookback: check.Lookback,
 	})

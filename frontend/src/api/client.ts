@@ -7,7 +7,6 @@ const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 const httpClient = axios.create({
   baseURL: apiBaseUrl,
   timeout: 10000,
-  withCredentials: true,
   headers: { Accept: "application/json" },
 });
 
@@ -39,16 +38,6 @@ export class ApiError extends Error {
 export function isApiError(error: unknown): error is ApiError {
   return error instanceof ApiError;
 }
-
-httpClient.interceptors.response.use(
-  (response) => response,
-  (error: AxiosError<ProblemDetails>) => {
-    if (error.response?.status === 401) {
-      redirectToOAuth();
-    }
-    return Promise.reject(error);
-  },
-);
 
 export async function getApiData<T>(
   url: string,
@@ -142,10 +131,4 @@ function responseHeader(headers: unknown, name: string): string {
   const maybeHeaders = headers as { get?: (key: string) => unknown; [key: string]: unknown };
   const value = typeof maybeHeaders.get === "function" ? maybeHeaders.get(name) : maybeHeaders[name];
   return typeof value === "string" ? value : "";
-}
-
-export function redirectToOAuth(): void {
-  if (typeof window === "undefined" || window.location.pathname.startsWith("/oauth2/")) return;
-  const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-  window.location.assign(`/oauth2/start?rd=${encodeURIComponent(returnTo)}`);
 }

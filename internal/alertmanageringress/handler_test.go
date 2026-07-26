@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/05allan1213/CloudOps-Copilot/internal/infra/incidentv3mysql"
+	"github.com/05allan1213/CloudOps-Copilot/internal/infra/incidentstore"
 )
 
 func TestWebhookStrictBoundedBatchAndDurableTargetRejection(t *testing.T) {
@@ -55,7 +55,7 @@ func TestWebhookStrictBoundedBatchAndDurableTargetRejection(t *testing.T) {
 }
 
 func TestWebhookContentTypeBodyLimitBearerAndDuplicateContract(t *testing.T) {
-	store := &fakeStore{results: []incidentv3mysql.IngestResult{{Duplicate: true}}}
+	store := &fakeStore{results: []incidentstore.IngestResult{{Duplicate: true}}}
 	handler := mustHandler(t, store, []byte("0123456789abcdef0123456789abcdef"), 4096)
 	body := marshalEnvelope(t, testEnvelope(testAlert("firing", "abc123", "WorkloadNotReady", "critical")))
 	for _, test := range []struct {
@@ -92,7 +92,7 @@ func TestWebhookContentTypeBodyLimitBearerAndDuplicateContract(t *testing.T) {
 }
 
 func TestWebhookReportsStoreLevelUnmatchedResolvedRejection(t *testing.T) {
-	store := &fakeStore{results: []incidentv3mysql.IngestResult{{Rejected: true, RejectionReason: "unmatched_resolved"}}}
+	store := &fakeStore{results: []incidentstore.IngestResult{{Rejected: true, RejectionReason: "unmatched_resolved"}}}
 	handler := mustHandler(t, store, nil, 4096)
 	resolved := testAlert("resolved", "abc123", "WorkloadNotReady", "critical")
 	resolved.EndsAt = resolved.StartsAt.Add(time.Minute)
@@ -117,11 +117,11 @@ func TestInternalProbesAreRedacted(t *testing.T) {
 	}
 }
 
-func TestRuntimeGenerationRefusalBlocksReadinessAndWebhookBeforeStore(t *testing.T) {
+func TestRuntimeUnavailableBlocksReadinessAndWebhookBeforeStore(t *testing.T) {
 	store := &fakeStore{}
 	handler, err := NewHandler(Config{
 		Store: store, Targets: mustTargets(t), MaxBodyBytes: 4096, RequestTimeout: time.Second,
-		RuntimeReady: func(context.Context) error { return errors.New("compatibility runtime refused after CUTOVER-V3") },
+		Readiness: func(context.Context) error { return errors.New("runtime is unavailable") },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -133,7 +133,7 @@ func TestRuntimeGenerationRefusalBlocksReadinessAndWebhookBeforeStore(t *testing
 	}
 	body := marshalEnvelope(t, testEnvelope(testAlert("firing", "abc123", "WorkloadNotReady", "critical")))
 	response := serveWebhook(handler, body, "application/json", "")
-	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), `"code":"runtime_generation_refused"`) {
+	if response.Code != http.StatusServiceUnavailable || !strings.Contains(response.Body.String(), `"code":"runtime_unavailable"`) {
 		t.Fatalf("webhook response=%d %s", response.Code, response.Body.String())
 	}
 	if store.ingestCalls != 0 || store.rejectionCalls != 0 {
@@ -145,27 +145,27 @@ type fakeStore struct {
 	readyErr       error
 	ingestErr      error
 	rejectionErr   error
-	results        []incidentv3mysql.IngestResult
-	signals        []incidentv3mysql.SignalInput
-	rejections     []incidentv3mysql.RejectionInput
+	results        []incidentstore.IngestResult
+	signals        []incidentstore.SignalInput
+	rejections     []incidentstore.RejectionInput
 	ingestCalls    int
 	rejectionCalls int
 }
 
 func (f *fakeStore) Ready(context.Context) error { return f.readyErr }
 
-func (f *fakeStore) IngestBatch(_ context.Context, signals []incidentv3mysql.SignalInput) ([]incidentv3mysql.IngestResult, error) {
+func (f *fakeStore) IngestBatch(_ context.Context, signals []incidentstore.SignalInput) ([]incidentstore.IngestResult, error) {
 	f.ingestCalls++
-	f.signals = append([]incidentv3mysql.SignalInput(nil), signals...)
+	f.signals = append([]incidentstore.SignalInput(nil), signals...)
 	if f.results == nil {
-		f.results = make([]incidentv3mysql.IngestResult, len(signals))
+		f.results = make([]incidentstore.IngestResult, len(signals))
 	}
 	return f.results, f.ingestErr
 }
 
-func (f *fakeStore) RecordRejections(_ context.Context, rejections []incidentv3mysql.RejectionInput) error {
+func (f *fakeStore) RecordRejections(_ context.Context, rejections []incidentstore.RejectionInput) error {
 	f.rejectionCalls++
-	f.rejections = append([]incidentv3mysql.RejectionInput(nil), rejections...)
+	f.rejections = append([]incidentstore.RejectionInput(nil), rejections...)
 	return f.rejectionErr
 }
 
@@ -181,7 +181,7 @@ func mustHandler(t *testing.T, store Store, token []byte, maxBody int64) *Handle
 	handler, err := NewHandler(Config{
 		Store: store, Targets: mustTargets(t), MaxBodyBytes: maxBody,
 		RequestTimeout: time.Second, BearerToken: token,
-		RuntimeReady: func(context.Context) error { return nil },
+		Readiness: func(context.Context) error { return nil },
 	})
 	if err != nil {
 		t.Fatal(err)

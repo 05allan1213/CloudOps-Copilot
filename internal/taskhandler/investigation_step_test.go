@@ -751,7 +751,7 @@ func testInvestigationSnapshot(t *testing.T, mode string, action *agent.Proposed
 	}
 	state := testInvestigationState()
 	return investigationSnapshot{
-		Task: task, RunPublicID: "run-1", LegacyStatus: "PENDING", Status: "pending",
+		Task: task, RunPublicID: "run-1", Status: "pending",
 		Objective: "investigate", Model: "fixture", PromptVersion: "v1", Limits: state.Limits, Usage: state.Usage,
 		RunVersion: 1, ExpectedIncidentVersion: 2, DeadlineAt: time.Date(2026, 7, 19, 10, 3, 0, 0, time.UTC),
 		RunCreatedAt: time.Date(2026, 7, 19, 9, 59, 0, 0, time.UTC), IncidentPublicID: "incident-1",

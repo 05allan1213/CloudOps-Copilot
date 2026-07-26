@@ -22,7 +22,6 @@ const postDeliveryBaselineObservationSchema = 1
 type baselinePromotionContract struct {
 	PlanPublicID         string
 	PlanStatus           string
-	PlanV3Status         string
 	Operation            string
 	Repository           string
 	BaseBranch           string
@@ -39,7 +38,6 @@ type baselinePromotionContract struct {
 	ChangeRepository     string
 	PRNumber             int64
 	ChangeStatus         string
-	ChangeV3Status       string
 	CIStatus             string
 	PRState              string
 	MergedRevision       string
@@ -128,7 +126,7 @@ func promotePassingDeploymentBaseline(
 		return fmt.Errorf("%w: post-delivery baseline promotion differs from the frozen VerificationRun", asyncjob.ErrInvalidMutation)
 	}
 	if commonStart == nil || commonStart.IsZero() || verifiedAt.IsZero() ||
-		verifiedAt.UTC().Sub(commonStart.UTC()) < verification.V3CommonStabilityWindow {
+		verifiedAt.UTC().Sub(commonStart.UTC()) < verification.CommonStabilityWindow {
 		return fmt.Errorf("%w: post-delivery baseline lacks the passing common window", asyncjob.ErrInvalidMutation)
 	}
 
@@ -169,11 +167,11 @@ func loadBaselinePromotionContract(ctx context.Context, tx asyncjob.DBTX, task a
 		deliveryCompleted         sql.NullTime
 	)
 	err := tx.QueryRowContext(ctx, `
-SELECT p.public_id, p.status, p.v3_status, p.operation_type, p.target_repository,
+SELECT p.public_id, p.status, p.operation_type, p.target_repository,
        p.target_base_branch, p.last_known_good_sha, p.target_path,
        CAST(p.target_resource_json AS CHAR), p.expected_post_image_hash, p.post_image,
        CAST(p.verification_plan_json AS CHAR), p.verification_plan_hash, p.canonical_plan_hash,
-       cr.public_id, cr.repository, cr.pr_number, cr.status, cr.v3_status, cr.ci_status, cr.pr_state,
+	       cr.public_id, cr.repository, cr.pr_number, cr.status, cr.ci_status, cr.pr_state,
        cr.merged_commit_sha, cr.target_revision, cr.detected_revision,
        cr.argocd_application, cr.argocd_project, cr.argocd_sync_status,
        cr.argocd_operation_phase, cr.argocd_health_status,
@@ -182,18 +180,17 @@ SELECT p.public_id, p.status, p.v3_status, p.operation_type, p.target_repository
        cr.observed_generation, cr.rollout_revision, cr.desired_replicas,
        cr.updated_replicas, cr.available_replicas, cr.unavailable_replicas,
        cr.delivery_completed_at
-FROM remediation_plans p
-JOIN change_requests cr
-  ON cr.plan_id = p.id AND cr.incident_id = p.incident_id
- AND cr.cycle_no = p.cycle_no AND cr.domain_schema_version = 3
-WHERE p.id = ? AND cr.id = ? AND p.incident_id = ? AND p.cycle_no = ?
-  AND p.domain_schema_version = 3
-FOR SHARE`, snapshot.RemediationPlanID, snapshot.ChangeRequestID, task.IncidentID, task.CycleNo).Scan(
-		&contract.PlanPublicID, &contract.PlanStatus, &contract.PlanV3Status, &contract.Operation,
+	FROM remediation_plans p
+	JOIN change_requests cr
+	  ON cr.plan_id = p.id AND cr.incident_id = p.incident_id
+	 AND cr.cycle_no = p.cycle_no
+	WHERE p.id = ? AND cr.id = ? AND p.incident_id = ? AND p.cycle_no = ?
+	FOR SHARE`, snapshot.RemediationPlanID, snapshot.ChangeRequestID, task.IncidentID, task.CycleNo).Scan(
+		&contract.PlanPublicID, &contract.PlanStatus, &contract.Operation,
 		&contract.Repository, &contract.BaseBranch, &contract.LastKnownGood, &contract.TargetPath,
 		&targetResource, &contract.ExpectedConfigHash, &postImage, &verificationPlan,
 		&contract.VerificationPlanHash, &contract.CanonicalPlanHash, &contract.ChangePublicID,
-		&contract.ChangeRepository, &contract.PRNumber, &contract.ChangeStatus, &contract.ChangeV3Status, &contract.CIStatus,
+		&contract.ChangeRepository, &contract.PRNumber, &contract.ChangeStatus, &contract.CIStatus,
 		&contract.PRState, &contract.MergedRevision, &contract.TargetRevision,
 		&contract.DetectedRevision, &contract.ArgoApplication, &contract.ArgoProject,
 		&contract.ArgoSyncStatus, &contract.ArgoOperationPhase, &contract.ArgoHealthStatus,
@@ -213,7 +210,7 @@ FOR SHARE`, snapshot.RemediationPlanID, snapshot.ChangeRequestID, task.IncidentI
 		return baselinePromotionContract{}, fmt.Errorf("%w: ChangeRequest public identity is invalid", asyncjob.ErrInvalidMutation)
 	}
 	if json.Unmarshal(targetResource, &contract.TargetResource) != nil || !json.Valid(resourceHealth) ||
-		!json.Valid(verificationPlan) || len(postImage) == 0 || len(postImage) > remediation.MaxV3PostImageBytes {
+		!json.Valid(verificationPlan) || len(postImage) == 0 || len(postImage) > remediation.MaxPostImageBytes {
 		return baselinePromotionContract{}, fmt.Errorf("%w: post-delivery Plan or delivery payload is malformed", asyncjob.ErrInvalidMutation)
 	}
 	canonicalVerificationPlan, err := canonicalBaselineJSON(verificationPlan)
@@ -223,7 +220,7 @@ FOR SHARE`, snapshot.RemediationPlanID, snapshot.ChangeRequestID, task.IncidentI
 	contract.ResourceHealth = append(json.RawMessage(nil), resourceHealth...)
 	contract.VerificationPlan = append(json.RawMessage(nil), canonicalVerificationPlan...)
 	contract.PostImageBytes = len(postImage)
-	if contract.PlanV3Status != "consumed" || (contract.PlanStatus != "approved" && contract.PlanStatus != "consumed") ||
+	if contract.PlanStatus != "consumed" ||
 		contract.Operation != string(remediation.OperationRestoreRequiredEnv) || !validSHA256Text(contract.ExpectedConfigHash) ||
 		sha256Hex(postImage) != contract.ExpectedConfigHash || !validSHA256Text(contract.VerificationPlanHash) ||
 		sha256Hex(canonicalVerificationPlan) != contract.VerificationPlanHash || !validSHA256Text(contract.CanonicalPlanHash) {
@@ -233,7 +230,7 @@ FOR SHARE`, snapshot.RemediationPlanID, snapshot.ChangeRequestID, task.IncidentI
 	if err != nil || !jsonVerificationEqual(canonicalVerificationPlan, frozenPlan) {
 		return baselinePromotionContract{}, fmt.Errorf("%w: VerificationRun differs from its remediation Plan", asyncjob.ErrInvalidMutation)
 	}
-	if contract.ChangeStatus != "delivered" || contract.ChangeV3Status != "delivered" ||
+	if contract.ChangeStatus != "delivered" ||
 		contract.CIStatus != "passing" || (contract.PRState != "closed" && contract.PRState != "merged") ||
 		contract.PRNumber <= 0 || contract.MergedRevision != contract.TargetRevision ||
 		contract.TargetRevision != contract.DetectedRevision || contract.TargetRevision != snapshot.GitOpsRevision ||
@@ -269,9 +266,9 @@ FOR SHARE`, snapshot.RemediationPlanID, snapshot.ChangeRequestID, task.IncidentI
 
 func loadBaselineDeliveryEvidence(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, snapshot VerificationAdvanceSnapshot, changePublicID string) (returnProofs map[DeliveryObservationKind]baselineDeliveryEvidenceProof, retErr error) {
 	rows, err := tx.QueryContext(ctx, `
-SELECT public_id, CAST(facts_json AS CHAR), content_hash, producer_dedupe_key, collected_at
-FROM evidence_items
-WHERE incident_id = ? AND cycle_no = ? AND domain_schema_version = 3
+	SELECT public_id, CAST(facts_json AS CHAR), content_hash, producer_dedupe_key, collected_at
+	FROM evidence_items
+	WHERE incident_id = ? AND cycle_no = ?
   AND producer_type IN ('delivery.observe','delivery_observation') AND valid = TRUE
 ORDER BY collected_at, id
 LIMIT 257`, task.IncidentID, task.CycleNo)
@@ -340,12 +337,12 @@ func lockBaselinePromotionTarget(ctx context.Context, tx asyncjob.DBTX, snapshot
 	}
 	var (
 		storedTargetHash, sourceRevision, imageDigest, gitopsRevision, configHash string
-		domainVersion, schemaVersion                                              uint16
+		schemaVersion                                                             uint16
 		rowVersion                                                                uint64
 		verifiedAt                                                                time.Time
 	)
 	err = tx.QueryRowContext(ctx, `
-SELECT domain_schema_version, baseline_schema_version, row_version,
+	SELECT baseline_schema_version, row_version,
        target_identity_hash, source_revision, image_digest, gitops_revision,
        config_hash, verified_at
 FROM deployment_baselines
@@ -354,7 +351,7 @@ WHERE status = 'active' AND cluster = ? AND environment = ? AND namespace = ?
   AND repository = ? AND base_branch = ? AND target_path = ?
 LIMIT 1 FOR UPDATE`, target.Cluster, target.Environment, target.Namespace,
 		target.WorkloadName, target.ContainerName, target.Repository, target.BaseBranch,
-		target.TargetPath).Scan(&domainVersion, &schemaVersion, &rowVersion, &storedTargetHash,
+		target.TargetPath).Scan(&schemaVersion, &rowVersion, &storedTargetHash,
 		&sourceRevision, &imageDigest, &gitopsRevision, &configHash, &verifiedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -362,7 +359,7 @@ LIMIT 1 FOR UPDATE`, target.Cluster, target.Environment, target.Namespace,
 		}
 		return baseline.Target{}, err
 	}
-	if domainVersion != baseline.DomainSchemaVersion || schemaVersion != baseline.BaselineSchemaVersion || rowVersion == 0 ||
+	if schemaVersion != baseline.BaselineSchemaVersion || rowVersion == 0 ||
 		storedTargetHash != targetHash || verifiedAt.IsZero() || sourceRevision != snapshot.SourceRevision ||
 		imageDigest != snapshot.ImageDigest {
 		return baseline.Target{}, fmt.Errorf("%w: active DeploymentBaseline target or immutable image identity differs", asyncjob.ErrInvalidMutation)
@@ -460,7 +457,7 @@ ORDER BY c.id`, task.SubjectID, task.IncidentID, task.CycleNo)
 			sampled.After(verifiedAt.UTC().Truncate(time.Microsecond)) || successAt.After(commonStart.UTC().Truncate(time.Microsecond)) {
 			return nil, invalidBaselineProof(typ, "successful sample window timestamps are inconsistent")
 		}
-		if windowEndedAt.Sub(windowStartedAt) < verification.V3CommonStabilityWindow {
+		if windowEndedAt.Sub(windowStartedAt) < verification.CommonStabilityWindow {
 			return nil, invalidBaselineProof(typ, "successful sample window is shorter than the frozen stability window")
 		}
 		if !validSHA256Text(contentHash) {
@@ -500,7 +497,7 @@ func invalidBaselineProof(typ verification.CheckType, reason string) error {
 
 func buildPromotedBaselineSnapshot(snapshot VerificationAdvanceSnapshot, contract baselinePromotionContract, target baseline.Target, proofs map[verification.CheckType]baselineVerificationSampleProof, verifiedAt time.Time) (baseline.Snapshot, error) {
 	argoChecks := selectBaselineProofs(proofs, verification.CheckArgoExactRevision, verification.CheckArgoSyncSucceeded)
-	kubernetesChecks := selectBaselineProofs(proofs, verification.CheckDeploymentObserved, verification.CheckDeploymentRolloutV3, verification.CheckWorkloadReady)
+	kubernetesChecks := selectBaselineProofs(proofs, verification.CheckDeploymentObserved, verification.CheckDeploymentRolloutComplete, verification.CheckWorkloadReady)
 	alertChecks := selectBaselineProofs(proofs, verification.CheckIncidentAlertsResolved)
 	metricChecks := selectBaselineProofs(proofs, verification.CheckMetricErrorRateBelow, verification.CheckMetricAvailabilityAbove)
 	logChecks := selectBaselineProofs(proofs, verification.CheckLogRequiredEnvAbsent)

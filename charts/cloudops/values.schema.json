@@ -3,43 +3,27 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "profile",
+    "bootstrapOnly",
     "images",
     "commonEnv",
     "database",
+    "mysql",
     "webhook",
-    "csrf",
     "api",
     "migrate",
-    "oauth",
     "worker",
-    "baselineVerifier",
     "observability"
   ],
   "properties": {
-    "profile": {
-      "type": "string",
-      "enum": ["phase3", "phase4", "phase5", "phase6"]
-    },
+    "bootstrapOnly": { "type": "boolean" },
     "images": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["api", "worker", "migrate", "oauth2Proxy"],
+      "required": ["api", "worker", "migrate"],
       "properties": {
-        "api": { "$ref": "#/definitions/runtimeImage" },
-        "worker": { "$ref": "#/definitions/runtimeImage" },
-        "migrate": { "$ref": "#/definitions/runtimeImage" },
-        "oauth2Proxy": {
-          "allOf": [
-            { "$ref": "#/definitions/runtimeImage" },
-            {
-              "type": "object",
-              "properties": {
-                "tag": { "type": "string", "enum": ["v7.15.3"] }
-              }
-            }
-          ]
-        }
+        "api": { "$ref": "#/definitions/image" },
+        "worker": { "$ref": "#/definitions/image" },
+        "migrate": { "$ref": "#/definitions/image" }
       }
     },
     "commonEnv": { "$ref": "#/definitions/envMap" },
@@ -53,37 +37,48 @@
         "migrate": { "$ref": "#/definitions/mysqlIdentity" }
       }
     },
+    "mysql": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "image", "database", "rootSecretName", "rootPasswordKey", "persistence", "resources"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "image": { "$ref": "#/definitions/image" },
+        "database": { "$ref": "#/definitions/mysqlName" },
+        "rootSecretName": { "$ref": "#/definitions/kubernetesName" },
+        "rootPasswordKey": { "$ref": "#/definitions/nonEmptyString" },
+        "persistence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["size", "storageClassName"],
+          "properties": {
+            "size": { "type": "string", "pattern": "^[1-9][0-9]*(Mi|Gi|Ti)$" },
+            "storageClassName": { "type": "string" }
+          }
+        },
+        "resources": { "$ref": "#/definitions/resources" }
+      }
+    },
     "webhook": {
       "type": "object",
       "additionalProperties": false,
       "required": ["secretName", "secretKey", "mountPath", "tokenFile"],
       "properties": {
-        "secretName": { "$ref": "#/definitions/nonEmptyString" },
+        "secretName": { "$ref": "#/definitions/kubernetesName" },
         "secretKey": { "$ref": "#/definitions/nonEmptyString" },
         "mountPath": { "$ref": "#/definitions/absolutePath" },
         "tokenFile": { "$ref": "#/definitions/absolutePath" }
       }
     },
-    "csrf": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["secretName", "secretKey", "mountPath", "secretFile"],
-      "properties": {
-        "secretName": { "$ref": "#/definitions/nonEmptyString" },
-        "secretKey": { "$ref": "#/definitions/nonEmptyString" },
-        "mountPath": { "$ref": "#/definitions/absolutePath" },
-        "secretFile": { "$ref": "#/definitions/absolutePath" }
-      }
-    },
     "api": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "replicas", "userPort", "internalPort", "env", "resources"],
+      "required": ["enabled", "replicas", "port", "managementPort", "env", "resources"],
       "properties": {
         "enabled": { "type": "boolean" },
         "replicas": { "type": "integer", "minimum": 1, "maximum": 5 },
-        "userPort": { "type": "integer", "enum": [8080] },
-        "internalPort": { "type": "integer", "enum": [8082] },
+        "port": { "type": "integer", "enum": [8080] },
+        "managementPort": { "type": "integer", "enum": [8082] },
         "env": { "$ref": "#/definitions/envMap" },
         "resources": { "$ref": "#/definitions/resources" }
       }
@@ -100,129 +95,35 @@
         "resources": { "$ref": "#/definitions/resources" }
       }
     },
-    "oauth": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "enabled",
-        "port",
-        "metricsPort",
-        "redirectURL",
-        "allowedEmailDomains",
-        "viewerLogins",
-        "operatorLogins",
-        "secret",
-        "cookie",
-        "resources"
-      ],
-      "properties": {
-        "enabled": { "type": "boolean" },
-        "port": { "type": "integer", "enum": [4180] },
-        "metricsPort": { "type": "integer", "enum": [44180] },
-        "redirectURL": { "type": "string", "pattern": "^https?://[^[:space:]]+/oauth2/callback$" },
-        "allowedEmailDomains": {
-          "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
-          "items": { "$ref": "#/definitions/nonEmptyString" }
-        },
-        "viewerLogins": { "$ref": "#/definitions/githubLogins" },
-        "operatorLogins": { "$ref": "#/definitions/githubLogins" },
-        "secret": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["name", "clientIDKey", "clientSecretKey", "cookieSecretKey"],
-          "properties": {
-            "name": { "$ref": "#/definitions/nonEmptyString" },
-            "clientIDKey": { "$ref": "#/definitions/nonEmptyString" },
-            "clientSecretKey": { "$ref": "#/definitions/nonEmptyString" },
-            "cookieSecretKey": { "$ref": "#/definitions/nonEmptyString" }
-          }
-        },
-        "cookie": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["name", "secure", "sameSite", "expire", "refresh"],
-          "properties": {
-            "name": { "type": "string", "pattern": "^_[A-Za-z0-9_]+$" },
-            "secure": { "type": "boolean" },
-            "sameSite": { "type": "string", "enum": ["lax", "strict", "none"] },
-            "expire": { "$ref": "#/definitions/duration" },
-            "refresh": { "$ref": "#/definitions/nonNegativeDuration" }
-          }
-        },
-        "resources": { "$ref": "#/definitions/resources" }
-      }
-    },
     "worker": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled", "replicas", "managementPort", "demoNamespace", "providerConfigSecretName", "credentials", "env", "resources"],
+      "required": ["enabled", "replicas", "managementPort", "providerNamespace", "providerConfigSecretName", "credentials", "env", "resources"],
       "properties": {
         "enabled": { "type": "boolean" },
         "replicas": { "type": "integer", "minimum": 1, "maximum": 5 },
         "managementPort": { "type": "integer", "enum": [8081] },
-        "demoNamespace": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
-        "providerConfigSecretName": { "$ref": "#/definitions/nonEmptyString" },
-        "credentials": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["secretName", "mountPath", "files"],
-          "properties": {
-            "secretName": { "$ref": "#/definitions/nonEmptyString" },
-            "mountPath": { "$ref": "#/definitions/absolutePath" },
-            "files": {
-              "type": "object",
-              "minProperties": 1,
-              "propertyNames": { "pattern": "^[A-Z_][A-Z0-9_]*_FILE$" },
-              "additionalProperties": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" }
-            }
-          }
-        },
-        "env": { "$ref": "#/definitions/envMap" },
-        "resources": { "$ref": "#/definitions/resources" }
-      }
-    },
-    "baselineVerifier": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "enabled",
-        "demoNamespace",
-        "backoffLimit",
-        "activeDeadlineSeconds",
-        "ttlSecondsAfterFinished",
-        "database",
-        "credentials",
-        "env",
-        "resources"
-      ],
-      "properties": {
-        "enabled": { "type": "boolean" },
-        "demoNamespace": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
-        "backoffLimit": { "type": "integer", "minimum": 0, "maximum": 5 },
-        "activeDeadlineSeconds": { "type": "integer", "minimum": 30, "maximum": 600 },
-        "ttlSecondsAfterFinished": { "type": "integer", "minimum": 0 },
-        "database": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": ["user", "secretName", "passwordKey"],
-          "properties": {
-            "user": { "$ref": "#/definitions/nonEmptyString" },
-            "secretName": { "$ref": "#/definitions/nonEmptyString" },
-            "passwordKey": { "$ref": "#/definitions/nonEmptyString" }
-          }
+        "providerNamespace": { "$ref": "#/definitions/kubernetesName" },
+        "providerConfigSecretName": {
+          "oneOf": [
+            { "type": "string", "maxLength": 0 },
+            { "$ref": "#/definitions/kubernetesName" }
+          ]
         },
         "credentials": {
           "type": "object",
           "additionalProperties": false,
           "required": ["secretName", "mountPath", "files"],
           "properties": {
-            "secretName": { "$ref": "#/definitions/nonEmptyString" },
+            "secretName": {
+              "oneOf": [
+                { "type": "string", "maxLength": 0 },
+                { "$ref": "#/definitions/kubernetesName" }
+              ]
+            },
             "mountPath": { "$ref": "#/definitions/absolutePath" },
             "files": {
               "type": "object",
-              "minProperties": 1,
               "propertyNames": { "pattern": "^[A-Z_][A-Z0-9_]*_FILE$" },
               "additionalProperties": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" }
             }
@@ -252,33 +153,11 @@
   },
   "definitions": {
     "nonEmptyString": { "type": "string", "minLength": 1 },
-    "mysqlIdentity": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["user", "secretName", "passwordKey"],
-      "properties": {
-        "user": { "type": "string", "pattern": "^[A-Za-z0-9_][A-Za-z0-9_-]{0,31}$" },
-        "secretName": { "$ref": "#/definitions/nonEmptyString" },
-        "passwordKey": { "$ref": "#/definitions/nonEmptyString" }
-      }
-    },
-    "absolutePath": { "type": "string", "pattern": "^/" },
+    "absolutePath": { "type": "string", "pattern": "^/[^[:space:]]+$" },
     "duration": { "type": "string", "pattern": "^[1-9][0-9]*(ms|s|m|h)$" },
-    "nonNegativeDuration": { "type": "string", "pattern": "^(0|[1-9][0-9]*)(ms|s|m|h)$" },
-    "githubLogins": {
-      "type": "array",
-      "uniqueItems": true,
-      "items": {
-        "type": "string",
-        "pattern": "^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$"
-      }
-    },
-    "envMap": {
-      "type": "object",
-      "propertyNames": { "pattern": "^[A-Z_][A-Z0-9_]*$" },
-      "additionalProperties": { "type": ["string", "number", "boolean"] }
-    },
-    "runtimeImage": {
+    "kubernetesName": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", "maxLength": 63 },
+    "mysqlName": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$" },
+    "image": {
       "type": "object",
       "additionalProperties": false,
       "required": ["repository", "tag", "digest", "pullPolicy"],
@@ -289,22 +168,37 @@
         "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
       }
     },
+    "mysqlIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["user", "secretName", "passwordKey"],
+      "properties": {
+        "user": { "type": "string", "pattern": "^[A-Za-z0-9_][A-Za-z0-9_-]{0,31}$" },
+        "secretName": { "$ref": "#/definitions/kubernetesName" },
+        "passwordKey": { "$ref": "#/definitions/nonEmptyString" }
+      }
+    },
+    "envMap": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[A-Z_][A-Z0-9_]*$" },
+      "additionalProperties": { "type": "string" }
+    },
     "resources": {
       "type": "object",
       "additionalProperties": false,
       "required": ["requests", "limits"],
       "properties": {
-        "requests": { "$ref": "#/definitions/resourceList" },
-        "limits": { "$ref": "#/definitions/resourceList" }
+        "requests": { "$ref": "#/definitions/resourcePair" },
+        "limits": { "$ref": "#/definitions/resourcePair" }
       }
     },
-    "resourceList": {
+    "resourcePair": {
       "type": "object",
       "additionalProperties": false,
       "required": ["cpu", "memory"],
       "properties": {
-        "cpu": { "$ref": "#/definitions/nonEmptyString" },
-        "memory": { "$ref": "#/definitions/nonEmptyString" }
+        "cpu": { "type": "string", "minLength": 1 },
+        "memory": { "type": "string", "minLength": 1 }
       }
     }
   }

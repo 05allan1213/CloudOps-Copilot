@@ -10,7 +10,6 @@ export interface PlanDecisionAvailability {
 export function planDecisionAvailability(
   plan: RemediationPlanView,
   options: {
-    isOperator: boolean;
     incidentVersion: number;
     incidentStatus: IncidentStatus;
     nowMs?: number;
@@ -22,16 +21,14 @@ export function planDecisionAvailability(
   const stale = plan.incident_version + 1 !== options.incidentVersion;
   const conflict = options.conflict ?? false;
   let reason = "";
-  if (!options.isOperator) reason = "Viewer access is read-only. An operator must submit the exact decision.";
-  else if (plan.decision) reason = "This immutable Plan already has a persisted Decision.";
+  if (plan.decision) reason = "This immutable Plan already has a persisted Decision.";
   else if (conflict) reason = "The server rejected the previous payload as stale or conflicting. Refresh this Plan before deciding again.";
   else if (expired) reason = "This Plan has expired or has no valid expiry. Refresh for a current server-generated Plan.";
   else if (stale) reason = "This Plan is bound to an older Incident version. Refresh before deciding.";
   else if (options.incidentStatus !== "awaiting_approval") reason = `The Incident is ${options.incidentStatus.replace(/_/g, " ")} and is not awaiting approval.`;
   else if (plan.status !== "awaiting_approval") reason = `This Plan is ${plan.status.replace(/_/g, " ")} and is not awaiting a Decision.`;
   return {
-    available: options.isOperator
-      && !plan.decision
+    available: !plan.decision
       && !conflict
       && !expired
       && !stale

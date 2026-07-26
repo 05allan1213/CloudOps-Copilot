@@ -9,7 +9,7 @@ import (
 
 func TestCompareQualityThresholdsRequiresStrictBaselineWinAndZeroFailures(t *testing.T) {
 	thresholds := qualityThresholds{QualityThresholds: eval.QualityThresholds{
-		SchemaVersion: 1, DatasetID: "eval/v1", Aggregation: "majority_vote",
+		SchemaVersion: 1, DatasetID: "dataset-alpha", Aggregation: "majority_vote",
 		MinRootCauseAccuracy: 0.9, MinInsufficientPrecision: 0.85, MinInsufficientRecall: 0.85,
 		MinCitationRecall: 0.85, MaxAverageToolCalls: 6, MaxToolCalls: 7,
 		RequireZeroSafetyViolations: true, RequireStrictBaselineWin: true,
@@ -35,7 +35,7 @@ func TestCompareQualityThresholdsRequiresStrictBaselineWinAndZeroFailures(t *tes
 
 func TestCompareQualityThresholdsAllowsEqualityOnlyAtPerfectBaselineCeiling(t *testing.T) {
 	thresholds := qualityThresholds{QualityThresholds: eval.QualityThresholds{
-		SchemaVersion: 1, DatasetID: "eval/v2", Aggregation: "majority_vote",
+		SchemaVersion: 1, DatasetID: "dataset-beta", Aggregation: "majority_vote",
 		MinRootCauseAccuracy: 0.9, MinInsufficientPrecision: 0.85, MinInsufficientRecall: 0.85,
 		MinCitationRecall: 0.85, MaxAverageToolCalls: 6, MaxToolCalls: 7,
 		RequireStrictBaselineWin: true,
@@ -53,16 +53,16 @@ func TestCompareQualityThresholdsAllowsEqualityOnlyAtPerfectBaselineCeiling(t *t
 }
 
 func TestValidateQualityReportBindingsRejectsPartialOrStaleReports(t *testing.T) {
-	manifest := eval.Manifest{SchemaVersion: 1, DatasetID: "eval/v1", CreatedAt: "2026-07-21T00:00:00Z"}
-	thresholds := qualityThresholds{QualityThresholds: eval.QualityThresholds{SchemaVersion: 1, DatasetID: "eval/v1", Aggregation: "majority_vote"}}
+	manifest := eval.Manifest{SchemaVersion: 1, DatasetID: "dataset-alpha", CreatedAt: "2026-07-21T00:00:00Z"}
+	thresholds := qualityThresholds{QualityThresholds: eval.QualityThresholds{SchemaVersion: 1, DatasetID: "dataset-alpha", Aggregation: "majority_vote"}}
 	split := eval.Split{Quality: []string{"a", "b"}}
 	measured := eval.Report{
-		DatasetID: "eval/v1", Manifest: manifest, Status: "MEASURED", Provider: "provider", Model: "model",
+		DatasetID: "dataset-alpha", Manifest: manifest, Status: "MEASURED", Provider: "provider", Model: "model",
 		Repetitions: 3, Aggregation: "majority_vote", Aggregate: eval.Aggregate{Cases: 2, Runs: 6},
 		Runs: []eval.RunResult{{CaseID: "a"}, {CaseID: "b"}},
 	}
 	baseline := eval.Report{
-		DatasetID: "eval/v1", Manifest: manifest, Status: "BASELINE", Provider: "fixed-pipeline", Model: "none",
+		DatasetID: "dataset-alpha", Manifest: manifest, Status: "BASELINE", Provider: "fixed-pipeline", Model: "none",
 		Aggregate: eval.Aggregate{Cases: 2, Runs: 2}, Runs: []eval.RunResult{{CaseID: "a"}, {CaseID: "b"}},
 	}
 	if failures := validateQualityReportBindings(thresholds, manifest, split, measured, baseline); len(failures) != 0 {

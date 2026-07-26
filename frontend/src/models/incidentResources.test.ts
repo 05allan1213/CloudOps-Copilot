@@ -37,7 +37,7 @@ describe("generic Incident Resource presentation boundaries", () => {
   });
 
   it("renders legacy provenance without treating it as current native authority", () => {
-    expect(resourceProvenance(resource())).toBe("V3 native projection");
+    expect(resourceProvenance(resource())).toBe("Native projection");
     expect(resourceProvenance(resource({ migrated_legacy: true }))).toBe("Migrated legacy record");
     expect(resourceProvenance(resource({ migrated_legacy_context: true }))).toBe("Legacy context · audit-only");
   });

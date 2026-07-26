@@ -49,12 +49,12 @@ func TestMySQLInvestigationStepPersistsStableExecutionErrorCode(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	incidentPublicID := uuid.NewString()
 	result, err := db.ExecContext(ctx, `INSERT INTO incidents
- (public_id, fingerprint, correlation_key, correlation_key_version, cluster, namespace,
-  service_name, environment, target_kind, target_name, severity, status, summary,
-  first_seen_at, last_seen_at, version, domain_schema_version, v3_status, cycle_no)
-VALUES (?, ?, ?, 2, 'kind-v3', 'demo', 'demo', 'development', 'Deployment',
-        'demo', 'warning', 'DIAGNOSING', 'investigation error fixture', ?, ?, 2, 3, 'investigating', 1)`,
-		incidentPublicID, "investigation-step-"+uuid.NewString(), "v2:"+strings.Repeat("a", 64), now.Add(-2*time.Minute), now.Add(-2*time.Minute))
+	 (public_id, fingerprint, correlation_key, correlation_key_version, cluster, namespace,
+	  service_name, environment, target_kind, target_name, severity, summary,
+	  first_seen_at, last_seen_at, version, status, cycle_no)
+	VALUES (?, ?, ?, 2, 'kind', 'demo', 'demo', 'development', 'Deployment',
+	        'demo', 'warning', 'investigation error fixture', ?, ?, 2, 'investigating', 1)`,
+		incidentPublicID, "investigation-step-"+uuid.NewString(), strings.Repeat("a", 64), now.Add(-2*time.Minute), now.Add(-2*time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,9 +64,9 @@ VALUES (?, ?, ?, 2, 'kind-v3', 'demo', 'demo', 'development', 'Deployment',
 	}
 	agentRunPublicID := uuid.NewString()
 	result, err = db.ExecContext(ctx, `INSERT INTO agent_runs
- (public_id, incident_id, status, model, prompt_version, max_steps, final_diagnosis,
-  failure_code, row_version, domain_schema_version, v3_status, cycle_no, expected_incident_version)
-VALUES (?, ?, 'RUNNING', 'fixture-model', 'incident-agent-v3', 10, NULL, '', 1, 3, 'running', 1, 2)`,
+	 (public_id, incident_id, model, prompt_version, max_steps, final_diagnosis,
+	  failure_code, row_version, status, cycle_no, expected_incident_version)
+	VALUES (?, ?, 'fixture-model', 'incident-investigation-fixture', 10, NULL, '', 1, 'running', 1, 2)`,
 		agentRunPublicID, incidentID)
 	if err != nil {
 		t.Fatal(err)

@@ -12,7 +12,6 @@ import (
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
 	"github.com/05allan1213/CloudOps-Copilot/internal/bootstrap/health"
 	"github.com/05allan1213/CloudOps-Copilot/internal/bootstrap/logger"
-	"github.com/05allan1213/CloudOps-Copilot/internal/cutover"
 	"github.com/05allan1213/CloudOps-Copilot/internal/infra/database"
 	"github.com/05allan1213/CloudOps-Copilot/internal/middleware"
 	"github.com/05allan1213/CloudOps-Copilot/internal/taskhandler"
@@ -23,6 +22,47 @@ type taskRunner interface {
 	StopClaims()
 	Shutdown(context.Context) error
 	Ready(context.Context) error
+}
+
+type taskStoreReadiness interface {
+	Ready(context.Context) error
+}
+
+// standbyTaskRunner keeps the durable Worker process and schema readiness
+// available while optional Provider configuration is absent. It never claims
+// queued work, so unavailable Providers cannot consume attempts or fabricate a
+// terminal task result.
+type standbyTaskRunner struct {
+	store   taskStoreReadiness
+	started atomic.Bool
+	stopped atomic.Bool
+}
+
+func (r *standbyTaskRunner) Start(context.Context) error {
+	if r.store == nil {
+		return errors.New("standby task runner requires the async task store")
+	}
+	if !r.started.CompareAndSwap(false, true) {
+		return errors.New("standby task runner is already started")
+	}
+	return nil
+}
+
+func (r *standbyTaskRunner) StopClaims() { r.stopped.Store(true) }
+
+func (r *standbyTaskRunner) Shutdown(context.Context) error {
+	r.stopped.Store(true)
+	return nil
+}
+
+func (r *standbyTaskRunner) Ready(ctx context.Context) error {
+	if !r.started.Load() {
+		return asyncjob.ErrRunnerNotStarted
+	}
+	if r.stopped.Load() {
+		return asyncjob.ErrClaimsStopped
+	}
+	return r.store.Ready(ctx)
 }
 
 type Worker struct {
@@ -38,24 +78,6 @@ type Worker struct {
 	runnerStarted  bool
 }
 
-type runtimeGuardedTaskStore struct {
-	asyncjob.Store
-	runtimeReady func(context.Context) error
-}
-
-func (s runtimeGuardedTaskStore) Ready(ctx context.Context) error {
-	if s.Store == nil {
-		return errors.New("async task store is required")
-	}
-	if err := s.Store.Ready(ctx); err != nil {
-		return err
-	}
-	if s.runtimeReady == nil {
-		return errors.New("runtime generation guard is required")
-	}
-	return s.runtimeReady(ctx)
-}
-
 func NewWorker(ctx context.Context, cfg WorkerConfig) (*Worker, error) {
 	cfg = cfg.normalized()
 	if err := cfg.Validate(); err != nil {
@@ -63,8 +85,8 @@ func NewWorker(ctx context.Context, cfg WorkerConfig) (*Worker, error) {
 	}
 	application := cfg.Application
 	hasInlineOperations := hasTaskOperations(cfg.TaskOperations)
-	if !hasInlineOperations && cfg.TaskOperationFactory == nil {
-		return nil, errors.New("initialize async task handlers: operations are not migrated and production task operation factory is required")
+	if cfg.ProviderGatewayEnabled && !hasInlineOperations && cfg.TaskOperationFactory == nil {
+		return nil, errors.New("initialize async task handlers: Provider Gateway is enabled but no production task operation factory is configured")
 	}
 	mysqlCtx, cancelMySQL := context.WithTimeout(ctx, application.MySQLStartupTimeout)
 	mysql, err := database.OpenMySQL(mysqlCtx, database.MySQLConfig{
@@ -84,24 +106,7 @@ func NewWorker(ctx context.Context, cfg WorkerConfig) (*Worker, error) {
 		_ = mysql.Close()
 		return nil, err
 	}
-	runtimeGuard, err := cutover.NewSQLRuntimeGuard(mysql.SQLDB(), cfg.RuntimeGeneration)
-	if err != nil {
-		_ = mysql.Close()
-		return nil, fmt.Errorf("initialize Worker runtime generation guard: %w", err)
-	}
-	guardCtx, guardCancel := context.WithTimeout(ctx, application.MySQLStartupTimeout)
-	// Keep the existing migrate-without-restart behavior for an empty or old
-	// schema. Once the schema is current, marker ambiguity is a startup refusal
-	// before operation assembly or any Runner claim loop can be constructed.
-	schemaReadyErr := mysql.Ready(guardCtx)
-	if schemaReadyErr == nil {
-		err = runtimeGuard.Check(guardCtx)
-	}
-	guardCancel()
-	if err != nil {
-		_ = mysql.Close()
-		return nil, fmt.Errorf("enforce Worker runtime generation: %w", err)
-	}
+	var runner taskRunner
 	var handlers map[asyncjob.TaskType]asyncjob.Handler
 	if hasInlineOperations {
 		handlers, err = taskhandler.NewRuntime(cfg.TaskOperations)
@@ -109,7 +114,7 @@ func NewWorker(ctx context.Context, cfg WorkerConfig) (*Worker, error) {
 			_ = mysql.Close()
 			return nil, fmt.Errorf("initialize async task handlers: %w", err)
 		}
-	} else {
+	} else if cfg.TaskOperationFactory != nil {
 		operations, buildErr := cfg.TaskOperationFactory.Build(ctx, mysql.SQLDB(), repository)
 		if buildErr != nil {
 			_ = mysql.Close()
@@ -120,30 +125,27 @@ func NewWorker(ctx context.Context, cfg WorkerConfig) (*Worker, error) {
 			_ = mysql.Close()
 			return nil, fmt.Errorf("initialize production async task handlers: %w", buildErr)
 		}
+	} else {
+		runner = &standbyTaskRunner{store: repository}
 	}
-	runner, err := asyncjob.NewRunner(asyncjob.RunnerConfig{
-		Owner: cfg.Async.WorkerID,
-		Store: runtimeGuardedTaskStore{
-			Store: repository, runtimeReady: runtimeGuard.Check,
-		},
-		Handlers:     handlers,
-		Pools:        asyncPoolConfigs(cfg.Async),
-		DrainTimeout: cfg.Async.DrainTimeout,
-		CancelWait:   cfg.Async.ExitDeadline - cfg.Async.DrainTimeout,
-	})
-	if err != nil {
-		_ = mysql.Close()
-		return nil, err
+	if runner == nil {
+		runner, err = asyncjob.NewRunner(asyncjob.RunnerConfig{
+			Owner:        cfg.Async.WorkerID,
+			Store:        repository,
+			Handlers:     handlers,
+			Pools:        asyncPoolConfigs(cfg.Async),
+			DrainTimeout: cfg.Async.DrainTimeout,
+			CancelWait:   cfg.Async.ExitDeadline - cfg.Async.DrainTimeout,
+		})
+		if err != nil {
+			_ = mysql.Close()
+			return nil, err
+		}
 	}
 	metrics := middleware.NewMetrics()
 	worker := &Worker{
 		cfg: cfg, mysql: mysql, runner: runner,
-		mysqlReady: func(ctx context.Context) error {
-			if err := mysql.Ready(ctx); err != nil {
-				return err
-			}
-			return runtimeGuard.Check(ctx)
-		},
+		mysqlReady: mysql.Ready,
 	}
 	worker.management = &http.Server{
 		Addr: cfg.ManagementAddr,

@@ -17,7 +17,7 @@ describe("command response metadata", () => {
       config,
     });
 
-    const response = await postJSONWithMeta("/api/v3/remediation-plans/plan/decisions", { decision: "approved" }, { adapter });
+    const response = await postJSONWithMeta("/api/v1/remediation-plans/plan/decisions", { decision: "approved" }, { adapter });
     expect(response).toMatchObject({
       status: 202,
       requestID: "request-202",

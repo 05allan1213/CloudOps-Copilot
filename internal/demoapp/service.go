@@ -1,5 +1,5 @@
-// Package demoapp implements the small workload used by the V3 golden
-// incident scenario. It intentionally stays independent of CloudOps domain
+// Package demoapp implements the small workload used by the Demonstration
+// Scenario. It intentionally stays independent of CloudOps domain
 // state so the failure is injected only by changing its GitOps env node.
 package demoapp
 

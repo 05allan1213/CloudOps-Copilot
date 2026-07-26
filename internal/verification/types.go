@@ -33,31 +33,21 @@ const (
 type CheckType string
 
 const (
-	CheckArgoRevision            CheckType = "argocd_revision"
-	CheckArgoSync                CheckType = "argocd_sync"
-	CheckArgoHealth              CheckType = "argocd_health"
-	CheckDeploymentRollout       CheckType = "deployment_rollout"
-	CheckWorkloadReady           CheckType = "workload_ready"
-	CheckAlertResolved           CheckType = "alert_resolved"
-	CheckMetricErrorRateBelow    CheckType = "metric_error_rate_below"
-	CheckMetricAvailabilityAbove CheckType = "metric_availability_above"
-	CheckMetricLatencyP95Below   CheckType = "metric_latency_p95_below"
-	CheckLogErrorAbsent          CheckType = "log_error_absent"
-	CheckLogErrorRateBelow       CheckType = "log_error_rate_below"
-	CheckTraceErrorRateBelow     CheckType = "trace_error_rate_below"
-	CheckTraceLatencyP95Below    CheckType = "trace_latency_p95_below"
-	CheckArgoExactRevision       CheckType = "argocd_exact_revision"
-	CheckArgoSyncSucceeded       CheckType = "argocd_sync_succeeded"
-	CheckDeploymentObserved      CheckType = "deployment_observed_generation"
-	CheckDeploymentRolloutV3     CheckType = "deployment_rollout_complete"
-	CheckIncidentAlertsResolved  CheckType = "incident_alerts_resolved"
-	CheckDeploymentIdentity      CheckType = "deployment_identity_unchanged"
-	CheckLogRequiredEnvAbsent    CheckType = "log_required_env_error_absent"
-	// Legacy reserved identifiers remain compile-time compatible with Phase 5
-	// tests, but ValidatePlan never authorizes them for execution.
-	CheckMetricThreshold CheckType = "metric_threshold"
-	CheckLogErrorRate    CheckType = "log_error_rate"
-	CheckTraceErrorRate  CheckType = "trace_error_rate"
+	CheckWorkloadReady             CheckType = "workload_ready"
+	CheckMetricErrorRateBelow      CheckType = "metric_error_rate_below"
+	CheckMetricAvailabilityAbove   CheckType = "metric_availability_above"
+	CheckMetricLatencyP95Below     CheckType = "metric_latency_p95_below"
+	CheckLogErrorAbsent            CheckType = "log_error_absent"
+	CheckLogErrorRateBelow         CheckType = "log_error_rate_below"
+	CheckTraceErrorRateBelow       CheckType = "trace_error_rate_below"
+	CheckTraceLatencyP95Below      CheckType = "trace_latency_p95_below"
+	CheckArgoExactRevision         CheckType = "argocd_exact_revision"
+	CheckArgoSyncSucceeded         CheckType = "argocd_sync_succeeded"
+	CheckDeploymentObserved        CheckType = "deployment_observed_generation"
+	CheckDeploymentRolloutComplete CheckType = "deployment_rollout_complete"
+	CheckIncidentAlertsResolved    CheckType = "incident_alerts_resolved"
+	CheckDeploymentIdentity        CheckType = "deployment_identity_unchanged"
+	CheckLogRequiredEnvAbsent      CheckType = "log_required_env_error_absent"
 )
 
 type Comparison string

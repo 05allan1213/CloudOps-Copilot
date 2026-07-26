@@ -167,22 +167,22 @@ func (l *mysqlRemediationPrepareLoader) loadDurableFacts(ctx context.Context, ta
 	defer func() { _ = tx.Rollback() }()
 
 	var result remediationPrepareDurableFacts
-	var runLegacyStatus, runStatus, incidentStatus string
+	var runStatus, incidentStatus string
 	var expectedIncidentVersion uint64
 	var finalDiagnosis []byte
 	var completedAt sql.NullTime
 	const subjectQuery = `SELECT
- r.public_id, r.row_version, r.status, r.v3_status, r.expected_incident_version,
+ r.public_id, r.row_version, r.status, r.expected_incident_version,
 	r.migrated_legacy, r.migrated_legacy_context,
  r.final_diagnosis, r.completed_at,
- i.public_id, i.version, i.v3_status, i.cluster, i.environment, i.namespace,
+ i.public_id, i.version, i.status, i.cluster, i.environment, i.namespace,
  i.service_name, i.target_kind, i.target_name
 FROM agent_runs r
 JOIN incidents i ON i.id = r.incident_id
-WHERE r.id = ? AND r.incident_id = ? AND r.domain_schema_version = 3 AND r.cycle_no = ?
-  AND i.domain_schema_version = 3 AND i.cycle_no = ?`
+WHERE r.id = ? AND r.incident_id = ? AND r.cycle_no = ?
+  AND i.cycle_no = ?`
 	if err := tx.QueryRowContext(ctx, subjectQuery, task.SubjectID, task.IncidentID, task.CycleNo, task.CycleNo).Scan(
-		&result.AgentRunPublicID, &result.AgentRunVersion, &runLegacyStatus, &runStatus, &expectedIncidentVersion,
+		&result.AgentRunPublicID, &result.AgentRunVersion, &runStatus, &expectedIncidentVersion,
 		&result.MigratedLegacy, &result.MigratedLegacyContext,
 		&finalDiagnosis, &completedAt, &result.IncidentPublicID, &result.IncidentVersion, &incidentStatus,
 		&result.Cluster, &result.Environment, &result.Namespace, &result.ServiceName, &result.TargetKind, &result.TargetName,
@@ -192,7 +192,7 @@ WHERE r.id = ? AND r.incident_id = ? AND r.domain_schema_version = 3 AND r.cycle
 		}
 		return remediationPrepareDurableFacts{}, fmt.Errorf("load remediation.prepare subject: %w", err)
 	}
-	if result.AgentRunVersion != task.ExpectedSubjectVersion || runLegacyStatus != "COMPLETED" || runStatus != "completed" || !completedAt.Valid ||
+	if result.AgentRunVersion != task.ExpectedSubjectVersion || runStatus != "completed" || !completedAt.Valid ||
 		result.MigratedLegacy != task.MigratedLegacy || result.MigratedLegacyContext != task.MigratedLegacyContext ||
 		incidentStatus != "investigating" || expectedIncidentVersion != result.IncidentVersion ||
 		result.Namespace != l.policy.Namespace || result.TargetKind != "Deployment" || result.TargetName != l.policy.Workload {
@@ -220,7 +220,7 @@ WHERE r.id = ? AND r.incident_id = ? AND r.domain_schema_version = 3 AND r.cycle
 	var maxPlanVersion uint64
 	var actionable int
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(plan_version), 0),
- COALESCE(SUM(CASE WHEN cycle_no = ? AND v3_status IN ('awaiting_approval','approved') THEN 1 ELSE 0 END), 0)
+ COALESCE(SUM(CASE WHEN cycle_no = ? AND status IN ('awaiting_approval','approved') THEN 1 ELSE 0 END), 0)
 FROM remediation_plans
 WHERE incident_id = ?`, task.CycleNo, task.IncidentID).Scan(&maxPlanVersion, &actionable); err != nil {
 		return remediationPrepareDurableFacts{}, fmt.Errorf("load remediation Plan version: %w", err)
@@ -250,7 +250,7 @@ func decodeRemediationDiagnosis(payload []byte) (agent.DiagnosisRecord, error) {
 		return agent.DiagnosisRecord{}, fmt.Errorf("%w: completed AgentRun final Diagnosis has trailing data", asyncjob.ErrPolicyViolation)
 	}
 	if diagnosis.Candidate.Confidence != agent.DiagnosisConfirmed || diagnosis.Candidate.RemediationHint != agent.RemediationRestoreRequiredEnv ||
-		diagnosis.DiagnosisHash == "" || len(diagnosis.EvidenceIDs) == 0 || len(diagnosis.EvidenceIDs) > remediation.MaxV3Evidence {
+		diagnosis.DiagnosisHash == "" || len(diagnosis.EvidenceIDs) == 0 || len(diagnosis.EvidenceIDs) > remediation.MaxEvidenceBindings {
 		return agent.DiagnosisRecord{}, fmt.Errorf("%w: final Diagnosis does not authorize restore_required_env", asyncjob.ErrPolicyViolation)
 	}
 	return diagnosis, nil
@@ -267,7 +267,7 @@ func loadRemediationDiagnosisEvidence(ctx context.Context, tx *sql.Tx, task asyn
 		if err := tx.QueryRowContext(ctx, `SELECT content_hash, result_hash, producer_type, agent_run_id, facts_json, valid, truncated,
 migrated_legacy, migrated_legacy_context
 FROM evidence_items
-WHERE public_id = ? AND incident_id = ? AND domain_schema_version = 3 AND cycle_no = ?`,
+WHERE public_id = ? AND incident_id = ? AND cycle_no = ?`,
 			publicID, task.IncidentID, task.CycleNo).Scan(&contentHash, &resultHash, &producerType, &agentRunID,
 			&factsJSON, &valid, &truncated, &migratedLegacy, &migratedLegacyContext); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -282,7 +282,7 @@ WHERE public_id = ? AND incident_id = ? AND domain_schema_version = 3 AND cycle_
 			return nil, nil, fmt.Errorf("%w: Diagnosis Evidence is not a current verified observation", asyncjob.ErrPolicyViolation)
 		}
 		var envelope storedEvidenceEnvelope
-		if len(factsJSON) == 0 || len(factsJSON) > remediation.MaxV3PostImageBytes || json.Unmarshal(factsJSON, &envelope) != nil ||
+		if len(factsJSON) == 0 || len(factsJSON) > remediation.MaxPostImageBytes || json.Unmarshal(factsJSON, &envelope) != nil ||
 			envelope.SchemaVersion != 1 || envelope.ContentHash != contentHash || envelope.Truncated || envelope.Status != agent.CollectionAvailable {
 			return nil, nil, fmt.Errorf("%w: Diagnosis Evidence envelope is malformed", asyncjob.ErrPolicyViolation)
 		}
@@ -311,7 +311,7 @@ func validateCurrentRemediationDiagnosis(stored agent.DiagnosisRecord, incidentP
 	if err != nil || sufficiency.Outcome != agent.SufficiencyReady {
 		return fmt.Errorf("%w: current Evidence no longer satisfies the Diagnosis policy", asyncjob.ErrPolicyViolation)
 	}
-	validated, err := validateV3Diagnosis(stored.Candidate, investigationSnapshot{
+	validated, err := validateDiagnosis(stored.Candidate, investigationSnapshot{
 		IncidentPublicID: incidentPublicID, Task: asyncjob.Task{CycleNo: cycleNo}, Facts: facts,
 	}, policy, sufficiency)
 	if err != nil {
@@ -330,7 +330,7 @@ func (l *mysqlRemediationPrepareLoader) loadActiveBaseline(ctx context.Context, 
  source_revision, image_digest, gitops_revision, config_hash,
  verification_policy_version, verification_hash, row_version, verified_at
 FROM deployment_baselines
-WHERE domain_schema_version = 3 AND status = 'active'
+WHERE status = 'active'
   AND cluster = ? AND environment = ? AND namespace = ? AND workload_kind = 'Deployment'
   AND workload_name = ? AND container_name = ? AND repository = ? AND base_branch = ? AND target_path = ?
 ORDER BY id
@@ -378,7 +378,7 @@ LIMIT 2`, incident.Cluster, incident.Environment, incident.Namespace, incident.T
 	observationRows, err := tx.QueryContext(ctx, `SELECT id, public_id, observation_schema_version, source_identity,
  observed_json, content_hash
 FROM baseline_observations
-WHERE baseline_id = ? AND domain_schema_version = 3 AND observation_type = 'config_blob'
+WHERE baseline_id = ? AND observation_type = 'config_blob'
 ORDER BY sequence_no, id
 LIMIT 2`, baseline.ID)
 	if err != nil {
@@ -417,15 +417,15 @@ LIMIT 2`, baseline.ID)
 }
 
 func buildRemediationVerificationSnapshot(baseline remediationPrepareBaseline) (json.RawMessage, error) {
-	profile := verification.GoldenRequiredEnvProfileV1()
-	profileHash, err := verification.V3ProfileHash(profile)
+	profile := verification.GoldenRequiredEnvProfile()
+	profileHash, err := verification.ProfileHash(profile)
 	if err != nil {
 		return nil, err
 	}
 	snapshot := struct {
-		SchemaVersion int                              `json:"schema_version"`
-		Profile       verification.V3ProfileDefinition `json:"profile"`
-		ProfileHash   string                           `json:"profile_hash"`
+		SchemaVersion int                            `json:"schema_version"`
+		Profile       verification.ProfileDefinition `json:"profile"`
+		ProfileHash   string                         `json:"profile_hash"`
 		Baseline      struct {
 			PublicID                  string `json:"public_id"`
 			ObservationPublicID       string `json:"config_observation_public_id"`
@@ -458,8 +458,8 @@ func validateRemediationPreparePolicy(policy remediation.RestoreEnvPolicy) error
 		policy.Repository == "" || strings.Count(policy.Repository, "/") != 1 || policy.BaseBranch == "" ||
 		policy.AllowedPath == "" || path.Clean(policy.AllowedPath) != policy.AllowedPath || strings.HasPrefix(policy.AllowedPath, "../") ||
 		change.SensitivePath(policy.AllowedPath, nil) ||
-		policy.MaxDiffBytes <= 0 || policy.MaxDiffBytes > remediation.MaxV3PlanDiffBytes ||
-		policy.MaxPostImageBytes <= 0 || policy.MaxPostImageBytes > remediation.MaxV3PostImageBytes {
+		policy.MaxDiffBytes <= 0 || policy.MaxDiffBytes > remediation.MaxPlanDiffBytes ||
+		policy.MaxPostImageBytes <= 0 || policy.MaxPostImageBytes > remediation.MaxPostImageBytes {
 		return fmt.Errorf("%w: remediation.prepare policy is not the frozen restore_required_env contract", remediation.ErrInvalidArgument)
 	}
 	return nil

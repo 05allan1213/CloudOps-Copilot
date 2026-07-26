@@ -85,8 +85,8 @@ func TestV3ErrorRateTreatsMissingErrorSeriesAsVerifiedZero(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	observation, err := client.ObserveV3(context.Background(), V3MetricQuery{
-		Kind: V3MetricErrorRate, Service: "checkout\"api", Namespace: "shop", Environment: "staging",
+	observation, err := client.ObserveBoundedMetric(context.Background(), MetricQuery{
+		Kind: MetricErrorRate, Service: "checkout\"api", Namespace: "shop", Environment: "staging",
 		WorkloadName: "demo", Lookback: 30 * time.Minute,
 	})
 	if err != nil || observation.Status != verification.ObservationAvailable || observation.Value != 0 || observation.Denominator != 100 || observation.SampleCount != 100 {

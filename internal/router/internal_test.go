@@ -11,14 +11,13 @@ import (
 	"github.com/05allan1213/CloudOps-Copilot/internal/alertmanageringress"
 	"github.com/05allan1213/CloudOps-Copilot/internal/config"
 	"github.com/05allan1213/CloudOps-Copilot/internal/handler"
-	"github.com/05allan1213/CloudOps-Copilot/internal/infra/incidentv3mysql"
+	"github.com/05allan1213/CloudOps-Copilot/internal/infra/incidentstore"
 	"github.com/05allan1213/CloudOps-Copilot/internal/middleware"
 )
 
 func TestInternalRouterHasExactCapabilitySurfaceAndUserRouterDoesNotMountWebhook(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cfg := config.Load()
-	cfg.AuthEnabled = false
 	cfg.RateLimit.Enabled = false
 	cfg.StaticDir = ""
 	targets, err := alertmanageringress.ParseTargetAllowlist(cfg.SignalTargetAllowlistJSON)
@@ -28,12 +27,12 @@ func TestInternalRouterHasExactCapabilitySurfaceAndUserRouterDoesNotMountWebhook
 	ingress, err := alertmanageringress.NewHandler(alertmanageringress.Config{
 		Store: internalRouterStore{}, Targets: targets,
 		MaxBodyBytes: cfg.AlertmanagerWebhookMaxBodyBytes, RequestTimeout: cfg.RequestTimeout,
-		RuntimeReady: func(context.Context) error { return nil },
+		Readiness: func(context.Context) error { return nil },
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	deps := Dependencies{Metrics: middleware.NewMetrics(), V3Alertmanager: ingress}
+	deps := Dependencies{Metrics: middleware.NewMetrics(), Alertmanager: ingress}
 	internal, err := NewInternalRouter(cfg, deps)
 	if err != nil {
 		t.Fatal(err)
@@ -54,7 +53,7 @@ func TestInternalRouterHasExactCapabilitySurfaceAndUserRouterDoesNotMountWebhook
 			t.Errorf("missing INTERNAL route %s", route)
 		}
 	}
-	for _, path := range []string{"/api/v3/incidents", "/api/v2/incidents", "/api/v1/auth/login"} {
+	for _, path := range []string{"/api/v1/incidents", "/api/v2/incidents", "/api/v1/auth/login"} {
 		response := httptest.NewRecorder()
 		internal.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
 		if response.Code != http.StatusNotFound {
@@ -68,7 +67,7 @@ func TestInternalRouterHasExactCapabilitySurfaceAndUserRouterDoesNotMountWebhook
 	}
 	for _, route := range user.Routes() {
 		if route.Path == "/webhooks/alertmanager" {
-			t.Fatal("user listener mounted the INTERNAL V3 webhook")
+			t.Fatal("user listener mounted the INTERNAL webhook")
 		}
 	}
 }
@@ -76,9 +75,9 @@ func TestInternalRouterHasExactCapabilitySurfaceAndUserRouterDoesNotMountWebhook
 type internalRouterStore struct{}
 
 func (internalRouterStore) Ready(context.Context) error { return nil }
-func (internalRouterStore) IngestBatch(context.Context, []incidentv3mysql.SignalInput) ([]incidentv3mysql.IngestResult, error) {
+func (internalRouterStore) IngestBatch(context.Context, []incidentstore.SignalInput) ([]incidentstore.IngestResult, error) {
 	return nil, nil
 }
-func (internalRouterStore) RecordRejections(context.Context, []incidentv3mysql.RejectionInput) error {
+func (internalRouterStore) RecordRejections(context.Context, []incidentstore.RejectionInput) error {
 	return nil
 }

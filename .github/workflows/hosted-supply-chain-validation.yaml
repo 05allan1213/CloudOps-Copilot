@@ -68,8 +68,18 @@ jobs:
       fail-fast: false
       matrix:
         image:
-          - name: server-web
+          - name: api
             file: ./Dockerfile
+            target: cloudops-api
+          - name: worker
+            file: ./Dockerfile
+            target: cloudops-worker
+          - name: migrate
+            file: ./Dockerfile
+            target: cloudops-migrate
+          - name: demo
+            file: ./Dockerfile
+            target: cloudops-demo
     steps:
       - name: Checkout exact dispatch commit
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -92,7 +102,7 @@ jobs:
           SERVICE: ${{ matrix.image.name }}
         run: |
           case "${SERVICE}" in
-            server-web) ;;
+            api|worker|migrate|demo) ;;
             *) exit 1 ;;
           esac
           OWNER="${GITHUB_REPOSITORY_OWNER,,}"
@@ -117,7 +127,7 @@ jobs:
         with:
           context: .
           file: ${{ matrix.image.file }}
-          target: runtime
+          target: ${{ matrix.image.target }}
           push: true
           provenance: false
           sbom: false

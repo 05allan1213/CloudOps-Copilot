@@ -70,7 +70,7 @@ func New(ctx context.Context, runtime Runtime, maxGraphSteps int) (*Executor, er
 	}, ends)); err != nil {
 		return nil, err
 	}
-	runnable, err := g.Compile(ctx, compose.WithGraphName("incident_agent_runtime_v2"), compose.WithMaxRunSteps(maxGraphSteps))
+	runnable, err := g.Compile(ctx, compose.WithGraphName("incident_agent_runtime"), compose.WithMaxRunSteps(maxGraphSteps))
 	if err != nil {
 		return nil, err
 	}

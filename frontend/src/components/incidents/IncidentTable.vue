@@ -78,7 +78,7 @@ function compactID(value: string): string {
     >
       <table>
         <caption class="visually-hidden">
-          Loaded V3 Incidents. Sort controls apply to the currently loaded cursor results.
+          Loaded Incidents. Sort controls apply to the currently loaded cursor results.
         </caption>
         <thead>
           <tr>

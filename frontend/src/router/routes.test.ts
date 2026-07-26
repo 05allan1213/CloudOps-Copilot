@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { appRoutes } from "./routes";
 
-describe("V3 product routes", () => {
+describe("CloudOps product routes", () => {
   it("registers only Incident Workbench and not-found routes", () => {
     const paths = new Set(appRoutes.map((route) => route.path));
     for (const path of ["/", "/incidents", "/incidents/:incidentId", "/:pathMatch(.*)*"]) {
@@ -12,7 +12,7 @@ describe("V3 product routes", () => {
     expect(paths.has("/login")).toBe(false);
   });
 
-  it("makes the V3 Incident Workbench the default product entry", () => {
+  it("makes the Incident Workbench the default product entry", () => {
 	const root = appRoutes.find((route) => route.path === "/");
 	expect(root?.redirect).toBe("/incidents");
   });

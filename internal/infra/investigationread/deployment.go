@@ -183,7 +183,7 @@ func (t *Toolset) changeDetail(ctx context.Context, request agent.InvestigationT
 func (t *Toolset) loadBaseline(ctx context.Context) (returnIdentity baselineIdentity, retErr error) {
 	rows, err := t.cfg.DB.QueryContext(ctx, `SELECT source_revision, image_digest, gitops_revision
 FROM deployment_baselines
-WHERE domain_schema_version = 3 AND status = 'active' AND cluster = ? AND environment = ? AND namespace = ?
+WHERE status = 'active' AND cluster = ? AND environment = ? AND namespace = ?
   AND workload_kind = 'Deployment' AND workload_name = ? AND container_name = ? AND repository = ?
   AND base_branch = ? AND target_path = ?
 ORDER BY id LIMIT 2`, t.cfg.Target.Cluster, t.cfg.Target.Environment, t.cfg.Target.Namespace, t.cfg.Target.Workload,

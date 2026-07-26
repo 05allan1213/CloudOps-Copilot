@@ -3,6 +3,7 @@ package agenteval
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -96,48 +97,8 @@ func TestRunFixedBaselineUsesNoModelCalls(t *testing.T) {
 	}
 }
 
-func TestV2ConflictingSourcesCannotMakeAnyClaimReady(t *testing.T) {
-	dataset, err := LoadDataset(filepath.Join("..", "..", "..", "eval", "v2", "dataset.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var evalCase EvalCase
-	for _, candidate := range dataset.Cases {
-		if candidate.ID == "model-conflicting-sources" {
-			evalCase = candidate
-			break
-		}
-	}
-	if evalCase.ID == "" {
-		t.Fatal("v2 conflicting-sources case is missing")
-	}
-	runtime, err := newCaseRuntime(evalCase)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, fixture := range evalCase.Fixtures {
-		if err := applyFixture(evalCase, runtime, fixture.Actions[0]); err != nil {
-			t.Fatal(err)
-		}
-	}
-	results, ready, _, err := evaluatePolicies(evalCase, runtime.state, runtime.facts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(ready) != 0 {
-		t.Fatalf("conflicting authoritative sources produced READY claims: %v", ready)
-	}
-	identity := results["deployment_identity_regression/v1"]
-	if identity.Outcome != agent.SufficiencyInsufficient || !slices.Contains(identity.BlockingIDs, "fact-conflict-env-present") {
-		t.Fatalf("identity policy did not fail closed on the current Pod fact: %+v", identity)
-	}
-}
-
-func TestV3RemovesInvalidUnchangedIdentityRegressionPolicy(t *testing.T) {
-	dataset, err := LoadDataset(filepath.Join("..", "..", "..", "eval", "v3", "dataset.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestCurrentDatasetRejectsInvalidUnchangedIdentityRegressionPolicy(t *testing.T) {
+	dataset := loadCurrentDataset(t)
 	var conflicting EvalCase
 	for _, evalCase := range dataset.Cases {
 		for _, policy := range evalCase.Policies {
@@ -150,7 +111,7 @@ func TestV3RemovesInvalidUnchangedIdentityRegressionPolicy(t *testing.T) {
 		}
 	}
 	if conflicting.ID == "" {
-		t.Fatal("v3 conflicting-sources case is missing")
+		t.Fatal("current conflicting-sources case is missing")
 	}
 	runtime, err := newCaseRuntime(conflicting)
 	if err != nil {
@@ -166,8 +127,32 @@ func TestV3RemovesInvalidUnchangedIdentityRegressionPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(ready) != 0 {
-		t.Fatalf("v3 conflicting authoritative sources produced READY claims: %v", ready)
+		t.Fatalf("conflicting authoritative sources produced READY claims: %v", ready)
 	}
+}
+
+func loadCurrentDataset(t *testing.T) Dataset {
+	t.Helper()
+	root := filepath.Join("..", "..", "..")
+	encoded, err := os.ReadFile(filepath.Join(root, "eval", "index.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var index struct {
+		SchemaVersion       int    `json:"schema_version"`
+		ActiveDatasetSHA256 string `json:"active_dataset_sha256"`
+	}
+	if err := json.Unmarshal(encoded, &index); err != nil {
+		t.Fatal(err)
+	}
+	if index.SchemaVersion != 1 || len(index.ActiveDatasetSHA256) != 64 {
+		t.Fatalf("invalid Agent Eval index: %+v", index)
+	}
+	dataset, err := LoadDataset(filepath.Join(root, "eval", "sha256-"+index.ActiveDatasetSHA256, "dataset.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dataset
 }
 
 func TestRunModelKeepsInvestigatingWhenOneClaimIsReadyAndCandidatesRemain(t *testing.T) {

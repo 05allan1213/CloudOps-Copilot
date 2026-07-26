@@ -1,5 +1,5 @@
 // Package registryread implements the narrow OCI Distribution pull boundary
-// used by Phase 3 image resolution. It cannot list, upload, tag, mount, or
+// used by image resolution. It cannot list, upload, tag, mount, or
 // delete registry content.
 package registryread
 

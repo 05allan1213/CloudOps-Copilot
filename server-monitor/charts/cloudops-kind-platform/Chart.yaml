@@ -1,6 +1,0 @@
-apiVersion: v2
-name: cloudops-kind-platform
-description: Disposable kind platform bootstrap for the V3 database and observability stack.
-type: application
-version: 0.2.0
-appVersion: "3.0.2"

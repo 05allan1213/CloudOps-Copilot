@@ -219,7 +219,7 @@ func mysqlBaselineSnapshot(t *testing.T, revisionSeed, config string, observedAt
 	configHash := mysqlBaselineHash(configBytes)
 	snapshot := baseline.Snapshot{
 		Target: baseline.Target{
-			Cluster: "kind-cloudops-v3", Environment: "local-demo", Namespace: "demo", WorkloadKind: "Deployment",
+			Cluster: "kind-cloudops-local", Environment: "local-demo", Namespace: "demo", WorkloadKind: "Deployment",
 			WorkloadName: "demo", ContainerName: "demo", Repository: "acme/gitops",
 			BaseBranch: "main", TargetPath: "apps/demo/deployment.yaml",
 		},

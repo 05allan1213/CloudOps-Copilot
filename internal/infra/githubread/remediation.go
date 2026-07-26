@@ -110,12 +110,12 @@ func (c *Client) readExactContent(ctx context.Context, repo change.RepositoryRef
 	if err := c.getJSON(ctx, apiPath, &payload); err != nil {
 		return exactContent{}, mapExactGitReadError(err)
 	}
-	if payload.Type != "file" || payload.Path != targetPath || payload.Encoding != "base64" || payload.Size <= 0 || payload.Size > remediation.MaxV3PostImageBytes {
+	if payload.Type != "file" || payload.Path != targetPath || payload.Encoding != "base64" || payload.Size <= 0 || payload.Size > remediation.MaxPostImageBytes {
 		return exactContent{}, fmt.Errorf("%w: exact Git content response is outside bounds", change.ErrConflict)
 	}
 	encoded := strings.NewReplacer("\n", "", "\r", "", " ", "", "\t", "").Replace(payload.Content)
 	content, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil || len(content) != payload.Size || len(content) == 0 || len(content) > remediation.MaxV3PostImageBytes {
+	if err != nil || len(content) != payload.Size || len(content) == 0 || len(content) > remediation.MaxPostImageBytes {
 		return exactContent{}, fmt.Errorf("%w: exact Git blob content is malformed", change.ErrConflict)
 	}
 	sha := strings.ToLower(strings.TrimSpace(payload.SHA))

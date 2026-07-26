@@ -773,20 +773,19 @@ func sameTaskIdentity(left, right Task) bool {
 // the subject to the task's Incident cycle so a stale or cross-cycle task
 // cannot heartbeat, checkpoint, fail, or complete.
 func lockSubjectVersion(ctx context.Context, tx *sql.Tx, task Task) error {
-	var domainVersion, incidentCycle sql.NullInt64
+	var incidentCycle uint64
 	var incidentVersion uint64
-	var incidentStatus sql.NullString
-	if err := tx.QueryRowContext(ctx, `SELECT domain_schema_version, cycle_no, version, v3_status
+	var incidentStatus string
+	if err := tx.QueryRowContext(ctx, `SELECT cycle_no, version, status
 FROM incidents
 WHERE id = ?
-FOR UPDATE`, task.IncidentID).Scan(&domainVersion, &incidentCycle, &incidentVersion, &incidentStatus); err != nil {
+FOR UPDATE`, task.IncidentID).Scan(&incidentCycle, &incidentVersion, &incidentStatus); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrSubjectVersionMismatch
 		}
 		return fmt.Errorf("lock async task Incident cycle: %w", err)
 	}
-	if !domainVersion.Valid || domainVersion.Int64 != 3 || !incidentCycle.Valid || !incidentStatus.Valid ||
-		uint64(incidentCycle.Int64) != uint64(task.CycleNo) || !isActiveIncidentStatus(incidentStatus.String) {
+	if incidentCycle != uint64(task.CycleNo) || !isActiveIncidentStatus(incidentStatus) {
 		return ErrSubjectVersionMismatch
 	}
 	if task.SubjectType == "incident" {
@@ -801,22 +800,22 @@ FOR UPDATE`, task.IncidentID).Scan(&domainVersion, &incidentCycle, &incidentVers
 	switch task.SubjectType {
 	case "agent_run":
 		query = `SELECT row_version FROM agent_runs
-WHERE id = ? AND incident_id = ? AND domain_schema_version = 3 AND cycle_no = ?
+WHERE id = ? AND incident_id = ? AND cycle_no = ?
 FOR UPDATE`
 		args = []any{task.SubjectID, task.IncidentID, task.CycleNo}
 	case "remediation_plan":
 		query = `SELECT row_version FROM remediation_plans
-WHERE id = ? AND incident_id = ? AND domain_schema_version = 3 AND cycle_no = ?
+WHERE id = ? AND incident_id = ? AND cycle_no = ?
 FOR UPDATE`
 		args = []any{task.SubjectID, task.IncidentID, task.CycleNo}
 	case "change_request":
 		query = `SELECT row_version FROM change_requests
-WHERE id = ? AND incident_id = ? AND domain_schema_version = 3 AND cycle_no = ?
+WHERE id = ? AND incident_id = ? AND cycle_no = ?
 FOR UPDATE`
 		args = []any{task.SubjectID, task.IncidentID, task.CycleNo}
 	case "verification_run":
 		query = `SELECT row_version FROM verification_runs
-WHERE id = ? AND incident_id = ? AND domain_schema_version = 3 AND cycle_no = ?
+WHERE id = ? AND incident_id = ? AND cycle_no = ?
 FOR UPDATE`
 		args = []any{task.SubjectID, task.IncidentID, task.CycleNo}
 	default:

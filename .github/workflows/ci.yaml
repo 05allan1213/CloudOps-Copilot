@@ -3,40 +3,38 @@ name: CI
 on:
   pull_request:
     paths:
-      - .github/workflows/ci.yaml
+      - .github/workflows/**
       - .dockerignore
       - Dockerfile
       - Makefile
       - charts/**
-      - deploy/**
+      - cmd/**
+      - frontend/**
       - go.mod
       - go.sum
-      - cmd/**
       - internal/**
       - migrations/**
-      - scripts/check-immutable-workflow-dependencies.py
-      - frontend/**
-      - server-monitor/**
+      - runbooks/**
+      - scripts/**
   push:
     branches:
       - main
     tags:
       - 'v*'
     paths:
-      - .github/workflows/ci.yaml
+      - .github/workflows/**
       - .dockerignore
       - Dockerfile
       - Makefile
       - charts/**
-      - deploy/**
+      - cmd/**
+      - frontend/**
       - go.mod
       - go.sum
-      - cmd/**
       - internal/**
       - migrations/**
-      - scripts/check-immutable-workflow-dependencies.py
-      - frontend/**
-      - server-monitor/**
+      - runbooks/**
+      - scripts/**
   workflow_dispatch:
 
 concurrency:
@@ -57,19 +55,15 @@ env:
   GOVULNCHECK_VERSION: v1.6.0
   NODE_VERSION: '20'
   HELM_VERSION: v3.14.4
-  PROMETHEUS_IMAGE: prom/prometheus:v2.51.0@sha256:5ccad477d0057e62a7cd1981ffcc43785ac10c5a35522dc207466ff7e7ec845f
   SHELLCHECK_IMAGE: koalaman/shellcheck:v0.10.0@sha256:2097951f02e735b613f4a34de20c40f937a6c8f18ecb170612c88c34517221fb
   KUBECONFORM_IMAGE: ghcr.io/yannh/kubeconform:v0.6.7@sha256:0925177fb05b44ce18574076141b5c3d83235e1904d3f952182ac99ddc45762c
-  YQ_IMAGE: mikefarah/yq:4.44.1@sha256:bcb889a1f9bdb0613c8a054542d02360c2b1b35521041be3e1bd8fbd0534d411
   ACTIONLINT_IMAGE: rhysd/actionlint:1.7.7@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9
 
 jobs:
-  go-checks:
-    name: root Go checks
+  go:
+    name: Go contracts
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: read
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -80,44 +74,37 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: go.sum
 
-      - name: Install goimports
-        run: go install "golang.org/x/tools/cmd/goimports@${GOIMPORTS_VERSION}"
-
-      - name: Check goimports
+      - name: Install Go check tools
         run: |
-          GOIMPORTS_BIN="$(go env GOPATH)/bin/goimports"
-          test -z "$(${GOIMPORTS_BIN} -l .)"
-
-      - name: Install golangci-lint
-        run: |
+          go install "golang.org/x/tools/cmd/goimports@${GOIMPORTS_VERSION}"
           go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${GOLANGCI_LINT_VERSION}"
 
-      - name: Run golangci-lint
+      - name: Check module, structure, formatting, and naming
         run: |
-          GOLANGCI_LINT_BIN="$(go env GOPATH)/bin/golangci-lint"
-          "${GOLANGCI_LINT_BIN}" run --timeout=5m ./...
+          make check-gofmt
+          make check-goimports GOIMPORTS="$(go env GOPATH)/bin/goimports"
+          make check-deps
+          make check-structure
+          make check-naming
 
-      - name: Run tests
-        run: go test -count=1 ./...
+      - name: Vet and lint
+        run: |
+          make vet
+          make lint-go GOLANGCI_LINT="$(go env GOPATH)/bin/golangci-lint"
 
-      - name: Run race tests
-        run: go test -race -count=1 ./...
-
-      - name: Run go vet
-        run: go vet ./...
-
-      - name: Build module
-        run: go build ./...
+      - name: Test and build
+        run: |
+          make test-go
+          make test-race
+          make build-go
 
       - name: Scan reachable Go vulnerabilities
         run: go run "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}" ./...
 
   frontend:
-    name: frontend build
+    name: Frontend contracts
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    permissions:
-      contents: read
     defaults:
       run:
         working-directory: frontend
@@ -135,298 +122,78 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --prefer-offline
 
-      - name: Audit production and build dependencies
+      - name: Audit dependencies
         run: npm audit --audit-level=high --registry=https://registry.npmjs.org
 
-      - name: Run ESLint
-        run: npm run lint
+      - name: Lint, typecheck, test, and build
+        run: |
+          npm run lint
+          npm exec -- vue-tsc --noEmit
+          npm test
+          npm run build
 
-      - name: Run strict typecheck
-        run: npx vue-tsc --noEmit
-
-      - name: Run unit tests
-        run: npm test
-
-      - name: Build frontend
-        run: npm run build
-
-  compose:
-    name: compose config checks
+  runtime-contracts:
+    name: Runtime contracts
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    defaults:
-      run:
-        working-directory: server-monitor
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
-      - name: Validate docker compose config
-        run: |
-          cleanup() {
-            if [ -f .env.ci-backup ]; then
-              mv .env.ci-backup .env
-            else
-              rm -f .env
-            fi
-          }
-          trap cleanup EXIT
-          if [ -f .env ]; then
-            mv .env .env.ci-backup
-          fi
-          cp .env.example .env
-          docker compose --env-file .env.example config >/tmp/server-monitor-compose.yaml
+      - name: Setup Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        with:
+          version: ${{ env.HELM_VERSION }}
 
-      - name: Check shell syntax and run shellcheck
+      - name: Check shell scripts
         run: |
-          script_list="${RUNNER_TEMP}/server-monitor-shell-scripts.nul"
-          find . -type f -name '*.sh' -print0 | sort -z >"${script_list}"
-          scripts=()
-          while IFS= read -r -d '' script; do
-            scripts+=("${script}")
-          done <"${script_list}"
-          if ((${#scripts[@]} == 0)); then
-            echo "No shell scripts found under server-monitor" >&2
-            exit 1
-          fi
+          mapfile -d '' scripts < <(find scripts -type f -name '*.sh' -print0 | sort -z)
+          ((${#scripts[@]} > 0))
           for script in "${scripts[@]}"; do
             bash -n "${script}"
           done
           docker run --rm \
-            -v "${{ github.workspace }}:/repo" \
-            -w /repo/server-monitor \
-            "${{ env.SHELLCHECK_IMAGE }}" \
+            -v "${GITHUB_WORKSPACE}:/repo:ro" \
+            -w /repo \
+            "${SHELLCHECK_IMAGE}" \
             "${scripts[@]}"
 
-  prometheus:
-    name: prometheus config checks
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-
-      - name: Check Prometheus config
+      - name: Check Helm render contracts
         run: |
-          docker run --rm             --entrypoint promtool             -v "${{ github.workspace }}/server-monitor/docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro"             -v "${{ github.workspace }}/server-monitor/docker/alerts.yml:/etc/prometheus/rules/alerts.yml:ro"             ${{ env.PROMETHEUS_IMAGE }}             check config /etc/prometheus/prometheus.yml
-
-      - name: Check Prometheus rules
-        run: |
-          docker run --rm             --entrypoint promtool             -v "${{ github.workspace }}/server-monitor/docker/alerts.yml:/etc/prometheus/alerts.yml:ro"             ${{ env.PROMETHEUS_IMAGE }}             check rules /etc/prometheus/alerts.yml
-
-      - name: Check custom alert rules
-        run: |
-          docker run --rm             --entrypoint promtool             -v "${{ github.workspace }}/server-monitor/docker/custom-alerts.yml:/etc/prometheus/rules/custom-alerts.yml:ro"             ${{ env.PROMETHEUS_IMAGE }}             check rules /etc/prometheus/rules/custom-alerts.yml
-
-  helm:
-    name: helm chart checks
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-
-      - name: Setup Helm
-        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
-        with:
-          version: ${{ env.HELM_VERSION }}
-
-      - name: Lint charts
-        run: |
-          for profile in phase3 phase4 phase5 phase6; do
-            helm lint --strict charts/cloudops \
-              --values "charts/cloudops/values-${profile}.yaml"
-          done
-          helm lint server-monitor/charts/cloudops-kind-platform
-          helm lint server-monitor/charts/cloudops-demo
-
-      - name: Render charts and V3 phase profile
-        run: |
-          for profile in phase3 phase4 phase5 phase6; do
-            helm template "cloudops-${profile}" charts/cloudops \
-              --namespace cloudops-system \
-              --values "charts/cloudops/values-${profile}.yaml" \
-              >"/tmp/cloudops-${profile}-rendered.yaml"
-            docker run --rm -i \
-              "${{ env.YQ_IMAGE }}" eval -o=json 'select(.kind != null)' - \
-              <"/tmp/cloudops-${profile}-rendered.yaml" \
-              >"/tmp/cloudops-${profile}.json"
-          done
-          helm template cloudops-platform server-monitor/charts/cloudops-kind-platform \
+          make helm-lint
+          make helm-template
+          make helm-contracts
+          helm template cloudops charts/cloudops \
             --namespace cloudops-system \
-            >/tmp/cloudops-platform-rendered.yaml
-          helm template cloudops-demo server-monitor/charts/cloudops-demo \
-            --namespace demo \
-            >/tmp/cloudops-demo-rendered.yaml
+            --values charts/cloudops/values-local.yaml | \
+            docker run --rm -i "${KUBECONFORM_IMAGE}" \
+              -strict -summary -ignore-missing-schemas
 
-      - name: Validate rendered Kubernetes schema
+      - name: Check workflow contracts
         run: |
-          for manifest in \
-            /tmp/cloudops-phase3-rendered.yaml \
-            /tmp/cloudops-phase4-rendered.yaml \
-            /tmp/cloudops-phase5-rendered.yaml \
-            /tmp/cloudops-phase6-rendered.yaml \
-            /tmp/cloudops-platform-rendered.yaml \
-            /tmp/cloudops-demo-rendered.yaml; do
-            docker run --rm -i \
-              "${{ env.KUBECONFORM_IMAGE }}" \
-              -strict -summary -ignore-missing-schemas \
-              <"${manifest}"
-          done
-
-      - name: Enforce V3 phase profile boundaries
-        run: |
-          bash server-monitor/scripts/check-cloudops-profile-render.sh \
-            /tmp/cloudops-phase3.json \
-            /tmp/cloudops-phase4.json \
-            /tmp/cloudops-phase5.json \
-            /tmp/cloudops-phase6.json \
-            charts/cloudops
-          docker run --rm -i \
-            "${{ env.YQ_IMAGE }}" eval -o=json 'select(.kind != null)' - \
-            </tmp/cloudops-phase3-rendered.yaml \
-            >/tmp/cloudops-phase3.jsonl
-          docker run --rm -i \
-            "${{ env.YQ_IMAGE }}" eval -o=json 'select(.kind != null)' - \
-            </tmp/cloudops-demo-rendered.yaml \
-            >/tmp/cloudops-demo.jsonl
-          cat /tmp/cloudops-demo.jsonl >>/tmp/cloudops-phase3.jsonl
-          jq -s -e '
-            def count_resource($kind; $name):
-              [.[] | select(.kind == $kind and .metadata.name == $name)] | length;
-            count_resource("Deployment"; "cloudops-api") == 1 and
-            count_resource("Job"; "cloudops-migrate") == 1 and
-            count_resource("ServiceMonitor"; "cloudops-api") == 1 and
-            count_resource("PrometheusRule"; "cloudops-api") == 1 and
-            count_resource("Deployment"; "demo") == 1 and
-            count_resource("Service"; "demo") == 1 and
-            count_resource("Service"; "demo-diagnostics") == 1 and
-            count_resource("PodMonitor"; "demo") == 1 and
-            count_resource("PrometheusRule"; "demo") == 1 and
-            count_resource("Job"; "cloudops-demo-load-generator") == 1 and
-            ([.[] | select(.kind == "Service" and .metadata.namespace == "demo") | .metadata.name] | sort) == ["demo", "demo-diagnostics"] and
-            ([.[] | select(.kind == "Deployment" and .metadata.name == "demo")][0].spec.replicas) == 2 and
-            count_resource("Deployment"; "cloudops-worker") == 0 and
-            ([.[] | select(.kind == "Secret")] | length) == 0 and
-            ([.[] | select(.metadata.name as $name |
-              ["server-web", "prometheus", "victoriametrics", "jaeger", "kafka", "redis", "elasticsearch", "kibana", "fluent-bit", "grafana"] |
-              index($name))] | length) == 0
-          ' /tmp/cloudops-phase3.jsonl >/dev/null
-
-      - name: Enforce canonical Argo and GitOps fixture contracts
-        run: |
-          make argocd-contracts \
-            YQ="docker run --rm -v ${GITHUB_WORKSPACE}:/workdir -w /workdir ${YQ_IMAGE}" \
-            KUBECONFORM="docker run --rm -v ${GITHUB_WORKSPACE}:/workdir -w /workdir ${KUBECONFORM_IMAGE}"
-
-  static-delivery:
-    name: workflow and manifest checks
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with:
-          fetch-depth: 0
-
-      - name: Parse workflow YAML
-        run: |
-          for workflow in .github/workflows/*.yaml .github/workflows/*.yml; do
-            [ -e "${workflow}" ] || continue
-            docker run --rm \
-              -v "${{ github.workspace }}:/repo" \
-              -w /repo \
-              "${{ env.YQ_IMAGE }}" eval '.' "${workflow}" >/dev/null
-          done
-
-      - name: Run actionlint
-        run: |
+          python3 scripts/check-immutable-workflow-dependencies.py
           docker run --rm \
-            -v "${{ github.workspace }}:/repo" \
+            -v "${GITHUB_WORKSPACE}:/repo:ro" \
             -w /repo \
-            "${{ env.ACTIONLINT_IMAGE }}" -color
+            "${ACTIONLINT_IMAGE}" \
+            -no-color
 
-      - name: Audit immutable workflow dependencies
-        run: python3 scripts/check-immutable-workflow-dependencies.py
-
-      - name: Parse raw Kubernetes YAML
-        run: |
-          for manifest in server-monitor/k8s/*.yaml; do
-            docker run --rm \
-              -v "${{ github.workspace }}:/repo" \
-              -w /repo \
-              "${{ env.YQ_IMAGE }}" eval '.' "${manifest}" >/dev/null
-          done
-
-      - name: Parse V3 kind bootstrap YAML
-        run: |
-          for manifest in server-monitor/deploy/kind/*.yaml; do
-            docker run --rm \
-              -v "${{ github.workspace }}:/repo" \
-              -w /repo \
-              "${{ env.YQ_IMAGE }}" eval '.' "${manifest}" >/dev/null
-          done
-
-      - name: Validate raw Kubernetes schema
-        run: |
-          docker run --rm \
-            -v "${{ github.workspace }}:/repo" \
-            -w /repo \
-            "${{ env.KUBECONFORM_IMAGE }}" \
-            -strict -summary -ignore-missing-schemas \
-            server-monitor/k8s/*.yaml
-
-      - name: Check patch whitespace
-        env:
-          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: |
-          BASE_SHA="${EVENT_BASE_SHA}"
-          if [ -z "${BASE_SHA}" ] || [ "${BASE_SHA}" = "0000000000000000000000000000000000000000" ]; then
-            BASE_SHA="HEAD^"
-          fi
-          git diff --check "${BASE_SHA}" "${GITHUB_SHA}" --
-
-  docker-build:
-    name: docker build (${{ matrix.image.name }})
+  images:
+    name: Image (${{ matrix.image.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    permissions:
-      contents: read
-    needs:
-      - go-checks
-      - frontend
-      - compose
-      - prometheus
-      - helm
-      - static-delivery
     strategy:
       fail-fast: false
       matrix:
         image:
-          - name: cloudops-api
+          - name: api
             target: cloudops-api
-            file: ./Dockerfile
-            tag: cloudops-api:ci
-          - name: cloudops-worker
+          - name: worker
             target: cloudops-worker
-            file: ./Dockerfile
-            tag: cloudops-worker:ci
-          - name: cloudops-migrate
+          - name: migrate
             target: cloudops-migrate
-            file: ./Dockerfile
-            tag: cloudops-migrate:ci
-          - name: cloudops-demo
+          - name: demo
             target: cloudops-demo
-            file: ./Dockerfile
-            tag: cloudops-demo:ci
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -434,454 +201,19 @@ jobs:
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
 
-      - name: Build image
+      - name: Build without publishing
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
-          file: ${{ matrix.image.file }}
+          file: ./Dockerfile
           target: ${{ matrix.image.target }}
           push: false
-          load: true
           provenance: false
           sbom: false
-          tags: ${{ matrix.image.tag }}
+          tags: cloudops-${{ matrix.image.name }}:ci
           build-args: |
             VCS_REF=${{ github.sha }}
             VCS_SOURCE=${{ github.server_url }}/${{ github.repository }}
             VERSION=${{ github.sha }}
-          cache-from: type=gha,scope=${{ matrix.image.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}
-
-      - name: Verify OCI revision labels
-        env:
-          IMAGE_TAG: ${{ matrix.image.tag }}
-          EXPECTED_REVISION: ${{ github.sha }}
-          EXPECTED_SOURCE: ${{ github.server_url }}/${{ github.repository }}
-        run: |
-          test "$(docker image inspect "${IMAGE_TAG}" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "${EXPECTED_REVISION}"
-          test "$(docker image inspect "${IMAGE_TAG}" --format '{{ index .Config.Labels "org.opencontainers.image.source" }}')" = "${EXPECTED_SOURCE}"
-          test "$(docker image inspect "${IMAGE_TAG}" --format '{{ index .Config.Labels "org.opencontainers.image.version" }}')" = "${EXPECTED_REVISION}"
-
-      - name: Scan image vulnerabilities
-        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
-        with:
-          version: v0.72.0
-          image-ref: ${{ matrix.image.tag }}
-          format: table
-          exit-code: '1'
-          severity: HIGH,CRITICAL
-
-      - name: Generate image SBOM
-        uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
-        with:
-          image: ${{ matrix.image.tag }}
-          format: spdx-json
-          output-file: ${{ matrix.image.name }}.spdx.json
-
-      - name: Upload image SBOM
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: sbom-${{ matrix.image.name }}
-          path: ${{ matrix.image.name }}.spdx.json
-          if-no-files-found: error
-
-  push-images:
-    name: push images (${{ matrix.image.name }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs:
-      - docker-build
-    environment: production
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
-    env:
-      DOCKERHUB_NAMESPACE: ${{ secrets.DOCKERHUB_USERNAME }}
-      EVIDENCE_SUBDIR: release-evidence/${{ matrix.image.name }}
-    strategy:
-      fail-fast: false
-      matrix:
-        image:
-          - name: server-web
-            file: ./Dockerfile
-    steps:
-      - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with:
-          ref: ${{ github.sha }}
-
-      - name: Validate controlled release context
-        run: |
-          [[ "${GITHUB_EVENT_NAME}" == "push" ]]
-          [[ "${GITHUB_REF}" =~ ^refs/tags/v[^/]+$ ]]
-          [[ "${GITHUB_SHA}" =~ ^[a-f0-9]{40}$ ]]
-          test -n "${DOCKERHUB_NAMESPACE}"
-
-      - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
-
-      - name: Login to DockerHub
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Prepare immutable image identity
-        id: image
-        env:
-          SERVICE: ${{ matrix.image.name }}
-        run: |
-          case "${SERVICE}" in
-            server-web) ;;
-            *) exit 1 ;;
-          esac
-          IMAGE_REPOSITORY="${DOCKERHUB_NAMESPACE}/${SERVICE}"
-          IMAGE_TAG="${IMAGE_REPOSITORY}:${GITHUB_SHA}"
-          EVIDENCE_DIR="${RUNNER_TEMP}/${EVIDENCE_SUBDIR}"
-          mkdir -p "${EVIDENCE_DIR}"
-          echo "EVIDENCE_DIR=${EVIDENCE_DIR}" >>"${GITHUB_ENV}"
-          echo "repository=${IMAGE_REPOSITORY}" >>"${GITHUB_OUTPUT}"
-          echo "tag=${IMAGE_TAG}" >>"${GITHUB_OUTPUT}"
-          printf '%s\n' "${GITHUB_SHA}" >"${EVIDENCE_DIR}/git-sha.txt"
-
-      - name: Build and push immutable image
-        id: build-push
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
-        with:
-          context: .
-          file: ${{ matrix.image.file }}
-          target: runtime
-          push: true
-          provenance: false
-          sbom: false
-          tags: ${{ steps.image.outputs.tag }}
-          build-args: |
-            VCS_REF=${{ github.sha }}
-            VCS_SOURCE=${{ github.server_url }}/${{ github.repository }}
-            VERSION=${{ github.sha }}
-          cache-from: type=gha,scope=${{ matrix.image.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}
-
-      - name: Verify Registry digest and OCI labels
-        env:
-          DIGEST: ${{ steps.build-push.outputs.digest }}
-          IMAGE_REPOSITORY: ${{ steps.image.outputs.repository }}
-          IMAGE_TAG: ${{ steps.image.outputs.tag }}
-          SERVICE: ${{ matrix.image.name }}
-        run: |
-          [[ "${DIGEST}" =~ ^sha256:[a-f0-9]{64}$ ]]
-          REGISTRY_DIGEST="$(docker buildx imagetools inspect "${IMAGE_TAG}" --format '{{json .Manifest}}' | jq -r '.digest')"
-          test "${REGISTRY_DIGEST}" = "${DIGEST}"
-
-          IMAGE_REF="${IMAGE_REPOSITORY}@${DIGEST}"
-          docker buildx imagetools inspect "${IMAGE_REF}" --format '{{json .Image}}' >"${EVIDENCE_DIR}/oci-labels.json"
-          jq -e --arg sha "${GITHUB_SHA}" --arg source "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" '
-            .config.Labels["org.opencontainers.image.revision"] == $sha and
-            .config.Labels["org.opencontainers.image.version"] == $sha and
-            .config.Labels["org.opencontainers.image.source"] == $source
-          ' "${EVIDENCE_DIR}/oci-labels.json" >/dev/null
-
-          jq -n \
-            --arg service "${SERVICE}" \
-            --arg repository "${IMAGE_REPOSITORY}" \
-            --arg digest "${DIGEST}" \
-            --arg immutable_tag "${IMAGE_TAG}" \
-            '{service: $service, repository: $repository, digest: $digest, immutable_tag: $immutable_tag}' \
-            >"${EVIDENCE_DIR}/image-digests.json"
-
-      - name: Scan pushed digest vulnerabilities
-        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
-        with:
-          version: v0.72.0
-          image-ref: ${{ steps.image.outputs.repository }}@${{ steps.build-push.outputs.digest }}
-          format: json
-          output: ${{ runner.temp }}/release-evidence/${{ matrix.image.name }}/trivy.json
-          exit-code: '1'
-          ignore-unfixed: false
-          severity: HIGH,CRITICAL
-
-      - name: Generate pushed digest SBOM
-        uses: anchore/sbom-action@f8bdd1d8ac5e901a77a92f111440fdb1b593736b # v0.20.6
-        with:
-          image: ${{ steps.image.outputs.repository }}@${{ steps.build-push.outputs.digest }}
-          format: spdx-json
-          output-file: ${{ runner.temp }}/release-evidence/${{ matrix.image.name }}/${{ matrix.image.name }}.spdx.json
-
-      - name: Record scan and SBOM hashes
-        run: |
-          sha256sum \
-            "${EVIDENCE_DIR}/${{ matrix.image.name }}.spdx.json" \
-            "${EVIDENCE_DIR}/trivy.json" \
-            >"${EVIDENCE_DIR}/evidence.sha256"
-
-      - name: Attest exact digest build provenance
-        id: provenance
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
-        with:
-          subject-name: ${{ steps.image.outputs.repository }}
-          subject-digest: ${{ steps.build-push.outputs.digest }}
-          push-to-registry: true
-
-      - name: Attest exact digest SBOM
-        id: sbom-attestation
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
-        with:
-          subject-name: ${{ steps.image.outputs.repository }}
-          subject-digest: ${{ steps.build-push.outputs.digest }}
-          sbom-path: ${{ runner.temp }}/release-evidence/${{ matrix.image.name }}/${{ matrix.image.name }}.spdx.json
-          push-to-registry: true
-
-      - name: Inspect provenance and SBOM subjects
-        env:
-          DIGEST: ${{ steps.build-push.outputs.digest }}
-          IMAGE_REPOSITORY: ${{ steps.image.outputs.repository }}
-          PROVENANCE_BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
-          SBOM_BUNDLE: ${{ steps.sbom-attestation.outputs.bundle-path }}
-        run: |
-          extract_statement() {
-            local bundle="$1"
-            local output="$2"
-            jq -er '.. | objects | .payload? // empty' "${bundle}" | head -n 1 | base64 -d >"${output}"
-          }
-
-          cp "${PROVENANCE_BUNDLE}" "${EVIDENCE_DIR}/provenance.bundle.json"
-          cp "${SBOM_BUNDLE}" "${EVIDENCE_DIR}/sbom.bundle.json"
-          extract_statement "${PROVENANCE_BUNDLE}" "${EVIDENCE_DIR}/provenance-inspection.json"
-          extract_statement "${SBOM_BUNDLE}" "${EVIDENCE_DIR}/sbom-attestation-inspection.json"
-
-          for statement in provenance-inspection.json sbom-attestation-inspection.json; do
-            jq -e --arg name "${IMAGE_REPOSITORY}" --arg digest "${DIGEST#sha256:}" '
-              any(.subject[]; .name == $name and .digest.sha256 == $digest)
-            ' "${EVIDENCE_DIR}/${statement}" >/dev/null
-          done
-          jq -e '.predicateType == "https://slsa.dev/provenance/v1"' \
-            "${EVIDENCE_DIR}/provenance-inspection.json" >/dev/null
-          jq -e '.predicateType | startswith("https://spdx.dev/")' \
-            "${EVIDENCE_DIR}/sbom-attestation-inspection.json" >/dev/null
-
-      - name: Install cosign
-        uses: sigstore/cosign-installer@d7543c93d881b35a8faa02e8e3605f69b7a1ce62 # v3.10.0
-
-      - name: Sign immutable image digest
-        env:
-          DIGEST: ${{ steps.build-push.outputs.digest }}
-          IMAGE_REPOSITORY: ${{ steps.image.outputs.repository }}
-          SERVICE: ${{ matrix.image.name }}
-        run: |
-          cosign sign --yes \
-            --oidc-provider=github-actions \
-            --bundle "${EVIDENCE_DIR}/cosign-sign.bundle.json" \
-            -a "service=${SERVICE}" \
-            -a "digest=${DIGEST}" \
-            -a "git.sha=${GITHUB_SHA}" \
-            "${IMAGE_REPOSITORY}@${DIGEST}"
-
-      - name: Verify hosted keyless identity and transparency log
-        env:
-          DIGEST: ${{ steps.build-push.outputs.digest }}
-          IMAGE_REPOSITORY: ${{ steps.image.outputs.repository }}
-          SERVICE: ${{ matrix.image.name }}
-        run: |
-          CERTIFICATE_IDENTITY="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/ci.yaml@${GITHUB_REF}"
-          cosign verify \
-            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-            --certificate-identity "${CERTIFICATE_IDENTITY}" \
-            --certificate-github-workflow-repository "${GITHUB_REPOSITORY}" \
-            --certificate-github-workflow-name "${GITHUB_WORKFLOW}" \
-            --certificate-github-workflow-ref "${GITHUB_REF}" \
-            --certificate-github-workflow-sha "${GITHUB_SHA}" \
-            --certificate-github-workflow-trigger "push" \
-            -a "service=${SERVICE}" \
-            -a "digest=${DIGEST}" \
-            -a "git.sha=${GITHUB_SHA}" \
-            --output json \
-            "${IMAGE_REPOSITORY}@${DIGEST}" \
-            >"${EVIDENCE_DIR}/cosign-verify.json"
-          cosign download signature "${IMAGE_REPOSITORY}@${DIGEST}" \
-            >"${EVIDENCE_DIR}/cosign-signatures.json"
-
-          jq '[.[] | .optional | {
-            issuer: .Issuer,
-            certificate_identity: .Subject,
-            repository: .githubWorkflowRepository,
-            workflow_name: .githubWorkflowName,
-            workflow_ref: .githubWorkflowRef,
-            workflow_sha: .githubWorkflowSHA,
-            workflow_trigger: .githubWorkflowTrigger
-          }]' "${EVIDENCE_DIR}/cosign-verify.json" \
-            >"${EVIDENCE_DIR}/certificate-claims.json"
-          CERTIFICATE_BYTES="$(jq -er '
-            .verificationMaterial.certificate.rawBytes //
-            .verificationMaterial.x509CertificateChain.certificates[0].rawBytes
-          ' "${EVIDENCE_DIR}/cosign-sign.bundle.json")"
-          printf '%s' "${CERTIFICATE_BYTES}" | base64 -d \
-            | openssl x509 -inform DER -noout -text \
-            >"${EVIDENCE_DIR}/certificate-claims.txt"
-          jq '{mediaType, tlogEntries: .verificationMaterial.tlogEntries}' \
-            "${EVIDENCE_DIR}/cosign-sign.bundle.json" \
-            >"${EVIDENCE_DIR}/rekor-transparency.json"
-          jq -e '.tlogEntries | length > 0 and all(.[]; .logIndex != null and .logId != null)' \
-            "${EVIDENCE_DIR}/rekor-transparency.json" >/dev/null
-
-      - name: Record release workflow evidence
-        env:
-          DIGEST: ${{ steps.build-push.outputs.digest }}
-          IMAGE_REPOSITORY: ${{ steps.image.outputs.repository }}
-          SERVICE: ${{ matrix.image.name }}
-        run: |
-          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          jq -n \
-            --arg repository "${GITHUB_REPOSITORY}" \
-            --arg workflow_name "${GITHUB_WORKFLOW}" \
-            --arg workflow_path ".github/workflows/ci.yaml" \
-            --arg run_id "${GITHUB_RUN_ID}" \
-            --arg run_attempt "${GITHUB_RUN_ATTEMPT}" \
-            --arg run_url "${RUN_URL}" \
-            --arg event "${GITHUB_EVENT_NAME}" \
-            --arg ref "${GITHUB_REF}" \
-            --arg sha "${GITHUB_SHA}" \
-            --arg actor "${GITHUB_ACTOR}" \
-            --arg environment "production" \
-            --arg issuer "https://token.actions.githubusercontent.com" \
-            --arg certificate_identity "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/.github/workflows/ci.yaml@${GITHUB_REF}" \
-            --arg service "${SERVICE}" \
-            --arg image_repository "${IMAGE_REPOSITORY}" \
-            --arg image_digest "${DIGEST}" \
-            '{repository: $repository, workflow_name: $workflow_name, workflow_path: $workflow_path,
-              run_id: $run_id, run_attempt: $run_attempt, run_url: $run_url, event: $event,
-              ref: $ref, sha: $sha, actor: $actor, environment: $environment, issuer: $issuer,
-              certificate_identity: $certificate_identity, service: $service,
-              image_repository: $image_repository, image_digest: $image_digest}' \
-            >"${EVIDENCE_DIR}/workflow-run.json"
-          grep -RhoE 'uses:[[:space:]]+[^[:space:]]+' .github/workflows .github/actions 2>/dev/null \
-            | sed -E 's/^uses:[[:space:]]+//' | sort -u >"${EVIDENCE_DIR}/action-pins.txt"
-          sha256sum "${EVIDENCE_DIR}"/*.json >"${EVIDENCE_DIR}/json-evidence.sha256"
-
-      - name: Upload release supply-chain evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: release-evidence-${{ matrix.image.name }}
-          path: ${{ runner.temp }}/release-evidence/${{ matrix.image.name }}
-          if-no-files-found: error
-          retention-days: 30
-
-  release-manifest:
-    name: assemble atomic release manifest
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs:
-      - push-images
-    permissions:
-      contents: read
-    steps:
-      - name: Download verified release evidence
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          pattern: release-evidence-*
-          path: ${{ runner.temp }}/release-evidence
-
-      - name: Assemble all-or-nothing digest manifest
-        run: |
-          mapfile -t DIGEST_FILES < <(find "${RUNNER_TEMP}/release-evidence" -name image-digests.json -type f | sort)
-          test "${#DIGEST_FILES[@]}" -eq 1
-          jq -s \
-            --arg git_sha "${GITHUB_SHA}" \
-            --arg git_ref "${GITHUB_REF}" \
-            --arg run_id "${GITHUB_RUN_ID}" \
-            '{git_sha: $git_sha, git_ref: $git_ref, run_id: $run_id,
-              images: (map({key: .service, value: {repository: .repository, digest: .digest}}) | from_entries)}' \
-            "${DIGEST_FILES[@]}" >"${RUNNER_TEMP}/release-manifest.json"
-          jq -e --arg sha "${GITHUB_SHA}" '
-            .git_sha == $sha and
-            (.images | keys | sort) == ["server-web"] and
-            all(.images[]; (.repository | length > 0) and (.digest | test("^sha256:[a-f0-9]{64}$")))
-          ' "${RUNNER_TEMP}/release-manifest.json" >/dev/null
-          (
-            cd "${RUNNER_TEMP}"
-            sha256sum release-manifest.json >release-manifest.sha256
-          )
-
-      - name: Upload atomic release manifest
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: release-manifest-${{ github.sha }}
-          path: |
-            ${{ runner.temp }}/release-manifest.json
-            ${{ runner.temp }}/release-manifest.sha256
-          if-no-files-found: error
-          retention-days: 30
-
-  deploy:
-    name: deploy chart
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && vars.DEPLOY_ENABLED == 'true'
-    needs:
-      - release-manifest
-    environment: production
-    permissions:
-      contents: read
-    env:
-      KUBE_CONFIG_DATA: ${{ secrets.KUBE_CONFIG_DATA }}
-      DEPLOY_NAMESPACE: ${{ vars.DEPLOY_NAMESPACE }}
-      DEPLOY_RELEASE_NAME: ${{ vars.DEPLOY_RELEASE_NAME }}
-      DEPLOY_VALUES_FILE: ${{ vars.DEPLOY_VALUES_FILE }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-        with:
-          ref: ${{ github.sha }}
-
-      - name: Setup Helm
-        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
-        with:
-          version: ${{ env.HELM_VERSION }}
-
-      - name: Setup kubectl
-        uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede # v4.0.1
-
-      - name: Download atomic release manifest
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: release-manifest-${{ github.sha }}
-          path: ${{ runner.temp }}/release-manifest
-
-      - name: Configure kubeconfig
-        run: |
-          if [ -z "${KUBE_CONFIG_DATA}" ]; then
-            echo "KUBE_CONFIG_DATA secret is required when DEPLOY_ENABLED=true" >&2
-            exit 1
-          fi
-          KUBECONFIG_PATH="${RUNNER_TEMP}/kubeconfig"
-          printf '%s' "${KUBE_CONFIG_DATA}" | base64 -d > "${KUBECONFIG_PATH}"
-          chmod 600 "${KUBECONFIG_PATH}"
-          echo "KUBECONFIG=${KUBECONFIG_PATH}" >> "${GITHUB_ENV}"
-
-      - name: Deploy with Helm
-        run: |
-          RELEASE_NAME="${DEPLOY_RELEASE_NAME:-server-monitor}"
-          NAMESPACE="${DEPLOY_NAMESPACE:-server-monitor}"
-          VALUES_FILE="${DEPLOY_VALUES_FILE:-server-monitor/charts/server-monitor/values.yaml}"
-          MANIFEST="${RUNNER_TEMP}/release-manifest/release-manifest.json"
-          (
-            cd "${RUNNER_TEMP}/release-manifest"
-            sha256sum --check release-manifest.sha256
-          )
-          test "$(jq -r '.git_sha' "${MANIFEST}")" = "${GITHUB_SHA}"
-
-          SERVER_WEB_REPOSITORY="$(jq -r '.images["server-web"].repository' "${MANIFEST}")"
-          SERVER_WEB_DIGEST="$(jq -r '.images["server-web"].digest' "${MANIFEST}")"
-          [[ "${SERVER_WEB_DIGEST}" =~ ^sha256:[a-f0-9]{64}$ ]]
-
-          helm upgrade --install "${RELEASE_NAME}" server-monitor/charts/server-monitor \
-            --namespace "${NAMESPACE}" \
-            --create-namespace \
-            --wait \
-            --atomic \
-            --timeout 10m \
-            --values "${VALUES_FILE}" \
-            --set-string "serverWeb.image.repository=${SERVER_WEB_REPOSITORY}" \
-            --set-string "serverWeb.image.digest=${SERVER_WEB_DIGEST}"
+          cache-from: type=gha,scope=ci-${{ matrix.image.name }}
+          cache-to: type=gha,mode=max,scope=ci-${{ matrix.image.name }}

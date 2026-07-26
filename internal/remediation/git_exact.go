@@ -73,8 +73,8 @@ func ValidateExactGitRestoreFacts(facts ExactGitRestoreFacts) error {
 	}
 	if strings.TrimSpace(facts.Repository) == "" || strings.TrimSpace(facts.BaseBranch) == "" ||
 		!validGitTreePath(facts.TargetPath) || facts.FileMode != "100644" || !facts.BaselineIsAncestor ||
-		len(facts.CurrentContent) == 0 || len(facts.CurrentContent) > MaxV3PostImageBytes ||
-		len(facts.BaselineContent) == 0 || len(facts.BaselineContent) > MaxV3PostImageBytes {
+		len(facts.CurrentContent) == 0 || len(facts.CurrentContent) > MaxPostImageBytes ||
+		len(facts.BaselineContent) == 0 || len(facts.BaselineContent) > MaxPostImageBytes {
 		return fmt.Errorf("%w: exact Git restore facts are outside policy bounds", ErrDrift)
 	}
 	currentBlob, err := gitObjectHash("blob", facts.CurrentContent, objectHexLength)
@@ -98,7 +98,7 @@ func ExpectedGitTreeHash(facts ExactGitRestoreFacts, postImage []byte) (string, 
 	if err := ValidateExactGitRestoreFacts(facts); err != nil {
 		return "", err
 	}
-	if len(postImage) == 0 || len(postImage) > MaxV3PostImageBytes {
+	if len(postImage) == 0 || len(postImage) > MaxPostImageBytes {
 		return "", fmt.Errorf("%w: post-image is outside Git blob bounds", ErrInvalidArgument)
 	}
 	objectHexLength := len(facts.BaseTreeSHA)

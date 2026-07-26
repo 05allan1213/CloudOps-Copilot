@@ -30,8 +30,8 @@ func TestAgentWorkerIDDefaultsToReplicaHostname(t *testing.T) {
 			_ = os.Unsetenv("INCIDENT_AGENT_WORKER_ID")
 		}
 	})
-	t.Setenv("HOSTNAME", "server-web-replica-a")
-	if got := Load().IncidentAgentWorkerID; got != "server-web-replica-a" {
+	t.Setenv("HOSTNAME", "cloudops-worker-replica-a")
+	if got := Load().IncidentAgentWorkerID; got != "cloudops-worker-replica-a" {
 		t.Fatalf("worker id=%q", got)
 	}
 }

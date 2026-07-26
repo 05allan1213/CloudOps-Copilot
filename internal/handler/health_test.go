@@ -25,18 +25,15 @@ func TestAPIReadinessRequiresSupportedMySQLSchema(t *testing.T) {
 	for _, test := range []struct {
 		name     string
 		mysql    mysqlClient
-		runtime  RuntimeReadiness
 		expected int
 	}{
 		{name: "missing", expected: http.StatusServiceUnavailable},
 		{name: "disabled", mysql: readinessMySQL{}, expected: http.StatusServiceUnavailable},
 		{name: "schema mismatch", mysql: readinessMySQL{enabled: true, err: errors.New("unsupported schema version 6, want 7")}, expected: http.StatusServiceUnavailable},
-		{name: "missing runtime guard", mysql: readinessMySQL{enabled: true}, expected: http.StatusServiceUnavailable},
-		{name: "marker mismatch", mysql: readinessMySQL{enabled: true}, runtime: func(context.Context) error { return errors.New("compatibility runtime refused after CUTOVER-V3") }, expected: http.StatusServiceUnavailable},
-		{name: "ready", mysql: readinessMySQL{enabled: true}, runtime: func(context.Context) error { return nil }, expected: http.StatusOK},
+		{name: "ready", mysql: readinessMySQL{enabled: true}, expected: http.StatusOK},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			handler := &Handler{mysqlClient: test.mysql, runtimeReadiness: test.runtime, readyTimeout: time.Second}
+			handler := &Handler{mysqlClient: test.mysql, readyTimeout: time.Second}
 			response := httptest.NewRecorder()
 			ctx, _ := gin.CreateTestContext(response)
 			ctx.Request = httptest.NewRequest(http.MethodGet, "/readyz", nil)

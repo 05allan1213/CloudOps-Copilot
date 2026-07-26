@@ -6,18 +6,18 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "cloudops.labels" . | nindent 4 }}
-    app.kubernetes.io/component: api-internal
+    app.kubernetes.io/component: api-management
     cloudops.io/monitoring: enabled
 spec:
   selector:
     matchLabels:
-      app.kubernetes.io/component: api-internal
+      app.kubernetes.io/component: api-management
       cloudops.io/monitoring: enabled
   namespaceSelector:
     matchNames:
       - {{ .Release.Namespace }}
   endpoints:
-    - port: internal
+    - port: management
       path: /metrics
       interval: {{ .Values.observability.serviceMonitor.interval }}
       scrapeTimeout: {{ .Values.observability.serviceMonitor.scrapeTimeout }}
@@ -37,15 +37,15 @@ spec:
       rules:
         - alert: CloudOpsAPIAvailability
           expr: |
-            absent(up{namespace={{ .Release.Namespace | quote }},service="cloudops-api-internal"})
-            or max(up{namespace={{ .Release.Namespace | quote }},service="cloudops-api-internal"}) < 1
+            absent(up{namespace={{ .Release.Namespace | quote }},service="cloudops-api-management"})
+            or max(up{namespace={{ .Release.Namespace | quote }},service="cloudops-api-management"}) < 1
           for: 2m
           labels:
             severity: warning
             signal_target: cloudops-control-plane
           annotations:
             summary: CloudOps API metrics target is unavailable
-            description: The internal API Service has no healthy Prometheus target.
+            description: The API management Service has no healthy Prometheus target.
 {{- if .Values.worker.enabled }}
         - alert: CloudOpsWorkerAvailability
           expr: |
@@ -57,7 +57,7 @@ spec:
             signal_target: cloudops-control-plane
           annotations:
             summary: CloudOps Worker metrics target is unavailable
-            description: The phase6 Worker management Service has no healthy Prometheus target.
+            description: The Worker management Service has no healthy Prometheus target.
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor

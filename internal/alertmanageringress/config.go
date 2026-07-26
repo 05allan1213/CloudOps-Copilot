@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/05allan1213/CloudOps-Copilot/internal/infra/incidentv3mysql"
+	"github.com/05allan1213/CloudOps-Copilot/internal/infra/incidentstore"
 )
 
 const (
@@ -43,15 +43,15 @@ type Config struct {
 	MaxBodyBytes   int64
 	RequestTimeout time.Duration
 	BearerToken    []byte
-	RuntimeReady   func(context.Context) error
+	Readiness      func(context.Context) error
 }
 
 // Store is the complete durable ingress contract. Rejections are durable
 // facts, not log-only validation failures.
 type Store interface {
 	Ready(ctx context.Context) error
-	IngestBatch(ctx context.Context, signals []incidentv3mysql.SignalInput) ([]incidentv3mysql.IngestResult, error)
-	RecordRejections(ctx context.Context, rejections []incidentv3mysql.RejectionInput) error
+	IngestBatch(ctx context.Context, signals []incidentstore.SignalInput) ([]incidentstore.IngestResult, error)
+	RecordRejections(ctx context.Context, rejections []incidentstore.RejectionInput) error
 }
 
 // ParseTargetAllowlist strictly decodes and validates the server-owned target
@@ -113,8 +113,8 @@ func validateExactTargetFields(contents []byte) error {
 	return nil
 }
 
-// ReadBearerToken reads the Phase 3 credential-file contract. An empty path is
-// the explicit Phase 2 compatibility boundary and leaves bearer auth disabled.
+// ReadBearerToken reads the bounded credential-file contract. An empty path
+// leaves bearer authentication disabled for trusted local ingress.
 func ReadBearerToken(path string) ([]byte, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {

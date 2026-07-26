@@ -5,8 +5,6 @@ import (
 	"errors"
 	"strings"
 	"time"
-
-	domain "github.com/05allan1213/CloudOps-Copilot/internal/incident"
 )
 
 // RunModelIdentity is the immutable provider/model/prompt/tool contract bound
@@ -47,24 +45,24 @@ func lowerHexIdentity(value string, length int) bool {
 	return true
 }
 
-type RunStatus = domain.AgentRunStatus
+type RunStatus string
 
 const (
-	RunPending   = domain.AgentRunPending
-	RunRunning   = domain.AgentRunRunning
-	RunCompleted = domain.AgentRunCompleted
-	RunFailed    = domain.AgentRunFailed
-	RunCancelled = domain.AgentRunCancelled
+	RunPending   RunStatus = "pending"
+	RunRunning   RunStatus = "running"
+	RunCompleted RunStatus = "completed"
+	RunFailed    RunStatus = "failed"
+	RunCancelled RunStatus = "cancelled"
 )
 
-type StepStatus = domain.AgentStepStatus
+type StepStatus string
 
 const (
-	StepPending   = domain.AgentStepPending
-	StepRunning   = domain.AgentStepRunning
-	StepCompleted = domain.AgentStepCompleted
-	StepFailed    = domain.AgentStepFailed
-	StepCancelled = domain.AgentStepCancelled
+	StepPending   StepStatus = "pending"
+	StepRunning   StepStatus = "running"
+	StepCompleted StepStatus = "completed"
+	StepFailed    StepStatus = "failed"
+	StepCancelled StepStatus = "cancelled"
 )
 
 // Node is a stable logical Agent graph node identifier.
@@ -301,8 +299,7 @@ type GraphState struct {
 	LastCompletedNode  Node            `json:"last_completed_node,omitempty"`
 	LastStepPublicID   string          `json:"last_step_id,omitempty"`
 
-	// Investigation is the V3 reducer-owned checkpoint. Legacy graph fields
-	// remain readable during the expand phase.
+	// Investigation is the reducer-owned durable checkpoint.
 	Investigation *InvestigationState `json:"investigation_state,omitempty"`
 }
 

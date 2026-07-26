@@ -18,7 +18,6 @@ import (
 )
 
 const (
-	DomainSchemaVersion      uint16 = 3
 	BaselineSchemaVersion    uint16 = 1
 	ObservationSchemaVersion uint16 = 1
 

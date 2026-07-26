@@ -19,7 +19,6 @@ import (
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
 	apibootstrap "github.com/05allan1213/CloudOps-Copilot/internal/bootstrap/api"
 	appconfig "github.com/05allan1213/CloudOps-Copilot/internal/config"
-	"github.com/05allan1213/CloudOps-Copilot/internal/cutover"
 	"github.com/05allan1213/CloudOps-Copilot/internal/taskhandler"
 )
 
@@ -71,7 +70,6 @@ func runtimeApplication(t *testing.T, dsn string) appconfig.Config {
 	}
 
 	application := appconfig.Load()
-	application.AuthEnabled = false
 	application.MySQLHost = mysqlHost
 	application.MySQLPort = mysqlPort
 	application.MySQLUser = driverConfig.User
@@ -94,7 +92,7 @@ func runtimeApplication(t *testing.T, dsn string) appconfig.Config {
 func exerciseRuntime(t *testing.T, application appconfig.Config, verifier *sql.DB, expectedReadiness int) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	api, err := apibootstrap.NewAPI(ctx, apibootstrap.APIConfig{Application: application, RuntimeGeneration: cutover.RuntimeCompatibility})
+	api, err := apibootstrap.NewAPI(ctx, apibootstrap.APIConfig{Application: application})
 	if err != nil {
 		t.Fatalf("start API with DML-only user: %v", err)
 	}
@@ -110,25 +108,25 @@ func exerciseRuntime(t *testing.T, application appconfig.Config, verifier *sql.D
 	go func() { apiDone <- api.Serve(ctx, apiListener, internalListener) }()
 	waitForHTTPStatus(t, "http://"+apiListener.Addr().String()+"/readyz", expectedReadiness)
 	waitForHTTPStatus(t, "http://"+internalListener.Addr().String()+"/readyz", expectedReadiness)
-	if status := runtimeHTTPStatus(t, http.MethodGet, "http://"+internalListener.Addr().String()+"/api/v3/incidents", nil, ""); status != http.StatusNotFound {
+	if status := runtimeHTTPStatus(t, http.MethodGet, "http://"+internalListener.Addr().String()+"/api/v1/incidents", nil, ""); status != http.StatusNotFound {
 		t.Fatalf("INTERNAL listener exposed user API: status=%d", status)
 	}
 	if status := runtimeHTTPStatus(t, http.MethodPost, "http://"+apiListener.Addr().String()+"/webhooks/alertmanager", bytes.NewBufferString(`{}`), "application/json"); status != http.StatusNotFound {
-		t.Fatalf("user listener exposed V3 webhook: status=%d", status)
+		t.Fatalf("user listener exposed internal webhook: status=%d", status)
 	}
 	if expectedReadiness == http.StatusOK {
 		fingerprint := fmt.Sprintf("a%015x", time.Now().UnixNano())
-		body := fmt.Sprintf(`{"version":"4","groupKey":"{}:{alertname=\"CloudOpsDemoDeploymentUnavailable\"}","truncatedAlerts":0,"status":"firing","receiver":"cloudops-demo","groupLabels":{},"commonLabels":{},"commonAnnotations":{},"externalURL":"http://alertmanager:9093","alerts":[{"status":"firing","labels":{"alertname":"CloudOpsDemoDeploymentUnavailable","severity":"critical","cluster":"kind-cloudops-v3","environment":"local-demo","namespace":"demo","service":"demo","deployment":"demo"},"annotations":{"summary":"DML-only V3 ingress proof"},"startsAt":"2026-07-18T12:00:00.123456Z","endsAt":"0001-01-01T00:00:00Z","generatorURL":"http://prometheus:9090/graph","fingerprint":"%s"}]}`, fingerprint)
+		body := fmt.Sprintf(`{"version":"4","groupKey":"{}:{alertname=\"CloudOpsDemoDeploymentUnavailable\"}","truncatedAlerts":0,"status":"firing","receiver":"cloudops-demo","groupLabels":{},"commonLabels":{},"commonAnnotations":{},"externalURL":"http://alertmanager:9093","alerts":[{"status":"firing","labels":{"alertname":"CloudOpsDemoDeploymentUnavailable","severity":"critical","cluster":"kind-cloudops-local","environment":"local-demo","namespace":"demo","service":"demo","deployment":"demo"},"annotations":{"summary":"DML-only ingress proof"},"startsAt":"2026-07-18T12:00:00.123456Z","endsAt":"0001-01-01T00:00:00Z","generatorURL":"http://prometheus:9090/graph","fingerprint":"%s"}]}`, fingerprint)
 		status := runtimeHTTPStatus(t, http.MethodPost, "http://"+internalListener.Addr().String()+"/webhooks/alertmanager", bytes.NewBufferString(body), "application/json")
 		if status != http.StatusAccepted {
-			t.Fatalf("V3 Alertmanager ingress status=%d", status)
+			t.Fatalf("Alertmanager ingress status=%d", status)
 		}
 		var signalCount int
-		if err := verifier.QueryRow(`SELECT COUNT(*) FROM incident_signals WHERE source = 'alertmanager' AND fingerprint = ? AND domain_schema_version = 3 AND canonical_schema_version = 2 AND correlation_key_version = 2`, fingerprint).Scan(&signalCount); err != nil {
+		if err := verifier.QueryRow(`SELECT COUNT(*) FROM incident_signals WHERE source = 'alertmanager' AND fingerprint = ? AND canonical_schema_version = 2 AND correlation_key_version = 2`, fingerprint).Scan(&signalCount); err != nil {
 			t.Fatal(err)
 		}
 		if signalCount != 1 {
-			t.Fatalf("durable V3 Alertmanager signal count=%d, want 1", signalCount)
+			t.Fatalf("durable Alertmanager signal count=%d, want 1", signalCount)
 		}
 	}
 	cancel()
@@ -140,7 +138,6 @@ func exerciseRuntime(t *testing.T, application appconfig.Config, verifier *sql.D
 	workerConfig := WorkerConfig{
 		Application:       application,
 		TaskOperations:    testRuntimeTaskOperations(),
-		RuntimeGeneration: cutover.RuntimeCompatibility,
 		ManagementAddr:    "127.0.0.1:18081",
 		ReadHeaderTimeout: time.Second,
 		ReadTimeout:       time.Second,

@@ -32,7 +32,7 @@ import SidebarMenu from "./SidebarMenu.vue";
 
     <div class="sidebar-footer">
       <span>Evidence-first Workbench</span>
-      <small>V3 MySQL projection</small>
+      <small>MySQL operational data</small>
     </div>
   </aside>
 </template>

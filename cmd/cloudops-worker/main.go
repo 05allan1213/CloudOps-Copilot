@@ -1,4 +1,4 @@
-// Command cloudops-worker owns the bounded MySQL-backed V3 async task runtime.
+// Command cloudops-worker owns the bounded MySQL-backed async task runtime.
 package main
 
 import (

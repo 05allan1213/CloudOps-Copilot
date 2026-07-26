@@ -1,0 +1,61 @@
+{{- if .Values.bootstrapOnly -}}
+  {{- if or .Values.api.enabled .Values.worker.enabled .Values.migrate.enabled -}}
+  {{- fail "bootstrapOnly requires API, Worker, and Migrate to be disabled" -}}
+  {{- end -}}
+  {{- if not .Values.mysql.enabled -}}
+  {{- fail "bootstrapOnly requires the local MySQL runtime" -}}
+  {{- end -}}
+{{- else -}}
+  {{- if not .Values.api.enabled -}}
+  {{- fail "the CloudOps runtime requires cloudops-api" -}}
+  {{- end -}}
+  {{- if not .Values.worker.enabled -}}
+  {{- fail "the CloudOps runtime requires cloudops-worker" -}}
+  {{- end -}}
+  {{- if not .Values.migrate.enabled -}}
+  {{- fail "the CloudOps runtime requires cloudops-migrate" -}}
+  {{- end -}}
+{{- end -}}
+
+{{- if or (hasKey .Values.commonEnv "MYSQL_USER") (hasKey .Values.commonEnv "MYSQL_PASSWORD") -}}
+{{- fail "commonEnv must not contain workload-scoped MySQL credentials" -}}
+{{- end -}}
+
+{{- if or
+  (eq .Values.database.api.user .Values.database.worker.user)
+  (eq .Values.database.api.user .Values.database.migrate.user)
+  (eq .Values.database.worker.user .Values.database.migrate.user) -}}
+{{- fail "API, Worker, and Migrate must use different MySQL users" -}}
+{{- end -}}
+{{- if or
+  (eq .Values.database.api.secretName .Values.database.worker.secretName)
+  (eq .Values.database.api.secretName .Values.database.migrate.secretName)
+  (eq .Values.database.worker.secretName .Values.database.migrate.secretName) -}}
+{{- fail "API, Worker, and Migrate must use different MySQL credential Secrets" -}}
+{{- end -}}
+{{- range $name, $identity := .Values.database -}}
+  {{- if eq $identity.secretName $.Values.mysql.rootSecretName -}}
+  {{- fail (printf "database.%s must not reuse the MySQL root Secret" $name) -}}
+  {{- end -}}
+{{- end -}}
+
+{{- range $name, $image := .Values.images -}}
+  {{- if eq (lower ($image.tag | toString)) "latest" -}}
+  {{- fail (printf "images.%s.tag must not be latest" $name) -}}
+  {{- end -}}
+{{- end -}}
+{{- if eq (lower (.Values.mysql.image.tag | toString)) "latest" -}}
+{{- fail "mysql.image.tag must not be latest" -}}
+{{- end -}}
+
+{{- if ne (index .Values.worker.env "K8S_WRITE_ENABLED" | toString) "false" -}}
+{{- fail "cloudops-worker Kubernetes access must remain read-only by default" -}}
+{{- end -}}
+{{- if eq (index .Values.worker.env "PROVIDER_GATEWAY_ENABLED" | toString) "true" -}}
+  {{- if not .Values.worker.providerConfigSecretName -}}
+  {{- fail "Provider Gateway requires worker.providerConfigSecretName" -}}
+  {{- end -}}
+  {{- if eq (len .Values.worker.credentials.files) 0 -}}
+  {{- fail "Provider Gateway requires bounded credential file references" -}}
+  {{- end -}}
+{{- end -}}

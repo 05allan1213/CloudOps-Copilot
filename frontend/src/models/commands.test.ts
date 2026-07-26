@@ -55,7 +55,7 @@ describe("command presentation and retry identity", () => {
     });
     const retry = retainCommandAttempt(attempt);
     expect(retry.idempotencyKey).toBe(attempt.idempotencyKey);
-    expect(commandHeaders("csrf-token", attempt.idempotencyKey)).toEqual(commandHeaders("csrf-token", retry.idempotencyKey));
+    expect(commandHeaders(attempt.idempotencyKey)).toEqual(commandHeaders(retry.idempotencyKey));
     expect(idempotencyKey.length).toBeLessThanOrEqual(128);
   });
 });

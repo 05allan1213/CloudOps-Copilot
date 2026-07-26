@@ -58,7 +58,7 @@ func TestMySQLRemediationPrepareLoaderBindsTaskDiagnosisEvidenceBaselineAndExact
 		Version: "restore-required-env-policy/v1", Repository: "acme/gitops", BaseBranch: "main",
 		AllowedPath: "apps/demo.yaml", APIVersion: "apps/v1", Namespace: "demo",
 		Workload: "demo", Container: "demo", EnvKey: "REQUIRED_ENV",
-		MaxDiffBytes: remediation.MaxV3PlanDiffBytes, MaxPostImageBytes: remediation.MaxV3PostImageBytes,
+		MaxDiffBytes: remediation.MaxPlanDiffBytes, MaxPostImageBytes: remediation.MaxPostImageBytes,
 		VerificationVersion: verification.GoldenRequiredEnvProfileID,
 	}
 	loader, err := NewMySQLRemediationPrepareLoader(db, git, MySQLRemediationPrepareLoaderConfig{
@@ -151,12 +151,12 @@ func insertRemediationLoaderFixture(t *testing.T, ctx context.Context, db *sql.D
 	fixture.baselineContent = append(append([]byte(nil), fixture.currentContent...), []byte("          env:\n            - name: REQUIRED_ENV\n              value: healthy\n")...)
 	incidentPublicID := uuid.NewString()
 	result, err := db.ExecContext(ctx, `INSERT INTO incidents
- (public_id, fingerprint, correlation_key, correlation_key_version, cluster, namespace,
-  service_name, environment, target_kind, target_name, severity, status, summary,
-  first_seen_at, last_seen_at, version, domain_schema_version, v3_status, cycle_no)
-VALUES (?, ?, ?, 2, 'kind-v3', 'demo', 'demo', 'development', 'Deployment',
-        'demo', 'warning', 'DIAGNOSING', 'remediation loader fixture', ?, ?, 2, 3, 'investigating', 1)`,
-		incidentPublicID, "remediation-loader-"+uuid.NewString(), "v2:"+strings.Repeat("a", 64), now.Add(-2*time.Minute), now.Add(-2*time.Minute))
+	 (public_id, fingerprint, correlation_key, correlation_key_version, cluster, namespace,
+	  service_name, environment, target_kind, target_name, severity, summary,
+	  first_seen_at, last_seen_at, version, status, cycle_no)
+	VALUES (?, ?, ?, 2, 'kind', 'demo', 'demo', 'development', 'Deployment',
+	        'demo', 'warning', 'remediation loader fixture', ?, ?, 2, 'investigating', 1)`,
+		incidentPublicID, "remediation-loader-"+uuid.NewString(), strings.Repeat("a", 64), now.Add(-2*time.Minute), now.Add(-2*time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ VALUES (?, ?, ?, 2, 'kind-v3', 'demo', 'demo', 'development', 'Deployment',
 	for _, fact := range facts {
 		factIDs = append(factIDs, fact.ID)
 	}
-	diagnosis, err := validateV3Diagnosis(agent.DiagnosisCandidate{
+	diagnosis, err := validateDiagnosis(agent.DiagnosisCandidate{
 		ClaimType: policy.ClaimType, Summary: "The required environment node was removed from the deployed GitOps revision.",
 		Confidence: agent.DiagnosisConfirmed, EvidenceFactIDs: factIDs, RemediationHint: agent.RemediationRestoreRequiredEnv,
 	}, investigationSnapshot{IncidentPublicID: incidentPublicID, Task: asyncjob.Task{CycleNo: 1}, Facts: facts}, policy, sufficiency)
@@ -184,9 +184,9 @@ VALUES (?, ?, ?, 2, 'kind-v3', 'demo', 'demo', 'development', 'Deployment',
 	fixture.diagnosis = diagnosis
 	diagnosisJSON, _ := json.Marshal(diagnosis)
 	result, err = db.ExecContext(ctx, `INSERT INTO agent_runs
- (public_id, incident_id, status, model, prompt_version, max_steps, final_diagnosis,
-  failure_code, completed_at, row_version, domain_schema_version, v3_status, cycle_no, expected_incident_version)
-VALUES (?, ?, 'COMPLETED', 'fixture-model', 'incident-agent-v3', 10, ?, '', ?, ?, 3, 'completed', 1, 2)`,
+	 (public_id, incident_id, model, prompt_version, max_steps, final_diagnosis,
+	  failure_code, completed_at, row_version, status, cycle_no, expected_incident_version)
+	VALUES (?, ?, 'fixture-model', 'incident-investigation-fixture', 10, ?, '', ?, ?, 'completed', 1, 2)`,
 		fixture.agentRunPublicID, fixture.incidentID, diagnosisJSON, now.Add(-time.Minute), fixture.agentRunVersion)
 	if err != nil {
 		t.Fatal(err)
@@ -208,11 +208,11 @@ VALUES (?, ?, 'COMPLETED', 'fixture-model', 'incident-agent-v3', 10, ?, '', ?, ?
 			Facts: selected, ContentHash: contentHash,
 		})
 		if _, err := db.ExecContext(ctx, `INSERT INTO evidence_items
- (public_id, incident_id, domain_schema_version, cycle_no, agent_run_id, type, source,
-  producer_type, producer_dedupe_key, tool_name, resource_ref, query_text, summary,
-  facts_json, result_hash, content_hash, raw_ref, redaction_json, truncated, valid,
-  idempotency_key, collected_at, created_at)
-VALUES (?, ?, 3, 1, ?, 'agent_observation', ?, 'agent_step', ?, 'fixture.read',
+	 (public_id, incident_id, cycle_no, agent_run_id, type, source,
+	  producer_type, producer_dedupe_key, tool_name, resource_ref, query_text, summary,
+	  facts_json, result_hash, content_hash, raw_ref, redaction_json, truncated, valid,
+	  idempotency_key, collected_at, created_at)
+	VALUES (?, ?, 1, ?, 'agent_observation', ?, 'agent_step', ?, 'fixture.read',
         'github://acme/gitops/apps/demo.yaml', '', 'verified fixture facts', ?, ?, ?, '',
         JSON_OBJECT('policy','fixture'), FALSE, TRUE, ?, ?, ?)`,
 			evidenceID, fixture.incidentID, fixture.agentRunID, selected[0].SourceSystem,
@@ -224,12 +224,12 @@ VALUES (?, ?, 3, 1, ?, 'agent_observation', ?, 'agent_step', ?, 'fixture.read',
 
 	configHash := remediation.HashBytes(fixture.baselineContent)
 	result, err = db.ExecContext(ctx, `INSERT INTO deployment_baselines
- (public_id, domain_schema_version, baseline_schema_version, target_identity_hash,
-  cluster, environment, namespace, workload_kind, workload_name, container_name,
-  repository, base_branch, target_path, source_revision, image_digest, gitops_revision,
-  config_hash, verification_policy_version, verification_hash, status, row_version,
-  verified_at, created_at, updated_at)
-VALUES (?, 3, 1, ?, 'kind-v3', 'development', 'demo', 'Deployment', 'demo', 'demo',
+	 (public_id, baseline_schema_version, target_identity_hash,
+	  cluster, environment, namespace, workload_kind, workload_name, container_name,
+	  repository, base_branch, target_path, source_revision, image_digest, gitops_revision,
+	  config_hash, verification_policy_version, verification_hash, status, row_version,
+	  verified_at, created_at, updated_at)
+	VALUES (?, 1, ?, 'kind', 'development', 'demo', 'Deployment', 'demo', 'demo',
         'acme/gitops', 'main', 'apps/demo.yaml', ?, ?, ?, ?, 'baseline-health/v1', ?,
         'active', 1, ?, ?, ?)`, uuid.NewString(), strings.Repeat("b", 64), strings.Repeat("c", 40),
 		"sha256:"+strings.Repeat("d", 64), fixture.baselineRevision, configHash, strings.Repeat("e", 64),
@@ -240,9 +240,9 @@ VALUES (?, 3, 1, ?, 'kind-v3', 'development', 'demo', 'Deployment', 'demo', 'dem
 	baselineID, _ := result.LastInsertId()
 	fixture.baselineID = uint64(baselineID)
 	result, err = db.ExecContext(ctx, `INSERT INTO baseline_observations
- (public_id, domain_schema_version, observation_schema_version, baseline_id, sequence_no,
-  observation_type, source_identity, observed_json, content_hash, dedupe_key, observed_at, created_at)
-VALUES (?, 3, 1, ?, 1, 'config_blob', ?, JSON_OBJECT('repository','acme/gitops','path','apps/demo.yaml','revision',?),
+	 (public_id, observation_schema_version, baseline_id, sequence_no,
+	  observation_type, source_identity, observed_json, content_hash, dedupe_key, observed_at, created_at)
+	VALUES (?, 1, ?, 1, 'config_blob', ?, JSON_OBJECT('repository','acme/gitops','path','apps/demo.yaml','revision',?),
         ?, ?, ?, ?)`, uuid.NewString(), fixture.baselineID, "github:acme/gitops@"+fixture.baselineRevision,
 		fixture.baselineRevision, configHash, hashCanonical("baseline-observation", configHash), now.Add(-3*time.Minute), now.Add(-3*time.Minute))
 	if err != nil {

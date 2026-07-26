@@ -25,7 +25,7 @@ spec:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
     spec:
       serviceAccountName: cloudops-worker
-      automountServiceAccountToken: true
+      automountServiceAccountToken: {{ eq (index .Values.worker.env "K8S_ENABLED" | toString) "true" }}
       enableServiceLinks: false
       terminationGracePeriodSeconds: 65
       securityContext:
@@ -41,9 +41,11 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+          {{- if .Values.worker.providerConfigSecretName }}
           envFrom:
             - secretRef:
                 name: {{ .Values.worker.providerConfigSecretName }}
+          {{- end }}
           env:
             {{- range $name, $_ := .Values.commonEnv }}
             - name: {{ $name }}
@@ -97,15 +99,24 @@ spec:
           resources:
             {{- toYaml .Values.worker.resources | nindent 12 }}
           volumeMounts:
+            {{- if gt (len .Values.worker.credentials.files) 0 }}
             - name: worker-credentials
               mountPath: {{ .Values.worker.credentials.mountPath }}
               readOnly: true
+            {{- end }}
             - name: worker-tmp
               mountPath: /tmp
       volumes:
+        {{- if gt (len .Values.worker.credentials.files) 0 }}
         - name: worker-credentials
           secret:
             secretName: {{ .Values.worker.credentials.secretName }}
+            items:
+              {{- range $name, $filename := .Values.worker.credentials.files }}
+              - key: {{ $filename }}
+                path: {{ $filename }}
+              {{- end }}
+        {{- end }}
         - name: worker-tmp
           emptyDir: {}
 ---

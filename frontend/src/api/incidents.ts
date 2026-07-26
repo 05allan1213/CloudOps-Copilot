@@ -18,7 +18,7 @@ import type {
   VersionedCommand,
 } from "../types/incidents";
 
-const base = "/api/v3/incidents";
+const base = "/api/v1/incidents";
 
 export interface CommandRequestOptions {
   idempotencyKey?: string;
@@ -76,28 +76,25 @@ export async function getIncidentResolutionReport(incidentID: string, signal?: A
 export function startInvestigation(
   incidentID: string,
   body: VersionedCommand,
-  csrfToken: string,
   options?: CommandRequestOptions,
 ): Promise<CommandOutcome> {
-  return postCommand(`${base}/${encodeURIComponent(incidentID)}/investigations`, body, csrfToken, "investigate", incidentID, options);
+  return postCommand(`${base}/${encodeURIComponent(incidentID)}/investigations`, body, "investigate", incidentID, options);
 }
 
 export function closeIncident(
   incidentID: string,
   body: VersionedCommand,
-  csrfToken: string,
   options?: CommandRequestOptions,
 ): Promise<CommandOutcome> {
-  return postCommand(`${base}/${encodeURIComponent(incidentID)}/close`, body, csrfToken, "close", incidentID, options);
+  return postCommand(`${base}/${encodeURIComponent(incidentID)}/close`, body, "close", incidentID, options);
 }
 
 export function decideRemediation(
   planID: string,
   body: DecisionCommand,
-  csrfToken: string,
   options?: CommandRequestOptions,
 ): Promise<CommandOutcome> {
-  return postCommand(`/api/v3/remediation-plans/${encodeURIComponent(planID)}/decisions`, body, csrfToken, body.decision, planID, options);
+  return postCommand(`/api/v1/remediation-plans/${encodeURIComponent(planID)}/decisions`, body, body.decision, planID, options);
 }
 
 export function incidentRealtimeURL(incidentID: string): string {
@@ -142,13 +139,12 @@ async function getTypedResource<T>(incidentID: string, resource: string, signal?
 function postCommand<TBody>(
   url: string,
   body: TBody,
-  csrfToken: string,
   action: string,
   resourceID: string,
   options: CommandRequestOptions = {},
 ): Promise<CommandOutcome> {
   const idempotencyKey = options.idempotencyKey || newCommandKey(action, resourceID);
-  const config: AxiosRequestConfig = { headers: commandHeaders(csrfToken, idempotencyKey) };
+  const config: AxiosRequestConfig = { headers: commandHeaders(idempotencyKey) };
   return postJSONWithMeta<CommandResponse, TBody>(url, body, config).then((response) => {
     if (response.status !== 202) {
       throw new ApiError(
@@ -171,10 +167,9 @@ function postCommand<TBody>(
   });
 }
 
-export function commandHeaders(csrfToken: string, idempotencyKey: string): Record<string, string> {
+export function commandHeaders(idempotencyKey: string): Record<string, string> {
   return {
     "Content-Type": "application/json",
-    "X-CSRF-Token": csrfToken,
     "Idempotency-Key": idempotencyKey,
   };
 }

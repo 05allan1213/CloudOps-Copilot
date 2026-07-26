@@ -20,7 +20,7 @@ func TestDeliveryObserveExactIdentityFlowCreatesVerificationOnlyAfterRollout(t *
 		HeadTreeSHA: snapshot.ExpectedTreeSHA, HeadPostImageHash: snapshot.ExpectedPostImageHash,
 	}}
 	first, err := evaluateDeliveryObservation(snapshot, prOpen, now, 5*time.Second)
-	if err != nil || first.FailureCode != "" || first.Projection.V3Status != "pr_open" || first.Projection.Status != "ci_pending" || first.VerificationPlan != nil {
+	if err != nil || first.FailureCode != "" || first.Projection.Status != "pr_open" || first.Projection.CIStatus != "pending" || first.VerificationPlan != nil {
 		t.Fatalf("pull request outcome=%+v err=%v", first, err)
 	}
 
@@ -31,7 +31,7 @@ func TestDeliveryObserveExactIdentityFlowCreatesVerificationOnlyAfterRollout(t *
 		RequiredCheckName: "render-and-validate", ProducerAppID: 15368, WorkflowID: 41, WorkflowPath: ".github/workflows/render.yaml",
 	}}
 	second, err := evaluateDeliveryObservation(snapshot, ci, now.Add(5*time.Second), 5*time.Second)
-	if err != nil || second.FailureCode != "" || second.Projection.Status != "merge_pending" || second.Projection.CIStatus != "passing" || second.VerificationPlan != nil {
+	if err != nil || second.FailureCode != "" || second.Projection.Status != "pr_open" || second.Projection.CIStatus != "passing" || second.VerificationPlan != nil {
 		t.Fatalf("CI outcome=%+v err=%v", second, err)
 	}
 
@@ -44,7 +44,7 @@ func TestDeliveryObserveExactIdentityFlowCreatesVerificationOnlyAfterRollout(t *
 		HumanMerged: true, MergedBy: "incident-operator", MergedByType: "User", MergeMethod: "squash",
 	}}
 	third, err := evaluateDeliveryObservation(snapshot, merged, now.Add(10*time.Second), 5*time.Second)
-	if err != nil || third.FailureCode != "" || third.Projection.V3Status != "merged" || third.Projection.TargetRevision != mergedSHA || third.VerificationPlan != nil {
+	if err != nil || third.FailureCode != "" || third.Projection.Status != "merged" || third.Projection.TargetRevision != mergedSHA || third.VerificationPlan != nil {
 		t.Fatalf("merge outcome=%+v err=%v", third, err)
 	}
 
@@ -56,7 +56,7 @@ func TestDeliveryObserveExactIdentityFlowCreatesVerificationOnlyAfterRollout(t *
 		ResourceHealth: json.RawMessage(`[{"kind":"Deployment","health":"Healthy"}]`),
 	}}
 	fourth, err := evaluateDeliveryObservation(snapshot, argo, now.Add(15*time.Second), 5*time.Second)
-	if err != nil || fourth.FailureCode != "" || fourth.Projection.V3Status != "rolling_out" || fourth.VerificationPlan != nil {
+	if err != nil || fourth.FailureCode != "" || fourth.Projection.Status != "rolling_out" || fourth.VerificationPlan != nil {
 		t.Fatalf("Argo outcome=%+v err=%v", fourth, err)
 	}
 
@@ -69,7 +69,7 @@ func TestDeliveryObserveExactIdentityFlowCreatesVerificationOnlyAfterRollout(t *
 		ReadyReplicas: 2, AvailableReplicas: 2, PodsReady: 2, PodsTotal: 2, Progressing: true, Available: true,
 	}}
 	fifth, err := evaluateDeliveryObservation(snapshot, rollout, now.Add(20*time.Second), 5*time.Second)
-	if err != nil || fifth.FailureCode != "" || fifth.Projection.V3Status != "delivered" || fifth.Requeue || fifth.VerificationPlan == nil {
+	if err != nil || fifth.FailureCode != "" || fifth.Projection.Status != "delivered" || fifth.Requeue || fifth.VerificationPlan == nil {
 		t.Fatalf("rollout outcome=%+v err=%v", fifth, err)
 	}
 	plan := fifth.VerificationPlan
@@ -83,7 +83,6 @@ func TestDeliveryObserveExactIdentityFlowCreatesVerificationOnlyAfterRollout(t *
 func TestDeliveryObserveFailsWhenArgoSupersedesMergedRevision(t *testing.T) {
 	now := time.Date(2026, 7, 20, 6, 0, 0, 0, time.UTC)
 	snapshot := deliveryTestSnapshot(now)
-	snapshot.Projection.V3Status = "syncing"
 	snapshot.Projection.Status = "syncing"
 	snapshot.Projection.MergedCommitSHA = strings.Repeat("f", 40)
 	snapshot.Projection.TargetRevision = snapshot.Projection.MergedCommitSHA
@@ -93,7 +92,7 @@ func TestDeliveryObserveFailsWhenArgoSupersedesMergedRevision(t *testing.T) {
 		SyncResultRevision: strings.Repeat("e", 40), SyncStatus: "Synced", OperationPhase: "Succeeded",
 	}}
 	outcome, err := evaluateDeliveryObservation(snapshot, observation, now, 5*time.Second)
-	if err != nil || outcome.FailureCode != "revision_superseded" || outcome.Projection.V3Status != "failed" || outcome.VerificationPlan != nil || outcome.Requeue {
+	if err != nil || outcome.FailureCode != "revision_superseded" || outcome.Projection.Status != "failed" || outcome.VerificationPlan != nil || outcome.Requeue {
 		t.Fatalf("outcome=%+v err=%v", outcome, err)
 	}
 }
@@ -105,48 +104,11 @@ func TestDeliveryObserveRejectsInvalidLeaseBeforeReads(t *testing.T) {
 	task := asyncjob.Task{
 		ID: 91, IncidentID: 11, CycleNo: 2, Queue: asyncjob.QueueObserve, Type: asyncjob.TaskDeliveryObserve,
 		SubjectType: "change_request", SubjectID: 21, Transition: "delivery.observe", ExpectedSubjectVersion: 4,
-		PayloadSchemaVersion: deliveryObservePayloadSchema, Payload: json.RawMessage(`{"change_request_id":"22222222-2222-4222-8222-222222222222","phase":"observe"}`),
+		PayloadSchemaVersion: deliveryObservePayloadSchema, Payload: json.RawMessage(`{"change_request_id":"22222222-2222-4222-8222-222222222222","step":"observe"}`),
 	}
 	result := operation.handle(context.Background(), asyncjob.Execution{Task: task, Lease: asyncjob.Lease{TaskID: task.ID, Owner: "worker", Generation: 1, ExpectedSubjectVersion: 3, Attempt: 1, MaxAttempts: 8}})
 	if result.Disposition != asyncjob.DispositionDead || result.ErrorCode != "invalid_task_subject" || store.loads != 0 || observer.calls != 0 {
 		t.Fatalf("result=%+v loads=%d calls=%d", result, store.loads, observer.calls)
-	}
-}
-
-func TestLegacyDeliveryObservationRequiresFullRepositoryPRBaseHeadBranchAndMergeIdentity(t *testing.T) {
-	base := LegacyDeliveryObserveSnapshot{Repository: "acme/app", PRNumber: 7,
-		BaseRevision: strings.Repeat("a", 40), HeadCommitSHA: strings.Repeat("b", 40), HeadBranch: "feature/fix",
-		SourcePRState: "open", PRURL: "https://github.com/acme/app/pull/7"}
-	observation := DeliveryPullRequestObservation{Repository: base.Repository, PullRequest: base.PRNumber,
-		State: "open", BaseSHA: base.BaseRevision, HeadSHA: base.HeadCommitSHA, HeadBranch: base.HeadBranch, URL: base.PRURL}
-	if !validateLegacyPullRequestObservation(base, observation, "open") {
-		t.Fatal("complete legacy pull request observation was rejected")
-	}
-	mutations := []func(*DeliveryPullRequestObservation){
-		func(value *DeliveryPullRequestObservation) { value.Repository = "acme/other" },
-		func(value *DeliveryPullRequestObservation) { value.PullRequest++ },
-		func(value *DeliveryPullRequestObservation) { value.BaseSHA = strings.Repeat("c", 40) },
-		func(value *DeliveryPullRequestObservation) { value.HeadSHA = strings.Repeat("d", 40) },
-		func(value *DeliveryPullRequestObservation) { value.HeadBranch = "feature/other" },
-		func(value *DeliveryPullRequestObservation) { value.URL = "https://github.com/acme/app/pull/8" },
-	}
-	for index, mutate := range mutations {
-		changed := observation
-		mutate(&changed)
-		if validateLegacyPullRequestObservation(base, changed, strings.ToLower(changed.State)) {
-			t.Fatalf("legacy identity mutation %d was accepted: %+v", index, changed)
-		}
-	}
-	merged := observation
-	merged.State, merged.Merged, merged.MergeCommitSHA = "merged", true, strings.Repeat("e", 40)
-	base.SourcePRState = "merged"
-	base.SourceMergedSHA = merged.MergeCommitSHA
-	if !validateLegacyPullRequestObservation(base, merged, "merged") {
-		t.Fatal("complete merged pull request identity was rejected")
-	}
-	merged.MergeCommitSHA = strings.Repeat("f", 40)
-	if validateLegacyPullRequestObservation(base, merged, "merged") {
-		t.Fatal("mismatched merge identity was accepted")
 	}
 }
 
@@ -157,7 +119,7 @@ func TestDeliveryObserveRejectsSupersededApprovalBeforeProviderRead(t *testing.T
 	task := asyncjob.Task{
 		ID: 92, IncidentID: 11, CycleNo: 2, Queue: asyncjob.QueueObserve, Type: asyncjob.TaskDeliveryObserve,
 		SubjectType: "change_request", SubjectID: 21, Transition: "delivery.observe", ExpectedSubjectVersion: 4,
-		PayloadSchemaVersion: deliveryObservePayloadSchema, Payload: json.RawMessage(`{"change_request_id":"22222222-2222-4222-8222-222222222222","phase":"observe"}`),
+		PayloadSchemaVersion: deliveryObservePayloadSchema, Payload: json.RawMessage(`{"change_request_id":"22222222-2222-4222-8222-222222222222","step":"observe"}`),
 	}
 	result := operation.handle(context.Background(), asyncjob.Execution{Task: task, Lease: asyncjob.Lease{TaskID: task.ID, Owner: "worker", Generation: 1, ExpectedSubjectVersion: task.ExpectedSubjectVersion, Attempt: 1, MaxAttempts: 8}})
 	if result.Disposition != asyncjob.DispositionDead || result.ErrorCode != "delivery_preflight_rejected" || store.loads != 1 || observer.calls != 0 {
@@ -171,16 +133,16 @@ func deliveryTestSnapshot(now time.Time) DeliveryObserveSnapshot {
 		ChangeRequestID: 21, ChangeRequestPublicID: "22222222-2222-4222-8222-222222222222",
 		IncidentID: 11, IncidentPublicID: "11111111-1111-4111-8111-111111111111", IncidentFingerprint: "DemoRequiredEnvMissing",
 		IncidentVersion: 8, IncidentStatus: "delivering", CycleNo: 2, PlanID: 31, PlanPublicID: "33333333-3333-4333-8333-333333333333",
-		PlanVersion: 1, PlanStatus: "approved", PlanV3Status: "consumed", Decision: "approved", DecisionPlanVersion: 1,
+		PlanVersion: 1, PlanStatus: "consumed", Decision: "approved", DecisionPlanVersion: 1,
 		Repository: "acme/gitops", BaseBranch: "main", TargetPath: "apps/demo/deployment.yaml", PRNumber: 42,
 		BaseRevision: strings.Repeat("a", 40), LastKnownGoodSHA: strings.Repeat("9", 40),
 		ExpectedPostImageHash: strings.Repeat("d", 64), ExpectedTreeSHA: strings.Repeat("c", 40),
-		ServiceName: "demo", Cluster: "kind-cloudops-v3", Environment: "local-demo", Namespace: "demo",
+		ServiceName: "demo", Cluster: "cloudops-local", Environment: "local-demo", Namespace: "demo",
 		WorkloadKind: "Deployment", WorkloadName: "demo", Container: "demo", ExpectedReplicas: 2,
 		AlertNames: []string{"DemoRequiredEnvMissing"}, SourceRevision: strings.Repeat("1", 40),
 		ImageDigest: "sha256:" + strings.Repeat("2", 64), BaselineGitOpsSHA: strings.Repeat("9", 40),
 		ArgoApplication: "cloudops-demo", ArgoProject: "cloudops-demo", ArgoRepository: "acme/gitops", ArgoPath: "apps/demo",
-		Projection: DeliveryProjection{V3Status: "pr_open", Status: "pr_created", CIStatus: "pending", HeadCommitSHA: strings.Repeat("b", 40), DeliveryDeadlineAt: &deadline},
+		Projection: DeliveryProjection{Status: "pr_open", CIStatus: "pending", HeadCommitSHA: strings.Repeat("b", 40), DeliveryDeadlineAt: &deadline},
 		RowVersion: 4, Now: now,
 	}
 }

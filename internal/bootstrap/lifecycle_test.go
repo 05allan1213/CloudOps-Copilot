@@ -37,43 +37,9 @@ func (r *testTaskRunner) Shutdown(ctx context.Context) error {
 }
 func (r *testTaskRunner) Ready(context.Context) error { return r.readyErr }
 
-type readinessOnlyTaskStore struct {
-	asyncjob.Store
-	readyErr   error
-	readyCalls int
-}
+type taskStoreReadinessFunc func(context.Context) error
 
-func (s *readinessOnlyTaskStore) Ready(context.Context) error {
-	s.readyCalls++
-	return s.readyErr
-}
-
-func TestRuntimeGuardedTaskStoreChecksGenerationAfterSchema(t *testing.T) {
-	underlying := &readinessOnlyTaskStore{}
-	guardCalls := 0
-	refused := errors.New("compatibility runtime refused after CUTOVER-V3")
-	store := runtimeGuardedTaskStore{
-		Store: underlying,
-		runtimeReady: func(context.Context) error {
-			guardCalls++
-			return refused
-		},
-	}
-	if err := store.Ready(context.Background()); !errors.Is(err, refused) {
-		t.Fatalf("guarded store readiness err=%v", err)
-	}
-	if underlying.readyCalls != 1 || guardCalls != 1 {
-		t.Fatalf("ready calls schema=%d generation=%d", underlying.readyCalls, guardCalls)
-	}
-
-	underlying.readyErr = errors.New("unsupported async task schema")
-	if err := store.Ready(context.Background()); !errors.Is(err, underlying.readyErr) {
-		t.Fatalf("schema readiness err=%v", err)
-	}
-	if guardCalls != 1 {
-		t.Fatalf("generation guard ran before schema readiness: calls=%d", guardCalls)
-	}
-}
+func (f taskStoreReadinessFunc) Ready(ctx context.Context) error { return f(ctx) }
 
 func TestWorkerOwnsAsyncRunnerAndShutsDown(t *testing.T) {
 	runner := &testTaskRunner{}
@@ -139,14 +105,33 @@ func TestWorkerExitsWhenAsyncRunnerCannotStart(t *testing.T) {
 	}
 }
 
-func TestNewWorkerFailsClosedBeforeClaimingWhenOperationsAreMissing(t *testing.T) {
-	t.Setenv("AUTH_ENABLED", "false")
-	cfg, err := LoadWorkerConfig()
-	if err != nil {
+func TestStandbyTaskRunnerNeverClaimsAndChecksSchema(t *testing.T) {
+	readyCalls := atomic.Int32{}
+	runner := &standbyTaskRunner{store: nil}
+	if err := runner.Start(context.Background()); err == nil || !strings.Contains(err.Error(), "requires the async task store") {
+		t.Fatalf("missing store error=%v", err)
+	}
+	store := taskStoreReadinessFunc(func(context.Context) error {
+		readyCalls.Add(1)
+		return nil
+	})
+	runner = &standbyTaskRunner{store: store}
+	if err := runner.Ready(context.Background()); !errors.Is(err, asyncjob.ErrRunnerNotStarted) {
+		t.Fatalf("not-started error=%v", err)
+	}
+	if err := runner.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewWorker(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), "operations are not migrated") {
-		t.Fatalf("missing task operations error=%v", err)
+	if err := runner.Ready(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if readyCalls.Load() != 1 {
+		t.Fatalf("readiness calls=%d, want 1", readyCalls.Load())
+	}
+	// Standby has no claim method and cannot consume task attempts.
+	runner.stopped.Store(true)
+	if err := runner.Ready(context.Background()); !errors.Is(err, asyncjob.ErrClaimsStopped) {
+		t.Fatalf("stopped error=%v", err)
 	}
 }
 

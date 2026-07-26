@@ -7,8 +7,6 @@ const incidentID = "00000000-0000-4000-8000-000000000001";
 const planID = "00000050-0000-4000-8000-000000000001";
 const deliveryID = "00000060-0000-4000-8000-000000000001";
 const defaultFixture = Object.freeze({
-  session: "ready",
-  role: "operator",
   command: "202",
   plan: "valid",
   verification: "passed",
@@ -21,7 +19,6 @@ const defaultFixture = Object.freeze({
 const fixture = { ...defaultFixture };
 const metrics = {
   commands: [],
-  sessionRequests: 0,
   listRequests: 0,
   timelineRequests: 0,
   eventConnections: 0,
@@ -49,8 +46,7 @@ function at(second) {
 function cors(request) {
   return {
     "Access-Control-Allow-Origin": request.headers.origin || appOrigin,
-    "Access-Control-Allow-Credentials": "true",
-    "Access-Control-Allow-Headers": "Content-Type, X-CSRF-Token, Idempotency-Key, Last-Event-ID",
+    "Access-Control-Allow-Headers": "Content-Type, Idempotency-Key, Last-Event-ID",
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
     "Access-Control-Expose-Headers": "X-Request-ID, X-Trace-ID, Idempotent-Replay",
     Vary: "Origin",
@@ -59,7 +55,6 @@ function cors(request) {
 
 function problem(url, status, code, detail) {
   const titles = {
-    401: "Authentication required",
     403: "Forbidden",
     404: "Not found",
     409: "Command conflict",
@@ -152,7 +147,7 @@ const generic = {
   }],
   timeline: [{
     id: publicID(20, 1), kind: "timeline_event", status: "awaiting_approval", cycle: 3, version: 1,
-    summary: "The server persisted a bounded remediation Plan and now requires an operator Decision.", hash: sha256("2"),
+    summary: "The server persisted a bounded remediation Plan and now requires an Owner Decision.", hash: sha256("2"),
     migrated_legacy: false, migrated_legacy_context: false, created_at: at(2), updated_at: at(2),
   }],
   evidence: [{
@@ -238,7 +233,7 @@ function decision(decisionValue, reason) {
     decision_schema_version: 1,
     plan_version: 4,
     decision: decisionValue,
-    actor: { provider: "github", login: "demo-operator", role: "operator" },
+    actor: { provider: "local", login: "owner", role: "owner" },
     reason,
     request_id: "fixture-request-202",
     request_authenticated_at: at(20),
@@ -301,7 +296,7 @@ function remediationPlan() {
     proposed_patch_hash: sha256("e"),
     canonical_manifest: { operation: "restore_required_env", path: "deploy/environments/demo/checkout-api.yaml" },
     bounded_diff: longDiff(),
-    policy_version: "gitops-remediation/v3.4.1",
+    policy_version: "gitops-remediation-policy/revision-4",
     policy_hash: sha256("f"),
     policy_snapshot: { result: "allowed", constraints: ["single_file", "single_env", "draft_pr_only"] },
     verification_plan: { profile: "golden-required-env/v1", common_stability_window_ms: 60000, required_checks: 3 },
@@ -398,7 +393,7 @@ function check(number, status, required = true) {
     required,
     profile_id: "golden-required-env/v1",
     template_id: number === 1 ? "checkout-error-rate" : number === 2 ? "checkout-rollout-ready" : "checkout-alert-absent",
-    template_version: "v3.1.0",
+    template_version: "verification-template/revision-1",
     subject: {
       revision: gitSHA("3"),
       cluster: "kind-cloudops",
@@ -520,7 +515,7 @@ function resolutionReport() {
     diagnosis: { summary: "Required environment variable was absent from the GitOps manifest." },
     evidence: { ids: [publicID(40, 1), publicID(40, 2)] },
     remediation_plan: noChange ? null : { id: planID, hash: sha256("a") },
-    remediation_decision: noChange ? null : { decision: "approved", actor: "demo-operator" },
+    remediation_decision: noChange ? null : { decision: "approved", actor: "owner" },
     delivery: noChange ? null : { id: deliveryID, target_revision: gitSHA("3") },
     verification: { run_id: noChange ? publicID(70, 101) : publicID(70, 103), status: "passed" },
     timeline: { terminal_event: "incident_resolved" },
@@ -541,14 +536,13 @@ const server = http.createServer(async (request, response) => {
     if (url.searchParams.get("reset") === "1") {
       Object.assign(fixture, defaultFixture);
       metrics.commands = [];
-      metrics.sessionRequests = 0;
       metrics.listRequests = 0;
       metrics.timelineRequests = 0;
       metrics.eventConnections = 0;
       metrics.sseAttempts = 0;
       metrics.lastEventID = "";
     }
-    for (const key of ["session", "role", "command", "plan", "verification", "list", "detail", "sections", "sse"]) {
+    for (const key of ["command", "plan", "verification", "list", "detail", "sections", "sse"]) {
       const value = url.searchParams.get(key);
       if (value) fixture[key] = value;
     }
@@ -566,34 +560,12 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
-  if (url.pathname === "/api/v3/session/csrf") {
-    metrics.sessionRequests += 1;
-    if (fixture.session === "expired") {
-      json(request, response, 401, problem(url, 401, "AUTHENTICATION_REQUIRED", "The GitHub session has expired and must be established again."));
-      return;
-    }
-    if (fixture.session === "forbidden") {
-      json(request, response, 403, problem(url, 403, "ROLE_FORBIDDEN", "The authenticated GitHub identity has no Workbench role."));
-      return;
-    }
-    if (fixture.session === "error") {
-      json(request, response, 503, problem(url, 503, "SESSION_UNAVAILABLE", "The trusted session service is temporarily unavailable."));
-      return;
-    }
-    json(request, response, 200, {
-      token: "fixture-csrf-token",
-      expires_at: "2099-01-01T00:00:00Z",
-      actor: { provider: "github", login: `demo-${fixture.role}`, role: fixture.role },
-    });
-    return;
-  }
-
-  if (url.pathname === "/api/v3/incidents") {
+  if (url.pathname === "/api/v1/incidents") {
     metrics.listRequests += 1;
     if (fixture.list === "loading") await new Promise((resolve) => setTimeout(resolve, 1200));
     if (fixture.list === "timeout") await new Promise((resolve) => setTimeout(resolve, 11000));
     if (fixture.list === "forbidden") {
-      json(request, response, 403, problem(url, 403, "LIST_FORBIDDEN", "The current GitHub identity cannot read Incident projections."));
+      json(request, response, 403, problem(url, 403, "LIST_FORBIDDEN", "The Local Owner request was denied by the API boundary."));
       return;
     }
     if (fixture.list === "error") {
@@ -617,14 +589,13 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
-  const decisionMatch = url.pathname.match(/^\/api\/v3\/remediation-plans\/([^/]+)\/decisions$/);
+  const decisionMatch = url.pathname.match(/^\/api\/v1\/remediation-plans\/([^/]+)\/decisions$/);
   if (request.method === "POST" && decisionMatch) {
     const rawBody = await requestBody(request);
     let body = {};
     try { body = JSON.parse(rawBody); } catch { /* fixture returns the configured response below */ }
     const record = {
       idempotencyKey: String(request.headers["idempotency-key"] || ""),
-      csrfToken: String(request.headers["x-csrf-token"] || ""),
       origin: String(request.headers.origin || ""),
       body,
       mode: fixture.command,
@@ -638,7 +609,7 @@ const server = http.createServer(async (request, response) => {
       return;
     }
     if (fixture.command === "403") {
-      json(request, response, 403, problem(url, 403, "COMMAND_FORBIDDEN", "The authenticated identity is not allowed to execute this command."));
+      json(request, response, 403, problem(url, 403, "COMMAND_FORBIDDEN", "The Local Owner request did not satisfy the command boundary."));
       return;
     }
     if (fixture.command === "409") {
@@ -673,13 +644,13 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
-  const incidentMatch = url.pathname.match(/^\/api\/v3\/incidents\/([^/]+)(?:\/(.*))?$/);
+  const incidentMatch = url.pathname.match(/^\/api\/v1\/incidents\/([^/]+)(?:\/(.*))?$/);
   if (incidentMatch && incidentMatch[1] === incidentID) {
     const resource = incidentMatch[2];
     if (!resource) {
       if (fixture.detail === "loading") await new Promise((resolve) => setTimeout(resolve, 1200));
       if (fixture.detail === "forbidden") {
-        json(request, response, 403, problem(url, 403, "INCIDENT_FORBIDDEN", "The current GitHub identity cannot read this Incident projection."));
+        json(request, response, 403, problem(url, 403, "INCIDENT_FORBIDDEN", "The Local Owner request was denied by the API boundary."));
         return;
       }
       if (fixture.detail === "error") {

@@ -31,7 +31,7 @@ func validBaselineVerifierConfig() BaselineVerifierConfig {
 			ObservabilityMaxTraces: 100, ObservabilityMaxRetries: 1,
 		},
 		Target: baseline.Target{
-			Cluster: "kind-cloudops-v3", Environment: "local-demo", Namespace: "demo", WorkloadKind: "Deployment",
+			Cluster: "cloudops-local", Environment: "local-demo", Namespace: "demo", WorkloadKind: "Deployment",
 			WorkloadName: "demo", ContainerName: "demo", Repository: "acme/gitops",
 			BaseBranch: "main", TargetPath: "apps/demo/deployment.yaml",
 		},

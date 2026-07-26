@@ -7,12 +7,10 @@ import {
   Menu,
   Moon,
   Sunny,
-  SwitchButton,
   UserFilled,
 } from "@element-plus/icons-vue";
 
 import { useTheme } from "../../composables/useTheme";
-import { useAuthStore } from "../../stores/auth";
 
 defineProps<{
   pageTitle: string;
@@ -22,7 +20,6 @@ const emit = defineEmits<{
   openNavigation: [trigger?: HTMLElement];
 }>();
 
-const auth = useAuthStore();
 const { isDark, toggleTheme } = useTheme();
 const mobileNavigationButton = ref<HTMLButtonElement | null>(null);
 const environmentLabel = import.meta.env.VITE_ENVIRONMENT_LABEL || "Demo / kind";
@@ -34,9 +31,6 @@ function requestMobileNavigation() {
   emit("openNavigation", mobileNavigationButton.value ?? undefined);
 }
 
-function handleUserCommand(command: string) {
-  if (command === "sign-out") auth.signOut();
-}
 </script>
 
 <template>
@@ -61,7 +55,7 @@ function handleUserCommand(command: string) {
       <RouterLink
         class="product-mark"
         to="/incidents"
-        aria-label="CloudOps Incident Agent home"
+        aria-label="CloudOps home"
       >
         <span
           class="product-icon"
@@ -71,7 +65,7 @@ function handleUserCommand(command: string) {
             <DataAnalysis />
           </el-icon>
         </span>
-        <span class="product-name product-name--long">CloudOps Incident Agent</span>
+        <span class="product-name product-name--long">CloudOps</span>
         <span class="product-name product-name--short">CloudOps</span>
       </RouterLink>
 
@@ -119,46 +113,23 @@ function handleUserCommand(command: string) {
         </el-icon>
       </button>
 
-      <el-dropdown
-        trigger="click"
-        placement="bottom-end"
-        @command="handleUserCommand"
+      <span
+        class="user-trigger"
+        aria-label="Local Owner context"
       >
-        <button
-          type="button"
-          class="user-trigger"
-          :aria-label="`Open account menu for ${auth.actor?.login || 'GitHub session'}`"
+        <span
+          class="user-avatar"
+          aria-hidden="true"
         >
-          <span
-            class="user-avatar"
-            aria-hidden="true"
-          >
-            <el-icon :size="18">
-              <UserFilled />
-            </el-icon>
-          </span>
-          <span class="user-copy">
-            <strong>{{ auth.actor?.login || "GitHub session" }}</strong>
-            <small>{{ auth.actor?.role || "viewer" }}</small>
-          </span>
-        </button>
-        <template #dropdown>
-          <el-dropdown-menu>
-            <el-dropdown-item disabled>
-              {{ auth.actor?.login || "GitHub session" }} · {{ auth.actor?.role || "viewer" }}
-            </el-dropdown-item>
-            <el-dropdown-item
-              command="sign-out"
-              divided
-            >
-              <el-icon aria-hidden="true">
-                <SwitchButton />
-              </el-icon>
-              Sign out
-            </el-dropdown-item>
-          </el-dropdown-menu>
-        </template>
-      </el-dropdown>
+          <el-icon :size="18">
+            <UserFilled />
+          </el-icon>
+        </span>
+        <span class="user-copy">
+          <strong>Owner</strong>
+          <small>local</small>
+        </span>
+      </span>
     </div>
   </header>
 </template>

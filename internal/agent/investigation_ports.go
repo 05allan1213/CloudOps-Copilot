@@ -2,7 +2,7 @@ package agent
 
 import "context"
 
-// ModelView is the bounded, provider-neutral input for one V3 investigation
+// ModelView is the bounded, provider-neutral input for one investigation
 // decision. Provider prompts and raw responses never cross this port.
 type ModelView struct {
 	State            InvestigationState           `json:"state"`
@@ -56,7 +56,7 @@ type DiagnosisView struct {
 	RequiredEvidenceByClaim map[string][]string          `json:"required_evidence_by_claim,omitempty"`
 }
 
-// InvestigationModel is the V3 model boundary. Each call represents exactly
+// InvestigationModel is the model boundary. Each call represents exactly
 // one durable graph step.
 type InvestigationModel interface {
 	ProposeDelta(context.Context, ModelView) (StateDelta, ModelUsage, error)

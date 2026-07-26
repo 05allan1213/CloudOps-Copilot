@@ -1,6 +1,5 @@
-// Package remediationmysql owns the narrow MySQL adapter for immutable V3
-// remediation Plans and Decisions. It is intentionally independent from the
-// legacy incidentmysql repository bundle so cloudops-worker can import it.
+// Package remediationmysql owns the narrow MySQL adapter for immutable
+// remediation Plans and Decisions.
 package remediationmysql
 
 import (
@@ -18,10 +17,10 @@ import (
 	"github.com/05allan1213/CloudOps-Copilot/internal/remediation"
 )
 
-const v3PlanSelect = `SELECT
-    p.id, p.public_id, p.incident_id, i.public_id, p.domain_schema_version,
-    p.cycle_no, p.incident_version, ar.public_id, p.business_budget_authorization_id, p.diagnosis_hash,
-    p.plan_version, p.plan_hash, p.status, p.v3_status, p.migrated_legacy, p.migrated_legacy_context, p.operation_type,
+const planSelect = `SELECT
+	    p.id, p.public_id, p.incident_id, i.public_id,
+	    p.cycle_no, p.incident_version, ar.public_id, p.business_budget_authorization_id, p.diagnosis_hash,
+	    p.plan_version, p.plan_hash, p.status, p.migrated_legacy, p.migrated_legacy_context, p.operation_type,
     p.target_repository, p.target_base_revision, p.target_base_branch,
     p.last_known_good_sha, p.base_blob_sha, p.file_mode, p.target_path,
     p.target_resource_json, p.target_field_ref, p.parameters_json,
@@ -37,45 +36,45 @@ FROM remediation_plans p
 JOIN incidents i ON i.id = p.incident_id
 JOIN agent_runs ar ON ar.id = p.created_by_agent_run_id`
 
-type V3RemediationRepository struct {
+type Repository struct {
 	db *sql.DB
 }
 
-var _ remediation.V3Repository = (*V3RemediationRepository)(nil)
+var _ remediation.Repository = (*Repository)(nil)
 
-func NewV3RemediationRepository(db *sql.DB) (*V3RemediationRepository, error) {
+func NewRepository(db *sql.DB) (*Repository, error) {
 	if db == nil {
-		return nil, fmt.Errorf("%w: V3 remediation database required", remediation.ErrInvalidArgument)
+		return nil, fmt.Errorf("%w: remediation database required", remediation.ErrInvalidArgument)
 	}
-	return &V3RemediationRepository{db: db}, nil
+	return &Repository{db: db}, nil
 }
 
-func (r *V3RemediationRepository) CreatePlan(ctx context.Context, plan *remediation.RemediationPlan) error {
+func (r *Repository) CreatePlan(ctx context.Context, plan *remediation.RemediationPlan) error {
 	if r == nil || r.db == nil {
-		return fmt.Errorf("%w: V3 remediation repository is not initialized", remediation.ErrInvalidArgument)
+		return fmt.Errorf("%w: remediation repository is not initialized", remediation.ErrInvalidArgument)
 	}
 	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
-		return fmt.Errorf("begin V3 plan transaction: %w", err)
+		return fmt.Errorf("begin remediation Plan transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	if err := r.CreatePlanIn(ctx, tx, plan); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit V3 plan transaction: %w", err)
+		return fmt.Errorf("commit remediation Plan transaction: %w", err)
 	}
 	return nil
 }
 
-func (r *V3RemediationRepository) CreatePlanIn(ctx context.Context, executor remediation.PersistenceTX, plan *remediation.RemediationPlan) error {
+func (r *Repository) CreatePlanIn(ctx context.Context, executor remediation.PersistenceTX, plan *remediation.RemediationPlan) error {
 	if executor == nil || plan == nil || plan.Status != remediation.PlanAwaitingApproval {
 		return remediation.ErrInvalidArgument
 	}
-	if err := remediation.ValidateV3Plan(*plan); err != nil {
+	if err := remediation.ValidatePlan(*plan); err != nil {
 		return err
 	}
-	incident, err := lockV3RemediationIncident(ctx, executor, plan.IncidentID)
+	incident, err := lockRemediationIncident(ctx, executor, plan.IncidentID)
 	if err != nil {
 		return err
 	}
@@ -83,31 +82,31 @@ func (r *V3RemediationRepository) CreatePlanIn(ctx context.Context, executor rem
 		return fmt.Errorf("%w: plan does not belong to the current Incident cycle", remediation.ErrConflict)
 	}
 
-	existing, existingErr := findV3PlanByIdentity(ctx, executor, plan, true)
+	existing, existingErr := findPlanByIdentity(ctx, executor, plan, true)
 	if existingErr == nil {
-		if sameV3PlanContent(*existing, *plan) {
+		if samePlanContent(*existing, *plan) {
 			*plan = *existing
 			return nil
 		}
-		return fmt.Errorf("%w: V3 plan identity already has different content", remediation.ErrConflict)
+		return fmt.Errorf("%w: remediation Plan identity already has different content", remediation.ErrConflict)
 	}
 	if !errors.Is(existingErr, remediation.ErrNotFound) {
 		return existingErr
 	}
 	if incident.version != plan.IncidentVersion || incident.status != "investigating" || !incident.databaseNow.Before(plan.ExpiresAt) {
-		return fmt.Errorf("%w: stale Incident version or phase for V3 plan", remediation.ErrConflict)
+		return fmt.Errorf("%w: stale Incident version or status for remediation Plan", remediation.ErrConflict)
 	}
 
-	agentRun, err := resolveV3AgentRun(ctx, executor, plan.CreatedByAgentRunID, plan.IncidentID, plan.CycleNo, true)
+	agentRun, err := resolveAgentRun(ctx, executor, plan.CreatedByAgentRunID, plan.IncidentID, plan.CycleNo, true)
 	if err != nil {
 		return err
 	}
 	if agentRun.status != "completed" || agentRun.expectedIncidentVersion != plan.IncidentVersion || agentRun.diagnosisHash != plan.DiagnosisHash ||
 		agentRun.budgetAuthorizationID != plan.BusinessBudgetAuthorizationID || agentRun.migratedLegacy != plan.MigratedLegacy ||
 		agentRun.migratedLegacyContext != plan.MigratedLegacyContext {
-		return fmt.Errorf("%w: V3 plan is not bound to the completed diagnosis", remediation.ErrConflict)
+		return fmt.Errorf("%w: remediation Plan is not bound to the completed diagnosis", remediation.ErrConflict)
 	}
-	if err := validateV3PlanEvidence(ctx, executor, plan); err != nil {
+	if err := validatePlanEvidence(ctx, executor, plan); err != nil {
 		return err
 	}
 
@@ -129,9 +128,9 @@ func (r *V3RemediationRepository) CreatePlanIn(ctx context.Context, executor rem
 	}
 
 	result, err := executor.ExecContext(ctx, `INSERT INTO remediation_plans (
-    public_id, incident_id, domain_schema_version, cycle_no, incident_version,
-    created_by_agent_run_id, business_budget_authorization_id, diagnosis_hash, plan_version, plan_hash, status,
-    v3_status, migrated_legacy, migrated_legacy_context, operation_type, target_repository, target_base_revision,
+	    public_id, incident_id, cycle_no, incident_version,
+	    created_by_agent_run_id, business_budget_authorization_id, diagnosis_hash, plan_version, plan_hash, status,
+	    migrated_legacy, migrated_legacy_context, operation_type, target_repository, target_base_revision,
     target_base_branch, last_known_good_sha, base_blob_sha, file_mode, target_path,
     target_resource_json, target_field_ref, parameters_json, evidence_references_json,
     risk_level, policy_snapshot_hash, expected_before_hash,
@@ -140,9 +139,9 @@ func (r *V3RemediationRepository) CreatePlanIn(ctx context.Context, executor rem
     rollback_plan, validation_plan, policy_version, policy_snapshot_json,
     verification_plan_json, verification_plan_hash, evidence_bindings_json,
     evidence_set_hash, hash_schema_version, canonical_plan_hash,
-    plan_content_schema_version, row_version, created_at, updated_at, expires_at
-) VALUES (
-    ?, ?, 3, ?, ?, ?, ?, ?, ?, ?, 'awaiting_approval', 'awaiting_approval', ?, ?,
+	    plan_content_schema_version, row_version, created_at, updated_at, expires_at
+	) VALUES (
+	    ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_approval', ?, ?,
     'restore_required_env', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'low', ?, ?, ?, ?,
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )`,
@@ -163,27 +162,27 @@ func (r *V3RemediationRepository) CreatePlanIn(ctx context.Context, executor rem
 	)
 	if err != nil {
 		if !isMySQLDuplicate(err) {
-			return classifyV3RemediationError(err)
+			return classifyRemediationError(err)
 		}
-		existing, loadErr := findV3PlanByIdentity(ctx, executor, plan, true)
-		if loadErr == nil && sameV3PlanContent(*existing, *plan) {
+		existing, loadErr := findPlanByIdentity(ctx, executor, plan, true)
+		if loadErr == nil && samePlanContent(*existing, *plan) {
 			*plan = *existing
 			return nil
 		}
 		if loadErr != nil && !errors.Is(loadErr, remediation.ErrNotFound) {
 			return loadErr
 		}
-		return fmt.Errorf("%w: duplicate V3 plan identity", remediation.ErrConflict)
+		return fmt.Errorf("%w: duplicate remediation Plan identity", remediation.ErrConflict)
 	}
 	id, err := result.LastInsertId()
 	if err != nil || id <= 0 {
-		return fmt.Errorf("read V3 plan ID: %w", err)
+		return fmt.Errorf("read remediation Plan ID: %w", err)
 	}
 	plan.ID = uint64(id)
 	return nil
 }
 
-func (r *V3RemediationRepository) GetPlan(ctx context.Context, publicID string) (*remediation.RemediationPlan, error) {
+func (r *Repository) GetPlan(ctx context.Context, publicID string) (*remediation.RemediationPlan, error) {
 	if r == nil || r.db == nil {
 		return nil, remediation.ErrInvalidArgument
 	}
@@ -191,13 +190,13 @@ func (r *V3RemediationRepository) GetPlan(ctx context.Context, publicID string) 
 	if _, err := uuid.Parse(publicID); err != nil {
 		return nil, remediation.ErrInvalidArgument
 	}
-	return loadV3Plan(ctx, r.db, "p.public_id = ?", false, publicID)
+	return loadPlan(ctx, r.db, "p.public_id = ?", false, publicID)
 }
 
-// LockPlanIn loads the immutable V3 Plan through an owning transaction and
+// LockPlanIn loads the immutable Plan through an owning transaction and
 // holds its row lock until that transaction completes. Command workflows use
 // it to bind the human Decision to the exact version/hash they inspected.
-func (r *V3RemediationRepository) LockPlanIn(ctx context.Context, executor remediation.PersistenceTX, publicID string) (*remediation.RemediationPlan, error) {
+func (r *Repository) LockPlanIn(ctx context.Context, executor remediation.PersistenceTX, publicID string) (*remediation.RemediationPlan, error) {
 	if r == nil || r.db == nil || executor == nil {
 		return nil, remediation.ErrInvalidArgument
 	}
@@ -205,17 +204,17 @@ func (r *V3RemediationRepository) LockPlanIn(ctx context.Context, executor remed
 	if _, err := uuid.Parse(publicID); err != nil {
 		return nil, remediation.ErrInvalidArgument
 	}
-	owner, err := loadV3Plan(ctx, executor, "p.public_id = ?", false, publicID)
+	owner, err := loadPlan(ctx, executor, "p.public_id = ?", false, publicID)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := lockV3RemediationIncident(ctx, executor, owner.IncidentID); err != nil {
+	if _, err := lockRemediationIncident(ctx, executor, owner.IncidentID); err != nil {
 		return nil, err
 	}
-	return loadV3Plan(ctx, executor, "p.public_id = ?", true, publicID)
+	return loadPlan(ctx, executor, "p.public_id = ?", true, publicID)
 }
 
-func (r *V3RemediationRepository) ResolveAgentRunID(ctx context.Context, executor remediation.PersistenceTX, publicID string, incidentID, cycleNo uint64) (uint64, error) {
+func (r *Repository) ResolveAgentRunID(ctx context.Context, executor remediation.PersistenceTX, publicID string, incidentID, cycleNo uint64) (uint64, error) {
 	publicID = strings.TrimSpace(publicID)
 	if executor == nil || incidentID == 0 || cycleNo == 0 {
 		return 0, remediation.ErrInvalidArgument
@@ -223,32 +222,32 @@ func (r *V3RemediationRepository) ResolveAgentRunID(ctx context.Context, executo
 	if _, err := uuid.Parse(publicID); err != nil {
 		return 0, remediation.ErrInvalidArgument
 	}
-	run, err := resolveV3AgentRun(ctx, executor, publicID, incidentID, cycleNo, true)
+	run, err := resolveAgentRun(ctx, executor, publicID, incidentID, cycleNo, true)
 	if err != nil {
 		return 0, err
 	}
 	return run.id, nil
 }
 
-func (r *V3RemediationRepository) RecordDecision(ctx context.Context, planPublicID string, expectedRowVersion uint64, decision *remediation.Approval) error {
+func (r *Repository) RecordDecision(ctx context.Context, planPublicID string, expectedRowVersion uint64, decision *remediation.Approval) error {
 	if r == nil || r.db == nil {
 		return remediation.ErrInvalidArgument
 	}
 	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
-		return fmt.Errorf("begin V3 decision transaction: %w", err)
+		return fmt.Errorf("begin remediation Decision transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	if err := r.RecordDecisionIn(ctx, tx, planPublicID, expectedRowVersion, decision); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit V3 decision transaction: %w", err)
+		return fmt.Errorf("commit remediation Decision transaction: %w", err)
 	}
 	return nil
 }
 
-func (r *V3RemediationRepository) RecordDecisionIn(ctx context.Context, executor remediation.PersistenceTX, planPublicID string, expectedRowVersion uint64, decision *remediation.Approval) error {
+func (r *Repository) RecordDecisionIn(ctx context.Context, executor remediation.PersistenceTX, planPublicID string, expectedRowVersion uint64, decision *remediation.Approval) error {
 	planPublicID = strings.TrimSpace(planPublicID)
 	if executor == nil || decision == nil || expectedRowVersion == 0 {
 		return remediation.ErrInvalidArgument
@@ -256,15 +255,15 @@ func (r *V3RemediationRepository) RecordDecisionIn(ctx context.Context, executor
 	if _, err := uuid.Parse(planPublicID); err != nil {
 		return remediation.ErrInvalidArgument
 	}
-	owner, err := loadV3Plan(ctx, executor, "p.public_id = ?", false, planPublicID)
+	owner, err := loadPlan(ctx, executor, "p.public_id = ?", false, planPublicID)
 	if err != nil {
 		return err
 	}
-	incident, err := lockV3RemediationIncident(ctx, executor, owner.IncidentID)
+	incident, err := lockRemediationIncident(ctx, executor, owner.IncidentID)
 	if err != nil {
 		return err
 	}
-	plan, err := loadV3Plan(ctx, executor, "p.public_id = ?", true, planPublicID)
+	plan, err := loadPlan(ctx, executor, "p.public_id = ?", true, planPublicID)
 	if err != nil {
 		return err
 	}
@@ -272,36 +271,36 @@ func (r *V3RemediationRepository) RecordDecisionIn(ctx context.Context, executor
 		return fmt.Errorf("%w: Decision does not belong to the current Incident cycle", remediation.ErrConflict)
 	}
 	if plan.Status != remediation.PlanAwaitingApproval {
-		existing, existingErr := loadV3Decision(ctx, executor, plan.ID, true)
-		if existingErr == nil && sameV3Decision(*existing, *decision) {
+		existing, existingErr := loadDecision(ctx, executor, plan.ID, true)
+		if existingErr == nil && sameDecision(*existing, *decision) {
 			*decision = *existing
 			return nil
 		}
 		if existingErr != nil && !errors.Is(existingErr, remediation.ErrNotFound) {
 			return existingErr
 		}
-		return fmt.Errorf("%w: V3 Plan already has a terminal Decision", remediation.ErrConflict)
+		return fmt.Errorf("%w: remediation Plan already has a terminal Decision", remediation.ErrConflict)
 	}
 	if plan.RowVersion != expectedRowVersion || incident.status != "awaiting_approval" || incident.version != plan.IncidentVersion+1 {
-		return fmt.Errorf("%w: stale V3 Plan or Incident phase", remediation.ErrConflict)
+		return fmt.Errorf("%w: stale remediation Plan or Incident status", remediation.ErrConflict)
 	}
 	var databaseNow time.Time
 	if err := executor.QueryRowContext(ctx, "SELECT NOW(6)").Scan(&databaseNow); err != nil {
 		return fmt.Errorf("read Decision database time: %w", err)
 	}
-	if err := remediation.ValidateV3DecisionBinding(*plan, *decision, databaseNow.UTC()); err != nil {
+	if err := remediation.ValidateDecisionBinding(*plan, *decision, databaseNow.UTC()); err != nil {
 		return err
 	}
 
 	result, err := executor.ExecContext(ctx, `INSERT INTO remediation_decisions (
-    public_id, domain_schema_version, decision_schema_version, incident_id,
+	    public_id, decision_schema_version, incident_id,
     cycle_no, plan_id, plan_version, decision, actor_provider, actor_login,
     actor_role, reason, request_id, request_authenticated_at, expires_at,
     approved_hash_schema_version, approved_plan_hash, approved_base_sha,
     approved_post_image_hash, approved_tree_hash, approved_patch_hash,
     approved_policy_hash, approved_verification_hash, approved_evidence_set_hash,
     created_at
-) VALUES (?, 3, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		decision.PublicID, decision.DecisionSchemaVersion, decision.IncidentID,
 		decision.CycleNo, decision.PlanID, decision.PlanVersion, decision.Decision,
 		decision.ActorProvider, decision.Actor, decision.Role, decision.Reason,
@@ -314,21 +313,21 @@ func (r *V3RemediationRepository) RecordDecisionIn(ctx context.Context, executor
 	)
 	if err != nil {
 		if isMySQLDuplicate(err) {
-			existing, loadErr := loadV3Decision(ctx, executor, plan.ID, true)
-			if loadErr == nil && sameV3Decision(*existing, *decision) {
+			existing, loadErr := loadDecision(ctx, executor, plan.ID, true)
+			if loadErr == nil && sameDecision(*existing, *decision) {
 				*decision = *existing
 				return nil
 			}
 			if loadErr != nil && !errors.Is(loadErr, remediation.ErrNotFound) {
 				return loadErr
 			}
-			return fmt.Errorf("%w: duplicate V3 Decision identity", remediation.ErrConflict)
+			return fmt.Errorf("%w: duplicate remediation Decision identity", remediation.ErrConflict)
 		}
-		return classifyV3RemediationError(err)
+		return classifyRemediationError(err)
 	}
 	id, err := result.LastInsertId()
 	if err != nil || id <= 0 {
-		return fmt.Errorf("read V3 Decision ID: %w", err)
+		return fmt.Errorf("read remediation Decision ID: %w", err)
 	}
 	decision.ID = uint64(id)
 	nextStatus := remediation.PlanApproved
@@ -336,21 +335,21 @@ func (r *V3RemediationRepository) RecordDecisionIn(ctx context.Context, executor
 		nextStatus = remediation.PlanRejected
 	}
 	updated, err := executor.ExecContext(ctx, `UPDATE remediation_plans
-SET status = ?, v3_status = ?, row_version = row_version + 1, updated_at = NOW(6)
-WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ?
-  AND row_version = ? AND v3_status = 'awaiting_approval'`,
-		nextStatus, nextStatus, plan.ID, plan.CycleNo, expectedRowVersion)
+	SET status = ?, row_version = row_version + 1, updated_at = NOW(6)
+	WHERE id = ? AND cycle_no = ?
+	  AND row_version = ? AND status = 'awaiting_approval'`,
+		nextStatus, plan.ID, plan.CycleNo, expectedRowVersion)
 	if err != nil {
-		return classifyV3RemediationError(err)
+		return classifyRemediationError(err)
 	}
 	affected, err := updated.RowsAffected()
 	if err != nil || affected != 1 {
-		return fmt.Errorf("%w: stale V3 Plan Decision write", remediation.ErrConflict)
+		return fmt.Errorf("%w: stale remediation Plan Decision write", remediation.ErrConflict)
 	}
 	return nil
 }
 
-func (r *V3RemediationRepository) GetDecision(ctx context.Context, planPublicID string) (*remediation.Approval, error) {
+func (r *Repository) GetDecision(ctx context.Context, planPublicID string) (*remediation.Approval, error) {
 	if r == nil || r.db == nil {
 		return nil, remediation.ErrInvalidArgument
 	}
@@ -362,17 +361,17 @@ func (r *V3RemediationRepository) GetDecision(ctx context.Context, planPublicID 
 	if err != nil {
 		return nil, err
 	}
-	decision, err := loadV3Decision(ctx, r.db, plan.ID, false)
+	decision, err := loadDecision(ctx, r.db, plan.ID, false)
 	if err != nil {
 		return nil, err
 	}
-	if err := remediation.ValidateV3DecisionBinding(*plan, *decision, decision.CreatedAt); err != nil {
+	if err := remediation.ValidateDecisionBinding(*plan, *decision, decision.CreatedAt); err != nil {
 		return nil, err
 	}
 	return decision, nil
 }
 
-type v3IncidentFence struct {
+type incidentFence struct {
 	publicID    string
 	cycleNo     uint64
 	version     uint64
@@ -380,18 +379,18 @@ type v3IncidentFence struct {
 	databaseNow time.Time
 }
 
-func lockV3RemediationIncident(ctx context.Context, executor remediation.PersistenceTX, incidentID uint64) (v3IncidentFence, error) {
-	var result v3IncidentFence
-	err := executor.QueryRowContext(ctx, `SELECT public_id, cycle_no, version, v3_status, NOW(6)
-FROM incidents WHERE id = ? AND domain_schema_version = 3 FOR UPDATE`, incidentID).
+func lockRemediationIncident(ctx context.Context, executor remediation.PersistenceTX, incidentID uint64) (incidentFence, error) {
+	var result incidentFence
+	err := executor.QueryRowContext(ctx, `SELECT public_id, cycle_no, version, status, NOW(6)
+	FROM incidents WHERE id = ? FOR UPDATE`, incidentID).
 		Scan(&result.publicID, &result.cycleNo, &result.version, &result.status, &result.databaseNow)
 	if err != nil {
-		return result, classifyV3RemediationError(err)
+		return result, classifyRemediationError(err)
 	}
 	return result, nil
 }
 
-type v3AgentRunFence struct {
+type agentRunFence struct {
 	id                      uint64
 	status                  string
 	expectedIncidentVersion uint64
@@ -401,22 +400,22 @@ type v3AgentRunFence struct {
 	migratedLegacyContext   bool
 }
 
-func resolveV3AgentRun(ctx context.Context, executor remediation.PersistenceTX, publicID string, incidentID, cycleNo uint64, lock bool) (v3AgentRunFence, error) {
-	query := `SELECT id, v3_status, expected_incident_version, business_budget_authorization_id, final_diagnosis,
-migrated_legacy, migrated_legacy_context
-FROM agent_runs
-WHERE public_id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3`
+func resolveAgentRun(ctx context.Context, executor remediation.PersistenceTX, publicID string, incidentID, cycleNo uint64, lock bool) (agentRunFence, error) {
+	query := `SELECT id, status, expected_incident_version, business_budget_authorization_id, final_diagnosis,
+	migrated_legacy, migrated_legacy_context
+	FROM agent_runs
+	WHERE public_id = ? AND incident_id = ? AND cycle_no = ?`
 	if lock {
 		query += " FOR UPDATE"
 	}
-	var result v3AgentRunFence
+	var result agentRunFence
 	var budgetAuthorization sql.NullInt64
 	var diagnosisJSON []byte
 	err := executor.QueryRowContext(ctx, query, publicID, incidentID, cycleNo).
 		Scan(&result.id, &result.status, &result.expectedIncidentVersion, &budgetAuthorization, &diagnosisJSON,
 			&result.migratedLegacy, &result.migratedLegacyContext)
 	if err != nil {
-		return result, classifyV3RemediationError(err)
+		return result, classifyRemediationError(err)
 	}
 	var diagnosis struct {
 		DiagnosisHash string `json:"diagnosis_hash"`
@@ -431,17 +430,17 @@ WHERE public_id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_versi
 	return result, nil
 }
 
-func validateV3PlanEvidence(ctx context.Context, executor remediation.PersistenceTX, plan *remediation.RemediationPlan) error {
+func validatePlanEvidence(ctx context.Context, executor remediation.PersistenceTX, plan *remediation.RemediationPlan) error {
 	for _, binding := range plan.EvidenceBindings {
 		var contentHash sql.NullString
 		var valid, truncated, migratedLegacy, migratedLegacyContext bool
 		err := executor.QueryRowContext(ctx, `SELECT content_hash, valid, truncated, migrated_legacy, migrated_legacy_context
-FROM evidence_items
-WHERE public_id = ? AND incident_id = ? AND domain_schema_version = 3 AND cycle_no = ?
+	FROM evidence_items
+	WHERE public_id = ? AND incident_id = ? AND cycle_no = ?
 FOR SHARE`, binding.ID, plan.IncidentID, plan.CycleNo).Scan(
 			&contentHash, &valid, &truncated, &migratedLegacy, &migratedLegacyContext)
 		if err != nil {
-			return classifyV3RemediationError(err)
+			return classifyRemediationError(err)
 		}
 		if !contentHash.Valid || contentHash.String != binding.ContentHash || !valid || truncated ||
 			migratedLegacy != plan.MigratedLegacy || migratedLegacyContext != plan.MigratedLegacyContext {
@@ -451,16 +450,16 @@ FOR SHARE`, binding.ID, plan.IncidentID, plan.CycleNo).Scan(
 	return nil
 }
 
-func findV3PlanByIdentity(ctx context.Context, executor remediation.PersistenceTX, plan *remediation.RemediationPlan, lock bool) (*remediation.RemediationPlan, error) {
-	return loadV3Plan(ctx, executor, `(p.public_id = ? OR
+func findPlanByIdentity(ctx context.Context, executor remediation.PersistenceTX, plan *remediation.RemediationPlan, lock bool) (*remediation.RemediationPlan, error) {
+	return loadPlan(ctx, executor, `(p.public_id = ? OR
     (p.incident_id = ? AND p.plan_version = ?) OR
-    (p.incident_id = ? AND p.cycle_no = ? AND p.v3_status IN ('awaiting_approval','approved')))`,
+	    (p.incident_id = ? AND p.cycle_no = ? AND p.status IN ('awaiting_approval','approved')))`,
 		lock, plan.PublicID, plan.IncidentID, plan.PlanVersion, plan.IncidentID, plan.CycleNo)
 }
 
-func loadV3Plan(ctx context.Context, executor remediation.PersistenceTX, predicate string, lock bool, args ...any) (*remediation.RemediationPlan, error) {
-	query := v3PlanSelect + `
-WHERE p.domain_schema_version = 3 AND p.plan_content_schema_version IS NOT NULL AND ` + predicate + `
+func loadPlan(ctx context.Context, executor remediation.PersistenceTX, predicate string, lock bool, args ...any) (*remediation.RemediationPlan, error) {
+	query := planSelect + `
+	WHERE p.plan_content_schema_version IS NOT NULL AND ` + predicate + `
 ORDER BY (p.public_id = ?) DESC, p.id DESC LIMIT 1`
 	publicID := ""
 	if len(args) > 0 {
@@ -472,15 +471,15 @@ ORDER BY (p.public_id = ?) DESC, p.id DESC LIMIT 1`
 	}
 	var plan remediation.RemediationPlan
 	var budgetAuthorization sql.NullInt64
-	var legacyStatus, v3Status string
+	var status string
 	var migratedLegacy, migratedLegacyContext bool
 	var targetJSON, parametersJSON, evidenceReferencesJSON []byte
 	var manifestJSON, policyJSON, verificationJSON, evidenceBindingsJSON []byte
 	err := executor.QueryRowContext(ctx, query, args...).Scan(
 		&plan.ID, &plan.PublicID, &plan.IncidentID, &plan.IncidentPublicID,
-		&plan.DomainSchemaVersion, &plan.CycleNo, &plan.IncidentVersion,
+		&plan.CycleNo, &plan.IncidentVersion,
 		&plan.CreatedByAgentRunID, &budgetAuthorization, &plan.DiagnosisHash, &plan.PlanVersion,
-		&plan.PlanHash, &legacyStatus, &v3Status, &migratedLegacy, &migratedLegacyContext, &plan.OperationType,
+		&plan.PlanHash, &status, &migratedLegacy, &migratedLegacyContext, &plan.OperationType,
 		&plan.TargetRepository, &plan.TargetBaseRevision, &plan.TargetBaseBranch,
 		&plan.LastKnownGoodRevision, &plan.BaseBlobSHA, &plan.FileMode,
 		&plan.TargetPath, &targetJSON, &plan.TargetFieldRef, &parametersJSON,
@@ -495,36 +494,36 @@ ORDER BY (p.public_id = ?) DESC, p.id DESC LIMIT 1`
 		&plan.UpdatedAt, &plan.ExpiresAt,
 	)
 	if err != nil {
-		return nil, classifyV3RemediationError(err)
+		return nil, classifyRemediationError(err)
 	}
 	if budgetAuthorization.Valid {
 		plan.BusinessBudgetAuthorizationID = uint64(budgetAuthorization.Int64)
 	}
-	plan.Status = remediation.PlanStatus(v3Status)
+	plan.Status = remediation.PlanStatus(status)
 	plan.MigratedLegacy, plan.MigratedLegacyContext = migratedLegacy, migratedLegacyContext
-	plan.CanonicalChangeManifest, err = canonicalizeStoredV3JSON(manifestJSON)
+	plan.CanonicalChangeManifest, err = canonicalizeStoredJSON(manifestJSON)
 	if err != nil {
-		return nil, fmt.Errorf("%w: decode persisted V3 change manifest", remediation.ErrInvalidArgument)
+		return nil, fmt.Errorf("%w: decode persisted change manifest", remediation.ErrInvalidArgument)
 	}
-	plan.PolicySnapshot, err = canonicalizeStoredV3JSON(policyJSON)
+	plan.PolicySnapshot, err = canonicalizeStoredJSON(policyJSON)
 	if err != nil {
-		return nil, fmt.Errorf("%w: decode persisted V3 policy", remediation.ErrInvalidArgument)
+		return nil, fmt.Errorf("%w: decode persisted policy", remediation.ErrInvalidArgument)
 	}
-	plan.VerificationPlan, err = canonicalizeStoredV3JSON(verificationJSON)
+	plan.VerificationPlan, err = canonicalizeStoredJSON(verificationJSON)
 	if err != nil {
-		return nil, fmt.Errorf("%w: decode persisted V3 verification plan", remediation.ErrInvalidArgument)
+		return nil, fmt.Errorf("%w: decode persisted verification plan", remediation.ErrInvalidArgument)
 	}
 	var target remediation.TargetResource
 	if json.Unmarshal(targetJSON, &target) != nil || json.Unmarshal(parametersJSON, &plan.Parameters) != nil || plan.Parameters.Target != target || json.Unmarshal(evidenceReferencesJSON, &plan.EvidenceReferences) != nil || json.Unmarshal(evidenceBindingsJSON, &plan.EvidenceBindings) != nil {
-		return nil, fmt.Errorf("%w: decode persisted V3 plan JSON", remediation.ErrInvalidArgument)
+		return nil, fmt.Errorf("%w: decode persisted remediation Plan JSON", remediation.ErrInvalidArgument)
 	}
-	if err := remediation.ValidateV3Plan(plan); err != nil {
+	if err := remediation.ValidatePlan(plan); err != nil {
 		return nil, err
 	}
 	return &plan, nil
 }
 
-func canonicalizeStoredV3JSON(raw []byte) (json.RawMessage, error) {
+func canonicalizeStoredJSON(raw []byte) (json.RawMessage, error) {
 	var value any
 	if len(raw) == 0 || json.Unmarshal(raw, &value) != nil {
 		return nil, remediation.ErrInvalidArgument
@@ -536,7 +535,7 @@ func canonicalizeStoredV3JSON(raw []byte) (json.RawMessage, error) {
 	return json.RawMessage(canonical), nil
 }
 
-func sameV3PlanContent(left, right remediation.RemediationPlan) bool {
+func samePlanContent(left, right remediation.RemediationPlan) bool {
 	return left.IncidentID == right.IncidentID && left.IncidentPublicID == right.IncidentPublicID &&
 		left.CycleNo == right.CycleNo && left.IncidentVersion == right.IncidentVersion &&
 		left.PlanVersion == right.PlanVersion && left.CanonicalPlanHash == right.CanonicalPlanHash &&
@@ -552,24 +551,24 @@ func nullableBudgetAuthorization(id uint64) any {
 	return id
 }
 
-const v3DecisionSelect = `SELECT id, public_id, domain_schema_version,
-    decision_schema_version, incident_id, cycle_no, plan_id, plan_version,
+const decisionSelect = `SELECT id, public_id, decision_schema_version,
+	    incident_id, cycle_no, plan_id, plan_version,
     decision, actor_provider, actor_login, actor_role, reason, request_id,
     request_authenticated_at, expires_at, approved_hash_schema_version,
     approved_plan_hash, approved_base_sha, approved_post_image_hash,
     approved_tree_hash, approved_patch_hash, approved_policy_hash,
     approved_verification_hash, approved_evidence_set_hash, created_at
-FROM remediation_decisions WHERE plan_id = ?`
+FROM remediation_decisions WHERE plan_id = ? AND imported_history = FALSE`
 
-func loadV3Decision(ctx context.Context, executor remediation.PersistenceTX, planID uint64, lock bool) (*remediation.Approval, error) {
-	query := v3DecisionSelect
+func loadDecision(ctx context.Context, executor remediation.PersistenceTX, planID uint64, lock bool) (*remediation.Approval, error) {
+	query := decisionSelect
 	if lock {
 		query += " FOR UPDATE"
 	}
 	var decision remediation.Approval
 	err := executor.QueryRowContext(ctx, query, planID).Scan(
-		&decision.ID, &decision.PublicID, &decision.DomainSchemaVersion,
-		&decision.DecisionSchemaVersion, &decision.IncidentID, &decision.CycleNo,
+		&decision.ID, &decision.PublicID, &decision.DecisionSchemaVersion,
+		&decision.IncidentID, &decision.CycleNo,
 		&decision.PlanID, &decision.PlanVersion, &decision.Decision,
 		&decision.ActorProvider, &decision.Actor, &decision.Role, &decision.Reason,
 		&decision.RequestID, &decision.RequestAuthenticatedAt, &decision.ExpiresAt,
@@ -580,14 +579,14 @@ func loadV3Decision(ctx context.Context, executor remediation.PersistenceTX, pla
 		&decision.ApprovedEvidenceSetHash, &decision.CreatedAt,
 	)
 	if err != nil {
-		return nil, classifyV3RemediationError(err)
+		return nil, classifyRemediationError(err)
 	}
 	return &decision, nil
 }
 
-func sameV3Decision(left, right remediation.Approval) bool {
-	return left.PublicID == right.PublicID && left.DomainSchemaVersion == right.DomainSchemaVersion &&
-		left.DecisionSchemaVersion == right.DecisionSchemaVersion && left.IncidentID == right.IncidentID &&
+func sameDecision(left, right remediation.Approval) bool {
+	return left.PublicID == right.PublicID && left.DecisionSchemaVersion == right.DecisionSchemaVersion &&
+		left.IncidentID == right.IncidentID &&
 		left.CycleNo == right.CycleNo && left.PlanID == right.PlanID && left.PlanVersion == right.PlanVersion &&
 		left.Decision == right.Decision && left.ActorProvider == right.ActorProvider && left.Actor == right.Actor &&
 		left.Role == right.Role && left.Reason == right.Reason && left.RequestID == right.RequestID &&
@@ -599,7 +598,7 @@ func sameV3Decision(left, right remediation.Approval) bool {
 		left.ApprovedEvidenceSetHash == right.ApprovedEvidenceSetHash && left.CreatedAt.Equal(right.CreatedAt)
 }
 
-func classifyV3RemediationError(err error) error {
+func classifyRemediationError(err error) error {
 	if err == nil {
 		return nil
 	}
@@ -610,11 +609,11 @@ func classifyV3RemediationError(err error) error {
 	if errors.As(err, &mysqlErr) {
 		switch mysqlErr.Number {
 		case 1062:
-			return fmt.Errorf("%w: duplicate V3 remediation identity", remediation.ErrConflict)
+			return fmt.Errorf("%w: duplicate remediation identity", remediation.ErrConflict)
 		case 1451, 1452:
-			return fmt.Errorf("%w: V3 remediation ownership constraint", remediation.ErrConflict)
+			return fmt.Errorf("%w: remediation ownership constraint", remediation.ErrConflict)
 		case 1406, 3819:
-			return fmt.Errorf("%w: V3 remediation persistence constraint", remediation.ErrInvalidArgument)
+			return fmt.Errorf("%w: remediation persistence constraint", remediation.ErrInvalidArgument)
 		}
 	}
 	return err

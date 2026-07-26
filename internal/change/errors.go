@@ -1,4 +1,4 @@
-// Package change defines framework-independent Phase 3 change intelligence contracts.
+// Package change defines framework-independent change intelligence contracts.
 package change
 
 import "errors"

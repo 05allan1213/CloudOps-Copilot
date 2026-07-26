@@ -41,9 +41,9 @@ defineEmits<{
 
 const definitions: Record<StateBlockState, { title: string; message: string; icon: Component; tone: string }> = {
   loading: { title: "Loading", message: "Fetching the latest server projection…", icon: markRaw(Refresh), tone: "neutral" },
-  empty: { title: "No incidents found", message: "No V3 incidents match the current filters.", icon: markRaw(RemoveFilled), tone: "neutral" },
+  empty: { title: "No incidents found", message: "No Incidents match the current filters.", icon: markRaw(RemoveFilled), tone: "neutral" },
   error: { title: "Incidents could not be loaded", message: "Retry the request. If it continues to fail, use the request identifiers below.", icon: markRaw(CircleCloseFilled), tone: "danger" },
-  forbidden: { title: "Viewer access is required", message: "Use a GitHub identity with viewer or operator access, then retry the access check.", icon: markRaw(Lock), tone: "warning" },
+  forbidden: { title: "Request forbidden", message: "The Local Owner boundary rejected this request. Verify its Origin and exact command preconditions.", icon: markRaw(Lock), tone: "warning" },
   not_found: { title: "Projection not found", message: "The requested Incident projection does not exist or is no longer available.", icon: markRaw(InfoFilled), tone: "neutral" },
   unavailable: { title: "Incident projection unavailable", message: "The API cannot serve this projection right now. Retry after the dependency recovers.", icon: markRaw(WarningFilled), tone: "warning" },
   disabled: { title: "Action unavailable", message: "This action is not available in the current state.", icon: markRaw(Lock), tone: "neutral" },

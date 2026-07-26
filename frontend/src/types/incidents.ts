@@ -77,9 +77,9 @@ export interface RemediationDecisionView {
   plan_version: number;
   decision: "approved" | "rejected";
   actor: {
-    provider: "github";
+    provider: "local";
     login: string;
-    role: "operator";
+    role: "owner";
   };
   reason: string;
   request_id: string;

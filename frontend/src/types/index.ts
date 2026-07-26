@@ -1,17 +1,3 @@
-export type SessionRole = "viewer" | "operator";
-
-export interface SessionActor {
-  provider: string;
-  login: string;
-  role: SessionRole;
-}
-
-export interface SessionResponse {
-  token: string;
-  expires_at: string;
-  actor: SessionActor;
-}
-
 export interface ProblemDetails {
   type: string;
   title: string;

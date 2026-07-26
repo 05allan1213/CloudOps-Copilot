@@ -44,7 +44,7 @@ export function deterministicResourceSummary(item: ResourceView): string {
 export function resourceProvenance(item: ResourceView): string {
   if (item.migrated_legacy_context) return "Legacy context · audit-only";
   if (item.migrated_legacy) return "Migrated legacy record";
-  return "V3 native projection";
+  return "Native projection";
 }
 
 export function evidenceStateDefinition(status?: string): EvidenceStateDefinition {

@@ -2,15 +2,11 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: cloudops-migrate
+  name: {{ printf "cloudops-migrate-%d" .Release.Revision }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "cloudops.labels" . | nindent 4 }}
     app.kubernetes.io/component: migrate
-  annotations:
-    helm.sh/hook: pre-install,pre-upgrade
-    helm.sh/hook-weight: "10"
-    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
 spec:
   backoffLimit: {{ .Values.migrate.backoffLimit }}
   activeDeadlineSeconds: {{ .Values.migrate.activeDeadlineSeconds }}
@@ -41,10 +37,8 @@ spec:
             capabilities:
               drop: ["ALL"]
           env:
-            # Pre-install hooks run before normal ConfigMaps and
-            # ServiceAccounts exist, so the migration Job receives only its
-            # bounded database settings directly from values plus the
-            # pre-created password Secret.
+            # The migration Job receives only bounded database settings and
+            # its workload-specific pre-created password Secret.
             {{- range $name := list "MYSQL_HOST" "MYSQL_PORT" "MYSQL_DATABASE" "MYSQL_PING_TIMEOUT_SECONDS" }}
             - name: {{ $name }}
               value: {{ index $.Values.commonEnv $name | quote }}

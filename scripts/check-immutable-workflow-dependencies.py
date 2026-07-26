@@ -73,10 +73,10 @@ def main() -> int:
         ):
             oidc_write_files.append(path)
 
-    if len(oidc_write_files) != 2:
+    if len(oidc_write_files) != 1:
         rendered = ", ".join(str(path) for path in oidc_write_files) or "none"
         violations.append(
-            "expected exactly two workflow files with id-token: write; "
+            "expected exactly one manually dispatched workflow file with id-token: write; "
             f"found {len(oidc_write_files)}: {rendered}"
         )
 
@@ -89,7 +89,7 @@ def main() -> int:
     print(
         "PASS: immutable workflow dependency audit checked "
         f"{external_dependencies} external uses entries across "
-        f"{len(dependency_files)} YAML files; id-token: write remains limited to 2 workflows."
+        f"{len(dependency_files)} YAML files; id-token: write remains limited to 1 workflow."
     )
     return 0
 

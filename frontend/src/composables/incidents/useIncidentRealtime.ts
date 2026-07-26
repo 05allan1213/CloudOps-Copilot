@@ -1,6 +1,5 @@
 import { onBeforeUnmount, ref } from "vue";
 
-import { redirectToOAuth } from "../../api/client";
 import { incidentRealtimeURL } from "../../api/incidents";
 import type { IncidentRealtimeEvent } from "../../types/incidents";
 
@@ -63,16 +62,9 @@ export function useIncidentRealtime(incidentID: string, resync: (resource: Incid
       const headers: Record<string, string> = { Accept: "text/event-stream" };
       if (lastCursor.value) headers["Last-Event-ID"] = lastCursor.value;
       const response = await fetch(incidentRealtimeURL(incidentID), {
-        credentials: "include",
         headers,
         signal: controller.signal,
       });
-      if (response.status === 401) {
-        stopped = true;
-        state.value = "disconnected";
-        redirectToOAuth();
-        return;
-      }
       if (!response.ok || !response.body) throw new Error(`Realtime request failed with status ${response.status}`);
       const wasConnected = hasConnected;
       const restored = wasConnected && reconnectAttempts > 0;

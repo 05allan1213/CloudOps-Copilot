@@ -18,7 +18,7 @@ import (
 	"unicode/utf8"
 
 	domain "github.com/05allan1213/CloudOps-Copilot/internal/incident"
-	"github.com/05allan1213/CloudOps-Copilot/internal/infra/incidentv3mysql"
+	"github.com/05allan1213/CloudOps-Copilot/internal/infra/incidentstore"
 )
 
 const (
@@ -63,8 +63,8 @@ type alert struct {
 }
 
 type normalizedBatch struct {
-	Signals    []incidentv3mysql.SignalInput
-	Rejections []incidentv3mysql.RejectionInput
+	Signals    []incidentstore.SignalInput
+	Rejections []incidentstore.RejectionInput
 }
 
 func decodeEnvelope(reader io.Reader) (envelope, error) {
@@ -239,7 +239,7 @@ func normalizeEnvelope(input envelope, targets []Target) (normalizedBatch, error
 		}
 	}
 
-	result := normalizedBatch{Signals: make([]incidentv3mysql.SignalInput, 0, len(input.Alerts))}
+	result := normalizedBatch{Signals: make([]incidentstore.SignalInput, 0, len(input.Alerts))}
 	for index, item := range input.Alerts {
 		normalized, rejection, err := normalizeAlert(item, targets)
 		if err != nil {
@@ -254,20 +254,20 @@ func normalizeEnvelope(input envelope, targets []Target) (normalizedBatch, error
 	return result, nil
 }
 
-func normalizeAlert(input alert, targets []Target) (incidentv3mysql.SignalInput, *incidentv3mysql.RejectionInput, error) {
+func normalizeAlert(input alert, targets []Target) (incidentstore.SignalInput, *incidentstore.RejectionInput, error) {
 	status := domain.SignalStatus(strings.ToLower(strings.TrimSpace(input.Status)))
 	if status != domain.SignalStatusFiring && status != domain.SignalStatusResolved {
-		return incidentv3mysql.SignalInput{}, nil, errors.New("status must be firing or resolved")
+		return incidentstore.SignalInput{}, nil, errors.New("status must be firing or resolved")
 	}
 	if input.StartsAt.IsZero() {
-		return incidentv3mysql.SignalInput{}, nil, errors.New("startsAt is required")
+		return incidentstore.SignalInput{}, nil, errors.New("startsAt is required")
 	}
 	startsAt := input.StartsAt.UTC()
 	var endsAt *time.Time
 	resolvedEndsAt := ""
 	if status == domain.SignalStatusResolved {
 		if input.EndsAt.IsZero() || input.EndsAt.Before(input.StartsAt) {
-			return incidentv3mysql.SignalInput{}, nil, errors.New("resolved alert requires endsAt at or after startsAt")
+			return incidentstore.SignalInput{}, nil, errors.New("resolved alert requires endsAt at or after startsAt")
 		}
 		resolved := input.EndsAt.UTC()
 		endsAt = &resolved
@@ -275,33 +275,33 @@ func normalizeAlert(input alert, targets []Target) (incidentv3mysql.SignalInput,
 	}
 	fingerprint := strings.ToLower(strings.TrimSpace(input.Fingerprint))
 	if fingerprint == "" || len(fingerprint) > 128 {
-		return incidentv3mysql.SignalInput{}, nil, errors.New("fingerprint must contain 1..128 hex characters")
+		return incidentstore.SignalInput{}, nil, errors.New("fingerprint must contain 1..128 hex characters")
 	}
 	if _, err := hex.DecodeString(evenHex(fingerprint)); err != nil {
-		return incidentv3mysql.SignalInput{}, nil, errors.New("fingerprint must be hexadecimal")
+		return incidentstore.SignalInput{}, nil, errors.New("fingerprint must be hexadecimal")
 	}
 	if err := validateStringMap(input.Labels); err != nil {
-		return incidentv3mysql.SignalInput{}, nil, fmt.Errorf("labels: %w", err)
+		return incidentstore.SignalInput{}, nil, fmt.Errorf("labels: %w", err)
 	}
 	if err := validateStringMap(input.Annotations); err != nil {
-		return incidentv3mysql.SignalInput{}, nil, fmt.Errorf("annotations: %w", err)
+		return incidentstore.SignalInput{}, nil, fmt.Errorf("annotations: %w", err)
 	}
 
-	sourceEventID := "v2:" + hashCanonical(
+	sourceEventID := hashCanonical(
 		canonicalIdentityVersion, alertmanagerSource, fingerprint, canonicalTime(startsAt), string(status), resolvedEndsAt,
 	)
 	instanceKey := hashCanonical(canonicalIdentityVersion, alertmanagerSource, fingerprint, canonicalTime(startsAt))
 	target, reason := resolveTarget(input.Labels, targets)
 	if reason != "" {
 		labelsHash := hashStringMap(input.Labels)
-		return incidentv3mysql.SignalInput{}, &incidentv3mysql.RejectionInput{
+		return incidentstore.SignalInput{}, &incidentstore.RejectionInput{
 			Source: alertmanagerSource, SourceEventID: sourceEventID, Fingerprint: fingerprint,
 			AlertInstanceKey: instanceKey, ReasonCode: reason,
 			Details: map[string]string{"labels_hash": labelsHash, "status": string(status)},
 		}, nil
 	}
 
-	correlationKey := "v2:" + hashCanonical(
+	correlationKey := hashCanonical(
 		target.ClusterID, target.Environment, target.Namespace, target.WorkloadKind, target.WorkloadName,
 	)
 	severity := domain.NormalizeSeverity(strings.ToLower(strings.TrimSpace(input.Labels["severity"])))
@@ -314,11 +314,11 @@ func normalizeAlert(input alert, targets []Target) (incidentv3mysql.SignalInput,
 	}
 	labelsJSON, err := json.Marshal(safeLabels(input.Labels))
 	if err != nil {
-		return incidentv3mysql.SignalInput{}, nil, err
+		return incidentstore.SignalInput{}, nil, err
 	}
 	annotationsJSON, err := json.Marshal(safeAnnotations(input.Annotations))
 	if err != nil {
-		return incidentv3mysql.SignalInput{}, nil, err
+		return incidentstore.SignalInput{}, nil, err
 	}
 	alertName := redactExternalText(input.Labels["alertname"], 128)
 	if alertName == "" {
@@ -328,7 +328,7 @@ func normalizeAlert(input alert, targets []Target) (incidentv3mysql.SignalInput,
 	if summary == "" {
 		summary = bounded(alertName+" "+string(status), maxSummaryBytes)
 	}
-	return incidentv3mysql.SignalInput{
+	return incidentstore.SignalInput{
 		Source: alertmanagerSource, SourceEventID: sourceEventID, AlertInstanceKey: instanceKey,
 		CorrelationKey: correlationKey, Fingerprint: fingerprint, Status: status, Severity: severity,
 		Cluster: target.ClusterID, Environment: target.Environment, Namespace: target.Namespace,

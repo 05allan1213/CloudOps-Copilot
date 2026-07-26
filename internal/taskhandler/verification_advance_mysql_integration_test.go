@@ -17,7 +17,7 @@ import (
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
 	baselinepkg "github.com/05allan1213/CloudOps-Copilot/internal/baseline"
 	"github.com/05allan1213/CloudOps-Copilot/internal/infra/baselinemysql"
-	incidentmysql "github.com/05allan1213/CloudOps-Copilot/internal/infra/incidentmysql"
+	remediationmysql "github.com/05allan1213/CloudOps-Copilot/internal/infra/remediationmysql"
 	"github.com/05allan1213/CloudOps-Copilot/internal/migration"
 	"github.com/05allan1213/CloudOps-Copilot/internal/remediation"
 	"github.com/05allan1213/CloudOps-Copilot/internal/verification"
@@ -91,12 +91,12 @@ func TestMySQLVerificationAdvanceTimeoutRequeuesInvestigation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assertVerificationIntegrationValue(t, ctx, db, "SELECT v3_status FROM verification_runs WHERE id = ?", "timed_out", runID)
+	assertVerificationIntegrationValue(t, ctx, db, "SELECT status FROM verification_runs WHERE id = ?", "timed_out", runID)
 	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM verification_checks WHERE verification_run_id = ? AND status = 'timed_out'", 1, runID)
 	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM verification_runs WHERE id = ? AND completed_at IS NOT NULL AND common_window_completed_at IS NULL", 1, runID)
 	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM verification_samples WHERE verification_run_id = ? AND status = 'timed_out'", 1, runID)
 	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM evidence_items WHERE incident_id = ? AND cycle_no = 1 AND evidence_contract_version = 1 AND producer_type = 'verification_check'", 1, incidentID)
-	assertVerificationIntegrationValue(t, ctx, db, "SELECT v3_status FROM incidents WHERE id = ?", "investigating", incidentID)
+	assertVerificationIntegrationValue(t, ctx, db, "SELECT status FROM incidents WHERE id = ?", "investigating", incidentID)
 	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM async_tasks WHERE incident_id = ? AND cycle_no = 1 AND transition = 'investigation.start' AND status = 'ready'", 1, incidentID)
 	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM incident_signals WHERE id = ? AND incident_id = ?", 1, signalID, incidentID)
 }
@@ -146,10 +146,10 @@ func TestMySQLVerificationAdvancePassesWithBoundedNoChangeReport(t *testing.T) {
 	for index := 0; index < 50; index++ {
 		metadata, _ := json.Marshal(map[string]any{"sequence": index})
 		if _, err := db.ExecContext(ctx, `INSERT INTO incident_events
- (public_id, incident_id, domain_schema_version, cycle_no, event_schema_version,
-  event_type, idempotency_key, actor_type, actor_id, summary, metadata_json,
-  occurred_at, created_at)
-VALUES (?, ?, 3, 1, 1, 'verification_fixture', ?, 'system', 'integration-test', ?, ?, ?, ?)`,
+	 (public_id, incident_id, cycle_no, event_schema_version,
+	  event_type, idempotency_key, actor_type, actor_id, summary, metadata_json,
+	  occurred_at, created_at)
+	VALUES (?, ?, 1, 1, 'verification_fixture', ?, 'system', 'integration-test', ?, ?, ?, ?)`,
 			uuid.NewString(), incidentID, hashVerificationTask("timeline", index),
 			fmt.Sprintf("fixture event %d", index), metadata, now.Add(time.Duration(index)*time.Microsecond), now); err != nil {
 			t.Fatal(err)
@@ -159,7 +159,7 @@ VALUES (?, ?, 3, 1, 1, 'verification_fixture', ?, 'system', 'integration-test', 
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := verification.CompileV3VerificationPlan(verification.V3CompileInput{
+	plan, err := verification.CompilePlan(verification.CompileInput{
 		TriggerType: "no_change", TargetRevision: strings.Repeat("b", 40), SourceRevision: strings.Repeat("c", 40),
 		ImageDigest: "sha256:" + strings.Repeat("d", 64), GitOpsRevision: strings.Repeat("b", 40),
 		ArgoApplication: "cloudops-demo", ArgoProject: "cloudops-demo", Cluster: "kind-local", Environment: "local",
@@ -194,12 +194,12 @@ VALUES (?, ?, 3, 1, 1, 'verification_fixture', ?, 'system', 'integration-test', 
 		SampledAt: now, QueryValid: true, SourceHealthy: true, RetentionCovered: true,
 		SourceReference: "integration://prometheus/error-rate",
 	}
-	sample := verification.EvaluateV3Observation(checks[selected], observation, now)
+	sample := verification.EvaluateObservation(checks[selected], observation, now)
 	if sample.Status != verification.SamplePassed {
 		t.Fatalf("sample=%+v", sample)
 	}
 	check := checks[selected]
-	if err := verification.ApplyV3Sample(&check, sample, now); err != nil {
+	if err := verification.ApplySample(&check, sample, now); err != nil {
 		t.Fatal(err)
 	}
 	checks[selected] = check
@@ -214,7 +214,7 @@ VALUES (?, ?, 3, 1, 1, 'verification_fixture', ?, 'system', 'integration-test', 
 		TriggerType: "no_change_signal", TriggerSignalID: signalID,
 		SourceRevision: plan.SourceRevision, ImageDigest: plan.ImageDigest, GitOpsRevision: plan.GitOpsRevision,
 		ProfileID: plan.ProfileID, ProfileHash: plan.ProfileHash, ContractVersion: verificationContractVersion,
-		CommonStabilityWindow: verification.V3CommonStabilityWindow,
+		CommonStabilityWindow: verification.CommonStabilityWindow,
 	}
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -251,7 +251,7 @@ VALUES (?, ?, 3, 1, 1, 'verification_fixture', ?, 'system', 'integration-test', 
 	}
 
 	var runStatus, resultSummary, failureReason string
-	if err := db.QueryRowContext(ctx, "SELECT v3_status, result_summary, failure_reason FROM verification_runs WHERE id = ?", runID).Scan(&runStatus, &resultSummary, &failureReason); err != nil {
+	if err := db.QueryRowContext(ctx, "SELECT status, result_summary, failure_reason FROM verification_runs WHERE id = ?", runID).Scan(&runStatus, &resultSummary, &failureReason); err != nil {
 		t.Fatal(err)
 	}
 	if runStatus != "passed" {
@@ -271,7 +271,7 @@ VALUES (?, ?, 3, 1, 1, 'verification_fixture', ?, 'system', 'integration-test', 
 		}
 		t.Fatalf("run=%s summary=%s failure=%s checks=%v", runStatus, resultSummary, failureReason, states)
 	}
-	assertVerificationIntegrationValue(t, ctx, db, "SELECT v3_status FROM incidents WHERE id = ?", "resolved", incidentID)
+	assertVerificationIntegrationValue(t, ctx, db, "SELECT status FROM incidents WHERE id = ?", "resolved", incidentID)
 	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM verification_checks WHERE verification_run_id = ? AND status = 'passed'", 8, runID)
 	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM resolution_reports WHERE incident_id = ? AND verification_run_id = ? AND trigger_signal_id = ?", 1, incidentID, runID, signalID)
 	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM resolution_reports WHERE incident_id = ? AND diagnosis_json IS NULL AND remediation_plan_json IS NULL AND delivery_json IS NULL AND JSON_EXTRACT(evidence_json, '$.evidence_count') = 0 AND JSON_EXTRACT(timeline_json, '$.event_count') = 51 AND JSON_SEARCH(timeline_json, 'one', 'incident_resolved') IS NOT NULL AND CHAR_LENGTH(content_hash) = 64", 1, incidentID)
@@ -320,7 +320,7 @@ func TestMySQLVerificationAdvancePersistsBoundPostDeliveryReport(t *testing.T) {
 	if err := db.QueryRowContext(ctx, "SELECT public_id FROM verification_runs WHERE id = ?", runID).Scan(&runPublicID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(ctx, "UPDATE incidents SET status = 'DIAGNOSING', v3_status = 'investigating', version = 2 WHERE id = ?", incidentID); err != nil {
+	if _, err := db.ExecContext(ctx, "UPDATE incidents SET status = 'investigating', version = 2 WHERE id = ?", incidentID); err != nil {
 		t.Fatal(err)
 	}
 	diagnosisHash := strings.Repeat("f", 64)
@@ -331,11 +331,11 @@ func TestMySQLVerificationAdvancePersistsBoundPostDeliveryReport(t *testing.T) {
 	})
 	agentRunPublicID := uuid.NewString()
 	result, err := db.ExecContext(ctx, `INSERT INTO agent_runs
- (public_id, incident_id, status, model, prompt_version, max_steps, final_diagnosis,
-  failure_code, completed_at, domain_schema_version, v3_status, cycle_no,
-  expected_incident_version)
-VALUES (?, ?, 'COMPLETED', 'fixture-model', 'incident-agent-v3', 1, ?, '', ?, 3,
-        'completed', 1, 2)`, agentRunPublicID, incidentID, diagnosisJSON, now.Add(-time.Minute))
+	 (public_id, incident_id, model, prompt_version, max_steps, final_diagnosis,
+	  failure_code, completed_at, status, cycle_no,
+	  expected_incident_version)
+	VALUES (?, ?, 'fixture-model', 'incident-investigation-fixture', 1, ?, '', ?,
+	        'completed', 1, 2)`, agentRunPublicID, incidentID, diagnosisJSON, now.Add(-time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -345,12 +345,12 @@ VALUES (?, ?, 'COMPLETED', 'fixture-model', 'incident-agent-v3', 1, ?, '', ?, 3,
 	baselineContentHash := sha256Hex(baselineFacts)
 	baselineEvidencePublicID := uuid.NewString()
 	if _, err := db.ExecContext(ctx, `INSERT INTO evidence_items
- (public_id, incident_id, agent_run_id, type, source, producer_type,
-  producer_dedupe_key, resource_ref, query_text, summary, facts_json, result_hash,
-  content_hash, raw_ref, truncated, valid, collected_at, domain_schema_version, cycle_no)
-VALUES (?, ?, ?, 'configuration', 'github', 'agent_step', ?,
+	 (public_id, incident_id, agent_run_id, type, source, producer_type,
+	  producer_dedupe_key, resource_ref, query_text, summary, facts_json, result_hash,
+	  content_hash, raw_ref, truncated, valid, collected_at, cycle_no)
+	VALUES (?, ?, ?, 'configuration', 'github', 'agent_step', ?,
 	        'github://acme/gitops/apps/demo/deployment.yaml', 'exact blob', 'verified missing required env',
-        ?, ?, ?, '', FALSE, TRUE, ?, 3, 1)`, baselineEvidencePublicID, incidentID, agentRunID,
+	        ?, ?, ?, '', FALSE, TRUE, ?, 1)`, baselineEvidencePublicID, incidentID, agentRunID,
 		hashVerificationTask("baseline-evidence", baselineEvidencePublicID), baselineFacts,
 		baselineContentHash, baselineContentHash, now.Add(-time.Minute)); err != nil {
 		t.Fatal(err)
@@ -358,7 +358,7 @@ VALUES (?, ?, ?, 'configuration', 'github', 'agent_step', ?,
 	targetRevision := strings.Repeat("b", 40)
 	sourceRevision := strings.Repeat("c", 40)
 	imageDigest := "sha256:" + strings.Repeat("d", 64)
-	verificationPlan, err := verification.CompileV3VerificationPlan(verification.V3CompileInput{
+	verificationPlan, err := verification.CompilePlan(verification.CompileInput{
 		TriggerType: "post_delivery", Repository: "acme/gitops", PullRequest: 7,
 		TargetRevision: targetRevision, SourceRevision: sourceRevision, ImageDigest: imageDigest, GitOpsRevision: targetRevision,
 		ArgoApplication: "cloudops-demo", ArgoProject: "cloudops-demo", Cluster: "kind-local", Environment: "local",
@@ -373,7 +373,7 @@ VALUES (?, ?, ?, 'configuration', 'github', 'agent_step', ?,
 	if err != nil {
 		t.Fatal(err)
 	}
-	remediationRepository, err := incidentmysql.NewV3RemediationRepository(db)
+	remediationRepository, err := remediationmysql.NewRepository(db)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,24 +386,24 @@ VALUES (?, ?, ?, 'configuration', 'github', 'agent_step', ?,
 		BaseBranch: remediationPlan.TargetBaseBranch, TargetPath: remediationPlan.TargetPath,
 	}, verificationPlan.SourceRevision, verificationPlan.ImageDigest, remediationPlan.LastKnownGoodRevision,
 		remediationPlan.ExpectedPostImageHash, now.Add(-3*time.Minute))
-	if _, err := db.ExecContext(ctx, "UPDATE incidents SET status = 'AWAITING_APPROVAL', v3_status = 'awaiting_approval', version = 3 WHERE id = ?", incidentID); err != nil {
+	if _, err := db.ExecContext(ctx, "UPDATE incidents SET status = 'awaiting_approval', version = 3 WHERE id = ?", incidentID); err != nil {
 		t.Fatal(err)
 	}
-	decision, err := remediation.NewV3Approval(remediationPlan, "github", "operator-login", "operator", "reviewed exact immutable plan", "post-delivery-report-approval", now, now.Add(10*time.Minute))
+	decision, err := remediation.NewApproval(remediationPlan, "local", "owner", "owner", "reviewed exact immutable plan", "post-delivery-report-approval", now, now.Add(10*time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := remediationRepository.RecordDecision(ctx, remediationPlan.PublicID, remediationPlan.RowVersion, &decision); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(ctx, "UPDATE remediation_plans SET status = 'approved', v3_status = 'consumed', row_version = row_version + 1 WHERE id = ?", remediationPlan.ID); err != nil {
+	if _, err := db.ExecContext(ctx, "UPDATE remediation_plans SET status = 'consumed', row_version = row_version + 1 WHERE id = ?", remediationPlan.ID); err != nil {
 		t.Fatal(err)
 	}
 	changePublicID := uuid.NewString()
 	result, err = db.ExecContext(ctx, `INSERT INTO change_requests
- (public_id, plan_id, domain_schema_version, incident_id, cycle_no, repository,
-  base_revision, head_branch, commit_sha, pr_number, pr_url, status, v3_status,
-  write_phase, ci_status, pr_state, merged_commit_sha, target_revision,
+	 (public_id, plan_id, incident_id, cycle_no, repository,
+	  base_revision, head_branch, commit_sha, pr_number, pr_url, status,
+	  operation_step, ci_status, pr_state, merged_commit_sha, target_revision,
   argocd_application, argocd_project, detected_revision, argocd_sync_status,
   argocd_operation_phase, argocd_health_status, resource_health_json,
   cluster, environment, namespace, workload_kind, workload_name,
@@ -411,8 +411,8 @@ VALUES (?, ?, ?, 'configuration', 'github', 'agent_step', ?,
   updated_replicas, available_replicas, unavailable_replicas, delivery_started_at,
   delivery_deadline_at, delivery_completed_at, last_observed_at, idempotency_key,
   logical_operation_key, row_version, expected_subject_version)
-VALUES (?, ?, 3, ?, 1, 'acme/gitops', ?, 'cloudops/restore-required-env', ?, 7,
-        'https://github.example/acme/gitops/pull/7', 'delivered', 'delivered', 'observe',
+	VALUES (?, ?, ?, 1, 'acme/gitops', ?, 'cloudops/restore-required-env', ?, 7,
+	        'https://github.example/acme/gitops/pull/7', 'delivered', 'observe',
         'passing', 'closed', ?, ?, 'cloudops-demo', 'cloudops-demo', ?, 'Synced',
         'Succeeded', 'Healthy', JSON_ARRAY(JSON_OBJECT('kind','Deployment','health','Healthy')),
 	        'kind-local', 'local', 'demo', 'Deployment', 'demo',
@@ -442,7 +442,7 @@ VALUES (?, ?, 3, ?, 1, 'acme/gitops', ?, 'cloudops/restore-required-env', ?, 7,
 		t.Fatal(err)
 	}
 	if _, err := db.ExecContext(ctx, `UPDATE verification_runs
-SET remediation_plan_id = ?, change_request_id = ?, status = 'running', v3_status = 'running',
+	SET remediation_plan_id = ?, change_request_id = ?, status = 'running',
     trigger_type = 'post_delivery', trigger_signal_id = NULL, target_revision = ?,
     source_revision = ?, image_digest = ?, gitops_revision = ?, plan_json = ?,
     verification_profile_version = 1, verification_profile_hash = ?,
@@ -458,7 +458,7 @@ WHERE id = ?`, remediationPlan.ID, changeID, verificationPlan.TargetRevision,
 	}
 	insertVerificationIntegrationChecks(t, ctx, db, incidentID, runID, verificationPlan, now)
 	primePassingVerificationSamples(t, ctx, db, incidentID, runID, verificationPlan, verification.CheckMetricErrorRateBelow, now)
-	if _, err := db.ExecContext(ctx, "UPDATE incidents SET status = 'VERIFYING', v3_status = 'verifying', version = 4 WHERE id = ?", incidentID); err != nil {
+	if _, err := db.ExecContext(ctx, "UPDATE incidents SET status = 'verifying', version = 4 WHERE id = ?", incidentID); err != nil {
 		t.Fatal(err)
 	}
 	task := asyncjob.Task{IncidentID: incidentID, CycleNo: 1, SubjectID: runID, ExpectedSubjectVersion: 1}
@@ -471,9 +471,9 @@ WHERE id = ?`, remediationPlan.ID, changeID, verificationPlan.TargetRevision,
 		t.Fatal("metric_error_rate_below check is missing")
 	}
 	observation := verification.Observation{Status: verification.ObservationAvailable, Value: .001, Denominator: 50, SampleCount: 50, SampledAt: now, QueryValid: true, SourceHealthy: true, RetentionCovered: true, SourceReference: "integration://prometheus/error-rate"}
-	sample := verification.EvaluateV3Observation(checks[selected], observation, now)
+	sample := verification.EvaluateObservation(checks[selected], observation, now)
 	check := checks[selected]
-	if sample.Status != verification.SamplePassed || verification.ApplyV3Sample(&check, sample, now) != nil {
+	if sample.Status != verification.SamplePassed || verification.ApplySample(&check, sample, now) != nil {
 		t.Fatalf("sample=%+v check=%+v", sample, check)
 	}
 	checks[selected] = check
@@ -483,7 +483,7 @@ WHERE id = ?`, remediationPlan.ID, changeID, verificationPlan.TargetRevision,
 		Checks: checks, CheckID: check.PublicID, Now: now, CycleNo: 1, IncidentVersion: 4, IncidentStatus: "verifying",
 		TriggerType: "post_delivery", RemediationPlanID: remediationPlan.ID, ChangeRequestID: changeID,
 		SourceRevision: verificationPlan.SourceRevision, ImageDigest: verificationPlan.ImageDigest, GitOpsRevision: verificationPlan.GitOpsRevision,
-		ProfileID: verificationPlan.ProfileID, ProfileHash: verificationPlan.ProfileHash, ContractVersion: verificationContractVersion, CommonStabilityWindow: verification.V3CommonStabilityWindow,
+		ProfileID: verificationPlan.ProfileID, ProfileHash: verificationPlan.ProfileHash, ContractVersion: verificationContractVersion, CommonStabilityWindow: verification.CommonStabilityWindow,
 	}
 	tasks, err := asyncjob.NewRepository(db)
 	if err != nil {
@@ -495,8 +495,8 @@ WHERE id = ?`, remediationPlan.ID, changeID, verificationPlan.TargetRevision,
 		assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM deployment_baselines WHERE status = 'active' AND id = ?", 1, oldBaseline.BaselineID)
 		assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM deployment_baselines", 1)
 		assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM baseline_observations", 7)
-		assertVerificationIntegrationValue(t, ctx, db, "SELECT v3_status FROM verification_runs WHERE id = ?", "running", runID)
-		assertVerificationIntegrationValue(t, ctx, db, "SELECT v3_status FROM incidents WHERE id = ?", "verifying", incidentID)
+		assertVerificationIntegrationValue(t, ctx, db, "SELECT status FROM verification_runs WHERE id = ?", "running", runID)
+		assertVerificationIntegrationValue(t, ctx, db, "SELECT status FROM incidents WHERE id = ?", "verifying", incidentID)
 		assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM resolution_reports WHERE incident_id = ?", 0, incidentID)
 	}
 	if _, err := db.ExecContext(ctx, `CREATE TRIGGER fail_promoted_baseline_observation
@@ -549,8 +549,8 @@ SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'forced resolution report rollback'`)
 		t.Fatal(err)
 	}
 
-	assertVerificationIntegrationValue(t, ctx, db, "SELECT v3_status FROM verification_runs WHERE id = ?", "passed", runID)
-	assertVerificationIntegrationValue(t, ctx, db, "SELECT v3_status FROM incidents WHERE id = ?", "resolved", incidentID)
+	assertVerificationIntegrationValue(t, ctx, db, "SELECT status FROM verification_runs WHERE id = ?", "passed", runID)
+	assertVerificationIntegrationValue(t, ctx, db, "SELECT status FROM incidents WHERE id = ?", "resolved", incidentID)
 	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM verification_checks WHERE verification_run_id = ? AND status = 'passed'", 10, runID)
 	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM deployment_baselines", 2)
 	assertVerificationIntegrationCount(t, ctx, db, "SELECT COUNT(*) FROM deployment_baselines WHERE id = ? AND status = 'superseded'", 1, oldBaseline.BaselineID)
@@ -605,14 +605,14 @@ func (verificationIntegrationReport) PersistIn(context.Context, asyncjob.DBTX, a
 func insertVerificationIntegrationFixture(t *testing.T, ctx context.Context, db *sql.DB, now time.Time) (uint64, uint64, uint64) {
 	t.Helper()
 	result, err := db.ExecContext(ctx, `INSERT INTO incidents
- (public_id, fingerprint, correlation_key, cluster, namespace, service_name, environment,
-  target_kind, target_name, severity, status, summary, first_seen_at, last_seen_at,
-  version, domain_schema_version, v3_status, cycle_no, needs_attention,
-  correlation_key_version, created_at, updated_at)
-VALUES (?, 'verification-fingerprint', 'sha256:verification-correlation', 'kind-local',
+	 (public_id, fingerprint, correlation_key, cluster, namespace, service_name, environment,
+	  target_kind, target_name, severity, summary, first_seen_at, last_seen_at,
+	  version, status, cycle_no, needs_attention,
+	  correlation_key_version, created_at, updated_at)
+	VALUES (?, 'verification-fingerprint', 'sha256:verification-correlation', 'kind-local',
 	        'demo', 'demo', 'local', 'Deployment', 'demo',
-        'critical', 'VERIFYING', 'verification integration fixture', ?, ?, 1, 3,
-        'verifying', 1, FALSE, 2, ?, ?)`, uuid.NewString(), now.Add(-10*time.Minute), now, now, now)
+	        'critical', 'verification integration fixture', ?, ?, 1,
+	        'verifying', 1, FALSE, 2, ?, ?)`, uuid.NewString(), now.Add(-10*time.Minute), now, now, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -620,12 +620,12 @@ VALUES (?, 'verification-fingerprint', 'sha256:verification-correlation', 'kind-
 	incidentID := uint64(incidentID64)
 	hash := strings.Repeat("a", 64)
 	if _, err := db.ExecContext(ctx, `INSERT INTO incident_signals
- (public_id, incident_id, domain_schema_version, cycle_no, canonical_schema_version,
-  correlation_key_version, source, source_event_id, fingerprint, alert_instance_key,
+	 (public_id, incident_id, cycle_no, canonical_schema_version,
+	  correlation_key_version, source, source_event_id, fingerprint, alert_instance_key,
   status, severity, cluster, namespace, service_name, environment, target_kind,
   target_name, category, occurred_at, starts_at, ends_at, received_at, summary,
   labels_json, annotations_json, raw_payload, created_at)
-VALUES (?, ?, 3, 1, 2, 2, 'alertmanager', 'verification-firing',
+	VALUES (?, ?, 1, 2, 2, 'alertmanager', 'verification-firing',
         'verification-fingerprint', ?, 'firing', 'critical', 'kind-local',
 	        'demo', 'demo', 'local', 'Deployment', 'demo',
         'availability', ?, ?, NULL, ?, 'firing signal', JSON_OBJECT(), JSON_OBJECT(),
@@ -633,12 +633,12 @@ VALUES (?, ?, 3, 1, 2, 2, 'alertmanager', 'verification-firing',
 		t.Fatal(err)
 	}
 	result, err = db.ExecContext(ctx, `INSERT INTO incident_signals
- (public_id, incident_id, domain_schema_version, cycle_no, canonical_schema_version,
+	 (public_id, incident_id, cycle_no, canonical_schema_version,
   correlation_key_version, source, source_event_id, fingerprint, alert_instance_key,
   status, severity, cluster, namespace, service_name, environment, target_kind,
   target_name, category, occurred_at, starts_at, ends_at, received_at, summary,
   labels_json, annotations_json, raw_payload, created_at)
-VALUES (?, ?, 3, 1, 2, 2, 'alertmanager', 'verification-resolved',
+	VALUES (?, ?, 1, 2, 2, 'alertmanager', 'verification-resolved',
         'verification-fingerprint', ?, 'resolved', 'critical', 'kind-local',
 	        'demo', 'demo', 'local', 'Deployment', 'demo',
         'availability', ?, ?, ?, ?, 'resolved signal', JSON_OBJECT(), JSON_OBJECT(),
@@ -648,7 +648,7 @@ VALUES (?, ?, 3, 1, 2, 2, 'alertmanager', 'verification-resolved',
 	}
 	signalID64, _ := result.LastInsertId()
 	signalID := uint64(signalID64)
-	profile, err := verification.CompileV3VerificationPlan(verification.V3CompileInput{
+	profile, err := verification.CompilePlan(verification.CompileInput{
 		TriggerType:    "no_change",
 		TargetRevision: strings.Repeat("b", 40), SourceRevision: strings.Repeat("c", 40),
 		ImageDigest: "sha256:" + strings.Repeat("d", 64), GitOpsRevision: strings.Repeat("b", 40),
@@ -662,14 +662,14 @@ VALUES (?, ?, 3, 1, 2, 2, 'alertmanager', 'verification-resolved',
 	}
 	planJSON, _ := json.Marshal(profile)
 	result, err = db.ExecContext(ctx, `INSERT INTO verification_runs
- (public_id, incident_id, domain_schema_version, cycle_no, remediation_plan_id,
-  change_request_id, status, v3_status, trigger_type, trigger_signal_id,
+	 (public_id, incident_id, cycle_no, remediation_plan_id,
+	  change_request_id, status, trigger_type, trigger_signal_id,
   target_revision, source_revision, image_digest, gitops_revision, plan_json,
   verification_profile_version, verification_profile_hash,
   verification_contract_version, verification_profile_id, common_stability_window_ms,
   started_at, deadline_at, attempt, row_version, expected_subject_version,
   result_summary, failure_reason, created_at, updated_at)
-VALUES (?, ?, 3, 1, NULL, NULL, 'running', 'running', 'no_change_signal', ?,
+	VALUES (?, ?, 1, NULL, NULL, 'running', 'no_change_signal', ?,
         ?, ?, ?, ?, ?, 1, ?, 1, 'no-change/v1', 60000, ?, ?, 1, 1, 1, '', '', ?, ?)`,
 		uuid.NewString(), incidentID, signalID, profile.TargetRevision, profile.SourceRevision,
 		profile.ImageDigest, profile.GitOpsRevision, planJSON, profile.ProfileHash,
@@ -687,13 +687,13 @@ VALUES (?, ?, 3, 1, NULL, NULL, 'running', 'running', 'no_change_signal', ?,
 			comparison, threshold = spec.Comparison, spec.Threshold
 		}
 		if _, err := db.ExecContext(ctx, `INSERT INTO verification_checks
- (public_id, verification_run_id, domain_schema_version, incident_id, cycle_no,
+	 (public_id, verification_run_id, incident_id, cycle_no,
   check_type, status, required_check, subject_json, expected_json, source_reference,
   lookback_ms, stability_window_ms, timeout_ms, poll_interval_ms,
   check_spec_schema_version, profile_id, template_id, template_version,
   comparison, threshold, source_identity, initial_delay_ms, min_samples,
   sample_unit, failure_mode, attempt_count, created_at, updated_at)
-VALUES (?, ?, 3, ?, 1, ?, 'pending', TRUE, ?, ?, '', ?, ?, ?, ?, 1,
+	VALUES (?, ?, ?, 1, ?, 'pending', TRUE, ?, ?, '', ?, ?, ?, ?, 1,
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`, uuid.NewString(), runID, incidentID,
 			spec.Type, subjectJSON, spec.Expected, spec.Lookback.Milliseconds(),
 			spec.StabilityWindow.Milliseconds(), spec.Timeout.Milliseconds(), spec.PollInterval.Milliseconds(),
@@ -724,7 +724,7 @@ spec:
 		Version: "restore-required-env-policy/v1", Repository: "acme/gitops", BaseBranch: "main",
 		AllowedPath: "apps/demo/deployment.yaml", APIVersion: "apps/v1", Namespace: "demo",
 		Workload: "demo", Container: "demo", EnvKey: "REQUIRED_ENV",
-		MaxDiffBytes: remediation.MaxV3PlanDiffBytes, MaxPostImageBytes: remediation.MaxV3PostImageBytes,
+		MaxDiffBytes: remediation.MaxPlanDiffBytes, MaxPostImageBytes: remediation.MaxPostImageBytes,
 		VerificationVersion: verification.GoldenRequiredEnvProfileID,
 	}
 	createdAt := now.Add(-30 * time.Second).Truncate(time.Microsecond)
@@ -756,10 +756,10 @@ func insertVerificationDeliveryEvidence(t *testing.T, ctx context.Context, db *s
 	contentHash := sha256Hex(facts)
 	producerKey := hashCanonical("delivery.observe", changeRequestPublicID, string(kind), contentHash)
 	if _, err := db.ExecContext(ctx, `INSERT INTO evidence_items
- (public_id, incident_id, domain_schema_version, cycle_no, type, source,
+	 (public_id, incident_id, cycle_no, type, source,
   producer_type, producer_dedupe_key, resource_ref, query_text, summary,
   facts_json, result_hash, content_hash, raw_ref, truncated, valid, collected_at)
-VALUES (?, ?, 3, 1, 'delivery_observation', 'integration', 'delivery.observe', ?,
+	VALUES (?, ?, 1, 'delivery_observation', 'integration', 'delivery.observe', ?,
         ?, '', ?, ?, ?, ?, '', FALSE, TRUE, ?)`, uuid.NewString(), incidentID,
 		producerKey, "change-request:"+changeRequestPublicID, string(kind)+" delivery observation",
 		facts, contentHash, contentHash, collectedAt.UTC()); err != nil {
@@ -777,13 +777,13 @@ func insertVerificationIntegrationChecks(t *testing.T, ctx context.Context, db *
 			comparison, threshold = spec.Comparison, spec.Threshold
 		}
 		if _, err := db.ExecContext(ctx, `INSERT INTO verification_checks
- (public_id, verification_run_id, domain_schema_version, incident_id, cycle_no,
+	 (public_id, verification_run_id, incident_id, cycle_no,
   check_type, status, required_check, subject_json, expected_json, source_reference,
   lookback_ms, stability_window_ms, timeout_ms, poll_interval_ms,
   check_spec_schema_version, profile_id, template_id, template_version,
   comparison, threshold, source_identity, initial_delay_ms, min_samples,
   sample_unit, failure_mode, attempt_count, created_at, updated_at)
-VALUES (?, ?, 3, ?, 1, ?, 'pending', ?, ?, ?, '', ?, ?, ?, ?, 1,
+	VALUES (?, ?, ?, 1, ?, 'pending', ?, ?, ?, '', ?, ?, ?, ?, 1,
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`, uuid.NewString(), runID, incidentID,
 			spec.Type, spec.Required, subjectJSON, spec.Expected, spec.Lookback.Milliseconds(),
 			spec.StabilityWindow.Milliseconds(), spec.Timeout.Milliseconds(), spec.PollInterval.Milliseconds(),
@@ -863,16 +863,16 @@ func primePassingVerificationSamples(t *testing.T, ctx context.Context, db *sql.
 			QueryValid: true, SourceHealthy: true, RetentionCovered: true,
 			SourceReference: "integration://verification/" + string(check.Type),
 		}
-		sample := verification.EvaluateV3Observation(check, observation, sampledAt)
+		sample := verification.EvaluateObservation(check, observation, sampledAt)
 		if sample.Status != verification.SamplePassed {
 			t.Fatalf("prime check %s sample=%+v", check.Type, sample)
 		}
 		contentHash := hashVerificationSample(sample, check, 1)
 		if _, err := db.ExecContext(ctx, `INSERT INTO verification_samples
- (public_id, domain_schema_version, sample_schema_version, incident_id, cycle_no,
-  verification_run_id, verification_check_id, sample_sequence, status, observed_json,
-  source_reference, reason_code, window_start_at, window_end_at, sampled_at, content_hash)
-VALUES (?, 3, 1, ?, 1, ?, ?, 1, 'passed', ?, ?, ?, ?, ?, ?, ?)`,
+	 (public_id, sample_schema_version, incident_id, cycle_no,
+	  verification_run_id, verification_check_id, sample_sequence, status, observed_json,
+	  source_reference, reason_code, window_start_at, window_end_at, sampled_at, content_hash)
+	VALUES (?, 1, ?, 1, ?, ?, 1, 'passed', ?, ?, ?, ?, ?, ?, ?)`,
 			uuid.NewString(), incidentID, runID, check.ID, sample.Observed, sample.SourceReference,
 			sample.ReasonCode, successSince, sampledAt, sampledAt, contentHash); err != nil {
 			t.Fatal(err)

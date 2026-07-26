@@ -2,15 +2,11 @@
 import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 
-import { redirectToOAuth } from "../../api/client";
-import StateBlock from "../incidents/StateBlock.vue";
 import AppHeader from "./AppHeader.vue";
 import AppSidebar from "./AppSidebar.vue";
 import SidebarMenu from "./SidebarMenu.vue";
-import { useAuthStore } from "../../stores/auth";
 
 const route = useRoute();
-const auth = useAuthStore();
 const mobileNavigationOpen = ref(false);
 const mobileNavigationTrigger = ref<HTMLElement | null>(null);
 
@@ -18,7 +14,6 @@ const pageTitle = computed(() =>
   typeof route.meta.title === "string" ? route.meta.title : "",
 );
 const isFullBleed = computed(() => route.meta.fullBleed === true);
-const authBoundaryState = computed(() => auth.error?.status === 403 ? "forbidden" : "unavailable");
 
 function openMobileNavigation(trigger?: HTMLElement) {
   mobileNavigationTrigger.value = trigger ?? null;
@@ -31,14 +26,6 @@ function closeMobileNavigation() {
 
 function restoreMobileNavigationFocus() {
   mobileNavigationTrigger.value?.focus();
-}
-
-async function retrySession() {
-  try {
-    await auth.loadSession(true);
-  } catch {
-    // The boundary retains the normalized problem and recovery actions.
-  }
 }
 
 watch(
@@ -69,52 +56,7 @@ watch(
         :class="{ 'app-main--full-bleed': isFullBleed }"
         tabindex="-1"
       >
-        <section
-          v-if="auth.loading && !auth.initialized && !auth.error"
-          class="auth-boundary"
-          aria-labelledby="auth-boundary-title"
-        >
-          <h1
-            id="auth-boundary-title"
-            class="visually-hidden"
-          >
-            CloudOps Incident Agent session
-          </h1>
-          <StateBlock
-            state="loading"
-            :heading-level="2"
-            :busy="auth.loading"
-            title="Establishing GitHub session"
-            message="Checking the trusted session and issuing a short-lived CSRF token."
-          />
-        </section>
-        <section
-          v-else-if="auth.error"
-          class="auth-boundary"
-          aria-labelledby="auth-boundary-title"
-        >
-          <h1
-            id="auth-boundary-title"
-            class="visually-hidden"
-          >
-            CloudOps Incident Agent access
-          </h1>
-          <StateBlock
-            :state="authBoundaryState"
-            :heading-level="2"
-            :busy="auth.loading"
-            :title="authBoundaryState === 'forbidden' ? 'Workbench access is forbidden' : 'Workbench session unavailable'"
-            :message="auth.error.message"
-            :request-i-d="auth.error.requestID"
-            :trace-i-d="auth.error.traceID"
-            primary-action-label="Retry Session"
-            secondary-action-label="Re-authenticate"
-            @primary-action="retrySession"
-            @secondary-action="redirectToOAuth"
-          />
-        </section>
         <RouterView
-          v-else
           v-slot="{ Component }"
         >
           <Transition
@@ -136,7 +78,7 @@ watch(
     class="mobile-navigation"
     direction="ltr"
     size="min(86vw, 320px)"
-    title="CloudOps Incident Agent navigation"
+    title="CloudOps navigation"
     :append-to-body="true"
     :lock-scroll="true"
     :modal="true"
@@ -217,14 +159,6 @@ watch(
 .app-main--full-bleed {
   padding: 0;
   overflow: hidden;
-}
-
-.auth-boundary {
-  display: grid;
-  width: min(100%, 760px);
-  min-height: 40vh;
-  align-content: center;
-  margin: 0 auto;
 }
 
 .mobile-navigation-context {

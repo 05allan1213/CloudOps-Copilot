@@ -33,13 +33,11 @@ SELECT e.content_hash, e.valid, e.truncated,
            WHERE s.superseded_evidence_id = e.id
              AND s.incident_id = e.incident_id
              AND s.cycle_no = e.cycle_no
-             AND s.domain_schema_version = 3
        ) AS superseded
 FROM evidence_items e
 WHERE e.public_id = ?
   AND e.incident_id = ?
-  AND e.cycle_no = ?
-  AND e.domain_schema_version = 3`
+  AND e.cycle_no = ?`
 
 const approvedEvidenceAuthorityForUpdateSQL = approvedEvidenceAuthoritySQL + "\nFOR UPDATE"
 

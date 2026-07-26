@@ -11,7 +11,7 @@ func TestAPIBinaryLinksProductionV3AlertmanagerIngress(t *testing.T) {
 	dependencies := processDependencies(t, "./cmd/cloudops-api")
 	for _, required := range []string{
 		rootModulePath + "/internal/alertmanageringress",
-		rootModulePath + "/internal/infra/incidentv3mysql",
+		rootModulePath + "/internal/infra/incidentstore",
 	} {
 		if !dependencies[required] {
 			t.Errorf("cloudops-api does not compile required V3 ingress capability %s", required)
@@ -37,7 +37,7 @@ func TestAPIBinaryLinksProductionV3AlertmanagerIngress(t *testing.T) {
 	symbols := string(output)
 	for _, required := range []string{
 		"internal/alertmanageringress.(*Handler).Webhook",
-		"internal/infra/incidentv3mysql.(*Store).IngestBatch",
+		"internal/infra/incidentstore.(*Store).IngestBatch",
 		"internal/router.NewInternalRouter",
 	} {
 		if !strings.Contains(symbols, required) {

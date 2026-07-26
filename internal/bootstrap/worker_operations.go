@@ -16,7 +16,7 @@ import (
 )
 
 // WorkerOperationDependencies is the complete provider surface required by
-// the five subject-bound V3 operations. Every dependency is a real bounded
+// the five subject-bound operations. Every dependency is a real bounded
 // port; assembly deliberately supplies no no-op, forced-dead, or legacy
 // wrapper fallback.
 type WorkerOperationDependencies struct {
@@ -26,7 +26,7 @@ type WorkerOperationDependencies struct {
 	RemediationLoader taskhandler.RemediationPrepareLoader
 	RemediationStore  taskhandler.RemediationPrepareStore
 	GitHubReader      remediation.ExactGitReader
-	GitHubWriter      remediation.PhasedGitHubWriter
+	GitHubWriter      remediation.ReconciledGitHubWriter
 
 	DeliveryObserver         taskhandler.DeliveryObserver
 	VerificationObservations taskhandler.VerificationObservationSource

@@ -68,12 +68,16 @@ func TestRAGEval_AccuracyThreshold(t *testing.T) {
 		t.Logf("  %s: %d/%d (%.1f%%)", cat, cr.Correct, cr.Total, cr.Accuracy*100)
 	}
 
-	if result.Top1Accuracy < 0.60 {
-		t.Errorf("RAG Top-1 accuracy %.1f%% is below threshold 60%%", result.Top1Accuracy*100)
+	if result.Top1Accuracy < 0.95 {
+		t.Errorf("RAG Top-1 accuracy %.1f%% is below threshold 95%%", result.Top1Accuracy*100)
 	}
 
 	preciseResult := result.ByCategory["precise"]
-	if preciseResult.Total > 0 && preciseResult.Accuracy < 0.80 {
-		t.Errorf("RAG precise category accuracy %.1f%% is below threshold 80%%", preciseResult.Accuracy*100)
+	if preciseResult.Total > 0 && preciseResult.Accuracy < 1.0 {
+		t.Errorf("RAG precise category accuracy %.1f%% is below threshold 100%%", preciseResult.Accuracy*100)
+	}
+	keywordResult := result.ByCategory["keyword"]
+	if keywordResult.Total > 0 && keywordResult.Accuracy < 0.85 {
+		t.Errorf("RAG keyword category accuracy %.1f%% is below threshold 85%%", keywordResult.Accuracy*100)
 	}
 }

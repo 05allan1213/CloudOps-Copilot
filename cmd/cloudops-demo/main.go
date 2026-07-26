@@ -1,4 +1,4 @@
-// Command cloudops-demo runs the bounded workload used by the V3 golden flow.
+// Command cloudops-demo runs the bounded Demonstration Scenario workload.
 package main
 
 import (
@@ -39,7 +39,7 @@ func main() {
 	revision := env("SOURCE_REVISION", sourceRevision)
 	shutdownTrace, err := tracer.Init(ctx, tracer.Config{
 		ServiceName: "demo", ServiceVersion: serviceVersion,
-		Environment: env("DEPLOYMENT_ENVIRONMENT", "local-demo"), Cluster: env("K8S_CLUSTER_NAME", "kind-cloudops-v3"),
+		Environment: env("DEPLOYMENT_ENVIRONMENT", "local-demo"), Cluster: env("K8S_CLUSTER_NAME", "cloudops-local"),
 		Namespace: env("K8S_NAMESPACE", "demo"), PodUID: env("K8S_POD_UID", "unknown"), WorkloadKind: "Deployment", WorkloadName: "demo",
 		SourceRevision: revision, OTLPEndpoint: strings.TrimSpace(os.Getenv("TRACE_OTLP_ENDPOINT")), SampleRate: sampleRate,
 	})

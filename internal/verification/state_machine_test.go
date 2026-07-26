@@ -33,7 +33,7 @@ func TestRunAndCheckTerminalStatesAreImmutable(t *testing.T) {
 	}
 }
 
-func TestApplySampleRequiresContinuousStability(t *testing.T) {
+func TestApplySampleRecordsContinuousStabilityForCommonWindow(t *testing.T) {
 	base := time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)
 	check := Check{Status: CheckPending, StabilityWindow: 20 * time.Second}
 	passed := Sample{Status: SamplePassed, Observed: json.RawMessage(`{"healthy":true}`)}
@@ -46,11 +46,11 @@ func TestApplySampleRequiresContinuousStability(t *testing.T) {
 	if err := ApplySample(&check, passed, base.Add(20*time.Second)); err != nil || check.Status != CheckRunning {
 		t.Fatalf("second first-success must restart window: status=%s err=%v", check.Status, err)
 	}
-	if err := ApplySample(&check, passed, base.Add(40*time.Second)); err != nil || check.Status != CheckPassed || check.PassedAt == nil {
-		t.Fatalf("continuous window must pass: status=%s err=%v", check.Status, err)
+	if err := ApplySample(&check, passed, base.Add(40*time.Second)); err != nil || check.Status != CheckRunning || check.ConsecutiveSuccessSince == nil {
+		t.Fatalf("continuous success must remain available to the common window: status=%s err=%v", check.Status, err)
 	}
-	if err := ApplySample(&check, passed, base.Add(time.Minute)); err == nil {
-		t.Fatal("passed check must reject replay")
+	if err := ApplySample(&check, passed, base.Add(time.Minute)); err != nil {
+		t.Fatalf("revalidation inside the run must remain accepted: %v", err)
 	}
 }
 

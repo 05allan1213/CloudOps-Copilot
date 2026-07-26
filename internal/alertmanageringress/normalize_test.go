@@ -9,7 +9,7 @@ import (
 	"unicode/utf8"
 )
 
-func TestCanonicalV2IdentitiesAndMultiAlertCorrelation(t *testing.T) {
+func TestCanonicalIdentitiesAndMultiAlertCorrelation(t *testing.T) {
 	targets := mustTargets(t)
 	first := testAlert("firing", "abc123", "WorkloadNotReady", "critical")
 	second := testAlert("firing", "def456", "HighErrorRate", "warning")
@@ -21,12 +21,12 @@ func TestCanonicalV2IdentitiesAndMultiAlertCorrelation(t *testing.T) {
 		t.Fatalf("batch=%+v", batch)
 	}
 	left, right := batch.Signals[0], batch.Signals[1]
-	if left.SourceEventID != "v2:bb3466ad8f87503540c45fcc86c2f8e859e3f62acf31d1817481a1ff3bcae7ed" ||
+	if left.SourceEventID != "bb3466ad8f87503540c45fcc86c2f8e859e3f62acf31d1817481a1ff3bcae7ed" ||
 		left.AlertInstanceKey != "725b3a18075a23308e7ef19160fcde920f1463257b4f3f842ac0bdfff79f1452" ||
-		left.CorrelationKey != "v2:6cc0330d16aa0610192c1880497fca6c315222d55822271ea2f47d5b88a7c037" {
+		left.CorrelationKey != "f8bb47d6db6bc65e9817e6323a03454042285312a1a6c110bb05ae7f493076e6" {
 		t.Fatalf("canonical identity vector source=%q instance=%q correlation=%q", left.SourceEventID, left.AlertInstanceKey, left.CorrelationKey)
 	}
-	if left.CorrelationKey != right.CorrelationKey || !strings.HasPrefix(left.CorrelationKey, "v2:") || len(left.CorrelationKey) != 67 {
+	if left.CorrelationKey != right.CorrelationKey || len(left.CorrelationKey) != 64 {
 		t.Fatalf("correlation identities=%q/%q", left.CorrelationKey, right.CorrelationKey)
 	}
 	if left.SourceEventID == right.SourceEventID || left.AlertInstanceKey == right.AlertInstanceKey {
@@ -37,7 +37,7 @@ func TestCanonicalV2IdentitiesAndMultiAlertCorrelation(t *testing.T) {
 	}
 }
 
-func TestAlertmanagerV33NotificationReasonIsAccepted(t *testing.T) {
+func TestAlertmanagerVersion033NotificationReasonIsAccepted(t *testing.T) {
 	input := testEnvelope(testAlert("firing", "abc123", "WorkloadNotReady", "critical"))
 	input.NotificationReason = "new_group"
 	decoded, err := decodeEnvelope(bytes.NewReader(marshalEnvelope(t, input)))
@@ -217,7 +217,7 @@ func testAlert(status, fingerprint, alertName, severity string) alert {
 		Status: status, Fingerprint: fingerprint,
 		StartsAt: time.Date(2026, 7, 18, 12, 0, 0, 123456000, time.UTC),
 		Labels: map[string]string{
-			"alertname": alertName, "severity": severity, "cluster": "kind-cloudops-v3",
+			"alertname": alertName, "severity": severity, "cluster": "kind-cloudops-local",
 			"environment": "local-demo", "namespace": "demo",
 			"service": "demo", "deployment": "demo",
 		},

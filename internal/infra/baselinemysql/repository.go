@@ -126,15 +126,15 @@ func (r *Repository) activateIn(ctx context.Context, tx baseline.Transaction, sn
 
 	publicID := snapshot.PublicID()
 	result, err := tx.ExecContext(ctx, `
-INSERT INTO deployment_baselines (
-    public_id, domain_schema_version, baseline_schema_version,
+	INSERT INTO deployment_baselines (
+	    public_id, baseline_schema_version,
     target_identity_hash, cluster, environment, namespace, workload_kind,
     workload_name, container_name, repository, base_branch, target_path,
     source_revision, image_digest, gitops_revision, config_hash,
     verification_policy_version, verification_hash, status, row_version,
     verified_at, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 1, ?, NOW(6), NOW(6))`,
-		publicID, baseline.DomainSchemaVersion, baseline.BaselineSchemaVersion,
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 1, ?, NOW(6), NOW(6))`,
+		publicID, baseline.BaselineSchemaVersion,
 		snapshot.TargetIdentityHash, snapshot.Target.Cluster, snapshot.Target.Environment,
 		snapshot.Target.Namespace, "Deployment", snapshot.Target.WorkloadName,
 		snapshot.Target.ContainerName, snapshot.Target.Repository, snapshot.Target.BaseBranch,
@@ -156,13 +156,13 @@ INSERT INTO deployment_baselines (
 	observationIDs := make([]uint64, 0, len(snapshot.Observations))
 	for sequence, observation := range snapshot.Observations {
 		result, err := tx.ExecContext(ctx, `
-INSERT INTO baseline_observations (
-    public_id, domain_schema_version, observation_schema_version,
+	INSERT INTO baseline_observations (
+	    public_id, observation_schema_version,
     baseline_id, sequence_no, observation_type, source_identity,
     observed_json, content_hash, dedupe_key, observed_at, created_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(6))`,
-			observationPublicID(publicID, observation), baseline.DomainSchemaVersion,
-			baseline.ObservationSchemaVersion, baselineID, sequence+1, observation.Type,
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(6))`,
+			observationPublicID(publicID, observation), baseline.ObservationSchemaVersion,
+			baselineID, sequence+1, observation.Type,
 			observation.SourceIdentity, []byte(observation.ObservedJSON), observation.ContentHash,
 			observation.DedupeKey, observation.ObservedAt.UTC(),
 		)
@@ -208,31 +208,30 @@ func replayActivation(ctx context.Context, tx baseline.Transaction, exact *basel
 }
 
 type baselineRow struct {
-	ID, RowVersion                             uint64
-	DomainSchemaVersion, BaselineSchemaVersion uint16
-	PublicID, Status                           string
-	TargetIdentityHash                         string
-	Target                                     baseline.Target
-	SourceRevision                             string
-	ImageDigest, GitOpsRevision                string
-	ConfigHash, PolicyVersion                  string
-	VerificationHash                           string
-	VerifiedAt                                 time.Time
+	ID, RowVersion              uint64
+	BaselineSchemaVersion       uint16
+	PublicID, Status            string
+	TargetIdentityHash          string
+	Target                      baseline.Target
+	SourceRevision              string
+	ImageDigest, GitOpsRevision string
+	ConfigHash, PolicyVersion   string
+	VerificationHash            string
+	VerifiedAt                  time.Time
 }
 
 func loadExact(ctx context.Context, tx baseline.Transaction, snapshot baseline.Snapshot) (*baselineRow, error) {
 	row := &baselineRow{}
 	err := tx.QueryRowContext(ctx, `
-SELECT id, public_id, domain_schema_version, baseline_schema_version, status, row_version,
+	SELECT id, public_id, baseline_schema_version, status, row_version,
        target_identity_hash, cluster, environment, namespace, workload_kind, workload_name,
        container_name, repository, base_branch, target_path, source_revision, image_digest,
        gitops_revision, config_hash, verification_policy_version, verification_hash, verified_at
 FROM deployment_baselines
-WHERE domain_schema_version = 3
-  AND target_identity_hash = ? AND gitops_revision = ? AND config_hash = ?
+	WHERE target_identity_hash = ? AND gitops_revision = ? AND config_hash = ?
 LIMIT 1 FOR UPDATE`,
 		snapshot.TargetIdentityHash, snapshot.GitOpsRevision, snapshot.ConfigHash,
-	).Scan(&row.ID, &row.PublicID, &row.DomainSchemaVersion, &row.BaselineSchemaVersion,
+	).Scan(&row.ID, &row.PublicID, &row.BaselineSchemaVersion,
 		&row.Status, &row.RowVersion, &row.TargetIdentityHash, &row.Target.Cluster,
 		&row.Target.Environment, &row.Target.Namespace, &row.Target.WorkloadKind,
 		&row.Target.WorkloadName, &row.Target.ContainerName, &row.Target.Repository,
@@ -251,14 +250,14 @@ LIMIT 1 FOR UPDATE`,
 func loadActive(ctx context.Context, tx baseline.Transaction, targetHash string) (*baselineRow, error) {
 	row := &baselineRow{}
 	err := tx.QueryRowContext(ctx, `
-SELECT id, public_id, domain_schema_version, baseline_schema_version, status, row_version,
+	SELECT id, public_id, baseline_schema_version, status, row_version,
        target_identity_hash, cluster, environment, namespace, workload_kind, workload_name,
        container_name, repository, base_branch, target_path, source_revision, image_digest,
        gitops_revision, config_hash, verification_policy_version, verification_hash, verified_at
 FROM deployment_baselines
-WHERE domain_schema_version = 3 AND target_identity_hash = ? AND status = 'active'
+	WHERE target_identity_hash = ? AND status = 'active'
 LIMIT 1 FOR UPDATE`, targetHash).Scan(
-		&row.ID, &row.PublicID, &row.DomainSchemaVersion, &row.BaselineSchemaVersion,
+		&row.ID, &row.PublicID, &row.BaselineSchemaVersion,
 		&row.Status, &row.RowVersion, &row.TargetIdentityHash, &row.Target.Cluster,
 		&row.Target.Environment, &row.Target.Namespace, &row.Target.WorkloadKind,
 		&row.Target.WorkloadName, &row.Target.ContainerName, &row.Target.Repository,
@@ -292,8 +291,8 @@ WHERE id = ? AND status = 'active' AND row_version = ?`,
 }
 
 func compareExisting(row baselineRow, snapshot baseline.Snapshot) error {
-	if row.Status != "active" || row.DomainSchemaVersion != baseline.DomainSchemaVersion ||
-		row.BaselineSchemaVersion != baseline.BaselineSchemaVersion || row.RowVersion != 1 || row.PublicID != snapshot.PublicID() ||
+	if row.Status != "active" || row.BaselineSchemaVersion != baseline.BaselineSchemaVersion ||
+		row.RowVersion != 1 || row.PublicID != snapshot.PublicID() ||
 		row.TargetIdentityHash != snapshot.TargetIdentityHash || row.Target != snapshot.Target ||
 		row.SourceRevision != snapshot.SourceRevision || row.ImageDigest != snapshot.ImageDigest ||
 		row.GitOpsRevision != snapshot.GitOpsRevision || row.ConfigHash != snapshot.ConfigHash ||
@@ -306,7 +305,7 @@ func compareExisting(row baselineRow, snapshot baseline.Snapshot) error {
 
 func loadObservationIDs(ctx context.Context, tx baseline.Transaction, rowID uint64, snapshot baseline.Snapshot) (ids []uint64, retErr error) {
 	rows, err := tx.QueryContext(ctx, `
-SELECT id, public_id, domain_schema_version, observation_schema_version, sequence_no,
+	SELECT id, public_id, observation_schema_version, sequence_no,
        observation_type, source_identity, CAST(observed_json AS CHAR), content_hash,
        dedupe_key, observed_at
 FROM baseline_observations
@@ -324,14 +323,14 @@ ORDER BY sequence_no`, rowID)
 	index := 0
 	for rows.Next() {
 		var (
-			id, sequence                            uint64
-			domainVersion, observationSchemaVersion uint16
-			publicID, typ, source                   string
-			observed                                []byte
-			contentHash, dedupeKey                  string
-			observedAt                              time.Time
+			id, sequence             uint64
+			observationSchemaVersion uint16
+			publicID, typ, source    string
+			observed                 []byte
+			contentHash, dedupeKey   string
+			observedAt               time.Time
 		)
-		if err := rows.Scan(&id, &publicID, &domainVersion, &observationSchemaVersion,
+		if err := rows.Scan(&id, &publicID, &observationSchemaVersion,
 			&sequence, &typ, &source, &observed, &contentHash, &dedupeKey, &observedAt); err != nil {
 			return nil, fmt.Errorf("scan existing baseline observation: %w", err)
 		}
@@ -339,7 +338,7 @@ ORDER BY sequence_no`, rowID)
 			return nil, fmt.Errorf("%w: existing baseline has extra observations", baseline.ErrConflict)
 		}
 		expected := snapshot.Observations[index]
-		if domainVersion != baseline.DomainSchemaVersion || observationSchemaVersion != baseline.ObservationSchemaVersion ||
+		if observationSchemaVersion != baseline.ObservationSchemaVersion ||
 			sequence != uint64(index+1) || publicID != observationPublicID(snapshot.PublicID(), expected) ||
 			typ != string(expected.Type) || source != expected.SourceIdentity || !sameJSON(observed, expected.ObservedJSON) ||
 			contentHash != expected.ContentHash || dedupeKey != expected.DedupeKey || !sameMySQLTime(observedAt, expected.ObservedAt) {

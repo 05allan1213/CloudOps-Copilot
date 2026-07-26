@@ -681,7 +681,7 @@ SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'reject async task dead event'`); err
 			t.Fatal(err)
 		}
 		if _, err := db.ExecContext(ctx, `UPDATE incidents
-SET status = 'CLOSED', v3_status = 'closed', terminal_at = NOW(6), version = version + 1
+SET status = 'closed', terminal_at = NOW(6), version = version + 1
 WHERE id = ?`, poisonIncidentID); err != nil {
 			t.Fatal(err)
 		}
@@ -706,34 +706,35 @@ WHERE id = ?`, poisonIncidentID); err != nil {
 		}
 	})
 
-	t.Run("legacy Incident poison task records compatible history and does not block", func(t *testing.T) {
-		legacyPublicID := uuid.NewString()
-		legacyResult, err := db.ExecContext(ctx, `INSERT INTO incidents (
-public_id, fingerprint, correlation_key, cluster, namespace, service_name,
-environment, target_kind, target_name, severity, status, summary,
-first_seen_at, last_seen_at, version
-) VALUES (?, ?, ?, 'cluster', 'namespace', 'legacy-service', 'test', 'Deployment',
-          'legacy-workload', 'warning', 'DETECTED', 'legacy integration incident',
-          NOW(6), NOW(6), 1)`, legacyPublicID, "legacy-fingerprint-"+legacyPublicID, "legacy:"+legacyPublicID)
+	t.Run("imported Incident poison task records semantic history and does not block", func(t *testing.T) {
+		importedPublicID := uuid.NewString()
+		importedResult, err := db.ExecContext(ctx, `INSERT INTO incidents (
+public_id, fingerprint, correlation_key, correlation_key_version, cluster, namespace, service_name,
+environment, target_kind, target_name, severity, summary, first_seen_at, last_seen_at,
+terminal_at, version, status, cycle_no, migrated_legacy, migrated_legacy_context
+) VALUES (?, ?, ?, 1, 'cluster', 'namespace', 'imported-service', 'test', 'Deployment',
+          'imported-workload', 'warning', 'imported integration incident',
+          NOW(6), NOW(6), NOW(6), 1, 'closed', 1, TRUE, TRUE)`,
+			importedPublicID, "imported-fingerprint-"+importedPublicID, integrationHash("imported:"+importedPublicID))
 		if err != nil {
 			t.Fatal(err)
 		}
-		legacyID, err := legacyResult.LastInsertId()
+		importedID, err := importedResult.LastInsertId()
 		if err != nil {
 			t.Fatal(err)
 		}
-		// Public enqueue correctly rejects a legacy parent. Insert a historical
-		// poison row directly so the reaper compatibility path remains covered.
+		// Public enqueue correctly rejects a terminal parent. Insert the imported
+		// poison row directly so converted-history reaping remains covered.
 		poisonPublicID := uuid.NewString()
 		poisonResult, err := db.ExecContext(ctx, `INSERT INTO async_tasks (
 public_id, incident_id, cycle_no, queue, task_type, subject_type, subject_id,
 transition, expected_subject_version, payload_schema_version, payload_json,
-dedupe_key, replay_generation, status, priority, available_at, attempt,
+dedupe_key, replay_generation, migrated_legacy, migrated_legacy_context, status, priority, available_at, attempt,
 max_attempts, lease_generation, created_at, updated_at
 ) VALUES (?, ?, 1, 'investigate', 'investigation.advance', 'incident', ?,
-          'investigation.start', 1, 1, JSON_OBJECT(), ?, 0, 'ready', 100,
+          'investigation.start', 1, 1, JSON_OBJECT(), ?, 0, TRUE, TRUE, 'ready', 100,
           NOW(6), 1, 1, 0, NOW(6), NOW(6))`,
-			poisonPublicID, legacyID, legacyID, integrationHash("legacy-poison:"+poisonPublicID))
+			poisonPublicID, importedID, importedID, integrationHash("imported-poison:"+poisonPublicID))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -744,11 +745,11 @@ max_attempts, lease_generation, created_at, updated_at
 		poison := Task{ID: uint64(poisonID), Priority: 100}
 
 		healthyIncidentID := insertIntegrationIncident(t, ctx, db)
-		healthy, err := repository.Enqueue(ctx, integrationTask(healthyIncidentID, "legacy-poison-healthy", 3))
+		healthy, err := repository.Enqueue(ctx, integrationTask(healthyIncidentID, "imported-poison-healthy", 3))
 		if err != nil {
 			t.Fatal(err)
 		}
-		execution, err := repository.Claim(ctx, ClaimRequest{Queue: QueueInvestigate, Owner: "legacy-poison-worker", LeaseDuration: time.Second})
+		execution, err := repository.Claim(ctx, ClaimRequest{Queue: QueueInvestigate, Owner: "imported-poison-worker", LeaseDuration: time.Second})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -756,16 +757,16 @@ max_attempts, lease_generation, created_at, updated_at
 			t.Fatalf("claimed task=%d, want healthy task %d", execution.Task.ID, healthy.ID)
 		}
 		assertIntegrationTaskDead(t, ctx, db, poison.ID, "subject_version_mismatch")
-		assertIntegrationNoAttentionAndEvent(t, ctx, db, uint64(legacyID), poison.ID, 1, 0)
+		assertIntegrationNoAttentionAndEvent(t, ctx, db, uint64(importedID), poison.ID, 1, 0)
 		assertIntegrationAttemptStatus(t, ctx, db, poison.ID, "dead")
-		var legacyEvents int
+		var importedEvents int
 		if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM incident_events
 WHERE incident_id = ? AND event_type = 'async_task_dead'
-  AND domain_schema_version IS NULL AND cycle_no IS NULL AND event_schema_version IS NULL`, legacyID).Scan(&legacyEvents); err != nil {
+	  AND cycle_no = 1 AND event_schema_version = 1 AND public_id IS NOT NULL`, importedID).Scan(&importedEvents); err != nil {
 			t.Fatal(err)
 		}
-		if legacyEvents != 1 {
-			t.Fatalf("legacy-compatible dead events=%d, want 1", legacyEvents)
+		if importedEvents != 1 {
+			t.Fatalf("semantic imported-history dead events=%d, want 1", importedEvents)
 		}
 		if err := repository.Resolve(ctx, execution.Lease, Succeeded(nil)); err != nil {
 			t.Fatal(err)
@@ -966,13 +967,12 @@ func insertIntegrationIncident(t *testing.T, ctx context.Context, db *sql.DB) ui
 	t.Helper()
 	publicID := uuid.NewString()
 	result, err := db.ExecContext(ctx, `INSERT INTO incidents (
-public_id, fingerprint, correlation_key, cluster, namespace, service_name,
-environment, target_kind, target_name, severity, status, summary,
-first_seen_at, last_seen_at, version, domain_schema_version, v3_status,
-cycle_no, correlation_key_version
-) VALUES (?, ?, ?, 'cluster', 'namespace', 'service', 'test', 'Deployment',
-          'workload', 'warning', 'DETECTED', 'integration incident', NOW(6), NOW(6),
-          1, 3, 'detected', 1, 2)`, publicID, "fingerprint-"+publicID, "v2:"+publicID)
+public_id, fingerprint, correlation_key, correlation_key_version, cluster, namespace, service_name,
+environment, target_kind, target_name, severity, summary, first_seen_at, last_seen_at,
+version, status, cycle_no
+) VALUES (?, ?, ?, 1, 'cluster', 'namespace', 'service', 'test', 'Deployment',
+	          'workload', 'warning', 'integration incident', NOW(6), NOW(6),
+	          1, 'detected', 1)`, publicID, "fingerprint-"+publicID, integrationHash("incident:"+publicID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1018,10 +1018,10 @@ func integrationAgentRunTask(incidentID, runID uint64, identity string, maxAttem
 func insertIntegrationAgentRun(t *testing.T, ctx context.Context, db *sql.DB, incidentID uint64, cycle uint32) uint64 {
 	t.Helper()
 	result, err := db.ExecContext(ctx, `INSERT INTO agent_runs (
-public_id, incident_id, idempotency_key, status, model, prompt_version, max_steps,
-failure_code, row_version, domain_schema_version, v3_status, cycle_no,
+public_id, incident_id, idempotency_key, model, prompt_version, max_steps,
+failure_code, row_version, status, cycle_no,
 expected_incident_version, completed_at, created_at, updated_at
-) VALUES (?, ?, ?, 'COMPLETED', 'fixture', 'fixture-v1', 1, '', 1, 3,
+) VALUES (?, ?, ?, 'fixture', 'fixture-v1', 1, '', 1,
           'completed', ?, 1, NOW(6), NOW(6), NOW(6))`, uuid.NewString(), incidentID, uuid.NewString(), cycle)
 	if err != nil {
 		t.Fatal(err)

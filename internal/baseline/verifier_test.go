@@ -71,13 +71,13 @@ type verifierPrometheusStub struct {
 	alerts, errors, availability verification.Observation
 }
 
-func (s verifierPrometheusStub) ObserveV3(_ context.Context, query observabilityread.V3MetricQuery) (verification.Observation, error) {
+func (s verifierPrometheusStub) ObserveBoundedMetric(_ context.Context, query observabilityread.MetricQuery) (verification.Observation, error) {
 	switch query.Kind {
-	case observabilityread.V3MetricFiringAlerts:
+	case observabilityread.MetricFiringAlerts:
 		return s.alerts, nil
-	case observabilityread.V3MetricErrorRate:
+	case observabilityread.MetricErrorRate:
 		return s.errors, nil
-	case observabilityread.V3MetricAvailability:
+	case observabilityread.MetricAvailability:
 		return s.availability, nil
 	default:
 		return verification.Observation{}, errors.New("unexpected metric query")
@@ -135,7 +135,7 @@ func newVerifierFixture(t *testing.T) (*Verifier, *verifierStoreStub) {
 	}
 	cfg := VerifierConfig{
 		Target: Target{
-			Cluster: "kind-cloudops-v3", Environment: "local-demo", Namespace: "demo",
+			Cluster: "kind-cloudops-local", Environment: "local-demo", Namespace: "demo",
 			WorkloadKind: "Deployment", WorkloadName: "demo", ContainerName: "demo",
 			Repository: "acme/gitops", BaseBranch: "main", TargetPath: "apps/demo/deployment.yaml",
 		},

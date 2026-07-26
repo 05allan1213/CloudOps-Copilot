@@ -8,7 +8,6 @@ import (
 	"time"
 
 	appconfig "github.com/05allan1213/CloudOps-Copilot/internal/config"
-	"github.com/05allan1213/CloudOps-Copilot/internal/cutover"
 )
 
 func TestAPIServerGracefulShutdown(t *testing.T) {
@@ -41,7 +40,6 @@ func TestAPIServerGracefulShutdown(t *testing.T) {
 }
 
 func TestLoadAPIConfig(t *testing.T) {
-	t.Setenv("AUTH_ENABLED", "false")
 	config, err := LoadAPIConfig()
 	if err != nil {
 		t.Fatal(err)
@@ -52,14 +50,10 @@ func TestLoadAPIConfig(t *testing.T) {
 	if config.InternalListenAddr == "" || config.InternalListenAddr == config.Application.ListenAddr {
 		t.Fatalf("invalid INTERNAL listen address %q", config.InternalListenAddr)
 	}
-	if config.RuntimeGeneration != cutover.CurrentRuntimeGeneration {
-		t.Fatalf("runtime generation=%q", config.RuntimeGeneration)
-	}
 }
 
 func TestAPIConfigRejectsSharedUserAndInternalAddress(t *testing.T) {
 	cfg := APIConfig{Application: appconfig.Load(), InternalListenAddr: "127.0.0.1:18080"}
-	cfg.Application.AuthEnabled = false
 	cfg.Application.ListenAddr = cfg.InternalListenAddr
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("shared user and INTERNAL listener address was accepted")
@@ -68,26 +62,9 @@ func TestAPIConfigRejectsSharedUserAndInternalAddress(t *testing.T) {
 
 func TestAPIConfigRejectsSharedUserAndInternalPortAcrossHosts(t *testing.T) {
 	cfg := APIConfig{Application: appconfig.Load(), InternalListenAddr: "0.0.0.0:18080"}
-	cfg.Application.AuthEnabled = false
 	cfg.Application.ListenAddr = "127.0.0.1:18080"
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("shared user and INTERNAL listener port was accepted across bind hosts")
-	}
-}
-
-func TestAPIConfigRequiresLoopbackUserListenerForProxyAuth(t *testing.T) {
-	cfg := APIConfig{Application: appconfig.Load(), InternalListenAddr: "0.0.0.0:18082"}
-	cfg.Application.AuthEnabled = false
-	cfg.Application.V3ProxyAuthEnabled = true
-	cfg.Application.V3CSRFSecretFile = "/tmp/csrf-secret"
-	cfg.Application.V3OAuthOperatorLogins = []string{"operator"}
-	cfg.Application.ListenAddr = "0.0.0.0:18080"
-	if err := cfg.Validate(); err == nil {
-		t.Fatal("non-loopback proxy user listener was accepted")
-	}
-	cfg.Application.ListenAddr = "127.0.0.1:18080"
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("loopback proxy user listener rejected: %v", err)
 	}
 }
 

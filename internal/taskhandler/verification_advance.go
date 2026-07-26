@@ -124,7 +124,7 @@ func (o *verificationAdvanceOperation) handle(ctx context.Context, execution asy
 			nil,
 		)
 	}
-	sample := verification.EvaluateV3Observation(check, snapshot.Observation, now)
+	sample := verification.EvaluateObservation(check, snapshot.Observation, now)
 	if !snapshot.CheckDeadlineAt.IsZero() && !now.Before(snapshot.CheckDeadlineAt) {
 		sample = verification.Sample{
 			Status:          verification.SampleTimedOut,
@@ -133,7 +133,7 @@ func (o *verificationAdvanceOperation) handle(ctx context.Context, execution asy
 			ReasonCode:      "check_deadline_exceeded",
 		}
 	}
-	if err := verification.ApplyV3Sample(&check, sample, now); err != nil {
+	if err := verification.ApplySample(&check, sample, now); err != nil {
 		return asyncjob.Dead("verification_sample_rejected", boundChange(err.Error(), 2048), nil)
 	}
 	snapshot.Checks[checkIndex] = check

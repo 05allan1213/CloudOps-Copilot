@@ -19,7 +19,6 @@ withDefaults(defineProps<{
   loadingMore?: boolean;
   incidentVersion: number;
   incidentStatus: IncidentStatus;
-  isOperator: boolean;
   commandPending: boolean;
   commandFeedback: CommandFeedback | null;
 }>(), {
@@ -62,7 +61,6 @@ function forwardDecision(plan: RemediationPlanView, decision: "approved" | "reje
         :plan="plan"
         :incident-version="incidentVersion"
         :incident-status="incidentStatus"
-        :is-operator="isOperator"
         :command-pending="commandPending"
         :command-feedback="commandFeedback"
         @decide="forwardDecision"

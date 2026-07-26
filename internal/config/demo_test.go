@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func TestV2BaselineDefaultsAreSafe(t *testing.T) {
+func TestBaselineDefaultsAreSafe(t *testing.T) {
 	cfg := Load()
 	if cfg.FastDemoEnabled || cfg.FastDemoConfirmDisposable || cfg.K8SWriteEnabled {
 		t.Fatalf("unsafe defaults enabled: %+v", cfg)
@@ -15,14 +15,21 @@ func TestV2BaselineDefaultsAreSafe(t *testing.T) {
 	if !cfg.AgentToolRegistryEnabled || cfg.AgentToolDefaultTimeout != 30*time.Second || cfg.AgentToolLogArgs {
 		t.Fatalf("unexpected Agent tool defaults: enabled=%v timeout=%v log_args=%v", cfg.AgentToolRegistryEnabled, cfg.AgentToolDefaultTimeout, cfg.AgentToolLogArgs)
 	}
-	if !cfg.AuthEnabled || !cfg.RateLimit.Enabled {
-		t.Fatalf("formal security defaults must stay enabled: auth=%v rate_limit=%v", cfg.AuthEnabled, cfg.RateLimit.Enabled)
+	if !cfg.RateLimit.Enabled {
+		t.Fatal("rate limiting must default on")
+	}
+}
+
+func TestUnavailablePrometheusDoesNotBlockCoreRuntime(t *testing.T) {
+	cfg := Load()
+	cfg.PrometheusURL = ""
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("unconfigured optional Prometheus provider rejected: %v", err)
 	}
 }
 
 func TestFastDemoRequiresExplicitDisposableLocalEnvironment(t *testing.T) {
 	base := Load()
-	base.AuthEnabled = false
 	base.FastDemoEnabled = true
 	base.IncidentAgentEnabled = true
 	base.K8SEnabled = true
@@ -49,35 +56,12 @@ func TestFastDemoRequiresExplicitDisposableLocalEnvironment(t *testing.T) {
 	}
 }
 
-func TestFormalKubernetesWriteFailsClosed(t *testing.T) {
+func TestKubernetesWriteRequiresGuardedDemonstrationScenario(t *testing.T) {
 	cfg := Load()
-	cfg.AuthEnabled = false
 	cfg.K8SEnabled = true
 	cfg.K8SWriteEnabled = true
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "guarded local Fast Demo") {
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "guarded local Demonstration Scenario") {
 		t.Fatalf("formal Kubernetes write accepted: %v", err)
-	}
-}
-
-func TestV3ProxyAuthRequiresIndependentCSRFSecretAndGitHubAllowlist(t *testing.T) {
-	cfg := Load()
-	cfg.V3ProxyAuthEnabled = true
-	cfg.JWTSecret = ""
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "V3_CSRF_SECRET_FILE") {
-		t.Fatalf("proxy auth without CSRF secret file accepted: %v", err)
-	}
-	cfg.V3CSRFSecretFile = "/var/run/secrets/cloudops/csrf-signing-key"
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "allowlist") {
-		t.Fatalf("proxy auth without login allowlist accepted: %v", err)
-	}
-	cfg.V3OAuthViewerLogins = []string{"viewer-user"}
-	cfg.V3OAuthOperatorLogins = []string{"operator-user"}
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("valid proxy auth config rejected: %v", err)
-	}
-	cfg.V3OAuthViewerLogins = []string{"invalid login"}
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "invalid GitHub login") {
-		t.Fatalf("invalid GitHub login accepted: %v", err)
 	}
 }
 

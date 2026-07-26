@@ -145,8 +145,8 @@ func (r *mysqlVerificationAdvanceReader) Load(ctx context.Context, task asyncjob
 		migratedLegacy        bool
 	)
 	err = r.db.QueryRowContext(ctx, `
-SELECT vr.public_id, vr.incident_id, i.public_id, i.version, i.v3_status, vr.remediation_plan_id,
-       vr.change_request_id, COALESCE(vr.v3_status, vr.status), vr.target_revision,
+SELECT vr.public_id, vr.incident_id, i.public_id, i.version, i.status, vr.remediation_plan_id,
+       vr.change_request_id, vr.status, vr.target_revision,
        vr.plan_json, vr.started_at, vr.deadline_at, vr.completed_at, vr.row_version,
        vr.created_at, vr.updated_at, vr.cycle_no, vr.trigger_type, vr.trigger_signal_id,
        vr.source_revision, vr.image_digest, vr.gitops_revision,
@@ -154,8 +154,8 @@ SELECT vr.public_id, vr.incident_id, i.public_id, i.version, i.v3_status, vr.rem
 	       vr.verification_profile_hash, vr.verification_profile_version, vr.common_stability_window_ms,
 		vr.migrated_legacy, vr.migrated_legacy_context, NOW(6)
 FROM verification_runs vr
-JOIN incidents i ON i.id = vr.incident_id AND i.domain_schema_version = 3
-WHERE vr.id = ? AND vr.incident_id = ? AND vr.cycle_no = ? AND vr.domain_schema_version = 3`, task.SubjectID, task.IncidentID, task.CycleNo).Scan(
+JOIN incidents i ON i.id = vr.incident_id
+WHERE vr.id = ? AND vr.incident_id = ? AND vr.cycle_no = ?`, task.SubjectID, task.IncidentID, task.CycleNo).Scan(
 		&run.PublicID, &run.IncidentID, &run.IncidentPublicID, &incidentVersion, &incidentStatus, &remediationPlanID,
 		&changeRequestID, &status, &run.TargetRevision, &planJSON, &startedAt, &deadlineAt,
 		&completedAt, &rowVersion, &createdAt, &updatedAt, &cycleNo, &triggerType,
@@ -176,11 +176,11 @@ WHERE vr.id = ? AND vr.incident_id = ? AND vr.cycle_no = ? AND vr.domain_schema_
 	if err := json.Unmarshal(planJSON, &run.Plan); err != nil {
 		return VerificationAdvanceSnapshot{}, fmt.Errorf("decode verification plan: %w", err)
 	}
-	if err := verification.ValidateV3Plan(run.Plan); err != nil {
+	if err := verification.ValidatePlan(run.Plan); err != nil {
 		return VerificationAdvanceSnapshot{}, fmt.Errorf("validate frozen verification plan: %w", err)
 	}
 	if !contractVersion.Valid || contractVersion.Int64 != verificationContractVersion ||
-		!commonWindowMS.Valid || time.Duration(commonWindowMS.Int64)*time.Millisecond != verification.V3CommonStabilityWindow ||
+		!commonWindowMS.Valid || time.Duration(commonWindowMS.Int64)*time.Millisecond != verification.CommonStabilityWindow ||
 		!profileID.Valid || !profileHash.Valid || len(profileHash.String) != 64 || !profileVersion.Valid || profileVersion.Int64 != 1 ||
 		(run.Plan.ProfileID != "" && run.Plan.ProfileID != profileID.String) ||
 		(run.Plan.ProfileHash != "" && run.Plan.ProfileHash != profileHash.String) {
@@ -453,12 +453,12 @@ func (s *mysqlVerificationAdvanceStore) PersistIn(ctx context.Context, tx asyncj
 	var storedProfileID, storedProfileHash string
 	var storedMigratedLegacy, storedMigratedLegacyContext bool
 	if err := tx.QueryRowContext(ctx, `
-SELECT row_version, COALESCE(v3_status, status), remediation_plan_id, change_request_id,
+SELECT row_version, status, remediation_plan_id, change_request_id,
        COALESCE(trigger_type,''), COALESCE(source_revision,''), COALESCE(image_digest,''),
 	       COALESCE(gitops_revision,''), COALESCE(verification_profile_id,''),
 	       COALESCE(verification_profile_hash,''), migrated_legacy, migrated_legacy_context
 FROM verification_runs
-WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3
+WHERE id = ? AND incident_id = ? AND cycle_no = ?
 FOR UPDATE`, task.SubjectID, task.IncidentID, task.CycleNo).Scan(
 		&rowVersion, &currentStatus, &storedPlanID, &storedChangeID, &storedTrigger,
 		&storedSource, &storedImage, &storedGitOps, &storedProfileID, &storedProfileHash,
@@ -500,10 +500,6 @@ FOR UPDATE`, check.ID, task.SubjectID, task.IncidentID, task.CycleNo).Scan(
 		return err
 	}
 	newVersion := rowVersion + 1
-	legacyStatus := string(status)
-	if status == verification.RunInconclusive {
-		legacyStatus = string(verification.RunFailed)
-	}
 	completed := any(nil)
 	if verification.TerminalRun(status) {
 		completed = now
@@ -514,11 +510,11 @@ FOR UPDATE`, check.ID, task.SubjectID, task.IncidentID, task.CycleNo).Scan(
 	}
 	result, err := tx.ExecContext(ctx, `
 UPDATE verification_runs
-SET status = ?, v3_status = ?, started_at = COALESCE(started_at, ?),
+SET status = ?, started_at = COALESCE(started_at, ?),
     completed_at = ?, common_success_since = ?, common_window_completed_at = ?,
     result_summary = ?, failure_reason = ?, row_version = ?, updated_at = NOW(6)
 WHERE id = ? AND incident_id = ? AND cycle_no = ? AND row_version = ?`,
-		legacyStatus, string(status), now, completed, nullableTimeValue(commonStart), commonWindowCompleted,
+		string(status), now, completed, nullableTimeValue(commonStart), commonWindowCompleted,
 		boundVerificationText(reason, 2048), boundVerificationText(failureReason(status, reason), 128), newVersion,
 		task.SubjectID, task.IncidentID, task.CycleNo, rowVersion)
 	if err != nil {
@@ -568,10 +564,10 @@ func insertVerificationSample(ctx context.Context, tx asyncjob.DBTX, task asyncj
 	publicID := uuid.NewSHA1(uuid.NameSpaceOID, []byte(fmt.Sprintf("verification-sample\x00%d\x00%d\x00%d\x00%s", task.SubjectID, check.ID, sequence, contentHash))).String()
 	result, err := tx.ExecContext(ctx, `
 INSERT INTO verification_samples
- (public_id, domain_schema_version, sample_schema_version, incident_id, cycle_no, migrated_legacy, migrated_legacy_context,
+ (public_id, sample_schema_version, incident_id, cycle_no, migrated_legacy, migrated_legacy_context,
   verification_run_id, verification_check_id, sample_sequence, status, observed_json,
   source_reference, reason_code, window_start_at, window_end_at, sampled_at, content_hash)
-VALUES (?, 3, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
 		publicID, verificationSampleSchema, task.IncidentID, task.CycleNo, task.MigratedLegacy,
 		task.MigratedLegacyContext, task.SubjectID, check.ID,
@@ -644,8 +640,8 @@ func requeueInvestigation(ctx context.Context, tx asyncjob.DBTX, tasks Verificat
 	var incidentVersion uint64
 	var incidentStatus string
 	if err := tx.QueryRowContext(ctx, `
-SELECT version, v3_status FROM incidents
-WHERE id = ? AND cycle_no = ? AND domain_schema_version = 3 FOR UPDATE`, task.IncidentID, task.CycleNo).Scan(&incidentVersion, &incidentStatus); err != nil {
+SELECT version, status FROM incidents
+WHERE id = ? AND cycle_no = ? FOR UPDATE`, task.IncidentID, task.CycleNo).Scan(&incidentVersion, &incidentStatus); err != nil {
 		return err
 	}
 	if incidentStatus != "verifying" && incidentStatus != "investigating" {
@@ -654,9 +650,9 @@ WHERE id = ? AND cycle_no = ? AND domain_schema_version = 3 FOR UPDATE`, task.In
 	newIncidentVersion := incidentVersion + 1
 	result, err := tx.ExecContext(ctx, `
 UPDATE incidents
-SET v3_status = 'investigating', status = 'DIAGNOSING', needs_attention = FALSE,
+SET status = 'investigating', needs_attention = FALSE,
     blocking_reason_code = ?, version = ?, updated_at = NOW(6)
-WHERE id = ? AND cycle_no = ? AND domain_schema_version = 3 AND version = ?`,
+WHERE id = ? AND cycle_no = ? AND version = ?`,
 		boundVerificationText("verification_"+string(status)+":"+reason, 128), newIncidentVersion,
 		task.IncidentID, task.CycleNo, incidentVersion)
 	if err != nil {
@@ -668,9 +664,9 @@ WHERE id = ? AND cycle_no = ? AND domain_schema_version = 3 AND version = ?`,
 	metadata, _ := json.Marshal(map[string]any{"verification_run_id": task.SubjectID, "status": status, "reason": reason, "cycle_no": task.CycleNo})
 	if _, err := tx.ExecContext(ctx, `
 INSERT IGNORE INTO incident_events
- (public_id, incident_id, domain_schema_version, cycle_no, event_schema_version,
+ (public_id, incident_id, cycle_no, event_schema_version,
   event_type, idempotency_key, migrated_legacy_context, migrated_legacy, actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
-VALUES (?, ?, 3, ?, 1, 'verification_failed', ?, ?, ?, 'system', 'verification.advance', ?, ?, NOW(6), NOW(6))`,
+VALUES (?, ?, ?, 1, 'verification_failed', ?, ?, ?, 'system', 'verification.advance', ?, ?, NOW(6), NOW(6))`,
 		uuid.NewString(), task.IncidentID, task.CycleNo,
 		hashVerificationTask("verification_failed", task.SubjectID, status, reason),
 		task.MigratedLegacyContext, task.MigratedLegacy,
@@ -711,10 +707,10 @@ func resolveIncident(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, 
 	}
 	result, err := tx.ExecContext(ctx, `
 UPDATE incidents
-SET v3_status = 'resolved', status = 'RESOLVED', resolved_at = ?, terminal_at = ?,
+SET status = 'resolved', resolved_at = ?, terminal_at = ?,
     needs_attention = FALSE, blocking_reason_code = NULL, version = version + 1, updated_at = NOW(6)
-WHERE id = ? AND cycle_no = ? AND domain_schema_version = 3
-	  AND v3_status = 'verifying' AND version = ?`, now, now, task.IncidentID, task.CycleNo, snapshot.IncidentVersion)
+WHERE id = ? AND cycle_no = ?
+	  AND status = 'verifying' AND version = ?`, now, now, task.IncidentID, task.CycleNo, snapshot.IncidentVersion)
 	if err != nil {
 		return err
 	}
@@ -724,9 +720,9 @@ WHERE id = ? AND cycle_no = ? AND domain_schema_version = 3
 	metadata, _ := json.Marshal(map[string]any{"verification_run_id": task.SubjectID, "cycle_no": task.CycleNo})
 	_, err = tx.ExecContext(ctx, `
 INSERT IGNORE INTO incident_events
- (public_id, incident_id, domain_schema_version, cycle_no, event_schema_version,
+ (public_id, incident_id, cycle_no, event_schema_version,
   event_type, idempotency_key, migrated_legacy_context, migrated_legacy, actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
-VALUES (?, ?, 3, ?, 1, 'incident_resolved', ?, ?, ?, 'system', 'verification.advance', ?, ?, ?, NOW(6))`,
+VALUES (?, ?, ?, 1, 'incident_resolved', ?, ?, ?, 'system', 'verification.advance', ?, ?, ?, NOW(6))`,
 		uuid.NewString(), task.IncidentID, task.CycleNo,
 		hashVerificationTask("resolved", fmt.Sprint(task.IncidentID), fmt.Sprint(task.CycleNo), fmt.Sprint(task.SubjectID)),
 		task.MigratedLegacyContext, task.MigratedLegacy,
@@ -769,7 +765,7 @@ func persistVerificationFailureEvidence(ctx context.Context, tx asyncjob.DBTX, t
 	argumentsHash := hashVerificationTask("verification-arguments", string(check.Type), string(check.Expected), check.SourceIdentity)
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO evidence_items
- (public_id, incident_id, domain_schema_version, evidence_contract_version, cycle_no, migrated_legacy, migrated_legacy_context,
+ (public_id, incident_id, evidence_contract_version, cycle_no, migrated_legacy, migrated_legacy_context,
   verification_run_id, verification_check_id, type, source, producer_type, producer_id,
   producer_version, producer_dedupe_key, adapter_version, query_template_id,
   query_template_version, scope_snapshot_hash, arguments_hash, tool_name, resource_ref,
@@ -779,10 +775,10 @@ INSERT INTO evidence_items
   content_hash, raw_ref, safe_raw_reference, redaction_json, redaction_policy_version,
   redaction_counts_json, prompt_safety_flags_json, truncated, valid, idempotency_key,
   collected_at, observed_at, created_at)
-VALUES (?, ?, 3, 1, ?, ?, ?, ?, ?, 'verification_failure', 'verification', 'verification_check', ?,
+VALUES (?, ?, 1, ?, ?, ?, ?, ?, 'verification_failure', 'verification', 'verification_check', ?,
        'verification-check-evidence/v1', ?, 'verification-observer/v1', ?, ?, ?, ?,
        'verification.advance', ?, '', ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-       'verification-redaction/v1', ?, ?, FALSE, TRUE, ?, ?, ?, ?)
+       'observation-redaction/v1', ?, ?, FALSE, TRUE, ?, ?, ?, ?)
 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
 		evidencePublicID, task.IncidentID, task.CycleNo, task.MigratedLegacy, task.MigratedLegacyContext,
 		task.SubjectID, check.ID, check.PublicID,
@@ -791,7 +787,7 @@ ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
 		metadata.ProvenanceHash, metadata.TrustAxesJSON, metadata.ClaimUse, metadata.CorroborationGroups,
 		metadata.InputEvidenceIDs, metadata.InputSampleIDs, metadata.InputHashes, contentHash, contentHash,
 		boundVerificationText(sample.SourceReference, 1024), boundVerificationText(sample.SourceReference, 1024),
-		json.RawMessage(`{"policy":"verification-redaction/v1"}`), metadata.RedactionCounts, metadata.PromptSafetyFlags,
+		json.RawMessage(`{"policy":"observation-redaction/v1"}`), metadata.RedactionCounts, metadata.PromptSafetyFlags,
 		producerKey, now, now, now)
 	return err
 }
@@ -871,7 +867,7 @@ func NewMySQLResolutionReportWriter() ResolutionReportWriter {
 
 func (w *mysqlResolutionReportWriter) PersistIn(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, snapshot VerificationAdvanceSnapshot, _ []verification.Check, commonStart *time.Time, resolvedAt time.Time) error {
 	if tx == nil || snapshot.Run.ID != task.SubjectID || snapshot.Run.IncidentID != task.IncidentID || snapshot.CycleNo != task.CycleNo ||
-		commonStart == nil || commonStart.IsZero() || resolvedAt.Sub(commonStart.UTC()) < verification.V3CommonStabilityWindow {
+		commonStart == nil || commonStart.IsZero() || resolvedAt.Sub(commonStart.UTC()) < verification.CommonStabilityWindow {
 		return asyncjob.ErrInvalidMutation
 	}
 	var (
@@ -881,9 +877,9 @@ func (w *mysqlResolutionReportWriter) PersistIn(ctx context.Context, tx asyncjob
 		incidentResolvedAt                                                sql.NullTime
 	)
 	if err := tx.QueryRowContext(ctx, `
-SELECT public_id, service_name, target_name, environment, summary, version, v3_status, resolved_at
-FROM incidents
-WHERE id = ? AND cycle_no = ? AND domain_schema_version = 3
+	SELECT public_id, service_name, target_name, environment, summary, version, status, resolved_at
+	FROM incidents
+	WHERE id = ? AND cycle_no = ?
 FOR UPDATE`, task.IncidentID, task.CycleNo).Scan(
 		&incidentPublicID, &service, &workload, &environment, &incidentSummary, &incidentVersion,
 		&incidentStatus, &incidentResolvedAt); err != nil {
@@ -1019,7 +1015,7 @@ FOR UPDATE`, task.IncidentID, task.CycleNo).Scan(
 	}
 	summary := boundVerificationText("Verification passed after the common stability window", 2048)
 	contentHash := hashVerificationTask(
-		"resolution-report-row-v1", 3, verificationReportSchema, task.IncidentID, task.CycleNo,
+		"resolution-report-row-v1", verificationReportSchema, task.IncidentID, task.CycleNo,
 		task.SubjectID, initialID, triggerID, planID, remediationDecisionID, changeID,
 		triggerType, reason, service, workload, environment, incidentSummary,
 		cycleStartedAt.Format(time.RFC3339Nano), resolvedAt.Format(time.RFC3339Nano),
@@ -1033,7 +1029,7 @@ FOR UPDATE`, task.IncidentID, task.CycleNo).Scan(
 	)
 	insertResult, err := tx.ExecContext(ctx, `
 INSERT INTO resolution_reports
- (public_id, domain_schema_version, report_schema_version, incident_id, cycle_no,
+ (public_id, report_schema_version, incident_id, cycle_no,
   verification_run_id, initial_signal_id, trigger_signal_id, remediation_plan_id,
   remediation_decision_id, change_request_id, trigger_type, resolution_reason,
   service, workload, environment, impact_summary, cycle_started_at, resolved_at,
@@ -1043,7 +1039,7 @@ INSERT INTO resolution_reports
   diagnosis_json, evidence_json, remediation_plan_json, remediation_decision_json,
   delivery_json, verification_json, timeline_json, agent_usage_json, summary,
   content_hash, generated_at, migrated_legacy_context)
-	VALUES (?, 3, ?, ?, ?,
+	VALUES (?, ?, ?, ?,
 	        ?, ?, ?, ?,
 	        ?, ?, ?, ?,
 	        ?, ?, ?, ?, ?, ?,
@@ -1104,7 +1100,7 @@ func reportTime(value *time.Time) any {
 
 func reportSignals(ctx context.Context, tx asyncjob.DBTX, incidentID uint64, cycle uint32, triggerType string, triggerID uint64) (uint64, map[string]any, time.Time, error) {
 	initialID, initial, initialStatus, initialStart, err := queryReportSignal(ctx, tx,
-		`SELECT id, public_id, source, source_event_id, fingerprint, status, summary, occurred_at, starts_at, ends_at, labels_json, annotations_json FROM incident_signals WHERE incident_id = ? AND cycle_no = ? AND domain_schema_version = 3 AND status = 'firing' ORDER BY starts_at, id LIMIT 1`,
+		`SELECT id, public_id, source, source_event_id, fingerprint, status, summary, occurred_at, starts_at, ends_at, labels_json, annotations_json FROM incident_signals WHERE incident_id = ? AND cycle_no = ? AND status = 'firing' ORDER BY starts_at, id LIMIT 1`,
 		incidentID, cycle)
 	if err != nil {
 		return 0, nil, time.Time{}, err
@@ -1119,7 +1115,7 @@ func reportSignals(ctx context.Context, tx asyncjob.DBTX, incidentID uint64, cyc
 		return 0, nil, time.Time{}, asyncjob.ErrInvalidMutation
 	}
 	resolvedID, resolved, resolvedStatus, _, err := queryReportSignal(ctx, tx,
-		`SELECT id, public_id, source, source_event_id, fingerprint, status, summary, occurred_at, starts_at, ends_at, labels_json, annotations_json FROM incident_signals WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3 LIMIT 1`,
+		`SELECT id, public_id, source, source_event_id, fingerprint, status, summary, occurred_at, starts_at, ends_at, labels_json, annotations_json FROM incident_signals WHERE id = ? AND incident_id = ? AND cycle_no = ? LIMIT 1`,
 		triggerID, incidentID, cycle)
 	if err != nil {
 		return 0, nil, time.Time{}, err
@@ -1196,7 +1192,7 @@ func appendReportBoundary(first, latest *[]map[string]any, item map[string]any, 
 }
 
 func reportEvidence(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task) (returnValue []byte, retErr error) {
-	rows, err := tx.QueryContext(ctx, `SELECT public_id, type, source, resource_ref, summary, facts_json, result_hash, content_hash, collected_at FROM evidence_items WHERE incident_id = ? AND cycle_no = ? AND domain_schema_version = 3 AND valid = TRUE ORDER BY collected_at, id`, task.IncidentID, task.CycleNo)
+	rows, err := tx.QueryContext(ctx, `SELECT public_id, type, source, resource_ref, summary, facts_json, result_hash, content_hash, collected_at FROM evidence_items WHERE incident_id = ? AND cycle_no = ? AND valid = TRUE ORDER BY collected_at, id`, task.IncidentID, task.CycleNo)
 	if err != nil {
 		return nil, err
 	}
@@ -1228,7 +1224,7 @@ func reportDiagnosisIdentity(ctx context.Context, tx asyncjob.DBTX, task asyncjo
 	}
 	var creatorID uint64
 	var diagnosisHash string
-	if err := tx.QueryRowContext(ctx, `SELECT created_by_agent_run_id, diagnosis_hash FROM remediation_plans WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3 AND plan_content_schema_version = 2`, planID, task.IncidentID, task.CycleNo).
+	if err := tx.QueryRowContext(ctx, `SELECT created_by_agent_run_id, diagnosis_hash FROM remediation_plans WHERE id = ? AND incident_id = ? AND cycle_no = ? AND plan_content_schema_version = 2`, planID, task.IncidentID, task.CycleNo).
 		Scan(&creatorID, &diagnosisHash); err != nil {
 		return 0, "", err
 	}
@@ -1242,9 +1238,9 @@ func reportDiagnosis(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, 
 	var diagnosis []byte
 	var err error
 	if creatorAgentRunID == 0 {
-		err = tx.QueryRowContext(ctx, `SELECT final_diagnosis FROM agent_runs WHERE incident_id = ? AND cycle_no = ? AND domain_schema_version = 3 AND final_diagnosis IS NOT NULL ORDER BY completed_at DESC, id DESC LIMIT 1`, task.IncidentID, task.CycleNo).Scan(&diagnosis)
+		err = tx.QueryRowContext(ctx, `SELECT final_diagnosis FROM agent_runs WHERE incident_id = ? AND cycle_no = ? AND final_diagnosis IS NOT NULL ORDER BY completed_at DESC, id DESC LIMIT 1`, task.IncidentID, task.CycleNo).Scan(&diagnosis)
 	} else {
-		err = tx.QueryRowContext(ctx, `SELECT final_diagnosis FROM agent_runs WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3 AND v3_status = 'completed' AND final_diagnosis IS NOT NULL`, creatorAgentRunID, task.IncidentID, task.CycleNo).Scan(&diagnosis)
+		err = tx.QueryRowContext(ctx, `SELECT final_diagnosis FROM agent_runs WHERE id = ? AND incident_id = ? AND cycle_no = ? AND status = 'completed' AND final_diagnosis IS NOT NULL`, creatorAgentRunID, task.IncidentID, task.CycleNo).Scan(&diagnosis)
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		if creatorAgentRunID != 0 {
@@ -1282,10 +1278,9 @@ func reportRemediation(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task
 	var targetResource, changeManifest, evidenceBindings []byte
 	var planCreatedAt, planExpiresAt time.Time
 	if err = tx.QueryRowContext(ctx, `SELECT id, public_id, plan_content_schema_version, plan_version,
-       hash_schema_version, v3_status, operation_type, created_by_agent_run_id,
-       (SELECT ar.public_id FROM agent_runs ar WHERE ar.id = remediation_plans.created_by_agent_run_id
-          AND ar.incident_id = remediation_plans.incident_id AND ar.cycle_no = remediation_plans.cycle_no
-          AND ar.domain_schema_version = 3),
+	       hash_schema_version, status, operation_type, created_by_agent_run_id,
+	       (SELECT ar.public_id FROM agent_runs ar WHERE ar.id = remediation_plans.created_by_agent_run_id
+	          AND ar.incident_id = remediation_plans.incident_id AND ar.cycle_no = remediation_plans.cycle_no),
        diagnosis_hash, target_repository, target_base_branch, target_base_revision,
        last_known_good_sha, base_blob_sha, file_mode, target_path, target_resource_json,
        target_field_ref, expected_before_hash, expected_post_image_hash, expected_tree_hash,
@@ -1293,7 +1288,7 @@ func reportRemediation(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task
        policy_snapshot_hash, verification_plan_hash, evidence_bindings_json,
        evidence_set_hash, canonical_plan_hash, risk_level, created_at, expires_at
 FROM remediation_plans
-WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3`,
+WHERE id = ? AND incident_id = ? AND cycle_no = ?`,
 		snapshot.RemediationPlanID, task.IncidentID, task.CycleNo).Scan(
 		&planID, &planPublic, &planContentSchemaVersion, &planVersion, &hashSchemaVersion,
 		&planStatus, &operation, &creatorAgentRunID, &creatorAgentRunPublicID, &creatorDiagnosisHash, &targetRepository,
@@ -1348,7 +1343,7 @@ WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3`
        approved_tree_hash, approved_patch_hash, approved_policy_hash,
        approved_verification_hash, approved_evidence_set_hash, created_at
 FROM remediation_decisions
-WHERE plan_id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3
+WHERE plan_id = ? AND incident_id = ? AND cycle_no = ? AND imported_history = FALSE
 ORDER BY id DESC LIMIT 1`, snapshot.RemediationPlanID, task.IncidentID, task.CycleNo).Scan(
 		&decisionID, &decisionPublic, &decisionSchemaVersion, &decisionPlanVersion,
 		&decisionValue, &actorProvider, &actorLogin, &actorRole, &decisionReason, &requestID,
@@ -1379,7 +1374,7 @@ ORDER BY id DESC LIMIT 1`, snapshot.RemediationPlanID, task.IncidentID, task.Cyc
 	if err != nil {
 		return nil, nil, nil, 0, "", "", err
 	}
-	var changePublic, repository, prURL, mergedSHA, targetRevision, prState, v3Status, legacyStatus string
+	var changePublic, repository, prURL, mergedSHA, targetRevision, prState, changeStatus string
 	var changePlanID uint64
 	var ciStatus, detectedRevision, argoSync, argoPhase, argoHealth string
 	var cluster, environment, namespace, workloadKind, workloadName, rolloutRevision string
@@ -1389,17 +1384,17 @@ ORDER BY id DESC LIMIT 1`, snapshot.RemediationPlanID, task.IncidentID, task.Cyc
 	var desired, updated, available, unavailable int
 	err = tx.QueryRowContext(ctx, `
 SELECT public_id, plan_id, repository, pr_url, merged_commit_sha, target_revision, pr_state,
-       v3_status, status, ci_status, detected_revision, argocd_sync_status,
+	       status, ci_status, detected_revision, argocd_sync_status,
        argocd_operation_phase, argocd_health_status, COALESCE(resource_health_json, JSON_OBJECT()),
        sync_started_at, sync_completed_at, cluster, environment, namespace, workload_kind,
        workload_name, deployment_generation, observed_generation, rollout_revision,
        desired_replicas, updated_replicas, available_replicas, unavailable_replicas,
        delivery_started_at, delivery_completed_at
 FROM change_requests
-WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3`,
+WHERE id = ? AND incident_id = ? AND cycle_no = ?`,
 		snapshot.ChangeRequestID, task.IncidentID, task.CycleNo).Scan(
 		&changePublic, &changePlanID, &repository, &prURL, &mergedSHA, &targetRevision, &prState,
-		&v3Status, &legacyStatus, &ciStatus, &detectedRevision, &argoSync, &argoPhase,
+		&changeStatus, &ciStatus, &detectedRevision, &argoSync, &argoPhase,
 		&argoHealth, &resourceHealth, &syncStarted, &syncCompleted, &cluster, &environment,
 		&namespace, &workloadKind, &workloadName, &generation, &observedGeneration,
 		&rolloutRevision, &desired, &updated, &available, &unavailable, &deliveryStarted,
@@ -1428,7 +1423,7 @@ WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3`
 	delivery, err = boundedJSON(map[string]any{
 		"id": changePublic, "repository": repository, "pr_url": prURL,
 		"merged_commit_sha": mergedSHA, "target_revision": targetRevision,
-		"pr_state": prState, "status": v3Status, "ci_status": ciStatus,
+		"pr_state": prState, "status": changeStatus, "ci_status": ciStatus,
 		"argocd":              map[string]any{"detected_revision": detectedRevision, "sync_status": argoSync, "operation_phase": argoPhase, "health_status": argoHealth, "resource_health": reportJSONProjection(resourceHealth, 4096), "sync_started_at": nullableTimeString(syncStarted), "sync_completed_at": nullableTimeString(syncCompleted)},
 		"rollout":             map[string]any{"cluster": cluster, "environment": environment, "namespace": namespace, "workload_kind": workloadKind, "workload_name": workloadName, "generation": generation, "observed_generation": observedGeneration, "rollout_revision": rolloutRevision, "desired": desired, "updated": updated, "available": available, "unavailable": unavailable},
 		"delivery_started_at": nullableTimeString(deliveryStarted), "delivery_completed_at": nullableTimeString(deliveryCompleted),
@@ -1437,7 +1432,7 @@ WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3`
 	if err != nil {
 		return nil, nil, nil, 0, "", "", err
 	}
-	if v3Status != "delivered" || legacyStatus != "delivered" || (prState != "closed" && prState != "merged") || mergedSHA == "" || targetRevision == "" || mergedSHA != targetRevision {
+	if changeStatus != "delivered" || (prState != "closed" && prState != "merged") || mergedSHA == "" || targetRevision == "" || mergedSHA != targetRevision {
 		return nil, nil, nil, 0, "", "", asyncjob.ErrInvalidMutation
 	}
 	return plan, decision, delivery, decisionID, baseRevision, targetRevision, nil
@@ -1447,7 +1442,7 @@ func reportDeliveryObservations(ctx context.Context, tx asyncjob.DBTX, task asyn
 	if changeRequestPublicID == "" {
 		return nil, asyncjob.ErrInvalidMutation
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT public_id, facts_json, content_hash, producer_dedupe_key, collected_at FROM evidence_items WHERE incident_id = ? AND cycle_no = ? AND domain_schema_version = 3 AND producer_type IN ('delivery.observe','delivery_observation') AND valid = TRUE ORDER BY collected_at, id`, task.IncidentID, task.CycleNo)
+	rows, err := tx.QueryContext(ctx, `SELECT public_id, facts_json, content_hash, producer_dedupe_key, collected_at FROM evidence_items WHERE incident_id = ? AND cycle_no = ? AND producer_type IN ('delivery.observe','delivery_observation') AND valid = TRUE ORDER BY collected_at, id`, task.IncidentID, task.CycleNo)
 	if err != nil {
 		return nil, err
 	}
@@ -1585,7 +1580,7 @@ func reportSamples(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task) (r
 }
 
 func reportTimeline(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task) (returnValue []byte, retErr error) {
-	rows, err := tx.QueryContext(ctx, `SELECT public_id, event_type, actor_type, actor_id, summary, metadata_json, occurred_at FROM incident_events WHERE incident_id = ? AND cycle_no = ? AND domain_schema_version = 3 ORDER BY occurred_at, id`, task.IncidentID, task.CycleNo)
+	rows, err := tx.QueryContext(ctx, `SELECT public_id, event_type, actor_type, actor_id, summary, metadata_json, occurred_at FROM incident_events WHERE incident_id = ? AND cycle_no = ? ORDER BY occurred_at, id`, task.IncidentID, task.CycleNo)
 	if err != nil {
 		return nil, err
 	}
@@ -1659,7 +1654,7 @@ func reportTimeline(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task) (
 
 func reportAgentUsage(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task) ([]byte, error) {
 	var runs, steps, toolCalls, modelCalls, tokens int64
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(used_steps),0), COALESCE(SUM(used_tool_calls),0), COALESCE(SUM(used_model_calls),0), COALESCE(SUM(input_tokens + output_tokens),0) FROM agent_runs WHERE incident_id = ? AND cycle_no = ? AND domain_schema_version = 3`, task.IncidentID, task.CycleNo).Scan(&runs, &steps, &toolCalls, &modelCalls, &tokens); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(used_steps),0), COALESCE(SUM(used_tool_calls),0), COALESCE(SUM(used_model_calls),0), COALESCE(SUM(input_tokens + output_tokens),0) FROM agent_runs WHERE incident_id = ? AND cycle_no = ?`, task.IncidentID, task.CycleNo).Scan(&runs, &steps, &toolCalls, &modelCalls, &tokens); err != nil {
 		return nil, err
 	}
 	return boundedJSON(map[string]any{"agent_runs": runs, "steps": steps, "tool_calls": toolCalls, "model_calls": modelCalls, "tokens": tokens}, 8192)

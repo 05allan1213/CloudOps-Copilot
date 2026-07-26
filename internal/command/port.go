@@ -18,7 +18,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/05allan1213/CloudOps-Copilot/internal/apiv3"
+	"github.com/05allan1213/CloudOps-Copilot/internal/api"
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
 	"github.com/05allan1213/CloudOps-Copilot/internal/businessbudget"
 	"github.com/05allan1213/CloudOps-Copilot/internal/infra/remediationmysql"
@@ -32,7 +32,7 @@ type remediationDecisionRepository interface {
 	RecordDecisionIn(context.Context, remediation.PersistenceTX, string, uint64, *remediation.Approval) error
 }
 
-// Port implements the domain-owned V3 command transitions. Every durable
+// Port implements the domain-owned command transitions. Every durable
 // effect, task enqueue, Timeline event, and idempotent response shares one
 // MySQL transaction.
 type Port struct {
@@ -50,22 +50,25 @@ func NewPort(db *sql.DB) (*Port, error) {
 	if err != nil {
 		return nil, err
 	}
-	remediations, err := remediationmysql.NewV3RemediationRepository(db)
+	remediations, err := remediationmysql.NewRepository(db)
 	if err != nil {
 		return nil, err
 	}
 	return &Port{idempotency: idempotency, tasks: tasks, remediations: remediations}, nil
 }
 
-func (p *Port) Execute(ctx context.Context, request apiv3.CommandRequest) (apiv3.CommandResult, error) {
+func (p *Port) Execute(ctx context.Context, request api.CommandRequest) (api.CommandResult, error) {
 	if p == nil || p.idempotency == nil || p.tasks == nil || p.remediations == nil {
-		return apiv3.CommandResult{}, apiv3.ErrUnavailable
+		return api.CommandResult{}, api.ErrUnavailable
 	}
 	if request.ResourceID == "" || request.IdempotencyKey == "" || request.ExpectedVersion == 0 || len(request.CanonicalBody) == 0 {
-		return apiv3.CommandResult{}, apiv3.ErrInvalidArgument
+		return api.CommandResult{}, api.ErrInvalidArgument
+	}
+	if !isLocalOwner(request.Actor) {
+		return api.CommandResult{}, api.ErrForbidden
 	}
 	if _, err := uuid.Parse(request.ResourceID); err != nil {
-		return apiv3.CommandResult{}, apiv3.ErrInvalidArgument
+		return api.CommandResult{}, api.ErrInvalidArgument
 	}
 	actorHash := canonicalHash("actor", request.Actor.Provider, request.Actor.Login, request.Actor.Subject)
 	requestHash := sha256.Sum256(request.CanonicalBody)
@@ -76,38 +79,43 @@ func (p *Port) Execute(ctx context.Context, request apiv3.CommandRequest) (apiv3
 		RequestHash:       hex.EncodeToString(requestHash[:]),
 	}
 	response, replayed, err := p.idempotency.Execute(ctx, commandRequest, func(ctx context.Context, tx *sql.Tx) (Response, error) {
-		var result apiv3.CommandResult
+		var result api.CommandResult
 		var commandErr error
 		switch request.Kind {
-		case apiv3.CommandStartInvestigation:
+		case api.CommandStartInvestigation:
 			result, commandErr = p.startInvestigation(ctx, tx, request)
-		case apiv3.CommandCloseIncident:
+		case api.CommandCloseIncident:
 			result, commandErr = p.closeIncident(ctx, tx, request)
-		case apiv3.CommandDecideRemediation:
+		case api.CommandDecideRemediation:
 			result, commandErr = p.decideRemediation(ctx, tx, request)
 		default:
-			commandErr = apiv3.ErrInvalidArgument
+			commandErr = api.ErrInvalidArgument
 		}
 		return storedResponse(commandResourceType(request.Kind), request.ResourceID, result, commandErr)
 	})
 	if errors.Is(err, ErrPayloadConflict) {
-		return apiv3.CommandResult{}, apiv3.ErrConflict
+		return api.CommandResult{}, api.ErrConflict
 	}
 	if err != nil {
-		return apiv3.CommandResult{}, fmt.Errorf("%w: %v", apiv3.ErrUnavailable, err)
+		return api.CommandResult{}, fmt.Errorf("%w: %v", api.ErrUnavailable, err)
 	}
 	var stored struct {
-		Result apiv3.CommandResult `json:"result"`
-		Error  string              `json:"error,omitempty"`
+		Result api.CommandResult `json:"result"`
+		Error  string            `json:"error,omitempty"`
 	}
 	if err := json.Unmarshal(response.Body, &stored); err != nil {
-		return apiv3.CommandResult{}, fmt.Errorf("%w: decode command response", apiv3.ErrUnavailable)
+		return api.CommandResult{}, fmt.Errorf("%w: decode command response", api.ErrUnavailable)
 	}
 	stored.Result.Replayed = replayed
 	if stored.Error != "" {
 		return stored.Result, errorFromCode(stored.Error)
 	}
 	return stored.Result, nil
+}
+
+func isLocalOwner(actor api.OwnerIdentity) bool {
+	return actor.Subject == "local-owner" && actor.Provider == "local" &&
+		actor.Login == "owner" && actor.Role == "owner"
 }
 
 type lockedIncident struct {
@@ -123,43 +131,43 @@ type lockedIncident struct {
 func loadIncident(ctx context.Context, tx *sql.Tx, publicID string) (lockedIncident, error) {
 	var incident lockedIncident
 	err := tx.QueryRowContext(ctx, `
-SELECT id, public_id, cycle_no, v3_status, version, migrated_legacy, migrated_legacy_context
+SELECT id, public_id, cycle_no, status, version, migrated_legacy, migrated_legacy_context
 FROM incidents
-WHERE public_id = ? AND domain_schema_version = 3
+WHERE public_id = ?
 FOR UPDATE`, publicID).Scan(&incident.ID, &incident.PublicID, &incident.CycleNo, &incident.Status, &incident.Version,
 		&incident.MigratedLegacy, &incident.MigratedLegacyContext)
 	if errors.Is(err, sql.ErrNoRows) {
-		return lockedIncident{}, apiv3.ErrNotFound
+		return lockedIncident{}, api.ErrNotFound
 	}
 	return incident, err
 }
 
-func (p *Port) startInvestigation(ctx context.Context, tx *sql.Tx, request apiv3.CommandRequest) (apiv3.CommandResult, error) {
+func (p *Port) startInvestigation(ctx context.Context, tx *sql.Tx, request api.CommandRequest) (api.CommandResult, error) {
 	body, err := decodeStartInvestigationCommand(request)
 	if err != nil {
-		return apiv3.CommandResult{}, err
+		return api.CommandResult{}, err
 	}
 	incident, err := loadIncident(ctx, tx, request.ResourceID)
 	if err != nil {
-		return apiv3.CommandResult{}, err
+		return api.CommandResult{}, err
 	}
 	if incident.Version != request.ExpectedVersion {
-		return apiv3.CommandResult{}, apiv3.ErrStaleVersion
+		return api.CommandResult{}, api.ErrStaleVersion
 	}
 	if incident.Status != "detected" && incident.Status != "investigating" {
-		return apiv3.CommandResult{}, apiv3.ErrInvalidTransition
+		return api.CommandResult{}, api.ErrInvalidTransition
 	}
 	activeRunID, err := businessbudget.ActiveAgentRunForCycle(ctx, tx, incident.ID, incident.CycleNo)
 	if err != nil {
-		return apiv3.CommandResult{}, err
+		return api.CommandResult{}, err
 	}
 	if activeRunID != 0 {
 		reconciled, reconcileErr := reconcileDeadInvestigationRun(ctx, tx, incident, activeRunID)
 		if reconcileErr != nil {
-			return apiv3.CommandResult{}, reconcileErr
+			return api.CommandResult{}, reconcileErr
 		}
 		if !reconciled {
-			return apiv3.CommandResult{}, apiv3.ErrConflict
+			return api.CommandResult{}, api.ErrConflict
 		}
 	}
 	authorization, budget, err := businessbudget.AuthorizeAgentRun(ctx, tx, incident.ID, incident.CycleNo, businessbudget.Actor{
@@ -167,19 +175,19 @@ func (p *Port) startInvestigation(ctx context.Context, tx *sql.Tx, request apiv3
 		Reason: body.Reason, RequestID: request.RequestID,
 	})
 	if errors.Is(err, businessbudget.ErrInvalidAuthorization) {
-		return apiv3.CommandResult{}, apiv3.ErrInvalidArgument
+		return api.CommandResult{}, api.ErrInvalidArgument
 	}
 	if errors.Is(err, businessbudget.ErrAuthorizationConflict) {
-		return apiv3.CommandResult{}, apiv3.ErrConflict
+		return api.CommandResult{}, api.ErrConflict
 	}
 	if err != nil {
-		return apiv3.CommandResult{}, err
+		return api.CommandResult{}, err
 	}
 	if budget.Outcome == businessbudget.OutcomeHardExhausted {
-		if err := businessbudget.MarkExhausted(ctx, tx, budget, incident.ID, incident.CycleNo, "operator.investigation.start"); err != nil {
-			return apiv3.CommandResult{}, err
+		if err := businessbudget.MarkExhausted(ctx, tx, budget, incident.ID, incident.CycleNo, "owner.investigation.start"); err != nil {
+			return api.CommandResult{}, err
 		}
-		return apiv3.CommandResult{}, apiv3.ErrInvalidTransition
+		return api.CommandResult{}, api.ErrInvalidTransition
 	}
 	dedupeParts := []string{"task", incident.PublicID, fmt.Sprint(incident.CycleNo), "investigation.start", fmt.Sprint(incident.Version)}
 	payloadBody := map[string]any{
@@ -194,7 +202,7 @@ func (p *Port) startInvestigation(ctx context.Context, tx *sql.Tx, request apiv3
 			"reason": body.Reason, "request_id": request.RequestID,
 		})
 		if err := appendCommandEvent(ctx, tx, incident, "agent_run_retry_authorized", request.Actor, metadata); err != nil {
-			return apiv3.CommandResult{}, err
+			return api.CommandResult{}, err
 		}
 	}
 	dedupe := canonicalHash(dedupeParts...)
@@ -207,7 +215,7 @@ func (p *Port) startInvestigation(ctx context.Context, tx *sql.Tx, request apiv3
 		MigratedLegacyContext: incident.MigratedLegacyContext,
 	})
 	if err != nil {
-		return apiv3.CommandResult{}, err
+		return api.CommandResult{}, err
 	}
 	metadataBody := map[string]any{"task_id": task.PublicID, "request_id": request.RequestID}
 	if authorization.ID != 0 {
@@ -216,13 +224,13 @@ func (p *Port) startInvestigation(ctx context.Context, tx *sql.Tx, request apiv3
 	}
 	metadata, _ := json.Marshal(metadataBody)
 	if err := appendCommandEvent(ctx, tx, incident, "investigation_requested", request.Actor, metadata); err != nil {
-		return apiv3.CommandResult{}, err
+		return api.CommandResult{}, err
 	}
-	return apiv3.CommandResult{HTTPStatus: http.StatusAccepted, ResourceID: incident.PublicID, Status: "accepted", Version: incident.Version, Cycle: uint64(incident.CycleNo)}, nil
+	return api.CommandResult{HTTPStatus: http.StatusAccepted, ResourceID: incident.PublicID, Status: "accepted", Version: incident.Version, Cycle: uint64(incident.CycleNo)}, nil
 }
 
 // reconcileDeadInvestigationRun converts a technical dead task into a terminal
-// business Run only when an operator has explicitly chosen a new investigation.
+// business Run only when the Owner has explicitly chosen a new investigation.
 // A live replay for the same Run version always wins and preserves the conflict.
 func reconcileDeadInvestigationRun(ctx context.Context, tx *sql.Tx, incident lockedIncident, runID uint64) (bool, error) {
 	var runPublicID, taskPublicID string
@@ -239,8 +247,8 @@ func reconcileDeadInvestigationRun(ctx context.Context, tx *sql.Tx, incident loc
 	  ON live.subject_type = 'agent_run' AND live.subject_id = r.id
 	 AND live.transition = 'investigation.step' AND live.status IN ('ready','running')
 	 AND live.expected_subject_version = r.row_version
-	WHERE r.id = ? AND r.incident_id = ? AND r.cycle_no = ? AND r.domain_schema_version = 3
-	  AND r.status IN ('PENDING','RUNNING') AND r.v3_status IN ('pending','running')
+	WHERE r.id = ? AND r.incident_id = ? AND r.cycle_no = ?
+	  AND r.status IN ('pending','running')
 	  AND live.id IS NULL
 	ORDER BY dead.replay_generation DESC, dead.id DESC
 	LIMIT 1
@@ -262,26 +270,26 @@ func reconcileDeadInvestigationRun(ctx context.Context, tx *sql.Tx, incident loc
 	}
 
 	result, err := tx.ExecContext(ctx, `UPDATE agent_runs
-	SET status = 'FAILED', v3_status = 'failed', failure_code = ?, failure_summary = ?,
+	SET status = 'failed', failure_code = ?, failure_summary = ?,
 	    completed_at = NOW(6), row_version = row_version + 1, updated_at = NOW(6)
-	WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3
-	  AND row_version = ? AND status IN ('PENDING','RUNNING') AND v3_status IN ('pending','running')`,
+	WHERE id = ? AND incident_id = ? AND cycle_no = ?
+	  AND row_version = ? AND status IN ('pending','running')`,
 		reason, summary, runID, incident.ID, incident.CycleNo, rowVersion)
 	if err != nil {
 		return false, fmt.Errorf("reconcile dead investigation AgentRun: %w", err)
 	}
 	if affected, _ := result.RowsAffected(); affected != 1 {
-		return false, apiv3.ErrConflict
+		return false, api.ErrConflict
 	}
 	metadata, _ := json.Marshal(map[string]any{
 		"agent_run_id": runPublicID, "task_public_id": taskPublicID,
-		"reason": reason, "reconciled_before_command": string(apiv3.CommandStartInvestigation),
+		"reason": reason, "reconciled_before_command": string(api.CommandStartInvestigation),
 	})
 	if _, err := tx.ExecContext(ctx, `INSERT IGNORE INTO incident_events
-	    (public_id, incident_id, domain_schema_version, cycle_no, event_schema_version,
+	    (public_id, incident_id, cycle_no, event_schema_version,
 	     event_type, idempotency_key, migrated_legacy_context, migrated_legacy,
 	     actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
-	VALUES (?, ?, 3, ?, 1, 'agent_run_failed', ?, ?, ?, 'system', 'command-reconciler',
+	VALUES (?, ?, ?, 1, 'agent_run_failed', ?, ?, ?, 'system', 'command-reconciler',
 	        'investigation AgentRun reconciled after terminal task', ?, NOW(6), NOW(6))`,
 		uuid.NewString(), incident.ID, incident.CycleNo,
 		canonicalHash("event", taskPublicID, "agent_run_failed"),
@@ -296,70 +304,70 @@ type startInvestigationCommandBody struct {
 	Reason          string `json:"reason,omitempty"`
 }
 
-func decodeStartInvestigationCommand(request apiv3.CommandRequest) (startInvestigationCommandBody, error) {
+func decodeStartInvestigationCommand(request api.CommandRequest) (startInvestigationCommandBody, error) {
 	if len(request.CanonicalBody) == 0 || len(request.CanonicalBody) > 4096 {
-		return startInvestigationCommandBody{}, apiv3.ErrInvalidArgument
+		return startInvestigationCommandBody{}, api.ErrInvalidArgument
 	}
 	decoder := json.NewDecoder(bytes.NewReader(request.CanonicalBody))
 	decoder.DisallowUnknownFields()
 	var body startInvestigationCommandBody
 	if err := decoder.Decode(&body); err != nil {
-		return startInvestigationCommandBody{}, apiv3.ErrInvalidArgument
+		return startInvestigationCommandBody{}, api.ErrInvalidArgument
 	}
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return startInvestigationCommandBody{}, apiv3.ErrInvalidArgument
+		return startInvestigationCommandBody{}, api.ErrInvalidArgument
 	}
 	body.Reason = strings.TrimSpace(body.Reason)
 	if body.ExpectedVersion == 0 || body.ExpectedVersion != request.ExpectedVersion || len(body.Reason) > 1024 {
-		return startInvestigationCommandBody{}, apiv3.ErrInvalidArgument
+		return startInvestigationCommandBody{}, api.ErrInvalidArgument
 	}
 	return body, nil
 }
 
-func (p *Port) closeIncident(ctx context.Context, tx *sql.Tx, request apiv3.CommandRequest) (apiv3.CommandResult, error) {
+func (p *Port) closeIncident(ctx context.Context, tx *sql.Tx, request api.CommandRequest) (api.CommandResult, error) {
 	incident, err := loadIncident(ctx, tx, request.ResourceID)
 	if err != nil {
-		return apiv3.CommandResult{}, err
+		return api.CommandResult{}, err
 	}
 	if incident.Version != request.ExpectedVersion {
-		return apiv3.CommandResult{}, apiv3.ErrStaleVersion
+		return api.CommandResult{}, api.ErrStaleVersion
 	}
 	if incident.Status != "detected" && incident.Status != "investigating" && incident.Status != "awaiting_approval" {
-		return apiv3.CommandResult{}, apiv3.ErrInvalidTransition
+		return api.CommandResult{}, api.ErrInvalidTransition
 	}
 	var unsafe int
 	if err := tx.QueryRowContext(ctx, `
 SELECT
   (SELECT COUNT(*) FROM change_requests
-   WHERE domain_schema_version = 3 AND incident_id = ? AND cycle_no = ?)
+   WHERE incident_id = ? AND cycle_no = ?)
   +
   (SELECT COUNT(*) FROM verification_runs
-   WHERE domain_schema_version = 3 AND incident_id = ? AND cycle_no = ? AND v3_status IN ('pending','running'))
+   WHERE incident_id = ? AND cycle_no = ? AND status IN ('pending','running'))
   +
   (SELECT COUNT(*) FROM async_tasks
    WHERE incident_id = ? AND cycle_no = ? AND status IN ('ready','running')
      AND task_type IN ('change.ensure_pr','delivery.observe','verification.advance'))`,
 		incident.ID, incident.CycleNo, incident.ID, incident.CycleNo, incident.ID, incident.CycleNo).Scan(&unsafe); err != nil {
-		return apiv3.CommandResult{}, err
+		return api.CommandResult{}, err
 	}
 	if unsafe != 0 {
-		return apiv3.CommandResult{}, apiv3.ErrInvalidTransition
+		return api.CommandResult{}, api.ErrInvalidTransition
 	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE agent_runs
-SET v3_status = 'cancelled', status = 'CANCELLED', row_version = row_version + 1,
+SET status = 'cancelled', row_version = row_version + 1,
     cancel_requested_at = NOW(6), completed_at = NOW(6), updated_at = NOW(6)
-WHERE domain_schema_version = 3 AND incident_id = ? AND cycle_no = ? AND v3_status IN ('pending','running')`,
+WHERE incident_id = ? AND cycle_no = ? AND status IN ('pending','running')`,
 		incident.ID, incident.CycleNo); err != nil {
-		return apiv3.CommandResult{}, err
+		return api.CommandResult{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE remediation_plans
-SET v3_status = 'cancelled', status = 'cancelled', row_version = row_version + 1, updated_at = NOW(6)
-WHERE domain_schema_version = 3 AND incident_id = ? AND cycle_no = ?
-  AND v3_status IN ('awaiting_approval','approved')`, incident.ID, incident.CycleNo); err != nil {
-		return apiv3.CommandResult{}, err
+SET status = 'cancelled', row_version = row_version + 1, updated_at = NOW(6)
+WHERE incident_id = ? AND cycle_no = ?
+  AND status IN ('awaiting_approval','approved')`, incident.ID, incident.CycleNo); err != nil {
+		return api.CommandResult{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE async_task_attempts attempt
@@ -374,7 +382,7 @@ SET attempt.status = 'cancelled', attempt.finished_at = NOW(6),
 WHERE task.incident_id = ? AND task.cycle_no = ? AND task.status = 'running'
   AND task.task_type IN ('investigation.advance','remediation.prepare')
   AND attempt.status = 'running'`, incident.ID, incident.CycleNo); err != nil {
-		return apiv3.CommandResult{}, err
+		return api.CommandResult{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `
 UPDATE async_tasks
@@ -384,28 +392,28 @@ SET status = 'cancelled', lease_owner = NULL, lease_expires_at = NULL,
     cancelled_at = NOW(6), updated_at = NOW(6)
 WHERE incident_id = ? AND cycle_no = ? AND status IN ('ready','running')
   AND task_type IN ('investigation.advance','remediation.prepare')`, incident.ID, incident.CycleNo); err != nil {
-		return apiv3.CommandResult{}, err
+		return api.CommandResult{}, err
 	}
 	updated, err := tx.ExecContext(ctx, `
 UPDATE incidents
-SET v3_status = 'closed', status = 'CLOSED_NO_ACTION', version = version + 1,
+SET status = 'closed', version = version + 1,
     terminal_at = NOW(6), resolved_at = NULL, updated_at = NOW(6)
-WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? AND version = ?
-  AND v3_status IN ('detected','investigating','awaiting_approval')`,
+WHERE id = ? AND cycle_no = ? AND version = ?
+  AND status IN ('detected','investigating','awaiting_approval')`,
 		incident.ID, incident.CycleNo, incident.Version)
 	if err != nil {
-		return apiv3.CommandResult{}, err
+		return api.CommandResult{}, err
 	}
 	if affected, _ := updated.RowsAffected(); affected != 1 {
-		return apiv3.CommandResult{}, apiv3.ErrStaleVersion
+		return api.CommandResult{}, api.ErrStaleVersion
 	}
 	incident.Status = "closed"
 	incident.Version++
 	metadata, _ := json.Marshal(map[string]any{"request_id": request.RequestID})
 	if err := appendCommandEvent(ctx, tx, incident, "incident_closed", request.Actor, metadata); err != nil {
-		return apiv3.CommandResult{}, err
+		return api.CommandResult{}, err
 	}
-	return apiv3.CommandResult{HTTPStatus: http.StatusAccepted, ResourceID: incident.PublicID, Status: "closed", Version: incident.Version, Cycle: uint64(incident.CycleNo)}, nil
+	return api.CommandResult{HTTPStatus: http.StatusAccepted, ResourceID: incident.PublicID, Status: "closed", Version: incident.Version, Cycle: uint64(incident.CycleNo)}, nil
 }
 
 type remediationDecisionCommandBody struct {
@@ -415,60 +423,58 @@ type remediationDecisionCommandBody struct {
 	Reason          string `json:"reason"`
 }
 
-func (p *Port) decideRemediation(ctx context.Context, tx *sql.Tx, request apiv3.CommandRequest) (apiv3.CommandResult, error) {
+func (p *Port) decideRemediation(ctx context.Context, tx *sql.Tx, request api.CommandRequest) (api.CommandResult, error) {
 	body, err := decodeRemediationDecisionCommand(request)
 	if err != nil {
-		return apiv3.CommandResult{}, err
+		return api.CommandResult{}, err
 	}
-	if request.Actor.Provider != "github" || request.Actor.Role != "operator" ||
-		request.Actor.Login == "" || request.Actor.Login != strings.TrimSpace(request.Actor.Login) ||
-		len(request.Actor.Login) > 128 {
-		return apiv3.CommandResult{}, apiv3.ErrForbidden
+	if !isLocalOwner(request.Actor) {
+		return api.CommandResult{}, api.ErrForbidden
 	}
 	if request.RequestID == "" || request.RequestID != strings.TrimSpace(request.RequestID) || len(request.RequestID) > 128 {
-		return apiv3.CommandResult{}, apiv3.ErrInvalidArgument
+		return api.CommandResult{}, api.ErrInvalidArgument
 	}
 
 	plan, err := p.remediations.LockPlanIn(ctx, tx, request.ResourceID)
 	if errors.Is(err, remediation.ErrNotFound) {
-		return apiv3.CommandResult{}, apiv3.ErrNotFound
+		return api.CommandResult{}, api.ErrNotFound
 	}
 	if err != nil {
-		return apiv3.CommandResult{}, err
+		return api.CommandResult{}, err
 	}
 	if plan.RowVersion != request.ExpectedVersion || plan.CanonicalPlanHash != request.ExpectedHash {
-		return apiv3.CommandResult{}, apiv3.ErrStaleVersion
+		return api.CommandResult{}, api.ErrStaleVersion
 	}
 	if plan.Status != remediation.PlanAwaitingApproval {
-		return apiv3.CommandResult{}, apiv3.ErrInvalidTransition
+		return api.CommandResult{}, api.ErrInvalidTransition
 	}
 	if plan.CycleNo == 0 || plan.CycleNo > math.MaxUint32 || plan.RowVersion == math.MaxUint64 {
-		return apiv3.CommandResult{}, apiv3.ErrInvalidArgument
+		return api.CommandResult{}, api.ErrInvalidArgument
 	}
 	incident, err := loadIncident(ctx, tx, plan.IncidentPublicID)
 	if err != nil {
-		return apiv3.CommandResult{}, err
+		return api.CommandResult{}, err
 	}
 	if incident.ID != plan.IncidentID || uint64(incident.CycleNo) != plan.CycleNo ||
 		incident.Version != plan.IncidentVersion+1 {
-		return apiv3.CommandResult{}, apiv3.ErrConflict
+		return api.CommandResult{}, api.ErrConflict
 	}
 	if incident.Status != "awaiting_approval" {
-		return apiv3.CommandResult{}, apiv3.ErrInvalidTransition
+		return api.CommandResult{}, api.ErrInvalidTransition
 	}
 	var databaseNow time.Time
 	if err := tx.QueryRowContext(ctx, "SELECT NOW(6)").Scan(&databaseNow); err != nil {
-		return apiv3.CommandResult{}, err
+		return api.CommandResult{}, err
 	}
 	databaseNow = databaseNow.UTC()
 	if !databaseNow.Before(plan.ExpiresAt) {
-		return apiv3.CommandResult{}, apiv3.ErrConflict
+		return api.CommandResult{}, api.ErrConflict
 	}
 	decisionExpiresAt := databaseNow.Add(remediationDecisionTTL)
 	if plan.ExpiresAt.Before(decisionExpiresAt) {
 		decisionExpiresAt = plan.ExpiresAt
 	}
-	decision, err := remediation.NewV3Decision(
+	decision, err := remediation.NewDecision(
 		*plan,
 		remediation.Decision(body.Decision),
 		request.Actor.Provider,
@@ -480,13 +486,13 @@ func (p *Port) decideRemediation(ctx context.Context, tx *sql.Tx, request apiv3.
 		decisionExpiresAt,
 	)
 	if err != nil {
-		return apiv3.CommandResult{}, apiv3.ErrInvalidArgument
+		return api.CommandResult{}, api.ErrInvalidArgument
 	}
 	if err := p.remediations.RecordDecisionIn(ctx, tx, plan.PublicID, plan.RowVersion, &decision); err != nil {
 		// The repository can fail after its first write. Returning the original
 		// error forces the owning command transaction to roll back instead of
 		// durably recording a partial Decision without its Plan/task effects.
-		return apiv3.CommandResult{}, err
+		return api.CommandResult{}, err
 	}
 
 	nextPlanVersion := plan.RowVersion + 1
@@ -503,7 +509,7 @@ func (p *Port) decideRemediation(ctx context.Context, tx *sql.Tx, request apiv3.
 			PlanID string `json:"plan_id"`
 		}{PlanID: plan.PublicID})
 		if err != nil {
-			return apiv3.CommandResult{}, err
+			return api.CommandResult{}, err
 		}
 		task, err := p.tasks.EnqueueIn(ctx, tx, asyncjob.NewTask{
 			IncidentID: plan.IncidentID, CycleNo: uint32(plan.CycleNo),
@@ -515,33 +521,33 @@ func (p *Port) decideRemediation(ctx context.Context, tx *sql.Tx, request apiv3.
 			Priority: 90, MaxAttempts: 5,
 		})
 		if err != nil {
-			return apiv3.CommandResult{}, err
+			return api.CommandResult{}, err
 		}
 		metadata["task_id"] = task.PublicID
 	} else {
 		updated, err := tx.ExecContext(ctx, `UPDATE incidents
-SET status = 'DIAGNOSING', v3_status = 'investigating', version = version + 1,
+SET status = 'investigating', version = version + 1,
     needs_attention = FALSE, blocking_reason_code = NULL, blocked_at = NULL,
     updated_at = NOW(6)
-WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? AND version = ?
-  AND v3_status = 'awaiting_approval'`, incident.ID, incident.CycleNo, incident.Version)
+WHERE id = ? AND cycle_no = ? AND version = ?
+  AND status = 'awaiting_approval'`, incident.ID, incident.CycleNo, incident.Version)
 		if err != nil {
-			return apiv3.CommandResult{}, err
+			return api.CommandResult{}, err
 		}
 		if affected, _ := updated.RowsAffected(); affected != 1 {
-			return apiv3.CommandResult{}, errors.New("remediation rejection lost the locked Incident transition")
+			return api.CommandResult{}, errors.New("remediation rejection lost the locked Incident transition")
 		}
 		incident.Status = "investigating"
 		incident.Version++
 	}
 	metadataJSON, err := json.Marshal(metadata)
 	if err != nil || len(metadataJSON) > 8192 {
-		return apiv3.CommandResult{}, errors.New("remediation Decision Timeline metadata is invalid")
+		return api.CommandResult{}, errors.New("remediation Decision Timeline metadata is invalid")
 	}
 	if err := appendCommandEvent(ctx, tx, incident, eventType, request.Actor, metadataJSON); err != nil {
-		return apiv3.CommandResult{}, err
+		return api.CommandResult{}, err
 	}
-	return apiv3.CommandResult{
+	return api.CommandResult{
 		HTTPStatus: http.StatusAccepted,
 		ResourceID: plan.PublicID,
 		Status:     body.Decision,
@@ -550,28 +556,28 @@ WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? AND version = ?
 	}, nil
 }
 
-func decodeRemediationDecisionCommand(request apiv3.CommandRequest) (remediationDecisionCommandBody, error) {
+func decodeRemediationDecisionCommand(request api.CommandRequest) (remediationDecisionCommandBody, error) {
 	if len(request.CanonicalBody) == 0 || len(request.CanonicalBody) > 4096 {
-		return remediationDecisionCommandBody{}, apiv3.ErrInvalidArgument
+		return remediationDecisionCommandBody{}, api.ErrInvalidArgument
 	}
 	decoder := json.NewDecoder(bytes.NewReader(request.CanonicalBody))
 	decoder.DisallowUnknownFields()
 	var body remediationDecisionCommandBody
 	if err := decoder.Decode(&body); err != nil {
-		return remediationDecisionCommandBody{}, apiv3.ErrInvalidArgument
+		return remediationDecisionCommandBody{}, api.ErrInvalidArgument
 	}
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return remediationDecisionCommandBody{}, apiv3.ErrInvalidArgument
+		return remediationDecisionCommandBody{}, api.ErrInvalidArgument
 	}
 	if body.Decision != string(remediation.DecisionApproved) && body.Decision != string(remediation.DecisionRejected) {
-		return remediationDecisionCommandBody{}, apiv3.ErrInvalidTransition
+		return remediationDecisionCommandBody{}, api.ErrInvalidTransition
 	}
 	body.Reason = strings.TrimSpace(body.Reason)
 	if body.ExpectedVersion == 0 || body.ExpectedVersion != request.ExpectedVersion ||
 		body.ExpectedHash != request.ExpectedHash || !validCommandSHA256(body.ExpectedHash) ||
 		body.Reason == "" || len(body.Reason) > 1024 {
-		return remediationDecisionCommandBody{}, apiv3.ErrInvalidArgument
+		return remediationDecisionCommandBody{}, api.ErrInvalidArgument
 	}
 	return body, nil
 }
@@ -584,46 +590,46 @@ func validCommandSHA256(value string) bool {
 	return err == nil
 }
 
-func appendCommandEvent(ctx context.Context, tx *sql.Tx, incident lockedIncident, eventType string, actor apiv3.Identity, metadata []byte) error {
+func appendCommandEvent(ctx context.Context, tx *sql.Tx, incident lockedIncident, eventType string, actor api.OwnerIdentity, metadata []byte) error {
 	idempotency := canonicalHash("event", incident.PublicID, fmt.Sprint(incident.CycleNo), eventType, string(metadata))
 	_, err := tx.ExecContext(ctx, `
 INSERT IGNORE INTO incident_events
-    (public_id, incident_id, domain_schema_version, cycle_no, event_schema_version,
+    (public_id, incident_id, cycle_no, event_schema_version,
      event_type, idempotency_key, migrated_legacy_context, migrated_legacy, actor_type, actor_id, summary, metadata_json,
      occurred_at, created_at)
-VALUES (?, ?, 3, ?, 1, ?, ?, ?, ?, 'user', ?, ?, ?, NOW(6), NOW(6))`,
+VALUES (?, ?, ?, 1, ?, ?, ?, ?, 'user', ?, ?, ?, NOW(6), NOW(6))`,
 		uuid.NewString(), incident.ID, incident.CycleNo, eventType, idempotency,
 		incident.MigratedLegacyContext, incident.MigratedLegacy,
 		actor.Provider+":"+actor.Login, strings.ReplaceAll(eventType, "_", " "), metadata)
 	return err
 }
 
-func storedResponse(resourceType, resourceID string, result apiv3.CommandResult, commandErr error) (Response, error) {
+func storedResponse(resourceType, resourceID string, result api.CommandResult, commandErr error) (Response, error) {
 	status := http.StatusAccepted
 	code := ""
 	if commandErr != nil {
 		switch {
-		case errors.Is(commandErr, apiv3.ErrNotFound):
+		case errors.Is(commandErr, api.ErrNotFound):
 			status, code = http.StatusNotFound, "not_found"
-		case errors.Is(commandErr, apiv3.ErrStaleVersion):
+		case errors.Is(commandErr, api.ErrStaleVersion):
 			status, code = http.StatusConflict, "stale"
-		case errors.Is(commandErr, apiv3.ErrConflict):
+		case errors.Is(commandErr, api.ErrConflict):
 			status, code = http.StatusConflict, "conflict"
-		case errors.Is(commandErr, apiv3.ErrInvalidTransition):
+		case errors.Is(commandErr, api.ErrInvalidTransition):
 			status, code = http.StatusUnprocessableEntity, "invalid_transition"
-		case errors.Is(commandErr, apiv3.ErrNotImplemented):
+		case errors.Is(commandErr, api.ErrNotImplemented):
 			status, code = http.StatusNotImplemented, "not_implemented"
-		case errors.Is(commandErr, apiv3.ErrInvalidArgument):
+		case errors.Is(commandErr, api.ErrInvalidArgument):
 			status, code = http.StatusBadRequest, "invalid_argument"
-		case errors.Is(commandErr, apiv3.ErrForbidden):
+		case errors.Is(commandErr, api.ErrForbidden):
 			status, code = http.StatusForbidden, "forbidden"
 		default:
 			return Response{}, commandErr
 		}
 	}
 	body, err := json.Marshal(struct {
-		Result apiv3.CommandResult `json:"result"`
-		Error  string              `json:"error,omitempty"`
+		Result api.CommandResult `json:"result"`
+		Error  string            `json:"error,omitempty"`
 	}{Result: result, Error: code})
 	if err != nil {
 		return Response{}, err
@@ -634,26 +640,26 @@ func storedResponse(resourceType, resourceID string, result apiv3.CommandResult,
 func errorFromCode(code string) error {
 	switch code {
 	case "not_found":
-		return apiv3.ErrNotFound
+		return api.ErrNotFound
 	case "stale":
-		return apiv3.ErrStaleVersion
+		return api.ErrStaleVersion
 	case "conflict":
-		return apiv3.ErrConflict
+		return api.ErrConflict
 	case "invalid_transition":
-		return apiv3.ErrInvalidTransition
+		return api.ErrInvalidTransition
 	case "not_implemented":
-		return apiv3.ErrNotImplemented
+		return api.ErrNotImplemented
 	case "invalid_argument":
-		return apiv3.ErrInvalidArgument
+		return api.ErrInvalidArgument
 	case "forbidden":
-		return apiv3.ErrForbidden
+		return api.ErrForbidden
 	default:
-		return apiv3.ErrUnavailable
+		return api.ErrUnavailable
 	}
 }
 
-func commandResourceType(kind apiv3.CommandKind) string {
-	if kind == apiv3.CommandDecideRemediation {
+func commandResourceType(kind api.CommandKind) string {
+	if kind == api.CommandDecideRemediation {
 		return "remediation_plan"
 	}
 	return "incident"

@@ -62,6 +62,9 @@ main
 probe
 web
 
+# Private local lifecycle state, backups, and managed secrets
+.cloudops/
+
 # AI file
 .agents/
 .codex/

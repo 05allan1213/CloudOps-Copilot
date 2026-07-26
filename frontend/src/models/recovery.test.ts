@@ -32,34 +32,24 @@ function run(attempt: number, status: string, updatedAt: string): VerificationRu
 }
 
 describe("approval fail-closed presentation", () => {
-  it("only enables an operator on the current, unexpired awaiting-approval Plan", () => {
+  it("only enables the local Owner on the current, unexpired awaiting-approval Plan", () => {
     expect(planDecisionAvailability(plan(), {
-      isOperator: true,
       incidentVersion: 7,
       incidentStatus: "awaiting_approval",
       nowMs: Date.now(),
     }).available).toBe(true);
 
-    expect(planDecisionAvailability(plan(), {
-      isOperator: false,
-      incidentVersion: 7,
-      incidentStatus: "awaiting_approval",
-    })).toMatchObject({ available: false, reason: expect.stringContaining("Viewer") });
-
     expect(planDecisionAvailability(plan({ expires_at: new Date(Date.now() - 1).toISOString() }), {
-      isOperator: true,
       incidentVersion: 7,
       incidentStatus: "awaiting_approval",
     })).toMatchObject({ available: false, expired: true });
 
     expect(planDecisionAvailability(plan(), {
-      isOperator: true,
       incidentVersion: 8,
       incidentStatus: "awaiting_approval",
     })).toMatchObject({ available: false, stale: true });
 
     expect(planDecisionAvailability(plan(), {
-      isOperator: true,
       incidentVersion: 7,
       incidentStatus: "awaiting_approval",
       conflict: true,
@@ -68,18 +58,15 @@ describe("approval fail-closed presentation", () => {
 
   it("fails closed when expiry cannot be parsed or a Decision already exists", () => {
     expect(planDecisionAvailability(plan({ expires_at: "not-a-date" }), {
-      isOperator: true,
       incidentVersion: 7,
       incidentStatus: "awaiting_approval",
     }).expired).toBe(true);
     expect(planDecisionAvailability(plan({ decision: {} as RemediationPlanView["decision"] }), {
-      isOperator: true,
       incidentVersion: 7,
       incidentStatus: "awaiting_approval",
     }).available).toBe(false);
 
     expect(planDecisionAvailability(plan(), {
-      isOperator: true,
       incidentVersion: 7,
       incidentStatus: "delivering",
     })).toMatchObject({ available: false, reason: expect.stringContaining("not awaiting approval") });

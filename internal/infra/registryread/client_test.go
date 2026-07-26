@@ -20,7 +20,7 @@ import (
 	"github.com/05allan1213/CloudOps-Copilot/internal/change"
 )
 
-const testRepository = "acme/server-web"
+const testRepository = "acme/cloudops-api"
 
 type fixtureDocument struct {
 	manifest       []byte
@@ -30,7 +30,7 @@ type fixtureDocument struct {
 }
 
 func fixtureDocumentFor(revision string) fixtureDocument {
-	source := "https://github.com/acme/server-web"
+	source := "https://github.com/acme/cloudops-api"
 	config := []byte(fmt.Sprintf(`{"config":{"Labels":{"org.opencontainers.image.revision":%q,"org.opencontainers.image.source":%q,"org.opencontainers.image.version":%q}}}`, revision, source, revision))
 	configDigest := testDigest(config)
 	manifest := []byte(fmt.Sprintf(`{"schemaVersion":2,"mediaType":%q,"config":{"mediaType":%q,"digest":%q,"size":%d},"layers":[{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:%s","size":99}]}`, manifestOCI, configOCI, configDigest, len(config), strings.Repeat("f", 64)))
@@ -108,7 +108,7 @@ func TestReadMetadataTLSIntegrityLabelsCacheAndGETOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if requests.Load() != 2 || first.ResultHash == "" || first != second || first.Integrity != change.RegistryIntegrityVerified || !first.Valid || first.Revision != strings.Repeat("a", 40) || first.Source != "https://github.com/acme/server-web" || first.Version != first.Revision || first.ManifestDigest != doc.manifestDigest || first.ConfigDigest != doc.configDigest || !first.Redaction.AuthMaterialOmitted || !first.Redaction.ResponsesOmitted {
+	if requests.Load() != 2 || first.ResultHash == "" || first != second || first.Integrity != change.RegistryIntegrityVerified || !first.Valid || first.Revision != strings.Repeat("a", 40) || first.Source != "https://github.com/acme/cloudops-api" || first.Version != first.Revision || first.ManifestDigest != doc.manifestDigest || first.ConfigDigest != doc.configDigest || !first.Redaction.AuthMaterialOmitted || !first.Redaction.ResponsesOmitted {
 		t.Fatalf("unexpected bounded metadata/cache result: requests=%d metadata=%+v", requests.Load(), first)
 	}
 }

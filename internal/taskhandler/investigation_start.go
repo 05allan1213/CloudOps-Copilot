@@ -21,7 +21,7 @@ import (
 
 const (
 	// DefaultAgentRunBudget and HardAgentRunBudget retain the public taskhandler
-	// names while sharing the frozen V3 budget contract with every child kind.
+	// names while sharing the frozen budget contract with every child kind.
 	DefaultAgentRunBudget     = businessbudget.DefaultLimit
 	HardAgentRunBudget        = businessbudget.HardLimit
 	defaultSemanticIterations = 8
@@ -69,9 +69,9 @@ func startInvestigation(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Tas
 	var status string
 	var version uint64
 	if err := tx.QueryRowContext(ctx, `
-SELECT cycle_no, v3_status, version
+SELECT cycle_no, status, version
 FROM incidents
-WHERE id = ? AND domain_schema_version = 3
+WHERE id = ?
 FOR UPDATE`, task.IncidentID).Scan(&cycle, &status, &version); err != nil {
 		return fmt.Errorf("load investigation.start incident: %w", err)
 	}
@@ -101,11 +101,11 @@ INSERT INTO agent_runs
      prompt_version, prompt_hash, tool_schema_version, tool_schema_hash,
      max_steps, max_tool_calls, max_model_calls, token_budget, max_evidence_items,
      max_runtime_ms, tool_timeout_ms, max_evidence_bytes, max_checkpoint_bytes,
-     max_step_retries, failure_code, row_version, domain_schema_version, v3_status,
+     max_step_retries, failure_code, row_version,
 	     cycle_no, expected_incident_version, business_budget_authorization_id, migrated_legacy_context, deadline_at, created_at, updated_at)
-VALUES (?, ?, ?, 'PENDING', 'Investigate the current Incident using bounded read-only evidence.',
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 1, 3,
-	        'pending', ?, ?, ?, ?, TIMESTAMPADD(MICROSECOND, ?, NOW(6)), NOW(6), NOW(6))
+VALUES (?, ?, ?, 'pending', 'Investigate the current Incident using bounded read-only evidence.',
+	        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 1,
+	        ?, ?, ?, ?, TIMESTAMPADD(MICROSECOND, ?, NOW(6)), NOW(6), NOW(6))
 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
 		runPublicID, task.IncidentID, runKey,
 		identity.ActualModel, identity.Provider, identity.ActualModel, identity.PromptVersion, identity.PromptHash,
@@ -130,7 +130,7 @@ ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
 	var runMigratedLegacyContext bool
 	if err := tx.QueryRowContext(ctx, `
 SELECT public_id, incident_id, COALESCE(cycle_no, 0), COALESCE(expected_incident_version, 0),
-       COALESCE(idempotency_key, ''), COALESCE(v3_status, ''), business_budget_authorization_id,
+	       COALESCE(idempotency_key, ''), status, business_budget_authorization_id,
        COALESCE(model_provider, ''), COALESCE(actual_model, ''), COALESCE(prompt_version, ''),
 	       COALESCE(prompt_hash, ''), COALESCE(tool_schema_version, ''), COALESCE(tool_schema_hash, ''),
 	       migrated_legacy_context
@@ -152,9 +152,9 @@ FROM agent_runs WHERE id = ? FOR UPDATE`, runID).
 
 	updated, err := tx.ExecContext(ctx, `
 UPDATE incidents
-SET v3_status = 'investigating', version = version + 1, updated_at = NOW(6)
-WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? AND version = ?
-  AND v3_status IN ('detected','investigating')`,
+SET status = 'investigating', version = version + 1, updated_at = NOW(6)
+WHERE id = ? AND cycle_no = ? AND version = ?
+  AND status IN ('detected','investigating')`,
 		task.IncidentID, task.CycleNo, task.ExpectedSubjectVersion)
 	if err != nil {
 		return fmt.Errorf("advance investigation Incident: %w", err)
@@ -174,10 +174,10 @@ WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? AND version = ?
 	}
 	if _, err := tx.ExecContext(ctx, `
 INSERT IGNORE INTO incident_events
-    (public_id, incident_id, domain_schema_version, cycle_no, event_schema_version,
+    (public_id, incident_id, cycle_no, event_schema_version,
      event_type, idempotency_key, migrated_legacy_context, actor_type, actor_id, summary, metadata_json,
      occurred_at, created_at)
-VALUES (?, ?, 3, ?, 1, 'agent_run_created', ?, ?, 'system', 'async-task-handler',
+VALUES (?, ?, ?, 1, 'agent_run_created', ?, ?, 'system', 'async-task-handler',
         'investigation AgentRun created', ?, NOW(6), NOW(6))`,
 		uuid.NewString(), task.IncidentID, task.CycleNo,
 		hashCanonical("event", runPublicID, "agent_run_created"), task.MigratedLegacyContext, eventMetadata); err != nil {

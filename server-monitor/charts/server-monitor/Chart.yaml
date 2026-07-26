@@ -1,6 +1,0 @@
-apiVersion: v2
-name: server-monitor
-description: CloudOps Incident Workbench with a bounded Agent runtime and local observability dependencies.
-type: application
-version: 0.1.0
-appVersion: "0.1.0"

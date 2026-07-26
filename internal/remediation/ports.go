@@ -3,25 +3,10 @@ package remediation
 import (
 	"context"
 	"database/sql"
-	"time"
 )
 
-type Repository interface {
-	CreatePlan(context.Context, *RemediationPlan) error
-	GetPlan(context.Context, string) (*RemediationPlan, error)
-	GetApproval(context.Context, string) (*Approval, error)
-	ListPlans(context.Context, ListFilter) (Page, error)
-	ApprovePlan(context.Context, string, uint64, Approval, *ChangeRequest) (*RemediationPlan, *ChangeRequest, error)
-	RejectPlan(context.Context, string, uint64, Approval) (*RemediationPlan, error)
-	CreateDelivery(context.Context, *ChangeRequest) error
-	ClaimDelivery(context.Context, string, time.Time, time.Duration) (*ChangeRequest, *RemediationPlan, error)
-	ReleaseDelivery(context.Context, uint64, uint64, string, string) error
-	MarkPRCreated(context.Context, uint64, uint64, string, string, int64, string) error
-	UpdateCI(context.Context, uint64, uint64, CIStatus) error
-}
-
 // PersistenceTX is the transaction surface shared with the durable async task
-// runner. V3 domain effects must be written through the runner-owned
+// runner. Domain effects must be written through the runner-owned
 // transaction so task completion and business state cannot diverge.
 type PersistenceTX interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
@@ -29,9 +14,8 @@ type PersistenceTX interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
-// V3Repository is intentionally separate from the compatibility Repository.
-// In particular, V3 decisions are never stored as legacy approvals.
-type V3Repository interface {
+// Repository persists immutable plans and owner decisions.
+type Repository interface {
 	CreatePlan(context.Context, *RemediationPlan) error
 	CreatePlanIn(context.Context, PersistenceTX, *RemediationPlan) error
 	GetPlan(context.Context, string) (*RemediationPlan, error)
@@ -47,22 +31,22 @@ type GitHubWriter interface {
 	ReadCI(context.Context, string, string) (CIStatus, error)
 }
 
-// PhasedGitHubWriter is the V3 write surface. Each Ensure method reconciles
+// ReconciledGitHubWriter is the bounded write surface. Each Ensure method reconciles
 // first and performs at most one mutating GitHub request.
-type PhasedGitHubWriter interface {
-	ReconcileDraftPR(context.Context, PhasedDeliveryRequest) (WriteObservation, error)
-	EnsureBranch(context.Context, PhasedDeliveryRequest) (WriteObservation, error)
-	EnsureCommit(context.Context, PhasedDeliveryRequest) (WriteObservation, error)
-	EnsureDraftPR(context.Context, PhasedDeliveryRequest) (WriteObservation, error)
+type ReconciledGitHubWriter interface {
+	ReconcileDraftPR(context.Context, ChangeWriteRequest) (WriteObservation, error)
+	EnsureBranch(context.Context, ChangeWriteRequest) (WriteObservation, error)
+	EnsureCommit(context.Context, ChangeWriteRequest) (WriteObservation, error)
+	EnsureDraftPR(context.Context, ChangeWriteRequest) (WriteObservation, error)
 }
 
-type WritePhase string
+type OperationStep string
 
 const (
-	WritePhaseEnsureBranch  WritePhase = "ensure_branch"
-	WritePhaseEnsureCommit  WritePhase = "ensure_commit"
-	WritePhaseEnsureDraftPR WritePhase = "ensure_draft_pr"
-	WritePhaseComplete      WritePhase = "complete"
+	OperationStepEnsureBranch  OperationStep = "ensure_branch"
+	OperationStepEnsureCommit  OperationStep = "ensure_commit"
+	OperationStepEnsureDraftPR OperationStep = "ensure_draft_pr"
+	OperationStepComplete      OperationStep = "complete"
 )
 
 type DeliveryRequest struct {
@@ -84,7 +68,7 @@ type DeliveryResult struct {
 	PRURL     string
 }
 
-type PhasedDeliveryRequest struct {
+type ChangeWriteRequest struct {
 	DeliveryRequest
 	BaseBlobSHA           string
 	ExpectedBeforeHash    string
@@ -94,7 +78,7 @@ type PhasedDeliveryRequest struct {
 }
 
 type WriteObservation struct {
-	Phase      WritePhase
+	Step       OperationStep
 	BaseSHA    string
 	BranchSHA  string
 	CommitSHA  string

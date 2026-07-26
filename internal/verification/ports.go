@@ -116,7 +116,7 @@ type AlertReader interface {
 }
 
 // The signal ports deliberately accept typed templates and trusted dimensions,
-// never provider query language. Phase 5 does not wire them until a bounded
+// never provider query language. They are wired only when a bounded
 // read adapter exists; unsupported checks are rejected by ValidatePlan.
 type MetricTemplate string
 

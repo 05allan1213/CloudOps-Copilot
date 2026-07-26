@@ -3,7 +3,6 @@ package config
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/url"
 	"os"
 	"regexp"
@@ -13,7 +12,6 @@ import (
 	"time"
 
 	"github.com/05allan1213/CloudOps-Copilot/internal/bootstrap/configutil"
-	"github.com/05allan1213/CloudOps-Copilot/internal/verification"
 )
 
 type Config struct {
@@ -64,21 +62,20 @@ type Config struct {
 	// 默认值：1048576（1MB）
 	AlertmanagerWebhookMaxBodyBytes int64
 
-	// SignalTargetAllowlistJSON maps Alertmanager labels to server-owned V3
+	// SignalTargetAllowlistJSON maps Alertmanager labels to server-owned
 	// target identities. The default contains only the golden demo workload.
 	SignalTargetAllowlistJSON string
 
 	// AlertmanagerWebhookBearerTokenFile is the independent INTERNAL webhook
-	// credential. RequireBearer remains false only as an explicit Phase 2
-	// compatibility boundary before the Phase 3 deployment profile owns it.
+	// credential. RequireBearer may remain false only for trusted local ingress.
 	AlertmanagerWebhookBearerTokenFile string
 	AlertmanagerWebhookRequireBearer   bool
 
-	// IncidentAggregationWindow V2 告警聚合到同一 Incident 的时间窗口
+	// IncidentAggregationWindow 告警聚合到同一 Incident 的时间窗口
 	// 默认值：14400s（4 小时）
 	IncidentAggregationWindow time.Duration
 
-	// IncidentAgentEnabled opts into the durable Phase 2 runtime. It is disabled by default.
+	// IncidentAgentEnabled opts into the durable Agent runtime. It is disabled by default.
 	IncidentAgentEnabled            bool
 	IncidentAgentWorkerID           string
 	IncidentAgentPollInterval       time.Duration
@@ -95,7 +92,7 @@ type Config struct {
 	IncidentAgentMaxCheckpointBytes int
 	IncidentAgentMaxStepRetries     int
 
-	// FastDemo enables the disposable, controlled-direct V2 demo path only.
+	// FastDemo enables the disposable, controlled-direct demonstration path only.
 	FastDemoEnabled           bool
 	FastDemoConfirmDisposable bool
 	FastDemoRevision          string
@@ -105,7 +102,7 @@ type Config struct {
 	FastDemoRecoveryReplicas  int
 	FastDemoMaxReplicas       int
 
-	// Phase 3 change intelligence is read-only and disabled by default.
+	// Change intelligence is read-only and disabled by default.
 	ChangeIntelligenceEnabled bool
 	ChangeLookback            time.Duration
 	ChangeMaxCandidates       int
@@ -152,7 +149,7 @@ type Config struct {
 	RegistryCacheTTL          time.Duration
 	RegistryCacheMaxItems     int
 
-	// Phase 4 human-approved GitOps remediation is independently default-off.
+	// Human-approved GitOps remediation is independently default-off.
 	RemediationEnabled             bool
 	GitOpsPREnabled                bool
 	GitHubWriteEnabled             bool
@@ -179,7 +176,7 @@ type Config struct {
 	RemediationPollInterval        time.Duration
 	RemediationLeaseDuration       time.Duration
 
-	// Phase 5 delivery observation and deterministic recovery verification are independently default-off.
+	// Delivery observation and deterministic recovery verification are independently default-off.
 	DeliveryTrackingEnabled       bool
 	VerificationEnabled           bool
 	DeliveryWorkerID              string
@@ -190,7 +187,6 @@ type Config struct {
 	VerificationStabilityWindow   time.Duration
 	VerificationLeaseDuration     time.Duration
 	VerificationMaxAttempts       int
-	VerificationProfilesJSON      string
 	ObservabilityPrometheusURL    string
 	ObservabilityLokiURL          string
 	ObservabilityTempoURL         string
@@ -225,14 +221,14 @@ type Config struct {
 	// RateLimit 限流配置
 	RateLimit RateLimitConfig
 
-	// AgentTool* configures the neutral V2 Agent tool registry. The loader
+	// AgentTool* configures the neutral Agent tool registry. The loader
 	// accepts the old COPILOT_TOOL_* names only as temporary fallback aliases.
 	AgentToolRegistryEnabled bool
 	AgentToolDefaultTimeout  time.Duration
 	AgentToolLogArgs         bool
 
 	// RunbookDir Runbook Markdown 目录，为空时禁用 Runbook 检索
-	// 默认值：../runbooks
+	// 默认值：runbooks
 	RunbookDir string
 
 	// RunbookMaxFiles 最大 Runbook 文件数量
@@ -393,32 +389,6 @@ type Config struct {
 	// MySQLPingTimeout MySQL 健康检查超时时间
 	// 默认值：3s
 	MySQLPingTimeout time.Duration
-
-	// JWTSecret JWT 签名密钥，启用鉴权时必填且不少于 32 字节
-	// 默认值：空
-	// 敏感：是
-	JWTSecret string
-
-	// JWTExpireHours JWT 令牌过期时间（小时）
-	// 默认值：24
-	JWTExpireHours int
-
-	// AuthEnabled 是否启用鉴权，生产环境必须开启
-	// 默认值：true
-	AuthEnabled bool
-
-	// V3ProxyAuthEnabled switches the V3 user surface to the trusted
-	// oauth2-proxy header contract. In this profile the local JWT/login product
-	// surface is disabled and the API user listener must bind loopback.
-	V3ProxyAuthEnabled    bool
-	V3OAuthViewerLogins   []string
-	V3OAuthOperatorLogins []string
-	V3CSRFSecretFile      string
-
-	// AdminPassword 初始管理员密码，仅在首次启动且无用户时自动创建 admin 账户
-	// 默认值：空（不创建初始管理员）
-	// 敏感：是
-	AdminPassword string
 
 	// StaticDir 前端静态文件目录，为空时不提供静态文件服务
 	// 默认值：空
@@ -618,7 +588,6 @@ func Load() Config {
 		VerificationStabilityWindow:     configutil.DurationSeconds("VERIFICATION_STABILITY_WINDOW_SECONDS", 120),
 		VerificationLeaseDuration:       configutil.DurationSeconds("VERIFICATION_LEASE_SECONDS", 30),
 		VerificationMaxAttempts:         configutil.PositiveInt("VERIFICATION_MAX_ATTEMPTS", 180),
-		VerificationProfilesJSON:        configutil.String("VERIFICATION_PROFILES_JSON", `{"profiles":[]}`),
 		ObservabilityPrometheusURL:      configutil.String("OBSERVABILITY_PROMETHEUS_URL", "https://prometheus.invalid"),
 		ObservabilityLokiURL:            configutil.String("OBSERVABILITY_LOKI_URL", "https://loki.invalid"),
 		ObservabilityTempoURL:           configutil.String("OBSERVABILITY_TEMPO_URL", "https://tempo.invalid"),
@@ -646,7 +615,7 @@ func Load() Config {
 		AgentToolRegistryEnabled:   boolWithFallback("AGENT_TOOL_REGISTRY_ENABLED", "COPILOT_TOOL_REGISTRY_ENABLED", true),
 		AgentToolDefaultTimeout:    durationSecondsWithFallback("AGENT_TOOL_DEFAULT_TIMEOUT_SECONDS", "COPILOT_TOOL_DEFAULT_TIMEOUT_SECONDS", 30),
 		AgentToolLogArgs:           boolWithFallback("AGENT_TOOL_LOG_ARGS", "COPILOT_TOOL_LOG_ARGS", false),
-		RunbookDir:                 configutil.String("RUNBOOK_DIR", "server-monitor/runbooks"),
+		RunbookDir:                 configutil.String("RUNBOOK_DIR", "runbooks"),
 		RunbookMaxFiles:            configutil.PositiveInt("RUNBOOK_MAX_FILES", 100),
 		RunbookMaxFileBytes:        int64(configutil.PositiveInt("RUNBOOK_MAX_FILE_BYTES", 65536)),
 		RunbookSearchTopN:          configutil.PositiveInt("RUNBOOK_SEARCH_TOP_N", 2),
@@ -695,20 +664,12 @@ func Load() Config {
 		MySQLDatabase:              configutil.String("MYSQL_DATABASE", ""),
 		MySQLStartupTimeout:        configutil.DurationSeconds("MYSQL_STARTUP_TIMEOUT_SECONDS", 5),
 		MySQLPingTimeout:           configutil.DurationSeconds("MYSQL_PING_TIMEOUT_SECONDS", 3),
-		JWTSecret:                  configutil.String("JWT_SECRET", ""),
-		JWTExpireHours:             configutil.PositiveInt("JWT_EXPIRE_HOURS", 24),
-		AuthEnabled:                configutil.Bool("AUTH_ENABLED", true),
-		V3ProxyAuthEnabled:         configutil.Bool("V3_PROXY_AUTH_ENABLED", false),
-		V3OAuthViewerLogins:        configutil.List("V3_OAUTH_VIEWER_LOGINS"),
-		V3OAuthOperatorLogins:      configutil.List("V3_OAUTH_OPERATOR_LOGINS"),
-		V3CSRFSecretFile:           configutil.String("V3_CSRF_SECRET_FILE", ""),
-		AdminPassword:              configutil.String("ADMIN_PASSWORD", ""),
 		StaticDir:                  configutil.String("STATIC_DIR", ""),
 		TraceOTLPEndpoint:          configutil.NonEmptyString("TRACE_OTLP_ENDPOINT", ""),
 		TraceSampleRate:            configutil.FloatRange("TRACE_SAMPLE_RATE", 1.0, 0, 1),
 		KafkaBrokers:               configutil.List("KAFKA_BROKERS"),
 	}
-	result.SignalTargetAllowlistJSON = configutil.String("SIGNAL_TARGET_ALLOWLIST_JSON", `[{"cluster_id":"kind-cloudops-v3","environment":"local-demo","namespace":"demo","workload_kind":"Deployment","workload_name":"demo","service_name":"demo","match_labels":{"cluster":"kind-cloudops-v3","environment":"local-demo","namespace":"demo","deployment":"demo"}}]`)
+	result.SignalTargetAllowlistJSON = configutil.String("SIGNAL_TARGET_ALLOWLIST_JSON", `[{"cluster_id":"cloudops-local","environment":"local","namespace":"demo","workload_kind":"Deployment","workload_name":"demo","service_name":"demo","match_labels":{"cluster":"cloudops-local","environment":"local","namespace":"demo","deployment":"demo"}}]`)
 	result.AlertmanagerWebhookBearerTokenFile = configutil.String("ALERTMANAGER_WEBHOOK_BEARER_TOKEN_FILE", "")
 	result.AlertmanagerWebhookRequireBearer = configutil.Bool("ALERTMANAGER_WEBHOOK_REQUIRE_BEARER", false)
 	return result
@@ -718,34 +679,16 @@ func (c *Config) Validate() error {
 	if appEnv := strings.TrimSpace(c.AppEnv); appEnv == "" || len(appEnv) > 64 || !regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`).MatchString(appEnv) {
 		return fmt.Errorf("APP_ENV must contain 1-64 lowercase letters, digits or hyphens")
 	}
-	if c.AuthEnabled && !c.V3ProxyAuthEnabled && len(strings.TrimSpace(c.JWTSecret)) < 32 {
-		return fmt.Errorf("JWT_SECRET must be at least 32 bytes when auth is enabled, got %d", len(strings.TrimSpace(c.JWTSecret)))
-	}
-	if c.V3ProxyAuthEnabled {
-		if strings.TrimSpace(c.V3CSRFSecretFile) == "" {
-			return fmt.Errorf("V3_CSRF_SECRET_FILE is required when V3_PROXY_AUTH_ENABLED is true")
-		}
-		if len(c.V3OAuthViewerLogins)+len(c.V3OAuthOperatorLogins) == 0 {
-			return fmt.Errorf("V3 OAuth viewer or operator login allowlist is required when V3_PROXY_AUTH_ENABLED is true")
-		}
-		if err := validateGitHubLoginAllowlist("V3_OAUTH_VIEWER_LOGINS", c.V3OAuthViewerLogins); err != nil {
-			return err
-		}
-		if err := validateGitHubLoginAllowlist("V3_OAUTH_OPERATOR_LOGINS", c.V3OAuthOperatorLogins); err != nil {
-			return err
-		}
-	}
 	if c.ListenAddr == "" {
 		return fmt.Errorf("LISTEN_ADDR is required")
 	}
 	if err := configutil.ValidateListenAddr("LISTEN_ADDR", c.ListenAddr); err != nil {
 		return err
 	}
-	if c.PrometheusURL == "" {
-		return fmt.Errorf("PROMETHEUS_URL is required")
-	}
-	if err := configutil.ValidateHTTPURL("PROMETHEUS_URL", c.PrometheusURL); err != nil {
-		return err
+	if strings.TrimSpace(c.PrometheusURL) != "" {
+		if err := configutil.ValidateHTTPURL("PROMETHEUS_URL", c.PrometheusURL); err != nil {
+			return err
+		}
 	}
 	if c.LLMAPIURL != "" {
 		if err := configutil.ValidateHTTPURL("LLM_API_URL", c.LLMAPIURL); err != nil {
@@ -902,9 +845,6 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("registry metadata limits are invalid")
 		}
 	}
-	if c.JWTExpireHours <= 0 {
-		return fmt.Errorf("JWT_EXPIRE_HOURS must be positive, got %d", c.JWTExpireHours)
-	}
 	if c.LLMTimeout <= 0 {
 		return fmt.Errorf("LLM_TIMEOUT_SECONDS must be positive, got %v", c.LLMTimeout)
 	}
@@ -919,7 +859,7 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("K8S_ENABLED must be true when K8S_WRITE_ENABLED is true")
 		}
 		if !c.FastDemoEnabled {
-			return fmt.Errorf("K8S_WRITE_ENABLED is reserved for the guarded local Fast Demo and must be false in formal V2 modes")
+			return fmt.Errorf("K8S_WRITE_ENABLED is reserved for the guarded local Demonstration Scenario")
 		}
 	}
 	if err := checkK8SNamespace("K8S_DEFAULT_NAMESPACE", c.K8SDefaultNamespace); err != nil {
@@ -1033,7 +973,7 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("configure exactly one isolated GitHub write App or token-file authentication mode")
 		}
 		if (c.GitHubWritePrivateKeyFile != "" && c.GitHubWritePrivateKeyFile == c.GitHubPrivateKeyFile) || (c.GitHubWriteTokenFile != "" && c.GitHubWriteTokenFile == c.GitHubTokenFile) {
-			return fmt.Errorf("GitHub write credentials must not reuse Phase 3 read credential files")
+			return fmt.Errorf("GitHub write credentials must not reuse read credential files")
 		}
 		if c.GitHubWriteTimeout <= 0 || c.GitHubWriteMaxResponseBytes < 1024 || c.GitHubWriteMaxResponseBytes > 2*1024*1024 || c.GitHubWriteMaxContentBytes < c.RemediationMaxPatchBytes || strings.TrimSpace(c.RemediationWorkerID) == "" || len(c.RemediationWorkerID) > 128 || c.RemediationPollInterval <= 0 || c.RemediationLeaseDuration <= c.RemediationPollInterval {
 			return fmt.Errorf("GitHub write or remediation worker limits are invalid")
@@ -1047,18 +987,6 @@ func (c *Config) Validate() error {
 	if c.VerificationEnabled && !c.DeliveryTrackingEnabled {
 		return fmt.Errorf("VERIFICATION_ENABLED requires DELIVERY_TRACKING_ENABLED")
 	}
-	var profiles verification.Profiles
-	decoder := json.NewDecoder(strings.NewReader(c.VerificationProfilesJSON))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&profiles); err != nil || profiles.Validate() != nil {
-		return fmt.Errorf("VERIFICATION_PROFILES_JSON is invalid")
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("VERIFICATION_PROFILES_JSON is invalid")
-	}
-	if len(profiles.Items) > 0 && !c.VerificationEnabled {
-		return fmt.Errorf("non-empty VERIFICATION_PROFILES_JSON requires VERIFICATION_ENABLED")
-	}
 	if c.DeliveryTrackingEnabled || c.VerificationEnabled {
 		if strings.TrimSpace(c.DeliveryWorkerID) == "" || len(c.DeliveryWorkerID) > 128 || strings.TrimSpace(c.VerificationWorkerID) == "" || len(c.VerificationWorkerID) > 128 {
 			return fmt.Errorf("delivery and verification worker IDs must contain 1-128 bytes")
@@ -1066,16 +994,14 @@ func (c *Config) Validate() error {
 		if c.DeliveryPollInterval < time.Second || c.DeliveryPollInterval > time.Minute || c.DeliveryTimeout < time.Minute || c.DeliveryTimeout > 24*time.Hour || c.VerificationTimeout < time.Minute || c.VerificationTimeout > 24*time.Hour || c.VerificationStabilityWindow < c.DeliveryPollInterval || c.VerificationStabilityWindow > c.VerificationTimeout || c.VerificationLeaseDuration <= c.DeliveryPollInterval || c.VerificationMaxAttempts < 1 || c.VerificationMaxAttempts > 10000 {
 			return fmt.Errorf("delivery and verification timing configuration is invalid")
 		}
-		if len(profiles.Items) > 0 {
-			for name, raw := range map[string]string{"OBSERVABILITY_PROMETHEUS_URL": c.ObservabilityPrometheusURL, "OBSERVABILITY_LOKI_URL": c.ObservabilityLokiURL, "OBSERVABILITY_TEMPO_URL": c.ObservabilityTempoURL} {
-				u, err := url.Parse(strings.TrimSpace(raw))
-				if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" {
-					return fmt.Errorf("%s must be fixed HTTPS", name)
-				}
+		for name, raw := range map[string]string{"OBSERVABILITY_PROMETHEUS_URL": c.ObservabilityPrometheusURL, "OBSERVABILITY_TEMPO_URL": c.ObservabilityTempoURL} {
+			u, err := url.Parse(strings.TrimSpace(raw))
+			if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" {
+				return fmt.Errorf("%s must be fixed HTTPS", name)
 			}
-			if c.ObservabilityRequestTimeout < time.Second || c.ObservabilityRequestTimeout > time.Minute || c.ObservabilityMaxLookback < time.Minute || c.ObservabilityMaxLookback > 24*time.Hour || c.ObservabilityMaxResponseBytes < 1024 || c.ObservabilityMaxResponseBytes > 1024*1024 || c.ObservabilityMaxSamples < 1 || c.ObservabilityMaxSamples > 10000 || c.ObservabilityMaxSeries < 1 || c.ObservabilityMaxSeries > 100 || c.ObservabilityMaxTraces < 1 || c.ObservabilityMaxTraces > 1000 || c.ObservabilityMaxRetries < 0 || c.ObservabilityMaxRetries > 2 {
-				return fmt.Errorf("observability verification limits are invalid")
-			}
+		}
+		if c.ObservabilityRequestTimeout < time.Second || c.ObservabilityRequestTimeout > time.Minute || c.ObservabilityMaxLookback < time.Minute || c.ObservabilityMaxLookback > 24*time.Hour || c.ObservabilityMaxResponseBytes < 1024 || c.ObservabilityMaxResponseBytes > 1024*1024 || c.ObservabilityMaxSamples < 1 || c.ObservabilityMaxSamples > 10000 || c.ObservabilityMaxSeries < 1 || c.ObservabilityMaxSeries > 100 || c.ObservabilityMaxTraces < 1 || c.ObservabilityMaxTraces > 1000 || c.ObservabilityMaxRetries < 0 || c.ObservabilityMaxRetries > 2 {
+			return fmt.Errorf("observability verification limits are invalid")
 		}
 	}
 	return nil
@@ -1083,24 +1009,7 @@ func (c *Config) Validate() error {
 
 var (
 	k8sNamespacePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
-	githubLoginPattern  = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$`)
 )
-
-func validateGitHubLoginAllowlist(name string, values []string) error {
-	seen := make(map[string]struct{}, len(values))
-	for _, raw := range values {
-		login := strings.TrimSpace(raw)
-		if !githubLoginPattern.MatchString(login) {
-			return fmt.Errorf("%s contains invalid GitHub login %q", name, raw)
-		}
-		canonical := strings.ToLower(login)
-		if _, exists := seen[canonical]; exists {
-			return fmt.Errorf("%s contains duplicate GitHub login %q", name, raw)
-		}
-		seen[canonical] = struct{}{}
-	}
-	return nil
-}
 
 func checkK8SNamespace(name, namespace string) error {
 	if strings.TrimSpace(namespace) == "" {

@@ -178,7 +178,6 @@ type DeliveryObservation struct {
 // DeliveryProjection is the durable ChangeRequest projection updated by one
 // observation. Revisions remain separate fields throughout the operation.
 type DeliveryProjection struct {
-	V3Status             string
 	Status               string
 	CIStatus             string
 	PRState              string
@@ -221,7 +220,6 @@ type DeliveryObserveSnapshot struct {
 	PlanPublicID          string
 	PlanVersion           uint64
 	PlanStatus            string
-	PlanV3Status          string
 	Decision              string
 	DecisionPlanVersion   uint64
 	Repository            string
@@ -280,28 +278,6 @@ type DeliveryObserveStore interface {
 	PersistIn(context.Context, asyncjob.DBTX, asyncjob.Task, DeliveryObserveSnapshot, DeliveryObserveOutcome) error
 }
 
-type LegacyDeliveryObserveSnapshot struct {
-	ChangeRequestID uint64
-	IncidentID      uint64
-	CycleNo         uint32
-	RowVersion      uint64
-	IncidentVersion uint64
-	Repository      string
-	PRNumber        int64
-	BaseRevision    string
-	HeadCommitSHA   string
-	HeadBranch      string
-	SourcePRState   string
-	SourceMergedSHA string
-	PRURL           string
-	Now             time.Time
-}
-
-type LegacyDeliveryObserveStore interface {
-	LoadLegacy(context.Context, asyncjob.Task) (LegacyDeliveryObserveSnapshot, error)
-	PersistLegacyIn(context.Context, asyncjob.DBTX, asyncjob.Task, LegacyDeliveryObserveSnapshot, DeliveryPullRequestObservation, time.Time) error
-}
-
 type DeliveryObserveConfig struct {
 	Observer     DeliveryObserver
 	Store        DeliveryObserveStore
@@ -329,8 +305,7 @@ type deliveryObserveOperation struct{ cfg DeliveryObserveConfig }
 
 type deliveryObservePayload struct {
 	ChangeRequestID string `json:"change_request_id"`
-	Phase           string `json:"phase"`
-	LegacyReadOnly  bool   `json:"legacy_read_only,omitempty"`
+	Step            string `json:"step"`
 }
 
 func (o *deliveryObserveOperation) handle(ctx context.Context, execution asyncjob.Execution) asyncjob.Result {
@@ -344,20 +319,17 @@ func (o *deliveryObserveOperation) handle(ctx context.Context, execution asyncjo
 	if err != nil {
 		return asyncjob.Dead("invalid_delivery_payload", boundChange(err.Error(), 2048), nil)
 	}
-	if payload.LegacyReadOnly {
-		return o.handleLegacyReadOnly(ctx, execution, payload)
-	}
 	snapshot, err := o.cfg.Store.Load(ctx, task)
 	if err != nil {
 		return deliveryObserveLoadFailure(err)
 	}
 	if snapshot.ChangeRequestID != task.SubjectID || snapshot.IncidentID != task.IncidentID ||
 		snapshot.CycleNo != task.CycleNo || snapshot.RowVersion != task.ExpectedSubjectVersion ||
-		(payload.ChangeRequestID != "" && payload.ChangeRequestID != snapshot.ChangeRequestPublicID) || payload.Phase != "observe" {
+		(payload.ChangeRequestID != "" && payload.ChangeRequestID != snapshot.ChangeRequestPublicID) || payload.Step != "observe" {
 		return asyncjob.Dead("subject_version_mismatch", "delivery subject version or payload is stale", nil)
 	}
-	if snapshot.Projection.V3Status == "delivered" || snapshot.Projection.V3Status == "failed" ||
-		snapshot.Projection.V3Status == "cancelled" || snapshot.Projection.V3Status == "superseded" {
+	if snapshot.Projection.Status == "delivered" || snapshot.Projection.Status == "failed" ||
+		snapshot.Projection.Status == "cancelled" || snapshot.Projection.Status == "superseded" {
 		return asyncjob.Dead("delivery_terminal", "delivery subject is already terminal", nil)
 	}
 	now := o.cfg.Now().UTC()
@@ -366,7 +338,7 @@ func (o *deliveryObserveOperation) handle(ctx context.Context, execution asyncjo
 	}
 	kind := deliveryObservationKind(snapshot)
 	if kind == "" {
-		return asyncjob.Dead("delivery_phase_invalid", "ChangeRequest delivery phase has no authorized observer", nil)
+		return asyncjob.Dead("delivery_status_invalid", "ChangeRequest status has no authorized observer", nil)
 	}
 	request := deliveryObserveRequest(snapshot, kind)
 	externalCtx, cancel, err := asyncjob.ExternalCallContext(ctx)
@@ -397,76 +369,6 @@ func (o *deliveryObserveOperation) handle(ctx context.Context, execution asyncjo
 	})
 }
 
-func (o *deliveryObserveOperation) handleLegacyReadOnly(ctx context.Context, execution asyncjob.Execution, payload deliveryObservePayload) asyncjob.Result {
-	store, ok := o.cfg.Store.(LegacyDeliveryObserveStore)
-	if !ok {
-		return asyncjob.Dead("legacy_delivery_store_unsupported", "delivery store does not implement the Phase 7A read-only contract", nil)
-	}
-	snapshot, err := store.LoadLegacy(ctx, execution.Task)
-	if err != nil {
-		return deliveryObserveLoadFailure(err)
-	}
-	if snapshot.ChangeRequestID != execution.Task.SubjectID || snapshot.IncidentID != execution.Task.IncidentID || snapshot.CycleNo != execution.Task.CycleNo ||
-		snapshot.RowVersion != execution.Task.ExpectedSubjectVersion || payload.Phase != "observe" {
-		return asyncjob.Dead("subject_version_mismatch", "legacy delivery subject is stale", nil)
-	}
-	now := o.cfg.Now().UTC()
-	if !snapshot.Now.IsZero() {
-		now = snapshot.Now.UTC()
-	}
-	externalCtx, cancel, err := asyncjob.ExternalCallContext(ctx)
-	if err != nil {
-		return asyncjob.RetryAfter(0, "external_deadline_missing", "legacy delivery observer deadline is unavailable", nil)
-	}
-	observation, observeErr := o.cfg.Observer.Observe(externalCtx, DeliveryObserveRequest{
-		Kind: DeliveryObservePullRequest, Repository: snapshot.Repository, PullRequest: snapshot.PRNumber,
-		HeadSHA: snapshot.HeadCommitSHA, ExpectedBaseSHA: snapshot.BaseRevision,
-	})
-	cancel()
-	if observeErr != nil {
-		return deliveryObserveProviderFailure(observeErr)
-	}
-	if observation.Kind != DeliveryObservePullRequest || observation.PullRequest == nil {
-		return asyncjob.RetryAfter(0, "delivery_observation_invalid", "legacy observer returned no pull request facts", nil)
-	}
-	pr := *observation.PullRequest
-	state := strings.ToLower(strings.TrimSpace(pr.State))
-	if !validateLegacyPullRequestObservation(snapshot, pr, state) {
-		return asyncjob.RetryAfter(0, "delivery_observation_invalid", "legacy pull request identity is ambiguous", nil)
-	}
-	return asyncjob.Succeeded(func(ctx context.Context, tx asyncjob.DBTX) error {
-		return store.PersistLegacyIn(ctx, tx, execution.Task, snapshot, pr, now)
-	})
-}
-
-func validateLegacyPullRequestObservation(snapshot LegacyDeliveryObserveSnapshot, pr DeliveryPullRequestObservation, state string) bool {
-	if state != "open" && state != "closed" && state != "merged" {
-		return false
-	}
-	if pr.Repository != "" && !strings.EqualFold(pr.Repository, snapshot.Repository) {
-		return false
-	}
-	if pr.PullRequest != 0 && pr.PullRequest != snapshot.PRNumber {
-		return false
-	}
-	if pr.URL == "" || pr.URL != snapshot.PRURL || pr.BaseSHA == "" || !strings.EqualFold(pr.BaseSHA, snapshot.BaseRevision) ||
-		pr.HeadSHA == "" || !strings.EqualFold(pr.HeadSHA, snapshot.HeadCommitSHA) ||
-		strings.TrimSpace(pr.HeadBranch) == "" || pr.HeadBranch != snapshot.HeadBranch {
-		return false
-	}
-	if snapshot.SourcePRState != "" && !strings.EqualFold(snapshot.SourcePRState, state) &&
-		(!strings.EqualFold(snapshot.SourcePRState, "merged") || !pr.Merged) {
-		return false
-	}
-	if snapshot.SourceMergedSHA != "" && pr.Merged && !strings.EqualFold(snapshot.SourceMergedSHA, pr.MergeCommitSHA) {
-		return false
-	}
-	if pr.Merged || state == "merged" {
-		return pr.MergeCommitSHA != "" && deliveryRevisionPattern.MatchString(strings.ToLower(pr.MergeCommitSHA))
-	}
-	return pr.MergeCommitSHA == ""
-}
-
 func decodeDeliveryObservePayload(task asyncjob.Task) (deliveryObservePayload, error) {
 	decoder := json.NewDecoder(strings.NewReader(string(task.Payload)))
 	decoder.DisallowUnknownFields()
@@ -478,8 +380,8 @@ func decodeDeliveryObservePayload(task asyncjob.Task) (deliveryObservePayload, e
 	if err := decoder.Decode(&extra); err != io.EOF {
 		return deliveryObservePayload{}, errors.New("delivery.observe payload has multiple JSON values")
 	}
-	if strings.TrimSpace(payload.ChangeRequestID) == "" || payload.Phase == "" {
-		return deliveryObservePayload{}, errors.New("delivery.observe payload requires change_request_id and phase")
+	if strings.TrimSpace(payload.ChangeRequestID) == "" || payload.Step == "" {
+		return deliveryObservePayload{}, errors.New("delivery.observe payload requires change_request_id and step")
 	}
 	return payload, nil
 }
@@ -513,12 +415,12 @@ func deliveryObserveProviderFailure(err error) asyncjob.Result {
 var errDeliveryMalformedObservation = errors.New("malformed delivery observation")
 
 func deliveryObservationKind(snapshot DeliveryObserveSnapshot) DeliveryObservationKind {
-	switch snapshot.Projection.V3Status {
+	switch snapshot.Projection.Status {
 	case "pr_open":
-		switch snapshot.Projection.Status {
-		case "ci_pending":
+		switch snapshot.Projection.CIStatus {
+		case "pending":
 			return DeliveryObserveCI
-		case "pr_created", "ci_passed", "merge_pending":
+		case "passing":
 			return DeliveryObservePullRequest
 		default:
 			return ""
@@ -557,7 +459,7 @@ func evaluateDeliveryObservation(snapshot DeliveryObserveSnapshot, observation D
 	next.NextPollAt = ptrDeliveryTime(now.Add(poll))
 	outcome := DeliveryObserveOutcome{Kind: observation.Kind, SourceSystem: deliverySourceSystem(observation.Kind), EventType: "delivery_observed", Requeue: true, ObservedAt: now, NextPollAt: now.Add(poll), Projection: next, Observation: observation}
 	if next.DeliveryDeadlineAt != nil && !now.Before(next.DeliveryDeadlineAt.UTC()) {
-		code := deliveryTimeoutCode(snapshot.Projection.V3Status)
+		code := deliveryTimeoutCode(snapshot.Projection.Status)
 		return deliveryBusinessFailure(outcome, code, code), nil
 	}
 	switch observation.Kind {
@@ -603,7 +505,7 @@ func evaluateDeliveryPullRequest(snapshot DeliveryObserveSnapshot, pr DeliveryPu
 		return deliveryBusinessFailure(outcome, "pr_closed_without_merge", "the approved pull request was closed without a merge"), nil
 	}
 	if pr.Merged {
-		if snapshot.Projection.Status != "merge_pending" && snapshot.Projection.Status != "ci_passed" {
+		if snapshot.Projection.Status != "pr_open" || snapshot.Projection.CIStatus != "passing" {
 			return deliveryBusinessFailure(outcome, "merge_before_required_ci", "pull request merged before the required CI observation"), nil
 		}
 		if !deliveryRevisionPattern.MatchString(strings.ToLower(pr.MergeCommitSHA)) ||
@@ -613,7 +515,7 @@ func evaluateDeliveryPullRequest(snapshot DeliveryObserveSnapshot, pr DeliveryPu
 			!strings.EqualFold(pr.MergedPostImageHash, snapshot.ExpectedPostImageHash) || !pr.HumanMerged || strings.TrimSpace(pr.MergedBy) == "" || !strings.EqualFold(pr.MergedByType, "User") || !strings.EqualFold(pr.MergeMethod, "squash") {
 			return deliveryBusinessFailure(outcome, "merged_tree_mismatch", "human merge did not preserve the approved tree/post-image"), nil
 		}
-		outcome.Projection.V3Status, outcome.Projection.Status = "merged", "merged"
+		outcome.Projection.Status = "merged"
 		outcome.Projection.MergedCommitSHA = strings.ToLower(pr.MergeCommitSHA)
 		outcome.Projection.TargetRevision = strings.ToLower(pr.MergeCommitSHA)
 		outcome.Projection.PRState = strings.ToLower(pr.State)
@@ -623,15 +525,10 @@ func evaluateDeliveryPullRequest(snapshot DeliveryObserveSnapshot, pr DeliveryPu
 		outcome.Requeue = true
 		return outcome, nil
 	}
-	outcome.Projection.V3Status = "pr_open"
+	outcome.Projection.Status = "pr_open"
 	outcome.Projection.PRState = strings.ToLower(strings.TrimSpace(pr.State))
 	if strings.TrimSpace(pr.URL) != "" {
 		outcome.Projection.PRURL = boundChange(pr.URL, 1024)
-	}
-	if snapshot.Projection.Status == "merge_pending" || snapshot.Projection.Status == "ci_passed" {
-		outcome.Projection.Status = "merge_pending"
-	} else {
-		outcome.Projection.Status = "ci_pending"
 	}
 	return outcome, nil
 }
@@ -652,14 +549,13 @@ func evaluateDeliveryCI(snapshot DeliveryObserveSnapshot, ci DeliveryCIObservati
 	if status == "completed" && conclusion != "success" && conclusion != "failure" && conclusion != "cancelled" && conclusion != "timed_out" {
 		return DeliveryObserveOutcome{}, fmt.Errorf("%w: CI conclusion is invalid", errDeliveryMalformedObservation)
 	}
-	outcome.Projection.V3Status, outcome.Projection.Status = "pr_open", "ci_pending"
+	outcome.Projection.Status = "pr_open"
 	switch {
 	case conclusion == "failure" || conclusion == "cancelled" || conclusion == "timed_out":
 		outcome.Projection.CIStatus = "failing"
 		return deliveryBusinessFailure(outcome, "required_ci_failed", "required CI did not pass"), nil
 	case status == "completed" && conclusion == "success":
 		outcome.Projection.CIStatus = "passing"
-		outcome.Projection.Status = "merge_pending"
 	default:
 		outcome.Projection.CIStatus = "pending"
 	}
@@ -692,10 +588,9 @@ func evaluateDeliveryArgo(snapshot DeliveryObserveSnapshot, app DeliveryArgoObse
 	outcome.Projection.ArgoOperationPhase = boundChange(app.OperationPhase, 32)
 	outcome.Projection.ArgoHealthStatus = boundChange(app.HealthStatus, 32)
 	outcome.Projection.ResourceHealth = cloneJSON(app.ResourceHealth)
-	outcome.Projection.V3Status = "syncing"
 	outcome.Projection.Status = "syncing"
 	if syncRevision == expected && resultRevision == expected && strings.EqualFold(app.SyncStatus, "Synced") && strings.EqualFold(app.OperationPhase, "Succeeded") {
-		outcome.Projection.V3Status, outcome.Projection.Status = "rolling_out", "rollout_pending"
+		outcome.Projection.Status = "rolling_out"
 		outcome.Projection.SyncCompletedAt = cloneTime(app.LastSyncedAt)
 	} else if outcome.Projection.SyncStartedAt == nil {
 		outcome.Projection.SyncStartedAt = ptrDeliveryTime(outcome.ObservedAt)
@@ -732,13 +627,13 @@ func evaluateDeliveryRollout(snapshot DeliveryObserveSnapshot, rollout DeliveryR
 	if rollout.ObservedGeneration >= rollout.Generation && rollout.Generation > 0 &&
 		rollout.DesiredReplicas == snapshot.ExpectedReplicas && rollout.UpdatedReplicas == rollout.DesiredReplicas && rollout.ReadyReplicas == rollout.DesiredReplicas && rollout.AvailableReplicas == rollout.DesiredReplicas && rollout.UnavailableReplicas == 0 &&
 		rollout.PodsReady == rollout.PodsTotal && rollout.PodsTotal == rollout.DesiredReplicas && rollout.Progressing && rollout.Available {
-		outcome.Projection.V3Status, outcome.Projection.Status = "delivered", "delivered"
+		outcome.Projection.Status = "delivered"
 		completed := outcome.ObservedAt
 		outcome.Projection.DeliveryCompletedAt = &completed
 		outcome.Projection.NextPollAt = nil
 		outcome.EventType = "delivery_delivered"
 		outcome.Requeue = false
-		plan, err := verification.CompileV3VerificationPlan(verification.V3CompileInput{
+		plan, err := verification.CompilePlan(verification.CompileInput{
 			TriggerType: "post_delivery", Repository: snapshot.Repository, PullRequest: snapshot.PRNumber, TargetRevision: snapshot.Projection.TargetRevision,
 			SourceRevision: snapshot.SourceRevision, ImageDigest: snapshot.ImageDigest, GitOpsRevision: snapshot.Projection.TargetRevision,
 			ArgoApplication: snapshot.ArgoApplication, ArgoProject: snapshot.ArgoProject, Cluster: snapshot.Cluster, Environment: snapshot.Environment,
@@ -754,7 +649,7 @@ func evaluateDeliveryRollout(snapshot DeliveryObserveSnapshot, rollout DeliveryR
 
 func deliveryBusinessFailure(outcome DeliveryObserveOutcome, code, summary string) DeliveryObserveOutcome {
 	outcome.FailureCode, outcome.FailureSummary = boundChange(code, 128), boundChange(summary, 2048)
-	outcome.Projection.V3Status, outcome.Projection.Status = "failed", "failed"
+	outcome.Projection.Status = "failed"
 	outcome.Projection.FailureReason = outcome.FailureCode
 	outcome.EventType, outcome.Requeue = "delivery_failed", false
 	completed := outcome.ObservedAt
@@ -884,18 +779,18 @@ func (s *mysqlDeliveryObserveStore) Load(ctx context.Context, task asyncjob.Task
 	var snapshot DeliveryObserveSnapshot
 	var targetJSON, evidenceJSON []byte
 	var decisionPlanVersion uint64
-	var decision, planStatus, planV3Status string
+	var decision, planStatus string
 	var approvedBase, approvedPost, approvedTree, approvedPolicy, approvedVerification, approvedEvidence string
 	var prNumber int64
-	var prState, prURL, status, ciStatus, v3Status string
+	var prState, prURL, status, ciStatus string
 	var resourceHealth []byte
 	var syncStarted, syncCompleted, deliveryStarted, deliveryDeadline, deliveryCompleted, nextPoll, lastObserved sql.NullTime
 	var argoApplication, argoProject string
 	var changeMigratedLegacy, changeMigratedLegacyContext bool
 	var planMigratedLegacy, planMigratedLegacyContext bool
 	row := s.cfg.DB.QueryRowContext(ctx, `
-SELECT cr.id, cr.public_id, cr.incident_id, i.public_id, i.fingerprint, i.version, i.v3_status,
-	       cr.cycle_no, p.id, p.public_id, p.plan_version, p.status, p.v3_status,
+	SELECT cr.id, cr.public_id, cr.incident_id, i.public_id, i.fingerprint, i.version, i.status,
+	       cr.cycle_no, p.id, p.public_id, p.plan_version, p.status,
 	       cr.migrated_legacy, cr.migrated_legacy_context, p.migrated_legacy, p.migrated_legacy_context,
        d.decision, d.plan_version, d.approved_base_sha, d.approved_post_image_hash,
        d.approved_tree_hash, d.approved_policy_hash, d.approved_verification_hash, d.approved_evidence_set_hash,
@@ -909,14 +804,15 @@ SELECT cr.id, cr.public_id, cr.incident_id, i.public_id, i.fingerprint, i.versio
        cr.sync_completed_at, cr.deployment_generation, cr.observed_generation, cr.rollout_revision,
        cr.desired_replicas, cr.updated_replicas, cr.available_replicas, cr.unavailable_replicas,
        cr.delivery_started_at, cr.delivery_deadline_at, cr.delivery_completed_at, cr.next_poll_at,
-       cr.last_observed_at, cr.failure_reason, cr.row_version, cr.v3_status, cr.argocd_application, cr.argocd_project
-FROM change_requests cr
-JOIN incidents i ON i.id = cr.incident_id AND i.domain_schema_version = 3
-JOIN remediation_plans p ON p.id = cr.plan_id AND p.incident_id = cr.incident_id AND p.cycle_no = cr.cycle_no AND p.domain_schema_version = 3
-JOIN remediation_decisions d ON d.plan_id = p.id AND d.incident_id = p.incident_id AND d.cycle_no = p.cycle_no
-WHERE cr.id = ? AND cr.incident_id = ? AND cr.cycle_no = ? AND cr.domain_schema_version = 3`, task.SubjectID, task.IncidentID, task.CycleNo)
+	       cr.last_observed_at, cr.failure_reason, cr.row_version, cr.argocd_application, cr.argocd_project
+	FROM change_requests cr
+	JOIN incidents i ON i.id = cr.incident_id
+	JOIN remediation_plans p ON p.id = cr.plan_id AND p.incident_id = cr.incident_id AND p.cycle_no = cr.cycle_no
+	JOIN remediation_decisions d ON d.plan_id = p.id AND d.incident_id = p.incident_id AND d.cycle_no = p.cycle_no
+	  AND d.imported_history = FALSE
+	WHERE cr.id = ? AND cr.incident_id = ? AND cr.cycle_no = ?`, task.SubjectID, task.IncidentID, task.CycleNo)
 	if err := row.Scan(&snapshot.ChangeRequestID, &snapshot.ChangeRequestPublicID, &snapshot.IncidentID, &snapshot.IncidentPublicID, &snapshot.IncidentFingerprint, &snapshot.IncidentVersion, &snapshot.IncidentStatus,
-		&snapshot.CycleNo, &snapshot.PlanID, &snapshot.PlanPublicID, &snapshot.PlanVersion, &planStatus, &planV3Status,
+		&snapshot.CycleNo, &snapshot.PlanID, &snapshot.PlanPublicID, &snapshot.PlanVersion, &planStatus,
 		&changeMigratedLegacy, &changeMigratedLegacyContext, &planMigratedLegacy, &planMigratedLegacyContext,
 		&decision, &decisionPlanVersion, &approvedBase, &approvedPost, &approvedTree, &approvedPolicy, &approvedVerification, &approvedEvidence,
 		&snapshot.Repository, &snapshot.BaseBranch, &snapshot.TargetPath,
@@ -928,30 +824,29 @@ WHERE cr.id = ? AND cr.incident_id = ? AND cr.cycle_no = ? AND cr.domain_schema_
 		&snapshot.Projection.ArgoOperationPhase, &snapshot.Projection.ArgoHealthStatus, &resourceHealth, &syncStarted,
 		&syncCompleted, &snapshot.Projection.DeploymentGeneration, &snapshot.Projection.ObservedGeneration, &snapshot.Projection.RolloutRevision,
 		&snapshot.Projection.DesiredReplicas, &snapshot.Projection.UpdatedReplicas, &snapshot.Projection.AvailableReplicas, &snapshot.Projection.UnavailableReplicas,
-		&deliveryStarted, &deliveryDeadline, &deliveryCompleted, &nextPoll, &lastObserved, &snapshot.Projection.FailureReason, &snapshot.RowVersion, &v3Status, &argoApplication, &argoProject); err != nil {
+		&deliveryStarted, &deliveryDeadline, &deliveryCompleted, &nextPoll, &lastObserved, &snapshot.Projection.FailureReason, &snapshot.RowVersion, &argoApplication, &argoProject); err != nil {
 		return DeliveryObserveSnapshot{}, err
 	}
-	snapshot.PlanStatus, snapshot.PlanV3Status, snapshot.Decision, snapshot.DecisionPlanVersion = planStatus, planV3Status, decision, decisionPlanVersion
+	snapshot.PlanStatus, snapshot.Decision, snapshot.DecisionPlanVersion = planStatus, decision, decisionPlanVersion
 	snapshot.MigratedLegacy, snapshot.MigratedLegacyContext = changeMigratedLegacy, changeMigratedLegacyContext
 	if planMigratedLegacy != changeMigratedLegacy || planMigratedLegacyContext != changeMigratedLegacyContext ||
 		changeMigratedLegacy != task.MigratedLegacy || changeMigratedLegacyContext != task.MigratedLegacyContext {
 		return DeliveryObserveSnapshot{}, asyncjob.ErrSubjectVersionMismatch
 	}
 	snapshot.Projection.Status, snapshot.Projection.CIStatus, snapshot.Projection.PRState, snapshot.Projection.PRURL = status, ciStatus, prState, prURL
-	snapshot.Projection.V3Status = v3Status
 	snapshot.Projection.ResourceHealth = cloneJSON(resourceHealth)
 	snapshot.Projection.SyncStartedAt, snapshot.Projection.SyncCompletedAt = nullTimeValue(syncStarted), nullTimeValue(syncCompleted)
 	snapshot.Projection.DeliveryStartedAt, snapshot.Projection.DeliveryDeadlineAt, snapshot.Projection.DeliveryCompletedAt = nullTimeValue(deliveryStarted), nullTimeValue(deliveryDeadline), nullTimeValue(deliveryCompleted)
 	snapshot.Projection.NextPollAt, snapshot.Projection.LastObservedAt = nullTimeValue(nextPoll), nullTimeValue(lastObserved)
 	snapshot.PRNumber = prNumber
-	if snapshot.IncidentStatus != "delivering" || snapshot.Projection.V3Status == "" || snapshot.PlanV3Status == "" || snapshot.Decision != "approved" || snapshot.PlanV3Status == "invalidated" {
+	if snapshot.IncidentStatus != "delivering" || snapshot.Projection.Status == "" || snapshot.Decision != "approved" {
 		return DeliveryObserveSnapshot{}, fmt.Errorf("%w: delivery plan or approval is not active", asyncjob.ErrPolicyViolation)
 	}
-	if snapshot.PlanV3Status != "consumed" || (snapshot.PlanStatus != "approved" && snapshot.PlanStatus != "consumed") {
+	if snapshot.PlanStatus != "consumed" {
 		return DeliveryObserveSnapshot{}, fmt.Errorf("%w: delivery Plan is not consumed", asyncjob.ErrPolicyViolation)
 	}
-	if snapshot.Projection.V3Status != "pr_open" && snapshot.Projection.V3Status != "merged" && snapshot.Projection.V3Status != "syncing" && snapshot.Projection.V3Status != "rolling_out" {
-		return DeliveryObserveSnapshot{}, fmt.Errorf("%w: unsupported ChangeRequest delivery phase %q", asyncjob.ErrPolicyViolation, snapshot.Projection.V3Status)
+	if snapshot.Projection.Status != "pr_open" && snapshot.Projection.Status != "merged" && snapshot.Projection.Status != "syncing" && snapshot.Projection.Status != "rolling_out" {
+		return DeliveryObserveSnapshot{}, fmt.Errorf("%w: unsupported ChangeRequest delivery status %q", asyncjob.ErrPolicyViolation, snapshot.Projection.Status)
 	}
 	if snapshot.DecisionPlanVersion != snapshot.PlanVersion {
 		return DeliveryObserveSnapshot{}, fmt.Errorf("%w: approval plan version drift", asyncjob.ErrPolicyViolation)
@@ -980,9 +875,9 @@ WHERE cr.id = ? AND cr.incident_id = ? AND cr.cycle_no = ? AND cr.domain_schema_
 	}
 	var baselineCount int
 	baselineRows, err := s.cfg.DB.QueryContext(ctx, `
-SELECT source_revision, image_digest, gitops_revision
-FROM deployment_baselines
-WHERE domain_schema_version = 3 AND status = 'active' AND cluster = ? AND environment = ? AND namespace = ?
+	SELECT source_revision, image_digest, gitops_revision
+	FROM deployment_baselines
+	WHERE status = 'active' AND cluster = ? AND environment = ? AND namespace = ?
   AND workload_kind = ? AND workload_name = ? AND container_name = ? AND repository = ?
   AND base_branch = ? AND target_path = ? AND gitops_revision = ?
 LIMIT 2`, snapshot.Cluster, snapshot.Environment, snapshot.Namespace, snapshot.WorkloadKind, snapshot.WorkloadName, snapshot.Container,
@@ -1015,9 +910,8 @@ LIMIT 2`, snapshot.Cluster, snapshot.Environment, snapshot.Namespace, snapshot.W
 	if err := validateApprovedEvidenceCurrent(ctx, s.cfg.DB, snapshot.IncidentID, uint64(snapshot.CycleNo), bindings); err != nil {
 		return DeliveryObserveSnapshot{}, err
 	}
-	// An existing projection may have been written by a prior V3 worker. The
-	// fixed config remains authoritative; persisted values are only accepted if
-	// they agree, never silently replaced.
+	// The fixed config remains authoritative; persisted values are only accepted
+	// if they agree, never silently replaced.
 	if argoApplication != "" && argoApplication != snapshot.ArgoApplication || argoProject != "" && argoProject != snapshot.ArgoProject {
 		return DeliveryObserveSnapshot{}, fmt.Errorf("%w: persisted Argo identity drift", asyncjob.ErrPolicyViolation)
 	}
@@ -1025,110 +919,40 @@ LIMIT 2`, snapshot.Cluster, snapshot.Environment, snapshot.Namespace, snapshot.W
 		deadline := s.cfg.Now().UTC().Add(s.cfg.DeliveryTimeout)
 		snapshot.Projection.DeliveryDeadlineAt = &deadline
 	}
-	if snapshot.Projection.TargetRevision == "" && snapshot.Projection.V3Status == "merged" {
+	if snapshot.Projection.TargetRevision == "" && snapshot.Projection.Status == "merged" {
 		snapshot.Projection.TargetRevision = snapshot.Projection.MergedCommitSHA
 	}
 	snapshot.Now = s.cfg.Now().UTC()
-	// Incident fingerprints are canonical alert identities for the V3 compiler;
+	// Incident fingerprints are canonical alert identities for the verification compiler;
 	// no provider query language is accepted here.
 	snapshot.AlertNames = []string{snapshot.IncidentFingerprint}
 	return snapshot, nil
-}
-
-func (s *mysqlDeliveryObserveStore) LoadLegacy(ctx context.Context, task asyncjob.Task) (LegacyDeliveryObserveSnapshot, error) {
-	if task.SubjectType != "change_request" || task.SubjectID == 0 || task.CycleNo == 0 ||
-		!task.MigratedLegacy || !task.MigratedLegacyContext {
-		return LegacyDeliveryObserveSnapshot{}, asyncjob.ErrInvalidMutation
-	}
-	var snapshot LegacyDeliveryObserveSnapshot
-	err := s.cfg.DB.QueryRowContext(ctx, `SELECT cr.id,cr.incident_id,cr.cycle_no,cr.row_version,i.version,
-cr.repository,cr.pr_number,cr.base_revision,cr.commit_sha,cr.head_branch,cr.pr_state,cr.merged_commit_sha,cr.pr_url,UTC_TIMESTAMP(6)
-FROM change_requests cr JOIN incidents i ON i.id=cr.incident_id AND i.domain_schema_version=3
-WHERE cr.id=? AND cr.incident_id=? AND cr.cycle_no=? AND cr.domain_schema_version=3
-AND cr.migrated_legacy=TRUE AND cr.migrated_legacy_context=TRUE AND cr.pr_number>0 AND cr.pr_url<>''`, task.SubjectID, task.IncidentID, task.CycleNo).Scan(
-		&snapshot.ChangeRequestID, &snapshot.IncidentID, &snapshot.CycleNo, &snapshot.RowVersion, &snapshot.IncidentVersion,
-		&snapshot.Repository, &snapshot.PRNumber, &snapshot.BaseRevision, &snapshot.HeadCommitSHA, &snapshot.HeadBranch,
-		&snapshot.SourcePRState, &snapshot.SourceMergedSHA, &snapshot.PRURL, &snapshot.Now)
-	if err != nil {
-		return LegacyDeliveryObserveSnapshot{}, err
-	}
-	return snapshot, nil
-}
-
-func (s *mysqlDeliveryObserveStore) PersistLegacyIn(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, snapshot LegacyDeliveryObserveSnapshot, pr DeliveryPullRequestObservation, at time.Time) error {
-	if tx == nil || task.SubjectID != snapshot.ChangeRequestID || task.ExpectedSubjectVersion != snapshot.RowVersion {
-		return asyncjob.ErrInvalidMutation
-	}
-	var incidentVersion uint64
-	if err := tx.QueryRowContext(ctx, `SELECT version FROM incidents WHERE id=? AND cycle_no=? AND domain_schema_version=3 FOR UPDATE`, task.IncidentID, task.CycleNo).Scan(&incidentVersion); err != nil {
-		return err
-	}
-	if incidentVersion != snapshot.IncidentVersion {
-		return asyncjob.ErrSubjectVersionMismatch
-	}
-	if !validateLegacyPullRequestObservation(snapshot, pr, strings.ToLower(strings.TrimSpace(pr.State))) {
-		return asyncjob.ErrInvalidMutation
-	}
-	result, err := tx.ExecContext(ctx, `UPDATE change_requests SET v3_status='superseded',status=CASE WHEN ? THEN 'delivered' ELSE 'failed' END,
-pr_state=?,merged_commit_sha=CASE WHEN ? THEN ? ELSE merged_commit_sha END,failure_code='legacy_delivery_observed',
-failure_reason='Phase 7A read-only reconciliation completed; legacy approval cannot authorize V3 continuation',
-row_version=row_version+1,expected_subject_version=row_version+1,updated_at=?
-WHERE id=? AND incident_id=? AND cycle_no=? AND row_version=? AND migrated_legacy=TRUE`, pr.Merged, strings.ToLower(pr.State), pr.Merged, strings.ToLower(pr.MergeCommitSHA), at, task.SubjectID, task.IncidentID, task.CycleNo, snapshot.RowVersion)
-	if err != nil {
-		return err
-	}
-	if affected, _ := result.RowsAffected(); affected != 1 {
-		return asyncjob.ErrSubjectVersionMismatch
-	}
-	result, err = tx.ExecContext(ctx, `UPDATE incidents SET status='DIAGNOSING',v3_status='investigating',needs_attention=TRUE,
-blocking_reason_code='legacy_delivery_observed',blocked_at=?,version=version+1,updated_at=?
-WHERE id=? AND cycle_no=? AND version=? AND domain_schema_version=3`, at, at, task.IncidentID, task.CycleNo, incidentVersion)
-	if err != nil {
-		return err
-	}
-	if affected, _ := result.RowsAffected(); affected != 1 {
-		return asyncjob.ErrSubjectVersionMismatch
-	}
-	metadata, _ := json.Marshal(map[string]any{"change_request_id": snapshot.ChangeRequestID, "pr_number": snapshot.PRNumber, "pr_state": strings.ToLower(pr.State), "merged": pr.Merged, "migrated_legacy": true})
-	inputHash := hashCanonical("legacy-delivery-observed/v2", fmt.Sprint(task.SubjectID), snapshot.Repository,
-		fmt.Sprint(snapshot.PRNumber), snapshot.PRURL, snapshot.BaseRevision, snapshot.HeadCommitSHA, pr.State, pr.MergeCommitSHA)
-	outputHash := hashCanonical("legacy-delivery-observed-result/v2", strings.ToLower(pr.State), fmt.Sprint(pr.Merged))
-	_, err = tx.ExecContext(ctx, `INSERT INTO incident_events (
-public_id,incident_id,domain_schema_version,cycle_no,event_schema_version,event_type,source_status,target_status,
-reason_code,converter_version,conversion_input_hash,conversion_output_hash,migrated_legacy_context,idempotency_key,
-actor_type,actor_id,summary,metadata_json,occurred_at,created_at,migrated_legacy)
-VALUES (?, ?,3,?,1,'legacy_delivery_observed','delivering','investigating','legacy_delivery_observed',
-'delivery-observe/v2',?,?,TRUE,?,'system','phase7a-cutover',?,?,?,?,TRUE)`,
-		uuid.NewSHA1(uuid.NameSpaceOID, []byte(inputHash)).String(), task.IncidentID, task.CycleNo, inputHash,
-		outputHash, hashCanonical("legacy-delivery-event/v2", fmt.Sprint(task.SubjectID), inputHash),
-		"Legacy pull request reconciled read-only; Incident returned to investigation", metadata, at, at)
-	return err
 }
 
 func (s *mysqlDeliveryObserveStore) PersistIn(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, snapshot DeliveryObserveSnapshot, outcome DeliveryObserveOutcome) error {
 	if tx == nil || task.SubjectType != "change_request" || task.SubjectID != snapshot.ChangeRequestID || task.ExpectedSubjectVersion != snapshot.RowVersion {
 		return asyncjob.ErrInvalidMutation
 	}
-	if outcome.ObservedAt.IsZero() || outcome.Projection.V3Status == "" {
+	if outcome.ObservedAt.IsZero() || outcome.Projection.Status == "" {
 		return asyncjob.ErrInvalidMutation
 	}
 	var incidentVersion uint64
 	var incidentStatus string
-	if err := tx.QueryRowContext(ctx, `SELECT version, v3_status FROM incidents WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? FOR UPDATE`, task.IncidentID, task.CycleNo).Scan(&incidentVersion, &incidentStatus); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT version, status FROM incidents WHERE id = ? AND cycle_no = ? FOR UPDATE`, task.IncidentID, task.CycleNo).Scan(&incidentVersion, &incidentStatus); err != nil {
 		return err
 	}
 	if incidentStatus != "delivering" || incidentVersion != snapshot.IncidentVersion {
 		return asyncjob.ErrSubjectVersionMismatch
 	}
 	var currentVersion uint64
-	var currentV3 string
-	if err := tx.QueryRowContext(ctx, `SELECT row_version, v3_status FROM change_requests WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3 FOR UPDATE`, task.SubjectID, task.IncidentID, task.CycleNo).Scan(&currentVersion, &currentV3); err != nil {
+	var currentStatus string
+	if err := tx.QueryRowContext(ctx, `SELECT row_version, status FROM change_requests WHERE id = ? AND incident_id = ? AND cycle_no = ? FOR UPDATE`, task.SubjectID, task.IncidentID, task.CycleNo).Scan(&currentVersion, &currentStatus); err != nil {
 		return err
 	}
-	if currentVersion != task.ExpectedSubjectVersion || currentVersion != snapshot.RowVersion || currentV3 != snapshot.Projection.V3Status {
+	if currentVersion != task.ExpectedSubjectVersion || currentVersion != snapshot.RowVersion || currentStatus != snapshot.Projection.Status {
 		return asyncjob.ErrSubjectVersionMismatch
 	}
-	if outcome.FailureCode == "" && outcome.VerificationPlan == nil && outcome.Projection.V3Status == "delivered" {
+	if outcome.FailureCode == "" && outcome.VerificationPlan == nil && outcome.Projection.Status == "delivered" {
 		return asyncjob.ErrInvalidMutation
 	}
 	if err := s.validateApprovalIn(ctx, tx, snapshot); err != nil {
@@ -1140,18 +964,18 @@ func (s *mysqlDeliveryObserveStore) PersistIn(ctx context.Context, tx asyncjob.D
 		p.DeliveryDeadlineAt = snapshot.Projection.DeliveryDeadlineAt
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE change_requests SET
- status = ?, v3_status = ?, ci_status = ?, pr_state = ?, pr_url = ?, commit_sha = ?, merged_commit_sha = ?, target_revision = ?,
+	 status = ?, ci_status = ?, pr_state = ?, pr_url = ?, commit_sha = ?, merged_commit_sha = ?, target_revision = ?,
  argocd_application = ?, argocd_project = ?, detected_revision = ?, argocd_sync_status = ?, argocd_operation_phase = ?, argocd_health_status = ?, resource_health_json = ?,
  sync_started_at = ?, sync_completed_at = ?, cluster = ?, environment = ?, namespace = ?, workload_kind = ?, workload_name = ?,
  deployment_generation = ?, observed_generation = ?, rollout_revision = ?, desired_replicas = ?, updated_replicas = ?, available_replicas = ?, unavailable_replicas = ?,
  delivery_started_at = ?, delivery_deadline_at = ?, delivery_completed_at = ?, next_poll_at = ?, last_observed_at = ?, failure_code = ?, failure_reason = ?,
  row_version = ?, expected_subject_version = ?, updated_at = ?
-WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3 AND row_version = ? AND v3_status = ?`,
-		p.Status, p.V3Status, p.CIStatus, p.PRState, p.PRURL, p.HeadCommitSHA, p.MergedCommitSHA, p.TargetRevision,
+	WHERE id = ? AND incident_id = ? AND cycle_no = ? AND row_version = ? AND status = ?`,
+		p.Status, p.CIStatus, p.PRState, p.PRURL, p.HeadCommitSHA, p.MergedCommitSHA, p.TargetRevision,
 		snapshot.ArgoApplication, snapshot.ArgoProject, p.DetectedRevision, p.ArgoSyncStatus, p.ArgoOperationPhase, p.ArgoHealthStatus, deliveryNullableJSON(p.ResourceHealth), nullableTime(p.SyncStartedAt), nullableTime(p.SyncCompletedAt),
 		snapshot.Cluster, snapshot.Environment, snapshot.Namespace, snapshot.WorkloadKind, snapshot.WorkloadName, p.DeploymentGeneration, p.ObservedGeneration, p.RolloutRevision,
 		p.DesiredReplicas, p.UpdatedReplicas, p.AvailableReplicas, p.UnavailableReplicas, nullableTime(p.DeliveryStartedAt), nullableTime(p.DeliveryDeadlineAt), nullableTime(p.DeliveryCompletedAt), nullableTime(p.NextPollAt), nullableTime(p.LastObservedAt),
-		outcome.FailureCode, p.FailureReason, nextVersion, nextVersion, outcome.ObservedAt.UTC(), task.SubjectID, task.IncidentID, task.CycleNo, currentVersion, currentV3)
+		outcome.FailureCode, p.FailureReason, nextVersion, nextVersion, outcome.ObservedAt.UTC(), task.SubjectID, task.IncidentID, task.CycleNo, currentVersion, currentStatus)
 	if err != nil {
 		return err
 	}
@@ -1169,17 +993,17 @@ WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3 
 		return err
 	}
 	eventPayload := map[string]any{
-		"kind": outcome.Kind, "status": outcome.Projection.V3Status, "detail_status": outcome.Projection.Status,
+		"kind": outcome.Kind, "status": outcome.Projection.Status,
 		"source_revision": snapshot.SourceRevision, "image_digest": snapshot.ImageDigest,
 		"gitops_revision": outcome.Projection.TargetRevision, "failure_code": outcome.FailureCode, "failure_summary": outcome.FailureSummary,
 	}
-	if err := appendChangeEvent(ctx, tx, snapshot.ChangeRequestID, snapshot.IncidentID, snapshot.CycleNo, sequence, outcome.EventType, outcome.SourceSystem, remediation.WritePhase("observe"), false, "", eventPayload); err != nil {
+	if err := appendChangeEvent(ctx, tx, snapshot.ChangeRequestID, snapshot.IncidentID, snapshot.CycleNo, sequence, outcome.EventType, outcome.SourceSystem, remediation.OperationStep("observe"), false, "", eventPayload); err != nil {
 		return err
 	}
 	if outcome.FailureCode != "" {
 		return s.persistDeliveryFailure(ctx, tx, task, snapshot, outcome, incidentVersion)
 	}
-	if outcome.Projection.V3Status == "delivered" {
+	if outcome.Projection.Status == "delivered" {
 		if outcome.VerificationPlan == nil {
 			return asyncjob.ErrInvalidMutation
 		}
@@ -1189,17 +1013,17 @@ WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3 
 }
 
 func (s *mysqlDeliveryObserveStore) validateApprovalIn(ctx context.Context, tx asyncjob.DBTX, snapshot DeliveryObserveSnapshot) error {
-	var planStatus, planV3, decision string
+	var planStatus, decision string
 	var planVersion uint64
 	var expectedPost, expectedTree, policyHash, verificationHash, evidenceSetHash string
-	if err := tx.QueryRowContext(ctx, `SELECT status, v3_status, plan_version, expected_post_image_hash, expected_tree_hash, policy_snapshot_hash, verification_plan_hash, evidence_set_hash FROM remediation_plans WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3 FOR UPDATE`, snapshot.PlanID, snapshot.IncidentID, snapshot.CycleNo).Scan(&planStatus, &planV3, &planVersion, &expectedPost, &expectedTree, &policyHash, &verificationHash, &evidenceSetHash); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT status, plan_version, expected_post_image_hash, expected_tree_hash, policy_snapshot_hash, verification_plan_hash, evidence_set_hash FROM remediation_plans WHERE id = ? AND incident_id = ? AND cycle_no = ? FOR UPDATE`, snapshot.PlanID, snapshot.IncidentID, snapshot.CycleNo).Scan(&planStatus, &planVersion, &expectedPost, &expectedTree, &policyHash, &verificationHash, &evidenceSetHash); err != nil {
 		return err
 	}
-	if planV3 != "consumed" || (planStatus != "approved" && planStatus != "consumed") || planVersion != snapshot.PlanVersion || expectedPost != snapshot.ExpectedPostImageHash || expectedTree != snapshot.ExpectedTreeSHA || policyHash != snapshot.PolicyHash || verificationHash != snapshot.VerificationHash || evidenceSetHash != snapshot.EvidenceSetHash {
+	if planStatus != "consumed" || planVersion != snapshot.PlanVersion || expectedPost != snapshot.ExpectedPostImageHash || expectedTree != snapshot.ExpectedTreeSHA || policyHash != snapshot.PolicyHash || verificationHash != snapshot.VerificationHash || evidenceSetHash != snapshot.EvidenceSetHash {
 		return fmt.Errorf("%w: consumed Plan is no longer active", asyncjob.ErrPolicyViolation)
 	}
 	var approvedBase, approvedPost, approvedTree, approvedPolicy, approvedVerification, approvedEvidence string
-	if err := tx.QueryRowContext(ctx, `SELECT decision, approved_base_sha, approved_post_image_hash, approved_tree_hash, approved_policy_hash, approved_verification_hash, approved_evidence_set_hash FROM remediation_decisions WHERE plan_id = ? AND incident_id = ? AND cycle_no = ? FOR UPDATE`, snapshot.PlanID, snapshot.IncidentID, snapshot.CycleNo).Scan(&decision, &approvedBase, &approvedPost, &approvedTree, &approvedPolicy, &approvedVerification, &approvedEvidence); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT decision, approved_base_sha, approved_post_image_hash, approved_tree_hash, approved_policy_hash, approved_verification_hash, approved_evidence_set_hash FROM remediation_decisions WHERE plan_id = ? AND incident_id = ? AND cycle_no = ? AND imported_history = FALSE FOR UPDATE`, snapshot.PlanID, snapshot.IncidentID, snapshot.CycleNo).Scan(&decision, &approvedBase, &approvedPost, &approvedTree, &approvedPolicy, &approvedVerification, &approvedEvidence); err != nil {
 		return err
 	}
 	if decision != "approved" || approvedBase != snapshot.BaseRevision || approvedPost != snapshot.ExpectedPostImageHash || approvedTree != snapshot.ExpectedTreeSHA || approvedPolicy != snapshot.PolicyHash || approvedVerification != snapshot.VerificationHash || approvedEvidence != snapshot.EvidenceSetHash {
@@ -1209,7 +1033,7 @@ func (s *mysqlDeliveryObserveStore) validateApprovalIn(ctx context.Context, tx a
 }
 
 func (s *mysqlDeliveryObserveStore) enqueueObserve(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, snapshot DeliveryObserveSnapshot, version uint64, next time.Time) error {
-	payload, err := json.Marshal(deliveryObservePayload{ChangeRequestID: snapshot.ChangeRequestPublicID, Phase: "observe"})
+	payload, err := json.Marshal(deliveryObservePayload{ChangeRequestID: snapshot.ChangeRequestPublicID, Step: "observe"})
 	if err != nil {
 		return err
 	}
@@ -1218,7 +1042,7 @@ func (s *mysqlDeliveryObserveStore) enqueueObserve(ctx context.Context, tx async
 }
 
 func (s *mysqlDeliveryObserveStore) persistDeliveryFailure(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, snapshot DeliveryObserveSnapshot, outcome DeliveryObserveOutcome, incidentVersion uint64) error {
-	updated, err := tx.ExecContext(ctx, `UPDATE incidents SET status = 'DIAGNOSING', v3_status = 'investigating', version = version + 1, needs_attention = FALSE, blocking_reason_code = NULL, blocked_at = NULL, updated_at = ? WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? AND version = ? AND v3_status = 'delivering'`, outcome.ObservedAt.UTC(), task.IncidentID, task.CycleNo, incidentVersion)
+	updated, err := tx.ExecContext(ctx, `UPDATE incidents SET status = 'investigating', version = version + 1, needs_attention = FALSE, blocking_reason_code = NULL, blocked_at = NULL, updated_at = ? WHERE id = ? AND cycle_no = ? AND version = ? AND status = 'delivering'`, outcome.ObservedAt.UTC(), task.IncidentID, task.CycleNo, incidentVersion)
 	if err != nil {
 		return err
 	}
@@ -1264,7 +1088,7 @@ func (s *mysqlDeliveryObserveStore) persistDelivered(ctx context.Context, tx asy
 	var runPublicID string
 	var runVersion uint64
 	var runMigratedLegacy, runMigratedLegacyContext bool
-	if err := tx.QueryRowContext(ctx, `SELECT id, public_id, row_version, migrated_legacy, migrated_legacy_context FROM verification_runs WHERE change_request_id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3 AND trigger_type = 'post_delivery' AND target_revision = ? ORDER BY attempt DESC LIMIT 1 FOR UPDATE`, task.SubjectID, task.IncidentID, task.CycleNo, plan.TargetRevision).Scan(&runID, &runPublicID, &runVersion, &runMigratedLegacy, &runMigratedLegacyContext); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT id, public_id, row_version, migrated_legacy, migrated_legacy_context FROM verification_runs WHERE change_request_id = ? AND incident_id = ? AND cycle_no = ? AND trigger_type = 'post_delivery' AND target_revision = ? ORDER BY attempt DESC LIMIT 1 FOR UPDATE`, task.SubjectID, task.IncidentID, task.CycleNo, plan.TargetRevision).Scan(&runID, &runPublicID, &runVersion, &runMigratedLegacy, &runMigratedLegacyContext); err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
@@ -1272,7 +1096,7 @@ func (s *mysqlDeliveryObserveStore) persistDelivered(ctx context.Context, tx asy
 		var planAuthorization sql.NullInt64
 		if err := tx.QueryRowContext(ctx, `SELECT created_by_agent_run_id, business_budget_authorization_id
 FROM remediation_plans
-WHERE id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3
+	WHERE id = ? AND incident_id = ? AND cycle_no = ?
 FOR UPDATE`, snapshot.PlanID, task.IncidentID, task.CycleNo).Scan(&originatingAgentRunID, &planAuthorization); err != nil {
 			return err
 		}
@@ -1296,12 +1120,12 @@ FOR UPDATE`, snapshot.PlanID, task.IncidentID, task.CycleNo).Scan(&originatingAg
 		}
 		runPublicID = uuid.NewString()
 		result, insertErr := tx.ExecContext(ctx, `INSERT INTO verification_runs
- (public_id, incident_id, domain_schema_version, cycle_no, originating_agent_run_id, business_budget_authorization_id,
-  remediation_plan_id, change_request_id, status, v3_status, trigger_type,
+	 (public_id, incident_id, cycle_no, originating_agent_run_id, business_budget_authorization_id,
+	  remediation_plan_id, change_request_id, status, trigger_type,
   target_revision, source_revision, image_digest, gitops_revision, plan_json, verification_profile_version, verification_profile_hash,
   verification_contract_version, verification_profile_id, common_stability_window_ms, deadline_at, attempt, row_version, expected_subject_version,
   migrated_legacy, migrated_legacy_context, created_at, updated_at)
- VALUES (?, ?, 3, ?, ?, ?, ?, ?, 'pending', 'pending', 'post_delivery', ?, ?, ?, ?, ?, ?, ?, 1, ?, 60000, ?, 1, 1, 1, ?, ?, ?, ?)`,
+	 VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 'post_delivery', ?, ?, ?, ?, ?, ?, ?, 1, ?, 60000, ?, 1, 1, 1, ?, ?, ?, ?)`,
 			runPublicID, task.IncidentID, task.CycleNo, originatingAgentRunID, authorizationValue, snapshot.PlanID, task.SubjectID, plan.TargetRevision, plan.SourceRevision, plan.ImageDigest, plan.GitOpsRevision,
 			planJSON, plan.ProfileVersion, planHash, plan.ProfileID, deadline,
 			task.MigratedLegacy, task.MigratedLegacyContext, outcome.ObservedAt.UTC(), outcome.ObservedAt.UTC())
@@ -1332,11 +1156,11 @@ FOR UPDATE`, snapshot.PlanID, task.IncidentID, task.CycleNo).Scan(&originatingAg
 				threshold = spec.Threshold
 			}
 			if _, err := tx.ExecContext(ctx, `INSERT INTO verification_checks
- (public_id, verification_run_id, domain_schema_version, incident_id, cycle_no, check_type, status, required_check, subject_json, expected_json,
+	 (public_id, verification_run_id, incident_id, cycle_no, check_type, status, required_check, subject_json, expected_json,
   source_reference, lookback_ms, stability_window_ms, timeout_ms, poll_interval_ms, check_spec_schema_version, profile_id, template_id,
   template_version, comparison, threshold, source_identity, initial_delay_ms, min_samples, sample_unit, failure_mode,
   migrated_legacy, migrated_legacy_context, created_at, updated_at)
- VALUES (?, ?, 3, ?, ?, ?, 'pending', ?, ?, ?, '', ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	 VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?, '', ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				uuid.NewString(), runID, task.IncidentID, task.CycleNo, spec.Type, spec.Required, subjectJSON, spec.Expected,
 				spec.Lookback.Milliseconds(), spec.StabilityWindow.Milliseconds(), spec.Timeout.Milliseconds(), spec.PollInterval.Milliseconds(), spec.ProfileID, spec.TemplateID,
 				spec.TemplateVersion, comparison, threshold, spec.SourceIdentity, spec.InitialDelay.Milliseconds(), spec.MinSamples, spec.SampleUnit, spec.FailureMode,
@@ -1348,7 +1172,7 @@ FOR UPDATE`, snapshot.PlanID, task.IncidentID, task.CycleNo).Scan(&originatingAg
 	if runMigratedLegacy != task.MigratedLegacy || runMigratedLegacyContext != task.MigratedLegacyContext {
 		return asyncjob.ErrSubjectVersionMismatch
 	}
-	updated, err := tx.ExecContext(ctx, `UPDATE incidents SET status = 'VERIFYING', v3_status = 'verifying', version = version + 1, updated_at = ? WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? AND version = ? AND v3_status = 'delivering'`, outcome.ObservedAt.UTC(), task.IncidentID, task.CycleNo, incidentVersion)
+	updated, err := tx.ExecContext(ctx, `UPDATE incidents SET status = 'verifying', version = version + 1, updated_at = ? WHERE id = ? AND cycle_no = ? AND version = ? AND status = 'delivering'`, outcome.ObservedAt.UTC(), task.IncidentID, task.CycleNo, incidentVersion)
 	if err != nil {
 		return err
 	}
@@ -1378,9 +1202,9 @@ func appendDeliveryBudgetLineageEvent(ctx context.Context, tx asyncjob.DBTX, sna
 		return asyncjob.ErrInvalidMutation
 	}
 	_, err = tx.ExecContext(ctx, `INSERT IGNORE INTO incident_events
- (public_id, incident_id, domain_schema_version, cycle_no, event_schema_version,
-  event_type, idempotency_key, migrated_legacy_context, migrated_legacy, actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
-VALUES (?, ?, 3, ?, 1, 'verification_budget_lineage_bound', ?, ?, ?, 'system', 'delivery.observe',
+	 (public_id, incident_id, cycle_no, event_schema_version,
+	  event_type, idempotency_key, migrated_legacy_context, migrated_legacy, actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
+	VALUES (?, ?, ?, 1, 'verification_budget_lineage_bound', ?, ?, ?, 'system', 'delivery.observe',
 	        'post-delivery Verification bound to operator retry authorization', ?, ?, ?)`,
 		uuid.NewString(), snapshot.IncidentID, snapshot.CycleNo,
 		hashCanonical("delivery-budget-lineage", runPublicID, budget.AuthorizationPublicID), snapshot.MigratedLegacyContext,
@@ -1394,8 +1218,8 @@ func appendDeliveryIncidentEvent(ctx context.Context, tx asyncjob.DBTX, snapshot
 		return asyncjob.ErrInvalidMutation
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO incident_events
- (public_id, incident_id, domain_schema_version, cycle_no, event_schema_version, event_type, idempotency_key, migrated_legacy_context, migrated_legacy, actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
- VALUES (?, ?, 3, ?, 1, ?, ?, ?, ?, 'system', 'delivery.observe', ?, ?, ?, ?)
+	 (public_id, incident_id, cycle_no, event_schema_version, event_type, idempotency_key, migrated_legacy_context, migrated_legacy, actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
+	 VALUES (?, ?, ?, 1, ?, ?, ?, ?, 'system', 'delivery.observe', ?, ?, ?, ?)
  ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`, uuid.NewString(), snapshot.IncidentID, snapshot.CycleNo, eventType,
 		hashCanonical("delivery-event", snapshot.ChangeRequestPublicID, eventType, reason), snapshot.MigratedLegacyContext,
 		snapshot.MigratedLegacy, boundChange(reason, 2048), metadata, at.UTC(), at.UTC())
@@ -1442,7 +1266,7 @@ func appendDeliveryEvidence(ctx context.Context, tx asyncjob.DBTX, snapshot Deli
 		resourceRef = "kubernetes:" + snapshot.Namespace + "/" + snapshot.WorkloadName
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO evidence_items
- (public_id, incident_id, domain_schema_version, evidence_contract_version, cycle_no, migrated_legacy, migrated_legacy_context,
+	 (public_id, incident_id, evidence_contract_version, cycle_no, migrated_legacy, migrated_legacy_context,
   change_request_id, type, source, producer_type, producer_id, producer_version,
   producer_dedupe_key, adapter_version, query_template_id, query_template_version,
   scope_snapshot_hash, arguments_hash, tool_name, resource_ref, time_range_json, query_text,
@@ -1452,7 +1276,7 @@ func appendDeliveryEvidence(ctx context.Context, tx asyncjob.DBTX, snapshot Deli
   safe_raw_reference, redaction_json, redaction_policy_version, redaction_counts_json,
   prompt_safety_flags_json, source_revision, resource_version, truncated, valid,
   idempotency_key, collected_at, observed_at, created_at)
-	 VALUES (?, ?, 3, 1, ?, ?, ?, ?, 'delivery_observation', ?, 'delivery_observation', ?,
+	 VALUES (?, ?, 1, ?, ?, ?, ?, 'delivery_observation', ?, 'delivery_observation', ?,
          'delivery-observation-evidence/v1', ?, 'delivery-observer/v1', ?, 'v1', ?, ?, '', ?,
          NULL, '', ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?,
          'delivery-observation-redaction/v1', ?, ?, ?, ?, FALSE, TRUE, ?, ?, ?, ?)

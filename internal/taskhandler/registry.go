@@ -68,7 +68,7 @@ func dispatchKey(task asyncjob.Task) DispatchKey {
 }
 
 // Config injects the one-step application operations owned by later feature
-// phases. Phase 2 provides investigation.start because it is part of the
+// capabilities. investigation.start is part of the
 // Incident/Task convergence transaction.
 type Config struct {
 	AgentRunIdentity    agent.RunModelIdentity

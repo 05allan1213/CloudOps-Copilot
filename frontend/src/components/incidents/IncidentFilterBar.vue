@@ -47,7 +47,7 @@ const hasFilters = computed(() => Boolean(props.status || props.severity || prop
           Filter Incidents
         </h2>
         <p id="incident-filter-help">
-          Status, severity, and exact service are the server-supported V3 filters.
+          Status, severity, and exact service are the server-supported filters.
         </p>
       </div>
       <span class="filter-contract">URL-synced</span>

@@ -19,9 +19,9 @@ import (
 var errChangeApprovalExpired = errors.New("change.ensure_pr approval expired")
 
 const changeEnsurePlanSelect = `SELECT
-    p.id, p.public_id, p.incident_id, i.public_id, p.domain_schema_version,
-    p.cycle_no, p.incident_version, ar.public_id, p.diagnosis_hash,
-    p.plan_version, p.plan_hash, p.status, p.v3_status, p.migrated_legacy, p.migrated_legacy_context, p.operation_type,
+	    p.id, p.public_id, p.incident_id, i.public_id,
+	    p.cycle_no, p.incident_version, ar.public_id, p.diagnosis_hash,
+	    p.plan_version, p.plan_hash, p.status, p.migrated_legacy, p.migrated_legacy_context, p.operation_type,
     p.target_repository, p.target_base_revision, p.target_base_branch,
     p.last_known_good_sha, p.base_blob_sha, p.file_mode, p.target_path,
     p.target_resource_json, p.target_field_ref, p.parameters_json,
@@ -33,29 +33,28 @@ const changeEnsurePlanSelect = `SELECT
     p.verification_plan_hash, p.evidence_bindings_json, p.evidence_set_hash,
     p.hash_schema_version, p.canonical_plan_hash, p.plan_content_schema_version,
     p.row_version, p.created_at, p.updated_at, p.expires_at,
-    i.v3_status, i.version
-FROM remediation_plans p
-JOIN incidents i ON i.id = p.incident_id
-  AND i.domain_schema_version = 3 AND i.cycle_no = p.cycle_no
-JOIN agent_runs ar ON ar.id = p.created_by_agent_run_id
-  AND ar.incident_id = p.incident_id AND ar.cycle_no = p.cycle_no
-  AND ar.domain_schema_version = 3
-WHERE p.id = ? AND p.domain_schema_version = 3 AND p.plan_content_schema_version = 2`
+	    i.status, i.version
+	FROM remediation_plans p
+	JOIN incidents i ON i.id = p.incident_id
+	  AND i.cycle_no = p.cycle_no
+	JOIN agent_runs ar ON ar.id = p.created_by_agent_run_id
+	  AND ar.incident_id = p.incident_id AND ar.cycle_no = p.cycle_no
+	WHERE p.id = ? AND p.plan_content_schema_version = 2`
 
 const changeEnsureDecisionSelect = `SELECT
-    id, public_id, domain_schema_version, decision_schema_version,
-    incident_id, cycle_no, plan_id, plan_version, decision,
+	    id, public_id, decision_schema_version, incident_id, cycle_no,
+	    plan_id, plan_version, decision,
     actor_provider, actor_login, actor_role, reason, request_id,
     request_authenticated_at, expires_at, approved_hash_schema_version,
     approved_plan_hash, approved_base_sha, approved_post_image_hash,
     approved_tree_hash, approved_patch_hash, approved_policy_hash,
     approved_verification_hash, approved_evidence_set_hash, created_at
 FROM remediation_decisions
-WHERE plan_id = ? AND incident_id = ? AND cycle_no = ?`
+WHERE plan_id = ? AND incident_id = ? AND cycle_no = ? AND imported_history = FALSE`
 
 func (s *mysqlChangeEnsurePRStore) loadPlan(ctx context.Context, queryer changeQueryer, planID uint64, lock bool) (changePlanSnapshot, error) {
 	var snapshot changePlanSnapshot
-	var v3Status string
+	var status string
 	var targetJSON, parametersJSON, evidenceReferencesJSON []byte
 	var manifestJSON, policyJSON, verificationJSON, evidenceBindingsJSON []byte
 	query := changeEnsurePlanSelect
@@ -64,9 +63,9 @@ func (s *mysqlChangeEnsurePRStore) loadPlan(ctx context.Context, queryer changeQ
 	}
 	if err := queryer.QueryRowContext(ctx, query, planID).Scan(
 		&snapshot.Plan.ID, &snapshot.Plan.PublicID, &snapshot.Plan.IncidentID, &snapshot.Plan.IncidentPublicID,
-		&snapshot.Plan.DomainSchemaVersion, &snapshot.Plan.CycleNo, &snapshot.Plan.IncidentVersion,
+		&snapshot.Plan.CycleNo, &snapshot.Plan.IncidentVersion,
 		&snapshot.Plan.CreatedByAgentRunID, &snapshot.Plan.DiagnosisHash, &snapshot.Plan.PlanVersion,
-		&snapshot.Plan.PlanHash, &snapshot.LegacyPlanStatus, &v3Status,
+		&snapshot.Plan.PlanHash, &status,
 		&snapshot.Plan.MigratedLegacy, &snapshot.Plan.MigratedLegacyContext, &snapshot.Plan.OperationType,
 		&snapshot.Plan.TargetRepository, &snapshot.Plan.TargetBaseRevision, &snapshot.Plan.TargetBaseBranch,
 		&snapshot.Plan.LastKnownGoodRevision, &snapshot.Plan.BaseBlobSHA, &snapshot.Plan.FileMode,
@@ -84,23 +83,23 @@ func (s *mysqlChangeEnsurePRStore) loadPlan(ctx context.Context, queryer changeQ
 	); err != nil {
 		return changePlanSnapshot{}, err
 	}
-	snapshot.Plan.Status = remediation.PlanStatus(v3Status)
+	snapshot.Plan.Status = remediation.PlanStatus(status)
 	var err error
 	if snapshot.Plan.CanonicalChangeManifest, err = canonicalizeChangePlanJSON(manifestJSON); err != nil {
-		return snapshot, fmt.Errorf("%w: decode persisted V3 change manifest", remediation.ErrInvalidArgument)
+		return snapshot, fmt.Errorf("%w: decode persisted change manifest", remediation.ErrInvalidArgument)
 	}
 	if snapshot.Plan.PolicySnapshot, err = canonicalizeChangePlanJSON(policyJSON); err != nil {
-		return snapshot, fmt.Errorf("%w: decode persisted V3 remediation policy", remediation.ErrInvalidArgument)
+		return snapshot, fmt.Errorf("%w: decode persisted remediation policy", remediation.ErrInvalidArgument)
 	}
 	if snapshot.Plan.VerificationPlan, err = canonicalizeChangePlanJSON(verificationJSON); err != nil {
-		return snapshot, fmt.Errorf("%w: decode persisted V3 verification plan", remediation.ErrInvalidArgument)
+		return snapshot, fmt.Errorf("%w: decode persisted verification plan", remediation.ErrInvalidArgument)
 	}
 	var target remediation.TargetResource
 	if json.Unmarshal(targetJSON, &target) != nil ||
 		json.Unmarshal(parametersJSON, &snapshot.Plan.Parameters) != nil || snapshot.Plan.Parameters.Target != target ||
 		json.Unmarshal(evidenceReferencesJSON, &snapshot.Plan.EvidenceReferences) != nil ||
 		json.Unmarshal(evidenceBindingsJSON, &snapshot.Plan.EvidenceBindings) != nil {
-		return snapshot, fmt.Errorf("%w: decode persisted V3 plan JSON", remediation.ErrInvalidArgument)
+		return snapshot, fmt.Errorf("%w: decode persisted remediation Plan JSON", remediation.ErrInvalidArgument)
 	}
 
 	decisionQuery := changeEnsureDecisionSelect
@@ -108,8 +107,8 @@ func (s *mysqlChangeEnsurePRStore) loadPlan(ctx context.Context, queryer changeQ
 		decisionQuery += " FOR UPDATE"
 	}
 	if err := queryer.QueryRowContext(ctx, decisionQuery, snapshot.Plan.ID, snapshot.Plan.IncidentID, snapshot.Plan.CycleNo).Scan(
-		&snapshot.Decision.ID, &snapshot.Decision.PublicID, &snapshot.Decision.DomainSchemaVersion,
-		&snapshot.Decision.DecisionSchemaVersion, &snapshot.Decision.IncidentID, &snapshot.Decision.CycleNo,
+		&snapshot.Decision.ID, &snapshot.Decision.PublicID, &snapshot.Decision.DecisionSchemaVersion,
+		&snapshot.Decision.IncidentID, &snapshot.Decision.CycleNo,
 		&snapshot.Decision.PlanID, &snapshot.Decision.PlanVersion, &snapshot.Decision.Decision,
 		&snapshot.Decision.ActorProvider, &snapshot.Decision.Actor, &snapshot.Decision.Role, &snapshot.Decision.Reason,
 		&snapshot.Decision.RequestID, &snapshot.Decision.RequestAuthenticatedAt, &snapshot.Decision.ExpiresAt,
@@ -124,13 +123,13 @@ func (s *mysqlChangeEnsurePRStore) loadPlan(ctx context.Context, queryer changeQ
 		}
 		return snapshot, err
 	}
-	if err := remediation.ValidateV3Plan(snapshot.Plan); err != nil {
+	if err := remediation.ValidatePlan(snapshot.Plan); err != nil {
 		return snapshot, err
 	}
 	// Reconciliation remains approval-bound after expiry. Using the immutable
 	// Decision creation time validates every approved hash without requiring
 	// the approval to still be live at the time of a read-only reconciliation.
-	if err := remediation.ValidateV3ApprovalBinding(snapshot.Plan, snapshot.Decision, snapshot.Decision.CreatedAt.UTC()); err != nil {
+	if err := remediation.ValidateApprovalBinding(snapshot.Plan, snapshot.Decision, snapshot.Decision.CreatedAt.UTC()); err != nil {
 		return snapshot, err
 	}
 	return snapshot, nil
@@ -161,7 +160,6 @@ func (s *mysqlChangeEnsurePRStore) validateDurablePreflight(
 	plan := snapshot.Plan
 	now = now.UTC()
 	if snapshot.IncidentStatus != expectedIncidentStatus || plan.Status != expectedPlanStatus ||
-		snapshot.LegacyPlanStatus != string(remediation.PlanApproved) ||
 		plan.OperationType != remediation.OperationRestoreRequiredEnv ||
 		plan.IncidentID == 0 || plan.CycleNo == 0 || snapshot.Decision.Decision != remediation.DecisionApproved {
 		return fmt.Errorf("%w: Incident, Plan, or Decision is stale for the current delivery cycle", asyncjob.ErrPolicyViolation)
@@ -173,14 +171,14 @@ func (s *mysqlChangeEnsurePRStore) validateDurablePreflight(
 	if err := validateCurrentChangePolicy(plan, policyHash); err != nil {
 		return err
 	}
-	if err := remediation.ValidateV3Plan(plan); err != nil {
+	if err := remediation.ValidatePlan(plan); err != nil {
 		return err
 	}
 	bindingTime := now
 	if expired {
 		bindingTime = snapshot.Decision.CreatedAt.UTC()
 	}
-	if err := remediation.ValidateV3ApprovalBinding(plan, snapshot.Decision, bindingTime); err != nil {
+	if err := remediation.ValidateApprovalBinding(plan, snapshot.Decision, bindingTime); err != nil {
 		return err
 	}
 	if expired {
@@ -197,23 +195,23 @@ func validateCurrentChangePolicy(plan remediation.RemediationPlan, policyHash st
 }
 
 func (s *mysqlChangeEnsurePRStore) validateCurrentDiagnosisEvidence(ctx context.Context, queryer changeQueryer, plan remediation.RemediationPlan, lock bool) error {
-	query := `SELECT id, public_id, status, v3_status, expected_incident_version,
-       final_diagnosis, completed_at
-FROM agent_runs
-WHERE public_id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3`
+	query := `SELECT id, public_id, status, expected_incident_version,
+	       final_diagnosis, completed_at
+	FROM agent_runs
+	WHERE public_id = ? AND incident_id = ? AND cycle_no = ?`
 	if lock {
 		query += " FOR UPDATE"
 	}
 	var runID, expectedIncidentVersion uint64
-	var runPublicID, legacyStatus, runStatus string
+	var runPublicID, runStatus string
 	var finalDiagnosis []byte
 	var completedAt sql.NullTime
 	if err := queryer.QueryRowContext(ctx, query, plan.CreatedByAgentRunID, plan.IncidentID, plan.CycleNo).Scan(
-		&runID, &runPublicID, &legacyStatus, &runStatus, &expectedIncidentVersion, &finalDiagnosis, &completedAt,
+		&runID, &runPublicID, &runStatus, &expectedIncidentVersion, &finalDiagnosis, &completedAt,
 	); err != nil {
 		return err
 	}
-	if runPublicID != plan.CreatedByAgentRunID || legacyStatus != "COMPLETED" || runStatus != "completed" ||
+	if runPublicID != plan.CreatedByAgentRunID || runStatus != "completed" ||
 		!completedAt.Valid || expectedIncidentVersion != plan.IncidentVersion {
 		return fmt.Errorf("%w: creating AgentRun is no longer the completed current-cycle Diagnosis", asyncjob.ErrPolicyViolation)
 	}
@@ -237,8 +235,8 @@ WHERE public_id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_versi
 		}
 		evidenceQuery := `SELECT content_hash, result_hash, producer_type, agent_run_id,
        facts_json, valid, truncated
-FROM evidence_items
-WHERE public_id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3`
+		FROM evidence_items
+		WHERE public_id = ? AND incident_id = ? AND cycle_no = ?`
 		if lock {
 			evidenceQuery += " FOR UPDATE"
 		}
@@ -257,7 +255,7 @@ WHERE public_id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_versi
 			return fmt.Errorf("%w: Diagnosis Evidence is no longer a verified current-cycle observation", asyncjob.ErrPolicyViolation)
 		}
 		var envelope storedEvidenceEnvelope
-		if len(factsJSON) == 0 || len(factsJSON) > remediation.MaxV3PostImageBytes ||
+		if len(factsJSON) == 0 || len(factsJSON) > remediation.MaxPostImageBytes ||
 			json.Unmarshal(factsJSON, &envelope) != nil || envelope.SchemaVersion != 1 ||
 			envelope.ContentHash != contentHash || envelope.Truncated || envelope.Status != agent.CollectionAvailable {
 			return fmt.Errorf("%w: Diagnosis Evidence envelope is malformed", asyncjob.ErrPolicyViolation)
@@ -299,7 +297,7 @@ func validateCurrentChangeDiagnosis(stored agent.DiagnosisRecord, incidentPublic
 	if err != nil || sufficiency.Outcome != agent.SufficiencyReady {
 		return fmt.Errorf("%w: current Evidence no longer satisfies the configured ClaimPolicy", asyncjob.ErrPolicyViolation)
 	}
-	validated, err := validateV3Diagnosis(stored.Candidate, investigationSnapshot{
+	validated, err := validateDiagnosis(stored.Candidate, investigationSnapshot{
 		IncidentPublicID: incidentPublicID, Task: asyncjob.Task{CycleNo: cycleNo}, Facts: facts,
 	}, policy, sufficiency)
 	if err != nil {

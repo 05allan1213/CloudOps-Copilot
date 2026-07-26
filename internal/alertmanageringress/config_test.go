@@ -12,7 +12,7 @@ func TestParseTargetAllowlistIsTypedStrictAndDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(targets) != 1 || targets[0].ClusterID != "kind-cloudops-v3" || targets[0].ServiceName != "demo" {
+	if len(targets) != 1 || targets[0].ClusterID != "kind-cloudops-local" || targets[0].ServiceName != "demo" {
 		t.Fatalf("targets=%+v", targets)
 	}
 	for name, raw := range map[string]string{
@@ -33,7 +33,7 @@ func TestParseTargetAllowlistIsTypedStrictAndDeterministic(t *testing.T) {
 
 func TestReadBearerTokenUsesBoundedCredentialFile(t *testing.T) {
 	if token, err := ReadBearerToken(""); err != nil || token != nil {
-		t.Fatalf("Phase 2 compatibility token=%q err=%v", token, err)
+		t.Fatalf("local ingress token=%q err=%v", token, err)
 	}
 	path := filepath.Join(t.TempDir(), "alertmanager-token")
 	if err := os.WriteFile(path, []byte("0123456789abcdef0123456789abcdef\n"), 0o600); err != nil {
@@ -50,7 +50,7 @@ func TestReadBearerTokenUsesBoundedCredentialFile(t *testing.T) {
 	for _, token := range [][]byte{[]byte("short"), []byte("0123456789abcde 0123456789abcdef")} {
 		if _, err := NewHandler(Config{
 			Store: &fakeStore{}, Targets: mustTargets(t), MaxBodyBytes: 1024, BearerToken: token,
-			RuntimeReady: func(context.Context) error { return nil },
+			Readiness: func(context.Context) error { return nil },
 		}); err == nil {
 			t.Fatalf("invalid bearer token %q was accepted", token)
 		}
@@ -64,5 +64,5 @@ func TestHandlerRequiresRuntimeGenerationGuard(t *testing.T) {
 }
 
 func testTargetJSON() string {
-	return `[{"cluster_id":"kind-cloudops-v3","environment":"local-demo","namespace":"demo","workload_kind":"Deployment","workload_name":"demo","service_name":"demo","match_labels":{"cluster":"kind-cloudops-v3","environment":"local-demo","namespace":"demo","deployment":"demo"}}]`
+	return `[{"cluster_id":"kind-cloudops-local","environment":"local-demo","namespace":"demo","workload_kind":"Deployment","workload_name":"demo","service_name":"demo","match_labels":{"cluster":"kind-cloudops-local","environment":"local-demo","namespace":"demo","deployment":"demo"}}]`
 }

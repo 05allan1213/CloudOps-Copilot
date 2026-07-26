@@ -53,7 +53,7 @@ type RemediationPrepareConfig struct {
 
 func NewRemediationPrepare(config RemediationPrepareConfig) (Operation, error) {
 	if config.Loader == nil || config.Store == nil {
-		return nil, errors.New("remediation.prepare requires a bounded loader and V3 persistence store")
+		return nil, errors.New("remediation.prepare requires a bounded loader and persistence store")
 	}
 	if config.Now == nil {
 		config.Now = func() time.Time { return time.Now().UTC() }
@@ -107,7 +107,7 @@ func (o *remediationPrepareOperation) handle(ctx context.Context, execution asyn
 	plan.PublicID = input.PlanPublicID
 	plan.MigratedLegacy = input.MigratedLegacy
 	plan.MigratedLegacyContext = input.MigratedLegacyContext
-	if err := remediation.ValidateV3Plan(plan); err != nil {
+	if err := remediation.ValidatePlan(plan); err != nil {
 		return asyncjob.Dead("remediation_plan_invalid", boundChange(err.Error(), 2048), nil)
 	}
 	return asyncjob.Succeeded(func(ctx context.Context, tx asyncjob.DBTX) error {
@@ -144,12 +144,12 @@ func remediationPrepareLoadFailure(err error) asyncjob.Result {
 // in the async task's transaction. It deliberately does not enqueue a follow-up
 // task: human approval is the next explicit boundary.
 type mysqlRemediationPrepareStore struct {
-	repository remediation.V3Repository
+	repository remediation.Repository
 }
 
-func NewMySQLRemediationPrepareStore(repository remediation.V3Repository) (RemediationPrepareStore, error) {
+func NewMySQLRemediationPrepareStore(repository remediation.Repository) (RemediationPrepareStore, error) {
 	if repository == nil {
-		return nil, errors.New("V3 remediation repository is required")
+		return nil, errors.New("remediation repository is required")
 	}
 	return &mysqlRemediationPrepareStore{repository: repository}, nil
 }
@@ -163,9 +163,9 @@ func (s *mysqlRemediationPrepareStore) PersistIn(ctx context.Context, tx asyncjo
 	var runVersion, expectedIncidentVersion uint64
 	var runMigratedLegacy, runMigratedLegacyContext bool
 	if err := tx.QueryRowContext(ctx, `
-SELECT public_id, row_version, v3_status, expected_incident_version, migrated_legacy, migrated_legacy_context
+SELECT public_id, row_version, status, expected_incident_version, migrated_legacy, migrated_legacy_context
 FROM agent_runs
-WHERE id = ? AND incident_id = ? AND domain_schema_version = 3 AND cycle_no = ?
+WHERE id = ? AND incident_id = ? AND cycle_no = ?
 FOR SHARE`, task.SubjectID, task.IncidentID, task.CycleNo).
 		Scan(&runPublicID, &runVersion, &runStatus, &expectedIncidentVersion, &runMigratedLegacy, &runMigratedLegacyContext); err != nil {
 		return err
@@ -181,7 +181,7 @@ FOR SHARE`, task.SubjectID, task.IncidentID, task.CycleNo).
 	if err := tx.QueryRowContext(ctx, `
 SELECT public_id, row_version, status, gitops_revision, config_hash
 FROM deployment_baselines
-WHERE id = ? AND domain_schema_version = 3
+WHERE id = ?
 FOR SHARE`, input.Baseline.ID).
 		Scan(&baselinePublicID, &baselineVersion, &baselineStatus, &baselineRevision, &configHash); err != nil {
 		return err
@@ -195,7 +195,7 @@ FOR SHARE`, input.Baseline.ID).
 	if err := tx.QueryRowContext(ctx, `
 SELECT baseline_id, content_hash
 FROM baseline_observations
-WHERE id = ? AND domain_schema_version = 3 AND observation_type = 'config_blob'
+WHERE id = ? AND observation_type = 'config_blob'
 FOR SHARE`, input.Baseline.ObservationID).Scan(&observationBaselineID, &observationHash); err != nil {
 		return err
 	}
@@ -206,7 +206,7 @@ FOR SHARE`, input.Baseline.ObservationID).Scan(&observationBaselineID, &observat
 	var existingAuthorization sql.NullInt64
 	existingErr := tx.QueryRowContext(ctx, `SELECT id, business_budget_authorization_id
 FROM remediation_plans
-WHERE public_id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3
+WHERE public_id = ? AND incident_id = ? AND cycle_no = ?
 FOR UPDATE`, plan.PublicID, plan.IncidentID, plan.CycleNo).Scan(&existingPlanID, &existingAuthorization)
 	if existingErr == nil {
 		if existingPlanID == 0 {
@@ -237,16 +237,16 @@ FOR UPDATE`, plan.PublicID, plan.IncidentID, plan.CycleNo).Scan(&existingPlanID,
 	var version uint64
 	var status string
 	if err := tx.QueryRowContext(ctx, `
-SELECT version, v3_status FROM incidents
-WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? FOR UPDATE`, plan.IncidentID, plan.CycleNo).Scan(&version, &status); err != nil {
+SELECT version, status FROM incidents
+WHERE id = ? AND cycle_no = ? FOR UPDATE`, plan.IncidentID, plan.CycleNo).Scan(&version, &status); err != nil {
 		return err
 	}
 	switch status {
 	case "investigating":
 		result, err := tx.ExecContext(ctx, `
 UPDATE incidents
-SET v3_status = 'awaiting_approval', status = 'AWAITING_APPROVAL', version = version + 1, updated_at = NOW(6)
-WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? AND version = ? AND v3_status = 'investigating'`,
+SET status = 'awaiting_approval', version = version + 1, updated_at = NOW(6)
+WHERE id = ? AND cycle_no = ? AND version = ? AND status = 'investigating'`,
 			plan.IncidentID, plan.CycleNo, version)
 		if err != nil {
 			return err
@@ -260,7 +260,7 @@ WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? AND version = ? AND 
 			"authorization_slot":               budget.AuthorizationSlot,
 		})
 	case "awaiting_approval":
-		// A task replay after a committed plan must be idempotent. The V3
+		// A task replay after a committed plan must be idempotent. The
 		// repository already checked that the same immutable Plan is present.
 		return nil
 	default:
@@ -276,9 +276,9 @@ func appendPrepareIncidentEvent(ctx context.Context, tx asyncjob.DBTX, plan *rem
 	idempotency := hashCanonical("remediation.prepare", plan.PublicID, eventType)
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO incident_events
- (public_id, incident_id, domain_schema_version, cycle_no, event_schema_version,
+ (public_id, incident_id, cycle_no, event_schema_version,
   event_type, idempotency_key, migrated_legacy_context, migrated_legacy, actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
-VALUES (?, ?, 3, ?, 1, ?, ?, ?, ?, 'agent', ?, ?, ?, NOW(6), NOW(6))
+VALUES (?, ?, ?, 1, ?, ?, ?, ?, 'agent', ?, ?, ?, NOW(6), NOW(6))
 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
 		uuid.NewString(), plan.IncidentID, plan.CycleNo, eventType, idempotency,
 		plan.MigratedLegacyContext, plan.MigratedLegacy, plan.CreatedByAgentRunID,

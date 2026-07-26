@@ -9,22 +9,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func limitRequestBody(maxBytes int64) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if maxBytes > 0 && c.Request.ContentLength > maxBytes {
-			c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{
-				"status": "error",
-				"error":  "request body too large",
-			})
-			return
-		}
-		if maxBytes > 0 {
-			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
-		}
-		c.Next()
-	}
-}
-
 func registerStaticRoutes(router *gin.Engine, staticDir string) error {
 	if staticDir == "" {
 		return nil

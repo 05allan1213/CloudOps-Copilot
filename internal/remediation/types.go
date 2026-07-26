@@ -98,9 +98,7 @@ type RemediationPlan struct {
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 
-	// V3 immutable approval bindings. Legacy rows leave these fields empty
-	// until the release-A conversion/cutover flow classifies them.
-	DomainSchemaVersion           int
+	// Immutable approval bindings and imported-history provenance.
 	CycleNo                       uint64
 	IncidentVersion               uint64
 	CreatedByAgentRunID           string
@@ -147,7 +145,6 @@ type Approval struct {
 	ApprovedPatchHash string
 	CreatedAt         time.Time
 
-	DomainSchemaVersion       int
 	DecisionSchemaVersion     int
 	IncidentID                uint64
 	CycleNo                   uint64

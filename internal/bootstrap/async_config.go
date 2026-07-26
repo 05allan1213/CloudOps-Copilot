@@ -8,8 +8,7 @@ import (
 	"time"
 )
 
-// AsyncWorkerConfig is the typed, bounded configuration for the V3 task
-// runtime. It is intentionally separate from the legacy V2 application config.
+// AsyncWorkerConfig is the typed, bounded configuration for the task runtime.
 type AsyncWorkerConfig struct {
 	WorkerID string
 
@@ -42,8 +41,7 @@ type AsyncWorkerConfig struct {
 	ExitDeadline time.Duration
 }
 
-// DefaultAsyncWorkerConfig returns the Phase 2 frozen pool sizes and timing
-// contract from the V3 design.
+// DefaultAsyncWorkerConfig returns the frozen pool sizes and timing contract.
 func DefaultAsyncWorkerConfig() AsyncWorkerConfig {
 	return AsyncWorkerConfig{
 		WorkerID:                    "cloudops-worker",

@@ -68,7 +68,7 @@ USER 65532:65532
 
 FROM runtime-base AS cloudops-control-base
 
-COPY server-monitor/runbooks /app/runbooks
+COPY runbooks /app/runbooks
 
 ENV RUNBOOK_DIR=/app/runbooks
 
@@ -114,6 +114,3 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=5s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:8080/livez || exit 1
 
 CMD ["/app/cloudops-demo"]
-
-# Transitional alias for the existing server-web image reference. It runs API only.
-FROM cloudops-api AS runtime

@@ -29,7 +29,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{ retry: [] }>();
 const pullRequestURL = computed(() => safeExternalURL(props.delivery?.pr_url));
-const phases = computed(() => {
+const stages = computed(() => {
   const delivery = props.delivery;
   if (!delivery) return [];
   const mergeResult = delivery.merged_commit_sha
@@ -97,20 +97,20 @@ const phases = computed(() => {
 
       <ol
         class="delivery-rail"
-        aria-label="Persisted delivery phases"
+        aria-label="Persisted delivery stages"
       >
         <li
-          v-for="phase in phases"
-          :key="phase.index"
+          v-for="stage in stages"
+          :key="stage.index"
         >
           <span
-            class="phase-index"
+            class="stage-index"
             aria-hidden="true"
-          >{{ phase.index }}</span>
+          >{{ stage.index }}</span>
           <div>
-            <strong>{{ phase.label }}</strong>
-            <ResultBadge :result="phase.result" />
-            <small>{{ phase.detail }}</small>
+            <strong>{{ stage.label }}</strong>
+            <ResultBadge :result="stage.result" />
+            <small>{{ stage.detail }}</small>
           </div>
         </li>
       </ol>
@@ -252,7 +252,7 @@ const phases = computed(() => {
 }
 
 .delivery-rail li + li { border-left: 1px solid var(--co-border-default); }
-.phase-index { display: grid; width: 30px; height: 30px; place-items: center; border: 1px solid var(--co-border-strong); border-radius: var(--co-radius-pill); color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 10px; }
+.stage-index { display: grid; width: 30px; height: 30px; place-items: center; border: 1px solid var(--co-border-strong); border-radius: var(--co-radius-pill); color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 10px; }
 .delivery-rail li > div { display: grid; min-width: 0; align-content: start; justify-items: start; gap: var(--co-space-2); }
 .delivery-rail strong { color: var(--co-text-primary); font-size: 13px; }
 .delivery-rail small { color: var(--co-text-muted); overflow-wrap: anywhere; }

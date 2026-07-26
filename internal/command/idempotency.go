@@ -1,5 +1,5 @@
 // Package command contains the small transactional command-idempotency
-// contract shared by the V3 API and domain workflows.
+// contract shared by the V1 API and domain workflows.
 package command
 
 import (

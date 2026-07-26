@@ -88,7 +88,7 @@ func NewStructuredModel(ctx context.Context, client *llm.Client) (*StructuredMod
 	if err := g.AddEdge(structuredValidateRepairNode, compose.END); err != nil {
 		return nil, err
 	}
-	runnable, err := g.Compile(ctx, compose.WithGraphName("incident_agent_v3_structured_model"), compose.WithMaxRunSteps(6))
+	runnable, err := g.Compile(ctx, compose.WithGraphName("incident_agent_structured_model"), compose.WithMaxRunSteps(6))
 	if err != nil {
 		return nil, err
 	}

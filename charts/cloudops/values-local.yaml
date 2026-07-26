@@ -1,0 +1,19 @@
+# Local images are built and loaded by `make local-up`; Provider credentials
+# remain optional and are never rendered into Helm values.
+images:
+  api:
+    tag: local
+  worker:
+    tag: local
+  migrate:
+    tag: local
+
+# local-up verifies this exact tag against the pinned platform digest before
+# loading it into kind. The local runtime must never fall back to a registry.
+mysql:
+  image:
+    digest: ""
+    pullPolicy: Never
+
+commonEnv:
+  APP_ENV: local

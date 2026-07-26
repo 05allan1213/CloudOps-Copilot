@@ -12,7 +12,7 @@ import {
   statusTone,
 } from "./incidents";
 
-describe("V3 Incident Workbench presentation contract", () => {
+describe("Incident Workbench presentation contract", () => {
   it("uses the frozen seven-state lifecycle without deriving a verdict", () => {
     expect(incidentStatusLabel("verifying")).toBe("Verifying recovery");
     expect(incidentStatusLabel("future_state")).toBe("future state");

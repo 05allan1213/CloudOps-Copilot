@@ -1,41 +1,35 @@
-profile: phase3
+bootstrapOnly: false
 
 images:
   api:
     repository: cloudops-api
-    tag: dev
+    tag: local
     digest: ""
     pullPolicy: IfNotPresent
   worker:
     repository: cloudops-worker
-    tag: dev
+    tag: local
     digest: ""
     pullPolicy: IfNotPresent
   migrate:
     repository: cloudops-migrate
-    tag: dev
-    digest: ""
-    pullPolicy: IfNotPresent
-  oauth2Proxy:
-    repository: quay.io/oauth2-proxy/oauth2-proxy
-    tag: v7.15.3
+    tag: local
     digest: ""
     pullPolicy: IfNotPresent
 
-# Non-secret environment shared by API, Worker, and Migrate. MySQL identities
-# and credential values are workload-scoped below, read from pre-created
-# Secrets, and never rendered by this chart.
+# Shared non-secret process configuration. Database users and passwords remain
+# workload scoped and are read from pre-created Secrets.
 commonEnv:
-  APP_ENV: local-demo
+  APP_ENV: local
   LOG_LEVEL: info
   GIN_MODE: release
-  PROMETHEUS_URL: http://cloudops-monitoring-kube-prometheus-prometheus.cloudops-monitoring.svc:9090
+  PROMETHEUS_URL: ""
   REDIS_ADDR: ""
   KAFKA_BROKERS: ""
   MYSQL_HOST: mysql
   MYSQL_PORT: "3306"
   MYSQL_DATABASE: cloudops
-  MYSQL_STARTUP_TIMEOUT_SECONDS: "30"
+  MYSQL_STARTUP_TIMEOUT_SECONDS: "60"
   MYSQL_PING_TIMEOUT_SECONDS: "3"
   TRACE_OTLP_ENDPOINT: ""
   TRACE_SAMPLE_RATE: "1.0"
@@ -54,27 +48,39 @@ database:
     secretName: cloudops-migrate-database
     passwordKey: MYSQL_PASSWORD
 
+mysql:
+  enabled: true
+  image:
+    repository: mysql
+    tag: 8.0.46
+    digest: sha256:62fb722c78b24245ddff1796a0fcee4a49cc5b87e0aaaf20c92d1da9e0a2497b
+    pullPolicy: IfNotPresent
+  database: cloudops
+  rootSecretName: cloudops-mysql-root
+  rootPasswordKey: MYSQL_ROOT_PASSWORD
+  persistence:
+    size: 2Gi
+    storageClassName: ""
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
 webhook:
   secretName: cloudops-alertmanager-webhook
   secretKey: token
   mountPath: /var/run/secrets/cloudops/alertmanager
   tokenFile: /var/run/secrets/cloudops/alertmanager/token
 
-# This signing key is intentionally isolated from the oauth2-proxy client and
-# cookie Secret. It is mounted only into cloudops-api when OAuth is enabled.
-csrf:
-  secretName: cloudops-csrf
-  secretKey: signing-key
-  mountPath: /var/run/secrets/cloudops/csrf
-  secretFile: /var/run/secrets/cloudops/csrf/signing-key
-
 api:
   enabled: true
   replicas: 1
-  userPort: 8080
-  internalPort: 8082
+  port: 8080
+  managementPort: 8082
   env:
-    AUTH_ENABLED: "false"
     RATE_LIMIT_ENABLED: "false"
     INCIDENT_AGENT_ENABLED: "false"
     CHANGE_INTELLIGENCE_ENABLED: "false"
@@ -85,7 +91,7 @@ api:
     K8S_WRITE_ENABLED: "false"
     STATIC_DIR: /app/static
     ALERTMANAGER_WEBHOOK_REQUIRE_BEARER: "true"
-    SIGNAL_TARGET_ALLOWLIST_JSON: '[{"cluster_id":"kind-cloudops-v3","environment":"local-demo","namespace":"demo","workload_kind":"Deployment","workload_name":"demo","service_name":"demo","match_labels":{"cluster":"kind-cloudops-v3","environment":"local-demo","namespace":"demo","deployment":"demo"}}]'
+    SIGNAL_TARGET_ALLOWLIST_JSON: '[{"cluster_id":"cloudops-local","environment":"local","namespace":"demo","workload_kind":"Deployment","workload_name":"demo","service_name":"demo","match_labels":{"cluster":"cloudops-local","environment":"local","namespace":"demo","deployment":"demo"}}]'
   resources:
     requests:
       cpu: 50m
@@ -107,136 +113,26 @@ migrate:
       cpu: 250m
       memory: 128Mi
 
-oauth:
-  enabled: false
-  port: 4180
-  metricsPort: 44180
-  redirectURL: http://127.0.0.1:4180/oauth2/callback
-  allowedEmailDomains:
-    - "*"
-  viewerLogins:
-    - cloudops-viewer
-  operatorLogins:
-    - cloudops-operator
-  secret:
-    name: cloudops-oauth
-    clientIDKey: client-id
-    clientSecretKey: client-secret
-    cookieSecretKey: cookie-secret
-  cookie:
-    name: _cloudops_oauth2_proxy
-    secure: false
-    sameSite: lax
-    expire: 8h
-    refresh: 0s
-  resources:
-    requests:
-      cpu: 25m
-      memory: 32Mi
-    limits:
-      cpu: 250m
-      memory: 128Mi
-
 worker:
-  enabled: false
+  enabled: true
   replicas: 1
   managementPort: 8081
-  demoNamespace: demo
-  # Pre-created configuration Secret. It supplies environment-specific,
-  # non-credential provider values such as V3_TARGET_REPOSITORY,
-  # V3_TARGET_GITOPS_PATH, V3_TARGET_ARGO_REPOSITORY_URL, GitHub App IDs,
-  # allowlists, fixed provider endpoints, and required workflow identities.
-  providerConfigSecretName: cloudops-worker-provider-config
-  # Pre-created file credential Secret. The chart mounts it read-only and
-  # publishes only file paths to the Worker; it never renders secret bytes.
+  providerNamespace: demo
+  # When empty and PROVIDER_GATEWAY_ENABLED=false, the Worker stays ready in
+  # standby and deliberately does not claim Provider-backed work.
+  providerConfigSecretName: ""
   credentials:
-    secretName: cloudops-worker-credentials
+    secretName: ""
     mountPath: /var/run/secrets/cloudops/worker
-    files:
-      V3_LLM_API_KEY_FILE: llm-api-key
-      GITHUB_PRIVATE_KEY_FILE: github-read-private-key.pem
-      GITHUB_WRITE_PRIVATE_KEY_FILE: github-write-private-key.pem
-      ARGOCD_TOKEN_FILE: argocd-token
-      OBSERVABILITY_ELASTICSEARCH_USERNAME_FILE: elasticsearch-username
-      OBSERVABILITY_ELASTICSEARCH_PASSWORD_FILE: elasticsearch-password
-      OBSERVABILITY_ELASTICSEARCH_CA_FILE: elasticsearch-ca.crt
+    files: {}
   env:
     WORKER_MANAGEMENT_ADDR: ":8081"
-    V3_WORKER_PROVIDERS_ENABLED: "true"
-    K8S_ENABLED: "true"
+    PROVIDER_GATEWAY_ENABLED: "false"
+    K8S_ENABLED: "false"
     K8S_WRITE_ENABLED: "false"
     K8S_IN_CLUSTER: "true"
     K8S_ALLOWED_NAMESPACES: demo
     K8S_DEFAULT_NAMESPACE: demo
-    V3_TARGET_NAMESPACE: demo
-    V3_TARGET_ARGO_PATH: apps/demo
-  resources:
-    requests:
-      cpu: 50m
-      memory: 64Mi
-    limits:
-      cpu: 500m
-      memory: 256Mi
-
-baselineVerifier:
-  enabled: false
-  demoNamespace: demo
-  backoffLimit: 2
-  activeDeadlineSeconds: 300
-  ttlSecondsAfterFinished: 600
-  database:
-    user: cloudops-baseline
-    secretName: cloudops-baseline-database
-    passwordKey: MYSQL_PASSWORD
-  credentials:
-    secretName: cloudops-baseline-credentials
-    mountPath: /var/run/secrets/cloudops/baseline
-    files:
-      ARGOCD_TOKEN_FILE: argocd-token
-      OBSERVABILITY_ELASTICSEARCH_USERNAME_FILE: elasticsearch-username
-      OBSERVABILITY_ELASTICSEARCH_PASSWORD_FILE: elasticsearch-password
-      OBSERVABILITY_ELASTICSEARCH_CA_FILE: elasticsearch-ca.crt
-  env:
-    K8S_ENABLED: "true"
-    K8S_WRITE_ENABLED: "false"
-    K8S_IN_CLUSTER: "true"
-    K8S_ALLOWED_NAMESPACES: demo
-    K8S_DEFAULT_NAMESPACE: demo
-    V3_TARGET_CLUSTER: kind-cloudops-v3
-    V3_TARGET_ENVIRONMENT: local-demo
-    V3_TARGET_NAMESPACE: demo
-    V3_TARGET_SERVICE: demo
-    V3_TARGET_WORKLOAD: demo
-    V3_TARGET_CONTAINER: demo
-    V3_TARGET_REPOSITORY: 05allan1213/cloudops-gitops-demo
-    V3_SOURCE_REPOSITORY: 05allan1213/CloudOps-Copilot
-    V3_TARGET_BASE_BRANCH: main
-    V3_TARGET_GITOPS_PATH: apps/demo/deployment.yaml
-    V3_TARGET_ARGO_PATH: apps/demo
-    V3_TARGET_ARGO_APPLICATION: cloudops-demo
-    V3_TARGET_ARGO_PROJECT: cloudops-demo
-    V3_TARGET_ARGO_DESTINATION_SERVER: https://kubernetes.default.svc
-    V3_TARGET_READY_URL: http://demo-diagnostics.demo.svc:8080/readyz
-    V3_TARGET_REQUIRED_ENV_KEY: REQUIRED_ENV
-    V3_REQUIRED_CHECK_NAME: gitops-required-check
-    V3_REQUIRED_WORKFLOW_PATH: .github/workflows/gitops-required-check.yml
-    V3_BASELINE_ALERT_NAMES: CloudOpsDemoRequiredEnvMissing,CloudOpsDemoErrorRateHigh
-    V3_BASELINE_LOOKBACK_SECONDS: "1800"
-    V3_BASELINE_TIMEOUT_SECONDS: "180"
-    GITHUB_API_BASE_URL: https://api.github.com
-    ARGOCD_SERVER: https://argocd-server.cloudops-argocd.svc
-    ARGOCD_ALLOWED_APPLICATIONS: cloudops-demo
-    ARGOCD_ALLOWED_PROJECTS: cloudops-demo
-    REGISTRY_BASE_URL: https://ghcr.io
-    REGISTRY_ALLOWED_HOSTS: ghcr.io
-    REGISTRY_ALLOWED_REPOSITORIES: 05allan1213/cloudops-demo
-    REGISTRY_ALLOWED_AUTH_REALM_HOSTS: ghcr.io
-    OCI_ALLOWED_SOURCE_REPOSITORIES: https://github.com/05allan1213/CloudOps-Copilot
-    OBSERVABILITY_PROMETHEUS_URL: http://cloudops-monitoring-kube-prometheus-prometheus.cloudops-monitoring.svc:9090
-    OBSERVABILITY_TEMPO_URL: http://tempo.cloudops-tracing.svc:3200
-    OBSERVABILITY_ELASTICSEARCH_URL: https://cloudops-elasticsearch-es-http.cloudops-logging.svc:9200
-    OBSERVABILITY_ELASTICSEARCH_INDEX: logs-cloudops-*
-    OBSERVABILITY_MAX_LOOKBACK_SECONDS: "3600"
   resources:
     requests:
       cpu: 50m
@@ -246,7 +142,7 @@ baselineVerifier:
       memory: 256Mi
 
 observability:
-  enabled: true
+  enabled: false
   serviceMonitor:
     interval: 15s
     scrapeTimeout: 5s

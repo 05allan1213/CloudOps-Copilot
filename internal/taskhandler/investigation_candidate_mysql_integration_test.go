@@ -51,21 +51,21 @@ func TestMySQLInvestigationPersistsAndAssessesImmutableChangeCandidate(t *testin
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	incidentPublicID := uuid.NewString()
 	result, err := db.ExecContext(ctx, `INSERT INTO incidents
- (public_id, fingerprint, correlation_key, correlation_key_version, cluster, namespace,
-  service_name, environment, target_kind, target_name, severity, status, summary,
-  first_seen_at, last_seen_at, version, domain_schema_version, v3_status, cycle_no)
-VALUES (?, ?, ?, 2, 'kind-v3', 'cloudops-demo', 'demo', 'development', 'Deployment',
-        'demo', 'warning', 'DIAGNOSING', 'candidate integration fixture', ?, ?, 2, 3, 'investigating', 1)`,
-		incidentPublicID, "candidate-"+uuid.NewString(), "v2:"+strings.Repeat("a", 64), now.Add(-2*time.Minute), now.Add(-2*time.Minute))
+	 (public_id, fingerprint, correlation_key, correlation_key_version, cluster, namespace,
+	  service_name, environment, target_kind, target_name, severity, summary,
+	  first_seen_at, last_seen_at, version, status, cycle_no)
+	VALUES (?, ?, ?, 2, 'kind', 'cloudops-demo', 'demo', 'development', 'Deployment',
+	        'demo', 'warning', 'candidate integration fixture', ?, ?, 2, 'investigating', 1)`,
+		incidentPublicID, "candidate-"+uuid.NewString(), strings.Repeat("a", 64), now.Add(-2*time.Minute), now.Add(-2*time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
 	incidentID, _ := result.LastInsertId()
 	agentRunPublicID := uuid.NewString()
 	result, err = db.ExecContext(ctx, `INSERT INTO agent_runs
- (public_id, incident_id, status, model, prompt_version, max_steps, final_diagnosis,
-  failure_code, row_version, domain_schema_version, v3_status, cycle_no, expected_incident_version)
-VALUES (?, ?, 'RUNNING', 'fixture-model', 'incident-agent-v3', 10, NULL, '', 1, 3, 'running', 1, 2)`,
+	 (public_id, incident_id, model, prompt_version, max_steps, final_diagnosis,
+	  failure_code, row_version, status, cycle_no, expected_incident_version)
+	VALUES (?, ?, 'fixture-model', 'incident-investigation-fixture', 10, NULL, '', 1, 'running', 1, 2)`,
 		agentRunPublicID, incidentID)
 	if err != nil {
 		t.Fatal(err)
@@ -253,12 +253,12 @@ func insertCandidateEvidenceStep(t *testing.T, ctx context.Context, tx *sql.Tx, 
 	publicID := uuid.NewString()
 	arguments, argumentsHash := stepArguments(checkpoint)
 	result, err := tx.ExecContext(ctx, `INSERT INTO agent_steps
- (public_id, agent_run_id, domain_schema_version, incident_id, cycle_no, sequence, step_type,
-  short_reason, selected_tool, arguments_json, arguments_hash, result_summary, result_ref,
-  evidence_public_id, status, retry_count, duration_ms, input_tokens, output_tokens, error_code,
-  started_at, finished_at, created_at)
- VALUES (?, ?, 3, ?, ?, ?, 'execute_tool', 'candidate fixture', ?, ?, ?, 'candidate fixture', '', ?,
-         'COMPLETED', 0, 0, 0, 0, '', ?, ?, ?)`,
+	 (public_id, agent_run_id, incident_id, cycle_no, sequence, step_type,
+	  short_reason, selected_tool, arguments_json, arguments_hash, result_summary, result_ref,
+	  evidence_public_id, status, retry_count, duration_ms, input_tokens, output_tokens, error_code,
+	  started_at, finished_at, created_at)
+	 VALUES (?, ?, ?, ?, ?, 'execute_tool', 'candidate fixture', ?, ?, ?, 'candidate fixture', '', ?,
+	         'completed', 0, 0, 0, 0, '', ?, ?, ?)`,
 		publicID, snapshot.Task.SubjectID, snapshot.Task.IncidentID, snapshot.Task.CycleNo, sequence,
 		selectedTool(checkpoint), arguments, argumentsHash, evidencePublicID,
 		checkpoint.CapturedAt.UTC(), checkpoint.CapturedAt.UTC(), checkpoint.CapturedAt.UTC())

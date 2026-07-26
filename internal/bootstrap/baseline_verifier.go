@@ -29,7 +29,7 @@ import (
 )
 
 var forbiddenBaselineCredentialEnv = []string{
-	"LLM_API_KEY", "V3_LLM_API_KEY_FILE",
+	"LLM_API_KEY", "LLM_API_KEY_FILE",
 	"GITHUB_APP_ID", "GITHUB_INSTALLATION_ID", "GITHUB_PRIVATE_KEY_FILE", "GITHUB_TOKEN_FILE",
 	"GITHUB_WRITE_APP_ID", "GITHUB_WRITE_INSTALLATION_ID", "GITHUB_WRITE_PRIVATE_KEY_FILE", "GITHUB_WRITE_TOKEN_FILE",
 }
@@ -64,32 +64,32 @@ func LoadBaselineVerifierConfig() (BaselineVerifierConfig, error) {
 		return BaselineVerifierConfig{}, err
 	}
 	application := appconfig.Load()
-	gitopsRepository, err := splitRepository(configutil.String("V3_TARGET_REPOSITORY", ""))
+	gitopsRepository, err := splitRepository(configutil.String("OPERATIONAL_TARGET_REPOSITORY", ""))
 	if err != nil {
-		return BaselineVerifierConfig{}, fmt.Errorf("V3_TARGET_REPOSITORY: %w", err)
+		return BaselineVerifierConfig{}, fmt.Errorf("OPERATIONAL_TARGET_REPOSITORY: %w", err)
 	}
-	sourceRepository, err := splitRepository(configutil.String("V3_SOURCE_REPOSITORY", ""))
+	sourceRepository, err := splitRepository(configutil.String("BASELINE_SOURCE_REPOSITORY", ""))
 	if err != nil {
-		return BaselineVerifierConfig{}, fmt.Errorf("V3_SOURCE_REPOSITORY: %w", err)
+		return BaselineVerifierConfig{}, fmt.Errorf("BASELINE_SOURCE_REPOSITORY: %w", err)
 	}
-	alerts := configutil.List("V3_BASELINE_ALERT_NAMES")
+	alerts := configutil.List("BASELINE_ALERT_NAMES")
 	if len(alerts) == 0 {
 		alerts = []string{"CloudOpsDemoRequiredEnvMissing", "CloudOpsDemoErrorRateHigh"}
 	}
 	result := BaselineVerifierConfig{
 		Application: application,
 		Target: baseline.Target{
-			Cluster: configutil.String("V3_TARGET_CLUSTER", "kind-cloudops-v3"), Environment: configutil.String("V3_TARGET_ENVIRONMENT", "local-demo"),
-			Namespace: configutil.String("V3_TARGET_NAMESPACE", "demo"), WorkloadKind: "Deployment",
-			WorkloadName: configutil.String("V3_TARGET_WORKLOAD", "demo"), ContainerName: configutil.String("V3_TARGET_CONTAINER", "demo"),
-			Repository: gitopsRepository.FullName(), BaseBranch: configutil.String("V3_TARGET_BASE_BRANCH", "main"),
-			TargetPath: configutil.String("V3_TARGET_GITOPS_PATH", ""),
+			Cluster: configutil.String("OPERATIONAL_TARGET_CLUSTER", "cloudops-local"), Environment: configutil.String("OPERATIONAL_TARGET_ENVIRONMENT", "local-demo"),
+			Namespace: configutil.String("OPERATIONAL_TARGET_NAMESPACE", "demo"), WorkloadKind: "Deployment",
+			WorkloadName: configutil.String("OPERATIONAL_TARGET_WORKLOAD", "demo"), ContainerName: configutil.String("OPERATIONAL_TARGET_CONTAINER", "demo"),
+			Repository: gitopsRepository.FullName(), BaseBranch: configutil.String("OPERATIONAL_TARGET_BASE_BRANCH", "main"),
+			TargetPath: configutil.String("OPERATIONAL_TARGET_GITOPS_PATH", ""),
 		},
-		Service:  configutil.String("V3_TARGET_SERVICE", "demo"),
-		ArgoPath: configutil.String("V3_TARGET_ARGO_PATH", ""), ArgoDestinationServer: configutil.String("V3_TARGET_ARGO_DESTINATION_SERVER", "https://kubernetes.default.svc"),
-		ArgoApplication: configutil.String("V3_TARGET_ARGO_APPLICATION", "cloudops-demo"), ArgoProject: configutil.String("V3_TARGET_ARGO_PROJECT", "cloudops-demo"),
+		Service:  configutil.String("OPERATIONAL_TARGET_SERVICE", "demo"),
+		ArgoPath: configutil.String("OPERATIONAL_TARGET_ARGO_PATH", ""), ArgoDestinationServer: configutil.String("OPERATIONAL_TARGET_ARGO_DESTINATION_SERVER", "https://kubernetes.default.svc"),
+		ArgoApplication: configutil.String("OPERATIONAL_TARGET_ARGO_APPLICATION", "cloudops-demo"), ArgoProject: configutil.String("OPERATIONAL_TARGET_ARGO_PROJECT", "cloudops-demo"),
 		SourceRepository: sourceRepository, AlertNames: alerts,
-		Lookback: configutil.DurationSeconds("V3_BASELINE_LOOKBACK_SECONDS", 1800), CommandTimeout: configutil.DurationSeconds("V3_BASELINE_TIMEOUT_SECONDS", 180),
+		Lookback: configutil.DurationSeconds("BASELINE_LOOKBACK_SECONDS", 1800), CommandTimeout: configutil.DurationSeconds("BASELINE_TIMEOUT_SECONDS", 180),
 		ElasticsearchURL: configutil.String("OBSERVABILITY_ELASTICSEARCH_URL", ""), ElasticsearchIndex: configutil.String("OBSERVABILITY_ELASTICSEARCH_INDEX", "logs-cloudops-*"),
 		ElasticsearchBearerFile: configutil.String("OBSERVABILITY_ELASTICSEARCH_BEARER_TOKEN_FILE", ""), ElasticsearchUsernameFile: configutil.String("OBSERVABILITY_ELASTICSEARCH_USERNAME_FILE", ""),
 		ElasticsearchPasswordFile: configutil.String("OBSERVABILITY_ELASTICSEARCH_PASSWORD_FILE", ""), ElasticsearchCAFile: configutil.String("OBSERVABILITY_ELASTICSEARCH_CA_FILE", ""),
@@ -129,7 +129,7 @@ func (c BaselineVerifierConfig) Validate() error {
 	if err := validateProviderURL("ARGOCD_SERVER", a.ArgoCDServer, true); err != nil {
 		return err
 	}
-	if err := validateProviderURL("V3_TARGET_ARGO_DESTINATION_SERVER", c.ArgoDestinationServer, true); err != nil {
+	if err := validateProviderURL("OPERATIONAL_TARGET_ARGO_DESTINATION_SERVER", c.ArgoDestinationServer, true); err != nil {
 		return err
 	}
 	if a.ArgoCDTokenFile == "" || !slices.Contains(a.ArgoCDAllowedApplications, c.ArgoApplication) || !slices.Contains(a.ArgoCDAllowedProjects, c.ArgoProject) {

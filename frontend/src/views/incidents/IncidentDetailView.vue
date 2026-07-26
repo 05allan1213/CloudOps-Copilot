@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted } from "vue";
+import { computed, nextTick, onMounted, ref } from "vue";
 import { ArrowLeft } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useRoute, useRouter } from "vue-router";
@@ -20,12 +20,11 @@ import ZoneNav, { type IncidentZone } from "../../components/incidents/ZoneNav.v
 import { useIncidentDetail } from "../../composables/incidents/useIncidentDetail";
 import { useIncidentRealtime } from "../../composables/incidents/useIncidentRealtime";
 import { canExposeResolutionReport } from "../../models/recovery";
-import { useAuthStore } from "../../stores/auth";
 import type { IncidentRealtimeEvent, RemediationPlanView } from "../../types/incidents";
 
 const route = useRoute();
 const router = useRouter();
-const auth = useAuthStore();
+const viewRoot = ref<HTMLElement | null>(null);
 const incidentID = String(route.params.incidentId ?? "");
 const detail = useIncidentDetail(incidentID);
 const realtime = useIncidentRealtime(incidentID, detail.refreshResource);
@@ -44,7 +43,14 @@ onMounted(loadDetail);
 
 async function loadDetail() {
   await detail.load();
-  if (detail.pageState.value === "ready" && realtime.state.value === "disconnected") realtime.start();
+  if (detail.pageState.value !== "ready") return;
+  if (realtime.state.value === "disconnected") realtime.start();
+  await nextTick();
+  const heading = viewRoot.value?.querySelector<HTMLElement>("h1");
+  if (heading) {
+    heading.tabIndex = -1;
+    heading.focus({ preventScroll: true });
+  }
 }
 
 function retryResource(resource: IncidentRealtimeEvent["resource"]) {
@@ -59,7 +65,7 @@ function returnToIncidents() {
 
 async function promptReason(title: string, required: boolean, maxLength = 2048): Promise<string | null> {
   try {
-    const result = await ElMessageBox.prompt("This reason is persisted with the V3 command.", title, {
+    const result = await ElMessageBox.prompt("This reason is persisted with the CloudOps command.", title, {
       confirmButtonText: "Submit Command",
       cancelButtonText: "Cancel",
       inputType: "textarea",
@@ -80,18 +86,18 @@ async function promptReason(title: string, required: boolean, maxLength = 2048):
 async function runInvestigation() {
   const reason = await promptReason("Start Bounded Re-investigation", false, 1024);
   if (reason === null) return;
-  await runIncidentCommand(async () => detail.investigate(reason, await auth.commandToken()));
+  await runIncidentCommand(async () => detail.investigate(reason));
 }
 
 async function runClose() {
   const reason = await promptReason("Close This Incident", true);
   if (reason === null) return;
-  await runIncidentCommand(async () => detail.close(reason, await auth.commandToken()));
+  await runIncidentCommand(async () => detail.close(reason));
 }
 
 async function runDecision(plan: RemediationPlanView, decision: "approved" | "rejected", reason: string) {
   try {
-    await detail.decide(plan, decision, reason, await auth.commandToken());
+    await detail.decide(plan, decision, reason);
   } catch (cause) {
     if (detail.commandFeedback.value?.resourceID !== plan.id) {
       ElMessage.error(cause instanceof Error ? cause.message : "Decision command failed before submission");
@@ -137,7 +143,10 @@ async function refreshIncidentAfterConflict() {
 </script>
 
 <template>
-  <section class="incident-detail-view">
+  <section
+    ref="viewRoot"
+    class="incident-detail-view"
+  >
     <router-link
       :to="{ name: 'incidents' }"
       class="back-link"
@@ -191,13 +200,12 @@ async function refreshIncidentAfterConflict() {
       </div>
 
       <div
-        v-if="auth.isOperator"
         class="command-bar"
-        aria-label="Operator Incident commands"
+        aria-label="Owner Incident commands"
       >
         <div>
-          <strong>Operator Commands</strong>
-          <span>Server-side version, transition, CSRF, and idempotency checks remain authoritative.</span>
+          <strong>Owner Commands</strong>
+          <span>Server-side Origin, version, transition, and idempotency checks remain authoritative.</span>
         </div>
         <div class="command-actions">
           <el-button
@@ -333,7 +341,6 @@ async function refreshIncidentAfterConflict() {
             :loading-more="detail.remediationPlans.loadingMore"
             :incident-version="detail.incident.value.version"
             :incident-status="detail.incident.value.status"
-            :is-operator="auth.isOperator"
             :command-pending="detail.commandPending.value"
             :command-feedback="detail.commandFeedback.value"
             @load-more="detail.moreRemediationPlans"

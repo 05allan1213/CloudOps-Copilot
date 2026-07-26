@@ -4,8 +4,6 @@ export const fixtureOrigin = "http://127.0.0.1:18082";
 export const incidentID = "00000000-0000-4000-8000-000000000001";
 
 export interface FixtureOptions {
-  session?: "ready" | "expired" | "forbidden" | "error";
-  role?: "viewer" | "operator";
   command?: "202" | "403" | "409" | "422" | "501" | "503" | "timeout";
   plan?: "valid" | "expired" | "stale";
   verification?: "passed" | "failed" | "timed_out" | "inconclusive" | "not_run" | "no_change";

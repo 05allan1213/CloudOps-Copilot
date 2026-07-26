@@ -1,6 +1,6 @@
 apiVersion: v2
 name: cloudops
-description: CloudOps Incident Agent V3 application workloads and bounded access surfaces.
+description: CloudOps local platform runtime and bounded access surfaces.
 type: application
 version: 0.1.0
 appVersion: "0.1.0"

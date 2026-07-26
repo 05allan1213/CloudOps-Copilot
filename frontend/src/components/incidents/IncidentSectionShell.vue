@@ -86,8 +86,8 @@ const traceID = computed(() => typeof props.error === "string" ? "" : props.erro
       class="section-message section-message--warning"
       role="alert"
     >
-      <strong>Viewer access was denied.</strong>
-      <span>Use an identity with Incident viewer access, then retry this projection.</span>
+      <strong>The Local Owner request was denied.</strong>
+      <span>Verify the request Origin and retry this projection.</span>
       <dl
         v-if="requestID || traceID"
         class="request-identity"

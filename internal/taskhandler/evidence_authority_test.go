@@ -47,11 +47,13 @@ func TestApprovedEvidenceAuthorityQueryIsCurrentCycleScoped(t *testing.T) {
 		"s.cycle_no = e.cycle_no",
 		"e.incident_id = ?",
 		"e.cycle_no = ?",
-		"e.domain_schema_version = 3",
 	} {
 		if !strings.Contains(approvedEvidenceAuthoritySQL, required) {
 			t.Fatalf("authority query is missing %q", required)
 		}
+	}
+	if strings.Contains(approvedEvidenceAuthoritySQL, "domain_schema_version") {
+		t.Fatal("authority query must not depend on a product-generation discriminator")
 	}
 	if !strings.HasSuffix(approvedEvidenceAuthorityForUpdateSQL, "FOR UPDATE") {
 		t.Fatal("transactional authority query does not lock the referenced Evidence")

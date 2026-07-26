@@ -195,7 +195,7 @@ function statusExplanation(run: VerificationRunView): string {
           <div><dt>Deadline</dt><dd>{{ formatIncidentTime(selectedRun.deadline_at) }}</dd></div>
           <div><dt>Completed</dt><dd>{{ formatIncidentTime(selectedRun.completed_at) }}</dd></div>
           <div><dt>Success Since</dt><dd>{{ formatIncidentTime(selectedRun.common_window.success_since) }}</dd></div>
-          <div><dt>Provenance</dt><dd>{{ selectedRun.migrated_legacy_context ? "Migrated legacy context" : "Native V3 projection" }}</dd></div>
+          <div><dt>Provenance</dt><dd>{{ selectedRun.migrated_legacy_context ? "Migrated legacy context" : "Native projection" }}</dd></div>
         </dl>
 
         <section

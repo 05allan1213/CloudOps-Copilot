@@ -131,11 +131,11 @@ func AuthorizeAgentRun(ctx context.Context, tx DBTX, incidentID uint64, cycleNo 
 		}
 	}
 	insert, err := tx.ExecContext(ctx, `
-INSERT INTO incident_cycle_budget_authorizations
-    (public_id, domain_schema_version, authorization_schema_version, incident_id,
+	INSERT INTO incident_cycle_budget_authorizations
+	    (public_id, authorization_schema_version, incident_id,
      cycle_no, budget_kind, slot_no, actor_provider, actor_login, actor_role,
      reason, request_id, request_authenticated_at, created_at)
-VALUES (?, 3, 1, ?, ?, 'agent_run', ?, ?, ?, ?, ?, ?, ?, NOW(6))`,
+	VALUES (?, 1, ?, ?, 'agent_run', ?, ?, ?, ?, ?, ?, ?, NOW(6))`,
 		publicID, incidentID, cycleNo, slot, actor.Provider, actor.Login, actor.Role,
 		actor.Reason, actor.RequestID, databaseTime)
 	if err != nil {
@@ -157,7 +157,7 @@ VALUES (?, 3, 1, ?, ?, 'agent_run', ?, ?, ?, ?, ?, ?, ?, NOW(6))`,
 }
 
 // GuardAutomatic allows only the default three records. It never consumes an
-// operator authorization.
+// Owner authorization.
 func GuardAutomatic(ctx context.Context, tx DBTX, kind Kind, incidentID uint64, cycleNo uint32) (Result, error) {
 	if err := validateGuard(tx, kind, incidentID, cycleNo); err != nil {
 		return Result{}, err
@@ -275,19 +275,18 @@ func GuardChild(ctx context.Context, tx DBTX, kind Kind, incidentID uint64, cycl
 	return result, nil
 }
 
-// ActiveAgentRunForCycle returns the unique pending/running V3 AgentRun for an
-// Incident cycle. The generated active-cycle key enforces uniqueness; the
-// lookup never consults the legacy circular Incident pointer.
+// ActiveAgentRunForCycle returns the unique pending/running AgentRun for an
+// Incident cycle. The generated active-cycle key enforces uniqueness.
 func ActiveAgentRunForCycle(ctx context.Context, tx DBTX, incidentID uint64, cycleNo uint32) (uint64, error) {
 	if tx == nil || incidentID == 0 || cycleNo == 0 {
 		return 0, ErrInvalidAuthorization
 	}
 	var runID uint64
 	err := tx.QueryRowContext(ctx, `SELECT id
-FROM agent_runs
-WHERE active_incident_cycle_key = UNHEX(CONCAT('01', LPAD(HEX(?), 16, '0'), LPAD(HEX(?), 16, '0')))
-  AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3
-  AND v3_status IN ('pending','running')
+	FROM agent_runs
+	WHERE active_incident_cycle_key = UNHEX(CONCAT('01', LPAD(HEX(?), 16, '0'), LPAD(HEX(?), 16, '0')))
+	  AND incident_id = ? AND cycle_no = ?
+	  AND status IN ('pending','running')
 LIMIT 1
 FOR UPDATE`, incidentID, cycleNo, incidentID, cycleNo).Scan(&runID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -318,8 +317,8 @@ func MarkExhausted(ctx context.Context, tx DBTX, result Result, incidentID uint6
 SET version = CASE WHEN needs_attention = TRUE AND blocking_reason_code = ? THEN version ELSE version + 1 END,
     needs_attention = TRUE, blocking_reason_code = ?, blocked_at = COALESCE(blocked_at, NOW(6)),
     updated_at = NOW(6)
-WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? AND version = ?
-  AND v3_status IN ('detected','investigating','awaiting_approval','delivering','verifying')`,
+	WHERE id = ? AND cycle_no = ? AND version = ?
+	  AND status IN ('detected','investigating','awaiting_approval','delivering','verifying')`,
 		reason, reason, incidentID, cycleNo, result.IncidentVersion)
 	if err != nil {
 		return fmt.Errorf("mark Incident business budget exhausted: %w", err)
@@ -335,10 +334,10 @@ WHERE id = ? AND domain_schema_version = 3 AND cycle_no = ? AND version = ?
 		return errors.New("business budget Timeline metadata is invalid")
 	}
 	_, err = tx.ExecContext(ctx, `INSERT IGNORE INTO incident_events
-    (public_id, incident_id, domain_schema_version, cycle_no, event_schema_version,
+	    (public_id, incident_id, cycle_no, event_schema_version,
      event_type, idempotency_key, actor_type, actor_id, summary, metadata_json,
      occurred_at, created_at)
-VALUES (?, ?, 3, ?, 1, ?, ?, 'system', ?, ?, ?, NOW(6), NOW(6))`,
+	VALUES (?, ?, ?, 1, ?, ?, 'system', ?, ?, ?, NOW(6), NOW(6))`,
 		uuid.NewString(), incidentID, cycleNo, reason,
 		hashCanonical("business-budget", fmt.Sprint(incidentID), fmt.Sprint(cycleNo), reason, fmt.Sprint(result.Count), source),
 		source, strings.ReplaceAll(reason, "_", " "), metadata)
@@ -366,7 +365,7 @@ func validateGuard(tx DBTX, kind Kind, incidentID uint64, cycleNo uint32) error 
 }
 
 func validateActor(actor Actor) error {
-	if actor.Provider != "github" || actor.Role != "operator" || actor.Login == "" || len(actor.Login) > 128 ||
+	if actor.Provider != "local" || actor.Login != "owner" || actor.Role != "owner" ||
 		actor.Reason == "" || len(actor.Reason) > 1024 || actor.RequestID == "" || len(actor.RequestID) > 128 {
 		return ErrInvalidAuthorization
 	}
@@ -377,8 +376,8 @@ func lockIncident(ctx context.Context, tx DBTX, incidentID uint64, cycleNo uint3
 	var foundCycle uint64
 	var version uint64
 	var status string
-	if err := tx.QueryRowContext(ctx, `SELECT cycle_no, v3_status, version FROM incidents
-WHERE id = ? AND domain_schema_version = 3 FOR UPDATE`, incidentID).Scan(&foundCycle, &status, &version); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT cycle_no, status, version FROM incidents
+	WHERE id = ? FOR UPDATE`, incidentID).Scan(&foundCycle, &status, &version); err != nil {
 		return 0, fmt.Errorf("lock business budget Incident: %w", err)
 	}
 	if foundCycle != uint64(cycleNo) || status == "resolved" || status == "closed" {
@@ -393,7 +392,7 @@ func countRecords(ctx context.Context, tx DBTX, kind Kind, incidentID uint64, cy
 		return 0, err
 	}
 	var count int
-	query := "SELECT COUNT(*) FROM " + table + " WHERE incident_id = ? AND cycle_no = ? AND domain_schema_version = 3"
+	query := "SELECT COUNT(*) FROM " + table + " WHERE incident_id = ? AND cycle_no = ?"
 	if err := tx.QueryRowContext(ctx, query, incidentID, cycleNo).Scan(&count); err != nil {
 		return 0, fmt.Errorf("count %s business budget: %w", kind, err)
 	}
@@ -417,8 +416,8 @@ func loadAuthorization(ctx context.Context, tx DBTX, publicID string, incidentID
 	var authorization Authorization
 	var kind string
 	err := tx.QueryRowContext(ctx, `SELECT id, public_id, budget_kind, slot_no
-FROM incident_cycle_budget_authorizations
-WHERE public_id = ? AND incident_id = ? AND cycle_no = ? AND domain_schema_version = 3
+	FROM incident_cycle_budget_authorizations
+	WHERE public_id = ? AND incident_id = ? AND cycle_no = ? AND imported_history = FALSE
 FOR UPDATE`, publicID, incidentID, cycleNo).Scan(&authorization.ID, &authorization.PublicID, &kind, &authorization.Slot)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Authorization{}, ErrInvalidAuthorization
@@ -439,11 +438,11 @@ func loadAgentRunAuthorization(ctx context.Context, tx DBTX, runID, incidentID u
 	var slot sql.NullInt64
 	err := tx.QueryRowContext(ctx, `SELECT ar.public_id, ar.business_budget_authorization_id, a.public_id, a.slot_no
 FROM agent_runs ar
-LEFT JOIN incident_cycle_budget_authorizations a
-  ON a.id = ar.business_budget_authorization_id
- AND a.incident_id = ar.incident_id AND a.cycle_no = ar.cycle_no
- AND a.domain_schema_version = 3 AND a.budget_kind = 'agent_run'
-WHERE ar.id = ? AND ar.incident_id = ? AND ar.cycle_no = ? AND ar.domain_schema_version = 3
+		 LEFT JOIN incident_cycle_budget_authorizations a
+		  ON a.id = ar.business_budget_authorization_id
+		 AND a.incident_id = ar.incident_id AND a.cycle_no = ar.cycle_no
+		 AND a.budget_kind = 'agent_run' AND a.imported_history = FALSE
+	WHERE ar.id = ? AND ar.incident_id = ? AND ar.cycle_no = ?
 FOR UPDATE`, runID, incidentID, cycleNo).Scan(&runPublicID, &authorizationID, &publicID, &slot)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Authorization{}, "", fmt.Errorf("%w: originating AgentRun does not belong to the Incident cycle", ErrInvalidAuthorization)

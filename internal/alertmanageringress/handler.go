@@ -19,15 +19,15 @@ type Handler struct {
 	maxBodyBytes   int64
 	requestTimeout time.Duration
 	bearer         bearerVerifier
-	runtimeReady   func(context.Context) error
+	readiness      func(context.Context) error
 }
 
 func NewHandler(config Config) (*Handler, error) {
 	if config.Store == nil {
-		return nil, errors.New("V3 Alertmanager ingress store is required")
+		return nil, errors.New("alertmanager ingress store is required")
 	}
 	if len(config.Targets) == 0 || len(config.Targets) > maxTargets {
-		return nil, errors.New("V3 Alertmanager ingress requires a bounded target allowlist")
+		return nil, errors.New("alertmanager ingress requires a bounded target allowlist")
 	}
 	targets := make([]Target, len(config.Targets))
 	selectors := make(map[string]struct{}, len(config.Targets))
@@ -42,18 +42,18 @@ func NewHandler(config Config) (*Handler, error) {
 		}
 		selector := selectorKey(targets[index].MatchLabels)
 		if _, exists := selectors[selector]; exists {
-			return nil, errors.New("V3 Alertmanager ingress target selectors must be unique")
+			return nil, errors.New("alertmanager ingress target selectors must be unique")
 		}
 		selectors[selector] = struct{}{}
 	}
 	if config.MaxBodyBytes <= 0 {
-		return nil, errors.New("V3 Alertmanager ingress body limit must be positive")
+		return nil, errors.New("alertmanager ingress body limit must be positive")
 	}
 	if config.RequestTimeout <= 0 {
 		config.RequestTimeout = defaultRequestTimeout
 	}
-	if config.RuntimeReady == nil {
-		return nil, errors.New("V3 Alertmanager ingress runtime generation guard is required")
+	if config.Readiness == nil {
+		return nil, errors.New("alertmanager ingress runtime readiness is required")
 	}
 	if len(config.BearerToken) > 0 {
 		if err := validateBearerToken(config.BearerToken); err != nil {
@@ -63,7 +63,7 @@ func NewHandler(config Config) (*Handler, error) {
 	return &Handler{
 		store: config.Store, targets: targets,
 		maxBodyBytes: config.MaxBodyBytes, requestTimeout: config.RequestTimeout,
-		bearer: newBearerVerifier(config.BearerToken), runtimeReady: config.RuntimeReady,
+		bearer: newBearerVerifier(config.BearerToken), readiness: config.Readiness,
 	}, nil
 }
 
@@ -82,10 +82,10 @@ func (h *Handler) Webhook(w http.ResponseWriter, request *http.Request) {
 		return
 	}
 	runtimeCtx, runtimeCancel := context.WithTimeout(request.Context(), h.requestTimeout)
-	runtimeErr := h.runtimeReady(runtimeCtx)
+	runtimeErr := h.readiness(runtimeCtx)
 	runtimeCancel()
 	if runtimeErr != nil {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "error", "code": "runtime_generation_refused"})
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "error", "code": "runtime_unavailable"})
 		return
 	}
 	mediaType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
@@ -155,7 +155,7 @@ func (h *Handler) Livez(w http.ResponseWriter, _ *http.Request) {
 func (h *Handler) Readyz(w http.ResponseWriter, request *http.Request) {
 	ctx, cancel := context.WithTimeout(request.Context(), h.requestTimeout)
 	defer cancel()
-	if err := h.runtimeReady(ctx); err != nil {
+	if err := h.readiness(ctx); err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "not_ready"})
 		return
 	}

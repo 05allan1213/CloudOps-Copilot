@@ -8,7 +8,7 @@ import {
   successfulStreamPollDelay,
 } from "./useIncidentRealtime";
 
-describe("V3 incident SSE refresh hints", () => {
+describe("Incident SSE refresh hints", () => {
   it("suppresses duplicate cursors and foreign incident events", () => {
     const incidentID = "7f6c7e54-937a-4a12-9fb4-a315908fd0fd";
     const event = { cursor: "event-5", incident_id: incidentID, resource: "evidence" as const };

@@ -1,10 +1,6 @@
 package verification
 
-import (
-	"encoding/json"
-	"fmt"
-	"time"
-)
+import "time"
 
 var deliveryTransitions = map[string]map[string]struct{}{
 	"pr_created":      {"ci_pending": {}, "ci_passed": {}, "ci_failed": {}, "pr_closed": {}, "merge_timeout": {}, "delivery_cancelled": {}},
@@ -62,45 +58,6 @@ func CanTransitionCheck(from, to CheckStatus) bool {
 	}
 }
 
-func ApplySample(check *Check, sample Sample, now time.Time) error {
-	if check == nil || now.IsZero() || TerminalCheck(check.Status) {
-		return fmt.Errorf("%w: immutable or missing check", ErrInvalidTransition)
-	}
-	now = now.UTC()
-	if check.FirstCheckedAt == nil {
-		check.FirstCheckedAt = &now
-	}
-	check.LastCheckedAt = &now
-	check.AttemptCount++
-	check.Observed = append(json.RawMessage(nil), sample.Observed...)
-	check.SourceReference = bound(sample.SourceReference, 1024)
-	check.FailureReason = bound(sample.ReasonCode, 128)
-	switch sample.Status {
-	case SamplePassed:
-		if check.ConsecutiveSuccessSince == nil {
-			check.ConsecutiveSuccessSince = &now
-		}
-		if now.Sub(*check.ConsecutiveSuccessSince) >= check.StabilityWindow {
-			check.Status, check.PassedAt, check.FailureReason = CheckPassed, &now, ""
-		} else {
-			check.Status = CheckRunning
-		}
-	case SamplePending:
-		check.Status, check.ConsecutiveSuccessSince = CheckRunning, nil
-	case SampleUnavailable:
-		check.Status, check.ConsecutiveSuccessSince = CheckUnavailable, nil
-	case SampleFailed:
-		check.Status, check.ConsecutiveSuccessSince = CheckFailed, nil
-	case SampleInvalid:
-		check.Status, check.ConsecutiveSuccessSince = CheckInvalid, nil
-	case SampleTimedOut:
-		check.Status, check.ConsecutiveSuccessSince = CheckTimedOut, nil
-	default:
-		return fmt.Errorf("%w: unknown sample", ErrInvalidArgument)
-	}
-	return nil
-}
-
 func TerminalCheck(status CheckStatus) bool {
 	return status == CheckPassed || status == CheckFailed || status == CheckTimedOut || status == CheckInvalid || status == CheckCancelled
 }
@@ -129,7 +86,7 @@ func Aggregate(checks []Check) (RunStatus, string, bool) {
 	return RunRunning, "checks_pending", false
 }
 
-// CommonWindowResult evaluates the V3 shared stability window. Individual
+// CommonWindowResult evaluates the shared stability window. Individual
 // checks remain running until the maximum of all required success starts has
 // stayed continuously valid; a single passed check cannot resolve a Run.
 func CommonWindowResult(checks []Check, now time.Time, deadline time.Time) (RunStatus, string, bool, *time.Time) {
@@ -179,7 +136,7 @@ func CommonWindowResult(checks []Check, now time.Time, deadline time.Time) (RunS
 	if commonStart.IsZero() {
 		return RunRunning, "common_stability_window_pending", false, nil
 	}
-	if now.Sub(commonStart) < V3CommonStabilityWindow {
+	if now.Sub(commonStart) < CommonStabilityWindow {
 		if !deadline.IsZero() && !now.Before(deadline) {
 			return RunTimedOut, "common_stability_window_not_met", true, &commonStart
 		}

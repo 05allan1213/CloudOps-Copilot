@@ -93,7 +93,7 @@ func NewMetrics() *Metrics {
 		registry: prometheus.NewRegistry(),
 		requestsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "http_requests_total",
-			Help: "Total number of HTTP requests handled by server-web.",
+			Help: "Total number of HTTP requests handled by CloudOps.",
 		}, []string{"method", "path", "status"}),
 		requestDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "http_request_duration_seconds",
@@ -106,11 +106,11 @@ func NewMetrics() *Metrics {
 		}),
 		kafkaAlertEvents: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "server_web_kafka_alert_events_total",
-			Help: "Total number of alert events handled by the server-web Kafka producer.",
+			Help: "Total number of alert events handled by CloudOps.",
 		}, []string{"result"}),
 		agentToolEvents: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "cloudops_agent_tool_calls_total",
-			Help: "Total number of bounded Agent tool executions handled by server-web.",
+			Help: "Total number of bounded Agent tool executions handled by CloudOps.",
 		}, []string{"tool", "result"}),
 		agentToolDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "cloudops_agent_tool_duration_seconds",
@@ -150,11 +150,11 @@ func NewMetrics() *Metrics {
 		}, []string{"source", "status", "result"}),
 		incidentsCreated: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "cloudops_incidents_created_total",
-			Help: "Total Incidents created by V2 ingestion.",
+			Help: "Total Incidents created by Signal ingestion.",
 		}),
 		incidentsUpdated: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "cloudops_incidents_updated_total",
-			Help: "Total Incidents updated, resolved or reopened by V2 ingestion.",
+			Help: "Total Incidents updated, resolved or reopened by Signal ingestion.",
 		}),
 		incidentTransitions: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "cloudops_incident_transition_total",
@@ -162,11 +162,11 @@ func NewMetrics() *Metrics {
 		}, []string{"from", "to", "result"}),
 		incidentErrors: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "cloudops_incident_ingestion_errors_total",
-			Help: "Total V2 Incident ingestion errors by bounded reason.",
+			Help: "Total Incident ingestion errors by bounded reason.",
 		}, []string{"reason"}),
 		incidentDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "cloudops_incident_ingestion_duration_seconds",
-			Help:    "V2 Incident webhook ingestion duration.",
+			Help:    "Incident webhook ingestion duration.",
 			Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5},
 		}, []string{"result"}),
 		outboxPending: prometheus.NewGauge(prometheus.GaugeOpts{

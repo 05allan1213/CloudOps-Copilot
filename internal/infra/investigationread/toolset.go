@@ -48,7 +48,7 @@ const (
 )
 
 type prometheusReader interface {
-	ObserveV3(context.Context, observabilityread.V3MetricQuery) (verification.Observation, error)
+	ObserveBoundedMetric(context.Context, observabilityread.MetricQuery) (verification.Observation, error)
 }
 
 type elasticReader interface {
@@ -103,7 +103,7 @@ type Config struct {
 	Now            func() time.Time
 }
 
-// Toolset implements all eight V3 read contracts behind one exact dispatcher.
+// Toolset implements all eight bounded read contracts behind one exact dispatcher.
 // Provider-specific query languages and mutable endpoints are absent from the
 // public action schema.
 type Toolset struct{ cfg Config }
@@ -114,7 +114,7 @@ func New(config Config) (*Toolset, error) {
 	if config.DB == nil || config.Kubernetes == nil || config.Prometheus == nil || config.Elasticsearch == nil ||
 		config.Tempo == nil || config.GitHub == nil || config.Argo == nil || config.Runtime == nil ||
 		config.Registry == nil || config.Runbooks == nil {
-		return nil, errors.New("V3 investigation tools require MySQL and all eight bounded provider surfaces")
+		return nil, errors.New("investigation tools require MySQL and all eight bounded provider surfaces")
 	}
 	if err := validateTarget(config.Target); err != nil {
 		return nil, err
@@ -123,7 +123,7 @@ func New(config Config) (*Toolset, error) {
 		config.RequestTimeout = 10 * time.Second
 	}
 	if config.RequestTimeout < time.Second || config.RequestTimeout > 30*time.Second {
-		return nil, errors.New("V3 investigation tool timeout is outside 1s..30s")
+		return nil, errors.New("investigation tool timeout is outside 1s..30s")
 	}
 	if config.Now == nil {
 		config.Now = func() time.Time { return time.Now().UTC() }
@@ -137,16 +137,16 @@ func validateTarget(target Target) error {
 		target.ArgoApplication, target.ArgoProject, target.EnvKey}
 	for _, value := range values {
 		if strings.TrimSpace(value) == "" || len(value) > 1024 {
-			return errors.New("V3 investigation target identity is incomplete")
+			return errors.New("investigation target identity is incomplete")
 		}
 	}
 	if target.Repository.FullName() == "/" || strings.Trim(target.ArgoPath, "/") == strings.Trim(target.GitOpsPath, "/") ||
 		!regexp.MustCompile(`^[A-Z_][A-Z0-9_]{0,127}$`).MatchString(target.EnvKey) {
-		return errors.New("V3 investigation target policy is invalid")
+		return errors.New("investigation target policy is invalid")
 	}
 	for _, raw := range []string{target.GrafanaURL, target.KibanaURL, target.TempoURL} {
 		if raw != "" && !strings.HasPrefix(raw, "https://") && !strings.HasPrefix(raw, "http://") {
-			return errors.New("V3 investigation deep-link base is invalid")
+			return errors.New("investigation deep-link base is invalid")
 		}
 	}
 	return nil
@@ -259,14 +259,14 @@ func (t *Toolset) queryMetrics(ctx context.Context, request agent.InvestigationT
 	if err != nil {
 		return agent.ToolObservation{}, err
 	}
-	base := observabilityread.V3MetricQuery{Service: t.cfg.Target.Service, Namespace: t.cfg.Target.Namespace, Environment: t.cfg.Target.Environment, WorkloadName: t.cfg.Target.Workload, Lookback: lookback}
-	base.Kind = observabilityread.V3MetricErrorRate
-	errorRate, readErr := t.cfg.Prometheus.ObserveV3(ctx, base)
+	base := observabilityread.MetricQuery{Service: t.cfg.Target.Service, Namespace: t.cfg.Target.Namespace, Environment: t.cfg.Target.Environment, WorkloadName: t.cfg.Target.Workload, Lookback: lookback}
+	base.Kind = observabilityread.MetricErrorRate
+	errorRate, readErr := t.cfg.Prometheus.ObserveBoundedMetric(ctx, base)
 	if readErr != nil {
 		return unavailable(request.Action, "prometheus", "prometheus/readiness-and-5xx", readErr), nil
 	}
-	base.Kind = observabilityread.V3MetricReadiness
-	readiness, readyErr := t.cfg.Prometheus.ObserveV3(ctx, base)
+	base.Kind = observabilityread.MetricReadiness
+	readiness, readyErr := t.cfg.Prometheus.ObserveBoundedMetric(ctx, base)
 	if readyErr != nil {
 		return unavailable(request.Action, "prometheus", "prometheus/readiness-and-5xx", readyErr), nil
 	}

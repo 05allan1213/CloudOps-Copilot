@@ -41,7 +41,7 @@ type RolloutReader interface {
 }
 
 type PrometheusReader interface {
-	ObserveV3(context.Context, observabilityread.V3MetricQuery) (verification.Observation, error)
+	ObserveBoundedMetric(context.Context, observabilityread.MetricQuery) (verification.Observation, error)
 }
 
 type LogReader interface {
@@ -225,8 +225,8 @@ func (v *Verifier) Verify(ctx context.Context) (ActivationResult, error) {
 		"registry_result_hash": metadata.ResultHash, "source_commit_tree": sourceCommit.TreeSHA,
 	}
 
-	alerts, err := v.cfg.Prometheus.ObserveV3(ctx, observabilityread.V3MetricQuery{
-		Kind: observabilityread.V3MetricFiringAlerts, Service: v.cfg.Service,
+	alerts, err := v.cfg.Prometheus.ObserveBoundedMetric(ctx, observabilityread.MetricQuery{
+		Kind: observabilityread.MetricFiringAlerts, Service: v.cfg.Service,
 		Namespace: target.Namespace, Environment: target.Environment, Cluster: target.Cluster,
 		WorkloadName: target.WorkloadName, AlertNames: append([]string(nil), v.cfg.AlertNames...),
 		Lookback: v.cfg.Lookback,
@@ -238,16 +238,16 @@ func (v *Verifier) Verify(ctx context.Context) (ActivationResult, error) {
 		return ActivationResult{}, fmt.Errorf("%w: baseline alerts are firing or unqueryable", change.ErrConflict)
 	}
 
-	errorRate, err := v.cfg.Prometheus.ObserveV3(ctx, observabilityread.V3MetricQuery{
-		Kind: observabilityread.V3MetricErrorRate, Service: v.cfg.Service,
+	errorRate, err := v.cfg.Prometheus.ObserveBoundedMetric(ctx, observabilityread.MetricQuery{
+		Kind: observabilityread.MetricErrorRate, Service: v.cfg.Service,
 		Namespace: target.Namespace, Environment: target.Environment, WorkloadName: target.WorkloadName,
 		Lookback: v.cfg.Lookback,
 	})
 	if err != nil {
 		return ActivationResult{}, unavailable("prometheus", err)
 	}
-	availability, err := v.cfg.Prometheus.ObserveV3(ctx, observabilityread.V3MetricQuery{
-		Kind: observabilityread.V3MetricAvailability, Service: v.cfg.Service,
+	availability, err := v.cfg.Prometheus.ObserveBoundedMetric(ctx, observabilityread.MetricQuery{
+		Kind: observabilityread.MetricAvailability, Service: v.cfg.Service,
 		Namespace: target.Namespace, Environment: target.Environment, WorkloadName: target.WorkloadName,
 		Lookback: v.cfg.Lookback,
 	})

@@ -57,7 +57,7 @@ type Client struct {
 }
 
 var _ remediation.GitHubWriter = (*Client)(nil)
-var _ remediation.PhasedGitHubWriter = (*Client)(nil)
+var _ remediation.ReconciledGitHubWriter = (*Client)(nil)
 
 func New(cfg Config) (*Client, error) {
 	base, err := url.Parse(cfg.BaseURL)
@@ -144,7 +144,7 @@ func (c *Client) DeliverDraftPR(ctx context.Context, request remediation.Deliver
 
 // ReconcileDraftPR performs only bounded reads and returns the next write
 // phase. It is safe to call after an ambiguous GitHub response.
-func (c *Client) ReconcileDraftPR(ctx context.Context, request remediation.PhasedDeliveryRequest) (remediation.WriteObservation, error) {
+func (c *Client) ReconcileDraftPR(ctx context.Context, request remediation.ChangeWriteRequest) (remediation.WriteObservation, error) {
 	if err := c.validatePhasedRequest(request); err != nil {
 		return remediation.WriteObservation{}, err
 	}
@@ -158,39 +158,39 @@ func (c *Client) ReconcileDraftPR(ctx context.Context, request remediation.Phase
 		if verifyErr != nil {
 			return remediation.WriteObservation{}, verifyErr
 		}
-		return remediation.WriteObservation{Phase: remediation.WritePhaseComplete, BaseSHA: request.BaseRevision, BranchSHA: existing.CommitSHA, CommitSHA: existing.CommitSHA, TreeSHA: treeSHA, PRNumber: existing.PRNumber, PRURL: existing.PRURL, Reconciled: true}, nil
+		return remediation.WriteObservation{Step: remediation.OperationStepComplete, BaseSHA: request.BaseRevision, BranchSHA: existing.CommitSHA, CommitSHA: existing.CommitSHA, TreeSHA: treeSHA, PRNumber: existing.PRNumber, PRURL: existing.PRURL, Reconciled: true}, nil
 	}
 	branchSHA, found, err := c.findBranchCommit(ctx, request.Repository, request.Branch)
 	if err != nil {
 		return remediation.WriteObservation{}, err
 	}
 	if !found {
-		return remediation.WriteObservation{Phase: remediation.WritePhaseEnsureBranch, BaseSHA: request.BaseRevision, Reconciled: true}, nil
+		return remediation.WriteObservation{Step: remediation.OperationStepEnsureBranch, BaseSHA: request.BaseRevision, Reconciled: true}, nil
 	}
 	if strings.EqualFold(branchSHA, request.BaseRevision) {
-		return remediation.WriteObservation{Phase: remediation.WritePhaseEnsureCommit, BaseSHA: request.BaseRevision, BranchSHA: branchSHA, Reconciled: true}, nil
+		return remediation.WriteObservation{Step: remediation.OperationStepEnsureCommit, BaseSHA: request.BaseRevision, BranchSHA: branchSHA, Reconciled: true}, nil
 	}
 	treeSHA, err := c.verifyPhasedCommit(ctx, request, branchSHA)
 	if err != nil {
 		return remediation.WriteObservation{}, err
 	}
-	return remediation.WriteObservation{Phase: remediation.WritePhaseEnsureDraftPR, BaseSHA: request.BaseRevision, BranchSHA: branchSHA, CommitSHA: branchSHA, TreeSHA: treeSHA, Reconciled: true}, nil
+	return remediation.WriteObservation{Step: remediation.OperationStepEnsureDraftPR, BaseSHA: request.BaseRevision, BranchSHA: branchSHA, CommitSHA: branchSHA, TreeSHA: treeSHA, Reconciled: true}, nil
 }
 
-func (c *Client) EnsureBranch(ctx context.Context, request remediation.PhasedDeliveryRequest) (remediation.WriteObservation, error) {
+func (c *Client) EnsureBranch(ctx context.Context, request remediation.ChangeWriteRequest) (remediation.WriteObservation, error) {
 	observation, err := c.ReconcileDraftPR(ctx, request)
-	if err != nil || observation.Phase != remediation.WritePhaseEnsureBranch {
+	if err != nil || observation.Step != remediation.OperationStepEnsureBranch {
 		return observation, err
 	}
 	if err := c.requestJSON(ctx, http.MethodPost, c.repoEndpoint(request.Repository, "/git/refs"), map[string]any{"ref": "refs/heads/" + request.Branch, "sha": request.BaseRevision}, nil, http.StatusCreated, "ensure_branch"); err != nil {
 		return remediation.WriteObservation{}, err
 	}
-	return remediation.WriteObservation{Phase: remediation.WritePhaseEnsureCommit, BaseSHA: request.BaseRevision, BranchSHA: request.BaseRevision}, nil
+	return remediation.WriteObservation{Step: remediation.OperationStepEnsureCommit, BaseSHA: request.BaseRevision, BranchSHA: request.BaseRevision}, nil
 }
 
-func (c *Client) EnsureCommit(ctx context.Context, request remediation.PhasedDeliveryRequest) (remediation.WriteObservation, error) {
+func (c *Client) EnsureCommit(ctx context.Context, request remediation.ChangeWriteRequest) (remediation.WriteObservation, error) {
 	observation, err := c.ReconcileDraftPR(ctx, request)
-	if err != nil || observation.Phase != remediation.WritePhaseEnsureCommit {
+	if err != nil || observation.Step != remediation.OperationStepEnsureCommit {
 		return observation, err
 	}
 	baseFile, err := c.readFile(ctx, request.Repository, request.BaseRevision, request.Path)
@@ -221,22 +221,22 @@ func (c *Client) EnsureCommit(ctx context.Context, request remediation.PhasedDel
 	if !revisionPattern.MatchString(result.Commit.SHA) || !strings.EqualFold(result.Commit.Tree.SHA, request.ExpectedTreeHash) {
 		return remediation.WriteObservation{}, remediation.ErrDrift
 	}
-	return remediation.WriteObservation{Phase: remediation.WritePhaseEnsureDraftPR, BaseSHA: request.BaseRevision, BranchSHA: result.Commit.SHA, CommitSHA: result.Commit.SHA, TreeSHA: strings.ToLower(result.Commit.Tree.SHA)}, nil
+	return remediation.WriteObservation{Step: remediation.OperationStepEnsureDraftPR, BaseSHA: request.BaseRevision, BranchSHA: result.Commit.SHA, CommitSHA: result.Commit.SHA, TreeSHA: strings.ToLower(result.Commit.Tree.SHA)}, nil
 }
 
-func (c *Client) EnsureDraftPR(ctx context.Context, request remediation.PhasedDeliveryRequest) (remediation.WriteObservation, error) {
+func (c *Client) EnsureDraftPR(ctx context.Context, request remediation.ChangeWriteRequest) (remediation.WriteObservation, error) {
 	observation, err := c.ReconcileDraftPR(ctx, request)
-	if err != nil || observation.Phase != remediation.WritePhaseEnsureDraftPR {
+	if err != nil || observation.Step != remediation.OperationStepEnsureDraftPR {
 		return observation, err
 	}
 	result, err := c.createDraftPR(ctx, request.DeliveryRequest, observation.CommitSHA)
 	if err != nil {
 		return remediation.WriteObservation{}, err
 	}
-	return remediation.WriteObservation{Phase: remediation.WritePhaseComplete, BaseSHA: request.BaseRevision, BranchSHA: result.CommitSHA, CommitSHA: result.CommitSHA, TreeSHA: observation.TreeSHA, PRNumber: result.PRNumber, PRURL: result.PRURL}, nil
+	return remediation.WriteObservation{Step: remediation.OperationStepComplete, BaseSHA: request.BaseRevision, BranchSHA: result.CommitSHA, CommitSHA: result.CommitSHA, TreeSHA: observation.TreeSHA, PRNumber: result.PRNumber, PRURL: result.PRURL}, nil
 }
 
-func (c *Client) validatePhasedRequest(request remediation.PhasedDeliveryRequest) error {
+func (c *Client) validatePhasedRequest(request remediation.ChangeWriteRequest) error {
 	if err := c.authorize(request.Repository, request.BaseRevision, request.BaseBranch, request.Path); err != nil ||
 		!branchPattern.MatchString(request.Branch) || len(request.Content) == 0 || len(request.Content) > c.maxContentBytes ||
 		!revisionPattern.MatchString(request.BaseBlobSHA) || !revisionPattern.MatchString(request.ExpectedTreeHash) ||
@@ -275,7 +275,7 @@ func (c *Client) readFile(ctx context.Context, repository, revision, filePath st
 	return fileAtRevision{SHA: strings.ToLower(result.SHA), Content: content}, nil
 }
 
-func (c *Client) verifyPhasedCommit(ctx context.Context, request remediation.PhasedDeliveryRequest, commitSHA string) (string, error) {
+func (c *Client) verifyPhasedCommit(ctx context.Context, request remediation.ChangeWriteRequest, commitSHA string) (string, error) {
 	var commit struct {
 		Message string `json:"message"`
 		Tree    struct {
@@ -285,7 +285,7 @@ func (c *Client) verifyPhasedCommit(ctx context.Context, request remediation.Pha
 			SHA string `json:"sha"`
 		} `json:"parents"`
 	}
-	if err := c.requestJSON(ctx, http.MethodGet, c.repoEndpoint(request.Repository, "/git/commits/"+url.PathEscape(commitSHA)), nil, &commit, http.StatusOK, "verify_phased_commit"); err != nil {
+	if err := c.requestJSON(ctx, http.MethodGet, c.repoEndpoint(request.Repository, "/git/commits/"+url.PathEscape(commitSHA)), nil, &commit, http.StatusOK, "verify_change_commit"); err != nil {
 		return "", err
 	}
 	if commit.Message != request.CommitTitle || len(commit.Parents) != 1 || !strings.EqualFold(commit.Parents[0].SHA, request.BaseRevision) || !strings.EqualFold(commit.Tree.SHA, request.ExpectedTreeHash) {

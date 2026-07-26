@@ -262,19 +262,19 @@ export function useIncidentDetail(incidentID: string) {
     canRetryCommand.value = false;
   }
 
-  function investigate(reason: string, csrfToken: string) {
+  function investigate(reason: string) {
     if (!incident.value) throw new Error("Incident is not loaded");
     const body = { expected_version: incident.value.version, reason: reason || undefined };
-    return runCommand("Start Investigation", incidentID, (idempotencyKey) => startInvestigation(incidentID, body, csrfToken, { idempotencyKey }));
+    return runCommand("Start Investigation", incidentID, (idempotencyKey) => startInvestigation(incidentID, body, { idempotencyKey }));
   }
 
-  function close(reason: string, csrfToken: string) {
+  function close(reason: string) {
     if (!incident.value) throw new Error("Incident is not loaded");
     const body = { expected_version: incident.value.version, reason: reason || undefined };
-    return runCommand("Close Incident", incidentID, (idempotencyKey) => closeIncident(incidentID, body, csrfToken, { idempotencyKey }));
+    return runCommand("Close Incident", incidentID, (idempotencyKey) => closeIncident(incidentID, body, { idempotencyKey }));
   }
 
-  function decide(plan: RemediationPlanView, decision: "approved" | "rejected", reason: string, csrfToken: string) {
+  function decide(plan: RemediationPlanView, decision: "approved" | "rejected", reason: string) {
     if (!plan.version || !plan.canonical_plan_hash) throw new Error("Plan version and canonical hash are required");
     const body = {
       decision,
@@ -285,7 +285,7 @@ export function useIncidentDetail(incidentID: string) {
     return runCommand(
       decision === "approved" ? "Approve Plan" : "Reject Plan",
       plan.id,
-      (idempotencyKey) => decideRemediation(plan.id, body, csrfToken, { idempotencyKey }),
+      (idempotencyKey) => decideRemediation(plan.id, body, { idempotencyKey }),
     );
   }
 

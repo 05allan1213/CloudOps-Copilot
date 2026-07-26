@@ -1,131 +1,44 @@
-# Frontend browser-gate acceptance record
+# Frontend fixture validation record
 
-Validated locally on 2026-07-23.
+Validated locally on 2026-07-26.
 
 ## Scope and provenance
 
-The Playwright suite in this directory validates the Incident Workbench presentation layer: session bootstrap boundaries, keyboard and native-link navigation, URL and scroll restoration, responsive layout, focus restoration, fail-closed projection states, finite and reconnecting SSE behavior, command feedback, retry identity, theme contrast, reduced motion, visual stability, and basic interaction latency.
+The Playwright suite validates the current Incident Workbench presentation contract: keyboard and native-link navigation, URL and scroll restoration, responsive layout, focus restoration, fail-closed projection states, finite and reconnecting SSE behavior, Local Owner command feedback, retry identity, and interaction latency.
 
-The Node fixture server is presentation-only. It returns deterministic, contract-shaped responses for browser verification; it does not prove the real OAuth session, MySQL-backed API, production SSE service, or production command integration.
+The Node fixture server is presentation-only. It returns deterministic `/api/v1` responses and does not prove the MySQL-backed API, production SSE runtime, Kubernetes or GitHub Providers, or a real UI-to-Provider integration. Fixture results must not be promoted to task-level MCP evidence.
 
-The production command path is implemented and wired in `internal/startup/container.go`, `internal/bootstrap/api/api.go`, and `internal/command/port.go`. The fixture's optional `501` response is only a frontend presentation state and must not be described as the production backend behavior.
+The browser deliberately renders only fields in the current public contract. Missing service, workload, AgentStep, and Evidence trust fields remain explicitly not projected; the fixture does not synthesize them.
 
-### Current V3 projection boundary
+## Commands
 
-The browser deliberately renders only fields that are present in the current V3 contract. `IncidentView`/the `Incident` schema do not project `service` or `workload`; the List therefore keeps the exact `service` query filter but labels those response fields as unavailable instead of deriving them from the summary or resource name. The generic `ResourceView` used by Investigation and Evidence also does not project `AgentStep`, `Observation`, `Claim`, `Diagnosis`, or trust axes such as authority/freshness. Those cells and drawer facts remain explicitly `Not projected`, and no fixture value is promoted to integration evidence. Contract-level population of these fields is `NOT RUN` in this frontend-only validation slice.
-
-## Exact commands
-
-Validated in this workspace with the installed Chromium binary:
+The local proxy must bypass the host HTTP proxy for loopback health checks:
 
 ```bash
 cd /home/monody/k8s/CloudOps-Copilot/frontend
-npm run lint
-npx vue-tsc --noEmit
-npm run test
 npm run build
-PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/home/monody/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome npm run test:e2e
+npm test
+NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost \
+  npm run test:e2e -- --grep-invert "themes, motion"
 ```
 
-To use a freshly installed Playwright browser instead:
-
-```bash
-cd frontend
-npx playwright install chromium
-npm run test:e2e
-```
-
-Visual baselines are regenerated only when the presentation contract intentionally changes:
-
-```bash
-PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/home/monody/.cache/ms-playwright/chromium-1228/chrome-linux64/chrome npm run test:e2e:update
-```
-
-The production image and static-delivery parity gate used:
-
-```bash
-cd /home/monody/k8s/CloudOps-Copilot
-docker build --target cloudops-api -t cloudops-api:frontend-followup-local .
-```
-
-The emitted files in local `frontend/dist` and image `/app/static` were then compared by relative path and SHA-256.
-
-## Validation result
+## Current result
 
 | Gate | Result | Evidence |
 | --- | --- | --- |
-| ESLint | PASS | no findings |
-| Vue/TypeScript typecheck | PASS | `vue-tsc --noEmit` |
-| Vitest unit suite | PASS (46/46) | 10 test files |
-| Vite production build | PASS | 12 emitted files |
-| Playwright Chromium suite | PASS (19/19) | one serial authoritative run of `tests/e2e/workbench.spec.ts` |
-| Dark visual baseline | PASS | `tests/e2e/workbench.spec.ts-snapshots/incident-list-dark-1440-linux.png` |
-| Light visual baseline | PASS | `tests/e2e/workbench.spec.ts-snapshots/incident-list-light-1440-linux.png` |
-| Responsive matrix | PASS | 320x812, 375x812, 414x896, 667x375, 720x900, 768x900, 1024x768, 1440x1000 |
-| Theme and contrast matrix | PASS | dark/light toggle; primary, secondary, muted, and action contrast are at least 4.5:1 |
-| Reduced-motion matrix | PASS | animation and transition durations collapse to at most 1 ms |
-| Layout-shift / interaction budget | PASS | CLS `0`; interaction `13 ms`; maximum observed long task `96 ms` |
-| External font requests | PASS | no Google Fonts, Typekit, or Adobe Fonts requests |
-| Direct local CDP runtime probe | PASS | 414x812, fixture list rendered, document width 414/414 and `.app-main` 406/406 (scrollbar included, no overflow), semantic 404 `main a[href="/incidents"]`, no console or page errors |
-| Docker `cloudops-api` target | PASS | frontend rebuilt in the pinned Node image and copied into `/app/static` |
-| Local build vs image static parity | PASS (12/12) | relative paths and SHA-256 values matched exactly |
-| Playwright browser MCP | NOT RUN | MCP requires missing `/opt/google/chrome/chrome` |
-| Chrome DevTools MCP | NOT RUN | MCP initialization returns `Target.setDiscoverTargets: Target closed` |
-| Real OAuth/API/SSE/command integration | NOT RUN | live API containers reset all requests while restarting on Docker DNS and kubeconfig-permission failures |
-| V3 service/workload and AgentStep/Evidence trust projection parity | NOT RUN | current `Incident`/`Resource` DTOs do not expose those fields; UI keeps the boundary explicit |
+| Vue/TypeScript and Vite build | PASS | `npm run build`; 1812 modules transformed |
+| Vitest unit suite | PASS | 47 tests in 11 files |
+| Non-visual Playwright fixture suite | PASS | 17 serial scenarios |
+| Local Owner 403 failure path | PASS | command feedback remains fail-closed and preserves request identity |
+| SSE finite/reconnect behavior | PASS | cursor dedupe, `Last-Event-ID`, visible projection, and Live restoration |
+| Keyboard focus and list scroll restoration | PASS | detail H1 focus and back-navigation scroll verified |
+| ESLint | NOT RUN | not required for this focused implementation check |
+| Visual snapshot suite | NOT RUN | intentionally excluded from this focused run |
+| Browser or DevTools MCP | NOT RUN | no Browser MCP resource or template is available in this session |
+| Real UI -> `/api/v1` -> MySQL/Provider integration | NOT RUN | task runtime is not yet complete; fixture proof is not a substitute |
 
-## Authoritative 19-test browser matrix
+## Fixture matrix
 
-| # | Browser contract | Result |
-| ---: | --- | --- |
-| 1 | Keyboard navigation, skip link, URL-synced filters (including the exact service query), loaded-row sorting, and detail focus | PASS |
-| 2 | List loading, empty, forbidden, and unavailable states | PASS |
-| 3 | OAuth redirect on 401 and recoverable session boundaries on 403/503 | PASS |
-| 4 | 1/20/50-row datasets, long content, cursor append, native Ctrl-click, and back/scroll restoration | PASS |
-| 5 | Stable retryable list timeout | PASS |
-| 6 | Four-zone detail chain, dialog focus restoration, responsive layout, and 414px long-content containment | PASS |
-| 7 | Viewer permissions and projection failures fail closed without hiding recovery truth | PASS |
-| 8 | Every frozen Investigation and Evidence presentation state, with explicit `Not projected` AgentStep/trust boundaries | PASS (presentation only) |
-| 9 | Timeline cursor append beyond 200 persisted events without replacement | PASS |
-| 10 | Finite SSE resume with `Last-Event-ID`, dedupe, foreign-event rejection, focus, and scroll preservation | PASS |
-| 11 | Bounded reconnect keeps the projection visible and restores Live state | PASS |
-| 12 | Command 503 feedback, disabled states, and same-key retry | PASS |
-| 13 | Command 202/403/409/422 contracts without unsafe retries | PASS |
-| 14 | Expired and stale Plans fail closed before submission | PASS |
-| 15 | Failed, timed-out, inconclusive, NOT RUN, and passed Verification states remain distinct | PASS |
-| 16 | No-change recovery omits Plan/Delivery while retaining a passing ResolutionReport | PASS |
-| 17 | Command timeout remains pending, then becomes retryable with one preserved identity | PASS |
-| 18 | Theme, motion, contrast, zoom-equivalent width, external-font, and visual-baseline gates | PASS |
-| 19 | Basic interaction stays below the input-feedback budget | PASS |
+The 17 passing scenarios cover list navigation and states, dataset edges and pagination, timeouts, the four-zone detail chain, empty and unavailable projections, Investigation and Evidence states, Timeline pagination, SSE resume/reconnect, command retry and 202/403/409/422 responses, stale and expired Plans, Verification outcomes, no-change recovery, command timeout, and interaction latency.
 
-## Bundle measurement
-
-The explicit Element Plus registration keeps the production bundle below the Vite large-chunk warning threshold:
-
-| Largest emitted asset | Raw | Gzip |
-| --- | ---: | ---: |
-| JavaScript | 379.44 kB | 136.38 kB |
-| CSS | 104.82 kB | 15.98 kB |
-
-These are local Vite production-build measurements, not a hosted-performance claim.
-
-## Live integration boundary
-
-Read-only checks used `curl --noproxy '*'` against both exposed API containers. `/livez`, `/readyz`, `/api/v3/session/csrf`, and `/api/v3/incidents?limit=1` all ended with connection reset, HTTP `000`, and curl exit `56`.
-
-Recent container logs show two independent startup blockers:
-
-- `cloudops-v2-demo-server-web-1`: Docker DNS cannot resolve `mysql` (`127.0.0.11:53: server misbehaving`).
-- `server-monitor-server-web-1`: startup cannot read `/opt/server-monitor/docker/kubeconfig` and also reports intermittent Docker DNS failure for Kafka.
-
-No live Incident or command mutation was attempted. Real OAuth, MySQL-backed Query, SSE, Command, GitHub, Argo, and Verification evidence therefore remains `NOT RUN`.
-
-## 3-5 minute fixture demo path
-
-1. Open `/incidents?e2e=list` and show URL-synced filters, keyboard skip-link focus, and the loading/empty/forbidden/unavailable states.
-2. Open the fixture Incident and follow the four-zone chain: What Happened -> Investigation -> Remediation & Delivery -> Recovery.
-3. Inspect an Evidence row, copy a bounded hash, and show the request/trace identity on an unavailable projection.
-4. Switch to the viewer fixture to show approval controls fail closed; switch back to the operator fixture and open the decision dialog to demonstrate focus restoration and the immutable reason field.
-5. Trigger the finite/reconnect SSE fixtures and then the 503/timeout command fixtures; show resume identity, stable projection truth, restored Live state, and same-key retry.
-
-All demo steps use the deterministic fixture and are suitable only for a local presentation walkthrough.
+The visual, real-data, and Provider gates remain open until Task 0 has a runnable local lifecycle and the required MCP capabilities are available.

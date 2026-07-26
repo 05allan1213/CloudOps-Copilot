@@ -1,98 +1,91 @@
 # API
 
-V3 产品 API 的权威合同是手写 [OpenAPI 3.1](api-v3-openapi.yaml)，实现位于 [internal/apiv3](../internal/apiv3/)。浏览器产品面只消费这些 API；Handler 不运行 Agent、Delivery、Verification 或 LLM。
+CloudOps 只有一个公开产品合同：V1。权威描述是 [OpenAPI 3.1](api-v1-openapi.yaml)，实现位于 [`internal/api`](../internal/api/)。浏览器和第一方 client 只允许访问 `/api/v1`。
 
-## 1. Base path 与媒体类型
+## 1. Transport contract
 
-- Base path：`/api/v3`
+- Base path：`/api/v1`
 - Success：`application/json`
 - Error：`application/problem+json`
 - Event stream：`text/event-stream`
-- Public ID：canonical UUID；内部 numeric ID、lease、checkpoint 和 credential 不出现在 transport DTO。
+- Public ID：canonical UUID
+- Local Owner：固定 `local-owner` 审计身份，无 login、session、RBAC、CSRF 或 bearer token
 
-每个 error 都返回稳定 `code`、HTTP status、request ID 和 trace ID。客户端不得根据英文 detail 推导领域状态。
+每个错误包含稳定 semantic `code`、HTTP status、request ID 与 trace ID。客户端只根据 code/status 处理行为，不解析英文 detail。
 
-## 2. Query API
+## 2. Query endpoints
 
-| Method | Path | 角色 | 内容 |
-|---|---|---|---|
-| GET | `/session/csrf` | viewer/operator | 当前 GitHub identity-bound 短期 CSRF token |
-| GET | `/incidents` | viewer/operator | status/severity/service filter 与 cursor page |
-| GET | `/incidents/{id}` | viewer/operator | Incident current projection |
-| GET | `/incidents/{id}/signals` | viewer/operator | bounded Signal page |
-| GET | `/incidents/{id}/timeline` | viewer/operator | monotonic timeline page |
-| GET | `/incidents/{id}/evidence` | viewer/operator | sanitized Evidence metadata/facts |
-| GET | `/incidents/{id}/investigations` | viewer/operator | AgentRun/step summary |
-| GET | `/incidents/{id}/remediation-plans` | viewer/operator | 完整 Plan、diff、hash、decision |
-| GET | `/incidents/{id}/delivery` | viewer/operator | PR/CI/Argo/rollout projection |
-| GET | `/incidents/{id}/verifications` | viewer/operator | Check/sample/common-window projection |
-| GET | `/incidents/{id}/resolution-report` | viewer/operator | immutable current-cycle report |
-| GET | `/incidents/{id}/events` | viewer/operator | SSE refresh hints |
+| Method | Path | 内容 |
+|---|---|---|
+| GET | `/incidents` | status/severity/service filter 与 cursor page |
+| GET | `/incidents/{id}` | Incident current projection |
+| GET | `/incidents/{id}/signals` | bounded Signal page |
+| GET | `/incidents/{id}/timeline` | monotonic Timeline page |
+| GET | `/incidents/{id}/evidence` | sanitized Evidence facts/provenance projection |
+| GET | `/incidents/{id}/investigations` | AgentRun/step summary |
+| GET | `/incidents/{id}/remediation-plans` | Plan、diff、hash 与 decision |
+| GET | `/incidents/{id}/delivery` | Change/PR/CI/rollout projection |
+| GET | `/incidents/{id}/verifications` | run/check/sample projection |
+| GET | `/incidents/{id}/resolution-report` | current-cycle deterministic report |
+| GET | `/incidents/{id}/events` | Incident-scoped SSE refresh hints |
 
-Timeline 使用 `after_id`；其他 collection 使用 opaque cursor。`limit` 上限由服务端固定。SSE 接受 `Last-Event-ID`，只发送 Incident-scoped refresh hint；客户端收到 hint 后重新查询权威 projection。
+Timeline 使用 `after_id`；其他 collection 使用 opaque cursor。`limit` 有服务端上限。SSE 接受 `Last-Event-ID`，只发送 `incident.refresh` hint；客户端收到后重新读取权威 projection。
 
-## 3. Command API
+## 3. Command endpoints
 
 | Method | Path | 命令 |
 |---|---|---|
-| POST | `/incidents/{id}/investigations` | 显式启动新的 bounded investigation |
-| POST | `/incidents/{id}/close` | closed-no-action command |
+| POST | `/incidents/{id}/investigations` | 启动 bounded investigation |
+| POST | `/incidents/{id}/close` | closed-no-action transition |
 | POST | `/remediation-plans/{id}/decisions` | approve/reject exact Plan/hash |
 
-所有 POST 必须包含：
+所有 mutation 必须满足：
 
-```text
-Idempotency-Key: bounded opaque value
-X-CSRF-Token: current identity-bound token
-Origin: allowlisted UI origin
-```
+- `Content-Type: application/json`；
+- same-origin 或 allowlisted `Origin`；
+- bounded `Idempotency-Key`；
+- body 中的 positive `expected_version`；
+- decision body 中的 lowercase SHA-256 `expected_hash`。
 
-Body 还必须携带 expected version；decision 必须携带 expected canonical Plan hash。相同 idempotency key + 相同 payload 返回同一结果；相同 key + 不同 payload 返回 conflict。
+相同 identity/resource/command/key 与相同 canonical payload 重放原结果；相同 key 配不同 payload 返回 `IDEMPOTENCY_KEY_REUSED`。服务端以固定 Owner identity 写审计 actor，浏览器不能覆盖。
 
-## 4. Authentication
+## 4. Examples
 
-Phase 5/6 使用同 Pod 的 oauth2-proxy。公网/port-forward Service只暴露 proxy；用户 API listener绑定 loopback。API 只信任 proxy 覆盖的 GitHub login header，并拒绝 access token、Authorization 或 session cookie穿透。
-
-本地 HTTP port-forward 可在 Demo profile使用 `Secure=false` cookie；这只是本地例外，不是生产 TLS 设计。身份与命令安全详见 [Security](security.md)。
-
-## 5. 示例
-
-以下示例只进行 read，不打印 cookie 或 CSRF token：
+读取当前 Incident：
 
 ```bash
-BASE_URL=https://cloudops.example
-COOKIE_JAR=/secure/path/oauth-cookie.jar
-
+BASE_URL=http://127.0.0.1:18080
 curl --fail --silent --show-error \
-  --cookie "$COOKIE_JAR" \
-  "$BASE_URL/api/v3/incidents?limit=20&status=investigating"
-
-curl --fail --silent --show-error \
-  --cookie "$COOKIE_JAR" \
-  "$BASE_URL/api/v3/incidents/$INCIDENT_ID/verifications?limit=20"
+  "${BASE_URL}/api/v1/incidents?limit=20"
 ```
 
-命令示例必须从 `/api/v3/session/csrf` 在内存中取得 token，并由操作者显式确认 version/hash；文档不提供绕过 OAuth/CSRF 的命令。
-
-## 6. 当前状态
-
-| 控制 | 状态 | 说明 |
-|---|---|---|
-| Route/OpenAPI path parity source contract | `PASS` | `docs/api-v3-openapi.yaml`、`internal/apiv3/handler.go` |
-| Public UUID、bounded projection、problem+json | `PASS` | `internal/apiv3/types.go`、validation/projection代码 |
-| Viewer/operator、CSRF、Origin、idempotency | `PASS` | `internal/apiv3/` source contracts |
-| Cursor/Last-Event-ID/SSE refresh-only contract | `PASS` | handler/query port 与 OpenAPI |
-| 当前 HEAD API contract/integration tests | `NOT RUN` | 本文档切片只做静态检查 |
-| 真实 oauth2-proxy + GitHub OAuth | `NOT RUN` | live credentials/session 未验证 |
-| Phase 6 live two-page Workbench | `NOT RUN` | 无当前 clean-kind/browser证据 |
-| Golden Incident full API audit export | `NOT RUN` | 依赖真实 Golden E2E |
-
-## 7. 验证命令
+Mutation 示例保留 Origin、version 和 idempotency 约束：
 
 ```bash
-go test ./internal/apiv3
-rg -n '^  /api/v3/' docs/api-v3-openapi.yaml
-rg -n 'Method: http.Method(Get|Post)' internal/apiv3/handler.go
+BASE_URL=http://127.0.0.1:18080
+INCIDENT_ID=<canonical-uuid>
+
+curl --fail --silent --show-error \
+  -X POST \
+  -H "Origin: ${BASE_URL}" \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: owner-investigation-001' \
+  --data '{"expected_version":1,"reason":"owner requested investigation"}' \
+  "${BASE_URL}/api/v1/incidents/${INCIDENT_ID}/investigations"
 ```
 
-OpenAPI 和 runtime route 的任何变更必须在同一提交中更新 contract tests与本文。
+命令是否成功还取决于当前领域状态和 Provider availability；`202` 只表示命令被 durable 接受，不代表 Provider 工作已完成。
+
+## 5. Internal listener
+
+`/webhooks/alertmanager` 不属于浏览器 V1 API。它只存在于 `cloudops-api` 的内部 listener/Service，要求 secret file 提供的 bearer token，并将规范化 Signal 写入当前领域模型。用户 Service 不暴露该 route，内部 Service 不暴露 `/api/v1`。
+
+## 6. Verification
+
+```bash
+go test ./internal/api ./internal/router
+rg -n '^  /api/v1/' docs/api-v1-openapi.yaml
+make check-naming
+```
+
+OpenAPI、runtime route、typed frontend client 和 contract tests 必须在同一变更中保持一致。当前 live 联调证据见 [实施状态](evidence/cloudops-implementation-status.md)；静态 route 存在不能替代该证据。

@@ -39,7 +39,7 @@ import (
 	"github.com/05allan1213/CloudOps-Copilot/internal/verification"
 )
 
-type V3WorkerTargetConfig struct {
+type OperationalTargetConfig struct {
 	Cluster, Environment, Namespace string
 	Service, Workload, Container    string
 	RepositoryOwner, RepositoryName string
@@ -52,11 +52,13 @@ type V3WorkerTargetConfig struct {
 	GrafanaURL, KibanaURL, TempoURL string
 }
 
-func (t V3WorkerTargetConfig) repository() string { return t.RepositoryOwner + "/" + t.RepositoryName }
+func (t OperationalTargetConfig) repository() string {
+	return t.RepositoryOwner + "/" + t.RepositoryName
+}
 
-type V3WorkerProviderConfig struct {
+type ProviderGatewayConfig struct {
 	Application appconfig.Config
-	Target      V3WorkerTargetConfig
+	Target      OperationalTargetConfig
 
 	LLMAPIKeyFile string
 
@@ -76,41 +78,41 @@ type V3WorkerProviderConfig struct {
 	MaxCheckpointBytes int
 }
 
-func LoadV3WorkerProviderConfig(application appconfig.Config) (V3WorkerProviderConfig, error) {
-	repository := strings.Trim(strings.TrimSpace(os.Getenv("V3_TARGET_REPOSITORY")), "/")
+func LoadProviderGatewayConfig(application appconfig.Config) (ProviderGatewayConfig, error) {
+	repository := strings.Trim(strings.TrimSpace(os.Getenv("OPERATIONAL_TARGET_REPOSITORY")), "/")
 	owner, name := "", ""
 	if parts := strings.Split(repository, "/"); len(parts) == 2 {
 		owner, name = parts[0], parts[1]
 	}
-	result := V3WorkerProviderConfig{
+	result := ProviderGatewayConfig{
 		Application: application,
-		Target: V3WorkerTargetConfig{
-			Cluster: configutil.String("V3_TARGET_CLUSTER", "kind-cloudops-v3"), Environment: configutil.String("V3_TARGET_ENVIRONMENT", "local-demo"),
-			Namespace: configutil.String("V3_TARGET_NAMESPACE", "demo"), Service: configutil.String("V3_TARGET_SERVICE", "demo"),
-			Workload: configutil.String("V3_TARGET_WORKLOAD", "demo"), Container: configutil.String("V3_TARGET_CONTAINER", "demo"),
-			RepositoryOwner: owner, RepositoryName: name, BaseBranch: configutil.String("V3_TARGET_BASE_BRANCH", "main"),
-			GitOpsPath: configutil.String("V3_TARGET_GITOPS_PATH", ""), ArgoPath: configutil.String("V3_TARGET_ARGO_PATH", ""),
-			ArgoApplication: configutil.String("V3_TARGET_ARGO_APPLICATION", "cloudops-demo"),
-			ArgoProject:     configutil.String("V3_TARGET_ARGO_PROJECT", "cloudops-demo"), ArgoRepositoryURL: configutil.String("V3_TARGET_ARGO_REPOSITORY_URL", ""),
-			RequiredEnvKey: configutil.String("V3_TARGET_REQUIRED_ENV_KEY", "REQUIRED_ENV"),
-			ReadyURL:       configutil.String("V3_TARGET_READY_URL", "http://demo-diagnostics.demo.svc:8080/readyz"),
-			GrafanaURL:     configutil.String("V3_GRAFANA_URL", ""), KibanaURL: configutil.String("V3_KIBANA_URL", ""), TempoURL: configutil.String("V3_TEMPO_URL", ""),
+		Target: OperationalTargetConfig{
+			Cluster: configutil.String("OPERATIONAL_TARGET_CLUSTER", "cloudops-local"), Environment: configutil.String("OPERATIONAL_TARGET_ENVIRONMENT", "local-demo"),
+			Namespace: configutil.String("OPERATIONAL_TARGET_NAMESPACE", "demo"), Service: configutil.String("OPERATIONAL_TARGET_SERVICE", "demo"),
+			Workload: configutil.String("OPERATIONAL_TARGET_WORKLOAD", "demo"), Container: configutil.String("OPERATIONAL_TARGET_CONTAINER", "demo"),
+			RepositoryOwner: owner, RepositoryName: name, BaseBranch: configutil.String("OPERATIONAL_TARGET_BASE_BRANCH", "main"),
+			GitOpsPath: configutil.String("OPERATIONAL_TARGET_GITOPS_PATH", ""), ArgoPath: configutil.String("OPERATIONAL_TARGET_ARGO_PATH", ""),
+			ArgoApplication: configutil.String("OPERATIONAL_TARGET_ARGO_APPLICATION", "cloudops-demo"),
+			ArgoProject:     configutil.String("OPERATIONAL_TARGET_ARGO_PROJECT", "cloudops-demo"), ArgoRepositoryURL: configutil.String("OPERATIONAL_TARGET_ARGO_REPOSITORY_URL", ""),
+			RequiredEnvKey: configutil.String("OPERATIONAL_TARGET_REQUIRED_ENV_KEY", "REQUIRED_ENV"),
+			ReadyURL:       configutil.String("OPERATIONAL_TARGET_READY_URL", "http://demo-diagnostics.demo.svc:8080/readyz"),
+			GrafanaURL:     configutil.String("GRAFANA_URL", ""), KibanaURL: configutil.String("KIBANA_URL", ""), TempoURL: configutil.String("TEMPO_UI_URL", ""),
 		},
-		LLMAPIKeyFile:    configutil.String("V3_LLM_API_KEY_FILE", ""),
+		LLMAPIKeyFile:    configutil.String("LLM_API_KEY_FILE", ""),
 		ElasticsearchURL: configutil.String("OBSERVABILITY_ELASTICSEARCH_URL", ""), ElasticsearchIndex: configutil.String("OBSERVABILITY_ELASTICSEARCH_INDEX", "logs-cloudops-*"),
 		ElasticsearchBearerFile: configutil.String("OBSERVABILITY_ELASTICSEARCH_BEARER_TOKEN_FILE", ""), ElasticsearchUsernameFile: configutil.String("OBSERVABILITY_ELASTICSEARCH_USERNAME_FILE", ""),
 		ElasticsearchPasswordFile: configutil.String("OBSERVABILITY_ELASTICSEARCH_PASSWORD_FILE", ""), ElasticsearchCAFile: configutil.String("OBSERVABILITY_ELASTICSEARCH_CA_FILE", ""),
-		RequiredCheckName: configutil.String("V3_REQUIRED_CHECK_NAME", "gitops-required-check"), CheckProducerAppID: int64(configutil.NonNegativeInt("V3_REQUIRED_CHECK_APP_ID", 0)),
-		WorkflowID: int64(configutil.NonNegativeInt("V3_REQUIRED_WORKFLOW_ID", 0)), WorkflowPath: configutil.String("V3_REQUIRED_WORKFLOW_PATH", ".github/workflows/gitops-required-check.yml"),
-		PlanTTL: configutil.DurationSeconds("V3_REMEDIATION_PLAN_TTL_SECONDS", 1800), MaxCheckpointBytes: configutil.PositiveInt("V3_INVESTIGATION_MAX_CHECKPOINT_BYTES", 64*1024),
+		RequiredCheckName: configutil.String("GITOPS_REQUIRED_CHECK_NAME", "gitops-required-check"), CheckProducerAppID: int64(configutil.NonNegativeInt("GITOPS_REQUIRED_CHECK_APP_ID", 0)),
+		WorkflowID: int64(configutil.NonNegativeInt("GITOPS_REQUIRED_WORKFLOW_ID", 0)), WorkflowPath: configutil.String("GITOPS_REQUIRED_WORKFLOW_PATH", ".github/workflows/gitops-required-check.yml"),
+		PlanTTL: configutil.DurationSeconds("REMEDIATION_PLAN_TTL_SECONDS", 1800), MaxCheckpointBytes: configutil.PositiveInt("INVESTIGATION_MAX_CHECKPOINT_BYTES", 64*1024),
 	}
 	if err := result.Validate(); err != nil {
-		return V3WorkerProviderConfig{}, err
+		return ProviderGatewayConfig{}, err
 	}
 	return result, nil
 }
 
-func (c V3WorkerProviderConfig) Validate() error {
+func (c ProviderGatewayConfig) Validate() error {
 	t := c.Target
 	for name, value := range map[string]string{
 		"cluster": t.Cluster, "environment": t.Environment, "namespace": t.Namespace, "service": t.Service,
@@ -120,25 +122,25 @@ func (c V3WorkerProviderConfig) Validate() error {
 		"required env key": t.RequiredEnvKey, "ready URL": t.ReadyURL,
 	} {
 		if strings.TrimSpace(value) == "" {
-			return fmt.Errorf("V3 worker target %s is required", name)
+			return fmt.Errorf("worker target %s is required", name)
 		}
 	}
 	argoPath := strings.Trim(strings.TrimSpace(t.ArgoPath), "/")
 	gitOpsPath := strings.Trim(strings.TrimSpace(t.GitOpsPath), "/")
 	if argoPath == gitOpsPath || argoPath != strings.TrimSpace(t.ArgoPath) || gitOpsPath != strings.TrimSpace(t.GitOpsPath) ||
 		strings.Contains(argoPath, "..") || strings.Contains(gitOpsPath, "..") {
-		return errors.New("V3 worker Argo directory and GitOps file paths must be distinct bounded paths")
+		return errors.New("worker Argo directory and GitOps file paths must be distinct bounded paths")
 	}
 	if !slices.Contains(c.Application.K8SAllowedNamespaces, t.Namespace) && !slices.Contains(c.Application.K8SAllowedNamespaces, "*") {
-		return errors.New("V3 worker target namespace is not in K8S_ALLOWED_NAMESPACES")
+		return errors.New("worker target namespace is not in K8S_ALLOWED_NAMESPACES")
 	}
 	if c.Application.K8SRequestTimeout <= 0 || c.Application.LLMTimeout <= 0 || c.Application.LLMMaxTokens <= 0 ||
 		c.Application.ObservabilityRequestTimeout <= 0 || c.Application.ObservabilityMaxLookback < 30*time.Minute {
-		return errors.New("V3 worker provider timeouts and observability bounds are invalid")
+		return errors.New("worker provider timeouts and observability bounds are invalid")
 	}
 	if strings.TrimSpace(c.Application.LLMAPIURL) == "" || strings.TrimSpace(c.Application.LLMProvider) == "" || strings.TrimSpace(c.Application.LLMModel) == "" ||
 		(strings.TrimSpace(c.Application.LLMAPIKey) == "" && strings.TrimSpace(c.LLMAPIKeyFile) == "") {
-		return errors.New("V3 worker requires one configured LLM credential source")
+		return errors.New("worker requires one configured LLM credential source")
 	}
 	if err := validateProviderURL("LLM_API_URL", c.Application.LLMAPIURL, true); err != nil {
 		return err
@@ -151,19 +153,19 @@ func (c V3WorkerProviderConfig) Validate() error {
 	}
 	if c.Application.GitHubPrivateKeyFile != "" && c.Application.GitHubPrivateKeyFile == c.Application.GitHubWritePrivateKeyFile ||
 		c.Application.GitHubTokenFile != "" && c.Application.GitHubTokenFile == c.Application.GitHubWriteTokenFile {
-		return errors.New("V3 GitHub read and write credentials must be isolated")
+		return errors.New("GitHub read and write credentials must be isolated")
 	}
 	if err := validateProviderURL("ARGOCD_SERVER", c.Application.ArgoCDServer, true); err != nil {
 		return err
 	}
 	if strings.TrimSpace(c.Application.ArgoCDTokenFile) == "" || !slices.Contains(c.Application.ArgoCDAllowedApplications, t.ArgoApplication) || !slices.Contains(c.Application.ArgoCDAllowedProjects, t.ArgoProject) {
-		return errors.New("V3 Argo target and credential file must be allowlisted")
+		return errors.New("argo target and credential file must be allowlisted")
 	}
 	if err := validateProviderURL("REGISTRY_BASE_URL", c.Application.RegistryBaseURL, true); err != nil {
 		return err
 	}
 	if len(c.Application.RegistryAllowedHosts) == 0 || len(c.Application.RegistryAllowedRepos) == 0 || len(c.Application.OCIAllowedSources) == 0 {
-		return errors.New("V3 Registry identity allowlists are required")
+		return errors.New("registry identity allowlists are required")
 	}
 	for name, raw := range map[string]string{
 		"OBSERVABILITY_PROMETHEUS_URL":    c.Application.ObservabilityPrometheusURL,
@@ -175,14 +177,14 @@ func (c V3WorkerProviderConfig) Validate() error {
 		}
 	}
 	if c.ElasticsearchIndex != "logs-cloudops-*" || strings.TrimSpace(c.Application.RunbookDir) == "" {
-		return errors.New("V3 worker requires the fixed Elasticsearch index and Git-managed runbook directory")
+		return errors.New("worker requires the fixed Elasticsearch index and Git-managed runbook directory")
 	}
 	if c.RequiredCheckName == "" || c.CheckProducerAppID <= 0 || c.WorkflowID <= 0 ||
 		!strings.HasPrefix(c.WorkflowPath, ".github/workflows/") || (!strings.HasSuffix(c.WorkflowPath, ".yaml") && !strings.HasSuffix(c.WorkflowPath, ".yml")) {
-		return errors.New("V3 worker required-check App and workflow identity is incomplete")
+		return errors.New("worker required-check App and workflow identity is incomplete")
 	}
 	if c.PlanTTL <= 0 || c.PlanTTL > 24*time.Hour || c.MaxCheckpointBytes < 1024 || c.MaxCheckpointBytes > 128*1024 {
-		return errors.New("V3 worker Plan TTL or checkpoint bound is invalid")
+		return errors.New("worker Plan TTL or checkpoint bound is invalid")
 	}
 	return nil
 }
@@ -209,7 +211,7 @@ func validateGitHubRead(c appconfig.Config, repository, branch, path string) err
 	appAuth := c.GitHubAppID > 0 && c.GitHubInstallationID > 0 && c.GitHubPrivateKeyFile != ""
 	fileAuth := c.GitHubTokenFile != ""
 	if appAuth == fileAuth || !slices.Contains(c.GitHubAllowedRepositories, repository) || !slices.Contains(c.GitHubAllowedBranches, branch) || !slices.Contains(c.GitHubAllowedPaths, path) {
-		return errors.New("V3 GitHub read auth and target allowlists are incomplete")
+		return errors.New("GitHub read auth and target allowlists are incomplete")
 	}
 	return nil
 }
@@ -221,12 +223,12 @@ func validateGitHubWrite(c appconfig.Config, repository, branch, path string) er
 	appAuth := c.GitHubWriteAppID > 0 && c.GitHubWriteInstallationID > 0 && c.GitHubWritePrivateKeyFile != ""
 	fileAuth := c.GitHubWriteTokenFile != ""
 	if appAuth == fileAuth || !slices.Contains(c.GitHubWriteAllowedRepositories, repository) || !slices.Contains(c.GitHubWriteAllowedBaseBranches, branch) || !slices.Contains(c.GitHubWriteAllowedPaths, path) {
-		return errors.New("V3 GitHub write auth and target allowlists are incomplete")
+		return errors.New("GitHub write auth and target allowlists are incomplete")
 	}
 	return nil
 }
 
-type ProductionTaskOperationFactory struct{ Config V3WorkerProviderConfig }
+type ProductionTaskOperationFactory struct{ Config ProviderGatewayConfig }
 
 func (f ProductionTaskOperationFactory) Validate() error { return f.Config.Validate() }
 
@@ -235,17 +237,17 @@ func (f ProductionTaskOperationFactory) Build(ctx context.Context, db *sql.DB, t
 		return taskhandler.Config{}, err
 	}
 	if db == nil || tasks == nil {
-		return taskhandler.Config{}, errors.New("V3 production factory requires MySQL and the unified task repository")
+		return taskhandler.Config{}, errors.New("production factory requires MySQL and the unified task repository")
 	}
 	c, target := f.Config.Application, f.Config.Target
 
 	kubernetesClient, err := k8sread.NewClient(k8sread.Config{Enabled: true, InCluster: c.K8SInCluster, Kubeconfig: c.K8SKubeconfig, AllowedNamespaces: c.K8SAllowedNamespaces, DefaultNamespace: target.Namespace, RequestTimeout: c.K8SRequestTimeout})
 	if err != nil {
-		return taskhandler.Config{}, fmt.Errorf("initialize V3 Kubernetes client: %w", err)
+		return taskhandler.Config{}, fmt.Errorf("initialize Kubernetes client: %w", err)
 	}
 	runtimeReader, err := k8schange.New(kubernetesClient, c.K8SAllowedNamespaces, c.K8SRequestTimeout)
 	if err != nil {
-		return taskhandler.Config{}, fmt.Errorf("initialize V3 Kubernetes identity reader: %w", err)
+		return taskhandler.Config{}, fmt.Errorf("initialize Kubernetes identity reader: %w", err)
 	}
 
 	githubClient, err := buildGitHubRead(c, target.repository())
@@ -258,7 +260,7 @@ func (f ProductionTaskOperationFactory) Build(ctx context.Context, db *sql.DB, t
 	}
 	argoClient, err := argocdread.New(argocdread.Config{Server: c.ArgoCDServer, TokenFile: c.ArgoCDTokenFile, AllowedApplications: c.ArgoCDAllowedApplications, AllowedProjects: c.ArgoCDAllowedProjects, Timeout: c.ArgoCDTimeout, MaxRetries: 1, MaxResources: c.ArgoCDMaxResources, MaxDiffBytes: c.ArgoCDMaxDiffBytes})
 	if err != nil {
-		return taskhandler.Config{}, fmt.Errorf("initialize V3 Argo reader: %w", err)
+		return taskhandler.Config{}, fmt.Errorf("initialize Argo reader: %w", err)
 	}
 	registryClient, err := registryread.New(registryread.Config{
 		BaseURL: c.RegistryBaseURL, AllowedHosts: c.RegistryAllowedHosts, AllowedRepositories: c.RegistryAllowedRepos,
@@ -268,7 +270,7 @@ func (f ProductionTaskOperationFactory) Build(ctx context.Context, db *sql.DB, t
 		ConfigMaxBytes: c.RegistryConfigMaxBytes, CacheTTL: c.RegistryCacheTTL, CacheMaxItems: c.RegistryCacheMaxItems,
 	})
 	if err != nil {
-		return taskhandler.Config{}, fmt.Errorf("initialize V3 Registry reader: %w", err)
+		return taskhandler.Config{}, fmt.Errorf("initialize Registry reader: %w", err)
 	}
 
 	services, namespaces, environments := oneSet(target.Service), oneSet(target.Namespace), oneSet(target.Environment)
@@ -282,13 +284,13 @@ func (f ProductionTaskOperationFactory) Build(ctx context.Context, db *sql.DB, t
 	prometheusConfig.BaseURL, prometheusConfig.TokenFile = c.ObservabilityPrometheusURL, c.ObservabilityPromTokenFile
 	prometheusClient, err := observabilityread.NewPrometheus(prometheusConfig)
 	if err != nil {
-		return taskhandler.Config{}, fmt.Errorf("initialize V3 Prometheus reader: %w", err)
+		return taskhandler.Config{}, fmt.Errorf("initialize Prometheus reader: %w", err)
 	}
 	tempoConfig := baseObservability
 	tempoConfig.BaseURL, tempoConfig.TokenFile = c.ObservabilityTempoURL, c.ObservabilityTempoTokenFile
 	tempoClient, err := observabilityread.NewTempo(tempoConfig)
 	if err != nil {
-		return taskhandler.Config{}, fmt.Errorf("initialize V3 Tempo reader: %w", err)
+		return taskhandler.Config{}, fmt.Errorf("initialize Tempo reader: %w", err)
 	}
 	elasticClient, err := observabilityread.NewElasticsearch(observabilityread.ElasticConfig{
 		BaseURL: f.Config.ElasticsearchURL, KibanaURL: target.KibanaURL, IndexPattern: f.Config.ElasticsearchIndex,
@@ -299,12 +301,12 @@ func (f ProductionTaskOperationFactory) Build(ctx context.Context, db *sql.DB, t
 		AllowedServices: services, AllowedNamespaces: namespaces, AllowedEnvironments: environments,
 	})
 	if err != nil {
-		return taskhandler.Config{}, fmt.Errorf("initialize V3 Elasticsearch reader: %w", err)
+		return taskhandler.Config{}, fmt.Errorf("initialize Elasticsearch reader: %w", err)
 	}
 
 	documents, err := runbook.LoadDir(ctx, c.RunbookDir, runbook.LoadOptions{MaxFiles: c.RunbookMaxFiles, MaxFileBytes: c.RunbookMaxFileBytes})
 	if err != nil || len(documents) == 0 {
-		return taskhandler.Config{}, fmt.Errorf("load V3 runbooks: %w", errors.Join(err, errors.New("at least one Git-managed runbook is required")))
+		return taskhandler.Config{}, fmt.Errorf("load runbooks: %w", errors.Join(err, errors.New("at least one Git-managed runbook is required")))
 	}
 	retriever := runbook.NewRetriever(documents, runbook.RetrieverOptions{DefaultLimit: min(c.RunbookSearchTopN, 3), MaxLimit: 3, BM25Weight: 1, BM25K1: c.RunbookBM25K1, BM25B: c.RunbookBM25B, RRFK: c.RunbookRRFK})
 	investigationTools, err := investigationread.New(investigationread.Config{
@@ -318,7 +320,7 @@ func (f ProductionTaskOperationFactory) Build(ctx context.Context, db *sql.DB, t
 		}, RequestTimeout: c.K8SRequestTimeout,
 	})
 	if err != nil {
-		return taskhandler.Config{}, fmt.Errorf("initialize V3 investigation tools: %w", err)
+		return taskhandler.Config{}, fmt.Errorf("initialize investigation tools: %w", err)
 	}
 
 	verificationSource, err := verificationread.New(verificationread.Config{
@@ -329,34 +331,34 @@ func (f ProductionTaskOperationFactory) Build(ctx context.Context, db *sql.DB, t
 			ArgoApplication: target.ArgoApplication, ArgoProject: target.ArgoProject, ReadyURL: target.ReadyURL},
 	})
 	if err != nil {
-		return taskhandler.Config{}, fmt.Errorf("initialize V3 verification source: %w", err)
+		return taskhandler.Config{}, fmt.Errorf("initialize verification source: %w", err)
 	}
 
-	policy := v3RestoreEnvPolicy(target)
+	policy := restoreEnvPolicy(target)
 	policyHash, err := restorePolicyHash(policy)
 	if err != nil {
 		return taskhandler.Config{}, err
 	}
-	remediationRepository, err := remediationmysql.NewV3RemediationRepository(db)
+	remediationRepository, err := remediationmysql.NewRepository(db)
 	if err != nil {
-		return taskhandler.Config{}, fmt.Errorf("initialize V3 remediation repository: %w", err)
+		return taskhandler.Config{}, fmt.Errorf("initialize remediation repository: %w", err)
 	}
 	remediationLoader, err := taskhandler.NewMySQLRemediationPrepareLoader(db, githubClient, taskhandler.MySQLRemediationPrepareLoaderConfig{Policy: policy, PlanTTL: f.Config.PlanTTL})
 	if err != nil {
-		return taskhandler.Config{}, fmt.Errorf("initialize V3 remediation loader: %w", err)
+		return taskhandler.Config{}, fmt.Errorf("initialize remediation loader: %w", err)
 	}
 	remediationStore, err := taskhandler.NewMySQLRemediationPrepareStore(remediationRepository)
 	if err != nil {
-		return taskhandler.Config{}, fmt.Errorf("initialize V3 remediation store: %w", err)
+		return taskhandler.Config{}, fmt.Errorf("initialize remediation store: %w", err)
 	}
 
-	v3GitHub, err := deliveryread.NewV3GitHub(deliveryread.V3GitHubConfig{Reader: githubClient, RequiredCheckName: f.Config.RequiredCheckName, ProducerAppID: f.Config.CheckProducerAppID, WorkflowID: f.Config.WorkflowID, WorkflowPath: f.Config.WorkflowPath})
+	deliveryGitHub, err := deliveryread.NewDeliveryGitHub(deliveryread.DeliveryGitHubConfig{Reader: githubClient, RequiredCheckName: f.Config.RequiredCheckName, ProducerAppID: f.Config.CheckProducerAppID, WorkflowID: f.Config.WorkflowID, WorkflowPath: f.Config.WorkflowPath})
 	if err != nil {
-		return taskhandler.Config{}, fmt.Errorf("initialize V3 delivery GitHub reader: %w", err)
+		return taskhandler.Config{}, fmt.Errorf("initialize delivery GitHub reader: %w", err)
 	}
-	deliveryObserver, err := deliveryread.NewV3Observer(v3GitHub, argoClient, runtimeReader, runtimeReader, registryClient)
+	deliveryObserver, err := deliveryread.NewDeliveryObserver(deliveryGitHub, argoClient, runtimeReader, runtimeReader, registryClient)
 	if err != nil {
-		return taskhandler.Config{}, fmt.Errorf("initialize V3 delivery observer: %w", err)
+		return taskhandler.Config{}, fmt.Errorf("initialize delivery observer: %w", err)
 	}
 
 	apiKey, err := f.Config.llmAPIKey()
@@ -367,12 +369,12 @@ func (f ProductionTaskOperationFactory) Build(ctx context.Context, db *sql.DB, t
 	modelClient := agentllm.NewClient(agentllm.Options{APIKey: apiKey, APIURL: c.LLMAPIURL, Model: c.LLMModel, Timeout: c.LLMTimeout, MaxTokens: c.LLMMaxTokens, MaxRetries: &zeroRetries})
 	model, err := agentadapter.NewLLMModel(modelClient)
 	if err != nil {
-		return taskhandler.Config{}, fmt.Errorf("initialize V3 investigation model: %w", err)
+		return taskhandler.Config{}, fmt.Errorf("initialize investigation model: %w", err)
 	}
 	actionPolicies := investigationread.GoldenActionPolicies()
 	modelIdentity, err := model.RuntimeModelIdentity(c.LLMProvider, actionPolicies)
 	if err != nil {
-		return taskhandler.Config{}, fmt.Errorf("freeze V3 investigation model identity: %w", err)
+		return taskhandler.Config{}, fmt.Errorf("freeze investigation model identity: %w", err)
 	}
 
 	return AssembleWorkerTaskOperations(db, tasks, WorkerOperationConfig{
@@ -390,12 +392,12 @@ func (f ProductionTaskOperationFactory) Build(ctx context.Context, db *sql.DB, t
 	})
 }
 
-func v3RestoreEnvPolicy(target V3WorkerTargetConfig) remediation.RestoreEnvPolicy {
+func restoreEnvPolicy(target OperationalTargetConfig) remediation.RestoreEnvPolicy {
 	return remediation.RestoreEnvPolicy{
 		Version: remediation.RestoreRequiredEnvPolicyVersion, Repository: target.repository(), BaseBranch: target.BaseBranch,
 		AllowedPath: target.GitOpsPath, APIVersion: "apps/v1", Namespace: target.Namespace,
 		Workload: target.Workload, Container: target.Container, EnvKey: target.RequiredEnvKey,
-		MaxDiffBytes: remediation.MaxV3PlanDiffBytes, MaxPostImageBytes: remediation.MaxV3PostImageBytes,
+		MaxDiffBytes: remediation.MaxPlanDiffBytes, MaxPostImageBytes: remediation.MaxPostImageBytes,
 		VerificationVersion: verification.GoldenRequiredEnvProfileID,
 	}
 }
@@ -408,12 +410,12 @@ func buildGitHubRead(c appconfig.Config, repository string) (*githubread.Client,
 	} else {
 		token, err = githubread.NewAppTokenProvider(githubread.AppTokenConfig{BaseURL: c.GitHubAPIBaseURL, AppID: c.GitHubAppID, InstallationID: c.GitHubInstallationID, PrivateKeyFile: c.GitHubPrivateKeyFile, APIVersion: "2022-11-28", AllowedRepositories: []string{strings.Split(repository, "/")[1]}})
 		if err != nil {
-			return nil, fmt.Errorf("initialize V3 GitHub read auth: %w", err)
+			return nil, fmt.Errorf("initialize GitHub read auth: %w", err)
 		}
 	}
 	client, err := githubread.New(githubread.Config{BaseURL: c.GitHubAPIBaseURL, TokenProvider: token, AllowedRepositories: []string{repository}, AllowedBranches: c.GitHubAllowedBranches, AllowedPaths: c.GitHubAllowedPaths, DeniedPathPatterns: c.GitHubDeniedPathPatterns, Timeout: c.GitHubTimeout, MaxRetries: c.GitHubMaxRetries, MaxPages: 3, MaxResponseBytes: 2 * 1024 * 1024, MaxDiffFiles: c.GitHubMaxDiffFiles, MaxPatchFiles: c.GitHubMaxDiffFiles, MaxPatchBytesPerFile: 16 * 1024, MaxDiffBytes: c.GitHubMaxDiffBytes, APIVersion: "2022-11-28"})
 	if err != nil {
-		return nil, fmt.Errorf("initialize V3 GitHub read client: %w", err)
+		return nil, fmt.Errorf("initialize GitHub read client: %w", err)
 	}
 	return client, nil
 }
@@ -426,12 +428,12 @@ func buildGitHubWrite(c appconfig.Config, repository string) (*githubwrite.Clien
 	} else {
 		token, err = githubwrite.NewAppTokenProvider(githubwrite.AppTokenConfig{BaseURL: c.GitHubWriteAPIBaseURL, AppID: c.GitHubWriteAppID, InstallationID: c.GitHubWriteInstallationID, PrivateKeyFile: c.GitHubWritePrivateKeyFile, AllowedRepositories: []string{strings.Split(repository, "/")[1]}})
 		if err != nil {
-			return nil, fmt.Errorf("initialize V3 GitHub write auth: %w", err)
+			return nil, fmt.Errorf("initialize GitHub write auth: %w", err)
 		}
 	}
 	client, err := githubwrite.New(githubwrite.Config{BaseURL: c.GitHubWriteAPIBaseURL, TokenProvider: token, AllowedRepositories: []string{repository}, AllowedBaseBranches: c.GitHubWriteAllowedBaseBranches, AllowedPaths: c.GitHubWriteAllowedPaths, Timeout: c.GitHubWriteTimeout, MaxResponseBytes: c.GitHubWriteMaxResponseBytes, MaxContentBytes: c.GitHubWriteMaxContentBytes})
 	if err != nil {
-		return nil, fmt.Errorf("initialize V3 GitHub write client: %w", err)
+		return nil, fmt.Errorf("initialize GitHub write client: %w", err)
 	}
 	return client, nil
 }
@@ -445,33 +447,33 @@ func restorePolicyHash(policy remediation.RestoreEnvPolicy) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 func oneSet(value string) map[string]struct{} { return map[string]struct{}{value: {}} }
-func changeRepository(target V3WorkerTargetConfig) change.RepositoryRef {
+func changeRepository(target OperationalTargetConfig) change.RepositoryRef {
 	return change.RepositoryRef{Owner: target.RepositoryOwner, Name: target.RepositoryName}
 }
 
-func (c V3WorkerProviderConfig) llmAPIKey() (string, error) {
+func (c ProviderGatewayConfig) llmAPIKey() (string, error) {
 	if strings.TrimSpace(c.LLMAPIKeyFile) == "" {
 		return strings.TrimSpace(c.Application.LLMAPIKey), nil
 	}
 	data, err := os.ReadFile(c.LLMAPIKeyFile)
 	if err != nil || len(data) == 0 || len(data) > 16*1024 {
-		return "", fmt.Errorf("read V3 LLM key file: %w", err)
+		return "", fmt.Errorf("read LLM key file: %w", err)
 	}
 	value := strings.TrimSpace(string(data))
 	if value == "" {
-		return "", errors.New("V3 LLM key file is empty")
+		return "", errors.New("LLM key file is empty")
 	}
 	return value, nil
 }
 
 func strictProviderFlag() (bool, error) {
-	raw, exists := os.LookupEnv("V3_WORKER_PROVIDERS_ENABLED")
+	raw, exists := os.LookupEnv("PROVIDER_GATEWAY_ENABLED")
 	if !exists || strings.TrimSpace(raw) == "" {
 		return false, nil
 	}
 	value, err := strconv.ParseBool(strings.TrimSpace(raw))
 	if err != nil {
-		return false, fmt.Errorf("V3_WORKER_PROVIDERS_ENABLED must be a boolean: %w", err)
+		return false, fmt.Errorf("PROVIDER_GATEWAY_ENABLED must be a boolean: %w", err)
 	}
 	return value, nil
 }

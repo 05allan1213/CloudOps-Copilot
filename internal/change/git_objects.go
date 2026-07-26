@@ -10,7 +10,7 @@ import (
 
 // ValidExactGitObjectID accepts only complete lowercase SHA-1 or SHA-256 Git
 // object identities. Abbreviated revisions remain valid for legacy browsing
-// but cannot authorize V3 delivery or remediation facts.
+// but cannot authorize delivery or remediation facts.
 func ValidExactGitObjectID(value string) bool {
 	value = strings.TrimSpace(value)
 	if (len(value) != sha1.Size*2 && len(value) != sha256.Size*2) || strings.ToLower(value) != value {

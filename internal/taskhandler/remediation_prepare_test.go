@@ -106,7 +106,7 @@ spec:
 		Version: "restore-required-env-policy/v1", Repository: "acme/gitops", BaseBranch: "main",
 		AllowedPath: "apps/demo.yaml", APIVersion: "apps/v1", Namespace: "demo",
 		Workload: "demo", Container: "demo", EnvKey: "REQUIRED_ENV",
-		MaxDiffBytes: remediation.MaxV3PlanDiffBytes, MaxPostImageBytes: remediation.MaxV3PostImageBytes,
+		MaxDiffBytes: remediation.MaxPlanDiffBytes, MaxPostImageBytes: remediation.MaxPostImageBytes,
 		VerificationVersion: "golden-required-env/v1",
 	}
 	now := time.Date(2026, 7, 20, 2, 0, 0, 0, time.UTC)

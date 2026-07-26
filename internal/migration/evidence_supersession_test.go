@@ -7,30 +7,30 @@ import (
 	"github.com/05allan1213/CloudOps-Copilot/migrations"
 )
 
-func TestEvidenceSupersessionMigrationIsForwardOnlyAndCycleBound(t *testing.T) {
-	if LatestVersion != 18 {
-		t.Fatalf("latest migration=%d, want 18", LatestVersion)
+func TestBaselineEvidenceSupersessionIsCycleBound(t *testing.T) {
+	if LatestVersion != 1 {
+		t.Fatalf("latest migration=%d, want 1", LatestVersion)
 	}
-	contents, err := migrations.FS.ReadFile("00011_evidence_supersessions.sql")
+	contents, err := migrations.FS.ReadFile("00001_cloudops_baseline.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
 	sqlText := string(contents)
 	for _, required := range []string{
-		"CREATE TABLE evidence_supersessions",
-		"uk_evidence_items_v3_owner (id, incident_id, cycle_no)",
-		"FOREIGN KEY (superseded_evidence_id, incident_id, cycle_no)",
-		"FOREIGN KEY (superseding_evidence_id, incident_id, cycle_no)",
-		"UNIQUE KEY uk_evidence_supersessions_superseded",
-		"UNIQUE KEY uk_evidence_supersessions_superseding",
-		"superseding_evidence_id > superseded_evidence_id",
+		"CREATE TABLE `evidence_supersessions`",
+		"uk_evidence_items_owner` (`id`,`incident_id`,`cycle_no`)",
+		"FOREIGN KEY (`superseded_evidence_id`, `incident_id`, `cycle_no`)",
+		"FOREIGN KEY (`superseding_evidence_id`, `incident_id`, `cycle_no`)",
+		"UNIQUE KEY `uk_evidence_supersessions_superseded`",
+		"UNIQUE KEY `uk_evidence_supersessions_superseding`",
+		"superseding_evidence_id` > `superseded_evidence_id",
 		"ON DELETE RESTRICT",
 	} {
 		if !strings.Contains(sqlText, required) {
-			t.Fatalf("migration is missing %q", required)
+			t.Fatalf("baseline is missing %q", required)
 		}
 	}
-	if strings.Contains(sqlText, "-- +goose Down") || strings.Contains(sqlText, "UPDATE evidence_items") {
-		t.Fatal("Evidence supersession migration is not forward-only append-only")
+	if strings.Contains(sqlText, "-- +goose Down") {
+		t.Fatal("baseline unexpectedly contains a reverse migration")
 	}
 }

@@ -26,9 +26,9 @@ const (
 	SplitModel          = "model"
 )
 
-// Dataset is the immutable input to Agent Eval. Files are kept separate from
-// the oracle and split so a score cannot silently change when expectations are
-// edited.
+// Dataset is the immutable, content-addressed input to Agent Eval. Files are
+// kept separate from the oracle and split so a score cannot silently change
+// when expectations are edited.
 type Dataset struct {
 	SchemaVersion int        `json:"schema_version"`
 	DatasetID     string     `json:"dataset_id"`

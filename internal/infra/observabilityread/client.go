@@ -262,7 +262,7 @@ func (c *client) authorize(q verification.SignalQuery) error {
 }
 
 func (c *client) get(ctx context.Context, provider, path string, values url.Values) ([]byte, int, error) {
-	ctx, span := otel.Tracer("server-web/observabilityread").Start(ctx, provider+".observation")
+	ctx, span := otel.Tracer("cloudops/observabilityread").Start(ctx, provider+".observation")
 	span.SetAttributes(attribute.String("provider", provider), attribute.String("operation", "query"))
 	defer span.End()
 	u := *c.base

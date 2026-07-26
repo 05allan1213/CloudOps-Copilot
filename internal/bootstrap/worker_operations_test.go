@@ -157,16 +157,16 @@ func (workerExactGitReaderStub) ReadRestoreFacts(context.Context, remediation.Ex
 	return remediation.ExactGitRestoreFacts{}, nil
 }
 
-func (workerGitHubWriterStub) ReconcileDraftPR(context.Context, remediation.PhasedDeliveryRequest) (remediation.WriteObservation, error) {
+func (workerGitHubWriterStub) ReconcileDraftPR(context.Context, remediation.ChangeWriteRequest) (remediation.WriteObservation, error) {
 	return remediation.WriteObservation{}, nil
 }
-func (workerGitHubWriterStub) EnsureBranch(context.Context, remediation.PhasedDeliveryRequest) (remediation.WriteObservation, error) {
+func (workerGitHubWriterStub) EnsureBranch(context.Context, remediation.ChangeWriteRequest) (remediation.WriteObservation, error) {
 	return remediation.WriteObservation{}, nil
 }
-func (workerGitHubWriterStub) EnsureCommit(context.Context, remediation.PhasedDeliveryRequest) (remediation.WriteObservation, error) {
+func (workerGitHubWriterStub) EnsureCommit(context.Context, remediation.ChangeWriteRequest) (remediation.WriteObservation, error) {
 	return remediation.WriteObservation{}, nil
 }
-func (workerGitHubWriterStub) EnsureDraftPR(context.Context, remediation.PhasedDeliveryRequest) (remediation.WriteObservation, error) {
+func (workerGitHubWriterStub) EnsureDraftPR(context.Context, remediation.ChangeWriteRequest) (remediation.WriteObservation, error) {
 	return remediation.WriteObservation{}, nil
 }
 

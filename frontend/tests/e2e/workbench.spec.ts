@@ -83,34 +83,13 @@ test("Incident List exposes loading, empty, forbidden, and unavailable states", 
 
   await configureFixture(request, { list: "forbidden" });
   await openList(page);
-  await expect(page.getByRole("heading", { name: "Viewer access is required" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Request forbidden" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Retry Access Check" })).toBeVisible();
 
   await configureFixture(request, { list: "error" });
   await openList(page);
   await expect(page.getByRole("heading", { name: "Incident projection unavailable" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Retry Incidents" })).toBeVisible();
-});
-
-test("session expiry redirects to OAuth and non-401 failures render a recoverable boundary", async ({ page, request }) => {
-  await configureFixture(request, { session: "expired" });
-  await page.goto("/incidents?e2e=session-expired", { waitUntil: "domcontentloaded" }).catch(() => undefined);
-  await expect(page).toHaveURL(/\/oauth2\/start\?rd=%2Fincidents%3Fe2e%3Dsession-expired/);
-  const sensitiveStorageKeys = await page.evaluate(() => Object.keys(localStorage).filter((key) => /auth|jwt|token/i.test(key)));
-  expect(sensitiveStorageKeys).toEqual([]);
-
-  await configureFixture(request, { session: "forbidden" });
-  await page.goto("/incidents?e2e=session-forbidden", { waitUntil: "domcontentloaded" });
-  await expect(page.getByRole("heading", { name: "Workbench access is forbidden" })).toBeVisible();
-  await expect(page.locator(".auth-boundary .request-identity")).toContainText("fixture-request-403");
-  await expect(page.getByRole("button", { name: "Retry Session" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Re-authenticate" })).toBeVisible();
-  await expectNoLayoutOverflow(page);
-
-  await configureFixture(request, { session: "error" });
-  await page.getByRole("button", { name: "Retry Session" }).click();
-  await expect(page.getByRole("heading", { name: "Workbench session unavailable" })).toBeVisible();
-  await expect(page.locator(".auth-boundary .request-identity")).toContainText("fixture-request-503");
 });
 
 test("Incident List covers edge datasets, cursor append, native links, and back restoration", async ({ page, request, context }) => {
@@ -167,7 +146,7 @@ test("Incident List timeout keeps a stable retryable state", async ({ page, requ
 
 test("Incident Detail keeps the four-zone chain, dialog focus, and responsive layout", async ({ page, request }) => {
   const browser = monitorBrowser(page);
-  await configureFixture(request, { role: "operator", sections: "ready", sse: "connected" });
+  await configureFixture(request, { sections: "ready", sse: "connected" });
   await page.setViewportSize({ width: 1440, height: 1000 });
   await openDetail(page);
 
@@ -230,21 +209,15 @@ test("Incident Detail keeps the four-zone chain, dialog focus, and responsive la
   browser.expectClean();
 });
 
-test("viewer and projection states fail closed without hiding recovery truth", async ({ page, request }) => {
-  await configureFixture(request, { role: "viewer", sections: "ready", verification: "passed", sse: "connected" });
-  await openDetail(page);
-  await expect(page.locator(".approve-button")).toBeDisabled();
-  await expect(page.locator(".reject-button")).toBeDisabled();
-  await expect(page.locator(".decision-actions p")).toContainText("Viewer");
-
-  await configureFixture(request, { role: "operator", sections: "empty", verification: "not_run", sse: "connected" });
+test("projection states fail closed without hiding recovery truth", async ({ page, request }) => {
+  await configureFixture(request, { sections: "empty", verification: "not_run", sse: "connected" });
   await openDetail(page);
   await expect(page.locator("#evidence .section-message")).toContainText("No persisted Evidence");
   await expect(page.locator("#verifications .section-message")).toContainText("NOT RUN");
   await expect(page.locator("#resolution-report .section-message")).toContainText("No immutable ResolutionReport");
   await expect(page.locator(".report")).toHaveCount(0);
 
-  await configureFixture(request, { role: "operator", sections: "error", verification: "passed", sse: "connected" });
+  await configureFixture(request, { sections: "error", verification: "passed", sse: "connected" });
   await openDetail(page);
   await expect(page.locator("#evidence .section-message")).toContainText("Projection unavailable");
   await expect(page.locator("#evidence .request-identity")).toContainText("fixture-request-503");
@@ -323,7 +296,7 @@ test("realtime reconnect keeps the projection visible and restores Live state", 
 });
 
 test("command feedback preserves disabled and retryable states", async ({ page, request }) => {
-  await configureFixture(request, { command: "503", role: "operator", sse: "connected" });
+  await configureFixture(request, { command: "503", sse: "connected" });
   await openDetail(page);
   await page.locator(".approve-button").click();
   const dialog = page.locator("dialog.decision-dialog");
@@ -341,20 +314,19 @@ test("command feedback preserves disabled and retryable states", async ({ page, 
   expect(metrics.commands[0].idempotencyKey).toBe(metrics.commands[1].idempotencyKey);
 });
 
-test("operator command contract presents 202, 403, 409, and 422 without unsafe retries", async ({ page, request }) => {
-  await configureFixture(request, { command: "202", role: "operator", sse: "connected" });
+test("Owner command contract presents 202, 403, 409, and 422 without unsafe retries", async ({ page, request }) => {
+  await configureFixture(request, { command: "202", sse: "connected" });
   await openDetail(page, "command-202");
   const dialog = await submitDecision(page, "rejected", "The persisted evidence does not support the proposed exact change.");
   await expect(page.locator(".persisted-decision")).toContainText("rejected");
   await expect(page.locator(".command-feedback--accepted").first()).toContainText("202");
   const acceptedMetrics = await (await request.get("http://127.0.0.1:18082/fixture/metrics")).json();
-  expect(acceptedMetrics.commands[0].csrfToken).toBe("fixture-csrf-token");
   expect(acceptedMetrics.commands[0].idempotencyKey.length).toBeLessThanOrEqual(128);
   expect(acceptedMetrics.commands[0].body).toMatchObject({ decision: "rejected", expected_version: 5 });
   await expect(dialog).not.toHaveAttribute("open", "");
 
   for (const [mode, state, code] of [["403", "forbidden", "COMMAND_FORBIDDEN"], ["409", "conflict", "STALE_EXPECTATION"], ["422", "invalid", "INVALID_TRANSITION"]] as const) {
-    await configureFixture(request, { command: mode, role: "operator", sse: "connected" });
+    await configureFixture(request, { command: mode, sse: "connected" });
     await openDetail(page, `command-${mode}`);
     const failedDialog = await submitDecision(page);
     await expect(page.locator(`.command-feedback--${state}`).first()).toBeVisible();
@@ -371,7 +343,7 @@ test("operator command contract presents 202, 403, 409, and 422 without unsafe r
 
 test("expired and stale Plans fail closed before a Command is submitted", async ({ page, request }) => {
   for (const [mode, message] of [["expired", "Plan Expired"], ["stale", "Plan Version Is Stale"]] as const) {
-    await configureFixture(request, { plan: mode, command: "202", role: "operator", sse: "connected" });
+    await configureFixture(request, { plan: mode, command: "202", sse: "connected" });
     await openDetail(page, `plan-${mode}`);
     await expect(page.getByRole("status").filter({ hasText: message })).toBeVisible();
     await expect(page.locator(".approve-button")).toBeDisabled();
@@ -409,7 +381,7 @@ test("no-change recovery has no Plan or Delivery while retaining a passing Resol
 
 test("command timeout remains pending, then becomes retryable with the same identity", async ({ page, request }) => {
   test.setTimeout(30_000);
-  await configureFixture(request, { command: "timeout", role: "operator", sse: "connected" });
+  await configureFixture(request, { command: "timeout", sse: "connected" });
   await openDetail(page, "command-timeout");
   const dialog = await submitDecision(page);
   await expect(dialog.locator(".submit-decision")).toBeDisabled();

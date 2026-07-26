@@ -1,10 +1,6 @@
 package bootstrap
 
-import (
-	"testing"
-
-	"github.com/05allan1213/CloudOps-Copilot/internal/cutover"
-)
+import "testing"
 
 func TestLoadProcessSpecificConfig(t *testing.T) {
 	t.Setenv("AUTH_ENABLED", "false")
@@ -17,8 +13,8 @@ func TestLoadProcessSpecificConfig(t *testing.T) {
 	if workerConfig.ManagementAddr != "127.0.0.1:18081" {
 		t.Fatalf("management address=%q", workerConfig.ManagementAddr)
 	}
-	if workerConfig.RuntimeGeneration != cutover.CurrentRuntimeGeneration {
-		t.Fatalf("runtime generation=%q", workerConfig.RuntimeGeneration)
+	if workerConfig.ProviderGatewayEnabled {
+		t.Fatal("Provider Gateway must remain disabled when it is not configured")
 	}
 }
 
@@ -32,8 +28,8 @@ func TestWorkerConfigRejectsInvalidManagementAddress(t *testing.T) {
 
 func TestWorkerConfigRejectsMalformedProductionProviderFlag(t *testing.T) {
 	t.Setenv("AUTH_ENABLED", "false")
-	t.Setenv("V3_WORKER_PROVIDERS_ENABLED", "sometimes")
+	t.Setenv("PROVIDER_GATEWAY_ENABLED", "sometimes")
 	if _, err := LoadWorkerConfig(); err == nil {
-		t.Fatal("expected malformed V3 provider flag to fail closed")
+		t.Fatal("expected malformed provider flag to fail closed")
 	}
 }
