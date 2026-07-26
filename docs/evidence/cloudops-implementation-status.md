@@ -6,7 +6,7 @@
 >
 > Task 0 开工基线：`10a1f2b659b4ee9adb1a3efcb7725f83504b9d1f`
 >
-> 最后更新：2026-07-26 11:47（Asia/Shanghai）
+> 最后更新：2026-07-26 16:55（Asia/Shanghai）
 
 ## 状态总览
 
@@ -14,11 +14,11 @@
 |---|---|---|---|
 | 任务 0：语义基线与本地生命周期 | `DONE_WITH_NOT_RUN` | 无 | 本地 UI -> `/api/v1` -> MySQL、数据迁移及生命周期完成；外部 Provider 明确 `NOT RUN` |
 | 任务 1：平台 Shell 与 Settings | `DONE_WITH_NOT_RUN` | 任务 0 API、数据和生命周期契约 | Shell、Settings、revision、secret、notification 与 Worker activation 已完成真实联调；外部 Provider 调用明确 `NOT RUN` |
-| 任务 2：Infrastructure 与 Atlas | `READY` | 任务 0；任务 1 Scope/Shell | Operational Scope、Shell、Context Link 与 Provider health contract 已落地 |
+| 任务 2：Infrastructure 与 Atlas | `DONE_WITH_NOT_RUN` | 任务 0；任务 1 Scope/Shell | 真实 Kubernetes typed reader、Infrastructure、Operations Atlas、多 Scope contract 与 Context Link 已完成；第二真实集群及 MCP 维度明确 `NOT RUN` |
 | 任务 3：Monitoring | `READY` | 任务 0；任务 1 Provider/Scope/Query | Provider、Scope、Query policy 与公共时间范围已落地 |
-| 任务 4：Logs 与 Traces | `BLOCKED` | 任务 1；任务 2/3 context contract | 等待任务 1-3 的 resource/time contract |
+| 任务 4：Logs 与 Traces | `BLOCKED` | 任务 1；任务 2/3 context contract | 任务 2 resource/time Context Link 已落地；仍等待任务 3 Monitoring context contract |
 | 任务 5：Alerts | `READY` | 任务 0；任务 1 notification/Settings/Context Link | notification、Settings 与 Context Link 公共契约已落地 |
-| 任务 6：Agent | `BLOCKED` | 任务 1；任务 2-5 真实 Evidence source | 前置 Evidence Plane 尚未完成 |
+| 任务 6：Agent | `BLOCKED` | 任务 1；任务 2-5 真实 Evidence source | 任务 2 已完成；任务 3-5 的真实 Evidence source 尚未完成 |
 | 任务 7：Incidents 与 Verify | `BLOCKED` | 任务 5、6；任务 2-4 Context Link | 前置领域尚未完成 |
 | 任务 8：Operations 与 DevOps | `BLOCKED` | 任务 6；Incident 链另需任务 7 | authority contract 尚未完成 |
 | 任务 9：Scenario 与最终收敛 | `BLOCKED` | 任务 0-8 本地必需能力 | 前置任务尚未完成 |
@@ -197,3 +197,89 @@ Chrome 首次连接 `18081` 时，命令执行器已经回收 `local-up` 的后�
 - Kubernetes、Prometheus、Alertmanager、Elasticsearch、Tempo、GitHub、Argo CD Provider 的成功查询：不属于 Task 1；按后续 READY 任务分别实施和验收。
 - 浏览器系统通知成功投递：当前环境权限为 denied；产品错误码路径已验证，系统级成功通知 `NOT RUN`。
 - hosted/staging/production、PR、tag、默认分支、force push：`NOT RUN`。
+
+## 任务 2：Infrastructure 与 Operations Atlas
+
+### 实施结果
+
+- Worker 持有只读 Kubernetes typed client；API 不挂 ServiceAccount token，而是调用固定的内部 probe/topology/event gateway。资源投影覆盖 Namespace、Service、Deployment、StatefulSet、DaemonSet、Pod、Node、Ingress 与 EndpointSlice 关系事实，不返回原始 YAML。
+- `GET /api/v1/topology`、`GET /api/v1/topology/events`、`GET /api/v1/resources`、资源详情及 Event routes 已接入唯一 V1；Overview 与 Infrastructure 消费同一个 bounded topology projection。
+- Overview 使用按路由加载的 Three.js Operations Atlas、stable layout、Raycaster 与 OrbitControls；没有持续动画或装饰节点。结构化视图与 Canvas 使用同一 node identity，并支持显式和 WebGL 自动 fallback。
+- Infrastructure Workspace 提供 Namespace/Kind/search、typed detail、owner/selector/endpoint/scheduling/condition/Event 与相关资源；`cluster/namespace/resource/from/to/kind/search` 保存在 URL，浏览器 Back/Forward 恢复相同资源和时间上下文。
+- schema 4 持久化 1 至 10 个 revision-owned Scope 与独立 `active_operational_scope`。Header 使用持久活动集群 selector；切换前 probe 目标 reader，成功后刷新 bootstrap 并清除旧资源查询上下文，失败时保持原活动 Scope。
+- `K8S_CONNECTIONS_JSON` 注册 1 至 10 个具名 reader：cluster identity 唯一、最多一个 in-cluster、外部 kubeconfig 必须为绝对挂载路径并指定 context、每连接有 Namespace allowlist/default/timeout；未知 cluster fail closed。
+- Helm 对 in-cluster + external、external-only 和单连接兼容路径执行 fail-closed render 校验；external-only Worker 不挂 ServiceAccount token，也不创建 Kubernetes read RBAC。
+
+### Runtime 与数据审计
+
+| 项目 | 结果 | 当前证据 |
+|---|---|---|
+| Build/runtime | `PASS` | `make local-up` 从当前 worktree 重建并加载 API/Worker/Migrate；Helm `cloudops` revision `15`；API、Worker、MySQL Ready，Migrate Job succeeded，全部 Pod `0` restart |
+| Runtime images | `PASS` | local image IDs：API `sha256:0b6ffba1610b...`、Worker `sha256:30908d3cb8ab...`、Migrate `sha256:fc58b7110806...`；当前 Pods 使用本次新导入的 imageID |
+| Schema | `PASS` | `goose_db_version=4`；`00003_infrastructure_topology.sql` 与 `00004_operational_scope_registry.sql` 已应用 |
+| MySQL integration | `PASS` | MySQL `8.0.46` 上 `TestMySQLConfigurationRevisionSecretAndWorkerBoundary` 真实执行；两 Scope revision、active Scope 切换、secret 与 Worker activation 通过；临时库和临时用户残留均为 `0` |
+| Final configuration | `PASS` | active revision `8`，ID `a50e1a81-e89d-4802-8c26-711c143c318c`，hash `dcce24f597b880a66e5c4bdcfbdb99898d80ae4e1e36728088481b50a3bd57c4` |
+| Worker boundary | `PASS` | task `c748118e-e218-4fbc-854e-6b4eafb02546` succeeded；Worker `cloudops-worker-5f5476d74b-mmh6f` observed exact revision hash |
+| Active Scope | `PASS` | Scope `970c8025-35f5-42cc-9f6d-7bffb8b23877`，cluster `cloudops-local`，Namespaces `cloudops-system,demo`，`active=true` |
+| Multi-Scope fail closed | `PASS` | UI 加入未注册 `cluster-unregistered` 后 validation `KUBERNETES_READER_UNAVAILABLE`、typed readers `1/2`、发布禁用；删除后 `1/1` available 并成功发布 revision `6` |
+| Provider unavailable | `PASS` | revision `7` 停用 Kubernetes 后 Overview/Infrastructure/API 均为 `disabled`、`0 nodes`、`0 edges`、`0 Canvas`、无假拓扑；revision `8` 恢复 enabled |
+| Final topology | `PASS` | `kubernetes://cloudops-local` / Kubernetes `v1.36.1`；snapshot `96c9bf2e-506a-4b8d-be96-36fe70d14e9b`，content hash `547997cdd30140f3095db005b93f4d23bf919c91b318aa2fa821028bb23ed09d`，`13 nodes / 27 edges`，非 partial、非 truncated |
+
+### 浏览器联调证据
+
+验收 URL：`http://127.0.0.1:18083`。当前工具面未提供可调用的 Chrome DevTools/Playwright MCP；以下浏览器证据来自工作区 `@playwright/test` + Chromium，不冒充 MCP。
+
+| 维度 | 结果 | 证据 |
+|---|---|---|
+| Real resource flow | `PASS` | `cloudops-api` Deployment -> Pod `cloudops-api-5848cbdf6d-4r54s` -> 4 条真实 Scheduled/Pulled/Created/Started Event -> Namespace `cloudops-system`；Namespace Event 为 `200` 空投影；连续 Back 返回同一 Pod、Workload 和 Overview selection |
+| Canvas | `PASS` | 1440x900 drawing buffer `888x748`，`63,956` 个非背景像素、非背景比 `0.096287`、WebGL error `0`；Canvas node count `13` 与 structured `13/13` 一致 |
+| Interaction | `PASS` | 1440x900 拖拽像素签名 `6922a7e1 -> 5d1221dc`；390x844 为 `a67fae3d -> c5f4ff22`；两端重绘后非背景像素仍大于 `0`，console 均无错误 |
+| Fallback | `PASS` | `?view=structured` 显式路径为 `13/13`、无 Canvas；强制 WebGL init failure 自动切换 structured `13/13`、无 Canvas并显示明确原因 |
+| Responsive | `PASS` | 1440x900、390x844、320x568 实测；390 Canvas `390x360`；390/320 的 `scrollWidth` 分别等于 `390/320`，header selector、工具栏、内容与 bottom navigation 无遮挡 |
+| Network | `PASS` | topology/resources/detail/events 均为 `/api/v1` 且 `200`；Pod Event request/trace `dk8ddnpi8ruc-7e`，Namespace Event request/trace `dk8ddp6gviyf-7j` |
+| Console | `PASS` | 正常 desktop/mobile、Settings、Context Link 与 Provider-disabled 流程无 console/page error；自动 fallback 仅出现预期的 WebGL context 创建失败日志 |
+| Task result | `DONE_WITH_NOT_RUN` | Task 2 本地单活动集群纵向能力、multi-cluster configuration contract 与 fail-closed 边界完成；缺少的外部验收维度如下列为 `NOT RUN` |
+
+`web-design-guidelines` 最新规则用于最终审查并影响实现：Scope 删除增加确认；native select 补 name/autocomplete 与暗色颜色；Scope 错误提示增加 live region；时间统一用 `Intl.DateTimeFormat`；Canvas 文案改为真实 freshness/snapshot；spinner 遵循 reduced-motion。
+
+### 检查结果
+
+`PASS`：
+
+- `go test -count=1 ./...`
+- `go vet ./...`
+- `go test -count=1 ./internal/settings -run TestMySQLConfigurationRevisionSecretAndWorkerBoundary -v`（MySQL 8.0.46）
+- `npm exec -- vue-tsc --noEmit`
+- `npm run lint -- --quiet`
+- `npm test`：13 files / 51 tests
+- `npm run build`
+- `helm lint --strict charts/cloudops -f charts/cloudops/values-local.yaml`
+- `bash scripts/check-runtime-render.sh`
+- `git diff --check`
+- `make local-up`、`make local-status`、`/readyz`、`/api/v1/bootstrap`、`/api/v1/scopes`、Infrastructure/Atlas V1 routes
+
+### 实际文件清单
+
+- Domain/data：`CONTEXT.md`、`migrations/00003_infrastructure_topology.sql`、`migrations/00004_operational_scope_registry.sql`、`internal/infrastructure/**`、schema/migration contract tests。
+- Kubernetes/provider：`internal/infra/{kubernetestopology,infrastructuregateway}/**`、`internal/bootstrap/worker_infrastructure.go`、`internal/config/kubernetes*`、`internal/infra/k8sread/**`。
+- API/runtime：`internal/api/{infrastructure_handler,infrastructure_contract_test,platform_handler,handler}.go`、`internal/{router,di,startup,settings,bootstrap}/**` 相关文件、`docs/api-v1-openapi.yaml`。
+- Frontend：`frontend/src/api/{platform,infrastructure}.ts`、`frontend/src/components/infrastructure/**`、`frontend/src/views/{overview,infrastructure,settings,workspaces}/**`、layout/router/operationalScope utilities、Three.js dependencies。
+- Helm：`charts/cloudops/templates/{_helpers,rbac,runtime-validation,worker}.yaml`、`charts/cloudops/{values,values.schema}.yaml`、`scripts/check-runtime-render.sh`。
+- Task 2 implementation commit 共 `61` 个精确文件；状态文件为本节证据文件，不计入 implementation 数。
+
+### Delivery record
+
+| 项目 | 结果 | 证据 |
+|---|---|---|
+| Branch/base | `PASS` | `codex/v3-refactor`；implementation parent 为 `9edc02b` |
+| Implementation commit | `PASS` | `49a6d86e8efa1ef34ae2a77ed73e978c693a89e4`；61 个精确 implementation 文件 |
+| Worktree preservation | `PASS` | 保留任务开始时及后续全部未提交成果，未 reset、revert 或清理 |
+| Push | `NOT RUN` | 本地提交尚未 push；未创建 PR/tag、未触碰默认分支 |
+
+### NOT RUN
+
+- 第二个真实 Kubernetes 集群：当前只存在一个可用 reader/真实集群 `cloudops-local`。多连接实现、render contract、真实 MySQL 两 Scope persistence 与未注册 cluster fail-closed 已验证，但未用当前 kind 的别名伪造第二集群成功证据。
+- Kubernetes MCP：当前环境没有 Kubernetes MCP server；`kubectl` 与产品 typed client 的真实证据不冒充 MCP。
+- Chrome DevTools MCP 与 Playwright MCP：当前工具面没有可调用的浏览器 MCP；工作区 Playwright 浏览器验收不冒充 MCP。
+- Gateway API CRD kind：当前真实集群未安装 Gateway API CRD；Ingress typed projection 已实现并验证，Gateway API 成功读取 `NOT RUN`。
+- hosted/staging/production、外部 Provider、PR、push、tag、默认分支：均不属于本轮本地 Task 2 收尾，`NOT RUN`。
