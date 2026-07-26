@@ -163,7 +163,7 @@ func NewClient(rawBaseURL string, timeout time.Duration) (*Client, error) {
 func (c *Client) Probe(ctx context.Context, clusterID string) (infrastructure.ProviderSource, error) {
 	clusterID = strings.TrimSpace(clusterID)
 	if clusterID == "" || len(clusterID) > 128 {
-		return infrastructure.ProviderSource{}, errors.New("Kubernetes Provider probe cluster identity is invalid")
+		return infrastructure.ProviderSource{}, errors.New("kubernetes Provider probe cluster identity is invalid")
 	}
 	var result infrastructure.ProviderSource
 	query := url.Values{"cluster_id": []string{clusterID}}
@@ -219,7 +219,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	if err != nil {
 		return fmt.Errorf("call worker Provider Gateway: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	limited := io.LimitReader(response.Body, maxReplyBytes+1)
 	content, err := io.ReadAll(limited)
 	if err != nil {

@@ -17,10 +17,10 @@ func TestSemanticMigrationContract(t *testing.T) {
 			migrationNames = append(migrationNames, entry.Name())
 		}
 	}
-	if len(migrationNames) != 4 || migrationNames[0] != "00001_cloudops_baseline.sql" ||
+	if len(migrationNames) != 5 || migrationNames[0] != "00001_cloudops_baseline.sql" ||
 		migrationNames[1] != "00002_platform_foundation.sql" || migrationNames[2] != "00003_infrastructure_topology.sql" ||
-		migrationNames[3] != "00004_operational_scope_registry.sql" {
-		t.Fatalf("embedded migrations=%v, want semantic baseline, platform foundation, infrastructure topology, and operational scope registry", migrationNames)
+		migrationNames[3] != "00004_operational_scope_registry.sql" || migrationNames[4] != "00005_observability_queries.sql" {
+		t.Fatalf("embedded migrations=%v, want semantic baseline through observability queries", migrationNames)
 	}
 
 	contents, err := FS.ReadFile(migrationNames[0])
@@ -136,6 +136,28 @@ func TestSemanticMigrationContract(t *testing.T) {
 	for _, forbidden := range []string{"kubeconfig_data", "secret_value", "raw_yaml", "v2", "v3", "phase_2", "phase 2"} {
 		if strings.Contains(strings.ToLower(scopeRegistrySQL), forbidden) {
 			t.Errorf("operational scope registry retains forbidden implementation identity %q", forbidden)
+		}
+	}
+
+	observabilityContents, err := FS.ReadFile(migrationNames[4])
+	if err != nil {
+		t.Fatal(err)
+	}
+	observabilitySQL := string(observabilityContents)
+	for _, required := range []string{
+		"CREATE TABLE `query_definitions`", "CREATE TABLE `query_authorizations`",
+		"CREATE TABLE `query_executions`", "CREATE TABLE `query_execution_events`",
+		"fk_query_definitions_configuration_revision", "fk_query_authorizations_configuration_revision",
+		"fk_query_executions_authorization", "uk_query_execution_events_sequence",
+		"exact_query_hash", "max_response_bytes", "provider_collected_at",
+	} {
+		if !strings.Contains(observabilitySQL, required) {
+			t.Errorf("observability queries migration missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"raw_result", "secret_value", "bearer", "v2", "v3", "phase_3", "phase 3"} {
+		if strings.Contains(strings.ToLower(observabilitySQL), forbidden) {
+			t.Errorf("observability queries migration retains forbidden implementation or telemetry field %q", forbidden)
 		}
 	}
 }

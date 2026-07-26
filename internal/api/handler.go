@@ -29,6 +29,7 @@ type Config struct {
 	Settings       SettingsPort
 	Notifications  NotificationPort
 	Infrastructure InfrastructurePort
+	Monitoring     MonitoringPort
 	AllowedOrigins []string
 	Now            func() time.Time
 }
@@ -39,6 +40,7 @@ type Handler struct {
 	settings       SettingsPort
 	notifications  NotificationPort
 	infrastructure InfrastructurePort
+	monitoring     MonitoringPort
 	allowedOrigins map[string]struct{}
 	now            func() time.Time
 	idempotency    *idempotencyStore
@@ -63,6 +65,7 @@ func NewHandler(config Config) *Handler {
 		settings:       config.Settings,
 		notifications:  config.Notifications,
 		infrastructure: config.Infrastructure,
+		monitoring:     config.Monitoring,
 		allowedOrigins: normalizeOrigins(config.AllowedOrigins),
 		now:            config.Now,
 		idempotency:    newIdempotencyStore(config.Now),
@@ -109,6 +112,16 @@ var routes = []RouteSpec{
 	{Method: http.MethodPost, Path: "/api/v1/incidents/:id/investigations"},
 	{Method: http.MethodPost, Path: "/api/v1/incidents/:id/close"},
 	{Method: http.MethodPost, Path: "/api/v1/remediation-plans/:id/decisions"},
+	{Method: http.MethodGet, Path: "/api/v1/monitoring/catalog"},
+	{Method: http.MethodGet, Path: "/api/v1/monitoring/queries"},
+	{Method: http.MethodPost, Path: "/api/v1/monitoring/queries"},
+	{Method: http.MethodGet, Path: "/api/v1/monitoring/queries/:id"},
+	{Method: http.MethodPost, Path: "/api/v1/monitoring/queries/:id/cancel"},
+	{Method: http.MethodGet, Path: "/api/v1/monitoring/query-definitions"},
+	{Method: http.MethodPost, Path: "/api/v1/monitoring/query-definitions"},
+	{Method: http.MethodGet, Path: "/api/v1/monitoring/query-authorizations"},
+	{Method: http.MethodPost, Path: "/api/v1/monitoring/query-authorizations"},
+	{Method: http.MethodPost, Path: "/api/v1/monitoring/query-authorizations/:id/revoke"},
 }
 
 func Routes() []RouteSpec {
@@ -149,6 +162,11 @@ func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	queries.GET("/incidents/:id/verifications", handler.listVerifications)
 	queries.GET("/incidents/:id/resolution-report", handler.getResource(QueryResolutionReport))
 	queries.GET("/incidents/:id/events", handler.streamEvents)
+	queries.GET("/monitoring/catalog", handler.getMonitoringCatalog)
+	queries.GET("/monitoring/queries", handler.listMonitoringQueries)
+	queries.GET("/monitoring/queries/:id", handler.getMonitoringQuery)
+	queries.GET("/monitoring/query-definitions", handler.listQueryDefinitions)
+	queries.GET("/monitoring/query-authorizations", handler.listQueryAuthorizations)
 
 	commands := group.Group("")
 	commands.Use(handler.requireMutationOrigin)
@@ -162,6 +180,11 @@ func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	commands.POST("/incidents/:id/investigations", handler.startInvestigation)
 	commands.POST("/incidents/:id/close", handler.closeIncident)
 	commands.POST("/remediation-plans/:id/decisions", handler.decideRemediation)
+	commands.POST("/monitoring/queries", handler.startMonitoringQuery)
+	commands.POST("/monitoring/queries/:id/cancel", handler.cancelMonitoringQuery)
+	commands.POST("/monitoring/query-definitions", handler.saveQueryDefinition)
+	commands.POST("/monitoring/query-authorizations", handler.createQueryAuthorization)
+	commands.POST("/monitoring/query-authorizations/:id/revoke", handler.revokeQueryAuthorization)
 }
 
 func (h *Handler) listIncidents(c *gin.Context) {

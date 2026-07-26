@@ -34,7 +34,7 @@ func infrastructureGatewayHandler(cfg appconfig.Config) (http.Handler, error) {
 			return nil, clientErr
 		}
 		if client == nil {
-			return nil, errors.New("Kubernetes Provider client was not constructed")
+			return nil, errors.New("kubernetes Provider client was not constructed")
 		}
 		reader, readerErr := kubernetestopology.New(client, kubernetestopology.Config{
 			ClusterID: connection.ClusterID, AllowedNamespaces: connection.AllowedNamespaces,

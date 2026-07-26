@@ -45,11 +45,16 @@ expect_one() {
 
 expect_one Deployment cloudops-api
 expect_one Deployment cloudops-worker
+expect_one Deployment prometheus
+expect_one Deployment grafana
 expect_one StatefulSet mysql
 expect_one PersistentVolumeClaim cloudops-data
 expect_one Service cloudops-api
 expect_one Service cloudops-api-management
 expect_one Service cloudops-worker-management
+expect_one Service prometheus
+expect_one Service grafana
+expect_one ConfigMap cloudops-monitoring
 
 [[ "$(jq -r '[.[] | select(.kind == "Job" and (.metadata.name | startswith("cloudops-migrate-")))] | length' "${objects}")" == "1" ]] || {
   printf 'FAIL: expected one release-revision migration Job\n' >&2
@@ -68,6 +73,31 @@ expect_one Service cloudops-worker-management
 
 [[ "$(jq -r '[.[] | select(.kind == "Deployment" and .metadata.name == "cloudops-worker") | .spec.template.spec.containers[0].env | select(any(.[]; .name == "K8S_CONNECTIONS_JSON" and .value == ""))] | length' "${objects}")" == "1" ]] || {
   printf 'FAIL: empty Kubernetes connection registry must preserve the single-reader bootstrap contract\n' >&2
+  exit 1
+}
+
+[[ "$(jq -r '[.[] | select(.kind == "Deployment" and (.metadata.name == "prometheus" or .metadata.name == "grafana")) | .spec.template.spec | select(.automountServiceAccountToken == false) | .containers[0] | select(.securityContext.readOnlyRootFilesystem == true and .imagePullPolicy == "Never")] | length' "${objects}")" == "2" ]] || {
+  printf 'FAIL: native Monitoring providers must be non-root, tokenless, read-only, and use preloaded images\n' >&2
+  exit 1
+}
+
+[[ "$(jq -r '[.[] | select(.kind == "ConfigMap" and .metadata.name == "cloudops-monitoring") | .data["prometheus.yml"] | select(contains("cluster_id: \"cloudops-local\"") and contains("environment: \"local\"") and contains("namespace: \"cloudops-system\"") and contains("workload_kind: Deployment") and contains("workload: cloudops-api") and contains("workload: cloudops-worker"))] | length' "${objects}")" == "1" ]] || {
+  printf 'FAIL: Prometheus scrape targets must carry the exact bounded Workload labels\n' >&2
+  exit 1
+}
+
+[[ "$(jq -r '[.[] | select(.kind == "ConfigMap" and .metadata.name == "cloudops-monitoring") | .data["prometheus-datasource.yaml"] | select(contains("uid: Prometheus") and contains("url: http://prometheus.cloudops-system.svc:9090"))] | length' "${objects}")" == "1" ]] || {
+  printf 'FAIL: Grafana must provision the exact in-cluster Prometheus datasource\n' >&2
+  exit 1
+}
+
+[[ "$(jq -r '[.[] | select(.kind == "ConfigMap" and .metadata.name == "cloudops-monitoring") | .data["grafana.ini"] | select(contains("org_role = Editor") and contains("[explore]\nenabled = true"))] | length' "${objects}")" == "1" ]] || {
+  printf 'FAIL: local Grafana must allow its loopback Owner to open exact Explore links\n' >&2
+  exit 1
+}
+
+[[ "$(jq -r '[.[] | select(.kind == "ServiceMonitor" or .kind == "PrometheusRule")] | length' "${objects}")" == "0" ]] || {
+  printf 'FAIL: local Monitoring stack must not require unavailable Operator CRDs\n' >&2
   exit 1
 }
 

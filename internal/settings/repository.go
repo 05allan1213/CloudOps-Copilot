@@ -43,7 +43,7 @@ FROM configuration_revisions AS revision ORDER BY revision.revision_number DESC 
 	if err != nil {
 		return nil, fmt.Errorf("list configuration revisions: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	ids := make([]string, 0, limit)
 	for rows.Next() {
 		var id string

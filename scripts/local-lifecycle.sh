@@ -18,18 +18,32 @@ RELEASE_NAME="cloudops"
 DATABASE_NAME="cloudops"
 LOCAL_PORT="${CLOUDOPS_LOCAL_PORT:-18080}"
 LOCAL_URL="http://127.0.0.1:${LOCAL_PORT}"
+GRAFANA_LOCAL_PORT="${CLOUDOPS_GRAFANA_PORT:-18081}"
+GRAFANA_LOCAL_URL="http://127.0.0.1:${GRAFANA_LOCAL_PORT}"
 PORT_FORWARD_PID_FILE="${RUNTIME_DIR}/api-port-forward.pid"
 PORT_FORWARD_LOG="${RUNTIME_DIR}/api-port-forward.log"
+GRAFANA_PORT_FORWARD_PID_FILE="${RUNTIME_DIR}/grafana-port-forward.pid"
+GRAFANA_PORT_FORWARD_LOG="${RUNTIME_DIR}/grafana-port-forward.log"
 KIND_NODE_IMAGE="kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5"
 MYSQL_IMAGE="mysql:8.0.46"
 MYSQL_REPOSITORY="mysql"
 MYSQL_PLATFORM="linux/amd64"
 MYSQL_DIGEST="sha256:62fb722c78b24245ddff1796a0fcee4a49cc5b87e0aaaf20c92d1da9e0a2497b"
+PROMETHEUS_IMAGE="quay.io/prometheus/prometheus:v3.13.1-distroless"
+PROMETHEUS_REPOSITORY="quay.io/prometheus/prometheus"
+PROMETHEUS_DIGEST="sha256:214f8427c8fba80c327bb94a75feb802ae12f2d6ca30812aa6e7d22f09bbea80"
+PROMETHEUS_AMD64_DIGEST="sha256:335b5796a6e4355530475575253f84de20b8ad07bf899f65ed218451ce4c60b4"
+PROMETHEUS_PRELOAD_IMAGE="cloudops-preload/prometheus-amd64:v3.13.1-distroless"
+GRAFANA_IMAGE="grafana/grafana:12.3.1"
+GRAFANA_REPOSITORY="grafana/grafana"
+GRAFANA_DIGEST="sha256:2175aaa91c96733d86d31cf270d5310b278654b03f5718c59de12a865380a31f"
+GRAFANA_AMD64_DIGEST="sha256:7c064e627d9cb50c3485c9ded5ca0222de89a08e41403322a0c3ca6f1777a8d1"
+GRAFANA_PRELOAD_IMAGE="cloudops-preload/grafana-amd64:12.3.1"
 MIN_INOTIFY_INSTANCES=512
 BACKUP_FORMAT_VERSION=2
 BACKUP_CONTRACT="cloudops-semantic"
 RESTORE_STAGING_DATABASE="cloudops_restore_staging"
-LATEST_SCHEMA_VERSION=2
+LATEST_SCHEMA_VERSION=5
 DATA_CLAIM="cloudops-data"
 DATA_MOUNT_PATH="/var/lib/cloudops"
 DATA_DIRECTORY="${DATA_MOUNT_PATH}/data"
@@ -71,6 +85,11 @@ validate_local_port() {
   if [[ ! "${LOCAL_PORT}" =~ ^[0-9]+$ ]] || ((LOCAL_PORT < 1024 || LOCAL_PORT > 65535)); then
     die "CLOUDOPS_LOCAL_PORT must be an unprivileged TCP port"
   fi
+  if [[ ! "${GRAFANA_LOCAL_PORT}" =~ ^[0-9]+$ ]] || ((GRAFANA_LOCAL_PORT < 1024 || GRAFANA_LOCAL_PORT > 65535)); then
+    die "CLOUDOPS_GRAFANA_PORT must be an unprivileged TCP port"
+  fi
+  [[ "${LOCAL_PORT}" != "${GRAFANA_LOCAL_PORT}" ]] ||
+    die "CLOUDOPS_LOCAL_PORT and CLOUDOPS_GRAFANA_PORT must be different"
 }
 
 validate_fixed_boundaries() {
@@ -304,13 +323,57 @@ verify_mysql_image() {
     die "local ${MYSQL_IMAGE} platform=${platform}; expected ${MYSQL_PLATFORM}"
 }
 
+verify_observability_image() {
+  local image="$1" repository="$2" digest="$3" platform_digest="$4" preload_image="$5" image_id platform
+  if ! docker image inspect "${image}" >/dev/null 2>&1; then
+    docker pull --platform "${MYSQL_PLATFORM}" "${repository}@${digest}" >/dev/null
+    docker tag "${repository}@${digest}" "${image}"
+  fi
+  image_id="$(docker image inspect "${image}" --format '{{.Id}}')"
+  platform="$(docker image inspect "${image}" --format '{{.Os}}/{{.Architecture}}')"
+  [[ "${image_id}" == "${digest}" ]] ||
+    die "local ${image} does not match pinned image digest ${digest}"
+  docker pull --platform "${MYSQL_PLATFORM}" "${repository}@${platform_digest}" >/dev/null
+  docker tag "${repository}@${platform_digest}" "${preload_image}"
+  image_id="$(docker image inspect "${preload_image}" --format '{{.Id}}')"
+  [[ "${platform}" == "${MYSQL_PLATFORM}" ]] ||
+    die "local ${image} platform=${platform}; expected ${MYSQL_PLATFORM}"
+  [[ "${image_id}" == "${platform_digest}" ]] ||
+    die "local ${preload_image} does not match pinned platform digest ${platform_digest}"
+}
+
+verify_observability_images() {
+  verify_observability_image \
+    "${PROMETHEUS_IMAGE}" "${PROMETHEUS_REPOSITORY}" "${PROMETHEUS_DIGEST}" \
+    "${PROMETHEUS_AMD64_DIGEST}" "${PROMETHEUS_PRELOAD_IMAGE}"
+  verify_observability_image \
+    "${GRAFANA_IMAGE}" "${GRAFANA_REPOSITORY}" "${GRAFANA_DIGEST}" \
+    "${GRAFANA_AMD64_DIGEST}" "${GRAFANA_PRELOAD_IMAGE}"
+}
+
+load_observability_image() {
+  local preload_image="$1" runtime_image="$2" node source_ref target_ref
+  kind load docker-image "${preload_image}" --name "${CLUSTER_NAME}"
+  source_ref="docker.io/${preload_image}"
+  target_ref="${runtime_image}"
+  [[ "${target_ref}" == */*/* ]] || target_ref="docker.io/${target_ref}"
+  while IFS= read -r node; do
+    docker exec "${node}" ctr --namespace=k8s.io images tag --force "${source_ref}" "${target_ref}" >/dev/null
+  done < <(kind get nodes --name "${CLUSTER_NAME}")
+}
+
 build_application_images() {
-  local exact_sha source_url target
+  local exact_sha go_proxy source_url target
   exact_sha="$(git -C "${ROOT_DIR}" rev-parse HEAD)"
+  go_proxy="${CLOUDOPS_GO_PROXY:-https://goproxy.cn,direct}"
+  [[ "${go_proxy}" =~ ^[A-Za-z0-9:/.,_|-]+$ && "${go_proxy}" != *"@"* ]] ||
+    die "CLOUDOPS_GO_PROXY must be a credential-free Go proxy list"
   source_url="$(git -C "${ROOT_DIR}" remote get-url origin 2>/dev/null || printf 'local')"
   for target in api worker migrate; do
     note "building cloudops-${target}:local"
     docker build \
+      --network host \
+      --build-arg "GO_PROXY=${go_proxy}" \
       --build-arg "VCS_REF=${exact_sha}" \
       --build-arg "VCS_SOURCE=${source_url}" \
       --build-arg "VERSION=local" \
@@ -323,9 +386,12 @@ build_application_images() {
 load_runtime_images() {
   local image
   verify_mysql_image
+  verify_observability_images
   for image in cloudops-api:local cloudops-worker:local cloudops-migrate:local "${MYSQL_IMAGE}"; do
     kind load docker-image "${image}" --name "${CLUSTER_NAME}"
   done
+  load_observability_image "${PROMETHEUS_PRELOAD_IMAGE}" "${PROMETHEUS_IMAGE}"
+  load_observability_image "${GRAFANA_PRELOAD_IMAGE}" "${GRAFANA_IMAGE}"
 }
 
 reconcile_mysql_identities() {
@@ -367,6 +433,8 @@ install_runtime() {
   kube -n "${NAMESPACE}" rollout restart deployment/cloudops-api deployment/cloudops-worker >/dev/null
   kube -n "${NAMESPACE}" rollout status deployment/cloudops-api --timeout=5m
   kube -n "${NAMESPACE}" rollout status deployment/cloudops-worker --timeout=5m
+  kube -n "${NAMESPACE}" rollout status deployment/prometheus --timeout=5m
+  kube -n "${NAMESPACE}" rollout status deployment/grafana --timeout=5m
 }
 
 port_forward_pid() {
@@ -428,6 +496,66 @@ start_port_forward() {
   die "CloudOps loopback access did not become ready"
 }
 
+grafana_port_forward_pid() {
+  [[ -f "${GRAFANA_PORT_FORWARD_PID_FILE}" ]] || return 1
+  tr -d '[:space:]' <"${GRAFANA_PORT_FORWARD_PID_FILE}"
+}
+
+grafana_port_forward_process_matches() {
+  local pid="$1" command_line
+  [[ "${pid}" =~ ^[0-9]+$ && -r "/proc/${pid}/cmdline" ]] || return 1
+  command_line="$(tr '\0' ' ' <"/proc/${pid}/cmdline")"
+  [[ "${command_line}" == *"kubectl"* &&
+     "${command_line}" == *"${KUBE_CONTEXT}"* &&
+     "${command_line}" == *"${NAMESPACE}"* &&
+     "${command_line}" == *"service/grafana"* &&
+     "${command_line}" == *"${GRAFANA_LOCAL_PORT}:3000"* ]]
+}
+
+stop_grafana_port_forward() {
+  local pid
+  pid="$(grafana_port_forward_pid 2>/dev/null || true)"
+  if [[ -n "${pid}" ]] && grafana_port_forward_process_matches "${pid}"; then
+    kill "${pid}"
+    for _attempt in {1..20}; do
+      kill -0 "${pid}" 2>/dev/null || break
+      sleep 0.1
+    done
+  fi
+  rm -f "${GRAFANA_PORT_FORWARD_PID_FILE}"
+}
+
+start_grafana_port_forward() {
+  local pid
+  ensure_private_directories
+  pid="$(grafana_port_forward_pid 2>/dev/null || true)"
+  if [[ -n "${pid}" ]] && grafana_port_forward_process_matches "${pid}" &&
+     curl --noproxy '*' --fail --silent --max-time 2 "${GRAFANA_LOCAL_URL}/api/health" >/dev/null 2>&1; then
+    note "reusing Grafana loopback process pid=${pid}"
+    return
+  fi
+  stop_grafana_port_forward
+  : >"${GRAFANA_PORT_FORWARD_LOG}"
+  chmod 600 "${GRAFANA_PORT_FORWARD_LOG}"
+  nohup kubectl --context "${KUBE_CONTEXT}" -n "${NAMESPACE}" \
+    port-forward --address=127.0.0.1 service/grafana "${GRAFANA_LOCAL_PORT}:3000" \
+    </dev/null >"${GRAFANA_PORT_FORWARD_LOG}" 2>&1 &
+  pid="$!"
+  printf '%s\n' "${pid}" >"${GRAFANA_PORT_FORWARD_PID_FILE}"
+  chmod 600 "${GRAFANA_PORT_FORWARD_PID_FILE}"
+  for _attempt in {1..60}; do
+    if curl --noproxy '*' --fail --silent --max-time 2 "${GRAFANA_LOCAL_URL}/api/health" >/dev/null 2>&1; then
+      pass "grafana_url=${GRAFANA_LOCAL_URL}"
+      return
+    fi
+    kill -0 "${pid}" 2>/dev/null || break
+    sleep 0.5
+  done
+  stop_grafana_port_forward
+  tail -n 40 "${GRAFANA_PORT_FORWARD_LOG}" >&2 || true
+  die "Grafana loopback access did not become ready"
+}
+
 local_up() {
   preflight
   ensure_private_directories
@@ -438,6 +566,7 @@ local_up() {
   load_runtime_images
   install_runtime
   start_port_forward
+  start_grafana_port_forward
   print_status
 }
 
@@ -447,6 +576,7 @@ local_open() {
   context_exists || die "Kubernetes context is unavailable: ${KUBE_CONTEXT}"
   release_exists || die "CloudOps release is unavailable; run make local-up"
   start_port_forward
+  start_grafana_port_forward
   printf '%s\n' "${LOCAL_URL}"
   if [[ "${CLOUDOPS_NO_OPEN:-0}" != "1" ]] && command -v xdg-open >/dev/null 2>&1; then
     nohup xdg-open "${LOCAL_URL}" </dev/null >/dev/null 2>&1 &
@@ -983,14 +1113,14 @@ validate_bootstrap_secret_directory() {
 }
 
 print_status() {
-  local pod version pid gateway
+  local pod version pid grafana_pid gateway
   require_command kubectl
   require_command jq
   validate_fixed_boundaries
   validate_local_port
   validate_identifier "${DATABASE_NAME}"
-  printf 'cluster_name=%s\nkube_context=%s\nnamespace=%s\nrelease=%s\nurl=%s\n' \
-    "${CLUSTER_NAME}" "${KUBE_CONTEXT}" "${NAMESPACE}" "${RELEASE_NAME}" "${LOCAL_URL}"
+  printf 'cluster_name=%s\nkube_context=%s\nnamespace=%s\nrelease=%s\nurl=%s\ngrafana_url=%s\n' \
+    "${CLUSTER_NAME}" "${KUBE_CONTEXT}" "${NAMESPACE}" "${RELEASE_NAME}" "${LOCAL_URL}" "${GRAFANA_LOCAL_URL}"
   secret_directory_summary
   if ! context_exists; then
     printf 'runtime=unavailable\nreason=context_not_found\n'
@@ -1024,6 +1154,12 @@ print_status() {
   else
     printf 'loopback=stopped\n'
   fi
+  grafana_pid="$(grafana_port_forward_pid 2>/dev/null || true)"
+  if [[ -n "${grafana_pid}" ]] && grafana_port_forward_process_matches "${grafana_pid}"; then
+    printf 'grafana_loopback=available\ngrafana_loopback_pid=%s\n' "${grafana_pid}"
+  else
+    printf 'grafana_loopback=stopped\n'
+  fi
   kube -n "${NAMESPACE}" get pvc -l app.kubernetes.io/instance="${RELEASE_NAME}" \
     -o custom-columns='PVC:.metadata.name,STATUS:.status.phase,CAPACITY:.status.capacity.storage' --no-headers 2>/dev/null || true
   backup_summary
@@ -1037,6 +1173,8 @@ local_logs() {
   case "${component:-all}" in
     api) kube -n "${NAMESPACE}" logs deployment/cloudops-api --all-containers --tail="${lines}" ;;
     worker) kube -n "${NAMESPACE}" logs deployment/cloudops-worker --all-containers --tail="${lines}" ;;
+    prometheus) kube -n "${NAMESPACE}" logs deployment/prometheus --all-containers --tail="${lines}" ;;
+    grafana) kube -n "${NAMESPACE}" logs deployment/grafana --all-containers --tail="${lines}" ;;
     mysql) kube -n "${NAMESPACE}" logs statefulset/mysql --all-containers --tail="${lines}" ;;
     migrate)
       job="$(kube -n "${NAMESPACE}" get jobs -l app.kubernetes.io/component=migrate \
@@ -1045,12 +1183,12 @@ local_logs() {
       kube -n "${NAMESPACE}" logs "job/${job}" --all-containers --tail="${lines}"
       ;;
     all)
-      for component in api worker migrate mysql; do
+      for component in api worker prometheus grafana migrate mysql; do
         printf '== %s ==\n' "${component}"
         local_logs "${component}" || true
       done
       ;;
-    *) die "COMPONENT must be api, worker, migrate, mysql, or empty" ;;
+    *) die "COMPONENT must be api, worker, prometheus, grafana, migrate, mysql, or empty" ;;
   esac
 }
 
@@ -1060,22 +1198,31 @@ local_restart() {
   release_exists || die "CloudOps release is unavailable; run make local-up"
   kube -n "${NAMESPACE}" scale statefulset/mysql --replicas=1 >/dev/null
   kube -n "${NAMESPACE}" rollout status statefulset/mysql --timeout=5m
-  kube -n "${NAMESPACE}" scale deployment/cloudops-api deployment/cloudops-worker --replicas=1 >/dev/null
-  kube -n "${NAMESPACE}" rollout restart deployment/cloudops-api deployment/cloudops-worker >/dev/null
+  kube -n "${NAMESPACE}" scale \
+    deployment/cloudops-api deployment/cloudops-worker deployment/prometheus deployment/grafana \
+    --replicas=1 >/dev/null
+  kube -n "${NAMESPACE}" rollout restart \
+    deployment/cloudops-api deployment/cloudops-worker deployment/prometheus deployment/grafana >/dev/null
   kube -n "${NAMESPACE}" rollout status deployment/cloudops-api --timeout=5m
   kube -n "${NAMESPACE}" rollout status deployment/cloudops-worker --timeout=5m
+  kube -n "${NAMESPACE}" rollout status deployment/prometheus --timeout=5m
+  kube -n "${NAMESPACE}" rollout status deployment/grafana --timeout=5m
   start_port_forward
+  start_grafana_port_forward
   pass "CloudOps runtime restarted with persistent state preserved"
 }
 
 local_down() {
   validate_fixed_boundaries
   stop_port_forward
+  stop_grafana_port_forward
   if ! context_exists || ! release_exists; then
     note "CloudOps runtime is already stopped"
     return
   fi
-  kube -n "${NAMESPACE}" scale deployment/cloudops-api deployment/cloudops-worker --replicas=0 >/dev/null
+  kube -n "${NAMESPACE}" scale \
+    deployment/cloudops-api deployment/cloudops-worker deployment/prometheus deployment/grafana \
+    --replicas=0 >/dev/null
   kube -n "${NAMESPACE}" scale statefulset/mysql --replicas=0 >/dev/null
   pass "CloudOps workloads stopped; PVC and local secrets preserved"
 }
@@ -1098,6 +1245,7 @@ local_reset() {
     create_backup
   fi
   stop_port_forward
+  stop_grafana_port_forward
 	pvc_names="$(kube -n "${NAMESPACE}" get pvc \
 		-l app.kubernetes.io/instance="${RELEASE_NAME}" \
     -o name 2>/dev/null || true)"
@@ -1119,7 +1267,7 @@ local_reset() {
 }
 
 doctor() {
-  local failed=0 command_name pid pod latest_backup
+  local failed=0 command_name pid grafana_pid pod latest_backup
   validate_fixed_boundaries
   validate_local_port
   validate_state_directory
@@ -1173,6 +1321,14 @@ doctor() {
     printf 'PASS loopback process available pid=%s\n' "${pid}"
   else
     printf 'FAIL loopback process unavailable\n'
+    failed=1
+  fi
+  grafana_pid="$(grafana_port_forward_pid 2>/dev/null || true)"
+  if [[ -n "${grafana_pid}" ]] && grafana_port_forward_process_matches "${grafana_pid}" &&
+     curl --noproxy '*' --fail --silent --max-time 2 "${GRAFANA_LOCAL_URL}/api/health" >/dev/null 2>&1; then
+    printf 'PASS Grafana loopback process available pid=%s\n' "${grafana_pid}"
+  else
+    printf 'FAIL Grafana loopback process unavailable\n'
     failed=1
   fi
   backup_summary

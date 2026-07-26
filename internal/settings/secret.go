@@ -248,6 +248,35 @@ FROM secret_versions WHERE public_id = ? AND provider = ? AND purpose = ? AND st
 	return contents, nil
 }
 
+func (s *Service) ProviderAccess(ctx context.Context, revisionID string, provider Provider) (ProviderAccess, error) {
+	if !provider.Operational() {
+		return ProviderAccess{}, ErrNotFound
+	}
+	revision, err := s.Revision(ctx, strings.TrimSpace(revisionID))
+	if err != nil {
+		return ProviderAccess{}, err
+	}
+	var configuration *ProviderConfiguration
+	for index := range revision.Providers {
+		if revision.Providers[index].Provider == provider {
+			value := revision.Providers[index]
+			configuration = &value
+			break
+		}
+	}
+	if configuration == nil {
+		return ProviderAccess{}, ErrNotFound
+	}
+	access := ProviderAccess{Revision: revision, Configuration: *configuration}
+	credential, credentialErr := s.secretValue(ctx, provider, revision.SecretRefs)
+	if credentialErr == nil {
+		access.Credential = credential
+	} else if !errors.Is(credentialErr, ErrNotFound) {
+		return ProviderAccess{}, fmt.Errorf("resolve %s Provider credential: %w", provider, credentialErr)
+	}
+	return access, nil
+}
+
 func zeroBytes(value []byte) {
 	for index := range value {
 		value[index] = 0

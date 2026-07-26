@@ -1,9 +1,11 @@
 package startup
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/05allan1213/CloudOps-Copilot/internal/alertmanageringress"
 	"github.com/05allan1213/CloudOps-Copilot/internal/api"
@@ -13,9 +15,11 @@ import (
 	"github.com/05allan1213/CloudOps-Copilot/internal/handler"
 	"github.com/05allan1213/CloudOps-Copilot/internal/infra/incidentstore"
 	"github.com/05allan1213/CloudOps-Copilot/internal/infra/infrastructuregateway"
+	"github.com/05allan1213/CloudOps-Copilot/internal/infra/monitoringgateway"
 	"github.com/05allan1213/CloudOps-Copilot/internal/infrastructure"
 	"github.com/05allan1213/CloudOps-Copilot/internal/middleware"
 	"github.com/05allan1213/CloudOps-Copilot/internal/notification"
+	"github.com/05allan1213/CloudOps-Copilot/internal/observability"
 	"github.com/05allan1213/CloudOps-Copilot/internal/settings"
 )
 
@@ -53,7 +57,7 @@ func InitAPIContainer(cfg *config.Config, infra *di.Infra, runtimeReadiness hand
 		}
 		gatewayClient, gatewayErr := infrastructuregateway.NewClient(cfg.WorkerManagementTarget, cfg.K8SRequestTimeout)
 		if gatewayErr != nil {
-			return nil, fmt.Errorf("Kubernetes Provider Gateway client init failed: %w", gatewayErr)
+			return nil, fmt.Errorf("kubernetes Provider Gateway client init failed: %w", gatewayErr)
 		}
 		snapshotRepository, repositoryErr := infrastructure.NewMySQLRepository(infra.MySQL.SQLDB())
 		if repositoryErr != nil {
@@ -64,6 +68,18 @@ func InitAPIContainer(cfg *config.Config, infra *di.Infra, runtimeReadiness hand
 			return nil, fmt.Errorf("infrastructure service init failed: %w", err)
 		}
 		container.Settings.SetProviderProbe(settings.ProviderKubernetes, container.Infrastructure.ProbeCluster)
+		monitoringClient, gatewayErr := monitoringgateway.NewClient(cfg.WorkerManagementTarget, cfg.ObservabilityRequestTimeout+2*time.Second)
+		if gatewayErr != nil {
+			return nil, fmt.Errorf("prometheus Provider Gateway client init failed: %w", gatewayErr)
+		}
+		monitoringRepository, repositoryErr := observability.NewRepository(infra.MySQL.SQLDB())
+		if repositoryErr != nil {
+			return nil, fmt.Errorf("observability repository init failed: %w", repositoryErr)
+		}
+		container.Monitoring, err = observability.NewService(context.Background(), monitoringRepository, container.Settings, monitoringClient)
+		if err != nil {
+			return nil, fmt.Errorf("monitoring service init failed: %w", err)
+		}
 	}
 
 	h, err := handler.NewHandler(handler.Config{

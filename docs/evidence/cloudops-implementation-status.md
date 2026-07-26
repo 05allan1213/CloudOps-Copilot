@@ -6,7 +6,7 @@
 >
 > Task 0 开工基线：`10a1f2b659b4ee9adb1a3efcb7725f83504b9d1f`
 >
-> 最后更新：2026-07-26 16:55（Asia/Shanghai）
+> 最后更新：2026-07-26 22:27（Asia/Shanghai）
 
 ## 状态总览
 
@@ -15,10 +15,10 @@
 | 任务 0：语义基线与本地生命周期 | `DONE_WITH_NOT_RUN` | 无 | 本地 UI -> `/api/v1` -> MySQL、数据迁移及生命周期完成；外部 Provider 明确 `NOT RUN` |
 | 任务 1：平台 Shell 与 Settings | `DONE_WITH_NOT_RUN` | 任务 0 API、数据和生命周期契约 | Shell、Settings、revision、secret、notification 与 Worker activation 已完成真实联调；外部 Provider 调用明确 `NOT RUN` |
 | 任务 2：Infrastructure 与 Atlas | `DONE_WITH_NOT_RUN` | 任务 0；任务 1 Scope/Shell | 真实 Kubernetes typed reader、Infrastructure、Operations Atlas、多 Scope contract 与 Context Link 已完成；第二真实集群及 MCP 维度明确 `NOT RUN` |
-| 任务 3：Monitoring | `READY` | 任务 0；任务 1 Provider/Scope/Query | Provider、Scope、Query policy 与公共时间范围已落地 |
-| 任务 4：Logs 与 Traces | `BLOCKED` | 任务 1；任务 2/3 context contract | 任务 2 resource/time Context Link 已落地；仍等待任务 3 Monitoring context contract |
+| 任务 3：Monitoring | `DONE_WITH_NOT_RUN` | 任务 0；任务 1 Provider/Scope/Query | 真实 UI -> `/api/v1` -> Prometheus、bounded query、Definition/Execution/Authorization、审计、Workspace 与精确 Context Link 已完成；外部环境与真实 Agent runtime 明确 `NOT RUN` |
+| 任务 4：Logs 与 Traces | `READY` | 任务 1；任务 2/3 context contract | 任务 2 resource 与任务 3 query/resource/time Context Link 均已落地 |
 | 任务 5：Alerts | `READY` | 任务 0；任务 1 notification/Settings/Context Link | notification、Settings 与 Context Link 公共契约已落地 |
-| 任务 6：Agent | `BLOCKED` | 任务 1；任务 2-5 真实 Evidence source | 任务 2 已完成；任务 3-5 的真实 Evidence source 尚未完成 |
+| 任务 6：Agent | `BLOCKED` | 任务 1；任务 2-5 真实 Evidence source | 任务 2/3 已完成；任务 4/5 的真实 Evidence source 尚未完成 |
 | 任务 7：Incidents 与 Verify | `BLOCKED` | 任务 5、6；任务 2-4 Context Link | 前置领域尚未完成 |
 | 任务 8：Operations 与 DevOps | `BLOCKED` | 任务 6；Incident 链另需任务 7 | authority contract 尚未完成 |
 | 任务 9：Scenario 与最终收敛 | `BLOCKED` | 任务 0-8 本地必需能力 | 前置任务尚未完成 |
@@ -283,3 +283,77 @@ Chrome 首次连接 `18081` 时，命令执行器已经回收 `local-up` 的后�
 - Chrome DevTools MCP 与 Playwright MCP：当前工具面没有可调用的浏览器 MCP；工作区 Playwright 浏览器验收不冒充 MCP。
 - Gateway API CRD kind：当前真实集群未安装 Gateway API CRD；Ingress typed projection 已实现并验证，Gateway API 成功读取 `NOT RUN`。
 - hosted/staging/production、外部 Provider、PR、push、tag、默认分支：均不属于本轮本地 Task 2 收尾，`NOT RUN`。
+
+## 任务 3：Monitoring
+
+### 实施结果
+
+- Worker 持有 bounded Prometheus adapter；API 只调用固定内部 gateway，浏览器不接触 Provider endpoint、credential 或原始 response。guided 与 expert 查询共享活动 Operational Scope、最大 lookback、timeout、response bytes、series、samples、step 与 concurrency 合同。
+- Query Definition、Query Execution 与 Query Authorization 是三个独立持久化概念。Owner 可直接执行或绑定 immutable Definition；Agent 只能使用一次性 exact authorization 或已授权的 Definition version，scope/query/bounds expansion、revoked authorization 和浏览器伪造 `actor=agent` 均 fail closed。
+- `migrations/00005_observability_queries.sql` 将 schema 提升到 version 5，保存 Definition revision/content hash、Execution provenance/result bounds、Authorization consumption/revocation和顺序审计事件；查询结果不复制为新的遥测事实库。
+- Monitoring Workspace 提供真实 Workload selector、guided CPU/error query、expert PromQL、时间/step 控件、chart、table、history、audit、保存 Definition、授权/撤销及 Provider state。URL 保存 cluster/namespace/resource/mode/from/to/execution，可精确恢复同一查询上下文。
+- Context Link 同时生成 CloudOps 内部精确链接和 Grafana Explore provider link；两者绑定 normalized PromQL、真实 resource identity 与绝对 UTC 时间范围。
+
+### Runtime 与数据审计
+
+| 项目 | 结果 | 当前证据 |
+|---|---|---|
+| Build/runtime | `PASS` | `make local-up` 从当前 worktree 重建；Helm `cloudops` revision `18`；API、Worker、MySQL、Prometheus、Grafana 均 Ready，当前 Deployment 均 `1/1` |
+| Schema | `PASS` | `goose_db_version=5`；`migrations/00005_observability_queries.sql` 已应用 |
+| Prometheus authority | `PASS` | Kubernetes MCP 复核 image `quay.io/prometheus/prometheus:v3.13.1-distroless`；6/6 成功 Execution 保存 provider identity `http://prometheus:9090` 与 server version `3.13.1` |
+| Persistence/audit | `PASS` | 真实 MySQL：`query_executions=6`、`query_execution_events=18`、`query_definitions=1`、`query_authorizations=1`；每次成功执行均有 created/started/succeeded 三个顺序事件 |
+| Definition | `PASS` | UI 保存 immutable Definition `48eee2ff-dded-4fa0-a6cb-b786ccbbc415`；Owner 绑定执行 `fdcaf50a-e695-46e3-b61a-45cd8492759e` 为 `202`，实际 bounds 收紧为 `900s / 200 series / 1000 samples` |
+| Authorization boundary | `PASS` | UI 创建一次性 Authorization `eabad0f7-52ef-4544-a7cd-f8822777aa66` 得到 `201`，撤销得到 `204`，UI 与 MySQL 均为 `revoked`；API test 拒绝浏览器声明 Agent actor，domain test 证明 Agent 复用 Owner bounded contract 且 revoked authorization 被拒绝 |
+| Provider unavailable | `PASS` | Kubernetes MCP 将 Prometheus scale 到 `0` 后 catalog 仍为 `200` 且 `provider_state=unavailable`，UI 显示“Prometheus 不可用”、endpoint 与禁用执行按钮；恢复 `1` 后 Pod Ready、catalog available，恢复执行 `6fb46419-798f-4e28-9979-a57454169b70` succeeded |
+
+### MCP 联调证据
+
+验收 URL：`http://127.0.0.1:18082/monitoring`；Playwright MCP 与 Kubernetes MCP 直接操作当前 `kind-cloudops-local` / `cloudops-system` runtime。工具面没有独立 Prometheus MCP，因此 Provider 调用证据来自产品真实链路和 Prometheus provenance，不冒充专用 MCP。
+
+| 维度 | 结果 | 证据 |
+|---|---|---|
+| Guided query | `PASS` | 选择真实 `cloudops-api` Deployment；CPU execution `d2cbf7ec-ba40-46c5-9aa5-46fd7a861abb` 返回 `1 series / 22 samples`，error execution `70fa6d27-85bf-43a8-bd40-1d3eb171d574` 返回 `1 / 10` |
+| Expert PromQL | `PASS` | execution `ebc862dc-2f9e-4bce-87bc-cb4d534b02ca` 返回 `4 series / 92 samples / 2.4 KiB`；UI chart、四行 table、history 与审计显示 `status=200/202/304/403` |
+| UI/API/Provider chain | `PASS` | Playwright network 记录 UI `POST /api/v1/monitoring/queries` -> `202`，随后 execution `GET` -> `200`；页面结果与 MySQL 中的 Prometheus `3.13.1` provenance、series/sample counts 一致，无 fixture 或浏览器直连 Provider |
+| Definition/authorization | `PASS` | UI 保存 Definition，并对同一 normalized query 创建和撤销 Authorization；页面显示“已撤销”，数据库 projection 一致 |
+| Exact Context Link | `PASS` | CloudOps 与 Grafana 均打开 normalized PromQL `sum by (status) (rate(http_requests_total{...}[5m]))`，绝对范围 `2026-07-26T13:26:00Z` 至 `13:41:00Z`；Grafana 本地显示 `21:26:00` 至 `21:41:00`，图例同为 `200/202/304/403` |
+| Invalid query | `PASS` | UI 提交 `sum(` 得到可见 `422 INVALID_MONITORING_QUERY`；request/trace `dk8jqcsd0d8f-6x` |
+| Oversized query | `PASS` | UI 提交 `6h` range + `15s` step，`1441` points 超过 `1000` samples bound，得到可见 `422 INVALID_MONITORING_QUERY`；request/trace `dk8jqo3pcb0v-76` |
+| Console | `PASS` | 最终页面无 Vue/page exception；浏览器记录的两个 resource error 是上述预期 `422` 负向请求，未被误报为成功 |
+| Task result | `DONE_WITH_NOT_RUN` | Task 3 本地真实 UI-to-Prometheus 纵向能力与 unavailable 分支完成；未运行项如下 |
+
+`domain-modeling` Skill 用于收敛领域语言并影响实现：Definition 描述可复用且不可变版本化的查询意图，Execution 描述一次有界 Provider 调用及 provenance，Authorization 只描述 Agent 执行权限；三者没有合并为一个可变“saved query”记录。
+
+### 检查结果
+
+`PASS`：
+
+- `make check`：module/structure、`go vet`、`golangci-lint`、Go tests、race tests、build、frontend lint/typecheck/51 tests/build、actionlint、ShellCheck、Helm strict lint、runtime render、kubeconform `24/24` 与 naming gate 全部通过。
+- `golangci-lint run --max-same-issues=0 --max-issues-per-linter=0 ./...`：`0 issues`。
+- `go test -count=1 ./internal/observability ./internal/api`。
+- `git diff --check`。
+- `make local-up` 与 Kubernetes/Playwright MCP runtime 复核。
+
+### 实际文件清单
+
+- Domain/data：`internal/observability/**`、`migrations/00005_observability_queries.sql`、schema/migration contract tests、`CONTEXT.md`。
+- Provider boundary：`internal/infra/{monitoringprometheus,monitoringgateway,prometheus}/**`、`internal/bootstrap/worker_monitoring.go` 与 Worker/API runtime wiring。
+- API/contract：`internal/api/monitoring_handler*`、router/dependency wiring、`docs/api-v1-openapi.yaml`。
+- Frontend：`frontend/src/api/monitoring.ts`、`frontend/src/views/monitoring/**`、Monitoring route。
+- Configuration/runtime：Prometheus/Context Link settings、Helm monitoring stack、runtime validation、local lifecycle 与 Docker dependency closure。
+
+### Delivery record
+
+| 项目 | 结果 | 证据 |
+|---|---|---|
+| Branch/base | `PASS` | `codex/v3-refactor`；当前 HEAD `13079082c98e18f837c212212859f5347d670e41` |
+| Worktree preservation | `PASS` | 保留任务开始时和本轮全部未提交成果；未 reset、revert 或清理 |
+| Local commit | `PASS` | Task 3 implementation 与本状态节一并纳入本地 commit；精确 SHA 以提交完成后的 Git HEAD 为准 |
+| Push | `NOT RUN` | 未创建 PR 或 tag，未 push，未触碰默认分支 |
+
+### NOT RUN
+
+- 独立 Prometheus MCP：当前工具面未提供；真实 UI/API/Prometheus 与 Kubernetes MCP 证据不冒充专用 Prometheus MCP。
+- 真实 Agent runtime/LLM 发起的 PromQL：Agent 属于任务 6，当前未启用真实模型调用；共享 bounded contract、浏览器 actor 隔离、一次性授权及撤销已由实现、自动化测试和真实 Owner UI 验证，但不冒充 Agent runtime PASS。
+- 长时间运行查询的 live cancellation：本地查询在取消操作前已完成；cancellation API、持久状态与 Worker context 已实现并通过完整编译/静态门禁，但真实 in-flight cancellation 为 `NOT RUN`。
+- hosted/staging/production、外部 Prometheus、PR、push、tag、默认分支：`NOT RUN`。

@@ -230,7 +230,7 @@ func verifyDatasetAddress(path, expected string) error {
 	}
 	actual := fmt.Sprintf("%x", sha256.Sum256(encoded))
 	if actual != expected {
-		return fmt.Errorf("Agent Eval dataset address mismatch: expected sha256:%s, got sha256:%s", expected, actual)
+		return fmt.Errorf("agent Eval dataset address mismatch: expected sha256:%s, got sha256:%s", expected, actual)
 	}
 	return nil
 }

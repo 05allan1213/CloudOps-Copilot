@@ -73,7 +73,7 @@ func (s *Service) testProvider(ctx context.Context, config ProviderConfiguration
 		result.Detail = "Provider 连接失败；检查 endpoint、网络与 secret 状态"
 		return result
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 8192))
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		result.State = "unavailable"

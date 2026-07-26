@@ -9,6 +9,7 @@ import (
 
 	"github.com/05allan1213/CloudOps-Copilot/internal/bootstrap/logger"
 	"github.com/05allan1213/CloudOps-Copilot/internal/di"
+	"github.com/05allan1213/CloudOps-Copilot/internal/observability"
 	"github.com/05allan1213/CloudOps-Copilot/internal/router"
 	"github.com/05allan1213/CloudOps-Copilot/internal/startup"
 )
@@ -18,6 +19,7 @@ type API struct {
 	infra          *di.Infra
 	userServer     *http.Server
 	internalServer *http.Server
+	monitoring     *observability.Service
 }
 
 func NewAPI(ctx context.Context, cfg APIConfig) (*API, error) {
@@ -52,8 +54,9 @@ func NewAPI(ctx context.Context, cfg APIConfig) (*API, error) {
 		return fail(fmt.Errorf("create INTERNAL API router: %w", err))
 	}
 	return &API{
-		cfg:   cfg,
-		infra: infra,
+		cfg:        cfg,
+		infra:      infra,
+		monitoring: container.Monitoring,
 		userServer: &http.Server{
 			Addr:              application.ListenAddr,
 			Handler:           userHandler,
@@ -104,8 +107,16 @@ func (a *API) Serve(ctx context.Context, userListener, internalListener net.List
 		runErr,
 		a.userServer.Shutdown(shutdownCtx),
 		a.internalServer.Shutdown(shutdownCtx),
+		closeMonitoring(shutdownCtx, a.monitoring),
 		closeInfra(shutdownCtx, a.infra),
 	)
+}
+
+func closeMonitoring(ctx context.Context, service *observability.Service) error {
+	if service == nil {
+		return nil
+	}
+	return service.Close(ctx)
 }
 
 func RunAPI(ctx context.Context) error {

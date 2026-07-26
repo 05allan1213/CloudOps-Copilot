@@ -3,6 +3,7 @@
 ARG NODE_IMAGE=node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293
 ARG GO_IMAGE=golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2
 ARG RUNTIME_IMAGE=alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d
+ARG GO_PROXY=https://proxy.golang.org,direct
 ARG VCS_REF=unknown
 ARG VCS_SOURCE=unknown
 ARG VERSION=dev
@@ -20,6 +21,7 @@ RUN npm run build
 
 FROM ${GO_IMAGE} AS go-builder
 
+ARG GO_PROXY
 ARG VCS_REF=unknown
 ARG VCS_SOURCE=unknown
 ARG VERSION=dev
@@ -28,7 +30,7 @@ WORKDIR /src
 
 ENV CGO_ENABLED=0 \
     GOFLAGS=-trimpath \
-    GOPROXY=https://proxy.golang.org,direct
+    GOPROXY=${GO_PROXY}
 
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod \

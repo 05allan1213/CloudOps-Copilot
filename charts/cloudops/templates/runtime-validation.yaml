@@ -47,6 +47,15 @@
 {{- if eq (lower (.Values.mysql.image.tag | toString)) "latest" -}}
 {{- fail "mysql.image.tag must not be latest" -}}
 {{- end -}}
+{{- if eq (lower (.Values.observability.stack.prometheus.image.tag | toString)) "latest" -}}
+{{- fail "observability.stack.prometheus.image.tag must not be latest" -}}
+{{- end -}}
+{{- if eq (lower (.Values.observability.stack.grafana.image.tag | toString)) "latest" -}}
+{{- fail "observability.stack.grafana.image.tag must not be latest" -}}
+{{- end -}}
+{{- if and .Values.observability.enabled .Values.observability.stack.enabled -}}
+{{- fail "Operator-managed and native local observability modes are mutually exclusive" -}}
+{{- end -}}
 
 {{- if ne (index .Values.worker.env "K8S_WRITE_ENABLED" | toString) "false" -}}
 {{- fail "cloudops-worker Kubernetes access must remain read-only by default" -}}

@@ -18,15 +18,15 @@ type Registry struct {
 
 func NewRegistry(readers ...*Reader) (*Registry, error) {
 	if len(readers) == 0 || len(readers) > maximumReaders {
-		return nil, errors.New("Kubernetes topology reader registry requires 1 to 10 clients")
+		return nil, errors.New("kubernetes topology reader registry requires 1 to 10 clients")
 	}
 	registry := &Registry{readers: make(map[string]*Reader, len(readers))}
 	for _, reader := range readers {
 		if reader == nil {
-			return nil, errors.New("Kubernetes topology reader registry contains a nil client")
+			return nil, errors.New("kubernetes topology reader registry contains a nil client")
 		}
 		if _, exists := registry.readers[reader.clusterID]; exists {
-			return nil, errors.New("Kubernetes topology reader registry contains a duplicate cluster identity")
+			return nil, errors.New("kubernetes topology reader registry contains a duplicate cluster identity")
 		}
 		registry.readers[reader.clusterID] = reader
 	}
@@ -59,7 +59,7 @@ func (r *Registry) Events(ctx context.Context, clusterID string, resource infras
 
 func (r *Registry) reader(clusterID string) (*Reader, error) {
 	if r == nil {
-		return nil, errors.New("Kubernetes topology reader registry is unavailable")
+		return nil, errors.New("kubernetes topology reader registry is unavailable")
 	}
 	reader := r.readers[strings.TrimSpace(clusterID)]
 	if reader == nil {

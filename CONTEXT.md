@@ -132,6 +132,10 @@ _Avoid_: Unrestricted provider access, mutable query text, Agent-generated comma
 The Owner's revocable authority for the Agent to execute either one exact query once or one Query Definition version repeatedly within fixed provider, scope and resource bounds.
 _Avoid_: Permanent provider permission, approval of future edits, unrestricted Agent access
 
+**Query Execution**:
+An audited attempt to run one exact normalized query, bound to its actor, Provider, Operational Scope, Configuration Revision, time range and resource limits. It retains execution metadata and attributable references, not a long-lived copy of the Provider result.
+_Avoid_: Query Definition, telemetry archive, unrestricted Provider request
+
 **Operation Plan**:
 An immutable proposal for one external or high-impact effect, binding its exact target, parameters, diff, preconditions, risk, expiry and verification intent.
 _Avoid_: Chat suggestion, shell command, mutable draft, blanket permission

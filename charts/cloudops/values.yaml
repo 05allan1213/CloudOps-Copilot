@@ -158,3 +158,41 @@ observability:
   serviceMonitor:
     interval: 15s
     scrapeTimeout: 5s
+  stack:
+    enabled: false
+    clusterID: cloudops-local
+    environment: local
+    scrapeInterval: 5s
+    scrapeTimeout: 3s
+    prometheus:
+      image:
+        repository: quay.io/prometheus/prometheus
+        tag: v3.13.1-distroless
+        digest: sha256:214f8427c8fba80c327bb94a75feb802ae12f2d6ca30812aa6e7d22f09bbea80
+        pullPolicy: IfNotPresent
+      port: 9090
+      retentionTime: 6h
+      retentionSize: 256MB
+      resources:
+        requests:
+          cpu: 100m
+          memory: 192Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+    grafana:
+      image:
+        repository: grafana/grafana
+        tag: 12.3.1
+        digest: sha256:2175aaa91c96733d86d31cf270d5310b278654b03f5718c59de12a865380a31f
+        pullPolicy: IfNotPresent
+      port: 3000
+      rootURL: http://127.0.0.1:18081
+      anonymousRole: Viewer
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          cpu: 300m
+          memory: 256Mi

@@ -202,7 +202,7 @@ func validateNormalizedDraft(draft Draft) []FieldError {
 			}
 		}
 		if item.ContextLinkBase != "" {
-			if err := validateHTTPBase(item.ContextLinkBase, true); err != nil {
+			if err := validateContextLinkBase(item.ContextLinkBase); err != nil {
 				add(prefix+".context_link_base", "INVALID_CONTEXT_LINK", err.Error())
 			}
 		}
@@ -222,6 +222,21 @@ func validateNormalizedDraft(draft Draft) []FieldError {
 		}
 	}
 	return result
+}
+
+func validateContextLinkBase(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed == nil || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("必须是无 credential、query 或 fragment 的固定 HTTP URL")
+	}
+	if parsed.Scheme == "https" {
+		return nil
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if parsed.Scheme == "http" && (host == "127.0.0.1" || host == "localhost" || host == "::1") {
+		return nil
+	}
+	return fmt.Errorf("非 loopback Context Link 必须使用 https")
 }
 
 func defaultProviderConfiguration(provider Provider) ProviderConfiguration {

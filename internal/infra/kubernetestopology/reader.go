@@ -41,11 +41,11 @@ type Reader struct {
 
 func New(client kubernetes.Interface, cfg Config) (*Reader, error) {
 	if client == nil {
-		return nil, errors.New("Kubernetes topology client is required")
+		return nil, errors.New("kubernetes topology client is required")
 	}
 	clusterID := strings.TrimSpace(cfg.ClusterID)
 	if clusterID == "" || len(clusterID) > 128 {
-		return nil, errors.New("Kubernetes topology cluster identity is invalid")
+		return nil, errors.New("kubernetes topology cluster identity is invalid")
 	}
 	allowed := make(map[string]struct{}, len(cfg.AllowedNamespaces))
 	allowAll := false
@@ -64,7 +64,7 @@ func New(client kubernetes.Interface, cfg Config) (*Reader, error) {
 		allowed[namespace] = struct{}{}
 	}
 	if !allowAll && len(allowed) == 0 {
-		return nil, errors.New("Kubernetes topology Namespace allowlist is empty")
+		return nil, errors.New("kubernetes topology namespace allowlist is empty")
 	}
 	timeout := cfg.RequestTimeout
 	if timeout <= 0 {
@@ -83,8 +83,14 @@ func (r *Reader) Probe(ctx context.Context, clusterID string) (infrastructure.Pr
 	}
 	ctx, cancel := context.WithTimeout(ctx, r.requestTimeout)
 	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return infrastructure.ProviderSource{}, fmt.Errorf("probe Kubernetes API: %w", err)
+	}
 	version, err := r.client.Discovery().ServerVersion()
 	if err != nil {
+		return infrastructure.ProviderSource{}, fmt.Errorf("probe Kubernetes API: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
 		return infrastructure.ProviderSource{}, fmt.Errorf("probe Kubernetes API: %w", err)
 	}
 	return infrastructure.ProviderSource{
@@ -184,7 +190,7 @@ func (r *Reader) namespaces(values []string) ([]string, error) {
 		}
 		if !r.allowAllNamespaces {
 			if _, ok := r.allowedNamespaces[namespace]; !ok {
-				return nil, fmt.Errorf("Namespace %q is outside the Kubernetes reader allowlist", namespace)
+				return nil, fmt.Errorf("namespace %q is outside the Kubernetes reader allowlist", namespace)
 			}
 		}
 		if _, ok := seen[namespace]; ok {
@@ -469,7 +475,7 @@ func deploymentResource(clusterID string, item appsv1.Deployment) infrastructure
 	resource := baseResource(clusterID, "apps/v1", "Deployment", infrastructure.LayerWorkload, item.Namespace, item.Name, string(item.UID), fmt.Sprintf("%d/%d ready", item.Status.ReadyReplicas, desired), health, item.Labels, item.CreationTimestamp.Time)
 	resource.Selector = labelSelector(item.Spec.Selector)
 	for _, condition := range item.Status.Conditions {
-		resource.Conditions = append(resource.Conditions, infrastructure.ResourceCondition{Type: string(condition.Type), Status: string(condition.Status), Reason: bounded(condition.Reason, 128), Message: sanitized(condition.Message, 512), LastTransitionTime: condition.LastTransitionTime.Time.UTC()})
+		resource.Conditions = append(resource.Conditions, infrastructure.ResourceCondition{Type: string(condition.Type), Status: string(condition.Status), Reason: bounded(condition.Reason, 128), Message: sanitized(condition.Message, 512), LastTransitionTime: condition.LastTransitionTime.UTC()})
 	}
 	return resource
 }
@@ -482,7 +488,7 @@ func statefulSetResource(clusterID string, item appsv1.StatefulSet) infrastructu
 	resource := baseResource(clusterID, "apps/v1", "StatefulSet", infrastructure.LayerWorkload, item.Namespace, item.Name, string(item.UID), fmt.Sprintf("%d/%d ready", item.Status.ReadyReplicas, desired), replicaHealth(desired, item.Status.ReadyReplicas, "StatefulSet"), item.Labels, item.CreationTimestamp.Time)
 	resource.Selector = labelSelector(item.Spec.Selector)
 	for _, condition := range item.Status.Conditions {
-		resource.Conditions = append(resource.Conditions, infrastructure.ResourceCondition{Type: string(condition.Type), Status: string(condition.Status), Reason: bounded(condition.Reason, 128), Message: sanitized(condition.Message, 512), LastTransitionTime: condition.LastTransitionTime.Time.UTC()})
+		resource.Conditions = append(resource.Conditions, infrastructure.ResourceCondition{Type: string(condition.Type), Status: string(condition.Status), Reason: bounded(condition.Reason, 128), Message: sanitized(condition.Message, 512), LastTransitionTime: condition.LastTransitionTime.UTC()})
 	}
 	return resource
 }
@@ -492,7 +498,7 @@ func daemonSetResource(clusterID string, item appsv1.DaemonSet) infrastructure.R
 	resource := baseResource(clusterID, "apps/v1", "DaemonSet", infrastructure.LayerWorkload, item.Namespace, item.Name, string(item.UID), fmt.Sprintf("%d/%d ready", item.Status.NumberReady, desired), replicaHealth(desired, item.Status.NumberReady, "DaemonSet"), item.Labels, item.CreationTimestamp.Time)
 	resource.Selector = labelSelector(item.Spec.Selector)
 	for _, condition := range item.Status.Conditions {
-		resource.Conditions = append(resource.Conditions, infrastructure.ResourceCondition{Type: string(condition.Type), Status: string(condition.Status), Reason: bounded(condition.Reason, 128), Message: sanitized(condition.Message, 512), LastTransitionTime: condition.LastTransitionTime.Time.UTC()})
+		resource.Conditions = append(resource.Conditions, infrastructure.ResourceCondition{Type: string(condition.Type), Status: string(condition.Status), Reason: bounded(condition.Reason, 128), Message: sanitized(condition.Message, 512), LastTransitionTime: condition.LastTransitionTime.UTC()})
 	}
 	return resource
 }
@@ -542,7 +548,7 @@ func podResource(clusterID string, item corev1.Pod, replicaSetOwners map[string]
 		}
 	}
 	for _, condition := range item.Status.Conditions {
-		resource.Conditions = append(resource.Conditions, infrastructure.ResourceCondition{Type: string(condition.Type), Status: string(condition.Status), Reason: bounded(condition.Reason, 128), Message: sanitized(condition.Message, 512), LastTransitionTime: condition.LastTransitionTime.Time.UTC()})
+		resource.Conditions = append(resource.Conditions, infrastructure.ResourceCondition{Type: string(condition.Type), Status: string(condition.Status), Reason: bounded(condition.Reason, 128), Message: sanitized(condition.Message, 512), LastTransitionTime: condition.LastTransitionTime.UTC()})
 	}
 	return resource
 }
@@ -573,7 +579,7 @@ func nodeResource(clusterID string, item corev1.Node) infrastructure.Resource {
 		}
 	}
 	for _, condition := range item.Status.Conditions {
-		resource.Conditions = append(resource.Conditions, infrastructure.ResourceCondition{Type: string(condition.Type), Status: string(condition.Status), Reason: bounded(condition.Reason, 128), Message: sanitized(condition.Message, 512), LastTransitionTime: condition.LastTransitionTime.Time.UTC()})
+		resource.Conditions = append(resource.Conditions, infrastructure.ResourceCondition{Type: string(condition.Type), Status: string(condition.Status), Reason: bounded(condition.Reason, 128), Message: sanitized(condition.Message, 512), LastTransitionTime: condition.LastTransitionTime.UTC()})
 		if condition.Type == corev1.NodeReady {
 			if condition.Status == corev1.ConditionTrue {
 				resource.Health = infrastructure.ResourceHealth{State: infrastructure.HealthHealthy, Summary: "Node Ready"}
@@ -677,18 +683,18 @@ func eventID(item corev1.Event) string {
 
 func eventTime(item corev1.Event) time.Time {
 	if !item.EventTime.IsZero() {
-		return item.EventTime.Time.UTC()
+		return item.EventTime.UTC()
 	}
 	if item.Series != nil && !item.Series.LastObservedTime.IsZero() {
-		return item.Series.LastObservedTime.Time.UTC()
+		return item.Series.LastObservedTime.UTC()
 	}
 	if !item.LastTimestamp.IsZero() {
-		return item.LastTimestamp.Time.UTC()
+		return item.LastTimestamp.UTC()
 	}
 	if !item.FirstTimestamp.IsZero() {
-		return item.FirstTimestamp.Time.UTC()
+		return item.FirstTimestamp.UTC()
 	}
-	return item.CreationTimestamp.Time.UTC()
+	return item.CreationTimestamp.UTC()
 }
 
 func bounded(value string, max int) string {

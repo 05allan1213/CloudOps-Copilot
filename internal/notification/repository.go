@@ -18,8 +18,8 @@ import (
 )
 
 var (
-	ErrInvalid  = errors.New("invalid Owner Notification")
-	ErrNotFound = errors.New("Owner Notification not found")
+	ErrInvalid  = errors.New("invalid owner notification")
+	ErrNotFound = errors.New("owner notification not found")
 )
 
 type ContextLink struct {
@@ -91,16 +91,14 @@ FROM owner_notifications`
 	if err != nil {
 		return Page{}, fmt.Errorf("list Owner Notifications: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := make([]Item, 0, limit+1)
-	ids := make([]uint64, 0, limit+1)
 	for rows.Next() {
-		item, id, err := scanItem(rows)
+		item, _, err := scanItem(rows)
 		if err != nil {
 			return Page{}, err
 		}
 		items = append(items, item)
-		ids = append(ids, id)
 	}
 	if err := rows.Err(); err != nil {
 		return Page{}, err
@@ -109,7 +107,6 @@ FROM owner_notifications`
 	if len(items) > limit {
 		page.NextCursor = encodeCursor(items[limit-1].ID)
 		page.Items = items[:limit]
-		ids = ids[:limit]
 	}
 	if page.Items == nil {
 		page.Items = []Item{}
@@ -135,7 +132,7 @@ FROM owner_notifications WHERE id > ? ORDER BY id LIMIT ?`, afterID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list Owner Notification events: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := make([]Item, 0)
 	for rows.Next() {
 		item, _, err := scanItem(rows)

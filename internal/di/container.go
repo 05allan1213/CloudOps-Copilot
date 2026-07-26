@@ -15,6 +15,7 @@ import (
 	"github.com/05allan1213/CloudOps-Copilot/internal/infrastructure"
 	"github.com/05allan1213/CloudOps-Copilot/internal/middleware"
 	"github.com/05allan1213/CloudOps-Copilot/internal/notification"
+	"github.com/05allan1213/CloudOps-Copilot/internal/observability"
 	"github.com/05allan1213/CloudOps-Copilot/internal/router"
 	"github.com/05allan1213/CloudOps-Copilot/internal/settings"
 )
@@ -38,6 +39,7 @@ type Container struct {
 	Settings       *settings.Service
 	Notifications  *notification.Repository
 	Infrastructure *infrastructure.Service
+	Monitoring     *observability.Service
 }
 
 func NewContainer(infra *Infra) *Container {
@@ -55,5 +57,6 @@ func (c *Container) Dependencies() router.Dependencies {
 		Settings:       c.Settings,
 		Notifications:  c.Notifications,
 		Infrastructure: c.Infrastructure,
+		Monitoring:     c.Monitoring,
 	}
 }

@@ -452,7 +452,7 @@ ORDER BY FIELD(health.provider, 'mysql','kubernetes','prometheus','alertmanager'
 	if err != nil {
 		return nil, fmt.Errorf("list provider health: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	result := make([]ProviderHealth, 0, 9)
 	for rows.Next() {
 		var item ProviderHealth

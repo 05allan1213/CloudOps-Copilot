@@ -84,6 +84,22 @@ type ProviderConfiguration struct {
 	ContextLinkBase string   `json:"context_link_base"`
 }
 
+// ProviderAccess is a Worker-only resolved configuration. Credential is never
+// serialized and must be cleared by the caller after constructing a request.
+type ProviderAccess struct {
+	Revision      Revision
+	Configuration ProviderConfiguration
+	Credential    []byte `json:"-"`
+}
+
+func (a *ProviderAccess) Clear() {
+	if a == nil {
+		return
+	}
+	zeroBytes(a.Credential)
+	a.Credential = nil
+}
+
 type SecretReference struct {
 	Provider        Provider `json:"provider"`
 	Purpose         string   `json:"purpose"`

@@ -17,3 +17,16 @@ mysql:
 
 commonEnv:
   APP_ENV: local
+
+observability:
+  stack:
+    enabled: true
+    prometheus:
+      image:
+        digest: ""
+        pullPolicy: Never
+    grafana:
+      anonymousRole: Editor
+      image:
+        digest: ""
+        pullPolicy: Never

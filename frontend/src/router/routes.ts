@@ -6,7 +6,7 @@ export const appRoutes: RouteRecordRaw[] = [
   { path: "/", redirect: "/overview", meta: { title: "总览", hidden: true } },
   { path: "/overview", name: "overview", component: () => import("../views/overview/OverviewView.vue"), meta: { title: "总览", workspace: "overview", fullBleed: true } },
   { path: "/infrastructure", name: "infrastructure", component: () => import("../views/infrastructure/InfrastructureView.vue"), meta: { title: "基础设施", workspace: "infrastructure", provider: "kubernetes" } },
-  { path: "/monitoring", name: "monitoring", component: workspacePlaceholder, meta: { title: "监控", workspace: "monitoring", provider: "prometheus" } },
+  { path: "/monitoring", name: "monitoring", component: () => import("../views/monitoring/MonitoringView.vue"), meta: { title: "监控", workspace: "monitoring", provider: "prometheus" } },
   { path: "/alerts", name: "alerts", component: workspacePlaceholder, meta: { title: "告警", workspace: "alerts", provider: "alertmanager" } },
   { path: "/logs", name: "logs", component: workspacePlaceholder, meta: { title: "日志", workspace: "logs", provider: "elasticsearch" } },
   { path: "/traces", name: "traces", component: workspacePlaceholder, meta: { title: "链路", workspace: "traces", provider: "tempo" } },

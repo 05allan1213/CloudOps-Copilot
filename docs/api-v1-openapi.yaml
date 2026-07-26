@@ -590,6 +590,198 @@ paths:
         "422": { $ref: "#/components/responses/Problem" }
         "501": { $ref: "#/components/responses/Problem" }
         default: { $ref: "#/components/responses/Problem" }
+  /api/v1/monitoring/catalog:
+    get:
+      operationId: getMonitoringCatalog
+      description: Guided query catalog and live Prometheus availability for one exact Workload in the active Operational Scope.
+      parameters:
+        - { $ref: "#/components/parameters/MonitoringCluster" }
+        - { $ref: "#/components/parameters/MonitoringNamespace" }
+        - { $ref: "#/components/parameters/MonitoringResourceID" }
+        - { $ref: "#/components/parameters/MonitoringResourceKind" }
+        - { $ref: "#/components/parameters/MonitoringResourceName" }
+      responses:
+        "200":
+          description: Bounded guided catalog with explicit Provider state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MonitoringCatalog" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/monitoring/queries:
+    get:
+      operationId: listMonitoringQueries
+      description: Durable bounded Query Execution history; full telemetry results are not retained here.
+      parameters:
+        - name: cluster_id
+          in: query
+          schema: { type: string, maxLength: 128 }
+        - name: namespace
+          in: query
+          schema: { type: string, maxLength: 253 }
+        - name: resource_id
+          in: query
+          schema: { type: string, maxLength: 512 }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200":
+          description: Query Execution audit history
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MonitoringExecutionPage" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: startMonitoringQuery
+      description: Local Owner starts one guided or expert query through the shared bounded contract. Actor identity cannot be supplied by the browser.
+      parameters:
+        - { $ref: "#/components/parameters/Origin" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StartMonitoringQuery" }
+      responses:
+        "202":
+          description: Query Execution accepted for bounded asynchronous execution
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QueryExecution" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/monitoring/queries/{id}:
+    parameters:
+      - { $ref: "#/components/parameters/PublicID" }
+    get:
+      operationId: getMonitoringQuery
+      description: Exact Query Execution, live in-process result when available, audit events, and backend-generated Context Links.
+      responses:
+        "200":
+          description: Query Execution projection
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QueryExecution" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/monitoring/queries/{id}/cancel:
+    parameters:
+      - { $ref: "#/components/parameters/PublicID" }
+    post:
+      operationId: cancelMonitoringQuery
+      description: Local Owner cancels a pending or running Owner or authorized Agent Query Execution.
+      parameters:
+        - { $ref: "#/components/parameters/Origin" }
+      responses:
+        "200":
+          description: Cancelled Query Execution
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QueryExecution" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/monitoring/query-definitions:
+    get:
+      operationId: listQueryDefinitions
+      description: Immutable-versioned Query Definitions saved from successful Owner executions.
+      parameters: [{ $ref: "#/components/parameters/Limit" }]
+      responses:
+        "200":
+          description: Query Definition versions
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QueryDefinitionPage" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: saveQueryDefinition
+      description: Local Owner saves a successful Owner Query Execution; editing creates a new immutable version.
+      parameters:
+        - { $ref: "#/components/parameters/Origin" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SaveQueryDefinition" }
+      responses:
+        "201":
+          description: Immutable Query Definition version
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QueryDefinition" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/monitoring/query-authorizations:
+    get:
+      operationId: listQueryAuthorizations
+      description: Owner-managed exact Agent Query Authorizations and revocation state.
+      parameters: [{ $ref: "#/components/parameters/Limit" }]
+      responses:
+        "200":
+          description: Query Authorization audit list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QueryAuthorizationPage" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: createQueryAuthorization
+      description: Local Owner authorizes either one exact successful execution or one immutable Query Definition version. This does not execute as Agent.
+      parameters:
+        - { $ref: "#/components/parameters/Origin" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateQueryAuthorization" }
+      responses:
+        "201":
+          description: Exact revocable Agent Query Authorization
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/QueryAuthorization" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/monitoring/query-authorizations/{id}/revoke:
+    parameters:
+      - { $ref: "#/components/parameters/PublicID" }
+    post:
+      operationId: revokeQueryAuthorization
+      description: Local Owner revokes an Agent Query Authorization without rewriting prior execution audit.
+      parameters:
+        - { $ref: "#/components/parameters/Origin" }
+      responses:
+        "204": { description: Query Authorization revoked }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
 components:
   parameters:
     PublicID:
@@ -662,6 +854,31 @@ components:
       name: cursor
       in: query
       schema: { type: string, maxLength: 2048 }
+    MonitoringCluster:
+      name: cluster_id
+      in: query
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128 }
+    MonitoringNamespace:
+      name: namespace
+      in: query
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 253 }
+    MonitoringResourceID:
+      name: resource_id
+      in: query
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 512 }
+    MonitoringResourceKind:
+      name: resource_kind
+      in: query
+      required: true
+      schema: { type: string, enum: [Deployment, StatefulSet, DaemonSet] }
+    MonitoringResourceName:
+      name: resource_name
+      in: query
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 253 }
   schemas:
     ProviderIdentity:
       type: string
@@ -1092,6 +1309,281 @@ components:
         partial: { type: boolean }
         truncated: { type: boolean }
         collected_at: { type: string, format: date-time }
+    MonitoringProviderState:
+      type: string
+      enum: [available, partial, unavailable, disabled]
+    MonitoringResourceReference:
+      type: object
+      additionalProperties: false
+      required: [id, kind, namespace, name]
+      properties:
+        id: { type: string, minLength: 1, maxLength: 512 }
+        kind: { type: string, enum: [Deployment, StatefulSet, DaemonSet] }
+        namespace: { type: string, minLength: 1, maxLength: 253 }
+        name: { type: string, minLength: 1, maxLength: 253 }
+    MonitoringProviderSource:
+      type: object
+      additionalProperties: false
+      required: [provider, identity, collected_at]
+      properties:
+        provider: { type: string, const: prometheus }
+        identity: { type: string, maxLength: 512 }
+        server_version: { type: string, maxLength: 128 }
+        collected_at: { type: string, format: date-time }
+    QueryBounds:
+      type: object
+      additionalProperties: false
+      required: [max_lookback_seconds, timeout_ms, max_response_bytes, max_series, max_samples, concurrency_limit, step_seconds]
+      properties:
+        max_lookback_seconds: { type: integer, minimum: 1, maximum: 2592000 }
+        timeout_ms: { type: integer, minimum: 1, maximum: 60000 }
+        max_response_bytes: { type: integer, minimum: 1024, maximum: 2097152 }
+        max_series: { type: integer, minimum: 1, maximum: 200 }
+        max_samples: { type: integer, minimum: 1, maximum: 10000 }
+        concurrency_limit: { type: integer, minimum: 1, maximum: 2 }
+        step_seconds: { type: integer, minimum: 1, maximum: 3600 }
+    MonitoringCatalogEntry:
+      type: object
+      additionalProperties: false
+      required: [key, title, description, unit, query]
+      properties:
+        key: { type: string, maxLength: 64 }
+        title: { type: string, maxLength: 128 }
+        description: { type: string, maxLength: 512 }
+        unit: { type: string, maxLength: 64 }
+        query: { type: string, minLength: 1, maxLength: 8192 }
+    MonitoringCatalog:
+      type: object
+      additionalProperties: false
+      required: [configuration_revision_id, scope, resource, provider_state, provider_detail, source, metric_names, queries, bounds, partial, collected_at]
+      properties:
+        configuration_revision_id: { type: string, format: uuid }
+        scope: { $ref: "#/components/schemas/OperationalScope" }
+        resource: { $ref: "#/components/schemas/MonitoringResourceReference" }
+        provider_state: { $ref: "#/components/schemas/MonitoringProviderState" }
+        provider_detail: { type: string, maxLength: 512 }
+        source: { $ref: "#/components/schemas/MonitoringProviderSource" }
+        metric_names:
+          type: array
+          maxItems: 1000
+          items: { type: string, maxLength: 256 }
+        queries:
+          type: array
+          maxItems: 32
+          items: { $ref: "#/components/schemas/MonitoringCatalogEntry" }
+        bounds: { $ref: "#/components/schemas/QueryBounds" }
+        partial: { type: boolean }
+        collected_at: { type: string, format: date-time }
+    MonitoringTimeRange:
+      type: object
+      additionalProperties: false
+      required: [from, to]
+      properties:
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+    StartMonitoringQuery:
+      type: object
+      additionalProperties: false
+      required: [mode, cluster_id, namespace, resource, from, to, step_seconds]
+      properties:
+        mode: { type: string, enum: [guided, expert] }
+        catalog_key: { type: string, maxLength: 64 }
+        query: { type: string, maxLength: 8192 }
+        cluster_id: { type: string, minLength: 1, maxLength: 128 }
+        namespace: { type: string, minLength: 1, maxLength: 253 }
+        resource: { $ref: "#/components/schemas/MonitoringResourceReference" }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        step_seconds: { type: integer, minimum: 1, maximum: 3600 }
+        query_definition_id: { type: string, format: uuid }
+    QueryPoint:
+      type: object
+      additionalProperties: false
+      required: [timestamp, value]
+      properties:
+        timestamp: { type: string, format: date-time }
+        value: { type: number }
+    QuerySeries:
+      type: object
+      additionalProperties: false
+      required: [labels, points]
+      properties:
+        labels:
+          type: object
+          maxProperties: 64
+          additionalProperties: { type: string, maxLength: 512 }
+        points:
+          type: array
+          maxItems: 10000
+          items: { $ref: "#/components/schemas/QueryPoint" }
+    QueryResult:
+      type: object
+      additionalProperties: false
+      required: [result_type, series]
+      properties:
+        result_type: { type: string, enum: [matrix] }
+        series:
+          type: array
+          maxItems: 200
+          items: { $ref: "#/components/schemas/QuerySeries" }
+    MonitoringContextLink:
+      type: object
+      additionalProperties: false
+      required: [kind, label, href, target, availability]
+      properties:
+        kind: { type: string, enum: [internal, provider] }
+        label: { type: string, maxLength: 128 }
+        href: { type: string, maxLength: 16384 }
+        target: { type: string, enum: [current, external] }
+        provider: { type: string, maxLength: 64 }
+        resource_ref: { type: string, maxLength: 512 }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        availability: { type: string, enum: [available, unavailable, misconfigured] }
+    QueryExecutionEvent:
+      type: object
+      additionalProperties: false
+      required: [id, sequence, type, actor, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        sequence: { type: integer, minimum: 1 }
+        type: { type: string, enum: [created, started, succeeded, failed, cancel_requested, cancelled] }
+        actor: { type: string, enum: [owner, agent, system] }
+        detail: { type: string, maxLength: 512 }
+        created_at: { type: string, format: date-time }
+    QueryExecution:
+      type: object
+      additionalProperties: false
+      required: [id, configuration_revision_id, actor, provider, mode, query, query_hash, scope, resource, time_range, bounds, status, source, result_expired, series_count, sample_count, response_bytes, partial, truncated, links, events, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        configuration_revision_id: { type: string, format: uuid }
+        query_definition_id: { type: string, format: uuid }
+        query_authorization_id: { type: string, format: uuid }
+        actor: { type: string, enum: [owner, agent] }
+        provider: { type: string, const: prometheus }
+        mode: { type: string, enum: [guided, expert] }
+        catalog_key: { type: string, maxLength: 64 }
+        query: { type: string, minLength: 1, maxLength: 8192 }
+        query_hash: { $ref: "#/components/schemas/SHA256" }
+        scope: { $ref: "#/components/schemas/OperationalScope" }
+        resource: { $ref: "#/components/schemas/MonitoringResourceReference" }
+        time_range: { $ref: "#/components/schemas/MonitoringTimeRange" }
+        bounds: { $ref: "#/components/schemas/QueryBounds" }
+        status: { type: string, enum: [pending, running, succeeded, failed, cancelled] }
+        source: { $ref: "#/components/schemas/MonitoringProviderSource" }
+        result: { $ref: "#/components/schemas/QueryResult" }
+        result_expired: { type: boolean }
+        series_count: { type: integer, minimum: 0, maximum: 200 }
+        sample_count: { type: integer, minimum: 0, maximum: 10000 }
+        response_bytes: { type: integer, minimum: 0, maximum: 2097152 }
+        partial: { type: boolean }
+        truncated: { type: boolean }
+        error_code: { type: string, maxLength: 64 }
+        error_detail: { type: string, maxLength: 512 }
+        links:
+          type: array
+          items: { $ref: "#/components/schemas/MonitoringContextLink" }
+        events:
+          type: array
+          items: { $ref: "#/components/schemas/QueryExecutionEvent" }
+        created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+    MonitoringExecutionPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items: { $ref: "#/components/schemas/QueryExecution" }
+    SaveQueryDefinition:
+      type: object
+      additionalProperties: false
+      required: [query_execution_id, title]
+      properties:
+        query_execution_id: { type: string, format: uuid }
+        previous_query_definition_id: { type: string, format: uuid }
+        title: { type: string, minLength: 1, maxLength: 128 }
+        description: { type: string, maxLength: 512 }
+    QueryDefinition:
+      type: object
+      additionalProperties: false
+      required: [id, definition_key, revision, configuration_revision_id, provider, mode, title, query, query_hash, scope, resource, max_lookback_seconds, max_series, max_samples, content_hash, created_by, created_at, links]
+      properties:
+        id: { type: string, format: uuid }
+        definition_key: { type: string, format: uuid }
+        revision: { type: integer, minimum: 1 }
+        configuration_revision_id: { type: string, format: uuid }
+        provider: { type: string, const: prometheus }
+        mode: { type: string, enum: [guided, expert] }
+        catalog_key: { type: string, maxLength: 64 }
+        title: { type: string, minLength: 1, maxLength: 128 }
+        description: { type: string, maxLength: 512 }
+        query: { type: string, minLength: 1, maxLength: 8192 }
+        query_hash: { $ref: "#/components/schemas/SHA256" }
+        scope: { $ref: "#/components/schemas/OperationalScope" }
+        resource: { $ref: "#/components/schemas/MonitoringResourceReference" }
+        max_lookback_seconds: { type: integer, minimum: 1 }
+        max_series: { type: integer, minimum: 1, maximum: 200 }
+        max_samples: { type: integer, minimum: 1, maximum: 10000 }
+        content_hash: { $ref: "#/components/schemas/SHA256" }
+        created_by: { type: string, maxLength: 64 }
+        created_at: { type: string, format: date-time }
+        links:
+          type: array
+          items: { $ref: "#/components/schemas/MonitoringContextLink" }
+    QueryDefinitionPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items: { $ref: "#/components/schemas/QueryDefinition" }
+    CreateQueryAuthorization:
+      type: object
+      additionalProperties: false
+      required: [mode]
+      properties:
+        mode: { type: string, enum: [run_once, definition] }
+        query_execution_id: { type: string, format: uuid }
+        query_definition_id: { type: string, format: uuid }
+    QueryAuthorization:
+      type: object
+      additionalProperties: false
+      required: [id, configuration_revision_id, mode, provider, query_mode, query, query_hash, scope, resource, max_lookback_seconds, max_series, max_samples, created_by, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        configuration_revision_id: { type: string, format: uuid }
+        mode: { type: string, enum: [run_once, definition] }
+        query_definition_id: { type: string, format: uuid }
+        provider: { type: string, const: prometheus }
+        query_mode: { type: string, enum: [guided, expert] }
+        catalog_key: { type: string, maxLength: 64 }
+        query: { type: string, minLength: 1, maxLength: 8192 }
+        query_hash: { $ref: "#/components/schemas/SHA256" }
+        scope: { $ref: "#/components/schemas/OperationalScope" }
+        resource: { $ref: "#/components/schemas/MonitoringResourceReference" }
+        max_lookback_seconds: { type: integer, minimum: 1 }
+        max_series: { type: integer, minimum: 1, maximum: 200 }
+        max_samples: { type: integer, minimum: 1, maximum: 10000 }
+        consumed_execution_id: { type: string, format: uuid }
+        revoked_at: { type: string, format: date-time }
+        created_by: { type: string, maxLength: 64 }
+        created_at: { type: string, format: date-time }
+    QueryAuthorizationPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items: { $ref: "#/components/schemas/QueryAuthorization" }
     ApplyConfiguration:
       type: object
       additionalProperties: false

@@ -11,6 +11,7 @@ func registerAPIRoutes(engine *gin.Engine, cfg config.Config, deps Dependencies)
 	handler := contractapi.NewHandler(contractapi.Config{
 		Queries: deps.Queries, Commands: deps.Commands, AllowedOrigins: cfg.CORSOrigins,
 		Settings: deps.Settings, Notifications: deps.Notifications, Infrastructure: deps.Infrastructure,
+		Monitoring: deps.Monitoring,
 	})
 	contractapi.RegisterRoutes(engine.Group("/api/v1"), handler)
 	engine.NoRoute(func(c *gin.Context) {
