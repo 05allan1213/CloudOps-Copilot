@@ -6,7 +6,7 @@
 >
 > Task 0 开工基线：`10a1f2b659b4ee9adb1a3efcb7725f83504b9d1f`
 >
-> 最后更新：2026-07-28 05:36（Asia/Shanghai）
+> 最后更新：2026-07-28 05:44（Asia/Shanghai）
 
 ## 状态总览
 
@@ -754,8 +754,8 @@ Chrome 首次连接 `18081` 时，命令执行器已经回收 `local-up` 的后�
 |---|---|---|
 | Branch/base | `PASS` | `codex/v3-refactor`；任务开始 HEAD 与远端基线均为 `ea38165cb141f6b2d71f9ec15645ea272e2171a7` |
 | Worktree preservation | `PASS` | 保留 Task 8 既有未提交实现并继续完成；未 reset、revert、清理 retained database 或改写历史 migration |
-| Local commit | `PASS` | Task 8 implementation 与本状态节纳入当前语义提交；exact SHA 由提交完成后记录 |
-| Push | `NOT RUN` | 状态记录时尚未执行；仅允许当前 source implementation branch 的正常 fast-forward push，不创建 PR/tag、不触碰默认分支 |
+| Local commit | `PASS` | Task 8 implementation 与首版状态节纳入语义提交 `3c19e7842f21c9bdc904a7632d3abe719628de66` |
+| Push | `PASS` | `ea38165cb141f6b2d71f9ec15645ea272e2171a7 -> 3c19e7842f21c9bdc904a7632d3abe719628de66` 已正常 fast-forward push 到 `origin/codex/v3-refactor`；未创建 PR/tag，未触碰默认分支 |
 
 ### NOT RUN
 
