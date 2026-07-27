@@ -30,6 +30,19 @@ type ControlledScaleConfig struct {
 	RequestTimeout    time.Duration
 }
 
+type DeploymentScaleObservation struct {
+	Namespace          string    `json:"namespace"`
+	Name               string    `json:"name"`
+	ResourceVersion    string    `json:"resource_version"`
+	Generation         int64     `json:"generation"`
+	ObservedGeneration int64     `json:"observed_generation"`
+	DesiredReplicas    int32     `json:"desired_replicas"`
+	UpdatedReplicas    int32     `json:"updated_replicas"`
+	ReadyReplicas      int32     `json:"ready_replicas"`
+	AvailableReplicas  int32     `json:"available_replicas"`
+	ObservedAt         time.Time `json:"observed_at"`
+}
+
 func NewControlledScaleExecutor(client kubernetes.Interface, cfg ControlledScaleConfig) (*ControlledScaleExecutor, error) {
 	if client == nil {
 		return nil, errors.New("controlled scale executor requires a Kubernetes client")
@@ -54,32 +67,81 @@ func NewControlledScaleExecutor(client kubernetes.Interface, cfg ControlledScale
 }
 
 func (e *ControlledScaleExecutor) ScaleDeployment(ctx context.Context, namespace, name string, replicas int32) error {
+	_, err := e.ScaleDeploymentExact(ctx, namespace, name, replicas, "", -1)
+	return err
+}
+
+func (e *ControlledScaleExecutor) ObserveDeployment(ctx context.Context, namespace, name string) (DeploymentScaleObservation, error) {
 	if e == nil || e.client == nil {
-		return errors.New("controlled scale executor is unavailable")
+		return DeploymentScaleObservation{}, errors.New("controlled scale executor is unavailable")
 	}
 	if _, ok := e.allowedNamespaces[namespace]; !ok {
-		return fmt.Errorf("namespace %q is outside the controlled demo allowlist", namespace)
+		return DeploymentScaleObservation{}, fmt.Errorf("namespace %q is outside the controlled operation allowlist", namespace)
 	}
 	if err := k8sreader.ValidateName("namespace", namespace); err != nil {
-		return err
+		return DeploymentScaleObservation{}, err
 	}
 	if err := k8sreader.ValidateName("name", name); err != nil {
-		return err
+		return DeploymentScaleObservation{}, err
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, e.requestTimeout)
+	defer cancel()
+	deployment, err := e.client.AppsV1().Deployments(namespace).Get(requestCtx, name, metav1.GetOptions{})
+	if err != nil {
+		return DeploymentScaleObservation{}, controlledK8sError(err)
+	}
+	desired := int32(1)
+	if deployment.Spec.Replicas != nil {
+		desired = *deployment.Spec.Replicas
+	}
+	return DeploymentScaleObservation{
+		Namespace: namespace, Name: name, ResourceVersion: deployment.ResourceVersion,
+		Generation: deployment.Generation, ObservedGeneration: deployment.Status.ObservedGeneration,
+		DesiredReplicas: desired, UpdatedReplicas: deployment.Status.UpdatedReplicas,
+		ReadyReplicas: deployment.Status.ReadyReplicas, AvailableReplicas: deployment.Status.AvailableReplicas,
+		ObservedAt: time.Now().UTC(),
+	}, nil
+}
+
+func (e *ControlledScaleExecutor) ScaleDeploymentExact(
+	ctx context.Context,
+	namespace, name string,
+	replicas int32,
+	expectedResourceVersion string,
+	expectedReplicas int32,
+) (DeploymentScaleObservation, error) {
+	if e == nil || e.client == nil {
+		return DeploymentScaleObservation{}, errors.New("controlled scale executor is unavailable")
+	}
+	if _, ok := e.allowedNamespaces[namespace]; !ok {
+		return DeploymentScaleObservation{}, fmt.Errorf("namespace %q is outside the controlled operation allowlist", namespace)
+	}
+	if err := k8sreader.ValidateName("namespace", namespace); err != nil {
+		return DeploymentScaleObservation{}, err
+	}
+	if err := k8sreader.ValidateName("name", name); err != nil {
+		return DeploymentScaleObservation{}, err
 	}
 	if replicas < 1 || replicas > int32(e.maxReplicas) {
-		return fmt.Errorf("replicas must be in range 1-%d", e.maxReplicas)
+		return DeploymentScaleObservation{}, fmt.Errorf("replicas must be in range 1-%d", e.maxReplicas)
 	}
 	requestCtx, cancel := context.WithTimeout(ctx, e.requestTimeout)
 	defer cancel()
 	scale, err := e.client.AppsV1().Deployments(namespace).GetScale(requestCtx, name, metav1.GetOptions{})
 	if err != nil {
-		return controlledK8sError(err)
+		return DeploymentScaleObservation{}, controlledK8sError(err)
+	}
+	if expectedResourceVersion != "" && scale.ResourceVersion != expectedResourceVersion {
+		return DeploymentScaleObservation{}, errors.New("controlled Kubernetes resource version precondition failed")
+	}
+	if expectedReplicas >= 0 && scale.Spec.Replicas != expectedReplicas {
+		return DeploymentScaleObservation{}, errors.New("controlled Kubernetes replica precondition failed")
 	}
 	scale.Spec.Replicas = replicas
 	if _, err := e.client.AppsV1().Deployments(namespace).UpdateScale(requestCtx, name, scale, metav1.UpdateOptions{}); err != nil {
-		return controlledK8sError(err)
+		return DeploymentScaleObservation{}, controlledK8sError(err)
 	}
-	return nil
+	return e.ObserveDeployment(ctx, namespace, name)
 }
 
 func controlledK8sError(err error) error {

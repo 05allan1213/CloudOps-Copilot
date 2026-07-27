@@ -18,6 +18,7 @@ import (
 	"github.com/05allan1213/CloudOps-Copilot/internal/middleware"
 	"github.com/05allan1213/CloudOps-Copilot/internal/notification"
 	"github.com/05allan1213/CloudOps-Copilot/internal/observability"
+	"github.com/05allan1213/CloudOps-Copilot/internal/operation"
 	"github.com/05allan1213/CloudOps-Copilot/internal/router"
 	"github.com/05allan1213/CloudOps-Copilot/internal/settings"
 	"github.com/05allan1213/CloudOps-Copilot/internal/telemetry"
@@ -46,6 +47,7 @@ type Container struct {
 	Monitoring     *observability.Service
 	Telemetry      *telemetry.Service
 	AgentWorkspace *agent.WorkspaceRepository
+	Operations     *operation.WorkspaceService
 }
 
 func NewContainer(infra *Infra) *Container {
@@ -67,5 +69,6 @@ func (c *Container) Dependencies() router.Dependencies {
 		Monitoring:     c.Monitoring,
 		Telemetry:      c.Telemetry,
 		AgentWorkspace: c.AgentWorkspace,
+		Operations:     c.Operations,
 	}
 }

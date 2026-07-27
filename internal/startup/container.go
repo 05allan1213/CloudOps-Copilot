@@ -22,6 +22,7 @@ import (
 	"github.com/05allan1213/CloudOps-Copilot/internal/middleware"
 	"github.com/05allan1213/CloudOps-Copilot/internal/notification"
 	"github.com/05allan1213/CloudOps-Copilot/internal/observability"
+	"github.com/05allan1213/CloudOps-Copilot/internal/operation"
 	"github.com/05allan1213/CloudOps-Copilot/internal/settings"
 	"github.com/05allan1213/CloudOps-Copilot/internal/telemetry"
 )
@@ -59,6 +60,14 @@ func InitAPIContainer(cfg *config.Config, infra *di.Infra, runtimeReadiness hand
 			return nil, fmt.Errorf("agent workspace repository init failed: %w", err)
 		}
 		container.AgentWorkspace.SetRunbookDir(cfg.RunbookDir)
+		operationRepository, operationErr := operation.NewRepository(infra.MySQL.SQLDB())
+		if operationErr != nil {
+			return nil, fmt.Errorf("operation repository init failed: %w", operationErr)
+		}
+		container.Operations, operationErr = operation.NewWorkspaceService(operationRepository, container.AgentWorkspace)
+		if operationErr != nil {
+			return nil, fmt.Errorf("operation workspace init failed: %w", operationErr)
+		}
 		alertmanagerClient, gatewayErr := alertmanagergateway.NewClient(cfg.WorkerManagementTarget, cfg.RequestTimeout+2*time.Second)
 		if gatewayErr != nil {
 			return nil, fmt.Errorf("alertmanager Provider Gateway client init failed: %w", gatewayErr)

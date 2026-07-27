@@ -56,12 +56,17 @@ func TestFastDemoRequiresExplicitDisposableLocalEnvironment(t *testing.T) {
 	}
 }
 
-func TestKubernetesWriteRequiresGuardedDemonstrationScenario(t *testing.T) {
+func TestKubernetesWriteRequiresExplicitNamespaceAllowlist(t *testing.T) {
 	cfg := Load()
 	cfg.K8SEnabled = true
 	cfg.K8SWriteEnabled = true
-	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "guarded local Demonstration Scenario") {
-		t.Fatalf("formal Kubernetes write accepted: %v", err)
+	cfg.K8SAllowedNamespaces = []string{"*"}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "explicit namespace allowlists") {
+		t.Fatalf("wildcard Kubernetes write accepted: %v", err)
+	}
+	cfg.K8SAllowedNamespaces = []string{"default"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("bounded authorized Kubernetes operation configuration rejected: %v", err)
 	}
 }
 

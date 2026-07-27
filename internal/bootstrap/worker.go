@@ -81,6 +81,7 @@ type Worker struct {
 	runner     taskRunner
 	recovery   taskRunner
 	workspace  taskRunner
+	operations taskRunner
 	activation activationRunner
 	management *http.Server
 	ready      atomic.Bool
@@ -93,6 +94,8 @@ type Worker struct {
 	recoveryStarted   bool
 	workspaceStartErr error
 	workspaceStarted  bool
+	operationStartErr error
+	operationStarted  bool
 }
 
 func NewWorker(ctx context.Context, cfg WorkerConfig) (*Worker, error) {
@@ -224,6 +227,11 @@ func NewWorker(ctx context.Context, cfg WorkerConfig) (*Worker, error) {
 		_ = mysql.Close()
 		return nil, fmt.Errorf("initialize Agent Workspace runner: %w", err)
 	}
+	operationRunner, err := newWorkerOperationRunner(cfg, mysql.SQLDB())
+	if err != nil {
+		_ = mysql.Close()
+		return nil, fmt.Errorf("initialize controlled operation runner: %w", err)
+	}
 	providerGateway, err := infrastructureGatewayHandler(application)
 	if err != nil {
 		_ = mysql.Close()
@@ -245,7 +253,8 @@ func NewWorker(ctx context.Context, cfg WorkerConfig) (*Worker, error) {
 		return nil, fmt.Errorf("initialize Alertmanager Provider Gateway: %w", err)
 	}
 	worker := &Worker{
-		cfg: cfg, mysql: mysql, runner: runner, recovery: recoveryRunner, workspace: workspaceRunner, activation: activation,
+		cfg: cfg, mysql: mysql, runner: runner, recovery: recoveryRunner, workspace: workspaceRunner,
+		operations: operationRunner, activation: activation,
 		mysqlReady: mysql.Ready,
 	}
 	healthHandler := health.NewHandler(health.Options{
@@ -311,6 +320,8 @@ func (w *Worker) readiness(ctx context.Context) error {
 	recoveryStarted := w.recoveryStarted
 	workspaceStartErr := w.workspaceStartErr
 	workspaceStarted := w.workspaceStarted
+	operationStartErr := w.operationStartErr
+	operationStarted := w.operationStarted
 	w.stateMu.RUnlock()
 	if startErr != nil {
 		return fmt.Errorf("async task runtime startup: %w", startErr)
@@ -344,6 +355,18 @@ func (w *Worker) readiness(ctx context.Context) error {
 	}
 	if err := w.workspace.Ready(ctx); err != nil {
 		return fmt.Errorf("agent workspace runtime readiness: %w", err)
+	}
+	if w.operations == nil {
+		return errors.New("controlled operation runner is not initialized")
+	}
+	if operationStartErr != nil {
+		return fmt.Errorf("controlled operation runtime startup: %w", operationStartErr)
+	}
+	if !operationStarted {
+		return errors.New("controlled operation runner is not started")
+	}
+	if err := w.operations.Ready(ctx); err != nil {
+		return fmt.Errorf("controlled operation runtime readiness: %w", err)
 	}
 	if w.activation == nil {
 		return errors.New("configuration activation runner is not initialized")
@@ -396,13 +419,31 @@ func (w *Worker) Serve(ctx context.Context, listener net.Listener) error {
 		w.recovery.StopClaims()
 		return errors.Join(fmt.Errorf("start Agent Workspace runtime: %w", workspaceErr), w.recovery.Shutdown(shutdownCtx), w.runner.Shutdown(shutdownCtx), w.management.Shutdown(shutdownCtx), w.mysql.Close())
 	}
+	operationErr := w.operations.Start(ctx)
+	w.stateMu.Lock()
+	w.operationStartErr = operationErr
+	w.operationStarted = operationErr == nil
+	w.stateMu.Unlock()
+	if operationErr != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), w.cfg.Async.ExitDeadline)
+		defer cancel()
+		w.runner.StopClaims()
+		w.recovery.StopClaims()
+		w.workspace.StopClaims()
+		return errors.Join(fmt.Errorf("start controlled operation runtime: %w", operationErr),
+			w.workspace.Shutdown(shutdownCtx), w.recovery.Shutdown(shutdownCtx), w.runner.Shutdown(shutdownCtx),
+			w.management.Shutdown(shutdownCtx), w.mysql.Close())
+	}
 	if activationErr := w.activation.Start(ctx); activationErr != nil {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), w.cfg.Async.ExitDeadline)
 		defer cancel()
 		w.runner.StopClaims()
 		w.recovery.StopClaims()
 		w.workspace.StopClaims()
-		return errors.Join(fmt.Errorf("start configuration activation runtime: %w", activationErr), w.workspace.Shutdown(shutdownCtx), w.recovery.Shutdown(shutdownCtx), w.runner.Shutdown(shutdownCtx), w.management.Shutdown(shutdownCtx), w.mysql.Close())
+		w.operations.StopClaims()
+		return errors.Join(fmt.Errorf("start configuration activation runtime: %w", activationErr),
+			w.operations.Shutdown(shutdownCtx), w.workspace.Shutdown(shutdownCtx), w.recovery.Shutdown(shutdownCtx),
+			w.runner.Shutdown(shutdownCtx), w.management.Shutdown(shutdownCtx), w.mysql.Close())
 	}
 	w.ready.Store(true)
 
@@ -433,6 +474,12 @@ func (w *Worker) Serve(ctx context.Context, listener net.Listener) error {
 	if workspaceStarted {
 		w.workspace.StopClaims()
 	}
+	w.stateMu.RLock()
+	operationStarted := w.operationStarted
+	w.stateMu.RUnlock()
+	if operationStarted {
+		w.operations.StopClaims()
+	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), w.cfg.Async.ExitDeadline)
 	defer cancel()
 	serverShutdownErr := w.management.Shutdown(shutdownCtx)
@@ -440,6 +487,7 @@ func (w *Worker) Serve(ctx context.Context, listener net.Listener) error {
 	var runnerShutdownErr error
 	var recoveryShutdownErr error
 	var workspaceShutdownErr error
+	var operationShutdownErr error
 	if started {
 		runnerShutdownErr = w.runner.Shutdown(shutdownCtx)
 	}
@@ -449,7 +497,11 @@ func (w *Worker) Serve(ctx context.Context, listener net.Listener) error {
 	if recoveryStarted {
 		recoveryShutdownErr = w.recovery.Shutdown(shutdownCtx)
 	}
-	return errors.Join(runErr, serverShutdownErr, activationShutdownErr, workspaceShutdownErr, recoveryShutdownErr, runnerShutdownErr, w.mysql.Close())
+	if operationStarted {
+		operationShutdownErr = w.operations.Shutdown(shutdownCtx)
+	}
+	return errors.Join(runErr, serverShutdownErr, activationShutdownErr, operationShutdownErr,
+		workspaceShutdownErr, recoveryShutdownErr, runnerShutdownErr, w.mysql.Close())
 }
 
 func RunWorker(ctx context.Context) error {

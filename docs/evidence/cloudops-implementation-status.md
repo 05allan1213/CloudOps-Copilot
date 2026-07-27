@@ -6,7 +6,7 @@
 >
 > Task 0 开工基线：`10a1f2b659b4ee9adb1a3efcb7725f83504b9d1f`
 >
-> 最后更新：2026-07-28 04:18（Asia/Shanghai）
+> 最后更新：2026-07-28 05:36（Asia/Shanghai）
 
 ## 状态总览
 
@@ -20,8 +20,8 @@
 | 任务 5：Alerts | `DONE_WITH_NOT_RUN` | 任务 0；任务 1 notification/Settings/Context Link | 本地真实 Alertmanager firing/resolved、Signal-to-Alert、ack、provider-backed silence、显式 Incident、Owner Notification、Workspace 与幂等重投已完成；专用 Alertmanager MCP 明确 `NOT RUN` |
 | 任务 6：Agent | `DONE_WITH_NOT_RUN` | 任务 1；任务 2-5 真实 Evidence source | 真实 Alert Investigation、Logs Consultation、bounded tools、Evidence/Guidance、snapshot、SSE、Knowledge、Agent UI 与三层 authority 已完成；真实 LLM 诊断明确 `NOT RUN` |
 | 任务 7：Incidents 与 Verify | `DONE_WITH_NOT_RUN` | 任务 5、6；任务 2-4 Context Link | `/api/v1` Incident 协调、当前 Cycle 投影、Recovery Verification、ResolutionReport、close 与真实 UI/API/MySQL 主链已完成；真实 Kubernetes recovery、外部 Provider 与真实模型明确 `NOT RUN` |
-| 任务 8：Operations 与 DevOps | `READY` | 任务 6；Incident 链另需任务 7 | Task 6 Operation Plan/authority 与 Task 7 Incident recovery contract 均可用；可开始受控 operation/delivery 分支 |
-| 任务 9：Scenario 与最终收敛 | `BLOCKED` | 任务 0-8 本地必需能力 | 前置任务尚未完成 |
+| 任务 8：Operations 与 DevOps | `DONE_WITH_NOT_RUN` | 任务 6；Incident 链另需任务 7 | immutable Plan、exact Authorization、本地可逆执行、审计/验证、delivery identity 与 DevOps Workspace 已完成；live Kubernetes/GitHub/Argo 写入明确 `NOT RUN` |
+| 任务 9：Scenario 与最终收敛 | `READY` | 任务 0-8 本地必需能力 | 任务 0-8 本地必需能力已完成；Task 9 尚未开始，必须按独立范围执行最终 Scenario 与收敛验收 |
 
 ## 任务 0：语义基线与本地生命周期
 
@@ -688,3 +688,79 @@ Chrome 首次连接 `18081` 时，命令执行器已经回收 `local-up` 的后�
 - 真实 LLM/model Investigation：当前链使用持久化 terminal Investigation fixture facts 验证协调合同，未配置或调用真实模型；model calls/tokens 均为 `0`。
 - GitHub、Argo CD、真实 Delivery/Plan/ChangeRequest：本次选择规范允许的 no-change recovery 分支，数据库对应数量为 `0`；外部读取、写入与 DevOps execution 均未运行。
 - hosted/staging/production、外部 Provider、Scenario、PR、push、tag、默认分支：`NOT RUN`。
+
+## 任务 8：受控 Operations 与 DevOps
+
+### 实施结果
+
+- Task 6 的 `OperationPlan` / `ActionCard` 真相源被前向扩展为 immutable authority subject；canonical content hash 绑定 target、parameters、intended state、preconditions、risk、expiry、Configuration Revision 与 verification intent。授权只绑定当前 exact hash，不能授权 Agent、会话或未来参数。
+- `migrations/00011_controlled_operations.sql` 将 schema 提升到 `11`，新增 durable execution、lease、append-only audit event、current verification 与 local Change Freeze 状态；没有修改既有 migration 或重写 retained history。
+- execution 在 enqueue、claim、effect 前重复核对 exact authorization、expiry、Configuration Revision 与 precondition；material field、Plan row 或 active revision 变化会使旧授权失效。execution 使用稳定幂等 identity、lease fencing、effect boundary、terminal state 与 current Evidence verification。
+- level-two local reversible action 通过 typed `local.change_freeze` adapter 执行和反向执行；level-three Kubernetes adapter 只支持 allowlisted Deployment scale，并同时要求 worker `K8S_WRITE_ENABLED=true`、exact Plan、exact Authorization 与 effect-time precondition。任一条件缺失即 fail closed。
+- ChangeCandidate、DeploymentBaseline 与 delivery projection 保持 source revision、image digest、GitOps revision、configuration/verification hash 分离；Task 7 的 Incident Recovery Verification 与本任务的 Operation Verification 是不同语义，二者不能互相替代。
+- `/api/v1/devops` 与 `/devops` 纵向接入 API/router/DI/Worker/OpenAPI。DevOps Workspace 提供 Provider branches、Owner review、exact hash、execution/audit、Current Evidence Verify、ChangeCandidate、DeploymentBaseline、PR/CI/Argo/rollout 与 Agent Inspector links。
+- GitHub 与 Argo 始终是 optional delivery branches。active Configuration Revision 中二者 disabled 时，Kubernetes/cloud-native Evidence 与 Agent 主链仍可用，UI 和 API 明确返回 `NOT RUN`，没有 fixture/mock 结果补位。
+- `domain-modeling` Skill 用于核对术语和边界；`CONTEXT.md` 增加 Operation Execution、Operation Verification、Change Freeze、ChangeCandidate、DeploymentBaseline 与 DevOps Workspace，并明确 Operation Verification 不替代 Incident Recovery Verification。
+
+### Runtime 与数据审计
+
+| 项目 | 结果 | 当前证据 |
+|---|---|---|
+| 前置合同 | `PASS` | Task 6 的 durable Operation Plan/Action Card/exact authority 与 Task 7 的 Incident current-cycle/Recovery Verification 均可用；本任务直接复用其 public ID、Configuration Revision、Evidence 与 Context Link contract |
+| Build/runtime | `PASS` | `kind-cloudops-local` / `cloudops-system` / Helm `cloudops` revision `32` deployed；schema `11`；API、Worker 与 migration Job Ready/completed |
+| Runtime write gate | `PASS` | API 与 Worker Deployment 均为 `1/1`；Worker `K8S_WRITE_ENABLED=false`；GitHub/Argo 在 active revision 中 disabled；产品运行态没有可用外部 mutation authority |
+| Durable projection | `PASS` | retained Task 6 Plan `3dd07b74-d576-4574-aa32-f3036d6282af` 与 Action Card `155c80aa-8c2e-4805-8ec0-24937c4abe6c` 均已 expired；当前 `0` Authorization、`0` execution、`0` Change Freeze、`0` ChangeCandidate、`9` DeploymentBaseline、`0` delivery |
+| Real MySQL authority chain | `PASS` | disposable MySQL 8 的 `TestMySQLExactAuthorityLocalExecutionAndInvalidation` 在 `4.75s` 内通过；覆盖 zero-authorization、exact hash Owner review、local reversible execution、append-only audit、current verification、stale precondition、expiry、Plan material tampering 与 Configuration Revision invalidation；测试数据库/容器已删除 |
+| Timestamp persistence | `PASS` | canonical authority timestamp 统一为 UTC microsecond precision；新增 repository regression，证明 `DATETIME(6)` round-trip 后 hash 不漂移 |
+| External execution | `NOT RUN` | 未创建新的 live exact Plan/Authorization，未启用 write gate，未对真实 Kubernetes、GitHub 或 Argo 执行产品 mutation；fake adapter 测试只证明 typed contract，不作为外部链证据 |
+
+### MCP 与纵向联调证据
+
+验收 URL：`http://127.0.0.1:18080/devops`。Playwright MCP 与 Kubernetes MCP 直接操作当前 local runtime。当前工具面没有 GitHub 或 Argo MCP；对应 provider 也在 active revision 中 disabled，因此保持 `NOT RUN`，不以 CLI、fixture 或 mock 冒充 MCP/外部链。
+
+| 维度 | 结果 | 证据 |
+|---|---|---|
+| Desktop Workspace | `PASS` | `/api/v1/devops?limit=100` 返回 `200`；Operations 与 Delivery identity 呈现 Kubernetes `PASS`、GitHub/Argo `NOT RUN`、expired authority subjects、零 execution、9 条 DeploymentBaseline；console `0 errors / 0 warnings`，`clientWidth=scrollWidth=1280` |
+| Mobile Workspace | `PASS` | `390x844` 下 Operations/Delivery 两视图均无 document 横向 overflow 或越界控件；三张 860px identity table 仅在各自 356px `overflow-x:auto` region 内滚动；修复 58px bottom-nav 遮挡后，零写提示与 GitHub/Argo `NOT RUN` 行可完整滚到导航上方 |
+| Owner review UI | `PASS` | Workspace 显示 immutable content hash、Configuration Revision、expiry、risk 与 exact material payload；只有 `proposed` subject 可进入 Owner review，只有 authorized hash 精确相等且无既有 execution 时才显示执行入口 |
+| Plan -> execution -> Verify | `PASS`（真实 MySQL/local action） | exact Plan/Card -> Owner review -> durable queue/lease -> local reversible effect -> append-only audit -> current Evidence Verify 全链通过真实 MySQL test；wrong hash、expired subject、stale precondition、material mutation 与 revision 变化均拒绝 |
+| Kubernetes MCP readiness | `PASS` | 部署后 API/Worker Pod 均 `Ready=true`、restart `0`；05:34:17 至 05:35:41 浏览器验收前后 Deployment/Pod resourceVersion 分别保持 `209616 / 209602 / 209566 / 209562`，generation、副本、imageID 与 restartCount 逐字段不变 |
+| Kubernetes warning audit | `PASS` | 最后 warning 仍是 05:22 schema upgrade 窗口的旧 Pod readiness/backoff；revision 32 新 Pod 部署后无新增 warning |
+| Zero product write | `PASS` | 浏览器验收前后 API 均为 `0` Authorization、`0` execution、`0` Change Freeze；Kubernetes 对照完全不变；没有 GitHub/Argo 请求或外部 artifact |
+| Task result | `DONE_WITH_NOT_RUN` | 本地 immutable authority、真实 MySQL execution/audit/verification、DevOps UI/API 与 Kubernetes read-only projection 完成；live Kubernetes/GitHub/Argo mutation 保持 `NOT RUN` |
+
+### 检查结果
+
+`PASS`：
+
+- `make check`：Go unit/integration 与 race suite、`go vet`、`golangci-lint --max-same-issues=0`（`0 issues`）、gofmt/goimports/dependency/structure、四个 binary build。
+- frontend ESLint exit `0`（`0 errors`，保留既有 warning baseline）、Vue typecheck、Vitest `19 files / 64 tests`、production build；移动端遮挡修复后重新执行同一 frontend lint/test/build 并通过。
+- actionlint、immutable workflow dependency audit、ShellCheck；Helm strict lint/runtime render、kubeconform `38/38` 与 semantic naming guard。
+- `internal/operation` authority/runner/local adapter、`internal/infra/k8schange` typed adapter、agent authority persistence、API/router/lifecycle、migration/schema 与 frontend store/router 的专项测试均包含在上述门禁。
+- disposable MySQL 8 focused test `TestMySQLExactAuthorityLocalExecutionAndInvalidation`；Playwright desktop/mobile；Kubernetes MCP readiness/resourceVersion/warning 对照。
+- `git diff --check`（状态文件更新后复跑）。
+
+### 实际文件清单
+
+- Domain/data：`internal/operation/**`、`internal/agent/workspace_repository_authority.go`、`migrations/00011_controlled_operations.sql`、schema/migration/MySQL authority tests。
+- Execution boundary：`internal/bootstrap/worker_operation_runtime.go`、Worker lifecycle、`internal/infra/k8schange/{controlled_executor,operation_adapter}.go` 与 typed adapter tests。
+- API/contract：`internal/api/operation_handler.go`、handler/router/dependency/DI/startup wiring、`docs/api-v1-openapi.yaml`。
+- Frontend：`frontend/src/api/devops.ts`、`frontend/src/stores/devOpsWorkspace.ts`、`frontend/src/views/devops/DevOpsWorkspaceView.vue`、Agent Inspector links 与 router/store tests。
+- Documentation：`CONTEXT.md` 与本实施状态节；现有 ADR 保持 accepted decision history，不回写或伪造外部 evidence。
+
+### Delivery record
+
+| 项目 | 结果 | 证据 |
+|---|---|---|
+| Branch/base | `PASS` | `codex/v3-refactor`；任务开始 HEAD 与远端基线均为 `ea38165cb141f6b2d71f9ec15645ea272e2171a7` |
+| Worktree preservation | `PASS` | 保留 Task 8 既有未提交实现并继续完成；未 reset、revert、清理 retained database 或改写历史 migration |
+| Local commit | `PASS` | Task 8 implementation 与本状态节纳入当前语义提交；exact SHA 由提交完成后记录 |
+| Push | `NOT RUN` | 状态记录时尚未执行；仅允许当前 source implementation branch 的正常 fast-forward push，不创建 PR/tag、不触碰默认分支 |
+
+### NOT RUN
+
+- Live Kubernetes product mutation：没有当前 exact Operation Plan/Action Authorization，Worker write gate 为 false；未 scale/restart/patch/delete 任何真实 workload。Kubernetes MCP 仅用于 read-only projection/readiness/resourceVersion 证据。
+- GitHub App delivery、Draft PR、CI exact-head 验证：active revision disabled，当前工具面无 GitHub MCP，且没有任务内 exact Plan/Authorization；未调用 GitHub product adapter，未创建 branch/commit/PR。
+- Argo exact revision/sync observation：active revision disabled，当前工具面无 Argo MCP；未读取外部 Application，也未 sync/override/rollback。
+- Incident-bound live recovery execution：Task 7 contract 可用，但本轮未制造新的 Incident fault/recovery。Task 8 Operation Verification 的真实 MySQL/local action proof 不冒充 live Incident Recovery Verification。
+- hosted/staging/production、真实 LLM/model、外部 Scenario、PR、tag、默认分支与任何未授权 Provider write：`NOT RUN`。

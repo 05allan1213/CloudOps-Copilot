@@ -156,6 +156,30 @@ _Avoid_: Chat suggestion, shell command, mutable draft, blanket permission
 The Owner's decision permitting one exact action card or Operation Plan to execute. Any material change produces a new action identity and requires a new decision.
 _Avoid_: Agent role, reusable write access, approval of future changes
 
+**Operation Execution**:
+An audited attempt to carry out one exact authorized action card or Operation Plan, subject to its current expiry and preconditions.
+_Avoid_: Action proposal, authorization, untracked provider write
+
+**Operation Verification**:
+A current post-effect observation that determines whether an Operation Execution achieved its declared intent. It may support an Incident's recovery proof but never replaces Recovery Verification.
+_Avoid_: Delivery completion, stale Evidence, Incident resolution
+
+**Change Freeze**:
+A reversible Owner-controlled state that prevents a planned external effect on one exact Workload target while the freeze is active.
+_Avoid_: Deployment pause, provider outage, blanket environment lock
+
+**ChangeCandidate**:
+An attributable change identity correlated with an Incident and supporting Evidence for investigation; it is not itself an approved action or a proven cause.
+_Avoid_: Operation Plan, authorization, root-cause conclusion
+
+**DeploymentBaseline**:
+A separately verified immutable record of one Workload's source revision, running image digest and GitOps revision at a known good state.
+_Avoid_: Mutable tag, application version label, inferred rollback target
+
+**DevOps Workspace**:
+The CloudOps product area for reviewing exact change identity, Operation authority, execution audit, delivery observations and Verification links without making GitHub or Argo a prerequisite for the Operational Loop.
+_Avoid_: Generic CI/CD dashboard, mandatory GitOps stage, provider console
+
 **Cloud-Native Operations**:
 The primary product domain that relates Kubernetes state, metrics, Alerts, logs and traces into an actionable view of system behavior.
 _Avoid_: Generic infrastructure portal, GitOps delivery pipeline

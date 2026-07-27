@@ -1,7 +1,5 @@
 import type { RouteRecordRaw } from "vue-router";
 
-const workspacePlaceholder = () => import("../views/workspaces/WorkspaceStatusView.vue");
-
 export const appRoutes: RouteRecordRaw[] = [
   { path: "/", redirect: "/overview", meta: { title: "总览", hidden: true } },
   { path: "/overview", name: "overview", component: () => import("../views/overview/OverviewView.vue"), meta: { title: "总览", workspace: "overview", fullBleed: true } },
@@ -14,7 +12,7 @@ export const appRoutes: RouteRecordRaw[] = [
   { path: "/agent", name: "agent", component: () => import("../views/agent/AgentWorkspaceView.vue"), meta: { title: "Agent", workspace: "agent", provider: "llm", fullBleed: true } },
   { path: "/incidents", name: "incidents", component: () => import("../views/incidents/IncidentListView.vue"), meta: { title: "事件", workspace: "incidents" } },
   { path: "/incidents/:incidentId", name: "incident-detail", component: () => import("../views/incidents/IncidentDetailView.vue"), meta: { title: "事件详情", workspace: "incidents", hidden: true } },
-  { path: "/devops", name: "devops", component: workspacePlaceholder, meta: { title: "DevOps", workspace: "devops", provider: "github" } },
+  { path: "/devops", name: "devops", component: () => import("../views/devops/DevOpsWorkspaceView.vue"), meta: { title: "DevOps", workspace: "devops", fullBleed: true } },
   { path: "/settings", name: "settings", component: () => import("../views/settings/SettingsView.vue"), meta: { title: "设置", workspace: "settings" } },
   { path: "/:pathMatch(.*)*", name: "not-found", component: () => import("../pages/NotFoundPage.vue"), meta: { title: "页面不存在", hidden: true } },
 ];

@@ -15,6 +15,7 @@ func registerAPIRoutes(engine *gin.Engine, cfg config.Config, deps Dependencies)
 		Monitoring:     deps.Monitoring,
 		Telemetry:      deps.Telemetry,
 		AgentWorkspace: deps.AgentWorkspace,
+		Operations:     deps.Operations,
 	})
 	contractapi.RegisterRoutes(engine.Group("/api/v1"), handler)
 	engine.NoRoute(func(c *gin.Context) {

@@ -302,6 +302,9 @@ type Config struct {
 	// 默认值：false
 	K8SWriteEnabled bool
 
+	// OperationMaxReplicas bounds the typed Deployment scale operation.
+	OperationMaxReplicas int
+
 	// K8SInCluster 是否优先使用集群内 ServiceAccount 配置
 	// 默认值：true
 	K8SInCluster bool
@@ -661,6 +664,7 @@ func Load() Config {
 		K8SClusterID:               configutil.String("K8S_CLUSTER_ID", "cloudops-local"),
 		K8SConnectionsJSON:         configutil.String("K8S_CONNECTIONS_JSON", ""),
 		K8SWriteEnabled:            configutil.Bool("K8S_WRITE_ENABLED", false),
+		OperationMaxReplicas:       configutil.PositiveInt("OPERATION_MAX_REPLICAS", 10),
 		K8SInCluster:               configutil.Bool("K8S_IN_CLUSTER", true),
 		K8SKubeconfig:              configutil.String("K8S_KUBECONFIG", ""),
 		K8SAllowedNamespaces:       defaultList(configutil.List("K8S_ALLOWED_NAMESPACES"), []string{"default"}),
@@ -887,9 +891,14 @@ func (c *Config) Validate() error {
 		if !c.K8SEnabled {
 			return fmt.Errorf("K8S_ENABLED must be true when K8S_WRITE_ENABLED is true")
 		}
-		if !c.FastDemoEnabled {
-			return fmt.Errorf("K8S_WRITE_ENABLED is reserved for the guarded local Demonstration Scenario")
+		for _, namespace := range c.K8SAllowedNamespaces {
+			if namespace == "*" {
+				return fmt.Errorf("K8S_WRITE_ENABLED requires explicit namespace allowlists")
+			}
 		}
+	}
+	if c.OperationMaxReplicas < 1 || c.OperationMaxReplicas > 100 {
+		return fmt.Errorf("OPERATION_MAX_REPLICAS must be in range 1-100, got %d", c.OperationMaxReplicas)
 	}
 	if clusterID := strings.TrimSpace(c.K8SClusterID); clusterID == "" || len(clusterID) > 128 || !regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`).MatchString(clusterID) {
 		return fmt.Errorf("K8S_CLUSTER_ID must contain 1-128 letters, digits, dots, underscores or hyphens")

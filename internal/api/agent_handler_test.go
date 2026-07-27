@@ -191,6 +191,9 @@ func (stub *agentWorkspacePortStub) AuthorizeActionCard(context.Context, string,
 func (stub *agentWorkspacePortStub) ActionCard(context.Context, string) (agent.ActionCard, error) {
 	return agent.ActionCard{}, nil
 }
+func (stub *agentWorkspacePortStub) ActionCards(context.Context, int) ([]agent.ActionCard, error) {
+	return []agent.ActionCard{}, nil
+}
 func (stub *agentWorkspacePortStub) ProposeOperationPlan(context.Context, agent.ActionProposalRequest) (agent.OperationPlan, error) {
 	stub.proposalCalls++
 	return agent.OperationPlan{}, nil

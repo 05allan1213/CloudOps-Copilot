@@ -17,12 +17,13 @@ func TestSemanticMigrationContract(t *testing.T) {
 			migrationNames = append(migrationNames, entry.Name())
 		}
 	}
-	if len(migrationNames) != 10 || migrationNames[0] != "00001_cloudops_baseline.sql" ||
+	if len(migrationNames) != 11 || migrationNames[0] != "00001_cloudops_baseline.sql" ||
 		migrationNames[1] != "00002_platform_foundation.sql" || migrationNames[2] != "00003_infrastructure_topology.sql" ||
 		migrationNames[3] != "00004_operational_scope_registry.sql" || migrationNames[4] != "00005_observability_queries.sql" ||
 		migrationNames[5] != "00006_telemetry_evidence_context.sql" || migrationNames[6] != "00007_alert_lifecycle.sql" ||
 		migrationNames[7] != "00008_agent_workspace.sql" || migrationNames[8] != "00009_agent_workspace_tasks.sql" ||
-		migrationNames[9] != "00010_incident_recovery_loop.sql" {
+		migrationNames[9] != "00010_incident_recovery_loop.sql" ||
+		migrationNames[10] != "00011_controlled_operations.sql" {
 		t.Fatalf("embedded migrations=%v, want exact semantic history through Agent Workspace tasks", migrationNames)
 	}
 

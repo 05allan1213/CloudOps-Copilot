@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/05allan1213/CloudOps-Copilot/internal/agent"
+	"github.com/05allan1213/CloudOps-Copilot/internal/operation"
 	"github.com/05allan1213/CloudOps-Copilot/internal/telemetry"
 )
 
@@ -36,6 +37,7 @@ type Config struct {
 	Telemetry      TelemetryPort
 	Alerts         AlertPort
 	AgentWorkspace AgentWorkspacePort
+	Operations     OperationPort
 	AllowedOrigins []string
 	Now            func() time.Time
 }
@@ -50,6 +52,7 @@ type Handler struct {
 	telemetry      TelemetryPort
 	alerts         AlertPort
 	agentWorkspace AgentWorkspacePort
+	operations     OperationPort
 	allowedOrigins map[string]struct{}
 	now            func() time.Time
 	idempotency    *idempotencyStore
@@ -81,6 +84,7 @@ func NewHandler(config Config) *Handler {
 		telemetry:      config.Telemetry,
 		alerts:         config.Alerts,
 		agentWorkspace: config.AgentWorkspace,
+		operations:     config.Operations,
 		allowedOrigins: normalizeOrigins(config.AllowedOrigins),
 		now:            config.Now,
 		idempotency:    newIdempotencyStore(config.Now),
@@ -181,6 +185,11 @@ var routes = []RouteSpec{
 	{Method: http.MethodPost, Path: "/api/v1/operation-plans"},
 	{Method: http.MethodGet, Path: "/api/v1/operation-plans/:id"},
 	{Method: http.MethodPost, Path: "/api/v1/operation-plans/:id/authorizations"},
+	{Method: http.MethodPost, Path: "/api/v1/operation-plans/:id/executions"},
+	{Method: http.MethodPost, Path: "/api/v1/agent/action-cards/:id/executions"},
+	{Method: http.MethodGet, Path: "/api/v1/operations"},
+	{Method: http.MethodGet, Path: "/api/v1/operations/:id"},
+	{Method: http.MethodGet, Path: "/api/v1/devops"},
 }
 
 func Routes() []RouteSpec {
@@ -248,6 +257,9 @@ func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	queries.GET("/agent/action-cards/:id", handler.getActionCard)
 	queries.GET("/operation-plans", handler.listOperationPlans)
 	queries.GET("/operation-plans/:id", handler.getOperationPlan)
+	queries.GET("/operations", handler.listOperations)
+	queries.GET("/operations/:id", handler.getOperation)
+	queries.GET("/devops", handler.getDevOpsWorkspace)
 
 	commands := group.Group("")
 	commands.Use(handler.requireMutationOrigin)
@@ -288,10 +300,13 @@ func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	commands.POST("/agent/action-cards/:id/authorizations", handler.authorizeActionCard)
 	commands.POST("/operation-plans", handler.proposeOperationPlan)
 	commands.POST("/operation-plans/:id/authorizations", handler.authorizeOperationPlan)
+	commands.POST("/operation-plans/:id/executions", handler.executeOperationPlan)
+	commands.POST("/agent/action-cards/:id/executions", handler.executeActionCard)
 }
 
 var _ TelemetryPort = (*telemetry.Service)(nil)
 var _ AgentWorkspacePort = (*agent.WorkspaceRepository)(nil)
+var _ OperationPort = (*operation.WorkspaceService)(nil)
 
 func (h *Handler) listIncidents(c *gin.Context) {
 	cursor, afterID, limit, err := parseListOptions(c.Request)

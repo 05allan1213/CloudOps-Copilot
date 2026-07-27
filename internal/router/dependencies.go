@@ -11,6 +11,7 @@ import (
 	"github.com/05allan1213/CloudOps-Copilot/internal/middleware"
 	"github.com/05allan1213/CloudOps-Copilot/internal/notification"
 	"github.com/05allan1213/CloudOps-Copilot/internal/observability"
+	"github.com/05allan1213/CloudOps-Copilot/internal/operation"
 	"github.com/05allan1213/CloudOps-Copilot/internal/settings"
 	"github.com/05allan1213/CloudOps-Copilot/internal/telemetry"
 )
@@ -29,4 +30,5 @@ type Dependencies struct {
 	Monitoring     *observability.Service
 	Telemetry      *telemetry.Service
 	AgentWorkspace *agent.WorkspaceRepository
+	Operations     *operation.WorkspaceService
 }

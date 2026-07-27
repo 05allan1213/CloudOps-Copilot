@@ -1374,6 +1374,23 @@ paths:
         "404": { $ref: "#/components/responses/Problem" }
         "409": { $ref: "#/components/responses/Problem" }
         default: { $ref: "#/components/responses/Problem" }
+  /api/v1/agent/action-cards/{id}/executions:
+    parameters: [{ $ref: "#/components/parameters/PublicID" }]
+    post:
+      operationId: executeAgentActionCard
+      description: Local Owner queues one exact authorized reversible Action Card; the API performs no mutation.
+      parameters: [{ $ref: "#/components/parameters/Origin" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ExactExecution" } } }
+      responses:
+        "202": { description: Durable controlled execution queued, content: { application/json: { schema: { $ref: "#/components/schemas/OperationExecution" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
   /api/v1/operation-plans:
     get:
       operationId: listAgentOperationPlans
@@ -1419,6 +1436,59 @@ paths:
         "403": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
         "409": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/operation-plans/{id}/executions:
+    parameters: [{ $ref: "#/components/parameters/PublicID" }]
+    post:
+      operationId: executeAgentOperationPlan
+      description: Local Owner queues one exact authorized high-impact Operation Plan; only the Worker may cross the provider effect boundary.
+      parameters: [{ $ref: "#/components/parameters/Origin" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ExactExecution" } } }
+      responses:
+        "202": { description: Durable controlled execution queued, content: { application/json: { schema: { $ref: "#/components/schemas/OperationExecution" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/operations:
+    get:
+      operationId: listControlledOperations
+      description: Durable controlled execution and audit projections; this read never contacts or mutates a Provider.
+      parameters: [{ $ref: "#/components/parameters/Limit" }]
+      responses:
+        "200":
+          description: Controlled operation execution page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/OperationExecution" } }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/operations/{id}:
+    parameters: [{ $ref: "#/components/parameters/PublicID" }]
+    get:
+      operationId: getControlledOperation
+      description: One durable execution with append-only audit and current verification Evidence.
+      responses:
+        "200": { description: Controlled operation detail, content: { application/json: { schema: { $ref: "#/components/schemas/OperationExecution" } } } }
+        "404": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/devops:
+    get:
+      operationId: getDevOpsWorkspace
+      description: MySQL projection of exact change, baseline, Plan, delivery, operation, provider, and Verification identities.
+      parameters: [{ $ref: "#/components/parameters/Limit" }]
+      responses:
+        "200": { description: DevOps Workspace projection, content: { application/json: { schema: { $ref: "#/components/schemas/DevOpsWorkspace" } } } }
+        "501": { $ref: "#/components/responses/Problem" }
         default: { $ref: "#/components/responses/Problem" }
 components:
   parameters:
@@ -3329,6 +3399,103 @@ components:
       properties:
         expected_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
         reason: { type: string, minLength: 1, maxLength: 1024 }
+    ExactExecution:
+      type: object
+      additionalProperties: false
+      required: [expected_hash]
+      properties:
+        expected_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+    OperationContextLink:
+      type: object
+      additionalProperties: false
+      required: [kind, label, href]
+      properties:
+        kind: { type: string }
+        label: { type: string }
+        href: { type: string }
+        status: { type: string }
+    OperationAuditEvent:
+      type: object
+      additionalProperties: false
+      required: [id, sequence, type, payload, content_hash, occurred_at]
+      properties:
+        id: { type: string, format: uuid }
+        sequence: { type: integer, minimum: 1 }
+        type: { type: string }
+        payload: { type: object }
+        content_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+        occurred_at: { type: string, format: date-time }
+    OperationVerificationObservation:
+      type: object
+      additionalProperties: false
+      required: [id, source, status, provider_identity, evidence, content_hash, summary, observed_at]
+      properties:
+        id: { type: string, format: uuid }
+        source: { type: string, enum: [local, kubernetes] }
+        status: { type: string, enum: [passed, failed] }
+        provider_identity: { type: object }
+        evidence: { type: object }
+        content_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+        summary: { type: string }
+        observed_at: { type: string, format: date-time }
+    OperationExecution:
+      type: object
+      additionalProperties: false
+      required: [id, subject_type, subject_id, run_id, configuration_revision_id, operation_type, expected_content_hash, status, attempt, created_at, events, links]
+      properties:
+        id: { type: string, format: uuid }
+        subject_type: { type: string, enum: [action_card, operation_plan] }
+        subject_id: { type: string, format: uuid }
+        run_id: { type: string, format: uuid }
+        incident_id: { type: string, format: uuid }
+        configuration_revision_id: { type: string, format: uuid }
+        operation_type: { type: string }
+        expected_content_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+        status: { type: string, enum: [ready, running, succeeded, failed, precondition_failed, verification_failed, cancelled] }
+        attempt: { type: integer, minimum: 0 }
+        external_effect_started_at: { type: string, format: date-time }
+        result: { type: object }
+        failure_code: { type: string }
+        failure_summary: { type: string }
+        created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        events: { type: array, items: { $ref: "#/components/schemas/OperationAuditEvent" } }
+        verification: { $ref: "#/components/schemas/OperationVerificationObservation" }
+        links: { type: array, items: { $ref: "#/components/schemas/OperationContextLink" } }
+    DevOpsWorkspace:
+      type: object
+      description: Durable DevOps projection. Operation Plan and Action Card objects retain their Agent authority schema.
+      required: [operation_plans, action_cards, executions, change_freezes, change_candidates, deployment_baselines, deliveries, providers, collected_at]
+      properties:
+        operation_plans: { type: array, items: { type: object } }
+        action_cards: { type: array, items: { type: object } }
+        executions: { type: array, items: { $ref: "#/components/schemas/OperationExecution" } }
+        change_freezes: { type: array, items: { $ref: "#/components/schemas/ChangeFreezeState" } }
+        change_candidates: { type: array, items: { type: object } }
+        deployment_baselines: { type: array, items: { type: object } }
+        deliveries: { type: array, items: { type: object } }
+        providers: { type: array, items: { type: object } }
+        collected_at: { type: string, format: date-time }
+    ChangeFreezeState:
+      type: object
+      additionalProperties: false
+      required: [target, enabled, reason, row_version]
+      properties:
+        target:
+          type: object
+          additionalProperties: false
+          required: [cluster_id, environment, namespace, workload_kind, workload_name]
+          properties:
+            cluster_id: { type: string }
+            environment: { type: string }
+            namespace: { type: string }
+            workload_kind: { type: string, enum: [Deployment] }
+            workload_name: { type: string }
+        enabled: { type: boolean }
+        reason: { type: string }
+        row_version: { type: integer, minimum: 0 }
+        updated_at: { type: string, format: date-time }
     CommandResult:
       type: object
       additionalProperties: false

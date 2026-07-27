@@ -130,6 +130,7 @@ async function authorizePlan(plan: OperationPlan) {
         <p>{{ card.risk }}</p><code translate="no">{{ card.content_hash }}</code>
         <details><summary>Exact payload</summary><pre>{{ compactJSON({ target: card.target, parameters: card.parameters, preconditions: card.preconditions }) }}</pre></details>
         <button v-if="card.status === 'proposed'" type="button" @click="openAuthority(card)">审查 exact Action Card</button>
+        <RouterLink class="devops-link" :to="{ name: 'devops', query: { subject: card.id } }">在 DevOps 审查 / 执行<ExternalLink :size="13" aria-hidden="true" /></RouterLink>
         <form v-if="authoritySubjectID === card.id" @submit.prevent="authorizeCard(card)"><label :for="authorityInputID(card.id)">授权理由</label><textarea :id="authorityInputID(card.id)" v-model="authorityReason" name="authorization_reason" autocomplete="off" maxlength="1024" rows="3"></textarea><button type="submit" :disabled="authorityReason.trim().length < 2 || store.mutating">确认 exact hash</button></form>
       </article>
 
@@ -138,6 +139,7 @@ async function authorizePlan(plan: OperationPlan) {
         <p>{{ plan.risk }}</p><code translate="no">{{ plan.content_hash }}</code>
         <details><summary>Exact immutable plan</summary><pre>{{ compactJSON({ target: plan.target, parameters: plan.parameters, intended_state: plan.intended_state, preconditions: plan.preconditions, verification_intent: plan.verification_intent }) }}</pre></details>
         <button v-if="plan.status === 'proposed'" type="button" @click="openAuthority(plan)">审查 Operation Plan</button>
+        <RouterLink class="devops-link" :to="{ name: 'devops', query: { subject: plan.id } }">在 DevOps 审查 / 执行<ExternalLink :size="13" aria-hidden="true" /></RouterLink>
         <form v-if="authoritySubjectID === plan.id" @submit.prevent="authorizePlan(plan)"><label :for="authorityInputID(plan.id)">授权理由</label><textarea :id="authorityInputID(plan.id)" v-model="authorityReason" name="authorization_reason" autocomplete="off" maxlength="1024" rows="3"></textarea><button type="submit" :disabled="authorityReason.trim().length < 2 || store.mutating">授权 exact Plan</button></form>
       </article>
     </section>
@@ -172,7 +174,9 @@ async function authorizePlan(plan: OperationPlan) {
 .inspector-section h2 { margin: 0; font-size: 12px; letter-spacing: 0; }
 .inspector-section > header > span { color: var(--co-text-secondary); font-size: 9px; font-variant-numeric: tabular-nums; }
 .context-drift { display: flex; align-items: flex-start; gap: var(--co-space-2); margin-bottom: var(--co-space-2); padding: var(--co-space-2); border: 1px solid var(--co-status-warning-border); border-radius: var(--co-radius-control); color: var(--co-status-warning-fg); background: var(--co-status-warning-bg); font-size: 10px; line-height: 1.45; }
-.attach-context, .authority-record > button, .authority-record form button, .knowledge-row button { display: inline-flex; min-height: 32px; align-items: center; justify-content: center; gap: var(--co-space-2); padding: 0 var(--co-space-3); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); color: var(--co-text-secondary); background: var(--co-bg-surface); cursor: pointer; font-size: 10px; font-weight: 750; }
+.attach-context, .authority-record > button, .authority-record form button, .knowledge-row button, .devops-link { display: inline-flex; min-height: 32px; align-items: center; justify-content: center; gap: var(--co-space-2); padding: 0 var(--co-space-3); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); color: var(--co-text-secondary); background: var(--co-bg-surface); cursor: pointer; font-size: 10px; font-weight: 750; }
+.devops-link { width: 100%; margin-top: var(--co-space-2); color: var(--co-action-primary); }
+.devops-link:hover { border-color: var(--co-action-primary); background: var(--co-bg-hover); }
 .attach-context { width: 100%; margin-bottom: var(--co-space-3); color: var(--co-text-on-action); border-color: var(--co-action-primary); background: var(--co-action-primary); }
 .attach-context:disabled, .authority-record button:disabled, .knowledge-row button:disabled { cursor: not-allowed; opacity: 0.55; }
 .inspector-facts { display: grid; gap: var(--co-space-2); margin: 0; }

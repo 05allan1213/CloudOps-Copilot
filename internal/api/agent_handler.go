@@ -37,6 +37,7 @@ type AgentWorkspacePort interface {
 	ProposeActionCard(context.Context, agent.ActionProposalRequest) (agent.ActionCard, error)
 	AuthorizeActionCard(context.Context, string, agent.AuthorizeActionRequest) (agent.ActionCard, error)
 	ActionCard(context.Context, string) (agent.ActionCard, error)
+	ActionCards(context.Context, int) ([]agent.ActionCard, error)
 	ProposeOperationPlan(context.Context, agent.ActionProposalRequest) (agent.OperationPlan, error)
 	AuthorizeOperationPlan(context.Context, string, agent.AuthorizeActionRequest) (agent.OperationPlan, error)
 	OperationPlan(context.Context, string) (agent.OperationPlan, error)
