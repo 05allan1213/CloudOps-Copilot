@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/05allan1213/CloudOps-Copilot/internal/agent"
 	"github.com/05allan1213/CloudOps-Copilot/internal/telemetry"
 )
 
@@ -34,6 +35,7 @@ type Config struct {
 	Monitoring     MonitoringPort
 	Telemetry      TelemetryPort
 	Alerts         AlertPort
+	AgentWorkspace AgentWorkspacePort
 	AllowedOrigins []string
 	Now            func() time.Time
 }
@@ -47,6 +49,7 @@ type Handler struct {
 	monitoring     MonitoringPort
 	telemetry      TelemetryPort
 	alerts         AlertPort
+	agentWorkspace AgentWorkspacePort
 	allowedOrigins map[string]struct{}
 	now            func() time.Time
 	idempotency    *idempotencyStore
@@ -77,6 +80,7 @@ func NewHandler(config Config) *Handler {
 		monitoring:     config.Monitoring,
 		telemetry:      config.Telemetry,
 		alerts:         config.Alerts,
+		agentWorkspace: config.AgentWorkspace,
 		allowedOrigins: normalizeOrigins(config.AllowedOrigins),
 		now:            config.Now,
 		idempotency:    newIdempotencyStore(config.Now),
@@ -152,6 +156,28 @@ var routes = []RouteSpec{
 	{Method: http.MethodGet, Path: "/api/v1/traces/:trace_id"},
 	{Method: http.MethodPost, Path: "/api/v1/traces/searches/:id/traces/:trace_id/evidence"},
 	{Method: http.MethodPost, Path: "/api/v1/agent/consultations"},
+	{Method: http.MethodGet, Path: "/api/v1/agent/investigations"},
+	{Method: http.MethodGet, Path: "/api/v1/agent/investigations/:id"},
+	{Method: http.MethodPost, Path: "/api/v1/agent/investigations/:id/cancel"},
+	{Method: http.MethodGet, Path: "/api/v1/agent/consultations"},
+	{Method: http.MethodGet, Path: "/api/v1/agent/consultations/:id"},
+	{Method: http.MethodPost, Path: "/api/v1/agent/consultations/:id/snapshots"},
+	{Method: http.MethodPost, Path: "/api/v1/agent/consultations/:id/messages"},
+	{Method: http.MethodGet, Path: "/api/v1/agent/consultations/:id/events"},
+	{Method: http.MethodPost, Path: "/api/v1/agent/consultations/:id/cancel"},
+	{Method: http.MethodGet, Path: "/api/v1/knowledge-items"},
+	{Method: http.MethodPost, Path: "/api/v1/knowledge-items"},
+	{Method: http.MethodGet, Path: "/api/v1/knowledge-items/:id"},
+	{Method: http.MethodPatch, Path: "/api/v1/knowledge-items/:id"},
+	{Method: http.MethodDelete, Path: "/api/v1/knowledge-items/:id"},
+	{Method: http.MethodGet, Path: "/api/v1/runbook-guidance"},
+	{Method: http.MethodPost, Path: "/api/v1/agent/action-cards"},
+	{Method: http.MethodGet, Path: "/api/v1/agent/action-cards/:id"},
+	{Method: http.MethodPost, Path: "/api/v1/agent/action-cards/:id/authorizations"},
+	{Method: http.MethodGet, Path: "/api/v1/operation-plans"},
+	{Method: http.MethodPost, Path: "/api/v1/operation-plans"},
+	{Method: http.MethodGet, Path: "/api/v1/operation-plans/:id"},
+	{Method: http.MethodPost, Path: "/api/v1/operation-plans/:id/authorizations"},
 }
 
 func Routes() []RouteSpec {
@@ -206,6 +232,17 @@ func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	queries.GET("/traces/searches", handler.listTraceSearches)
 	queries.GET("/traces/searches/:id", handler.getTraceSearch)
 	queries.GET("/traces/:trace_id", handler.getTraceDetail)
+	queries.GET("/agent/investigations", handler.listAgentInvestigations)
+	queries.GET("/agent/investigations/:id", handler.getAgentInvestigation)
+	queries.GET("/agent/consultations", handler.listAgentConsultations)
+	queries.GET("/agent/consultations/:id", handler.getAgentConsultation)
+	queries.GET("/agent/consultations/:id/events", handler.streamAgentEvents)
+	queries.GET("/knowledge-items", handler.listKnowledgeItems)
+	queries.GET("/knowledge-items/:id", handler.getKnowledgeItem)
+	queries.GET("/runbook-guidance", handler.listRunbookGuidance)
+	queries.GET("/agent/action-cards/:id", handler.getActionCard)
+	queries.GET("/operation-plans", handler.listOperationPlans)
+	queries.GET("/operation-plans/:id", handler.getOperationPlan)
 
 	commands := group.Group("")
 	commands.Use(handler.requireMutationOrigin)
@@ -234,9 +271,21 @@ func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	commands.POST("/traces/searches", handler.startTraceSearch)
 	commands.POST("/traces/searches/:id/traces/:trace_id/evidence", handler.saveTraceEvidence)
 	commands.POST("/agent/consultations", handler.createTelemetryConsultation)
+	commands.POST("/agent/investigations/:id/cancel", handler.cancelAgentInvestigation)
+	commands.POST("/agent/consultations/:id/snapshots", handler.attachAgentSnapshot)
+	commands.POST("/agent/consultations/:id/messages", handler.sendAgentMessage)
+	commands.POST("/agent/consultations/:id/cancel", handler.cancelAgentConsultation)
+	commands.POST("/knowledge-items", handler.createKnowledgeItem)
+	commands.PATCH("/knowledge-items/:id", handler.updateKnowledgeItem)
+	commands.DELETE("/knowledge-items/:id", handler.deleteKnowledgeItem)
+	commands.POST("/agent/action-cards", handler.proposeActionCard)
+	commands.POST("/agent/action-cards/:id/authorizations", handler.authorizeActionCard)
+	commands.POST("/operation-plans", handler.proposeOperationPlan)
+	commands.POST("/operation-plans/:id/authorizations", handler.authorizeOperationPlan)
 }
 
 var _ TelemetryPort = (*telemetry.Service)(nil)
+var _ AgentWorkspacePort = (*agent.WorkspaceRepository)(nil)
 
 func (h *Handler) listIncidents(c *gin.Context) {
 	cursor, afterID, limit, err := parseListOptions(c.Request)

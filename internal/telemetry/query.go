@@ -85,6 +85,40 @@ func prepareTraceSearch(request StartTraceSearchRequest, revision settings.Revis
 	return newPrepared("tempo", "trace_search", revision.ID, request.Mode, query, scope, resource, window, bounds), nil
 }
 
+// PrepareBoundedLogToolRequest creates the fixed guided Logs request available
+// to Agent read tools. It cannot carry expert Elasticsearch query text.
+func PrepareBoundedLogToolRequest(clusterID, namespace string, resource ResourceReference, from, to time.Time, limit int, revision settings.Revision) (ProviderLogRequest, error) {
+	prepared, err := prepareLogQuery(StartLogQueryRequest{
+		Mode: ModeGuided, ClusterID: clusterID, Namespace: namespace,
+		Resource: resource, From: from, To: to, Limit: limit,
+	}, revision)
+	if err != nil {
+		return ProviderLogRequest{}, err
+	}
+	return ProviderLogRequest{
+		ConfigurationRevision: prepared.ConfigurationRevision,
+		Scope:                 prepared.Scope, Resource: prepared.Resource, Query: prepared.Query,
+		TimeRange: prepared.TimeRange, Bounds: prepared.Bounds,
+	}, nil
+}
+
+// PrepareBoundedTraceToolRequest creates the fixed guided Trace search request
+// available to Agent read tools. Expert TraceQL remains outside this contract.
+func PrepareBoundedTraceToolRequest(clusterID, namespace string, resource ResourceReference, from, to time.Time, limit int, revision settings.Revision) (ProviderTraceSearchRequest, error) {
+	prepared, err := prepareTraceSearch(StartTraceSearchRequest{
+		Mode: ModeGuided, ClusterID: clusterID, Namespace: namespace,
+		Resource: resource, From: from, To: to, Limit: limit,
+	}, revision)
+	if err != nil {
+		return ProviderTraceSearchRequest{}, err
+	}
+	return ProviderTraceSearchRequest{
+		ConfigurationRevision: prepared.ConfigurationRevision,
+		Scope:                 prepared.Scope, Resource: prepared.Resource, Query: prepared.Query,
+		TimeRange: prepared.TimeRange, Bounds: prepared.Bounds,
+	}, nil
+}
+
 func prepareTraceDetail(request TraceDetailRequest, revision settings.Revision) (preparedQuery, string, error) {
 	traceID := strings.ToLower(strings.TrimSpace(request.TraceID))
 	if !traceIDPattern.MatchString(traceID) {

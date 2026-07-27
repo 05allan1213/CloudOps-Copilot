@@ -102,6 +102,27 @@ func PrepareOwnerQuery(request StartQueryRequest, revision settings.Revision) (P
 	}, nil
 }
 
+// PrepareBoundedMetricToolRequest builds one fixed catalog query for an Agent
+// read tool. Expert PromQL remains exclusively behind Query Authorization.
+func PrepareBoundedMetricToolRequest(catalogKey, clusterID, namespace string, resource ResourceReference, from, to time.Time, stepSeconds int, revision settings.Revision) (ProviderQueryRequest, error) {
+	prepared, err := PrepareOwnerQuery(StartQueryRequest{
+		Mode: ModeGuided, CatalogKey: strings.TrimSpace(catalogKey), ClusterID: clusterID,
+		Namespace: namespace, Resource: resource, From: from, To: to, StepSeconds: stepSeconds,
+	}, revision)
+	if err != nil {
+		return ProviderQueryRequest{}, err
+	}
+	return ProviderQueryRequest{
+		ConfigurationRevision: prepared.ConfigurationRevision,
+		Scope:                 prepared.Scope,
+		Resource:              prepared.Resource,
+		Query:                 prepared.Query,
+		QueryHash:             prepared.QueryHash,
+		TimeRange:             prepared.TimeRange,
+		Bounds:                prepared.Bounds,
+	}, nil
+}
+
 func bindOwnerDefinition(prepared PreparedQuery, definition Definition) (PreparedQuery, error) {
 	if prepared.Actor != ActorOwner || prepared.DefinitionID == "" || prepared.DefinitionID != definition.ID ||
 		definition.ConfigurationRevision != prepared.ConfigurationRevision || definition.Mode != prepared.Mode ||

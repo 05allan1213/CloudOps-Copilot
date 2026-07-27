@@ -1,6 +1,7 @@
 package router
 
 import (
+	"github.com/05allan1213/CloudOps-Copilot/internal/agent"
 	"github.com/05allan1213/CloudOps-Copilot/internal/alert"
 	"github.com/05allan1213/CloudOps-Copilot/internal/alertmanageringress"
 	"github.com/05allan1213/CloudOps-Copilot/internal/api"
@@ -27,4 +28,5 @@ type Dependencies struct {
 	Infrastructure *infrastructure.Service
 	Monitoring     *observability.Service
 	Telemetry      *telemetry.Service
+	AgentWorkspace *agent.WorkspaceRepository
 }

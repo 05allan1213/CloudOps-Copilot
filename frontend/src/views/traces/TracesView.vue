@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   Archive,
   CheckCircle2,
@@ -39,6 +39,7 @@ import {
   type TraceSummary,
 } from "../../api/telemetry";
 import { waterfallPosition } from "../../models/telemetry";
+import { openAgentPanel, publishAgentContext, type AgentPageContext } from "../../utils/agentContext";
 import { OPERATIONAL_SCOPE_CHANGED_EVENT } from "../../utils/operationalScope";
 
 interface RequestFailure {
@@ -164,6 +165,37 @@ function telemetryContext() {
     namespace: resource.namespace,
     resource: { id: resource.id, kind: resource.kind, namespace: resource.namespace, name: resource.name },
   };
+}
+
+function currentAgentContext(): AgentPageContext | null {
+  const current = detail.value ?? currentSearch.value;
+  const queryID = detail.value?.query_id || currentSearch.value?.id;
+  if (!current || !queryID || (currentSearch.value?.status && currentSearch.value.status !== "succeeded")) return null;
+  return {
+    route: route.fullPath,
+    input: {
+      title: `${current.resource.name} Trace 上下文`,
+      cluster_id: current.scope.cluster_id,
+      environment: current.scope.environment,
+      namespaces: [...current.scope.namespaces],
+      resource_refs: [current.resource],
+      filters: {
+        workspace: "traces",
+        provider: "tempo",
+        trace_id: detail.value?.trace_id,
+        query_hash: currentSearch.value?.query_hash,
+      },
+      from: current.time_range.from,
+      to: current.time_range.to,
+      query_definition_refs: [],
+      query_execution_refs: [queryID],
+      evidence_refs: retainedEvidence.value.map((item) => item.id),
+    },
+  };
+}
+
+function publishCurrentAgentContext() {
+  publishAgentContext(currentAgentContext());
 }
 
 function contextRouteQuery(): Record<string, string> {
@@ -392,18 +424,22 @@ async function freezeContext() {
   freezing.value = true;
   queryError.value = null;
   try {
+    const context = currentAgentContext();
     consultation.value = await createTelemetryConsultation({
       title: `${resource.name} Trace 上下文`,
       cluster_id: scope.cluster_id,
       environment: scope.environment,
       namespaces: [resource.namespace],
       resource_refs: [resource],
+      filters: context?.input.filters,
       from: range.from,
       to: range.to,
+      query_definition_refs: context?.input.query_definition_refs,
       query_execution_refs: [queryID],
       evidence_refs: retainedEvidence.value.map((item) => item.id),
     });
     statusMessage.value = "当前 Trace 上下文已冻结为不可变 Context Snapshot。";
+    if (context) openAgentPanel({ consultationId: consultation.value.id, context });
   } catch (reason) {
     queryError.value = normalizeFailure(reason, "Context Snapshot 创建失败。");
   } finally {
@@ -420,10 +456,13 @@ onMounted(() => {
   void loadWorkspace();
 });
 
+watch([() => route.fullPath, currentSearch, detail, retainedEvidence], publishCurrentAgentContext, { flush: "post" });
+
 onBeforeUnmount(() => {
   mounted = false;
   controller?.abort();
   window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT, receiveScopeChange);
+  publishAgentContext(null);
 });
 </script>
 

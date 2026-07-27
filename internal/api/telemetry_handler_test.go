@@ -12,11 +12,13 @@ import (
 )
 
 type telemetryPortStub struct {
-	err      error
-	catalog  telemetry.Catalog
-	logQuery telemetry.LogQuery
-	trace    telemetry.TraceDetail
-	lastLog  telemetry.StartLogQueryRequest
+	err          error
+	catalog      telemetry.Catalog
+	logQuery     telemetry.LogQuery
+	trace        telemetry.TraceDetail
+	lastLog      telemetry.StartLogQueryRequest
+	lastSnapshot telemetry.AttachContextSnapshotRequest
+	snapshot     telemetry.ContextSnapshot
 }
 
 func (s *telemetryPortStub) Catalog(context.Context, string, telemetry.CatalogRequest) (telemetry.Catalog, error) {
@@ -52,6 +54,10 @@ func (s *telemetryPortStub) SaveTraceEvidence(context.Context, string, string, t
 }
 func (s *telemetryPortStub) CreateConsultation(context.Context, telemetry.CreateConsultationRequest) (telemetry.Consultation, error) {
 	return telemetry.Consultation{}, s.err
+}
+func (s *telemetryPortStub) AttachContextSnapshot(_ context.Context, _ string, request telemetry.AttachContextSnapshotRequest) (telemetry.ContextSnapshot, error) {
+	s.lastSnapshot = request
+	return s.snapshot, s.err
 }
 
 func TestTelemetryHTTPContractProjectsUnavailableEmptyAndTruncatedStates(t *testing.T) {

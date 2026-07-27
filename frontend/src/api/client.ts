@@ -74,6 +74,31 @@ export async function postJSON<T, TBody = unknown>(
   }
 }
 
+export async function patchJSON<T, TBody = unknown>(
+  url: string,
+  body?: TBody,
+  config: AxiosRequestConfig = {},
+): Promise<T> {
+  try {
+    return (await httpClient.patch<T>(url, body, config)).data;
+  } catch (err) {
+    if (axios.isAxiosError(err)) throw normalizeAxiosError(err);
+    throw err;
+  }
+}
+
+export async function deleteJSON<T = void>(
+  url: string,
+  config: AxiosRequestConfig = {},
+): Promise<T> {
+  try {
+    return (await httpClient.delete<T>(url, config)).data;
+  } catch (err) {
+    if (axios.isAxiosError(err)) throw normalizeAxiosError(err);
+    throw err;
+  }
+}
+
 export interface JSONResponse<T> {
   data: T;
   status: number;

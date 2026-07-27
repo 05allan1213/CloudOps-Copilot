@@ -90,6 +90,13 @@ func TestWorkerReadinessRequiresClaimLoopsMySQLAndQueue(t *testing.T) {
 	worker.stateMu.Lock()
 	worker.runnerStarted = true
 	worker.stateMu.Unlock()
+	if err := worker.readiness(context.Background()); err == nil || !strings.Contains(err.Error(), "workspace") {
+		t.Fatalf("missing Workspace readiness err=%v", err)
+	}
+	worker.workspace = &testTaskRunner{}
+	worker.stateMu.Lock()
+	worker.workspaceStarted = true
+	worker.stateMu.Unlock()
 	if err := worker.readiness(context.Background()); err == nil || !strings.Contains(err.Error(), "activation") {
 		t.Fatalf("missing activation readiness err=%v", err)
 	}
@@ -181,6 +188,7 @@ func testWorker(runner taskRunner, asyncConfig AsyncWorkerConfig) *Worker {
 	worker := &Worker{
 		cfg:        WorkerConfig{Async: asyncConfig},
 		runner:     runner,
+		workspace:  &testTaskRunner{},
 		activation: &testActivationRunner{},
 		mysqlReady: func(context.Context) error { return nil },
 	}

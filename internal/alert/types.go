@@ -4,6 +4,7 @@ package alert
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"time"
@@ -107,7 +108,7 @@ type IncidentLink struct {
 
 type InvestigationLink struct {
 	ID         string    `json:"id"`
-	IncidentID string    `json:"incident_id"`
+	IncidentID string    `json:"incident_id,omitempty"`
 	Status     string    `json:"status"`
 	CreatedAt  time.Time `json:"created_at"`
 }
@@ -256,5 +257,5 @@ type SilenceProvider interface {
 }
 
 type InvestigationStarter interface {
-	StartInvestigation(context.Context, string, uint64, string, string, Actor) error
+	StartAlertInvestigationTx(context.Context, *sql.Tx, string, string, string) (string, error)
 }

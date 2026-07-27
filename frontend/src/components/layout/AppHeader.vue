@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { Activity, Bell, ChevronRight, LoaderCircle, Moon, Network, Sun, UserRound } from "lucide-vue-next";
+import { Activity, Bell, Bot, ChevronRight, LoaderCircle, Moon, Network, Sun, UserRound } from "lucide-vue-next";
 
 import type { OperationalScope, ProviderHealth } from "../../api/platform";
 import { useTheme } from "../../composables/useTheme";
@@ -16,6 +16,7 @@ const props = defineProps<{
 }>();
 const emit = defineEmits<{
   changeScope: [scopeID: string];
+  openAgent: [];
   openNotifications: [trigger: HTMLElement];
 }>();
 
@@ -72,6 +73,9 @@ function changeScope(event: Event) {
         <LoaderCircle v-if="scopeSwitching" class="scope-spinner" :size="14" aria-hidden="true" />
         <small v-if="providerCount">{{ availableProviders }}/{{ providerCount }}</small>
       </label>
+      <button type="button" class="icon-button" aria-label="打开全局 Agent 面板" title="Agent" @click="emit('openAgent')">
+        <Bot :size="19" aria-hidden="true" />
+      </button>
       <button type="button" class="icon-button notification-button" aria-label="打开通知收件箱" title="通知" @click="openNotifications">
         <Bell :size="19" aria-hidden="true" />
         <span v-if="unreadCount" class="notification-count">{{ unreadCount > 99 ? "99+" : unreadCount }}</span>

@@ -402,8 +402,18 @@ func (r *Repository) CreateConsultation(ctx context.Context, revisionID string, 
 	consultationID, snapshotID := uuid.NewString(), uuid.NewString()
 	namespaces, _ := json.Marshal(request.Namespaces)
 	resources, _ := json.Marshal(request.Resources)
-	queryIDs, _ := json.Marshal(request.QueryIDs)
-	evidenceIDs, _ := json.Marshal(request.EvidenceIDs)
+	filters := request.Filters
+	if len(filters) == 0 {
+		filters = json.RawMessage(`{}`)
+	}
+	definitionIDs := request.DefinitionIDs
+	if definitionIDs == nil {
+		definitionIDs = []string{}
+	}
+	filtersJSON, _ := json.Marshal(json.RawMessage(filters))
+	definitionIDsJSON, _ := json.Marshal(definitionIDs)
+	queryIDs, _ := json.Marshal(nonNilStrings(request.QueryIDs))
+	evidenceIDs, _ := json.Marshal(nonNilStrings(request.EvidenceIDs))
 	now := r.now().UTC()
 	result, err := tx.ExecContext(ctx, `INSERT INTO agent_consultations
  (public_id, title, status, created_by, created_at, updated_at)
@@ -416,12 +426,12 @@ func (r *Repository) CreateConsultation(ctx context.Context, revisionID string, 
 		return Consultation{}, err
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO context_snapshots
- (public_id, consultation_id, configuration_revision_id, cluster_id, environment, namespaces_json,
-  resource_refs_json, range_start, range_end, query_execution_refs_json, evidence_refs_json,
+ (public_id, consultation_id, agent_run_id, subject_type, configuration_revision_id, cluster_id, environment, namespaces_json,
+  resource_refs_json, filters_json, range_start, range_end, query_definition_refs_json, query_execution_refs_json, evidence_refs_json,
   content_hash, created_by, created_at)
- VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'local-owner', ?)`, snapshotID, internalConsultationID,
-		configurationID, request.ClusterID, request.Environment, namespaces, resources,
-		request.From.UTC(), request.To.UTC(), queryIDs, evidenceIDs, contentHash, now); err != nil {
+ VALUES (?, ?, NULL, 'consultation', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'local-owner', ?)`, snapshotID, internalConsultationID,
+		configurationID, request.ClusterID, request.Environment, namespaces, resources, filtersJSON,
+		request.From.UTC(), request.To.UTC(), definitionIDsJSON, queryIDs, evidenceIDs, contentHash, now); err != nil {
 		return Consultation{}, fmt.Errorf("persist Context Snapshot: %w", err)
 	}
 	if err = tx.Commit(); err != nil {
@@ -433,14 +443,106 @@ func (r *Repository) CreateConsultation(ctx context.Context, revisionID string, 
 		Snapshot: ContextSnapshot{
 			ID: snapshotID, ConsultationID: consultationID, ConfigurationRevision: revisionID,
 			Scope: scope, Resources: append([]ResourceReference(nil), request.Resources...),
-			TimeRange: TimeRange{From: request.From.UTC(), To: request.To.UTC()},
-			QueryIDs:  append([]string(nil), request.QueryIDs...), EvidenceIDs: append([]string(nil), request.EvidenceIDs...),
+			Filters:       append(json.RawMessage(nil), request.Filters...),
+			TimeRange:     TimeRange{From: request.From.UTC(), To: request.To.UTC()},
+			DefinitionIDs: append([]string(nil), request.DefinitionIDs...), QueryIDs: append([]string(nil), request.QueryIDs...),
+			EvidenceIDs: append([]string(nil), request.EvidenceIDs...),
 			ContentHash: contentHash, CreatedAt: now,
 		},
 	}, nil
 }
 
+func (r *Repository) AttachContextSnapshot(ctx context.Context, consultationPublicID, revisionID string, request CreateConsultationRequest, contentHash string) (ContextSnapshot, error) {
+	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		return ContextSnapshot{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var consultationID uint64
+	var status string
+	if err = tx.QueryRowContext(ctx, `SELECT id,status FROM agent_consultations WHERE public_id=? FOR UPDATE`, consultationPublicID).Scan(&consultationID, &status); errors.Is(err, sql.ErrNoRows) {
+		return ContextSnapshot{}, ErrNotFound
+	} else if err != nil {
+		return ContextSnapshot{}, err
+	}
+	if status != "open" {
+		return ContextSnapshot{}, ErrConflict
+	}
+	configurationID, err := internalID(ctx, tx, "configuration_revisions", revisionID)
+	if err != nil {
+		return ContextSnapshot{}, err
+	}
+	namespaces, _ := json.Marshal(request.Namespaces)
+	resources, _ := json.Marshal(request.Resources)
+	filters := request.Filters
+	if len(filters) == 0 {
+		filters = json.RawMessage(`{}`)
+	}
+	definitions := request.DefinitionIDs
+	if definitions == nil {
+		definitions = []string{}
+	}
+	filtersJSON, _ := json.Marshal(json.RawMessage(filters))
+	definitionsJSON, _ := json.Marshal(definitions)
+	queries, _ := json.Marshal(nonNilStrings(request.QueryIDs))
+	evidence, _ := json.Marshal(nonNilStrings(request.EvidenceIDs))
+	publicID := uuid.NewString()
+	now := r.now().UTC()
+	result, err := tx.ExecContext(ctx, `INSERT INTO context_snapshots
+ (public_id,consultation_id,agent_run_id,subject_type,configuration_revision_id,cluster_id,environment,
+  namespaces_json,resource_refs_json,filters_json,range_start,range_end,query_definition_refs_json,
+  query_execution_refs_json,evidence_refs_json,content_hash,created_by,created_at)
+	 VALUES (?,?,NULL,'consultation',?,?,?,?,?,?,?,?,?,?,?,?,'local-owner',?)
+ ON DUPLICATE KEY UPDATE id=LAST_INSERT_ID(id)`, publicID, consultationID, configurationID,
+		request.ClusterID, request.Environment, namespaces, resources, filtersJSON, request.From.UTC(), request.To.UTC(),
+		definitionsJSON, queries, evidence, contentHash, now)
+	if err != nil {
+		return ContextSnapshot{}, fmt.Errorf("persist explicit Context Snapshot: %w", err)
+	}
+	internalSnapshotID, err := result.LastInsertId()
+	if err != nil || internalSnapshotID <= 0 {
+		return ContextSnapshot{}, fmt.Errorf("read explicit Context Snapshot identity: %w", err)
+	}
+	if err = tx.QueryRowContext(ctx, `SELECT public_id,created_at FROM context_snapshots WHERE id=?`, internalSnapshotID).Scan(&publicID, &now); err != nil {
+		return ContextSnapshot{}, err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE agent_consultations SET updated_at=? WHERE id=?`, now, consultationID); err != nil {
+		return ContextSnapshot{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return ContextSnapshot{}, fmt.Errorf("commit explicit Context Snapshot: %w", err)
+	}
+	return ContextSnapshot{
+		ID: publicID, ConsultationID: consultationPublicID, ConfigurationRevision: revisionID,
+		Scope:     settingsScope(scopeRecord{ClusterID: request.ClusterID, Environment: request.Environment, Namespaces: append([]string(nil), request.Namespaces...)}),
+		Resources: append([]ResourceReference(nil), request.Resources...), Filters: append(json.RawMessage(nil), request.Filters...),
+		TimeRange: TimeRange{From: request.From.UTC(), To: request.To.UTC()}, DefinitionIDs: append([]string(nil), request.DefinitionIDs...),
+		QueryIDs: append([]string(nil), request.QueryIDs...), EvidenceIDs: append([]string(nil), request.EvidenceIDs...),
+		ContentHash: contentHash, CreatedAt: now.UTC(),
+	}, nil
+}
+
 func (r *Repository) ValidateSnapshotReferences(ctx context.Context, revisionID string, request CreateConsultationRequest) error {
+	for _, id := range request.DefinitionIDs {
+		var actualRevision, clusterID, environment, resourceID, resourceNamespace string
+		var namespacesJSON []byte
+		err := r.db.QueryRowContext(ctx, `SELECT revision.public_id,definition.cluster_id,definition.environment,
+definition.namespaces_json,definition.resource_id,definition.resource_namespace
+FROM query_definitions definition JOIN configuration_revisions revision ON revision.id=definition.configuration_revision_id
+WHERE definition.public_id=?`, id).Scan(&actualRevision, &clusterID, &environment, &namespacesJSON, &resourceID, &resourceNamespace)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("validate Context Snapshot Query Definition reference: %w", err)
+		}
+		var namespaces []string
+		if json.Unmarshal(namespacesJSON, &namespaces) != nil || actualRevision != revisionID || clusterID != request.ClusterID ||
+			environment != request.Environment || !slices.Contains(request.Namespaces, resourceNamespace) ||
+			!slices.Contains(namespaces, resourceNamespace) || !snapshotHasResource(request.Resources, resourceID) {
+			return ErrConflict
+		}
+	}
 	for _, id := range request.QueryIDs {
 		var actualRevision, status, clusterID, environment string
 		var resource ResourceReference
@@ -482,6 +584,22 @@ func (r *Repository) ValidateSnapshotReferences(ctx context.Context, revisionID 
 		}
 	}
 	return nil
+}
+
+func snapshotHasResource(resources []ResourceReference, id string) bool {
+	for _, resource := range resources {
+		if resource.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func nonNilStrings(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
 }
 
 func snapshotContains(request CreateConsultationRequest, clusterID, environment string, resource ResourceReference, from, to time.Time) bool {

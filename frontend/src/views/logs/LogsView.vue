@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   Archive,
   CheckCircle2,
@@ -36,6 +36,7 @@ import {
   type TelemetryQueryMode,
 } from "../../api/telemetry";
 import { virtualWindow } from "../../models/telemetry";
+import { openAgentPanel, publishAgentContext, type AgentPageContext } from "../../utils/agentContext";
 import { OPERATIONAL_SCOPE_CHANGED_EVENT } from "../../utils/operationalScope";
 
 interface RequestFailure {
@@ -170,6 +171,36 @@ function telemetryContext() {
     namespace: resource.namespace,
     resource: { id: resource.id, kind: resource.kind, namespace: resource.namespace, name: resource.name },
   };
+}
+
+function currentAgentContext(): AgentPageContext | null {
+  const query = currentQuery.value;
+  if (!query || query.status !== "succeeded" || query.result_expired) return null;
+  return {
+    route: route.fullPath,
+    input: {
+      title: `${query.resource.name} 日志上下文`,
+      cluster_id: query.scope.cluster_id,
+      environment: query.scope.environment,
+      namespaces: [...query.scope.namespaces],
+      resource_refs: [query.resource],
+      filters: {
+        workspace: "logs",
+        provider: query.provider,
+        mode: query.mode,
+        query_hash: query.query_hash,
+      },
+      from: query.time_range.from,
+      to: query.time_range.to,
+      query_definition_refs: [],
+      query_execution_refs: [query.id],
+      evidence_refs: retainedEvidence.value.map((item) => item.id),
+    },
+  };
+}
+
+function publishCurrentAgentContext() {
+  publishAgentContext(currentAgentContext());
 }
 
 function contextRouteQuery(from = fromValue.value, to = toValue.value): Record<string, string> {
@@ -394,18 +425,22 @@ async function freezeContext() {
   freezing.value = true;
   queryError.value = null;
   try {
+    const context = currentAgentContext();
     consultation.value = await createTelemetryConsultation({
       title: `${resource.name} 日志上下文`,
       cluster_id: scope.cluster_id,
       environment: scope.environment,
       namespaces: [resource.namespace],
       resource_refs: [resource],
+      filters: context?.input.filters,
       from: query.time_range.from,
       to: query.time_range.to,
+      query_definition_refs: context?.input.query_definition_refs,
       query_execution_refs: [query.id],
       evidence_refs: retainedEvidence.value.map((item) => item.id),
     });
     statusMessage.value = "当前日志查询已冻结为不可变 Context Snapshot。";
+    if (context) openAgentPanel({ consultationId: consultation.value.id, context });
   } catch (reason) {
     queryError.value = normalizeFailure(reason, "Context Snapshot 创建失败。");
   } finally {
@@ -422,10 +457,13 @@ onMounted(() => {
   void loadWorkspace();
 });
 
+watch([() => route.fullPath, currentQuery, retainedEvidence], publishCurrentAgentContext, { flush: "post" });
+
 onBeforeUnmount(() => {
   mounted = false;
   controller?.abort();
   window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT, receiveScopeChange);
+  publishAgentContext(null);
 });
 </script>
 

@@ -26,11 +26,14 @@ describe("CloudOps product routes", () => {
     }
   });
 
-  it("uses native Alerts, Logs and Traces Workspace components", () => {
-    const placeholder = appRoutes.find((route) => route.path === "/agent")?.component;
+  it("uses native Alerts, Logs, Traces and Agent Workspace components", () => {
+    const placeholder = appRoutes.find((route) => route.path === "/devops")?.component;
     expect(appRoutes.find((route) => route.path === "/alerts")?.component).not.toBe(placeholder);
     expect(appRoutes.find((route) => route.path === "/alerts/:alertId")?.component).not.toBe(placeholder);
     expect(appRoutes.find((route) => route.path === "/logs")?.component).not.toBe(placeholder);
     expect(appRoutes.find((route) => route.path === "/traces")?.component).not.toBe(placeholder);
+    const agent = appRoutes.find((route) => route.path === "/agent");
+    expect(agent?.component).not.toBe(placeholder);
+    expect(agent?.meta?.fullBleed).toBe(true);
   });
 });

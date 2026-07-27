@@ -469,21 +469,21 @@ func (s *Service) StartInvestigation(ctx context.Context, request StartInvestiga
 		return View{}, ErrProviderUnavailable
 	}
 	eventKey := hashCanonical("alert-investigation-requested", request.IdempotencyKey)
-	preflight, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return View{}, err
 	}
-	defer func() { _ = preflight.Rollback() }()
-	row, err := loadAlertByPublicID(ctx, preflight, request.AlertID, true)
+	defer func() { _ = tx.Rollback() }()
+	row, err := loadAlertByPublicID(ctx, tx, request.AlertID, true)
 	if err != nil {
 		return View{}, err
 	}
 	var replay int
-	if err := preflight.QueryRowContext(ctx, `SELECT COUNT(*) FROM alert_events WHERE alert_id = ? AND idempotency_key = ?`, row.ID, eventKey).Scan(&replay); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM alert_events WHERE alert_id = ? AND idempotency_key = ?`, row.ID, eventKey).Scan(&replay); err != nil {
 		return View{}, err
 	}
 	if replay > 0 {
-		if err := preflight.Commit(); err != nil {
+		if err := tx.Commit(); err != nil {
 			return View{}, err
 		}
 		return s.alertView(ctx, request.AlertID)
@@ -491,59 +491,20 @@ func (s *Service) StartInvestigation(ctx context.Context, request StartInvestiga
 	if row.Version != request.ExpectedVersion {
 		return View{}, ErrStaleVersion
 	}
-	var incidentID, status string
-	var incidentVersion uint64
-	err = preflight.QueryRowContext(ctx, `SELECT incident.public_id, incident.version, incident.status
-FROM alert_incident_links relation JOIN alerts alert ON alert.id = relation.alert_id
-JOIN incidents incident ON incident.id = relation.incident_id
-WHERE alert.public_id = ? AND relation.incident_cycle_no = incident.cycle_no
-ORDER BY (incident.status IN ('detected','investigating')) DESC, relation.id DESC LIMIT 1`, request.AlertID).
-		Scan(&incidentID, &incidentVersion, &status)
-	if errors.Is(err, sql.ErrNoRows) {
-		return View{}, ErrConflict
-	}
+	runID, err := s.investigation.StartAlertInvestigationTx(ctx, tx, request.AlertID, request.IdempotencyKey, reason)
 	if err != nil {
 		return View{}, err
 	}
-	if status != "detected" && status != "investigating" {
-		return View{}, ErrConflict
-	}
-	if err := preflight.Commit(); err != nil {
+	if err := incrementAlertVersion(ctx, tx, &row); err != nil {
 		return View{}, err
 	}
-	if err := s.investigation.StartInvestigation(ctx, incidentID, incidentVersion, request.IdempotencyKey, reason, request.Actor); err != nil {
-		return View{}, err
-	}
-	finalizeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), commandFinalizationTimeout)
-	defer cancel()
-	tx, err := s.db.BeginTx(finalizeCtx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
-	if err != nil {
-		return View{}, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	row, err = loadAlertByPublicID(finalizeCtx, tx, request.AlertID, true)
-	if err != nil {
-		return View{}, err
-	}
-	if err := tx.QueryRowContext(finalizeCtx, `SELECT COUNT(*) FROM alert_events WHERE alert_id = ? AND idempotency_key = ?`, row.ID, eventKey).Scan(&replay); err != nil {
-		return View{}, err
-	}
-	if replay > 0 {
-		if err := tx.Commit(); err != nil {
-			return View{}, err
-		}
-		return s.alertView(finalizeCtx, request.AlertID)
-	}
-	if err := incrementAlertVersion(finalizeCtx, tx, &row); err != nil {
-		return View{}, err
-	}
-	if err := appendAlertEvent(finalizeCtx, tx, row, "alert_investigation_requested", "owner", request.Actor.Login,
+	if err := appendAlertEvent(ctx, tx, row, "alert_investigation_requested", "owner", request.Actor.Login,
 		"Agent Investigation requested from Alert context", nil, s.now().UTC(),
-		map[string]any{"incident_id": incidentID, "reason": reason}, eventKey); err != nil {
+		map[string]any{"agent_run_id": runID, "reason": reason}, eventKey); err != nil {
 		return View{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return View{}, err
 	}
-	return s.alertView(finalizeCtx, request.AlertID)
+	return s.alertView(ctx, request.AlertID)
 }

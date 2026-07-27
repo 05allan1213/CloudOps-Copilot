@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/05allan1213/CloudOps-Copilot/internal/agent"
 	alertdomain "github.com/05allan1213/CloudOps-Copilot/internal/alert"
 	"github.com/05allan1213/CloudOps-Copilot/internal/alertmanageringress"
 	"github.com/05allan1213/CloudOps-Copilot/internal/api"
@@ -53,12 +54,17 @@ func InitAPIContainer(cfg *config.Config, infra *di.Infra, runtimeReadiness hand
 		if err != nil {
 			return nil, fmt.Errorf("notification repository init failed: %w", err)
 		}
+		container.AgentWorkspace, err = agent.NewWorkspaceRepository(infra.MySQL.SQLDB())
+		if err != nil {
+			return nil, fmt.Errorf("agent workspace repository init failed: %w", err)
+		}
+		container.AgentWorkspace.SetRunbookDir(cfg.RunbookDir)
 		alertmanagerClient, gatewayErr := alertmanagergateway.NewClient(cfg.WorkerManagementTarget, cfg.RequestTimeout+2*time.Second)
 		if gatewayErr != nil {
 			return nil, fmt.Errorf("alertmanager Provider Gateway client init failed: %w", gatewayErr)
 		}
 		container.Alerts, err = alertdomain.NewService(infra.MySQL.SQLDB(), alertmanagerClient,
-			alertInvestigationStarter{commands: container.Commands})
+			alertInvestigationStarter{workspace: container.AgentWorkspace})
 		if err != nil {
 			return nil, fmt.Errorf("alert service init failed: %w", err)
 		}

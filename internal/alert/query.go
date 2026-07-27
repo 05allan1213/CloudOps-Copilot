@@ -274,11 +274,14 @@ WHERE relation.alert_id = ? ORDER BY relation.id DESC`, row.ID)
 		return View{}, err
 	}
 
-	investigations, err := queryer.QueryContext(ctx, `SELECT run.public_id, incident.public_id,
-run.status, run.created_at FROM alert_incident_links relation
+	investigations, err := queryer.QueryContext(ctx, `SELECT run.public_id, '', run.status, run.created_at
+FROM agent_runs run WHERE run.alert_id = ? AND run.run_kind = 'workspace'
+UNION ALL
+SELECT run.public_id, incident.public_id, run.status, run.created_at FROM alert_incident_links relation
 JOIN incidents incident ON incident.id = relation.incident_id
 JOIN agent_runs run ON run.incident_id = incident.id AND run.cycle_no = relation.incident_cycle_no
-WHERE relation.alert_id = ? ORDER BY run.created_at DESC, run.id DESC`, row.ID)
+WHERE relation.alert_id = ?
+ORDER BY created_at DESC`, row.ID, row.ID)
 	if err != nil {
 		return View{}, err
 	}

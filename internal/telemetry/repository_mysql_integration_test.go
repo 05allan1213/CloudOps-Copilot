@@ -97,6 +97,15 @@ func TestMySQLTelemetryMetadataEvidenceAndFrozenContext(t *testing.T) {
 	if consultation.Snapshot.ContentHash != sha256Text("immutable-context") || consultation.Snapshot.QueryIDs[0] != execution.ID {
 		t.Fatalf("consultation=%#v", consultation)
 	}
+	attachedRequest := request
+	attachedRequest.Filters = json.RawMessage(`{"severity":"error"}`)
+	attached, err := repository.AttachContextSnapshot(ctx, consultation.ID, revision.ID, attachedRequest, sha256Text("explicit-context"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attached.ID == consultation.Snapshot.ID || attached.ContentHash != sha256Text("explicit-context") || string(attached.Filters) != `{"severity":"error"}` {
+		t.Fatalf("explicit Context Snapshot=%#v", attached)
+	}
 
 	mismatch := request
 	mismatch.Resources = []ResourceReference{{ID: "other", Kind: "Deployment", Namespace: namespace, Name: "other"}}
@@ -106,7 +115,7 @@ func TestMySQLTelemetryMetadataEvidenceAndFrozenContext(t *testing.T) {
 
 	assertTelemetryCount(t, ctx, db, `SELECT COUNT(*) FROM query_execution_events qee JOIN query_executions qe ON qe.id=qee.query_execution_id WHERE qe.public_id=?`, 3, execution.ID)
 	assertTelemetryCount(t, ctx, db, `SELECT COUNT(*) FROM evidence_items WHERE query_execution_id IS NOT NULL AND incident_id IS NULL`, 1)
-	assertTelemetryCount(t, ctx, db, `SELECT COUNT(*) FROM context_snapshots WHERE public_id=? AND JSON_LENGTH(query_execution_refs_json)=1 AND JSON_LENGTH(evidence_refs_json)=1`, 1, consultation.Snapshot.ID)
+	assertTelemetryCount(t, ctx, db, `SELECT COUNT(*) FROM context_snapshots WHERE consultation_id=(SELECT id FROM agent_consultations WHERE public_id=?) AND JSON_LENGTH(query_execution_refs_json)=1 AND JSON_LENGTH(evidence_refs_json)=1`, 2, consultation.ID)
 	assertTelemetryCount(t, ctx, db, `SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='query_executions' AND column_name IN ('raw_result','result_json','provider_response')`, 0)
 	var storedFacts []byte
 	if err := db.QueryRowContext(ctx, `SELECT facts_json FROM evidence_items WHERE public_id=?`, evidence.ID).Scan(&storedFacts); err != nil {

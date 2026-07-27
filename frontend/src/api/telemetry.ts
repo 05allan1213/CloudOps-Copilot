@@ -347,8 +347,10 @@ export function createTelemetryConsultation(input: {
   environment: string;
   namespaces: string[];
   resource_refs: TelemetryResourceReference[];
+  filters?: Record<string, unknown>;
   from: string;
   to: string;
+  query_definition_refs?: string[];
   query_execution_refs: string[];
   evidence_refs: string[];
 }): Promise<Consultation> {

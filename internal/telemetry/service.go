@@ -344,29 +344,64 @@ func (s *Service) SaveTraceEvidence(ctx context.Context, queryID, traceID string
 }
 
 func (s *Service) CreateConsultation(ctx context.Context, request CreateConsultationRequest) (Consultation, error) {
-	revision, err := s.revisions.ActiveRevision(ctx)
+	request.Title = strings.TrimSpace(request.Title)
+	if len(request.Title) < 2 || len(request.Title) > 128 {
+		return Consultation{}, ErrInvalid
+	}
+	revision, request, contentHash, err := s.prepareContextSnapshot(ctx, request)
 	if err != nil {
 		return Consultation{}, err
 	}
-	request.Title = strings.TrimSpace(request.Title)
-	if len(request.Title) < 2 || len(request.Title) > 128 || request.From.IsZero() || request.To.IsZero() || !request.To.After(request.From) {
-		return Consultation{}, ErrInvalid
+	return s.repository.CreateConsultation(ctx, revision.ID, request, contentHash)
+}
+
+func (s *Service) AttachContextSnapshot(ctx context.Context, consultationID string, request AttachContextSnapshotRequest) (ContextSnapshot, error) {
+	revision, request, contentHash, err := s.prepareContextSnapshot(ctx, request)
+	if err != nil {
+		return ContextSnapshot{}, err
+	}
+	return s.repository.AttachContextSnapshot(ctx, strings.TrimSpace(consultationID), revision.ID, request, contentHash)
+}
+
+func (s *Service) prepareContextSnapshot(ctx context.Context, request CreateConsultationRequest) (settings.Revision, CreateConsultationRequest, string, error) {
+	revision, err := s.revisions.ActiveRevision(ctx)
+	if err != nil {
+		return settings.Revision{}, CreateConsultationRequest{}, "", err
+	}
+	if request.From.IsZero() || request.To.IsZero() || !request.To.After(request.From) {
+		return settings.Revision{}, CreateConsultationRequest{}, "", ErrInvalid
 	}
 	request.ClusterID, request.Environment = strings.TrimSpace(request.ClusterID), strings.TrimSpace(request.Environment)
 	request.From, request.To = request.From.UTC(), request.To.UTC()
 	request.Namespaces = stableStrings(request.Namespaces)
+	request.DefinitionIDs, err = stableUUIDs(request.DefinitionIDs)
+	if err != nil {
+		return settings.Revision{}, CreateConsultationRequest{}, "", err
+	}
 	request.QueryIDs, err = stableUUIDs(request.QueryIDs)
 	if err != nil {
-		return Consultation{}, err
+		return settings.Revision{}, CreateConsultationRequest{}, "", err
 	}
 	request.EvidenceIDs, err = stableUUIDs(request.EvidenceIDs)
 	if err != nil {
-		return Consultation{}, err
+		return settings.Revision{}, CreateConsultationRequest{}, "", err
+	}
+	if len(request.Filters) == 0 {
+		request.Filters = json.RawMessage(`{}`)
+	}
+	var filters map[string]any
+	if len(request.Filters) > 8192 || json.Unmarshal(request.Filters, &filters) != nil || filters == nil {
+		return settings.Revision{}, CreateConsultationRequest{}, "", ErrInvalid
+	}
+	request.Filters, err = json.Marshal(filters)
+	if err != nil {
+		return settings.Revision{}, CreateConsultationRequest{}, "", err
 	}
 	if request.ClusterID == "" || request.Environment == "" || len(request.Namespaces) == 0 || len(request.Resources) == 0 || len(request.Resources) > 32 ||
-		len(request.QueryIDs) > 32 || len(request.EvidenceIDs) > 32 || len(request.QueryIDs)+len(request.EvidenceIDs) == 0 ||
+		len(request.DefinitionIDs) > 32 || len(request.QueryIDs) > 32 || len(request.EvidenceIDs) > 32 ||
+		len(request.QueryIDs)+len(request.EvidenceIDs) == 0 ||
 		request.To.Sub(request.From) > time.Duration(revision.General.QueryMaxLookbackSeconds)*time.Second {
-		return Consultation{}, ErrInvalid
+		return settings.Revision{}, CreateConsultationRequest{}, "", ErrInvalid
 	}
 	var scope *settings.OperationalScope
 	for index := range revision.Scopes {
@@ -377,25 +412,37 @@ func (s *Service) CreateConsultation(ctx context.Context, request CreateConsulta
 		}
 	}
 	if scope == nil {
-		return Consultation{}, ErrInvalid
+		return settings.Revision{}, CreateConsultationRequest{}, "", ErrInvalid
 	}
 	for _, namespace := range request.Namespaces {
 		if !slices.Contains(scope.Namespaces, namespace) {
-			return Consultation{}, ErrInvalid
+			return settings.Revision{}, CreateConsultationRequest{}, "", ErrInvalid
 		}
 	}
 	request.Resources, err = normalizeResources(request.Resources, request.Namespaces)
 	if err != nil {
-		return Consultation{}, err
+		return settings.Revision{}, CreateConsultationRequest{}, "", err
 	}
 	if err := s.repository.ValidateSnapshotReferences(ctx, revision.ID, request); err != nil {
-		return Consultation{}, err
+		return settings.Revision{}, CreateConsultationRequest{}, "", err
 	}
-	canonical, err := json.Marshal(request)
+	canonical, err := json.Marshal(struct {
+		ClusterID     string              `json:"cluster_id"`
+		Environment   string              `json:"environment"`
+		Namespaces    []string            `json:"namespaces"`
+		Resources     []ResourceReference `json:"resource_refs"`
+		Filters       json.RawMessage     `json:"filters"`
+		From          time.Time           `json:"from"`
+		To            time.Time           `json:"to"`
+		DefinitionIDs []string            `json:"query_definition_refs"`
+		QueryIDs      []string            `json:"query_execution_refs"`
+		EvidenceIDs   []string            `json:"evidence_refs"`
+	}{request.ClusterID, request.Environment, request.Namespaces, request.Resources, request.Filters,
+		request.From, request.To, request.DefinitionIDs, request.QueryIDs, request.EvidenceIDs})
 	if err != nil {
-		return Consultation{}, err
+		return settings.Revision{}, CreateConsultationRequest{}, "", err
 	}
-	return s.repository.CreateConsultation(ctx, revision.ID, request, sha256Bytes(canonical))
+	return revision, request, sha256Bytes(canonical), nil
 }
 
 func (s *Service) retainEvidence(ctx context.Context, execution executionRecord, evidenceType, summary string, facts []byte, count int, source ProviderSource, truncated bool, observedAt time.Time) (Evidence, error) {

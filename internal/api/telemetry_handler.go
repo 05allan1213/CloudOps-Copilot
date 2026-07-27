@@ -25,6 +25,7 @@ type TelemetryPort interface {
 	SaveLogEvidence(context.Context, string, telemetry.SaveEvidenceRequest) (telemetry.Evidence, error)
 	SaveTraceEvidence(context.Context, string, string, telemetry.SaveEvidenceRequest) (telemetry.Evidence, error)
 	CreateConsultation(context.Context, telemetry.CreateConsultationRequest) (telemetry.Consultation, error)
+	AttachContextSnapshot(context.Context, string, telemetry.AttachContextSnapshotRequest) (telemetry.ContextSnapshot, error)
 }
 
 type logQueryPage struct {

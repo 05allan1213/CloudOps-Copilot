@@ -29,6 +29,8 @@ import {
 } from "../../api/platform";
 import { mobileMoreNavigation, type NavigationIcon } from "../../navigation";
 import { dispatchOperationalScopeChange, queryForScopeChange } from "../../utils/operationalScope";
+import { openAgentPanel } from "../../utils/agentContext";
+import GlobalAgentPanel from "../agent/GlobalAgentPanel.vue";
 import AppHeader from "./AppHeader.vue";
 import AppSidebar from "./AppSidebar.vue";
 import MobileBottomNav from "./MobileBottomNav.vue";
@@ -296,6 +298,7 @@ onBeforeUnmount(() => {
         :scope-switching="scopeSwitching"
         :provider-health="bootstrap?.provider_health"
         @change-scope="changeActiveScope"
+        @open-agent="openAgentPanel()"
         @open-notifications="openNotifications"
       />
       <div v-if="scopeSwitchError" class="scope-switch-alert" role="alert" aria-live="polite">
@@ -316,6 +319,7 @@ onBeforeUnmount(() => {
   </div>
 
   <MobileBottomNav @open-more="openMore" />
+  <GlobalAgentPanel />
 
   <el-drawer
     v-model="notificationsOpen"

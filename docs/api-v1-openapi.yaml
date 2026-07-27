@@ -1092,6 +1092,14 @@ paths:
         "503": { $ref: "#/components/responses/Problem" }
         default: { $ref: "#/components/responses/Problem" }
   /api/v1/agent/consultations:
+    get:
+      operationId: listAgentConsultations
+      description: Durable Consultation history without hidden cross-session chat injection.
+      parameters: [{ $ref: "#/components/parameters/Limit" }]
+      responses:
+        "200": { description: Consultation summaries and active snapshot identities }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
     post:
       operationId: createTelemetryConsultation
       description: Local Owner creates a Consultation with one immutable Context Snapshot from exact query and Evidence references.
@@ -1108,6 +1116,263 @@ paths:
         "409": { $ref: "#/components/responses/Problem" }
         "422": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/agent/investigations:
+    get:
+      operationId: listAgentInvestigations
+      description: Durable Alert and Incident Investigation history.
+      parameters: [{ $ref: "#/components/parameters/Limit" }]
+      responses:
+        "200": { description: Investigation summaries }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/agent/investigations/{id}:
+    parameters: [{ $ref: "#/components/parameters/PublicID" }]
+    get:
+      operationId: getAgentInvestigation
+      description: Exact Investigation with immutable context, bounded tool progress, Evidence citations, and outcome.
+      responses:
+        "200": { description: Investigation detail }
+        "404": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/agent/investigations/{id}/cancel:
+    parameters: [{ $ref: "#/components/parameters/PublicID" }]
+    post:
+      operationId: cancelAgentInvestigation
+      description: Local Owner requests bounded cancellation without deleting persisted progress.
+      parameters: [{ $ref: "#/components/parameters/Origin" }]
+      responses:
+        "202": { description: Cancellation requested or completed }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/agent/consultations/{id}:
+    parameters: [{ $ref: "#/components/parameters/PublicID" }]
+    get:
+      operationId: getAgentConsultation
+      description: Durable messages and explicit immutable Context Snapshots for one Consultation.
+      responses:
+        "200": { description: Consultation detail }
+        "404": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/agent/consultations/{id}/snapshots:
+    parameters: [{ $ref: "#/components/parameters/PublicID" }]
+    post:
+      operationId: attachAgentContextSnapshot
+      description: Local Owner explicitly attaches a new current-page context; navigation never mutates an existing snapshot.
+      parameters: [{ $ref: "#/components/parameters/Origin" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object } } }
+      responses:
+        "201": { description: New immutable Context Snapshot }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/agent/consultations/{id}/messages:
+    parameters: [{ $ref: "#/components/parameters/PublicID" }]
+    post:
+      operationId: sendAgentConsultationMessage
+      description: Local Owner starts one durable turn bound to the latest explicit snapshot.
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/Origin" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [content]
+              properties: { content: { type: string, minLength: 1, maxLength: 16000 } }
+      responses:
+        "202": { description: Owner message and durable Agent run }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/agent/consultations/{id}/events:
+    parameters: [{ $ref: "#/components/parameters/PublicID" }]
+    get:
+      operationId: streamAgentConsultationEvents
+      description: Resumable SSE for persisted tool progress and final answers; no hidden reasoning is emitted.
+      parameters:
+        - name: Last-Event-ID
+          in: header
+          schema: { type: string, maxLength: 128 }
+      responses:
+        "200":
+          description: Agent progress event stream
+          content: { text/event-stream: { schema: { type: string } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/agent/consultations/{id}/cancel:
+    parameters: [{ $ref: "#/components/parameters/PublicID" }]
+    post:
+      operationId: cancelAgentConsultationTurn
+      description: Local Owner cancels only the current turn and preserves Consultation history.
+      parameters: [{ $ref: "#/components/parameters/Origin" }]
+      responses:
+        "202": { description: Current turn cancellation requested }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/knowledge-items:
+    get:
+      operationId: listKnowledgeItems
+      description: Owner-confirmed, versioned Knowledge Items with scope and review state.
+      parameters: [{ $ref: "#/components/parameters/Limit" }]
+      responses:
+        "200": { description: Knowledge Item page }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: createKnowledgeItem
+      description: Local Owner confirms exact content before it becomes cross-session guidance.
+      parameters: [{ $ref: "#/components/parameters/Origin" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object } } }
+      responses:
+        "201": { description: Owner-confirmed Knowledge Item revision }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/knowledge-items/{id}:
+    parameters: [{ $ref: "#/components/parameters/PublicID" }]
+    get:
+      operationId: getKnowledgeItem
+      description: Exact Knowledge Item and immutable revision history.
+      responses:
+        "200": { description: Knowledge Item detail }
+        "404": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+    patch:
+      operationId: reviseKnowledgeItem
+      description: Local Owner creates a new immutable revision or changes lifecycle state.
+      parameters: [{ $ref: "#/components/parameters/Origin" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object } } }
+      responses:
+        "200": { description: Revised Knowledge Item }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+    delete:
+      operationId: deleteKnowledgeItem
+      description: Local Owner marks the item deleted while retained exact revisions remain explainable.
+      parameters: [{ $ref: "#/components/parameters/Origin" }]
+      responses:
+        "204": { description: Knowledge Item marked deleted }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/runbook-guidance:
+    get:
+      operationId: listRunbookGuidance
+      description: Git-managed Runbook Guidance with exact content revision; never current Evidence or write authority.
+      responses:
+        "200": { description: Versioned Runbook Guidance page }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/agent/action-cards:
+    post:
+      operationId: proposeAgentActionCard
+      description: Propose a reversible local action; creation does not authorize or execute it.
+      parameters: [{ $ref: "#/components/parameters/Origin" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object } } }
+      responses:
+        "201": { description: Immutable reversible Action Card }
+        "403": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/agent/action-cards/{id}:
+    parameters: [{ $ref: "#/components/parameters/PublicID" }]
+    get:
+      operationId: getAgentActionCard
+      description: Exact reversible Action Card and authorization state.
+      responses:
+        "200": { description: Action Card detail }
+        "404": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/agent/action-cards/{id}/authorizations:
+    parameters: [{ $ref: "#/components/parameters/PublicID" }]
+    post:
+      operationId: authorizeAgentActionCard
+      description: Local Owner authorizes exactly one immutable reversible Action Card hash; no execution occurs here.
+      parameters: [{ $ref: "#/components/parameters/Origin" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ExactAuthorization" } } }
+      responses:
+        "201": { description: Exact Action Card authorization }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/operation-plans:
+    get:
+      operationId: listAgentOperationPlans
+      description: Immutable high-impact Operation Plans and exact authorization state.
+      parameters: [{ $ref: "#/components/parameters/Limit" }]
+      responses:
+        "200": { description: Operation Plan page }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: proposeAgentOperationPlan
+      description: Propose a high-impact external operation; creation never authorizes or executes it.
+      parameters: [{ $ref: "#/components/parameters/Origin" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object } } }
+      responses:
+        "201": { description: Immutable high-impact Operation Plan }
+        "403": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/operation-plans/{id}:
+    parameters: [{ $ref: "#/components/parameters/PublicID" }]
+    get:
+      operationId: getAgentOperationPlan
+      description: Exact high-impact Operation Plan and authorization state.
+      responses:
+        "200": { description: Operation Plan detail }
+        "404": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/operation-plans/{id}/authorizations:
+    parameters: [{ $ref: "#/components/parameters/PublicID" }]
+    post:
+      operationId: authorizeAgentOperationPlan
+      description: Local Owner authorizes one exact immutable high-impact plan hash; execution remains a separate operation.
+      parameters: [{ $ref: "#/components/parameters/Origin" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ExactAuthorization" } } }
+      responses:
+        "201": { description: Exact Operation Plan authorization }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
         default: { $ref: "#/components/responses/Problem" }
 components:
   parameters:
@@ -2759,6 +3024,13 @@ components:
       properties:
         decision: { type: string, enum: [approved, rejected] }
         expected_version: { type: integer, minimum: 1 }
+        expected_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+        reason: { type: string, minLength: 1, maxLength: 1024 }
+    ExactAuthorization:
+      type: object
+      additionalProperties: false
+      required: [expected_hash, reason]
+      properties:
         expected_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
         reason: { type: string, minLength: 1, maxLength: 1024 }
     CommandResult:

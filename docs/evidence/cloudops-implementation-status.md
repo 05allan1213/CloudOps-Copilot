@@ -6,7 +6,7 @@
 >
 > Task 0 开工基线：`10a1f2b659b4ee9adb1a3efcb7725f83504b9d1f`
 >
-> 最后更新：2026-07-27 08:52（Asia/Shanghai）
+> 最后更新：2026-07-27 17:07（Asia/Shanghai）
 
 ## 状态总览
 
@@ -18,9 +18,9 @@
 | 任务 3：Monitoring | `DONE_WITH_NOT_RUN` | 任务 0；任务 1 Provider/Scope/Query | 真实 UI -> `/api/v1` -> Prometheus、bounded query、Definition/Execution/Authorization、审计、Workspace 与精确 Context Link 已完成；外部环境与真实 Agent runtime 明确 `NOT RUN` |
 | 任务 4：Logs 与 Traces | `DONE_WITH_NOT_RUN` | 任务 1；任务 2/3 context contract | 真实 UI -> `/api/v1` -> Elasticsearch/Tempo、Kubernetes correlation、Evidence 与不可变 Context Snapshot 已完成；缺少的专用 MCP 与外部控制台明确 `NOT RUN` |
 | 任务 5：Alerts | `DONE_WITH_NOT_RUN` | 任务 0；任务 1 notification/Settings/Context Link | 本地真实 Alertmanager firing/resolved、Signal-to-Alert、ack、provider-backed silence、显式 Incident、Owner Notification、Workspace 与幂等重投已完成；专用 Alertmanager MCP 明确 `NOT RUN` |
-| 任务 6：Agent | `READY` | 任务 1；任务 2-5 真实 Evidence source | 任务 2-5 已提供真实 Kubernetes、Prometheus、Elasticsearch、Tempo 与 Alertmanager Evidence source |
-| 任务 7：Incidents 与 Verify | `BLOCKED` | 任务 5、6；任务 2-4 Context Link | 任务 5 与 Context Link 已完成；等待任务 6 Agent 领域 |
-| 任务 8：Operations 与 DevOps | `BLOCKED` | 任务 6；Incident 链另需任务 7 | authority contract 尚未完成 |
+| 任务 6：Agent | `DONE_WITH_NOT_RUN` | 任务 1；任务 2-5 真实 Evidence source | 真实 Alert Investigation、Logs Consultation、bounded tools、Evidence/Guidance、snapshot、SSE、Knowledge、Agent UI 与三层 authority 已完成；真实 LLM 诊断明确 `NOT RUN` |
+| 任务 7：Incidents 与 Verify | `READY` | 任务 5、6；任务 2-4 Context Link | 任务 5/6 与 Context Link contract 均已完成，可开始 Incident/Verify 收敛 |
+| 任务 8：Operations 与 DevOps | `READY` | 任务 6；Incident 链另需任务 7 | Task 6 Operation Plan/authority contract 已完成；local reversible groundwork 可开始，Incident-bound execution/verify 仍等待任务 7 |
 | 任务 9：Scenario 与最终收敛 | `BLOCKED` | 任务 0-8 本地必需能力 | 前置任务尚未完成 |
 
 ## 任务 0：语义基线与本地生命周期
@@ -522,3 +522,89 @@ Chrome 首次连接 `18081` 时，命令执行器已经回收 `local-up` 的后�
 - Live Investigation 分支：规范允许 Investigation 或显式 Incident 二选一；本轮选择并通过显式 Incident 分支。Investigation relation/API/UI 已实现并通过自动化测试，但真实 Agent Investigation 属于任务 6，当前 `NOT RUN`。
 - 启用 automatic escalation 后由 policy 自动创建 Incident：当前验收有意保持产品默认 `off` 且 policy count `0`；revision-owned policy validation/匹配实现与自动化测试已通过，但 enabled live branch `NOT RUN`。
 - hosted/staging/production、外部 Alertmanager、系统级浏览器通知送达、真实 Agent/LLM、PR、push、tag、默认分支：`NOT RUN`。
+
+## 任务 6：Agent Investigation、Consultation 与 Knowledge
+
+### 实施结果
+
+- 复用并前向扩展唯一 `agent_runs` / `agent_steps` / `evidence_items` 真相源，没有创建第二套 Investigation 聚合。新的 Alert Investigation 直接绑定 Alert，不隐式创建或要求 Incident；旧 Incident Agent 历史继续可读。
+- `migrations/00008_agent_workspace.sql` 与 `00009_agent_workspace_tasks.sql` 将 schema 提升到 `9`，新增 durable Consultation message、SSE event、Evidence citation、Knowledge revision、Guidance citation、Action Card、Operation Plan、Authorization 及独立 Workspace task/attempt lease 合同。
+- Worker 增加 durable Agent Workspace runner，从 MySQL claim pending run，按精确 Configuration Revision 调用现有 typed Kubernetes、Prometheus、Elasticsearch、Tempo gateway；模型未启用时仍保存真实 bounded Provider Evidence，并以 `MODEL_PROVIDER_DISABLED` 和 `insufficient` fail closed。
+- Consultation 支持 list/detail、message、cancel、持久 SSE replay 与显式 Context Snapshot。页面导航不会静默改写旧 snapshot；只有 Owner 执行“附加当前上下文”才创建新的 immutable snapshot/hash。
+- Current Evidence 只来自当前 run 的 bounded Provider observations；旧聊天、Owner-confirmed Knowledge 与 Runbook 只进入独立 Guidance Citations，并保存 exact revision/hash 与 age，不冒充当前事实。
+- `/agent` 已替换占位页，提供 Investigation/Consultation history、conversation/tool progress、Context/Evidence/Guidance/Authority inspector；Header 的全局 Agent 面板复用同一 store，并对完整 Workspace/compact 实例使用独立 DOM identity。
+- 三层 authority 已落地：read-only bounded tools 可直接运行；reversible action 必须 exact Action Card hash；high-impact/external action 只能形成 immutable Operation Plan。错误 hash 返回冲突，零授权时没有 mutation execution adapter 被调用。
+- API/OpenAPI、Logs/Traces “咨询 Agent”入口、Alert Investigation starter、router/DI/startup、schema contracts 与本地 lifecycle 均已纵向接入。`scripts/local-lifecycle.sh` 修正 migration upgrade 时旧 API/Worker 阻塞 Helm wait 的顺序问题。
+- `domain-modeling` Skill 用于核对领域边界；现有 `CONTEXT.md` 已准确区分 Evidence、Guidance、Context Snapshot、Knowledge、Runbook、Operation Plan 与 Action Authorization，无需创建重复 glossary 或 ADR。
+
+### Runtime 与数据审计
+
+| 项目 | 结果 | 当前证据 |
+|---|---|---|
+| 前置合同 | `PASS` | 任务 1 的 Configuration Revision、Operational Scope 与 Context Link，以及任务 2-5 的真实 Kubernetes、Prometheus、Elasticsearch、Tempo、Alertmanager Evidence source 均由当前实现直接复用 |
+| Build/runtime | `PASS` | `kind-cloudops-local` / `cloudops-system` / Helm `cloudops` revision `29` deployed；schema `9`；API、Worker、MySQL、Prometheus、Elasticsearch、Tempo、Alertmanager、Grafana、OTel、Filebeat 均 Ready，最终 API/Worker restart 为 `0` |
+| Final images | `PASS` | local API `sha256:b3d88eb36fb9887ed67c5cea8e28defaf56f058035fc54a1d0f9875b08831e9f`；Worker `sha256:3f7dc567d4e05c9e8b3cd5dad4ebdb3a6df2e85f17ec1529e8e1dbf7495ef322`；Migrate `sha256:535a2f5fcdacaa998fd9f7465f5e0adf85284c827f3dbda8a9d5d30f31618107`；运行 Pod imageID 分别为 API `sha256:432f52804c2c8d1499a9f2eed33a989524501a7aaed4cf633343d1d37e9622da`、Worker `sha256:2dfab0804e41e2cae5e939dc5f748e412987a2e08df666986689fa8ac57070af` |
+| Active configuration | `PASS` | revision ID `19e127ca-5a96-4f99-9e61-1dea0a2f81e2`，hash `2fdfebc8f45167b6974705b415b02da85fae36bf47ae79f5af5a2ecf99045595`；LLM disabled，真实模型诊断保持 `NOT RUN` |
+| MySQL totals | `PASS` | `4` Consultations、`3` workspace runs（`1` Investigation + `2` Consultation turns）、`12` Evidence citations、`1` Knowledge Item、`1` Action Card、`1` Operation Plan、`0` Authorizations |
+| Alert Investigation | `PASS` | Alert `d82cf76f-c923-4e90-a131-4f9faf528c15`；run `80f82dd6-144a-4acc-be91-0b362fea39be`；snapshot `8e07ac8e-cdf3-48ce-a50f-d4d8a5eab0ac`；最终 `completed / insufficient / high`，failure `MODEL_PROVIDER_DISABLED` |
+| Logs Consultation | `PASS` | Consultation `d21c11a9-46ea-4e9e-aca8-fef5eae3eb84`；初始 snapshot `4bb31c2e-5271-4ee2-aaf6-7ba9a5756721` / hash `8e2952c75f8458c4b77df6ac9524f56d5f7543316c600f1e2dd0d45106227d5d`；run `8f2f31db-7d96-4edf-8e75-155b47e7be7b` |
+| Explicit snapshot | `PASS` | 新 Logs query `2dbe4794-a235-4ee6-b77b-2bd73e7c605b` 后由 Owner 显式创建 snapshot `fdab9544-d2e7-4428-ac25-c3e9c7455eed` / hash `d94155df9c673edd8af1fe19fbe66a1f00f065493e617132b76401c50a35b642`；旧 snapshot/hash 保持不变 |
+| Knowledge | `PASS` | item `13dd7e91-c367-4749-9576-d561f8406354` active；revision ID `7f150d2b-73bd-43fd-8af8-0dc4cd22394b`，revision `1`；后续 run `ed6cad43-5daf-4851-b245-d8ec358742fd` 只在 Guidance 中引用 exact revision |
+| Durable SSE | `PASS` | 两个 Consultation run 各有 `12` 个持久 stream events；包含 `run.created`、tool progress、`answer.completed` 与 `run.completed` |
+| Authority | `PASS` | Action Card `155c80aa-8c2e-4805-8ec0-24937c4abe6c` / hash `26b027e57b2e336a02108965a1f4cfe1d354382931bcd5736051a6780fb6268c`；Operation Plan `3dd07b74-d576-4574-aa32-f3036d6282af` / hash `b73cab3be2bdce188334169c0023b06f95ae0b3125d8f1d25eda6d41947d2b0d`；数据库状态均 `proposed`，authorization count `0` |
+
+### MCP 与纵向联调证据
+
+验收 URL：`http://127.0.0.1:18080/agent`。Chrome DevTools MCP、Playwright MCP 与 Kubernetes MCP 直接操作 revision `29` 的当前 runtime。当前工具面没有独立 Prometheus、Elasticsearch、Tempo、Alertmanager 或 LLM Provider MCP；下表中的 Provider 结果来自 CloudOps Worker 的真实 typed gateway 与实际本地 Provider，不冒充专用 MCP。
+
+| 维度 | 结果 | 证据 |
+|---|---|---|
+| Alert Investigation | `PASS` | Alert-scoped run 无 Incident 前置，依次完成 `kubernetes.resources`、`metrics.query`、`logs.query`、`traces.search`；保存 Evidence `45ac4fe0-289d-49fd-8d23-fb139e7a0041`、`9b9f80ac-4c1d-47bc-8e15-341d64e74ee0`、`4089ce86-a56d-411a-b6af-6e3e392b6056`、`a5f41645-e506-419d-bc9b-1ab4a02fd1cd`；未检索 Knowledge/Runbook |
+| Investigation history | `PASS` | revision `29` 的 API/UI 历史项显示 `alert · 4 Evidence`，不再错误显示 `0 Evidence`；列表 count 与详情 citations 由真实 MySQL integration assertion 锁定 |
+| Logs Consultation | `PASS` | 两轮 message 均完成 4 个真实 bounded tools；后续 run 的 Current Evidence 为 `52835e8b-7926-4e13-8ef8-2addf383ba86`、`5d129755-5188-4ce4-9d05-f05791deae43`、`41a5a49f-260f-4761-88e3-37b2ce26ae98`、`435f8f65-5ad6-4146-be82-887495d52786` |
+| Evidence vs Guidance | `PASS` | 后续 run 仅在 Guidance Citations 中引用 Knowledge revision `7f150d2b-73bd-43fd-8af8-0dc4cd22394b` 与 Runbook revisions `e8b9e0f69e597de0e74deaed6fe9e3208ff18193d47c0d442738a362f6a6a7a4`、`4c845617d58156d309fd649aac9525cc3279f94010f679d018341e5de2ceacc6`；Current Evidence 保持独立 Provider observation |
+| Context Snapshot | `PASS` | 从 Logs 导航到 `/overview` 后初始 snapshot ID/hash 未变化；只有显式 attach 创建新 snapshot，旧 snapshot 仍可读取 |
+| SSE | `PASS` | EventSource 精确绑定 `/api/v1/agent/consultations/d21c11a9-46ea-4e9e-aca8-fef5eae3eb84/events`，HTTP `200`、`content-type: text/event-stream`、`X-Accel-Buffering: no`；Chrome 与 Playwright 均确认同一 URL |
+| Authority negative path | `PASS` | Action Card 与 Operation Plan 使用错误 hash 授权均返回 `409 AGENT_STATE_CONFLICT`；两者无 authorization、无 execution，未调用 Kubernetes/GitHub/Argo 或其他 mutation adapter |
+| Workspace/global panel | `PASS` | 完整 Workspace 与全局 drawer 同时打开时 `duplicateIds=[]`；两个 composer 分别为 `agent-conversation-message` 与 `global-agent-conversation-message`，label/`aria-labelledby` 均可解析 |
+| Responsive UI | `PASS` | desktop 与 `390x844`、`320x720` 实测；390px/320px 均 `clientWidth == scrollWidth`，全局 drawer 精确覆盖 viewport，无可见文字溢出 |
+| Accessibility/console | `PASS` | Lighthouse snapshot Accessibility `100`、Best Practices `100`；Chrome 与 Playwright console 均为 `0 errors / 0 warnings`；最终 desktop/mobile screenshots 已保存为 MCP artifact |
+| Kubernetes MCP | `PASS` | API/Worker Deployment 均 `1/1` available；MySQL、Prometheus、Elasticsearch、Tempo、Alertmanager 及采集组件 Pod 全部 Ready；最终 API/Worker restart 为 `0` |
+| Task result | `DONE_WITH_NOT_RUN` | 本地真实 Alert/Logs -> Agent -> bounded tools -> Current Evidence -> outcome、snapshot、SSE、Knowledge exact revision、Guidance 与零授权 authority 主链完成；未运行项如下 |
+
+### 检查结果
+
+`PASS`：
+
+- `make check`：Go unit/integration、race suite、`go vet`、golangci-lint（`0 issues`）、gofmt/goimports/dependency/structure/build。
+- frontend ESLint（exit `0`、`0 errors`，保留仓库既有 warning baseline）、Vue typecheck、Vitest `17 files / 58 tests`、production build；SSR accessibility regression 同时渲染完整/compact Agent surface 并要求零重复 ID 与可解析 label。
+- actionlint、ShellCheck、Helm strict lint/runtime contracts、kubeconform `38/38`、first-party naming guard。
+- Agent Workspace repository/runner/authority、API/SSE、migration、Worker lifecycle、frontend API/router/a11y 的专项测试均包含在完整门禁。
+- disposable MySQL 8 integration `TestMySQLWorkspaceRunnerCollectsEvidenceBeforeDisabledModelOutcome`：`PASS`；真实当前 MySQL schema/data 查询再次确认上述 run、event、Knowledge 与 authority 状态。
+- 初次最终门禁发现 Worker readiness 测试对正式小写 `workspace` 错误合同使用大小写敏感的 `Workspace` 断言；修正测试后 focused `go test ./internal/bootstrap` 与完整 `make check` 均 `PASS`。
+- `git diff --check`（状态文件更新后复跑）。
+
+### 实际文件清单
+
+- Domain/data：`internal/agent/workspace_*`、`migrations/00008_agent_workspace.sql`、`00009_agent_workspace_tasks.sql`、schema/migration/MySQL contract tests。
+- Worker/Provider：`internal/bootstrap/worker*.go`、Worker lifecycle tests、typed Kubernetes/Prometheus/Telemetry gateway wiring、dynamic LLM ProviderAccess。
+- API/contract：`internal/api/agent_handler*`、Alert/Telemetry handlers、router/dependency/startup wiring、`docs/api-v1-openapi.yaml`。
+- Frontend：`frontend/src/api/agent*`、`stores/agentWorkspace.ts`、`components/agent/**`、`views/agent/AgentWorkspaceView.vue`、global panel、Logs/Traces context integration、router/a11y tests。
+- Runtime：`scripts/local-lifecycle.sh` migration upgrade ordering。
+- Task 6 implementation 为 `61` 个精确文件；本状态文件不计入 implementation 数。
+
+### Delivery record
+
+| 项目 | 结果 | 证据 |
+|---|---|---|
+| Branch/base | `PASS` | `codex/v3-refactor`；任务开始 HEAD `c53e518f4bcb834988897fe458546a63c8a0947d` |
+| Worktree preservation | `PASS` | 保留并收敛两个续作会话中的 Task 6 未提交成果；未 reset、revert 或清理 |
+| Local commit | `PASS` | Task 6 的 `61` 个 implementation 文件与本状态节纳入精确语义提交；最终 SHA 以提交完成后的 Git HEAD 为准 |
+| Push | `PASS` | 按任务书预授权仅 fast-forward push 当前非默认实施分支 `origin/codex/v3-refactor`；未创建 PR/tag，未触碰默认分支；远端 SHA 与最终 Git HEAD 相同 |
+
+### NOT RUN
+
+- 真实 LLM/model diagnosis：当前 Configuration Revision 未启用 LLM endpoint/model/credential；真实 bounded tools 与 Evidence 收集为 `PASS`，模型诊断、模型 token streaming 和模型生成结论严格 `NOT RUN`，不得用 fixture 或 fallback 文案冒充。
+- 独立 Prometheus、Elasticsearch、Tempo、Alertmanager、LLM Provider MCP：当前工具面未提供；真实 UI/API/Worker gateway/Provider 与 Kubernetes MCP 证据不冒充这些专用 MCP。
+- Action Card/Operation Plan 正向授权与 mutation execution：本轮有意保持 authorization count `0`；未授权 Kubernetes、GitHub、Argo 或其他外部/高影响写，未执行产品 mutation。
+- hosted/staging/production、外部 Provider、PR、tag、默认分支：`NOT RUN`。

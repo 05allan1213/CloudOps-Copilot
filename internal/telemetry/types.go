@@ -4,6 +4,7 @@ package telemetry
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -279,16 +280,20 @@ type Evidence struct {
 }
 
 type CreateConsultationRequest struct {
-	Title       string              `json:"title"`
-	ClusterID   string              `json:"cluster_id"`
-	Environment string              `json:"environment"`
-	Namespaces  []string            `json:"namespaces"`
-	Resources   []ResourceReference `json:"resource_refs"`
-	From        time.Time           `json:"from"`
-	To          time.Time           `json:"to"`
-	QueryIDs    []string            `json:"query_execution_refs"`
-	EvidenceIDs []string            `json:"evidence_refs"`
+	Title         string              `json:"title"`
+	ClusterID     string              `json:"cluster_id"`
+	Environment   string              `json:"environment"`
+	Namespaces    []string            `json:"namespaces"`
+	Resources     []ResourceReference `json:"resource_refs"`
+	Filters       json.RawMessage     `json:"filters,omitempty"`
+	From          time.Time           `json:"from"`
+	To            time.Time           `json:"to"`
+	DefinitionIDs []string            `json:"query_definition_refs"`
+	QueryIDs      []string            `json:"query_execution_refs"`
+	EvidenceIDs   []string            `json:"evidence_refs"`
 }
+
+type AttachContextSnapshotRequest = CreateConsultationRequest
 
 type Consultation struct {
 	ID        string          `json:"id"`
@@ -304,7 +309,9 @@ type ContextSnapshot struct {
 	ConfigurationRevision string                    `json:"configuration_revision_id"`
 	Scope                 settings.OperationalScope `json:"scope"`
 	Resources             []ResourceReference       `json:"resource_refs"`
+	Filters               json.RawMessage           `json:"filters"`
 	TimeRange             TimeRange                 `json:"time_range"`
+	DefinitionIDs         []string                  `json:"query_definition_refs"`
 	QueryIDs              []string                  `json:"query_execution_refs"`
 	EvidenceIDs           []string                  `json:"evidence_refs"`
 	ContentHash           string                    `json:"content_hash"`

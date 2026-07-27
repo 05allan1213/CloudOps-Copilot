@@ -67,7 +67,7 @@ MIN_INOTIFY_INSTANCES=512
 BACKUP_FORMAT_VERSION=2
 BACKUP_CONTRACT="cloudops-semantic"
 RESTORE_STAGING_DATABASE="cloudops_restore_staging"
-LATEST_SCHEMA_VERSION=7
+LATEST_SCHEMA_VERSION=9
 DATA_CLAIM="cloudops-data"
 DATA_MOUNT_PATH="/var/lib/cloudops"
 DATA_DIRECTORY="${DATA_MOUNT_PATH}/data"
@@ -491,11 +491,17 @@ install_runtime() {
 
   reconcile_mysql_identities
 
+  # Recreate existing local-tag Pods before Helm waits. A migration can make the
+  # previous binaries unready, so deferring this restart until after --wait
+  # creates a schema/readiness deadlock on upgrades.
+  if kube -n "${NAMESPACE}" get deployment/cloudops-api deployment/cloudops-worker >/dev/null 2>&1; then
+    note "restarting API and Worker to consume freshly loaded local images"
+    kube -n "${NAMESPACE}" rollout restart deployment/cloudops-api deployment/cloudops-worker >/dev/null
+  fi
+
   note "reconciling API, Worker, Migrate, MySQL, and bounded telemetry Providers"
   helm upgrade --install "${RELEASE_NAME}" "${CHART_DIR}" "${helm_args[@]}" \
     --wait --wait-for-jobs
-  note "restarting API and Worker to consume freshly loaded local images"
-  kube -n "${NAMESPACE}" rollout restart deployment/cloudops-api deployment/cloudops-worker >/dev/null
   kube -n "${NAMESPACE}" rollout status deployment/cloudops-api --timeout=5m
   kube -n "${NAMESPACE}" rollout status deployment/cloudops-worker --timeout=5m
   kube -n "${NAMESPACE}" rollout status deployment/prometheus --timeout=5m
