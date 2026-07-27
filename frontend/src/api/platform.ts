@@ -40,6 +40,19 @@ export interface ProviderConfiguration {
   context_link_base: string;
 }
 
+export interface EscalationPolicy {
+  id?: string;
+  configuration_revision_id?: string;
+  name: string;
+  enabled: boolean;
+  severities: Array<"unknown" | "info" | "warning" | "critical">;
+  namespaces: string[];
+  label_matchers: Record<string, string>;
+  minimum_firing_seconds: number;
+  minimum_recurrence_count: number;
+  create_incident: true;
+}
+
 export interface SecretReference {
   provider: ProviderIdentity;
   purpose: string;
@@ -54,6 +67,7 @@ export interface ConfigurationDraft {
   scope: OperationalScope;
   scopes: OperationalScope[];
   providers: ProviderConfiguration[];
+  escalation_policies: EscalationPolicy[];
   secret_references: SecretReference[];
 }
 
@@ -218,6 +232,7 @@ export function configurationDraft(revision: ConfigurationRevision): Configurati
     scope: structuredClone(revision.scope),
     scopes: structuredClone(scopes),
     providers: structuredClone(revision.providers),
+    escalation_policies: structuredClone(revision.escalation_policies ?? []),
     secret_references: structuredClone(revision.secret_references),
   };
 }

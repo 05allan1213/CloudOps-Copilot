@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"time"
+
+	alertdomain "github.com/05allan1213/CloudOps-Copilot/internal/alert"
 )
 
 const (
@@ -214,6 +216,16 @@ type CommandResult struct {
 
 type CommandPort interface {
 	Execute(context.Context, CommandRequest) (CommandResult, error)
+}
+
+type AlertPort interface {
+	List(context.Context, alertdomain.ListRequest) (alertdomain.Page, error)
+	Detail(context.Context, string) (alertdomain.Detail, error)
+	Acknowledge(context.Context, alertdomain.AcknowledgeRequest) (alertdomain.View, error)
+	CreateSilence(context.Context, alertdomain.CreateSilenceRequest) (alertdomain.Silence, error)
+	ExpireSilence(context.Context, alertdomain.ExpireSilenceRequest) (alertdomain.Silence, error)
+	LinkIncident(context.Context, alertdomain.LinkIncidentRequest) (alertdomain.View, error)
+	StartInvestigation(context.Context, alertdomain.StartInvestigationRequest) (alertdomain.View, error)
 }
 
 // Problem is the stable RFC 9457-compatible error envelope.

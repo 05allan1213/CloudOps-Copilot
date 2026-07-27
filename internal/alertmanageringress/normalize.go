@@ -17,6 +17,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	alertdomain "github.com/05allan1213/CloudOps-Copilot/internal/alert"
 	domain "github.com/05allan1213/CloudOps-Copilot/internal/incident"
 	"github.com/05allan1213/CloudOps-Copilot/internal/infra/incidentstore"
 )
@@ -63,7 +64,7 @@ type alert struct {
 }
 
 type normalizedBatch struct {
-	Signals    []incidentstore.SignalInput
+	Signals    []alertdomain.SignalInput
 	Rejections []incidentstore.RejectionInput
 }
 
@@ -239,7 +240,7 @@ func normalizeEnvelope(input envelope, targets []Target) (normalizedBatch, error
 		}
 	}
 
-	result := normalizedBatch{Signals: make([]incidentstore.SignalInput, 0, len(input.Alerts))}
+	result := normalizedBatch{Signals: make([]alertdomain.SignalInput, 0, len(input.Alerts))}
 	for index, item := range input.Alerts {
 		normalized, rejection, err := normalizeAlert(item, targets)
 		if err != nil {
@@ -254,20 +255,20 @@ func normalizeEnvelope(input envelope, targets []Target) (normalizedBatch, error
 	return result, nil
 }
 
-func normalizeAlert(input alert, targets []Target) (incidentstore.SignalInput, *incidentstore.RejectionInput, error) {
+func normalizeAlert(input alert, targets []Target) (alertdomain.SignalInput, *incidentstore.RejectionInput, error) {
 	status := domain.SignalStatus(strings.ToLower(strings.TrimSpace(input.Status)))
 	if status != domain.SignalStatusFiring && status != domain.SignalStatusResolved {
-		return incidentstore.SignalInput{}, nil, errors.New("status must be firing or resolved")
+		return alertdomain.SignalInput{}, nil, errors.New("status must be firing or resolved")
 	}
 	if input.StartsAt.IsZero() {
-		return incidentstore.SignalInput{}, nil, errors.New("startsAt is required")
+		return alertdomain.SignalInput{}, nil, errors.New("startsAt is required")
 	}
 	startsAt := input.StartsAt.UTC()
 	var endsAt *time.Time
 	resolvedEndsAt := ""
 	if status == domain.SignalStatusResolved {
 		if input.EndsAt.IsZero() || input.EndsAt.Before(input.StartsAt) {
-			return incidentstore.SignalInput{}, nil, errors.New("resolved alert requires endsAt at or after startsAt")
+			return alertdomain.SignalInput{}, nil, errors.New("resolved alert requires endsAt at or after startsAt")
 		}
 		resolved := input.EndsAt.UTC()
 		endsAt = &resolved
@@ -275,16 +276,16 @@ func normalizeAlert(input alert, targets []Target) (incidentstore.SignalInput, *
 	}
 	fingerprint := strings.ToLower(strings.TrimSpace(input.Fingerprint))
 	if fingerprint == "" || len(fingerprint) > 128 {
-		return incidentstore.SignalInput{}, nil, errors.New("fingerprint must contain 1..128 hex characters")
+		return alertdomain.SignalInput{}, nil, errors.New("fingerprint must contain 1..128 hex characters")
 	}
 	if _, err := hex.DecodeString(evenHex(fingerprint)); err != nil {
-		return incidentstore.SignalInput{}, nil, errors.New("fingerprint must be hexadecimal")
+		return alertdomain.SignalInput{}, nil, errors.New("fingerprint must be hexadecimal")
 	}
 	if err := validateStringMap(input.Labels); err != nil {
-		return incidentstore.SignalInput{}, nil, fmt.Errorf("labels: %w", err)
+		return alertdomain.SignalInput{}, nil, fmt.Errorf("labels: %w", err)
 	}
 	if err := validateStringMap(input.Annotations); err != nil {
-		return incidentstore.SignalInput{}, nil, fmt.Errorf("annotations: %w", err)
+		return alertdomain.SignalInput{}, nil, fmt.Errorf("annotations: %w", err)
 	}
 
 	sourceEventID := hashCanonical(
@@ -294,7 +295,7 @@ func normalizeAlert(input alert, targets []Target) (incidentstore.SignalInput, *
 	target, reason := resolveTarget(input.Labels, targets)
 	if reason != "" {
 		labelsHash := hashStringMap(input.Labels)
-		return incidentstore.SignalInput{}, &incidentstore.RejectionInput{
+		return alertdomain.SignalInput{}, &incidentstore.RejectionInput{
 			Source: alertmanagerSource, SourceEventID: sourceEventID, Fingerprint: fingerprint,
 			AlertInstanceKey: instanceKey, ReasonCode: reason,
 			Details: map[string]string{"labels_hash": labelsHash, "status": string(status)},
@@ -314,11 +315,11 @@ func normalizeAlert(input alert, targets []Target) (incidentstore.SignalInput, *
 	}
 	labelsJSON, err := json.Marshal(safeLabels(input.Labels))
 	if err != nil {
-		return incidentstore.SignalInput{}, nil, err
+		return alertdomain.SignalInput{}, nil, err
 	}
 	annotationsJSON, err := json.Marshal(safeAnnotations(input.Annotations))
 	if err != nil {
-		return incidentstore.SignalInput{}, nil, err
+		return alertdomain.SignalInput{}, nil, err
 	}
 	alertName := redactExternalText(input.Labels["alertname"], 128)
 	if alertName == "" {
@@ -328,7 +329,7 @@ func normalizeAlert(input alert, targets []Target) (incidentstore.SignalInput, *
 	if summary == "" {
 		summary = bounded(alertName+" "+string(status), maxSummaryBytes)
 	}
-	return incidentstore.SignalInput{
+	return alertdomain.SignalInput{
 		Source: alertmanagerSource, SourceEventID: sourceEventID, AlertInstanceKey: instanceKey,
 		CorrelationKey: correlationKey, Fingerprint: fingerprint, Status: status, Severity: severity,
 		Cluster: target.ClusterID, Environment: target.Environment, Namespace: target.Namespace,

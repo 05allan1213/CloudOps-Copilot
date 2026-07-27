@@ -16,6 +16,7 @@ var (
 	clusterIdentityPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`)
 	namespacePattern       = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
 	purposePattern         = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+	labelNamePattern       = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 )
 
 func normalizeDraft(input Draft) (Draft, []FieldError, string) {
@@ -36,6 +37,7 @@ func normalizeDraft(input Draft) (Draft, []FieldError, string) {
 		return result.Scopes[i].Name < result.Scopes[j].Name
 	})
 	result.SecretRefs = normalizeSecretReferences(result.SecretRefs)
+	result.EscalationPolicies = normalizeEscalationPolicies(result.EscalationPolicies)
 
 	providers := make(map[Provider]ProviderConfiguration, len(result.Providers))
 	for _, item := range result.Providers {
@@ -113,6 +115,39 @@ func normalizeSecretReferences(values []SecretReference) []SecretReference {
 	return result
 }
 
+func normalizeEscalationPolicies(values []EscalationPolicy) []EscalationPolicy {
+	result := make([]EscalationPolicy, 0, len(values))
+	for _, value := range values {
+		value.ID = ""
+		value.ConfigurationRevisionID = ""
+		value.Name = strings.TrimSpace(value.Name)
+		value.Severities = normalizeLowerStrings(value.Severities)
+		value.Namespaces = normalizeStrings(value.Namespaces)
+		matchers := make(map[string]string, len(value.LabelMatchers))
+		for name, expected := range value.LabelMatchers {
+			matchers[strings.TrimSpace(name)] = strings.TrimSpace(expected)
+		}
+		value.LabelMatchers = matchers
+		result = append(result, value)
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		left, right := strings.ToLower(result[i].Name), strings.ToLower(result[j].Name)
+		if left != right {
+			return left < right
+		}
+		return result[i].Name < result[j].Name
+	})
+	return result
+}
+
+func normalizeLowerStrings(values []string) []string {
+	result := make([]string, len(values))
+	for index, value := range values {
+		result[index] = strings.ToLower(value)
+	}
+	return normalizeStrings(result)
+}
+
 func validateNormalizedDraft(draft Draft) []FieldError {
 	var result []FieldError
 	add := func(field, code, message string) {
@@ -172,8 +207,61 @@ func validateNormalizedDraft(draft Draft) []FieldError {
 	if draft.General.TelemetryRetentionDays < 1 || draft.General.TelemetryRetentionDays > 365 {
 		add("general.telemetry_retention_days", "INVALID_RETENTION", "Telemetry 保留天数需为 1 至 365")
 	}
-	if draft.General.AutomaticEscalationEnabled {
-		add("general.automatic_escalation_enabled", "UNSUPPORTED_AUTOMATION", "当前合同不允许自动 escalation")
+	if len(draft.EscalationPolicies) > 50 {
+		add("escalation_policies", "INVALID_POLICY_COUNT", "一个 Configuration Revision 最多包含 50 条 Escalation Policy")
+	}
+	seenPolicyNames := make(map[string]struct{}, len(draft.EscalationPolicies))
+	validEnabledPolicies := 0
+	for index, policy := range draft.EscalationPolicies {
+		prefix := fmt.Sprintf("escalation_policies.%d", index)
+		errorCount := len(result)
+		if len(policy.Name) < 1 || len(policy.Name) > 128 {
+			add(prefix+".name", "INVALID_POLICY_NAME", "Policy 名称需为 1 至 128 个字符")
+		}
+		nameKey := strings.ToLower(policy.Name)
+		if _, exists := seenPolicyNames[nameKey]; exists {
+			add(prefix+".name", "DUPLICATE_POLICY_NAME", "同一 Configuration Revision 的 Policy 名称必须唯一")
+		}
+		seenPolicyNames[nameKey] = struct{}{}
+		if len(policy.Severities) < 1 || len(policy.Severities) > 4 {
+			add(prefix+".severities", "INVALID_SEVERITY_COUNT", "Policy 必须选择 1 至 4 个 severity")
+		}
+		for _, severity := range policy.Severities {
+			if !slices.Contains([]string{"unknown", "info", "warning", "critical"}, severity) {
+				add(prefix+".severities", "INVALID_SEVERITY", fmt.Sprintf("severity %q 无效", severity))
+			}
+		}
+		if len(policy.Namespaces) > 100 {
+			add(prefix+".namespaces", "INVALID_NAMESPACE_COUNT", "Policy 最多匹配 100 个 Namespace")
+		}
+		for _, namespace := range policy.Namespaces {
+			if !namespacePattern.MatchString(namespace) {
+				add(prefix+".namespaces", "INVALID_NAMESPACE", fmt.Sprintf("Namespace %q 格式无效", namespace))
+			}
+		}
+		if len(policy.LabelMatchers) > 8 {
+			add(prefix+".label_matchers", "INVALID_MATCHER_COUNT", "Policy 最多包含 8 个 exact label matcher")
+		}
+		for name, expected := range policy.LabelMatchers {
+			if !labelNamePattern.MatchString(name) || expected == "" || len(expected) > 1024 {
+				add(prefix+".label_matchers", "INVALID_MATCHER", "Label matcher 必须使用有效名称和 1 至 1024 字符的 exact value")
+			}
+		}
+		if policy.MinimumFiringSeconds < 0 || policy.MinimumFiringSeconds > 7*24*60*60 {
+			add(prefix+".minimum_firing_seconds", "INVALID_FIRING_DURATION", "持续 firing 时间需为 0 至 604800 秒")
+		}
+		if policy.MinimumRecurrenceCount < 1 || policy.MinimumRecurrenceCount > 100 {
+			add(prefix+".minimum_recurrence_count", "INVALID_RECURRENCE", "复发次数需为 1 至 100")
+		}
+		if !policy.CreateIncident {
+			add(prefix+".create_incident", "INVALID_POLICY_ACTION", "当前 Escalation Policy 只允许显式创建 Incident")
+		}
+		if policy.Enabled && len(result) == errorCount {
+			validEnabledPolicies++
+		}
+	}
+	if draft.General.AutomaticEscalationEnabled && validEnabledPolicies == 0 {
+		add("general.automatic_escalation_enabled", "POLICY_REQUIRED", "启用自动 escalation 前必须存在至少 1 条已启用且有效的 Policy")
 	}
 	if len(draft.Providers) != len(operationalProviders) {
 		add("providers", "INCOMPLETE_PROVIDERS", "Provider 配置集合不完整")

@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	alertdomain "github.com/05allan1213/CloudOps-Copilot/internal/alert"
 	"github.com/05allan1213/CloudOps-Copilot/internal/alertmanageringress"
 	"github.com/05allan1213/CloudOps-Copilot/internal/config"
 	"github.com/05allan1213/CloudOps-Copilot/internal/handler"
@@ -75,7 +76,7 @@ func TestInternalRouterHasExactCapabilitySurfaceAndUserRouterDoesNotMountWebhook
 type internalRouterStore struct{}
 
 func (internalRouterStore) Ready(context.Context) error { return nil }
-func (internalRouterStore) IngestBatch(context.Context, []incidentstore.SignalInput) ([]incidentstore.IngestResult, error) {
+func (internalRouterStore) IngestBatch(context.Context, []alertdomain.SignalInput) ([]alertdomain.IngestResult, error) {
 	return nil, nil
 }
 func (internalRouterStore) RecordRejections(context.Context, []incidentstore.RejectionInput) error {

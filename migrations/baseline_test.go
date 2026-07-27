@@ -17,10 +17,10 @@ func TestSemanticMigrationContract(t *testing.T) {
 			migrationNames = append(migrationNames, entry.Name())
 		}
 	}
-	if len(migrationNames) != 6 || migrationNames[0] != "00001_cloudops_baseline.sql" ||
+	if len(migrationNames) != 7 || migrationNames[0] != "00001_cloudops_baseline.sql" ||
 		migrationNames[1] != "00002_platform_foundation.sql" || migrationNames[2] != "00003_infrastructure_topology.sql" ||
 		migrationNames[3] != "00004_operational_scope_registry.sql" || migrationNames[4] != "00005_observability_queries.sql" ||
-		migrationNames[5] != "00006_telemetry_evidence_context.sql" {
+		migrationNames[5] != "00006_telemetry_evidence_context.sql" || migrationNames[6] != "00007_alert_lifecycle.sql" {
 		t.Fatalf("embedded migrations=%v, want semantic baseline through observability queries", migrationNames)
 	}
 
@@ -180,6 +180,27 @@ func TestSemanticMigrationContract(t *testing.T) {
 	for _, forbidden := range []string{"raw_result", "provider_response", "secret_value", "bearer", "fixture", "phase_4", "phase 4"} {
 		if strings.Contains(strings.ToLower(telemetrySQL), forbidden) {
 			t.Errorf("telemetry Evidence/context migration retains forbidden telemetry field or implementation identity %q", forbidden)
+		}
+	}
+
+	alertContents, err := FS.ReadFile(migrationNames[6])
+	if err != nil {
+		t.Fatal(err)
+	}
+	alertSQL := string(alertContents)
+	for _, required := range []string{
+		"CREATE TABLE IF NOT EXISTS `alert_ingress_locks`", "CREATE TABLE IF NOT EXISTS `alerts`", "CREATE TABLE IF NOT EXISTS `alert_signal_links`", "CREATE TABLE IF NOT EXISTS `alert_events`",
+		"CREATE TABLE IF NOT EXISTS `alert_acknowledgements`", "CREATE TABLE IF NOT EXISTS `alert_silences`",
+		"CREATE TABLE IF NOT EXISTS `alert_incident_links`", "CREATE TABLE IF NOT EXISTS `escalation_policies`",
+		"legacy_automatic_ingress", "DROP CHECK `chk_configuration_revisions_escalation`",
+	} {
+		if !strings.Contains(alertSQL, required) {
+			t.Errorf("Alert lifecycle migration missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"raw_webhook", "secret_value", "phase_5", "phase 5", "CREATE TABLE `alert_assignments`"} {
+		if strings.Contains(strings.ToLower(alertSQL), strings.ToLower(forbidden)) {
+			t.Errorf("Alert lifecycle migration retains forbidden field or implementation identity %q", forbidden)
 		}
 	}
 }

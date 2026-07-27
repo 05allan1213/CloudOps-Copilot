@@ -389,6 +389,148 @@ paths:
               schema: { type: string }
         "501": { $ref: "#/components/responses/Problem" }
         default: { $ref: "#/components/responses/Problem" }
+  /api/v1/alerts:
+    get:
+      operationId: listAlerts
+      description: Independent Alert lifecycle page derived from immutable Signals.
+      parameters:
+        - { $ref: "#/components/parameters/Cursor" }
+        - { $ref: "#/components/parameters/Limit" }
+        - { name: status, in: query, schema: { type: string, enum: [firing, resolved] } }
+        - { name: severity, in: query, schema: { type: string, enum: [unknown, info, warning, critical] } }
+        - { name: namespace, in: query, schema: { type: string, maxLength: 255 } }
+        - { name: search, in: query, schema: { type: string, maxLength: 255 } }
+      responses:
+        "200":
+          description: Bounded Alert page
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AlertPage" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/alerts/{id}:
+    parameters:
+      - { $ref: "#/components/parameters/PublicID" }
+    get:
+      operationId: getAlert
+      responses:
+        "200":
+          description: Alert lifecycle, source Signal provenance and audit events
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AlertDetail" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/alerts/{id}/acknowledgements:
+    parameters:
+      - { $ref: "#/components/parameters/PublicID" }
+    post:
+      operationId: acknowledgeAlert
+      description: Local Owner records a recurrence-bound acknowledgement without silencing or resolving the Alert.
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/Origin" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AlertCommand" }
+      responses:
+        "200": { description: Updated Alert, content: { application/json: { schema: { $ref: "#/components/schemas/Alert" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "413": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/alerts/{id}/silences:
+    parameters:
+      - { $ref: "#/components/parameters/PublicID" }
+    post:
+      operationId: createAlertSilence
+      description: Local Owner creates an exact-matcher, provider-backed silence bounded to 5 minutes through 24 hours.
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/Origin" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AlertSilenceCommand" }
+      responses:
+        "201": { description: Provider-backed silence, content: { application/json: { schema: { $ref: "#/components/schemas/AlertSilence" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "413": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/silences/{id}/expire:
+    parameters:
+      - { $ref: "#/components/parameters/PublicID" }
+    post:
+      operationId: expireAlertSilence
+      description: Local Owner expires the provider silence while leaving Alert firing state unchanged.
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/Origin" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AlertExpireSilenceCommand" }
+      responses:
+        "200": { description: Expired silence, content: { application/json: { schema: { $ref: "#/components/schemas/AlertSilence" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/alerts/{id}/investigations:
+    parameters:
+      - { $ref: "#/components/parameters/PublicID" }
+    post:
+      operationId: startAlertInvestigation
+      description: Local Owner starts an Investigation through an explicitly linked active Incident.
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/Origin" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AlertCommand" }
+      responses:
+        "202": { description: Investigation accepted, content: { application/json: { schema: { $ref: "#/components/schemas/Alert" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "413": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/alerts/{id}/incident-links:
+    parameters:
+      - { $ref: "#/components/parameters/PublicID" }
+    post:
+      operationId: linkAlertIncident
+      description: Local Owner explicitly creates an Incident or attaches the Alert to an existing active Incident.
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/Origin" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AlertIncidentLinkCommand" }
+      responses:
+        "201": { description: Updated Alert relation, content: { application/json: { schema: { $ref: "#/components/schemas/Alert" } } } }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "413": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
   /api/v1/incidents:
     get:
       operationId: listIncidents
@@ -2404,6 +2546,205 @@ components:
     GitObjectID:
       type: string
       pattern: "^[0-9a-f]{40}([0-9a-f]{24})?$"
+    AlertPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items: { $ref: "#/components/schemas/Alert" }
+        next_cursor: { type: string }
+    AlertDetail:
+      type: object
+      additionalProperties: false
+      required: [alert, signals, events]
+      properties:
+        alert: { $ref: "#/components/schemas/Alert" }
+        signals:
+          type: array
+          items: { $ref: "#/components/schemas/AlertSignal" }
+        events:
+          type: array
+          items: { $ref: "#/components/schemas/AlertEvent" }
+    Alert:
+      type: object
+      additionalProperties: false
+      required: [id, status, severity, summary, category, source, fingerprint, correlation_key, cluster, environment, namespace, service_name, target_kind, target_name, first_seen_at, last_seen_at, starts_at, recurrence_count, signal_count, version, incident_links, investigations, context_link, migrated_legacy, migrated_legacy_context, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [firing, resolved] }
+        severity: { type: string, enum: [unknown, info, warning, critical] }
+        summary: { type: string, maxLength: 2048 }
+        category: { type: string, maxLength: 255 }
+        source: { type: string, maxLength: 64 }
+        fingerprint: { type: string, maxLength: 128 }
+        correlation_key: { $ref: "#/components/schemas/SHA256" }
+        cluster: { type: string, maxLength: 128 }
+        environment: { type: string, maxLength: 64 }
+        namespace: { type: string, maxLength: 255 }
+        service_name: { type: string, maxLength: 255 }
+        target_kind: { type: string, maxLength: 64 }
+        target_name: { type: string, maxLength: 255 }
+        first_seen_at: { type: string, format: date-time }
+        last_seen_at: { type: string, format: date-time }
+        starts_at: { type: string, format: date-time }
+        resolved_at: { type: [string, "null"], format: date-time }
+        recurrence_count: { type: integer, minimum: 1 }
+        signal_count: { type: integer, minimum: 1 }
+        version: { type: integer, minimum: 1 }
+        acknowledgement: { oneOf: [{ $ref: "#/components/schemas/AlertAcknowledgement" }, { type: "null" }] }
+        silence: { oneOf: [{ $ref: "#/components/schemas/AlertSilence" }, { type: "null" }] }
+        incident_links:
+          type: array
+          items: { $ref: "#/components/schemas/AlertIncidentLink" }
+        investigations:
+          type: array
+          items: { $ref: "#/components/schemas/AlertInvestigation" }
+        context_link: { $ref: "#/components/schemas/AlertContextLink" }
+        migrated_legacy: { type: boolean }
+        migrated_legacy_context: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    AlertAcknowledgement:
+      type: object
+      additionalProperties: false
+      required: [id, recurrence_no, alert_version, actor, reason, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        recurrence_no: { type: integer, minimum: 1 }
+        alert_version: { type: integer, minimum: 1 }
+        actor:
+          type: object
+          additionalProperties: false
+          required: [provider, login, role]
+          properties:
+            provider: { type: string, const: local }
+            login: { type: string, const: owner }
+            role: { type: string, const: owner }
+        reason: { type: string, minLength: 1, maxLength: 1024 }
+        created_at: { type: string, format: date-time }
+    AlertMatcher:
+      type: object
+      additionalProperties: false
+      required: [name, value, is_regex, is_equal]
+      properties:
+        name: { type: string, maxLength: 128 }
+        value: { type: string, maxLength: 1024 }
+        is_regex: { type: boolean, const: false }
+        is_equal: { type: boolean, const: true }
+    AlertSilence:
+      type: object
+      additionalProperties: false
+      required: [id, status, matchers, reason, configuration_revision_id, starts_at, ends_at, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        provider_silence_id: { type: string, maxLength: 128 }
+        status: { type: string, enum: [pending, active, expired, failed] }
+        matchers:
+          type: array
+          minItems: 1
+          maxItems: 8
+          items: { $ref: "#/components/schemas/AlertMatcher" }
+        reason: { type: string, minLength: 1, maxLength: 1024 }
+        configuration_revision_id: { type: string, format: uuid }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+        expired_at: { type: [string, "null"], format: date-time }
+        provider_error_code: { type: string, maxLength: 64 }
+        created_at: { type: string, format: date-time }
+    AlertIncidentLink:
+      type: object
+      additionalProperties: false
+      required: [id, incident_id, incident_cycle, incident_status, provenance, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        incident_id: { type: string, format: uuid }
+        incident_cycle: { type: integer, minimum: 1 }
+        incident_status: { type: string }
+        provenance: { type: string, enum: [owner_created, owner_attached, escalation_policy, legacy_automatic_ingress] }
+        configuration_revision_id: { type: string, format: uuid }
+        escalation_policy_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+    AlertInvestigation:
+      type: object
+      additionalProperties: false
+      required: [id, incident_id, status, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        incident_id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, running, completed, failed, cancelled] }
+        created_at: { type: string, format: date-time }
+    AlertContextLink:
+      type: object
+      additionalProperties: false
+      required: [workspace, path, query, operational_scope_id, external]
+      properties:
+        workspace: { type: string, const: alerts }
+        path: { type: string, pattern: "^/alerts/[0-9a-f-]{36}$" }
+        query: { type: object, additionalProperties: { type: string } }
+        operational_scope_id: { type: string }
+        external: { type: boolean, const: false }
+    AlertSignal:
+      type: object
+      additionalProperties: true
+      required: [id, source_event_id, alert_instance_key, status, severity, summary, labels, annotations, starts_at, occurred_at, received_at, provenance]
+      properties:
+        id: { type: string, format: uuid }
+        source_event_id: { $ref: "#/components/schemas/SHA256" }
+        alert_instance_key: { $ref: "#/components/schemas/SHA256" }
+        status: { type: string, enum: [firing, resolved] }
+        severity: { type: string }
+        summary: { type: string }
+        labels: { type: object }
+        annotations: { type: object }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: [string, "null"], format: date-time }
+        occurred_at: { type: string, format: date-time }
+        received_at: { type: string, format: date-time }
+        provenance: { type: string, enum: [signal_normalization, legacy_automatic_ingress] }
+    AlertEvent:
+      type: object
+      additionalProperties: false
+      required: [id, type, actor_type, actor_id, summary, metadata, occurred_at]
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, maxLength: 64 }
+        actor_type: { type: string, maxLength: 32 }
+        actor_id: { type: string, maxLength: 128 }
+        summary: { type: string, maxLength: 2048 }
+        metadata: { type: object }
+        occurred_at: { type: string, format: date-time }
+    AlertCommand:
+      type: object
+      additionalProperties: false
+      required: [expected_version, reason]
+      properties:
+        expected_version: { type: integer, minimum: 1 }
+        reason: { type: string, minLength: 1, maxLength: 1024 }
+    AlertSilenceCommand:
+      type: object
+      additionalProperties: false
+      required: [expected_version, duration_seconds, reason]
+      properties:
+        expected_version: { type: integer, minimum: 1 }
+        duration_seconds: { type: integer, minimum: 300, maximum: 86400 }
+        reason: { type: string, minLength: 1, maxLength: 1024 }
+    AlertExpireSilenceCommand:
+      type: object
+      additionalProperties: false
+      required: [expected_version]
+      properties:
+        expected_version: { type: integer, minimum: 1 }
+    AlertIncidentLinkCommand:
+      type: object
+      additionalProperties: false
+      required: [expected_version, create]
+      properties:
+        expected_version: { type: integer, minimum: 1 }
+        create: { type: boolean }
+        incident_id: { type: string, format: uuid }
     VersionedCommand:
       type: object
       additionalProperties: false

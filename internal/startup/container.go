@@ -2,18 +2,18 @@ package startup
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"time"
 
+	alertdomain "github.com/05allan1213/CloudOps-Copilot/internal/alert"
 	"github.com/05allan1213/CloudOps-Copilot/internal/alertmanageringress"
 	"github.com/05allan1213/CloudOps-Copilot/internal/api"
 	commandapp "github.com/05allan1213/CloudOps-Copilot/internal/command"
 	"github.com/05allan1213/CloudOps-Copilot/internal/config"
 	"github.com/05allan1213/CloudOps-Copilot/internal/di"
 	"github.com/05allan1213/CloudOps-Copilot/internal/handler"
-	"github.com/05allan1213/CloudOps-Copilot/internal/infra/incidentstore"
+	"github.com/05allan1213/CloudOps-Copilot/internal/infra/alertmanagergateway"
 	"github.com/05allan1213/CloudOps-Copilot/internal/infra/infrastructuregateway"
 	"github.com/05allan1213/CloudOps-Copilot/internal/infra/monitoringgateway"
 	"github.com/05allan1213/CloudOps-Copilot/internal/infra/telemetrygateway"
@@ -41,10 +41,6 @@ func InitAPIContainer(cfg *config.Config, infra *di.Infra, runtimeReadiness hand
 		if err != nil {
 			return nil, fmt.Errorf("command port init failed: %w", err)
 		}
-		container.Alertmanager, err = initAlertmanagerIngress(cfg, infra.MySQL.SQLDB(), runtimeReadiness)
-		if err != nil {
-			return nil, fmt.Errorf("alertmanager ingress init failed: %w", err)
-		}
 		container.Settings, err = settings.NewService(infra.MySQL.SQLDB(), cfg.DataDir, settings.BootstrapDiagnostics{
 			ListenBoundary: cfg.ListenAddr, MySQLDatabase: cfg.MySQLDatabase,
 			DataDirectory: cfg.DataDir, WorkerManagementTarget: cfg.WorkerManagementTarget,
@@ -56,6 +52,19 @@ func InitAPIContainer(cfg *config.Config, infra *di.Infra, runtimeReadiness hand
 		container.Notifications, err = notification.NewRepository(infra.MySQL.SQLDB())
 		if err != nil {
 			return nil, fmt.Errorf("notification repository init failed: %w", err)
+		}
+		alertmanagerClient, gatewayErr := alertmanagergateway.NewClient(cfg.WorkerManagementTarget, cfg.RequestTimeout+2*time.Second)
+		if gatewayErr != nil {
+			return nil, fmt.Errorf("alertmanager Provider Gateway client init failed: %w", gatewayErr)
+		}
+		container.Alerts, err = alertdomain.NewService(infra.MySQL.SQLDB(), alertmanagerClient,
+			alertInvestigationStarter{commands: container.Commands})
+		if err != nil {
+			return nil, fmt.Errorf("alert service init failed: %w", err)
+		}
+		container.Alertmanager, err = initAlertmanagerIngress(cfg, container.Alerts, runtimeReadiness)
+		if err != nil {
+			return nil, fmt.Errorf("alertmanager ingress init failed: %w", err)
 		}
 		gatewayClient, gatewayErr := infrastructuregateway.NewClient(cfg.WorkerManagementTarget, cfg.K8SRequestTimeout)
 		if gatewayErr != nil {
@@ -108,11 +117,11 @@ func InitAPIContainer(cfg *config.Config, infra *di.Infra, runtimeReadiness hand
 	return container, nil
 }
 
-func initAlertmanagerIngress(cfg *config.Config, db *sql.DB, runtimeReadiness handler.RuntimeReadiness) (*alertmanageringress.Handler, error) {
-	incidentStore, err := incidentstore.NewStore(db)
-	if err != nil {
-		return nil, fmt.Errorf("incident store: %w", err)
+func initAlertmanagerIngress(cfg *config.Config, store alertmanageringress.Store, runtimeReadiness handler.RuntimeReadiness) (*alertmanageringress.Handler, error) {
+	if store == nil {
+		return nil, errors.New("alert ingress store is required")
 	}
+	var err error
 	targets, err := alertmanageringress.ParseTargetAllowlist(cfg.SignalTargetAllowlistJSON)
 	if err != nil {
 		return nil, fmt.Errorf("target allowlist: %w", err)
@@ -125,7 +134,7 @@ func initAlertmanagerIngress(cfg *config.Config, db *sql.DB, runtimeReadiness ha
 		return nil, errors.New("bearer is required but ALERTMANAGER_WEBHOOK_BEARER_TOKEN_FILE is empty")
 	}
 	return alertmanageringress.NewHandler(alertmanageringress.Config{
-		Store: incidentStore, Targets: targets,
+		Store: store, Targets: targets,
 		MaxBodyBytes: cfg.AlertmanagerWebhookMaxBodyBytes, RequestTimeout: cfg.RequestTimeout,
 		BearerToken: bearerToken, Readiness: runtimeReadiness,
 	})

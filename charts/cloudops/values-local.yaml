@@ -26,6 +26,10 @@ observability:
       image:
         digest: ""
         pullPolicy: Never
+    alertmanager:
+      image:
+        digest: ""
+        pullPolicy: Never
     grafana:
       anonymousRole: Editor
       image:

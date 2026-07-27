@@ -5,6 +5,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/05allan1213/CloudOps-Copilot/internal/alert"
 	"github.com/05allan1213/CloudOps-Copilot/internal/alertmanageringress"
 	"github.com/05allan1213/CloudOps-Copilot/internal/api"
 	"github.com/05allan1213/CloudOps-Copilot/internal/handler"
@@ -37,6 +38,7 @@ type Container struct {
 	Queries        api.QueryPort
 	Commands       api.CommandPort
 	Alertmanager   *alertmanageringress.Handler
+	Alerts         *alert.Service
 	Settings       *settings.Service
 	Notifications  *notification.Repository
 	Infrastructure *infrastructure.Service
@@ -56,6 +58,7 @@ func (c *Container) Dependencies() router.Dependencies {
 		Queries:        c.Queries,
 		Commands:       c.Commands,
 		Alertmanager:   c.Alertmanager,
+		Alerts:         c.Alerts,
 		Settings:       c.Settings,
 		Notifications:  c.Notifications,
 		Infrastructure: c.Infrastructure,

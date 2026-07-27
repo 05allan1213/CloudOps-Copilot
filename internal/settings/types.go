@@ -84,6 +84,21 @@ type ProviderConfiguration struct {
 	ContextLinkBase string   `json:"context_link_base"`
 }
 
+// EscalationPolicy is an immutable, revision-bound rule for promoting a
+// matching firing Alert into an Incident. Matchers are exact by design.
+type EscalationPolicy struct {
+	ID                      string            `json:"id,omitempty"`
+	ConfigurationRevisionID string            `json:"configuration_revision_id,omitempty"`
+	Name                    string            `json:"name"`
+	Enabled                 bool              `json:"enabled"`
+	Severities              []string          `json:"severities"`
+	Namespaces              []string          `json:"namespaces"`
+	LabelMatchers           map[string]string `json:"label_matchers"`
+	MinimumFiringSeconds    int               `json:"minimum_firing_seconds"`
+	MinimumRecurrenceCount  int               `json:"minimum_recurrence_count"`
+	CreateIncident          bool              `json:"create_incident"`
+}
+
 // ProviderAccess is a Worker-only resolved configuration. Credential is never
 // serialized and must be cleared by the caller after constructing a request.
 type ProviderAccess struct {
@@ -109,12 +124,13 @@ type SecretReference struct {
 }
 
 type Draft struct {
-	Summary    string                  `json:"summary"`
-	General    GeneralConfiguration    `json:"general"`
-	Scope      OperationalScope        `json:"scope"`
-	Scopes     []OperationalScope      `json:"scopes"`
-	Providers  []ProviderConfiguration `json:"providers"`
-	SecretRefs []SecretReference       `json:"secret_references"`
+	Summary            string                  `json:"summary"`
+	General            GeneralConfiguration    `json:"general"`
+	Scope              OperationalScope        `json:"scope"`
+	Scopes             []OperationalScope      `json:"scopes"`
+	Providers          []ProviderConfiguration `json:"providers"`
+	EscalationPolicies []EscalationPolicy      `json:"escalation_policies"`
+	SecretRefs         []SecretReference       `json:"secret_references"`
 }
 
 type FieldError struct {
@@ -141,19 +157,20 @@ type Validation struct {
 }
 
 type Revision struct {
-	ID             string                  `json:"id"`
-	Number         uint64                  `json:"number"`
-	Hash           string                  `json:"hash"`
-	Summary        string                  `json:"summary"`
-	General        GeneralConfiguration    `json:"general"`
-	Scope          OperationalScope        `json:"scope"`
-	Scopes         []OperationalScope      `json:"scopes"`
-	Providers      []ProviderConfiguration `json:"providers"`
-	SecretRefs     []SecretReference       `json:"secret_references"`
-	CreatedBy      string                  `json:"created_by"`
-	CreatedAt      time.Time               `json:"created_at"`
-	Active         bool                    `json:"active"`
-	WorkerBoundary *ActivationStatus       `json:"worker_boundary,omitempty"`
+	ID                 string                  `json:"id"`
+	Number             uint64                  `json:"number"`
+	Hash               string                  `json:"hash"`
+	Summary            string                  `json:"summary"`
+	General            GeneralConfiguration    `json:"general"`
+	Scope              OperationalScope        `json:"scope"`
+	Scopes             []OperationalScope      `json:"scopes"`
+	Providers          []ProviderConfiguration `json:"providers"`
+	EscalationPolicies []EscalationPolicy      `json:"escalation_policies"`
+	SecretRefs         []SecretReference       `json:"secret_references"`
+	CreatedBy          string                  `json:"created_by"`
+	CreatedAt          time.Time               `json:"created_at"`
+	Active             bool                    `json:"active"`
+	WorkerBoundary     *ActivationStatus       `json:"worker_boundary,omitempty"`
 }
 
 type SecretVersion struct {

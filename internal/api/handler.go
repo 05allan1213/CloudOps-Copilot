@@ -33,6 +33,7 @@ type Config struct {
 	Infrastructure InfrastructurePort
 	Monitoring     MonitoringPort
 	Telemetry      TelemetryPort
+	Alerts         AlertPort
 	AllowedOrigins []string
 	Now            func() time.Time
 }
@@ -45,6 +46,7 @@ type Handler struct {
 	infrastructure InfrastructurePort
 	monitoring     MonitoringPort
 	telemetry      TelemetryPort
+	alerts         AlertPort
 	allowedOrigins map[string]struct{}
 	now            func() time.Time
 	idempotency    *idempotencyStore
@@ -63,6 +65,9 @@ func NewHandler(config Config) *Handler {
 	if config.Infrastructure == nil {
 		config.Infrastructure = unavailableInfrastructurePort{}
 	}
+	if config.Alerts == nil {
+		config.Alerts = unavailableAlertPort{}
+	}
 	return &Handler{
 		queries:        config.Queries,
 		commands:       config.Commands,
@@ -71,6 +76,7 @@ func NewHandler(config Config) *Handler {
 		infrastructure: config.Infrastructure,
 		monitoring:     config.Monitoring,
 		telemetry:      config.Telemetry,
+		alerts:         config.Alerts,
 		allowedOrigins: normalizeOrigins(config.AllowedOrigins),
 		now:            config.Now,
 		idempotency:    newIdempotencyStore(config.Now),
@@ -103,6 +109,13 @@ var routes = []RouteSpec{
 	{Method: http.MethodPost, Path: "/api/v1/notifications/:id/read"},
 	{Method: http.MethodPost, Path: "/api/v1/notifications/read-all"},
 	{Method: http.MethodGet, Path: "/api/v1/notification-events"},
+	{Method: http.MethodGet, Path: "/api/v1/alerts"},
+	{Method: http.MethodGet, Path: "/api/v1/alerts/:id"},
+	{Method: http.MethodPost, Path: "/api/v1/alerts/:id/acknowledgements"},
+	{Method: http.MethodPost, Path: "/api/v1/alerts/:id/silences"},
+	{Method: http.MethodPost, Path: "/api/v1/silences/:id/expire"},
+	{Method: http.MethodPost, Path: "/api/v1/alerts/:id/investigations"},
+	{Method: http.MethodPost, Path: "/api/v1/alerts/:id/incident-links"},
 	{Method: http.MethodGet, Path: "/api/v1/incidents"},
 	{Method: http.MethodGet, Path: "/api/v1/incidents/:id"},
 	{Method: http.MethodGet, Path: "/api/v1/incidents/:id/signals"},
@@ -168,6 +181,8 @@ func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	queries.GET("/storage-status", handler.getStorageStatus)
 	queries.GET("/notifications", handler.listNotifications)
 	queries.GET("/notification-events", handler.streamNotificationEvents)
+	queries.GET("/alerts", handler.listAlerts)
+	queries.GET("/alerts/:id", handler.getAlert)
 	queries.GET("/incidents", handler.listIncidents)
 	queries.GET("/incidents/:id", handler.getIncident)
 	queries.GET("/incidents/:id/signals", handler.listResources(QuerySignals))
@@ -201,6 +216,11 @@ func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	commands.POST("/providers/:provider/tests", handler.testProvider)
 	commands.POST("/notifications/read-all", handler.readAllNotifications)
 	commands.POST("/notifications/:id/read", handler.readNotification)
+	commands.POST("/alerts/:id/acknowledgements", handler.acknowledgeAlert)
+	commands.POST("/alerts/:id/silences", handler.createAlertSilence)
+	commands.POST("/silences/:id/expire", handler.expireAlertSilence)
+	commands.POST("/alerts/:id/investigations", handler.startAlertInvestigation)
+	commands.POST("/alerts/:id/incident-links", handler.linkAlertIncident)
 	commands.POST("/incidents/:id/investigations", handler.startInvestigation)
 	commands.POST("/incidents/:id/close", handler.closeIncident)
 	commands.POST("/remediation-plans/:id/decisions", handler.decideRemediation)

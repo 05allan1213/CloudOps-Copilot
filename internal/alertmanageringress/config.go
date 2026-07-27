@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	alertdomain "github.com/05allan1213/CloudOps-Copilot/internal/alert"
 	"github.com/05allan1213/CloudOps-Copilot/internal/infra/incidentstore"
 )
 
@@ -50,7 +51,7 @@ type Config struct {
 // facts, not log-only validation failures.
 type Store interface {
 	Ready(ctx context.Context) error
-	IngestBatch(ctx context.Context, signals []incidentstore.SignalInput) ([]incidentstore.IngestResult, error)
+	IngestBatch(ctx context.Context, signals []alertdomain.SignalInput) ([]alertdomain.IngestResult, error)
 	RecordRejections(ctx context.Context, rejections []incidentstore.RejectionInput) error
 }
 

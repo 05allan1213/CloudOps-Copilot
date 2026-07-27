@@ -46,6 +46,7 @@ expect_one() {
 expect_one Deployment cloudops-api
 expect_one Deployment cloudops-worker
 expect_one Deployment prometheus
+expect_one Deployment alertmanager
 expect_one Deployment grafana
 expect_one Deployment otel-collector
 expect_one StatefulSet mysql
@@ -57,11 +58,13 @@ expect_one Service cloudops-api
 expect_one Service cloudops-api-management
 expect_one Service cloudops-worker-management
 expect_one Service prometheus
+expect_one Service alertmanager
 expect_one Service grafana
 expect_one Service elasticsearch
 expect_one Service tempo
 expect_one Service otel-collector
 expect_one ConfigMap cloudops-monitoring
+expect_one ConfigMap cloudops-alerting
 expect_one ConfigMap cloudops-telemetry
 expect_one ServiceAccount filebeat
 expect_one ClusterRole cloudops-filebeat-metadata-readonly
@@ -89,6 +92,11 @@ expect_one ClusterRoleBinding cloudops-filebeat-metadata-readonly
 
 [[ "$(jq -r '[.[] | select(.kind == "Deployment" and (.metadata.name == "prometheus" or .metadata.name == "grafana")) | .spec.template.spec | select(.automountServiceAccountToken == false) | .containers[0] | select(.securityContext.readOnlyRootFilesystem == true and .imagePullPolicy == "Never")] | length' "${objects}")" == "2" ]] || {
   printf 'FAIL: native Monitoring providers must be non-root, tokenless, read-only, and use preloaded images\n' >&2
+  exit 1
+}
+
+[[ "$(jq -r '[.[] | select(.kind == "Deployment" and .metadata.name == "alertmanager") | .spec.template.spec | select(.automountServiceAccountToken == false and .securityContext.runAsNonRoot == true) | select(any(.volumes[]; .name == "webhook-token" and .secret.secretName == "cloudops-alertmanager-webhook")) | .containers[0] | select(.securityContext.readOnlyRootFilesystem == true and .imagePullPolicy == "Never") | select(any(.volumeMounts[]; .name == "webhook-token" and .mountPath == "/var/run/secrets/cloudops/alertmanager" and .readOnly == true))] | length' "${objects}")" == "1" ]] || {
+  printf 'FAIL: Alertmanager must use the private webhook credential, a preloaded image, and a hardened tokenless Pod\n' >&2
   exit 1
 }
 
@@ -122,8 +130,18 @@ expect_one ClusterRoleBinding cloudops-filebeat-metadata-readonly
   exit 1
 }
 
-[[ "$(jq -r '[.[] | select(.kind == "ConfigMap" and .metadata.name == "cloudops-monitoring") | .data["prometheus.yml"] | select(contains("cluster_id: \"cloudops-local\"") and contains("environment: \"local\"") and contains("namespace: \"cloudops-system\"") and contains("workload_kind: Deployment") and contains("workload: cloudops-api") and contains("workload: cloudops-worker"))] | length' "${objects}")" == "1" ]] || {
+[[ "$(jq -r '[.[] | select(.kind == "ConfigMap" and .metadata.name == "cloudops-monitoring") | .data["prometheus.yml"] | select(contains("cluster_id: \"cloudops-local\"") and contains("environment: \"local\"") and contains("namespace: \"cloudops-system\"") and contains("workload_kind: Deployment") and contains("workload: cloudops-api") and contains("workload: cloudops-worker") and contains("alertmanager.cloudops-system.svc:9093") and contains("/etc/prometheus/rules/cloudops-alerts.yml"))] | length' "${objects}")" == "1" ]] || {
   printf 'FAIL: Prometheus scrape targets must carry the exact bounded Workload labels\n' >&2
+  exit 1
+}
+
+[[ "$(jq -r '[.[] | select(.kind == "ConfigMap" and .metadata.name == "cloudops-alerting") | select(.data["alertmanager.yml"] | contains("cloudops-api-management.cloudops-system.svc:8082/webhooks/alertmanager") and contains("send_resolved: true") and contains("credentials_file: /var/run/secrets/cloudops/alertmanager/token")) | select(.data["cloudops-alerts.yml"] | contains("alert: CloudOpsAlertLifecycleValidation") and contains("expr: vector(0) > 0") and contains("cluster: \"cloudops-local\"") and contains("namespace: demo") and contains("deployment: demo"))] | length' "${objects}")" == "1" ]] || {
+  printf 'FAIL: Alertmanager webhook and default-off controlled Alert lifecycle rule are not exact\n' >&2
+  exit 1
+}
+
+[[ "$(jq -r '[.[] | select(.kind == "Deployment" and .metadata.name == "prometheus") | .spec.template.spec.containers[0] | select(any(.args[]; . == "--web.enable-lifecycle")) | select(any(.volumeMounts[]; .mountPath == "/etc/prometheus/rules" and .readOnly == true and (has("subPath") | not)))] | length' "${objects}")" == "1" ]] || {
+  printf 'FAIL: Prometheus must mount the controlled Alert rule and expose bounded config reload\n' >&2
   exit 1
 }
 

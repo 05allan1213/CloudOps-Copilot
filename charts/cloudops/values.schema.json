@@ -199,7 +199,7 @@
         "stack": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["enabled", "clusterID", "environment", "scrapeInterval", "scrapeTimeout", "prometheus", "grafana", "elasticsearch", "filebeat", "tempo", "otelCollector"],
+          "required": ["enabled", "clusterID", "environment", "scrapeInterval", "scrapeTimeout", "prometheus", "alertmanager", "grafana", "elasticsearch", "filebeat", "tempo", "otelCollector"],
           "properties": {
             "enabled": { "type": "boolean" },
             "clusterID": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
@@ -215,6 +215,20 @@
                 "port": { "type": "integer", "enum": [9090] },
                 "retentionTime": { "$ref": "#/definitions/duration" },
                 "retentionSize": { "type": "string", "pattern": "^[1-9][0-9]*(KB|MB|GB)$" },
+                "resources": { "$ref": "#/definitions/resources" }
+              }
+            },
+            "alertmanager": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["image", "port", "retention", "groupWait", "groupInterval", "repeatInterval", "resources"],
+              "properties": {
+                "image": { "$ref": "#/definitions/image" },
+                "port": { "type": "integer", "enum": [9093] },
+                "retention": { "$ref": "#/definitions/duration" },
+                "groupWait": { "$ref": "#/definitions/duration" },
+                "groupInterval": { "$ref": "#/definitions/duration" },
+                "repeatInterval": { "$ref": "#/definitions/duration" },
                 "resources": { "$ref": "#/definitions/resources" }
               }
             },

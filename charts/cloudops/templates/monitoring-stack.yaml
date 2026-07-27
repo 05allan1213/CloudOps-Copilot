@@ -13,6 +13,12 @@ data:
       scrape_interval: {{ .Values.observability.stack.scrapeInterval }}
       scrape_timeout: {{ .Values.observability.stack.scrapeTimeout }}
       evaluation_interval: {{ .Values.observability.stack.scrapeInterval }}
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets: ["alertmanager.{{ .Release.Namespace }}.svc:{{ .Values.observability.stack.alertmanager.port }}"]
+    rule_files:
+      - /etc/prometheus/rules/cloudops-alerts.yml
     scrape_configs:
       - job_name: cloudops-api
         honor_labels: false
@@ -119,6 +125,7 @@ spec:
             - --storage.tsdb.retention.time={{ .Values.observability.stack.prometheus.retentionTime }}
             - --storage.tsdb.retention.size={{ .Values.observability.stack.prometheus.retentionSize }}
             - --web.listen-address=:{{ .Values.observability.stack.prometheus.port }}
+            - --web.enable-lifecycle
             - --log.level=info
           securityContext:
             allowPrivilegeEscalation: false
@@ -155,6 +162,9 @@ spec:
               mountPath: /etc/prometheus/prometheus.yml
               subPath: prometheus.yml
               readOnly: true
+            - name: alerting-config
+              mountPath: /etc/prometheus/rules
+              readOnly: true
             - name: prometheus-data
               mountPath: /prometheus
             - name: prometheus-tmp
@@ -163,6 +173,10 @@ spec:
         - name: monitoring-config
           configMap:
             name: cloudops-monitoring
+            defaultMode: 0444
+        - name: alerting-config
+          configMap:
+            name: cloudops-alerting
             defaultMode: 0444
         - name: prometheus-data
           emptyDir:

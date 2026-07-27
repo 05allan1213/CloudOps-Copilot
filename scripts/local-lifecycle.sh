@@ -59,11 +59,15 @@ OTEL_COLLECTOR_IMAGE="otel/opentelemetry-collector-contrib:0.156.0"
 OTEL_COLLECTOR_REPOSITORY="otel/opentelemetry-collector-contrib"
 OTEL_COLLECTOR_DIGEST="sha256:125bdbeb7590cc1952c5b3430ecf14063568980c2c93d5b38676cc0446ed8108"
 OTEL_COLLECTOR_PRELOAD_IMAGE="cloudops-preload/otel-collector-contrib-amd64:0.156.0"
+ALERTMANAGER_IMAGE="quay.io/prometheus/alertmanager:v0.33.1"
+ALERTMANAGER_REPOSITORY="quay.io/prometheus/alertmanager"
+ALERTMANAGER_DIGEST="sha256:9e082985f56f4c8c9f724e18f2288c6708f472e56a5286b8863d080434ea065d"
+ALERTMANAGER_PRELOAD_IMAGE="cloudops-preload/alertmanager-amd64:v0.33.1"
 MIN_INOTIFY_INSTANCES=512
 BACKUP_FORMAT_VERSION=2
 BACKUP_CONTRACT="cloudops-semantic"
 RESTORE_STAGING_DATABASE="cloudops_restore_staging"
-LATEST_SCHEMA_VERSION=6
+LATEST_SCHEMA_VERSION=7
 DATA_CLAIM="cloudops-data"
 DATA_MOUNT_PATH="/var/lib/cloudops"
 DATA_DIRECTORY="${DATA_MOUNT_PATH}/data"
@@ -382,6 +386,8 @@ verify_observability_images() {
     "${TEMPO_IMAGE}" "${TEMPO_REPOSITORY}" "${TEMPO_DIGEST}" "${TEMPO_PRELOAD_IMAGE}"
   verify_pinned_provider_image \
     "${OTEL_COLLECTOR_IMAGE}" "${OTEL_COLLECTOR_REPOSITORY}" "${OTEL_COLLECTOR_DIGEST}" "${OTEL_COLLECTOR_PRELOAD_IMAGE}"
+  verify_pinned_provider_image \
+    "${ALERTMANAGER_IMAGE}" "${ALERTMANAGER_REPOSITORY}" "${ALERTMANAGER_DIGEST}" "${ALERTMANAGER_PRELOAD_IMAGE}"
 }
 
 verify_pinned_provider_image() {
@@ -450,6 +456,7 @@ load_runtime_images() {
   load_observability_image "${FILEBEAT_PRELOAD_IMAGE}" "${FILEBEAT_IMAGE}"
   load_observability_image "${TEMPO_PRELOAD_IMAGE}" "${TEMPO_IMAGE}"
   load_observability_image "${OTEL_COLLECTOR_PRELOAD_IMAGE}" "${OTEL_COLLECTOR_IMAGE}"
+  load_observability_image "${ALERTMANAGER_PRELOAD_IMAGE}" "${ALERTMANAGER_IMAGE}"
 }
 
 reconcile_mysql_identities() {
@@ -492,6 +499,7 @@ install_runtime() {
   kube -n "${NAMESPACE}" rollout status deployment/cloudops-api --timeout=5m
   kube -n "${NAMESPACE}" rollout status deployment/cloudops-worker --timeout=5m
   kube -n "${NAMESPACE}" rollout status deployment/prometheus --timeout=5m
+  kube -n "${NAMESPACE}" rollout status deployment/alertmanager --timeout=5m
   kube -n "${NAMESPACE}" rollout status deployment/grafana --timeout=5m
   kube -n "${NAMESPACE}" rollout status statefulset/elasticsearch --timeout=8m
   kube -n "${NAMESPACE}" rollout status daemonset/filebeat --timeout=5m
@@ -1304,6 +1312,7 @@ local_logs() {
     api) kube -n "${NAMESPACE}" logs deployment/cloudops-api --all-containers --tail="${lines}" ;;
     worker) kube -n "${NAMESPACE}" logs deployment/cloudops-worker --all-containers --tail="${lines}" ;;
     prometheus) kube -n "${NAMESPACE}" logs deployment/prometheus --all-containers --tail="${lines}" ;;
+    alertmanager) kube -n "${NAMESPACE}" logs deployment/alertmanager --all-containers --tail="${lines}" ;;
     grafana) kube -n "${NAMESPACE}" logs deployment/grafana --all-containers --tail="${lines}" ;;
     elasticsearch) kube -n "${NAMESPACE}" logs statefulset/elasticsearch --all-containers --tail="${lines}" ;;
     filebeat) kube -n "${NAMESPACE}" logs daemonset/filebeat --all-containers --tail="${lines}" ;;
@@ -1317,12 +1326,12 @@ local_logs() {
       kube -n "${NAMESPACE}" logs "job/${job}" --all-containers --tail="${lines}"
       ;;
     all)
-      for component in api worker prometheus grafana elasticsearch filebeat tempo otel-collector migrate mysql; do
+      for component in api worker prometheus alertmanager grafana elasticsearch filebeat tempo otel-collector migrate mysql; do
         printf '== %s ==\n' "${component}"
         local_logs "${component}" || true
       done
       ;;
-    *) die "COMPONENT must be api, worker, prometheus, grafana, elasticsearch, filebeat, tempo, otel-collector, migrate, mysql, or empty" ;;
+    *) die "COMPONENT must be api, worker, prometheus, alertmanager, grafana, elasticsearch, filebeat, tempo, otel-collector, migrate, mysql, or empty" ;;
   esac
 }
 
@@ -1358,11 +1367,11 @@ local_restart() {
   kube -n "${NAMESPACE}" rollout status statefulset/elasticsearch --timeout=8m
   kube -n "${NAMESPACE}" rollout status statefulset/tempo --timeout=5m
   kube -n "${NAMESPACE}" scale \
-    deployment/cloudops-api deployment/cloudops-worker deployment/prometheus deployment/grafana deployment/otel-collector \
+    deployment/cloudops-api deployment/cloudops-worker deployment/prometheus deployment/alertmanager deployment/grafana deployment/otel-collector \
     --replicas=1 >/dev/null
   resume_filebeat
   kube -n "${NAMESPACE}" rollout restart \
-    deployment/cloudops-api deployment/cloudops-worker deployment/prometheus deployment/grafana deployment/otel-collector \
+    deployment/cloudops-api deployment/cloudops-worker deployment/prometheus deployment/alertmanager deployment/grafana deployment/otel-collector \
     statefulset/elasticsearch statefulset/tempo daemonset/filebeat >/dev/null
   kube -n "${NAMESPACE}" rollout status statefulset/elasticsearch --timeout=8m
   kube -n "${NAMESPACE}" rollout status statefulset/tempo --timeout=5m
@@ -1371,6 +1380,7 @@ local_restart() {
   kube -n "${NAMESPACE}" rollout status deployment/cloudops-api --timeout=5m
   kube -n "${NAMESPACE}" rollout status deployment/cloudops-worker --timeout=5m
   kube -n "${NAMESPACE}" rollout status deployment/prometheus --timeout=5m
+  kube -n "${NAMESPACE}" rollout status deployment/alertmanager --timeout=5m
   kube -n "${NAMESPACE}" rollout status deployment/grafana --timeout=5m
   start_port_forward
   start_grafana_port_forward
@@ -1388,7 +1398,7 @@ local_down() {
     return
   fi
   kube -n "${NAMESPACE}" scale \
-    deployment/cloudops-api deployment/cloudops-worker deployment/prometheus deployment/grafana deployment/otel-collector \
+    deployment/cloudops-api deployment/cloudops-worker deployment/prometheus deployment/alertmanager deployment/grafana deployment/otel-collector \
     --replicas=0 >/dev/null
   suspend_filebeat
   kube -n "${NAMESPACE}" scale statefulset/mysql statefulset/elasticsearch statefulset/tempo --replicas=0 >/dev/null
@@ -1524,6 +1534,12 @@ doctor() {
     printf 'PASS OpenTelemetry Collector ready\n'
   else
     printf 'FAIL OpenTelemetry Collector unavailable\n'
+    failed=1
+  fi
+  if [[ "$(kube -n "${NAMESPACE}" get deployment/alertmanager -o json 2>/dev/null | jq -r '(.spec.replicas == 1) and (.status.readyReplicas == 1)' 2>/dev/null || true)" == "true" ]]; then
+    printf 'PASS Alertmanager Provider ready\n'
+  else
+    printf 'FAIL Alertmanager Provider unavailable\n'
     failed=1
   fi
   if [[ "$(kube -n "${NAMESPACE}" get daemonset/filebeat -o json 2>/dev/null | jq -r '(.status.desiredNumberScheduled > 0) and (.status.numberReady == .status.desiredNumberScheduled)' 2>/dev/null || true)" == "true" ]]; then

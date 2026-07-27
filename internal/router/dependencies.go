@@ -1,6 +1,7 @@
 package router
 
 import (
+	"github.com/05allan1213/CloudOps-Copilot/internal/alert"
 	"github.com/05allan1213/CloudOps-Copilot/internal/alertmanageringress"
 	"github.com/05allan1213/CloudOps-Copilot/internal/api"
 	"github.com/05allan1213/CloudOps-Copilot/internal/handler"
@@ -20,6 +21,7 @@ type Dependencies struct {
 	Queries        api.QueryPort
 	Commands       api.CommandPort
 	Alertmanager   *alertmanageringress.Handler
+	Alerts         *alert.Service
 	Settings       *settings.Service
 	Notifications  *notification.Repository
 	Infrastructure *infrastructure.Service

@@ -202,6 +202,28 @@ configuration_revision_id, provider, enabled, endpoint, model, timeout_ms, max_r
 			return Revision{}, fmt.Errorf("insert %s provider configuration: %w", provider.Provider, err)
 		}
 	}
+	for _, policy := range draft.EscalationPolicies {
+		severitiesJSON, marshalErr := json.Marshal(policy.Severities)
+		if marshalErr != nil {
+			return Revision{}, fmt.Errorf("encode escalation policy severities: %w", marshalErr)
+		}
+		namespacesJSON, marshalErr := json.Marshal(policy.Namespaces)
+		if marshalErr != nil {
+			return Revision{}, fmt.Errorf("encode escalation policy namespaces: %w", marshalErr)
+		}
+		matchersJSON, marshalErr := json.Marshal(policy.LabelMatchers)
+		if marshalErr != nil {
+			return Revision{}, fmt.Errorf("encode escalation policy matchers: %w", marshalErr)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO escalation_policies (
+public_id, configuration_revision_id, name, enabled, severities_json, namespaces_json,
+label_matchers_json, minimum_firing_seconds, minimum_recurrence_count, create_incident, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(6))`, uuid.NewString(), revisionID, policy.Name,
+			policy.Enabled, severitiesJSON, namespacesJSON, matchersJSON, policy.MinimumFiringSeconds,
+			policy.MinimumRecurrenceCount, policy.CreateIncident); err != nil {
+			return Revision{}, fmt.Errorf("insert escalation policy %q: %w", policy.Name, err)
+		}
+	}
 	var activeScopeID int64
 	for _, scope := range draft.Scopes {
 		namespacesJSON, _ := json.Marshal(scope.Namespaces)

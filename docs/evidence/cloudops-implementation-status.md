@@ -6,7 +6,7 @@
 >
 > Task 0 开工基线：`10a1f2b659b4ee9adb1a3efcb7725f83504b9d1f`
 >
-> 最后更新：2026-07-27 03:12（Asia/Shanghai）
+> 最后更新：2026-07-27 08:52（Asia/Shanghai）
 
 ## 状态总览
 
@@ -17,9 +17,9 @@
 | 任务 2：Infrastructure 与 Atlas | `DONE_WITH_NOT_RUN` | 任务 0；任务 1 Scope/Shell | 真实 Kubernetes typed reader、Infrastructure、Operations Atlas、多 Scope contract 与 Context Link 已完成；第二真实集群及 MCP 维度明确 `NOT RUN` |
 | 任务 3：Monitoring | `DONE_WITH_NOT_RUN` | 任务 0；任务 1 Provider/Scope/Query | 真实 UI -> `/api/v1` -> Prometheus、bounded query、Definition/Execution/Authorization、审计、Workspace 与精确 Context Link 已完成；外部环境与真实 Agent runtime 明确 `NOT RUN` |
 | 任务 4：Logs 与 Traces | `DONE_WITH_NOT_RUN` | 任务 1；任务 2/3 context contract | 真实 UI -> `/api/v1` -> Elasticsearch/Tempo、Kubernetes correlation、Evidence 与不可变 Context Snapshot 已完成；缺少的专用 MCP 与外部控制台明确 `NOT RUN` |
-| 任务 5：Alerts | `READY` | 任务 0；任务 1 notification/Settings/Context Link | notification、Settings 与 Context Link 公共契约已落地 |
-| 任务 6：Agent | `BLOCKED` | 任务 1；任务 2-5 真实 Evidence source | 任务 2/3/4 已完成；任务 5 的真实 Alert Evidence source 尚未完成 |
-| 任务 7：Incidents 与 Verify | `BLOCKED` | 任务 5、6；任务 2-4 Context Link | 前置领域尚未完成 |
+| 任务 5：Alerts | `DONE_WITH_NOT_RUN` | 任务 0；任务 1 notification/Settings/Context Link | 本地真实 Alertmanager firing/resolved、Signal-to-Alert、ack、provider-backed silence、显式 Incident、Owner Notification、Workspace 与幂等重投已完成；专用 Alertmanager MCP 明确 `NOT RUN` |
+| 任务 6：Agent | `READY` | 任务 1；任务 2-5 真实 Evidence source | 任务 2-5 已提供真实 Kubernetes、Prometheus、Elasticsearch、Tempo 与 Alertmanager Evidence source |
+| 任务 7：Incidents 与 Verify | `BLOCKED` | 任务 5、6；任务 2-4 Context Link | 任务 5 与 Context Link 已完成；等待任务 6 Agent 领域 |
 | 任务 8：Operations 与 DevOps | `BLOCKED` | 任务 6；Incident 链另需任务 7 | authority contract 尚未完成 |
 | 任务 9：Scenario 与最终收敛 | `BLOCKED` | 任务 0-8 本地必需能力 | 前置任务尚未完成 |
 
@@ -439,3 +439,86 @@ Chrome 首次连接 `18081` 时，命令执行器已经回收 `local-up` 的后�
 - 独立 Logs、Traces、Elasticsearch、Tempo MCP：当前工具面未提供；Chrome DevTools/Kubernetes MCP 与真实产品 Provider 链不冒充这些专用 MCP。
 - Kibana 实例与外部 Elasticsearch/Tempo：当前本地 release 没有 Kibana；精确 Kibana link 生成合同已实现，但真实 Kibana 打开 `NOT RUN`。本轮 PASS 仅属于实际运行的本地 Elasticsearch、Tempo、Prometheus 与 Kubernetes 链。
 - hosted/staging/production、外部 Provider、真实 Agent/LLM 消费 Evidence、PR、push、tag、默认分支：`NOT RUN`。
+
+## 任务 5：Alerts 与显式 Incident escalation
+
+### 实施结果
+
+- `Signal` 保持不可变来源事实；Alertmanager envelope 先完整校验和规范化，再按稳定 `source + fingerprint` 更新独立 `Alert` aggregate。每个 Signal 通过不可变 link 保留 provenance，firing/resolved 使用不同 canonical `source_event_id`，重复投递由数据库唯一约束和 ingress lock 幂等收敛。
+- Alert lifecycle 独立保存状态、recurrence、version 与 event timeline；acknowledgement、silence、Investigation relation 和 Incident relation 是不同对象。resolved Alert 不关闭 Incident，silence 也不等于 acknowledgement 或 resolution。
+- Owner 可执行幂等 acknowledge、300 至 86400 秒的 bounded silence、提前 expire silence、启动 Investigation，以及显式创建或关联 Incident。Alertmanager adapter 只发送 bounded exact matcher silence，并保存 provider silence identity、Configuration Revision 与审计事件。
+- Settings 支持 revision-owned Escalation Policy、severity/namespace/label matcher bounds、最短 firing 时间与 recurrence threshold；默认 `automatic_escalation_enabled=false`，没有 policy 时 firing 只创建 Alert 与通知，不创建 Incident。
+- Alerts Workspace 提供 firing/resolved、severity、namespace、search、ack/silence/Investigation/Incident facets，详情展示原始 Signals、完整 timeline、Context Links 和 provenance；桌面与移动端复用任务 1 Shell。
+- P1/P2 firing 生成去重的 durable Owner Notification，并携带 exact Alert Context Link。当前 P1 notification 指向同一 Alert、cluster 与 namespace。
+- `migrations/00007_alert_lifecycle.sql` 将既有 automatic Signal-to-Incident 历史迁移为 Alert、Signal link 和 Incident link，不改写历史 Signal/Incident；provenance 固定为 `legacy_automatic_ingress`。
+- `domain-modeling` Skill 用于核对领域边界；现有 `CONTEXT.md` 已准确区分 Signal、Alert、Acknowledgement、Silence、Investigation、Escalation Policy 与 Incident，因此无需制造第二份领域模型。
+
+### Runtime 与数据审计
+
+| 项目 | 结果 | 当前证据 |
+|---|---|---|
+| 前置合同 | `PASS` | 任务 0 schema/lifecycle 与任务 1 notification、Settings、Context Link contract 均由当前实现直接复用 |
+| Build/runtime | `PASS` | `kind-cloudops-local` / `cloudops-system` / Helm `cloudops` revision `25` deployed；Migrate Job `cloudops-migrate-25` succeeded；API、Worker、MySQL、Prometheus、Alertmanager 均 Ready，当前 API/Worker/Alertmanager 为 `0` restart |
+| Final images | `PASS` | API `sha256:b283dd31078f6d0dbafd2da8609d2ac8eece921dd008ee5429b4ef1f9c9030b6`；Worker `sha256:6979ed8e34c89e7bc413d1b86603da94d299670c7e92c21ff63b947ae904600f`；Migrate `sha256:8c9e35610d63bf7252d484d94d16defacda22d46f060a35c232097e6aff09fee` |
+| Schema | `PASS` | `goose_db_version=7`；`migrations/00007_alert_lifecycle.sql` 已应用 |
+| Active configuration | `PASS` | revision `11`，ID `19e127ca-5a96-4f99-9e61-1dea0a2f81e2`，hash `2fdfebc8f45167b6974705b415b02da85fae36bf47ae79f5af5a2ecf99045595`；Worker activation `succeeded` 且 observed hash 相同 |
+| Alertmanager configuration | `PASS` | provider enabled，endpoint `http://alertmanager.cloudops-system.svc:9093`；`automatic_escalation_enabled=0`，当前 revision policy count `0` |
+| MySQL totals | `PASS` | `27` Signals、`10` Alerts、`27` Alert-Signal links、`15` Alert-Incident links、`16` Alert events、`9` Incidents、`1` acknowledgement、`1` silence、`1` Owner Notification |
+| Acceptance Alert | `PASS` | Alert `d82cf76f-c923-4e90-a131-4f9faf528c15` / fingerprint `bd01a46a78652be5` 最终 `resolved`、version `6`、`2` Signals、recurrence `1`；firing/resolved source events 各精确 `1` 条 |
+| Explicit Incident | `PASS` | Owner 创建 Incident `98c6344c-db04-4f40-b755-b631c0377af3`，link `368de682-0d83-41f2-a473-13430526e505` provenance=`owner_created`；Alert resolved 后 Incident 仍为 `detected` |
+| Legacy provenance | `PASS` | `9` 个 migrated Alert；`25` 个 legacy Alert-Signal links 与 `14` 个 legacy Alert-Incident links 均保留 `legacy_automatic_ingress`，未重写原始记录 |
+
+### MCP 与纵向联调证据
+
+验收 URL：`http://127.0.0.1:18080`。Playwright MCP、Chrome DevTools MCP 与 Kubernetes MCP 直接操作当前 `kind-cloudops-local` / `cloudops-system` runtime。当前工具面没有独立 Alertmanager MCP；下表中的 Provider 证据来自真实 Alertmanager 原生 API 与产品链，不冒充专用 MCP。
+
+| 维度 | 结果 | 证据 |
+|---|---|---|
+| Real firing -> Alert | `PASS` | Prometheus rule `CloudOpsAlertLifecycleValidation` 真实 firing，经 Alertmanager webhook 生成 Signal `cbc5463f-1865-4379-9c1e-a169447a3ddf`、source event `51065e07add91c8eae2ed92169b21fe65726ed0e26efe28ec49fe2e32e100b31` 与独立 Alert；firing 后无 automatic Incident link，随后才由 Owner 显式创建 Incident |
+| Acknowledge | `PASS` | acknowledgement `6f5d29b7-e910-4966-92f4-be4d3e5407fb`，recurrence `1`、Alert version `1`、actor `local/owner/owner`；UI 显示 reason 与 Ack facet |
+| Bounded silence | `PASS` | CloudOps silence `4e431a2c-bde8-4219-82b5-b40920e08e8c` 请求 `300` 秒；Alertmanager 返回 provider ID `f2b7b653-7ff5-410c-b9b3-379c354b428c`，原生 `/api/v2/silences` 显示 6 个 exact equality matcher，最终状态 `expired` |
+| Explicit Incident branch | `PASS` | 本次 MCP 验收选择规范允许的显式 Incident 分支；详情同时展示 Investigation 入口、`0` Investigation、`1` 个 linked detected Incident 及 exact Incident link |
+| Resolved Signal | `PASS` | resolved Signal `a66fa499-d2ab-4554-95d0-5bc3eafba882` / source event `52b3704b8dafb906e4b953157eb64562ab8a43a3f176dcb68fcde0c4dce413dd` 更新同一 Alert 到 `resolved v6`，没有关闭 linked Incident |
+| Duplicate webhook | `PASS` | 重投 response 为 `{"alerts":1,"duplicates":1,"ingested":1,"rejected":0,"status":"accepted"}`；重投前后 totals 不变，resolved source event count 仍为 `1`，未新增 Alert、Signal、Incident 或 link |
+| Owner Notification | `PASS` | notification `c4d4c430-e842-451d-9a89-6018d7e1cf25` 为 `P1 / alert / firing:1`；drawer exact link 为 `/alerts/d82cf76f-c923-4e90-a131-4f9faf528c15?cluster_id=cloudops-local&namespace=demo` |
+| Alerts Workspace | `PASS` | desktop 与 `390x844` mobile 实测；filters URL 精确保留 resolved/critical/namespace/search，结果仅目标 Alert；详情显示 resolved v6、2 Signals、expired silence、linked Incident，mobile `clientWidth=390 / scrollWidth=390` 无横向溢出 |
+| UI/API/console | `PASS` | 最终硬刷新 document/assets/bootstrap/scopes/notifications/SSE/Alert list/detail 均为 `200` 且业务请求只使用 `/api/v1`；Chrome DevTools 与 Playwright console 均为 `0 errors / 0 warnings` |
+| Kubernetes MCP | `PASS` | 最终 API、Worker、Prometheus、Alertmanager Deployment 均 `1/1`；对应 Pod Ready，API/Worker/Alertmanager restart 均为 `0` |
+| Alertmanager final state | `PASS` | 验收后 Prometheus rule 恢复为 `vector(0) > 0`，状态 `inactive`、health `ok`；没有留下 firing test Alert |
+| Task result | `DONE_WITH_NOT_RUN` | 本地真实 Signal -> Alert -> acknowledge -> silence -> explicit Incident -> resolved Signal 主链、UI/API/MySQL/Alertmanager 与重复 webhook 验收完成；未运行项如下 |
+
+### 检查结果
+
+`PASS`：
+
+- `make check`：Go unit/integration 与 race suite、`go vet`、`golangci-lint`（`0 issues`）、gofmt/goimports/dependency/structure。
+- frontend ESLint（exit `0`、`0 errors`，保留仓库既有 warning baseline）、Vue typecheck、Vitest `15 files / 55 tests`、production build。
+- actionlint、immutable workflow dependency audit、ShellCheck。
+- Helm strict lint/template/runtime contracts；kubeconform `38/38`；first-party naming guard。
+- Alertmanager adapter/gateway、Alert ingress/service/policy、Settings Escalation Policy、API/router、migration 与 frontend routes/API 的专项测试均包含在上述门禁。
+- `git diff --check`（状态文件更新后复跑）。
+
+### 实际文件清单
+
+- Domain/data：`internal/alert/**`、`migrations/00007_alert_lifecycle.sql`、schema/migration contract tests。
+- Provider boundary：`internal/infra/{alertmanagerapi,alertmanagergateway}/**`、`internal/bootstrap/worker_alertmanager.go`、Alertmanager ingress normalization 与 Worker/API wiring。
+- API/contract：`internal/api/alert_handler.go`、router/dependency wiring、`docs/api-v1-openapi.yaml`。
+- Frontend：`frontend/src/api/alerts.ts`、`frontend/src/components/alerts/**`、`frontend/src/views/alerts/**`、router tests，以及 Settings Escalation Policy UI/API tests。
+- Runtime：`charts/cloudops/templates/alerting-stack.yaml`、Prometheus/Alertmanager Helm values/schema、runtime validation 与 local lifecycle scripts。
+- Task 5 implementation 为 `54` 个精确文件；本状态文件不计入 implementation 数。
+
+### Delivery record
+
+| 项目 | 结果 | 证据 |
+|---|---|---|
+| Branch/base | `PASS` | `codex/v3-refactor`；当前 HEAD `0f7160b340804c3945a8ce2ede64d248480bbf54` |
+| Worktree preservation | `PASS` | 保留任务开始时及本轮全部未提交成果；未 reset、revert 或清理 |
+| Local commit | `PASS` | Task 5 的 `54` 个 implementation 文件与本状态节纳入同一本地提交；精确 SHA 以提交完成后的 Git HEAD 为准 |
+| Push | `NOT RUN` | 未创建 PR/tag，未 push，未触碰默认分支 |
+
+### NOT RUN
+
+- 独立 Alertmanager MCP：当前工具面未提供；真实 Alertmanager `v0.33.1`、原生 API、CloudOps adapter、浏览器与 Kubernetes MCP 证据不冒充专用 MCP。
+- Live Investigation 分支：规范允许 Investigation 或显式 Incident 二选一；本轮选择并通过显式 Incident 分支。Investigation relation/API/UI 已实现并通过自动化测试，但真实 Agent Investigation 属于任务 6，当前 `NOT RUN`。
+- 启用 automatic escalation 后由 policy 自动创建 Incident：当前验收有意保持产品默认 `off` 且 policy count `0`；revision-owned policy validation/匹配实现与自动化测试已通过，但 enabled live branch `NOT RUN`。
+- hosted/staging/production、外部 Alertmanager、系统级浏览器通知送达、真实 Agent/LLM、PR、push、tag、默认分支：`NOT RUN`。

@@ -25,6 +25,7 @@ import {
   type ConfigurationDraft,
   type ConfigurationRevision,
   type ConfigurationValidation,
+  type EscalationPolicy,
   type ProviderIdentity,
   type ProviderResult,
   type ProviderState,
@@ -74,6 +75,7 @@ const providerOptions: ProviderIdentity[] = [
   "github",
   "argocd",
 ];
+const severityOptions: EscalationPolicy["severities"] = ["critical", "warning", "info", "unknown"];
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "medium" });
 const numberFormatter = new Intl.NumberFormat("zh-CN");
@@ -200,6 +202,65 @@ function removeScope(index: number) {
 
 function scopeErrors(index: number) {
   const prefix = `scopes.${index}.`;
+  return validation.value?.errors.filter((item) => item.field.startsWith(prefix)) ?? [];
+}
+
+async function addEscalationPolicy() {
+  if (!draft.value || draft.value.escalation_policies.length >= 50) return;
+  draft.value.escalation_policies.push({
+    name: "",
+    enabled: true,
+    severities: ["critical"],
+    namespaces: [],
+    label_matchers: {},
+    minimum_firing_seconds: 0,
+    minimum_recurrence_count: 1,
+    create_incident: true,
+  });
+  const index = draft.value.escalation_policies.length - 1;
+  await nextTick();
+  document.querySelector<HTMLInputElement>(`[data-field="escalation_policies.${index}.name"]`)?.focus();
+}
+
+function removeEscalationPolicy(index: number) {
+  if (!draft.value) return;
+  const policy = draft.value.escalation_policies[index];
+  if (!window.confirm(`从当前草稿删除 Policy ${policy.name || index + 1}？`)) return;
+  draft.value.escalation_policies.splice(index, 1);
+}
+
+function updatePolicyNamespaces(index: number, event: Event) {
+  const policy = draft.value?.escalation_policies[index];
+  if (!policy) return;
+  policy.namespaces = (event.currentTarget as HTMLInputElement).value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function policyMatchersText(policy: EscalationPolicy): string {
+  return Object.entries(policy.label_matchers)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, value]) => `${name}=${value}`)
+    .join("\n");
+}
+
+function updatePolicyMatchers(index: number, event: Event) {
+  const policy = draft.value?.escalation_policies[index];
+  if (!policy) return;
+  const result: Record<string, string> = {};
+  for (const line of (event.currentTarget as HTMLTextAreaElement).value.split("\n")) {
+    const separator = line.indexOf("=");
+    if (separator < 1) continue;
+    const name = line.slice(0, separator).trim();
+    const value = line.slice(separator + 1).trim();
+    if (name && value) result[name] = value;
+  }
+  policy.label_matchers = result;
+}
+
+function policyErrors(index: number) {
+  const prefix = `escalation_policies.${index}.`;
   return validation.value?.errors.filter((item) => item.field.startsWith(prefix)) ?? [];
 }
 
@@ -514,6 +575,54 @@ onBeforeUnmount(() => {
           </ul>
         </section>
 
+        <section id="escalation-policies" class="settings-section" aria-labelledby="escalation-heading">
+          <header>
+            <div>
+              <p class="eyebrow">Alert Escalation</p>
+              <h2 id="escalation-heading">Escalation Policies</h2>
+            </div>
+            <button type="button" class="secondary-action" data-field="escalation_policies" :disabled="draft.escalation_policies.length >= 50" @click="addEscalationPolicy">
+              <Plus :size="17" aria-hidden="true" />添加 Policy
+            </button>
+          </header>
+          <div class="policy-revision">
+            <span>源 Configuration Revision #{{ activeRevision?.number }}</span>
+            <code>{{ activeRevision?.id }}</code>
+          </div>
+          <p v-if="draft.escalation_policies.length === 0" class="empty-line">当前 Revision 没有 Escalation Policy，自动 escalation 保持关闭。</p>
+          <div v-else class="policy-list">
+            <article v-for="(policy, index) in draft.escalation_policies" :key="policy.id || `draft-policy-${index}`" class="policy-item">
+              <header>
+                <label class="policy-toggle">
+                  <input v-model="policy.enabled" :name="`policy_${index}_enabled`" type="checkbox">
+                  <span>{{ policy.enabled ? "已启用" : "已停用" }}</span>
+                </label>
+                <span class="policy-action">创建 Incident</span>
+                <button type="button" class="scope-remove" :aria-label="`删除 Policy ${policy.name || index + 1}`" title="删除 Policy" @click="removeEscalationPolicy(index)">
+                  <Trash2 :size="17" aria-hidden="true" />
+                </button>
+              </header>
+              <div class="form-grid policy-grid">
+                <label class="span-two"><span>Policy 名称</span><input v-model="policy.name" :data-field="`escalation_policies.${index}.name`" :name="`policy_${index}_name`" type="text" maxlength="128" autocomplete="off" placeholder="例如：production critical…"></label>
+                <fieldset class="span-two severity-picker" :data-field="`escalation_policies.${index}.severities`">
+                  <legend>Severity</legend>
+                  <label v-for="severity in severityOptions" :key="severity"><input v-model="policy.severities" :name="`policy_${index}_severity`" type="checkbox" :value="severity"><span>{{ severity }}</span></label>
+                </fieldset>
+                <label><span>持续 firing（秒）</span><input v-model.number="policy.minimum_firing_seconds" :data-field="`escalation_policies.${index}.minimum_firing_seconds`" :name="`policy_${index}_duration`" type="number" inputmode="numeric" min="0" max="604800"></label>
+                <label><span>最小复发次数</span><input v-model.number="policy.minimum_recurrence_count" :data-field="`escalation_policies.${index}.minimum_recurrence_count`" :name="`policy_${index}_recurrence`" type="number" inputmode="numeric" min="1" max="100"></label>
+                <label class="span-two"><span>Namespaces（逗号分隔，留空表示不限）</span><input :value="policy.namespaces.join(', ')" :data-field="`escalation_policies.${index}.namespaces`" :name="`policy_${index}_namespaces`" type="text" autocomplete="off" spellcheck="false" placeholder="例如：production, payments…" @input="updatePolicyNamespaces(index, $event)"></label>
+                <label class="span-two"><span>Exact label matchers（每行 name=value）</span><textarea :value="policyMatchersText(policy)" :data-field="`escalation_policies.${index}.label_matchers`" :name="`policy_${index}_matchers`" rows="3" autocomplete="off" spellcheck="false" placeholder="team=platform&#10;service=checkout" @input="updatePolicyMatchers(index, $event)"></textarea></label>
+              </div>
+              <ul v-if="policyErrors(index).length" class="field-error-list">
+                <li v-for="item in policyErrors(index)" :key="`${item.field}-${item.code}`"><code>{{ item.code }}</code> {{ item.message }}</li>
+              </ul>
+            </article>
+          </div>
+          <ul v-if="validation?.errors.some((item) => item.field === 'escalation_policies')" class="field-error-list">
+            <li v-for="item in validation.errors.filter((candidate) => candidate.field === 'escalation_policies')" :key="`${item.field}-${item.code}`"><code>{{ item.code }}</code> {{ item.message }}</li>
+          </ul>
+        </section>
+
         <section id="providers" class="settings-section" aria-labelledby="providers-heading">
           <header><div><p class="eyebrow">Connections</p><h2 id="providers-heading">Provider 配置</h2></div></header>
           <div class="provider-list">
@@ -664,11 +773,23 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .form-grid--three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .form-grid label, .secret-editor label { display: grid; min-width: 0; gap: 6px; color: var(--co-text-secondary); font-size: 12px; font-weight: 700; }
 .form-grid .span-two { grid-column: span 2; }
-input, select { width: 100%; min-width: 0; min-height: 42px; padding: 0 var(--co-space-3); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); color: var(--co-text-primary); background: var(--co-bg-surface); }
-input:hover, select:hover { border-color: var(--co-border-strong); }
+input, select, textarea { width: 100%; min-width: 0; min-height: 42px; padding: 0 var(--co-space-3); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); color: var(--co-text-primary); background: var(--co-bg-surface); }
+textarea { padding-block: var(--co-space-2); resize: vertical; }
+input:hover, select:hover, textarea:hover { border-color: var(--co-border-strong); }
 input[type="checkbox"], input[type="radio"] { width: 18px; min-height: 18px; padding: 0; accent-color: var(--co-action-primary); }
 .toggle-row { display: flex; flex-wrap: wrap; gap: var(--co-space-5); }
 .toggle-row label, .provider-toggle { display: inline-flex; min-height: 44px; align-items: center; gap: var(--co-space-2); color: var(--co-text-secondary); cursor: pointer; font-size: 13px; font-weight: 700; }
+.policy-revision { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: var(--co-space-2) var(--co-space-4); color: var(--co-text-muted); font-size: 12px; }
+.policy-revision code { overflow-wrap: anywhere; color: var(--co-text-secondary); }
+.policy-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--co-space-4); }
+.policy-item { display: grid; min-width: 0; align-content: start; gap: var(--co-space-4); padding: var(--co-space-4); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-panel); background: var(--co-bg-surface); }
+.policy-item > header { display: flex; min-height: 36px; align-items: center; gap: var(--co-space-3); padding-bottom: var(--co-space-3); border-bottom: 1px solid var(--co-border-default); }
+.policy-toggle { display: inline-flex; min-height: 36px; align-items: center; gap: var(--co-space-2); color: var(--co-text-primary); cursor: pointer; font-size: 12px; font-weight: 750; }
+.policy-action { margin-left: auto; padding: 3px var(--co-space-2); border: 1px solid var(--co-status-info-border); border-radius: var(--co-radius-pill); color: var(--co-status-info-fg); background: var(--co-status-info-bg); font-size: 10px; font-weight: 750; }
+.policy-action + .scope-remove { margin-left: 0; }
+.severity-picker { min-width: 0; margin: 0; padding: var(--co-space-3); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); }
+.severity-picker legend { padding: 0 var(--co-space-1); color: var(--co-text-secondary); font-size: 12px; font-weight: 700; }
+.severity-picker label { display: inline-flex; min-height: 36px; align-items: center; gap: var(--co-space-2); margin-right: var(--co-space-4); color: var(--co-text-secondary); cursor: pointer; font-family: var(--co-font-mono); font-size: 12px; }
 .field-error-list { display: grid; gap: var(--co-space-1); margin: 0; padding: var(--co-space-3) var(--co-space-4); border: 1px solid var(--co-status-critical-border); border-radius: var(--co-radius-panel); color: var(--co-status-critical-fg); background: var(--co-status-critical-bg); list-style-position: inside; font-size: 12px; }
 .field-error-list code { color: inherit; }
 .provider-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--co-space-4); }
@@ -705,7 +826,7 @@ td { overflow-wrap: anywhere; }
 .facts-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; border: 1px solid var(--co-border-default); background: var(--co-bg-surface); }
 .facts-grid div { min-width: 0; padding: var(--co-space-4); border-right: 1px solid var(--co-border-default); border-bottom: 1px solid var(--co-border-default); }
 .facts-grid--bootstrap { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-@media (max-width: 1050px) { .scope-list, .provider-list { grid-template-columns: 1fr; } .secret-editor { grid-template-columns: repeat(2, minmax(0, 1fr)); } .secret-value { grid-column: 1 / -1; } .facts-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 1050px) { .scope-list, .policy-list, .provider-list { grid-template-columns: 1fr; } .secret-editor { grid-template-columns: repeat(2, minmax(0, 1fr)); } .secret-value { grid-column: 1 / -1; } .facts-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 767px) { .settings-view { gap: var(--co-space-5); } .page-heading { align-items: flex-start; flex-direction: column; } .page-heading h1 { font-size: 25px; } .action-bar { align-items: stretch; flex-direction: column; } .action-bar > div { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); } .action-bar button { min-width: 0; padding-inline: var(--co-space-2); font-size: 11px; } .revision-summary { flex-direction: column; } .revision-summary dl { min-width: 0; border-top: 1px solid var(--co-border-default); border-left: 0; } .form-grid, .form-grid--three, .form-grid--provider { grid-template-columns: 1fr; } .form-grid .span-two { grid-column: auto; } .provider-item > footer { align-items: stretch; flex-direction: column; } .provider-item > footer button { width: 100%; } .secret-editor { grid-template-columns: 1fr; } .secret-value { grid-column: auto; } .secret-references li { grid-template-columns: 1fr; } .validation-identity { grid-template-columns: 1fr; } .validation-providers { grid-template-columns: 1fr; } }
 @media (max-width: 420px) { .action-bar > div { grid-template-columns: 1fr; } .revision-summary dl, .facts-grid, .facts-grid--bootstrap { grid-template-columns: 1fr; } }
 </style>

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	alertdomain "github.com/05allan1213/CloudOps-Copilot/internal/alert"
 	"github.com/05allan1213/CloudOps-Copilot/internal/infra/incidentstore"
 )
 
@@ -55,7 +56,7 @@ func TestWebhookStrictBoundedBatchAndDurableTargetRejection(t *testing.T) {
 }
 
 func TestWebhookContentTypeBodyLimitBearerAndDuplicateContract(t *testing.T) {
-	store := &fakeStore{results: []incidentstore.IngestResult{{Duplicate: true}}}
+	store := &fakeStore{results: []alertdomain.IngestResult{{Duplicate: true}}}
 	handler := mustHandler(t, store, []byte("0123456789abcdef0123456789abcdef"), 4096)
 	body := marshalEnvelope(t, testEnvelope(testAlert("firing", "abc123", "WorkloadNotReady", "critical")))
 	for _, test := range []struct {
@@ -92,7 +93,7 @@ func TestWebhookContentTypeBodyLimitBearerAndDuplicateContract(t *testing.T) {
 }
 
 func TestWebhookReportsStoreLevelUnmatchedResolvedRejection(t *testing.T) {
-	store := &fakeStore{results: []incidentstore.IngestResult{{Rejected: true, RejectionReason: "unmatched_resolved"}}}
+	store := &fakeStore{results: []alertdomain.IngestResult{{Rejected: true, RejectionReason: "unmatched_resolved"}}}
 	handler := mustHandler(t, store, nil, 4096)
 	resolved := testAlert("resolved", "abc123", "WorkloadNotReady", "critical")
 	resolved.EndsAt = resolved.StartsAt.Add(time.Minute)
@@ -145,8 +146,8 @@ type fakeStore struct {
 	readyErr       error
 	ingestErr      error
 	rejectionErr   error
-	results        []incidentstore.IngestResult
-	signals        []incidentstore.SignalInput
+	results        []alertdomain.IngestResult
+	signals        []alertdomain.SignalInput
 	rejections     []incidentstore.RejectionInput
 	ingestCalls    int
 	rejectionCalls int
@@ -154,11 +155,11 @@ type fakeStore struct {
 
 func (f *fakeStore) Ready(context.Context) error { return f.readyErr }
 
-func (f *fakeStore) IngestBatch(_ context.Context, signals []incidentstore.SignalInput) ([]incidentstore.IngestResult, error) {
+func (f *fakeStore) IngestBatch(_ context.Context, signals []alertdomain.SignalInput) ([]alertdomain.IngestResult, error) {
 	f.ingestCalls++
-	f.signals = append([]incidentstore.SignalInput(nil), signals...)
+	f.signals = append([]alertdomain.SignalInput(nil), signals...)
 	if f.results == nil {
-		f.results = make([]incidentstore.IngestResult, len(signals))
+		f.results = make([]alertdomain.IngestResult, len(signals))
 	}
 	return f.results, f.ingestErr
 }

@@ -2,20 +2,21 @@ package startup
 
 import (
 	"context"
-	"database/sql"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	alertdomain "github.com/05allan1213/CloudOps-Copilot/internal/alert"
 	"github.com/05allan1213/CloudOps-Copilot/internal/config"
+	"github.com/05allan1213/CloudOps-Copilot/internal/infra/incidentstore"
 )
 
 func TestV3AlertmanagerIngressRequiredBearerFailsClosedAtStartup(t *testing.T) {
 	cfg := config.Load()
 	cfg.AlertmanagerWebhookRequireBearer = true
 	cfg.AlertmanagerWebhookBearerTokenFile = ""
-	if _, err := initAlertmanagerIngress(&cfg, new(sql.DB), runtimeReady); err == nil || !strings.Contains(err.Error(), "bearer is required") {
+	if _, err := initAlertmanagerIngress(&cfg, startupAlertStore{}, runtimeReady); err == nil || !strings.Contains(err.Error(), "bearer is required") {
 		t.Fatalf("required empty bearer startup err=%v", err)
 	}
 
@@ -24,7 +25,7 @@ func TestV3AlertmanagerIngressRequiredBearerFailsClosedAtStartup(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg.AlertmanagerWebhookBearerTokenFile = path
-	if handler, err := initAlertmanagerIngress(&cfg, new(sql.DB), runtimeReady); err != nil || handler == nil {
+	if handler, err := initAlertmanagerIngress(&cfg, startupAlertStore{}, runtimeReady); err != nil || handler == nil {
 		t.Fatalf("required file-backed bearer handler=%v err=%v", handler, err)
 	}
 }
@@ -32,9 +33,19 @@ func TestV3AlertmanagerIngressRequiredBearerFailsClosedAtStartup(t *testing.T) {
 func TestV3AlertmanagerIngressInvalidTargetAllowlistFailsStartup(t *testing.T) {
 	cfg := config.Load()
 	cfg.SignalTargetAllowlistJSON = `[{"cluster_id":"unknown"}]`
-	if _, err := initAlertmanagerIngress(&cfg, new(sql.DB), runtimeReady); err == nil || !strings.Contains(err.Error(), "target allowlist") {
+	if _, err := initAlertmanagerIngress(&cfg, startupAlertStore{}, runtimeReady); err == nil || !strings.Contains(err.Error(), "target allowlist") {
 		t.Fatalf("invalid target allowlist startup err=%v", err)
 	}
 }
 
 func runtimeReady(context.Context) error { return nil }
+
+type startupAlertStore struct{}
+
+func (startupAlertStore) Ready(context.Context) error { return nil }
+func (startupAlertStore) IngestBatch(context.Context, []alertdomain.SignalInput) ([]alertdomain.IngestResult, error) {
+	return nil, nil
+}
+func (startupAlertStore) RecordRejections(context.Context, []incidentstore.RejectionInput) error {
+	return nil
+}

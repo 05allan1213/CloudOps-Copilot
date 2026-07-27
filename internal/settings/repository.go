@@ -174,6 +174,44 @@ FROM provider_configurations WHERE configuration_revision_id = ? ORDER BY provid
 	}
 	sortedProviders(record.revision.Providers)
 
+	policyRows, err := db.QueryContext(ctx, `SELECT policy.public_id, revision.public_id,
+policy.name, policy.enabled, policy.severities_json, policy.namespaces_json,
+policy.label_matchers_json, policy.minimum_firing_seconds, policy.minimum_recurrence_count,
+policy.create_incident
+FROM escalation_policies AS policy
+JOIN configuration_revisions AS revision ON revision.id = policy.configuration_revision_id
+WHERE policy.configuration_revision_id = ? ORDER BY LOWER(policy.name), policy.name, policy.id`, record.internalID)
+	if err != nil {
+		return revisionRecord{}, fmt.Errorf("load escalation policies: %w", err)
+	}
+	record.revision.EscalationPolicies = []EscalationPolicy{}
+	for policyRows.Next() {
+		var item EscalationPolicy
+		var severitiesJSON, namespacesJSON, matchersJSON []byte
+		if err := policyRows.Scan(&item.ID, &item.ConfigurationRevisionID, &item.Name, &item.Enabled,
+			&severitiesJSON, &namespacesJSON, &matchersJSON, &item.MinimumFiringSeconds,
+			&item.MinimumRecurrenceCount, &item.CreateIncident); err != nil {
+			_ = policyRows.Close()
+			return revisionRecord{}, fmt.Errorf("scan escalation policy: %w", err)
+		}
+		if err := json.Unmarshal(severitiesJSON, &item.Severities); err != nil {
+			_ = policyRows.Close()
+			return revisionRecord{}, fmt.Errorf("decode escalation policy severities: %w", err)
+		}
+		if err := json.Unmarshal(namespacesJSON, &item.Namespaces); err != nil {
+			_ = policyRows.Close()
+			return revisionRecord{}, fmt.Errorf("decode escalation policy namespaces: %w", err)
+		}
+		if err := json.Unmarshal(matchersJSON, &item.LabelMatchers); err != nil {
+			_ = policyRows.Close()
+			return revisionRecord{}, fmt.Errorf("decode escalation policy matchers: %w", err)
+		}
+		record.revision.EscalationPolicies = append(record.revision.EscalationPolicies, item)
+	}
+	if err := policyRows.Close(); err != nil {
+		return revisionRecord{}, err
+	}
+
 	secretRows, err := db.QueryContext(ctx, `SELECT reference.provider, reference.purpose,
 secret.public_id, secret.state, secret.fingerprint
 FROM configuration_secret_references AS reference
