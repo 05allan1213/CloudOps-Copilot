@@ -14,6 +14,8 @@ import (
 	"github.com/05allan1213/CloudOps-Copilot/internal/bootstrap/health"
 	"github.com/05allan1213/CloudOps-Copilot/internal/bootstrap/logger"
 	"github.com/05allan1213/CloudOps-Copilot/internal/infra/database"
+	"github.com/05allan1213/CloudOps-Copilot/internal/infra/infrastructuregateway"
+	"github.com/05allan1213/CloudOps-Copilot/internal/infra/recoveryverificationread"
 	"github.com/05allan1213/CloudOps-Copilot/internal/middleware"
 	"github.com/05allan1213/CloudOps-Copilot/internal/settings"
 	"github.com/05allan1213/CloudOps-Copilot/internal/taskhandler"
@@ -77,6 +79,7 @@ type Worker struct {
 	cfg        WorkerConfig
 	mysql      *database.MySQL
 	runner     taskRunner
+	recovery   taskRunner
 	workspace  taskRunner
 	activation activationRunner
 	management *http.Server
@@ -86,6 +89,8 @@ type Worker struct {
 	stateMu           sync.RWMutex
 	runnerStartErr    error
 	runnerStarted     bool
+	recoveryStartErr  error
+	recoveryStarted   bool
 	workspaceStartErr error
 	workspaceStarted  bool
 }
@@ -132,6 +137,42 @@ func NewWorker(ctx context.Context, cfg WorkerConfig) (*Worker, error) {
 		_ = mysql.Close()
 		return nil, fmt.Errorf("initialize configuration activation runner: %w", err)
 	}
+	recoveryKubernetes, err := infrastructuregateway.NewClient(application.WorkerManagementTarget, application.K8SRequestTimeout)
+	if err != nil {
+		_ = mysql.Close()
+		return nil, fmt.Errorf("initialize recovery Kubernetes reader: %w", err)
+	}
+	recoverySource, err := recoveryverificationread.New(recoveryverificationread.Config{
+		DB: mysql.SQLDB(), Kubernetes: recoveryKubernetes,
+	})
+	if err != nil {
+		_ = mysql.Close()
+		return nil, fmt.Errorf("initialize recovery verification source: %w", err)
+	}
+	recoveryOperation, err := taskhandler.NewMySQLRecoveryVerify(taskhandler.MySQLVerificationAdvanceConfig{
+		DB: mysql.SQLDB(), Tasks: repository, Observations: recoverySource,
+		Reports: taskhandler.NewMySQLResolutionReportWriter(),
+	})
+	if err != nil {
+		_ = mysql.Close()
+		return nil, fmt.Errorf("initialize recovery verification operation: %w", err)
+	}
+	verifyPool := asyncPoolConfigs(cfg.Async)[asyncjob.QueueVerify]
+	recoveryRunner, err := asyncjob.NewRunner(asyncjob.RunnerConfig{
+		Owner: cfg.Async.WorkerID, Store: repository,
+		Handlers:     map[asyncjob.TaskType]asyncjob.Handler{asyncjob.TaskRecoveryVerify: asyncjob.HandlerFunc(recoveryOperation)},
+		TaskTypes:    []asyncjob.TaskType{asyncjob.TaskRecoveryVerify},
+		Pools:        map[asyncjob.Queue]asyncjob.PoolConfig{asyncjob.QueueVerify: verifyPool},
+		DrainTimeout: cfg.Async.DrainTimeout,
+		CancelWait:   cfg.Async.ExitDeadline - cfg.Async.DrainTimeout,
+		Boundary: asyncjob.BoundaryFunc(func(boundaryCtx context.Context, execution asyncjob.Execution) (context.Context, error) {
+			return settingsService.ObserveTaskBoundary(boundaryCtx, execution.Task.ID, execution.Task.ConfigurationRevisionID)
+		}),
+	})
+	if err != nil {
+		_ = mysql.Close()
+		return nil, fmt.Errorf("initialize recovery task runner: %w", err)
+	}
 	var runner taskRunner
 	var handlers map[asyncjob.TaskType]asyncjob.Handler
 	if hasInlineOperations {
@@ -159,6 +200,7 @@ func NewWorker(ctx context.Context, cfg WorkerConfig) (*Worker, error) {
 			Owner:        cfg.Async.WorkerID,
 			Store:        repository,
 			Handlers:     handlers,
+			TaskTypes:    asyncjob.TaskTypes(),
 			Pools:        asyncPoolConfigs(cfg.Async),
 			DrainTimeout: cfg.Async.DrainTimeout,
 			CancelWait:   cfg.Async.ExitDeadline - cfg.Async.DrainTimeout,
@@ -203,7 +245,7 @@ func NewWorker(ctx context.Context, cfg WorkerConfig) (*Worker, error) {
 		return nil, fmt.Errorf("initialize Alertmanager Provider Gateway: %w", err)
 	}
 	worker := &Worker{
-		cfg: cfg, mysql: mysql, runner: runner, workspace: workspaceRunner, activation: activation,
+		cfg: cfg, mysql: mysql, runner: runner, recovery: recoveryRunner, workspace: workspaceRunner, activation: activation,
 		mysqlReady: mysql.Ready,
 	}
 	healthHandler := health.NewHandler(health.Options{
@@ -265,6 +307,8 @@ func (w *Worker) readiness(ctx context.Context) error {
 	w.stateMu.RLock()
 	startErr := w.runnerStartErr
 	started := w.runnerStarted
+	recoveryStartErr := w.recoveryStartErr
+	recoveryStarted := w.recoveryStarted
 	workspaceStartErr := w.workspaceStartErr
 	workspaceStarted := w.workspaceStarted
 	w.stateMu.RUnlock()
@@ -276,6 +320,18 @@ func (w *Worker) readiness(ctx context.Context) error {
 	}
 	if err := w.runner.Ready(ctx); err != nil {
 		return fmt.Errorf("async task runtime readiness: %w", err)
+	}
+	if w.recovery == nil {
+		return errors.New("recovery verification runner is not initialized")
+	}
+	if recoveryStartErr != nil {
+		return fmt.Errorf("recovery verification runtime startup: %w", recoveryStartErr)
+	}
+	if !recoveryStarted {
+		return errors.New("recovery verification runner is not started")
+	}
+	if err := w.recovery.Ready(ctx); err != nil {
+		return fmt.Errorf("recovery verification runtime readiness: %w", err)
 	}
 	if w.workspace == nil {
 		return errors.New("agent workspace runner is not initialized")
@@ -317,6 +373,17 @@ func (w *Worker) Serve(ctx context.Context, listener net.Listener) error {
 		defer cancel()
 		return errors.Join(fmt.Errorf("start async task runtime: %w", runnerErr), w.management.Shutdown(shutdownCtx), w.mysql.Close())
 	}
+	recoveryErr := w.recovery.Start(ctx)
+	w.stateMu.Lock()
+	w.recoveryStartErr = recoveryErr
+	w.recoveryStarted = recoveryErr == nil
+	w.stateMu.Unlock()
+	if recoveryErr != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), w.cfg.Async.ExitDeadline)
+		defer cancel()
+		w.runner.StopClaims()
+		return errors.Join(fmt.Errorf("start recovery verification runtime: %w", recoveryErr), w.runner.Shutdown(shutdownCtx), w.management.Shutdown(shutdownCtx), w.mysql.Close())
+	}
 	workspaceErr := w.workspace.Start(ctx)
 	w.stateMu.Lock()
 	w.workspaceStartErr = workspaceErr
@@ -326,14 +393,16 @@ func (w *Worker) Serve(ctx context.Context, listener net.Listener) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), w.cfg.Async.ExitDeadline)
 		defer cancel()
 		w.runner.StopClaims()
-		return errors.Join(fmt.Errorf("start Agent Workspace runtime: %w", workspaceErr), w.runner.Shutdown(shutdownCtx), w.management.Shutdown(shutdownCtx), w.mysql.Close())
+		w.recovery.StopClaims()
+		return errors.Join(fmt.Errorf("start Agent Workspace runtime: %w", workspaceErr), w.recovery.Shutdown(shutdownCtx), w.runner.Shutdown(shutdownCtx), w.management.Shutdown(shutdownCtx), w.mysql.Close())
 	}
 	if activationErr := w.activation.Start(ctx); activationErr != nil {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), w.cfg.Async.ExitDeadline)
 		defer cancel()
 		w.runner.StopClaims()
+		w.recovery.StopClaims()
 		w.workspace.StopClaims()
-		return errors.Join(fmt.Errorf("start configuration activation runtime: %w", activationErr), w.workspace.Shutdown(shutdownCtx), w.runner.Shutdown(shutdownCtx), w.management.Shutdown(shutdownCtx), w.mysql.Close())
+		return errors.Join(fmt.Errorf("start configuration activation runtime: %w", activationErr), w.workspace.Shutdown(shutdownCtx), w.recovery.Shutdown(shutdownCtx), w.runner.Shutdown(shutdownCtx), w.management.Shutdown(shutdownCtx), w.mysql.Close())
 	}
 	w.ready.Store(true)
 
@@ -353,6 +422,12 @@ func (w *Worker) Serve(ctx context.Context, listener net.Listener) error {
 		w.runner.StopClaims()
 	}
 	w.stateMu.RLock()
+	recoveryStarted := w.recoveryStarted
+	w.stateMu.RUnlock()
+	if recoveryStarted {
+		w.recovery.StopClaims()
+	}
+	w.stateMu.RLock()
 	workspaceStarted := w.workspaceStarted
 	w.stateMu.RUnlock()
 	if workspaceStarted {
@@ -363,6 +438,7 @@ func (w *Worker) Serve(ctx context.Context, listener net.Listener) error {
 	serverShutdownErr := w.management.Shutdown(shutdownCtx)
 	activationShutdownErr := w.activation.Stop(shutdownCtx)
 	var runnerShutdownErr error
+	var recoveryShutdownErr error
 	var workspaceShutdownErr error
 	if started {
 		runnerShutdownErr = w.runner.Shutdown(shutdownCtx)
@@ -370,7 +446,10 @@ func (w *Worker) Serve(ctx context.Context, listener net.Listener) error {
 	if workspaceStarted {
 		workspaceShutdownErr = w.workspace.Shutdown(shutdownCtx)
 	}
-	return errors.Join(runErr, serverShutdownErr, activationShutdownErr, workspaceShutdownErr, runnerShutdownErr, w.mysql.Close())
+	if recoveryStarted {
+		recoveryShutdownErr = w.recovery.Shutdown(shutdownCtx)
+	}
+	return errors.Join(runErr, serverShutdownErr, activationShutdownErr, workspaceShutdownErr, recoveryShutdownErr, runnerShutdownErr, w.mysql.Close())
 }
 
 func RunWorker(ctx context.Context) error {

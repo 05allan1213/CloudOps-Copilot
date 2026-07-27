@@ -20,6 +20,11 @@ func TestOpenAPITypedWorkbenchProjectionContracts(t *testing.T) {
 	}
 
 	wantResponses := map[string]string{
+		"/api/v1/incidents/{id}/alerts":            "#/components/responses/IncidentAlertRelationPage",
+		"/api/v1/incidents/{id}/timeline":          "#/components/responses/IncidentTimelinePage",
+		"/api/v1/incidents/{id}/evidence":          "#/components/responses/IncidentEvidencePage",
+		"/api/v1/incidents/{id}/investigations":    "#/components/responses/IncidentInvestigationPage",
+		"/api/v1/incidents/{id}/decision":          "#/components/responses/IncidentDecisionProjection",
 		"/api/v1/incidents/{id}/remediation-plans": "#/components/responses/RemediationPlanPage",
 		"/api/v1/incidents/{id}/delivery":          "#/components/responses/DeliveryProjection",
 		"/api/v1/incidents/{id}/verifications":     "#/components/responses/VerificationRunPage",
@@ -40,6 +45,17 @@ func TestOpenAPITypedWorkbenchProjectionContracts(t *testing.T) {
 	}
 
 	for schemaName, value := range map[string]reflect.Type{
+		"IncidentOperationalContext":    reflect.TypeOf(IncidentOperationalContextView{}),
+		"IncidentResourceRef":           reflect.TypeOf(IncidentResourceRefView{}),
+		"IncidentTimeRange":             reflect.TypeOf(IncidentTimeRangeView{}),
+		"ContextLink":                   reflect.TypeOf(IncidentContextLinkView{}),
+		"IncidentAttention":             reflect.TypeOf(IncidentAttentionView{}),
+		"IncidentRecovery":              reflect.TypeOf(IncidentRecoveryView{}),
+		"IncidentAlertRelation":         reflect.TypeOf(IncidentAlertRelationView{}),
+		"IncidentTimelineEvent":         reflect.TypeOf(IncidentTimelineEventView{}),
+		"IncidentEvidence":              reflect.TypeOf(IncidentEvidenceView{}),
+		"IncidentInvestigation":         reflect.TypeOf(IncidentInvestigationView{}),
+		"IncidentDecision":              reflect.TypeOf(IncidentDecisionView{}),
 		"RemediationPlan":               reflect.TypeOf(RemediationPlanView{}),
 		"RemediationTarget":             reflect.TypeOf(RemediationTargetView{}),
 		"RemediationTargetResource":     reflect.TypeOf(RemediationTargetResourceView{}),
@@ -68,6 +84,11 @@ func TestOpenAPITypedWorkbenchProjectionContracts(t *testing.T) {
 	}
 
 	for _, path := range []string{
+		"/api/v1/incidents/{id}/alerts",
+		"/api/v1/incidents/{id}/timeline",
+		"/api/v1/incidents/{id}/evidence",
+		"/api/v1/incidents/{id}/investigations",
+		"/api/v1/incidents/{id}/decision",
 		"/api/v1/incidents/{id}/remediation-plans",
 		"/api/v1/incidents/{id}/delivery",
 		"/api/v1/incidents/{id}/verifications",

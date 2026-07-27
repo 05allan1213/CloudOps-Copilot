@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -189,7 +191,69 @@ func (m *MemoryQueryPort) Query(_ context.Context, request QueryRequest) (QueryR
 
 	children := m.children[request.IncidentID]
 	items := append([]ResourceView(nil), children[request.Kind]...)
-	return QueryResponse{Items: items}, nil
+	switch request.Kind {
+	case QueryTimeline:
+		result := make([]IncidentTimelineEventView, 0, len(items))
+		for _, item := range items {
+			occurredAt := memoryProjectionTime(item.UpdatedAt, item.CreatedAt, incident.UpdatedAt, incident.CreatedAt)
+			result = append(result, IncidentTimelineEventView{
+				ID: item.ID, Cycle: memoryProjectionCycle(item.Cycle, incident.Cycle), Type: item.Kind,
+				ActorType: "system", ActorID: "memory-projection", Summary: item.Summary,
+				Metadata: json.RawMessage(`{}`), OccurredAt: occurredAt,
+				MigratedLegacy: item.MigratedLegacy, MigratedLegacyContext: item.MigratedLegacyContext,
+			})
+		}
+		return QueryResponse{Timeline: result}, nil
+	case QueryEvidence:
+		result := make([]IncidentEvidenceView, 0, len(items))
+		for _, item := range items {
+			result = append(result, IncidentEvidenceView{
+				ID: item.ID, Cycle: memoryProjectionCycle(item.Cycle, incident.Cycle),
+				Type: item.Kind, Source: "memory_projection", Summary: item.Summary, ContentHash: item.Hash,
+				Valid: item.Status != "invalid", CollectedAt: memoryProjectionTime(item.UpdatedAt, item.CreatedAt, incident.UpdatedAt, incident.CreatedAt),
+				MigratedLegacy: item.MigratedLegacy, MigratedLegacyContext: item.MigratedLegacyContext,
+			})
+		}
+		return QueryResponse{Evidence: result}, nil
+	case QueryInvestigations:
+		result := make([]IncidentInvestigationView, 0, len(items))
+		for _, item := range items {
+			status := item.Status
+			if status == "" {
+				status = "completed"
+			}
+			version := item.Version
+			if version == 0 {
+				version = 1
+			}
+			at := memoryProjectionTime(item.UpdatedAt, item.CreatedAt, incident.UpdatedAt, incident.CreatedAt)
+			result = append(result, IncidentInvestigationView{
+				ID: item.ID, Cycle: memoryProjectionCycle(item.Cycle, incident.Cycle), Status: status,
+				Version: version, Objective: item.Summary, PromptVersion: "memory-projection/v1",
+				MaxSteps: 1, CreatedAt: at, UpdatedAt: at,
+				MigratedLegacy: item.MigratedLegacy, MigratedLegacyContext: item.MigratedLegacyContext,
+			})
+		}
+		return QueryResponse{Investigations: result}, nil
+	default:
+		return QueryResponse{Items: items}, nil
+	}
+}
+
+func memoryProjectionCycle(value, fallback uint64) uint64 {
+	if value != 0 {
+		return value
+	}
+	return fallback
+}
+
+func memoryProjectionTime(values ...time.Time) time.Time {
+	for _, value := range values {
+		if !value.IsZero() {
+			return value.UTC()
+		}
+	}
+	return time.Unix(0, 0).UTC()
 }
 
 func copyIncident(item *IncidentView) *IncidentView {

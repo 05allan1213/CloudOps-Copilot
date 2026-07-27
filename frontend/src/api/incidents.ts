@@ -7,10 +7,16 @@ import type {
   CommandResponse,
   DeliveryView,
   DecisionCommand,
+  IncidentAlertRelationView,
+  IncidentDecisionView,
+  IncidentEvidenceView,
+  IncidentInvestigationView,
   IncidentListQuery,
   IncidentResponse,
+  IncidentTimelineEventView,
   IncidentView,
   RemediationPlanView,
+  RecoveryDecisionCommand,
   ResolutionReportView,
   ResourceResponse,
   ResourceView,
@@ -37,16 +43,44 @@ export function listIncidentSignals(incidentID: string, cursor = "", signal?: Ab
   return listResources(incidentID, "signals", cursor, false, signal);
 }
 
-export function listIncidentTimeline(incidentID: string, afterID = "", signal?: AbortSignal) {
-  return listResources(incidentID, "timeline", afterID, true, signal);
+export function listIncidentAlerts(
+  incidentID: string,
+  cursor = "",
+  signal?: AbortSignal,
+): Promise<CollectionResponse<IncidentAlertRelationView>> {
+  return listTypedResources<IncidentAlertRelationView>(incidentID, "alerts", cursor, signal);
 }
 
-export function listIncidentEvidence(incidentID: string, cursor = "", signal?: AbortSignal) {
-  return listResources(incidentID, "evidence", cursor, false, signal);
+export function listIncidentTimeline(
+  incidentID: string,
+  afterID = "",
+  signal?: AbortSignal,
+): Promise<CollectionResponse<IncidentTimelineEventView>> {
+  return listTypedResources<IncidentTimelineEventView>(incidentID, "timeline", afterID, signal, true);
 }
 
-export function listIncidentInvestigations(incidentID: string, cursor = "", signal?: AbortSignal) {
-  return listResources(incidentID, "investigations", cursor, false, signal);
+export function listIncidentEvidence(
+  incidentID: string,
+  cursor = "",
+  signal?: AbortSignal,
+): Promise<CollectionResponse<IncidentEvidenceView>> {
+  return listTypedResources<IncidentEvidenceView>(incidentID, "evidence", cursor, signal);
+}
+
+export function listIncidentInvestigations(
+  incidentID: string,
+  cursor = "",
+  signal?: AbortSignal,
+): Promise<CollectionResponse<IncidentInvestigationView>> {
+  return listTypedResources<IncidentInvestigationView>(incidentID, "investigations", cursor, signal);
+}
+
+export async function getIncidentDecision(incidentID: string, signal?: AbortSignal): Promise<IncidentDecisionView | null> {
+  const response = await getJSON<{ decision: IncidentDecisionView | null }>(
+    `${base}/${encodeURIComponent(incidentID)}/decision`,
+    { signal },
+  );
+  return response.decision;
 }
 
 export function listIncidentRemediationPlans(
@@ -89,6 +123,20 @@ export function closeIncident(
   return postCommand(`${base}/${encodeURIComponent(incidentID)}/close`, body, "close", incidentID, options);
 }
 
+export function decideIncidentRecovery(
+  incidentID: string,
+  body: RecoveryDecisionCommand,
+  options?: CommandRequestOptions,
+): Promise<CommandOutcome> {
+  return postCommand(
+    `${base}/${encodeURIComponent(incidentID)}/decision`,
+    body,
+    body.decision,
+    incidentID,
+    options,
+  );
+}
+
 export function decideRemediation(
   planID: string,
   body: DecisionCommand,
@@ -122,9 +170,10 @@ function listTypedResources<T>(
   resource: string,
   cursor: string,
   signal?: AbortSignal,
+  timeline = false,
 ): Promise<CollectionResponse<T>> {
   const params: Record<string, string | number> = { limit: 100 };
-  if (cursor) params.cursor = cursor;
+  if (cursor) params[timeline ? "after_id" : "cursor"] = cursor;
   return getJSON<CollectionResponse<T>>(
     `${base}/${encodeURIComponent(incidentID)}/${resource}`,
     { params, signal },

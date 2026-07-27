@@ -1,11 +1,11 @@
 export function formatJSON(value: unknown): string {
-  if (value === undefined) return "Not projected";
-  if (value === null) return "Not applicable";
+  if (value === undefined) return "未投影";
+  if (value === null) return "不适用";
   return JSON.stringify(value, null, 2);
 }
 
 export function formatDurationMS(value: number): string {
-  if (!Number.isFinite(value) || value < 0) return "Unknown";
+  if (!Number.isFinite(value) || value < 0) return "未知";
   if (value < 1000) return `${Math.round(value)} ms`;
   const seconds = value / 1000;
   if (seconds < 60) return `${trimFixed(seconds)} s`;

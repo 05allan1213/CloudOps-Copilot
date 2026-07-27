@@ -6,7 +6,7 @@
 >
 > Task 0 开工基线：`10a1f2b659b4ee9adb1a3efcb7725f83504b9d1f`
 >
-> 最后更新：2026-07-27 17:07（Asia/Shanghai）
+> 最后更新：2026-07-28 04:18（Asia/Shanghai）
 
 ## 状态总览
 
@@ -19,8 +19,8 @@
 | 任务 4：Logs 与 Traces | `DONE_WITH_NOT_RUN` | 任务 1；任务 2/3 context contract | 真实 UI -> `/api/v1` -> Elasticsearch/Tempo、Kubernetes correlation、Evidence 与不可变 Context Snapshot 已完成；缺少的专用 MCP 与外部控制台明确 `NOT RUN` |
 | 任务 5：Alerts | `DONE_WITH_NOT_RUN` | 任务 0；任务 1 notification/Settings/Context Link | 本地真实 Alertmanager firing/resolved、Signal-to-Alert、ack、provider-backed silence、显式 Incident、Owner Notification、Workspace 与幂等重投已完成；专用 Alertmanager MCP 明确 `NOT RUN` |
 | 任务 6：Agent | `DONE_WITH_NOT_RUN` | 任务 1；任务 2-5 真实 Evidence source | 真实 Alert Investigation、Logs Consultation、bounded tools、Evidence/Guidance、snapshot、SSE、Knowledge、Agent UI 与三层 authority 已完成；真实 LLM 诊断明确 `NOT RUN` |
-| 任务 7：Incidents 与 Verify | `READY` | 任务 5、6；任务 2-4 Context Link | 任务 5/6 与 Context Link contract 均已完成，可开始 Incident/Verify 收敛 |
-| 任务 8：Operations 与 DevOps | `READY` | 任务 6；Incident 链另需任务 7 | Task 6 Operation Plan/authority contract 已完成；local reversible groundwork 可开始，Incident-bound execution/verify 仍等待任务 7 |
+| 任务 7：Incidents 与 Verify | `DONE_WITH_NOT_RUN` | 任务 5、6；任务 2-4 Context Link | `/api/v1` Incident 协调、当前 Cycle 投影、Recovery Verification、ResolutionReport、close 与真实 UI/API/MySQL 主链已完成；真实 Kubernetes recovery、外部 Provider 与真实模型明确 `NOT RUN` |
+| 任务 8：Operations 与 DevOps | `READY` | 任务 6；Incident 链另需任务 7 | Task 6 Operation Plan/authority 与 Task 7 Incident recovery contract 均可用；可开始受控 operation/delivery 分支 |
 | 任务 9：Scenario 与最终收敛 | `BLOCKED` | 任务 0-8 本地必需能力 | 前置任务尚未完成 |
 
 ## 任务 0：语义基线与本地生命周期
@@ -608,3 +608,83 @@ Chrome 首次连接 `18081` 时，命令执行器已经回收 `local-up` 的后�
 - 独立 Prometheus、Elasticsearch、Tempo、Alertmanager、LLM Provider MCP：当前工具面未提供；真实 UI/API/Worker gateway/Provider 与 Kubernetes MCP 证据不冒充这些专用 MCP。
 - Action Card/Operation Plan 正向授权与 mutation execution：本轮有意保持 authorization count `0`；未授权 Kubernetes、GitHub、Argo 或其他外部/高影响写，未执行产品 mutation。
 - hosted/staging/production、外部 Provider、PR、tag、默认分支：`NOT RUN`。
+
+## 任务 7：Incidents 与 Verify 回路
+
+### 实施结果
+
+- 任务 5 的独立 Alert lifecycle/显式 Incident escalation 与任务 6 的 durable Investigation/Evidence 已直接复用；任务 2 的 resource identity、任务 3 的绝对查询时间窗、任务 4 的 Logs/Trace/Evidence Context Link 均以同一 `cluster_id`、Namespace、resource、`from/to` 和 public ID 进入 Incident，而不是创建 Incident-only 副本。
+- 唯一 `/api/v1` Incident contract 已纵向覆盖 list/detail、Alert relations、timeline、Evidence、Investigations、decision、Verifications、ResolutionReport、事件流，以及 start Investigation、recovery decision、close 命令。DTO 只暴露当前 Cycle 投影，同时历史行与 `migrated_legacy` / `migrated_legacy_context` provenance 保持可审计。
+- `migrations/00010_incident_recovery_loop.sql` 将 schema 提升到 `10`：Incident Investigation 复用 Workspace runtime；Recovery Verification 绑定 Configuration Revision、Operational Scope、terminal Investigation 与唯一 Owner decision；ResolutionReport 通过复合外键锁定同一 Incident Cycle。迁移没有删除或改写历史 Incident、Alert、Signal、Evidence、Run、Plan、Delivery 或 Report 数据。
+- Worker 增加常驻 `recovery.verify` operation 与协调器。firing Alert 使必要检查立即失败并将 `verifying -> investigating`；只有所有必要检查在同一 60 秒稳定窗口内持续成功，才写入不可变 ResolutionReport 和 `incident_resolved`。Delivery completion 仍只进入 verifying，不能直接产生 Resolved。
+- Incident 页面收敛为“发生了什么 / 调查 / 决策 / 恢复”四区，展示 Alert relation provenance、timeline、Evidence producer/provenance、Investigation、decision、attention、Verification attempts/checks/samples/common window、ResolutionReport 与 close。旧 Incident-only 品牌、`Remediation & Delivery`、Postmortem 和已由独立 Workspace 承担的旧区块已从产品 UI 删除。
+- `CONTEXT.md` 增加 Incident Cycle、Recovery Verification 与 ResolutionReport 的精确领域语言；没有制造第二套 Incident/Verification 术语或新的 ADR。`domain-modeling` 用于核对 Alert/Incident、Delivery/Recovery 和 report/close 边界。
+- `web-design-guidelines` 最新规则用于最终前端检查并影响实现：语义 heading/region、可见 `focus-visible`、heading `scroll-margin-top`、原生 select label/name、长 ID 换行、稳定 responsive grid、`Intl.DateTimeFormat` 与 390px 无横向溢出。ZoneNav 与 Router 明确同文档滚动所有权，普通滚动更新 hash 时不再触发第二次锚点跳转。
+
+### Runtime 与数据审计
+
+真实数据来自 MySQL `8.0.46` 数据库 `cloudops_operational_recovery_1785173849252136532`。该数据库由 disposable integration 创建后按证据目的保留；浏览器验收使用当前工作树构建的 standalone API/Worker 读取同一数据库，不把 fixture DTO 当成集成证据。
+
+| 项目 | 结果 | 当前证据 |
+|---|---|---|
+| 前置合同 | `PASS` | 任务 5/6 均为 `DONE_WITH_NOT_RUN`；任务 2 resource、任务 3 query/time、任务 4 Logs/Trace/Evidence Context Link contract 已由当前 Incident Context Links 和 API projection 直接复用 |
+| Build/runtime | `PASS` | 当前分支 `codex/v3-refactor`、起始 HEAD `b20c2edc418632a220e9a14f19828760bf1a058a`；验收时由当前工作树 API/Worker binary 读取 retained MySQL，UI/API 为 `http://127.0.0.1:18170`；证据固化后临时 API/Worker 已停止，数据库继续保留 |
+| Schema | `PASS` | MySQL `8.0.46`；`goose_db_version=10`，`migrations/00010_incident_recovery_loop.sql` 已应用 |
+| Incident | `PASS` | `deb1d90c-41ed-4e10-bea0-2c718221a9c4` 最终 `cycle=1 / version=7 / closed`，`needs_attention=0`；resolved/terminal timestamps 分别持久化，关闭没有删除 resolved history |
+| Alert relations | `PASS` | 两条 resolved Alert 均绑定 cycle 1；`6ab76b7f-4998-435a-88b4-12482cdb5abc` provenance=`owner_created`，`ccaaebc1-8888-4e02-a8a3-62e71cca4352` provenance=`owner_attached` |
+| Investigation/Evidence | `PASS` | Investigation `695dd6c8-2a23-4f12-9d72-6bc08fa8a2e9` 为 `completed / diagnosed / cycle 1`；当前 Cycle 有原生 Agent observation 与 Verification failure Evidence，producer/source/hash/provenance 均持久化 |
+| Verification failure | `PASS` | attempt 1 `ab8f9657-5f11-47fb-b2d1-4077aecd2a29` 为 `failed`；timeline 精确保存 `verifying -> investigating`，当时 ResolutionReport count 为 `0` |
+| Common window PASS | `PASS` | attempt 2 `13f70fc9-6815-4add-bf16-9013b9a342fa` 为 `passed`；共同窗口 `2026-07-27T17:36:35.823413Z -> 17:37:36.840444Z`，必要检查为 Alert relations resolved 与 workload ready |
+| ResolutionReport | `PASS` | `51cafb80-32fb-405e-ac83-b34a27da4929` 为 `operational_recovery / recovered_without_change`，绑定 exact Configuration Revision、Operational Scope、Investigation 与 Owner decision；Plan/ChangeRequest 均为 `0`，source/image/GitOps revisions 均为 `NULL`，API `revisions={}` |
+| Delivery boundary | `PASS` | 当前 Incident 唯一 `incident_resolved` actor 为 `recovery.verify`；其他 actor 产生 Resolved 的数量为 `0`。`delivery.observe` regression 同时断言 completion 状态为 `verifying` 且绝不为 `resolved` |
+| Cycle isolation/history | `PASS` | 本次 Alert relations、timeline、Evidence、Investigation、Verification 与 ResolutionReport 全部为 cycle 1；真实 MySQL current-cycle projection integration 另保留旧 Cycle 行并断言只投影当前 Cycle，domain test 拒绝 cross-cycle transition |
+
+### MCP 与纵向联调证据
+
+验收 URL：`http://127.0.0.1:18170/incidents/deb1d90c-41ed-4e10-bea0-2c718221a9c4`；最终 Chrome DevTools MCP isolated context `cloudops-phase7-final-clean`。真实 MySQL integration 执行完整状态链，随后当前 API 与浏览器读取同一 retained 数据库并核对最终 projection。
+
+| 维度 | 结果 | 证据 |
+|---|---|---|
+| 完整状态链 | `PASS` | Alert -> explicit Incident (`owner_created`) -> 第二 Alert (`owner_attached`) -> Investigation -> recovery decision -> attempt 1 failure 返回 Investigate -> 两 Alert resolved -> attempt 2 common window PASS -> ResolutionReport -> Owner close；10 条 Incident timeline event 顺序与 MySQL 一致 |
+| Desktop UI | `PASS` | `1440x1000`：`clientWidth=scrollWidth=1440`，四区、2 条 Alert relations、1 次 Investigation、2 次 Verification、ResolutionReport 与 closed history 可见；交互控件无 viewport 越界 |
+| Mobile UI/scroll | `PASS` | `390x844`：选择“决策”后 target top=`64px`、hash=`#decision-zone`；普通滚动到底后 hash/select 均为 `recovery-zone`，`scrollY=maxScroll=9643`、bottom gap=`0`，`clientWidth=scrollWidth=390`，没有跳回决策区 |
+| Context Links | `PASS` | 页面精确提供 Monitoring、Logs、Traces、Agent、Alert links；保留 `cloudops-local`、`demo`、Incident/Investigation/Evidence identity 与绝对 `from/to`，optional DevOps 不作为恢复前置 |
+| Network/API | `PASS` | Incident 主投影、`alerts`、`timeline`、`evidence`、`investigations`、`decision`、`verifications`、`resolution-report`、`events` 均为 `/api/v1` 且 HTTP `200`；无并行版本 API |
+| Product boundary | `PASS` | 可访问性树与页面文本没有 Incident Workbench、`Remediation & Delivery` 或 Postmortem；关闭页明确显示“Incident 已关闭，最终恢复证明与关闭历史保持可审计” |
+| Console | `PASS` | 最终干净 isolated context 的 Chrome error、warning、issue 均为 `0`；accessibility snapshot 与 desktop/mobile screenshots 分别保存于 `/tmp/cloudops-task7-final-a11y-postfix.txt`、`/tmp/cloudops-task7-incident-desktop-postfix.png`、`/tmp/cloudops-task7-incident-mobile-postfix.png` |
+| Accessibility | `PASS` | 最终静态产物的 desktop `1440x1000` 与 mobile `390x844` Lighthouse snapshot 均为 Accessibility `100`、Best Practices `100`；contrast 与 `label-content-name-mismatch` 均通过。报告位于 `/tmp/cloudops-task7-lighthouse-final-desktop/` 与 `/tmp/cloudops-task7-lighthouse-final-mobile/`；剩余 `robots.txt` / `llms.txt` 不属于 Task 7 Incident workflow |
+| Task result | `DONE_WITH_NOT_RUN` | 当前真实 UI/API/MySQL Incident recovery 主链与失败回路完成；下列外部 Provider/环境分支保持 `NOT RUN` |
+
+### 检查结果
+
+`PASS`：
+
+- disposable MySQL 8 focused integration：完整 Alert -> Incident -> second Alert -> Investigation -> decision -> failed/pass Verification -> ResolutionReport -> close，以及 typed current-cycle projection/history isolation。
+- `make check`：Go tests/race、vet、golangci-lint `0 issues`、format/import/dependency/structure 与四个 binary build；frontend ESLint `0 errors`（仓库 warning baseline `2380`）、Vue typecheck、Vitest `18 files / 63 tests`、production build；actionlint、ShellCheck、Helm strict lint/runtime render、kubeconform `38/38` 与 naming guard。
+- Router scroll ownership Vitest `3/3`、Agent accessibility SSR `2/2`；focused frontend ESLint quiet、Vue typecheck/build；`git diff --check`。
+- Chrome DevTools MCP Lighthouse 最终 desktop/mobile Accessibility `100`、Best Practices `100`；修复后的辅助文字 contrast、sidebar brand 与 notification badge accessible name 均通过对应审计。
+
+### 实际文件清单
+
+- Domain/data：`CONTEXT.md`、`internal/{incident,recovery,verification}/**`、`migrations/00010_incident_recovery_loop.sql`、schema/domain/MySQL integration tests。
+- API/projection：`internal/api/incident_coordination_*`、Incident query/command/ResolutionReport projection、OpenAPI contracts、`docs/api-v1-openapi.yaml`。
+- Worker/runtime：`internal/{asyncjob,bootstrap,taskhandler}/**` 的 `recovery.verify` registry、coordinator、observation 与 ResolutionReport writer。
+- Alert/Agent convergence：`internal/{alert,agent}/**` 的 explicit relation、Incident Workspace Investigation、current-cycle Evidence/task binding。
+- Frontend：`frontend/src/api/{alerts,incidents}.ts`、Incident views/components/models/types/composables、Agent/Alert continuation、router scroll behavior 与 tests。
+- Documentation：`README.md` 与本实施状态节；历史数据、legacy provenance 字段和独立 Workspace 均保留。
+
+### Delivery record
+
+| 项目 | 结果 | 证据 |
+|---|---|---|
+| Branch/base | `PASS` | `codex/v3-refactor`；任务开始 HEAD `b20c2edc418632a220e9a14f19828760bf1a058a` |
+| Worktree preservation | `PASS` | 保留 Task 7 全部既有未提交成果；未 reset、revert、清理或删除 retained database |
+| Local commit | `PASS` | Task 7 implementation 与本状态节纳入当前语义提交；最终 SHA 以提交完成后的 Git HEAD 为准 |
+| Push | `NOT RUN` | 未创建 PR/tag，未 push，未触碰默认分支 |
+
+### NOT RUN
+
+- 真实 Kubernetes recovery Provider：主链的 workload-ready observation 使用 deterministic integration adapter；未在真实 workload 上制造/恢复故障，因此不把该检查冒充 live Kubernetes recovery。
+- 真实 LLM/model Investigation：当前链使用持久化 terminal Investigation fixture facts 验证协调合同，未配置或调用真实模型；model calls/tokens 均为 `0`。
+- GitHub、Argo CD、真实 Delivery/Plan/ChangeRequest：本次选择规范允许的 no-change recovery 分支，数据库对应数量为 `0`；外部读取、写入与 DevOps execution 均未运行。
+- hosted/staging/production、外部 Provider、Scenario、PR、push、tag、默认分支：`NOT RUN`。

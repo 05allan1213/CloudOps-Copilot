@@ -19,9 +19,13 @@ func TestFrozenTaskTypeQueueMapping(t *testing.T) {
 		TaskChangeEnsurePR:       QueueDeliver,
 		TaskDeliveryObserve:      QueueObserve,
 		TaskVerificationAdvance:  QueueVerify,
+		TaskRecoveryVerify:       QueueVerify,
 	}
 	if got := TaskTypes(); len(got) != 5 {
 		t.Fatalf("task types=%d, want 5", len(got))
+	}
+	if got, err := QueueForTaskType(TaskRecoveryVerify); err != nil || got != QueueVerify {
+		t.Fatalf("recovery queue=%q err=%v", got, err)
 	}
 	for taskType, queue := range want {
 		got, err := QueueForTaskType(taskType)

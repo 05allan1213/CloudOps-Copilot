@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/05allan1213/CloudOps-Copilot/internal/schemaversion"
 )
 
 type workspaceStepLease struct {
@@ -35,8 +37,8 @@ func (r *WorkspaceRepository) WorkspaceTaskReady(ctx context.Context) error {
 	if err := r.db.QueryRowContext(ctx, `SELECT MAX(version_id) FROM goose_db_version WHERE is_applied=1`).Scan(&version); err != nil {
 		return fmt.Errorf("read Agent Workspace schema version: %w", err)
 	}
-	if version != 9 {
-		return fmt.Errorf("unsupported Agent Workspace schema version %d, want 9", version)
+	if version != schemaversion.Latest {
+		return fmt.Errorf("unsupported Agent Workspace schema version %d, want %d", version, schemaversion.Latest)
 	}
 	var tables int
 	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM information_schema.tables
@@ -348,9 +350,10 @@ func (r *WorkspaceRepository) StartWorkspaceTool(ctx context.Context, lease Work
 		return workspaceStepLease{}, err
 	}
 	var cancelRequested sql.NullTime
+	var incidentID, cycleNo sql.NullInt64
 	var runStatus string
-	if err = tx.QueryRowContext(ctx, `SELECT status,cancel_requested_at FROM agent_runs WHERE id=? FOR UPDATE`, lease.RunID).
-		Scan(&runStatus, &cancelRequested); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT status,cancel_requested_at,incident_id,cycle_no FROM agent_runs WHERE id=? FOR UPDATE`, lease.RunID).
+		Scan(&runStatus, &cancelRequested, &incidentID, &cycleNo); err != nil {
 		return workspaceStepLease{}, err
 	}
 	if cancelRequested.Valid || runStatus == "cancelled" {
@@ -368,8 +371,9 @@ func (r *WorkspaceRepository) StartWorkspaceTool(ctx context.Context, lease Work
 	result, err := tx.ExecContext(ctx, `INSERT INTO agent_steps
 (public_id,agent_run_id,incident_id,cycle_no,sequence,step_type,short_reason,selected_tool,arguments_json,arguments_hash,
 result_summary,result_ref,evidence_public_id,status,retry_count,duration_ms,input_tokens,output_tokens,error_code,started_at,created_at)
-VALUES (?,?,NULL,NULL,?,'tool','bounded read selected by Workspace policy',?,?,?,'','','','running',0,0,0,0,'',?,?)`,
-		step.PublicID, lease.RunID, sequence, tool, arguments, step.ArgumentsHash, now, now)
+	VALUES (?,?,?,?,?,'tool','bounded read selected by Workspace policy',?,?,?,'','','','running',0,0,0,0,'',?,?)`,
+		step.PublicID, lease.RunID, workspaceNullableInt64(incidentID), workspaceNullableInt64(cycleNo), sequence,
+		tool, arguments, step.ArgumentsHash, now, now)
 	if err != nil {
 		return workspaceStepLease{}, err
 	}
@@ -403,12 +407,16 @@ func (r *WorkspaceRepository) CompleteWorkspaceTool(ctx context.Context, lease W
 		return "", err
 	}
 	var status, argumentsHash, snapshotHash string
+	var incidentID, cycleNo sql.NullInt64
+	var migratedLegacy, migratedLegacyContext bool
 	var timeFrom, timeTo time.Time
-	if err = tx.QueryRowContext(ctx, `SELECT step.status,step.arguments_hash,snapshot.content_hash,snapshot.range_start,snapshot.range_end
-FROM agent_steps step JOIN agent_runs run ON run.id=step.agent_run_id
-JOIN context_snapshots snapshot ON snapshot.id=run.context_snapshot_id
-WHERE step.id=? AND step.agent_run_id=? FOR UPDATE`, step.InternalID, lease.RunID).
-		Scan(&status, &argumentsHash, &snapshotHash, &timeFrom, &timeTo); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT step.status,step.arguments_hash,snapshot.content_hash,snapshot.range_start,snapshot.range_end,
+run.incident_id,run.cycle_no,run.migrated_legacy,run.migrated_legacy_context
+	FROM agent_steps step JOIN agent_runs run ON run.id=step.agent_run_id
+	JOIN context_snapshots snapshot ON snapshot.id=run.context_snapshot_id
+	WHERE step.id=? AND step.agent_run_id=? FOR UPDATE`, step.InternalID, lease.RunID).
+		Scan(&status, &argumentsHash, &snapshotHash, &timeFrom, &timeTo, &incidentID, &cycleNo,
+			&migratedLegacy, &migratedLegacyContext); err != nil {
 		return "", err
 	}
 	if status != "running" || argumentsHash != step.ArgumentsHash {
@@ -461,17 +469,19 @@ corroboration_groups_json,input_evidence_ids_json,input_sample_ids_json,input_ha
 content_hash,raw_ref,safe_raw_reference,redaction_json,redaction_policy_version,redaction_counts_json,prompt_safety_flags_json,
 truncated,valid,migrated_legacy,migrated_legacy_context,idempotency_key,collected_at,observed_at,created_at)
 VALUES (
-?,NULL,1,NULL,?,?,'agent.workspace.observation',?,
+	?,?,1,?,?,?,'agent.workspace.observation',?,
 'agent_step',?,?,?,'provider-gateway/v1',?,'1',
 ?,?,?,?,?,?,?,?,1,?,?,?,?,'context',
 ?,?,?,?,?,?,?,?,?,?,'agent-workspace-evidence/v1',
-?,?,?,1,0,0,?,?,?,?)`,
-		evidencePublicID, lease.RunID, step.InternalID, observation.Source, step.PublicID, WorkspaceToolVersion,
+?,?,?,1,?,?,?, ?,?,?)`,
+		evidencePublicID, workspaceNullableInt64(incidentID), workspaceNullableInt64(cycleNo), lease.RunID,
+		step.InternalID, observation.Source, step.PublicID, WorkspaceToolVersion,
 		contentHash, observation.Tool, snapshotHash, argumentsHash, observation.Tool, observation.ResourceRef, window,
 		query, workspaceBound(observation.Summary, 4096), facts, factSchemaHash, provenance, provenanceHash, trust,
 		groups, empty, empty, empty, workspaceNullableString(observation.SourceRevision), contentHash, contentHash,
 		"agent-workspace-step:"+step.PublicID, "agent-workspace-step:"+step.PublicID, redaction, redactionCounts,
-		promptFlags, observation.Truncated || observation.Partial, contentHash, observation.CollectedAt.UTC(),
+		promptFlags, observation.Truncated || observation.Partial, migratedLegacy, migratedLegacyContext,
+		contentHash, observation.CollectedAt.UTC(),
 		observation.ObservedAt.UTC(), now)
 	if err != nil {
 		return "", fmt.Errorf("persist Agent Workspace Evidence: %w", err)
@@ -557,11 +567,15 @@ func (r *WorkspaceRepository) CompleteWorkspaceTask(ctx context.Context, lease W
 	if err = r.guardWorkspaceLease(ctx, tx, lease); err != nil {
 		return err
 	}
-	var consultationID, snapshotID sql.NullInt64
+	var consultationID, snapshotID, incidentID, cycleNo sql.NullInt64
+	var subjectType, runPublicID string
+	var migratedLegacy, migratedLegacyContext bool
 	var runStatus string
 	var cancelRequested sql.NullTime
-	if err = tx.QueryRowContext(ctx, `SELECT status,consultation_id,context_snapshot_id,cancel_requested_at
-FROM agent_runs WHERE id=? FOR UPDATE`, lease.RunID).Scan(&runStatus, &consultationID, &snapshotID, &cancelRequested); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT status,consultation_id,context_snapshot_id,cancel_requested_at,
+	subject_type,public_id,incident_id,cycle_no,migrated_legacy,migrated_legacy_context
+	FROM agent_runs WHERE id=? FOR UPDATE`, lease.RunID).Scan(&runStatus, &consultationID, &snapshotID, &cancelRequested,
+		&subjectType, &runPublicID, &incidentID, &cycleNo, &migratedLegacy, &migratedLegacyContext); err != nil {
 		return err
 	}
 	if runStatus != "pending" && runStatus != "running" {
@@ -657,6 +671,27 @@ WHERE task_id=? AND attempt=? AND lease_owner=? AND lease_generation=? AND statu
 	}, now); err != nil {
 		return err
 	}
+	if subjectType == string(WorkspaceSubjectIncident) && incidentID.Valid && cycleNo.Valid {
+		metadata, _ := json.Marshal(map[string]any{
+			"agent_run_id": runPublicID, "outcome": completion.Outcome,
+			"uncertainty": completion.Uncertainty, "failure_code": completion.FailureCode,
+		})
+		incidentEventType := "agent_run_completed"
+		switch terminalStatus {
+		case "failed":
+			incidentEventType = "agent_run_failed"
+		case "cancelled":
+			incidentEventType = "agent_run_cancelled"
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT IGNORE INTO incident_events
+		(public_id,incident_id,cycle_no,event_schema_version,event_type,idempotency_key,
+		 migrated_legacy_context,migrated_legacy,actor_type,actor_id,summary,metadata_json,occurred_at,created_at)
+		VALUES (?,?,?,1,?,?,?,?,'system','agent-workspace',?,?,?,?)`, uuid.NewString(), incidentID.Int64,
+			cycleNo.Int64, incidentEventType, workspaceSHA256([]byte("incident-workspace-terminal:"+runPublicID)),
+			migratedLegacyContext, migratedLegacy, "Incident Investigation reached a terminal outcome", metadata, now, now); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 
@@ -741,6 +776,13 @@ func workspaceObjectOrDefault(raw json.RawMessage, fallback map[string]any) json
 	}
 	encoded, _ := json.Marshal(fallback)
 	return encoded
+}
+
+func workspaceNullableInt64(value sql.NullInt64) any {
+	if !value.Valid || value.Int64 <= 0 {
+		return nil
+	}
+	return value.Int64
 }
 
 func workspaceJSONObject(raw json.RawMessage) bool {

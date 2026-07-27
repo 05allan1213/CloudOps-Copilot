@@ -82,6 +82,7 @@ type RunnerConfig struct {
 	Owner        string
 	Store        Store
 	Handlers     map[TaskType]Handler
+	TaskTypes    []TaskType
 	Pools        map[Queue]PoolConfig
 	RetryBackoff BackoffPolicy
 	PollInterval time.Duration
@@ -103,6 +104,11 @@ func (f BoundaryFunc) Bind(ctx context.Context, execution Execution) (context.Co
 }
 
 func (c *RunnerConfig) applyDefaults() {
+	if len(c.TaskTypes) == 0 {
+		c.TaskTypes = TaskTypes()
+	} else {
+		c.TaskTypes = append([]TaskType(nil), c.TaskTypes...)
+	}
 	if c.RetryBackoff.isZero() {
 		c.RetryBackoff = DefaultRetryBackoffPolicy()
 	}
@@ -117,14 +123,44 @@ func (c *RunnerConfig) applyDefaults() {
 	}
 	defaults := DefaultPoolConfigs()
 	if c.Pools == nil {
-		c.Pools = defaults
+		c.Pools = make(map[Queue]PoolConfig, len(c.activeQueues()))
+		for _, queue := range c.activeQueues() {
+			c.Pools[queue] = defaults[queue]
+		}
 		return
 	}
-	for _, queue := range queues {
+	for _, queue := range c.activeQueues() {
 		if _, ok := c.Pools[queue]; !ok {
 			c.Pools[queue] = defaults[queue]
 		}
 	}
+}
+
+func (c RunnerConfig) activeQueues() []Queue {
+	selected := make(map[Queue]struct{}, len(c.TaskTypes))
+	for _, taskType := range c.TaskTypes {
+		if queue, err := QueueForTaskType(taskType); err == nil {
+			selected[queue] = struct{}{}
+		}
+	}
+	result := make([]Queue, 0, len(selected))
+	for _, queue := range queues {
+		if _, ok := selected[queue]; ok {
+			result = append(result, queue)
+		}
+	}
+	return result
+}
+
+func (c RunnerConfig) taskTypesForQueue(queue Queue) []TaskType {
+	result := make([]TaskType, 0, 2)
+	for _, taskType := range c.TaskTypes {
+		candidate, err := QueueForTaskType(taskType)
+		if err == nil && candidate == queue {
+			result = append(result, taskType)
+		}
+	}
+	return result
 }
 
 func (c RunnerConfig) Validate() error {
@@ -146,26 +182,37 @@ func (c RunnerConfig) Validate() error {
 	if c.CancelWait <= 0 || c.DrainTimeout+c.CancelWait > maxExitBudget {
 		return errors.New("async task drain and cancel windows must fit within 55 seconds")
 	}
-	if len(c.Pools) != len(queues) {
-		return errors.New("async task runner requires exactly four pool configurations")
+	activeQueues := c.activeQueues()
+	if len(activeQueues) == 0 || len(c.Pools) != len(activeQueues) {
+		return errors.New("async task runner requires exactly one pool configuration per selected queue")
 	}
 	for queue, pool := range c.Pools {
 		if err := pool.Validate(queue); err != nil {
 			return err
 		}
 	}
-	if len(c.Handlers) != len(taskTypes) {
-		return errors.New("async task runner requires exactly the five frozen task handlers")
+	if len(c.Handlers) != len(c.TaskTypes) {
+		return errors.New("async task runner requires exactly one handler per selected task type")
+	}
+	selected := make(map[TaskType]struct{}, len(c.TaskTypes))
+	for _, taskType := range c.TaskTypes {
+		if !taskType.Valid() {
+			return fmt.Errorf("unsupported selected async task type %q", taskType)
+		}
+		if _, duplicate := selected[taskType]; duplicate {
+			return fmt.Errorf("selected async task type %q is duplicated", taskType)
+		}
+		selected[taskType] = struct{}{}
 	}
 	for taskType, handler := range c.Handlers {
-		if !taskType.Valid() {
-			return fmt.Errorf("unsupported async task handler %q", taskType)
+		if _, ok := selected[taskType]; !ok {
+			return fmt.Errorf("async task handler %q is not selected", taskType)
 		}
 		if handler == nil {
 			return fmt.Errorf("async task handler %q is nil", taskType)
 		}
 	}
-	for _, taskType := range taskTypes {
+	for _, taskType := range c.TaskTypes {
 		if c.Handlers[taskType] == nil {
 			return fmt.Errorf("missing async task handler %q", taskType)
 		}

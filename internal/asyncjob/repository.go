@@ -3,8 +3,10 @@ package asyncjob
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -24,9 +26,11 @@ started_at, completed_at, dead_at, cancelled_at, replayed_from_task_id`
 
 const (
 	claimReadySelectSQL = `SELECT ` + taskColumns + `
-	FROM async_tasks FORCE INDEX (idx_async_tasks_ready_claim)
-	WHERE queue = ?
-	  AND id = ?
+		FROM async_tasks FORCE INDEX (idx_async_tasks_ready_claim)
+		WHERE queue = ?
+		  AND task_type IN (SELECT allowed.task_type FROM JSON_TABLE(?, '$[*]'
+		    COLUMNS(task_type VARCHAR(64) PATH '$')) AS allowed)
+		  AND id = ?
 	  AND status = 'ready'
 	  AND available_at <= NOW(6)
 	  AND attempt < max_attempts
@@ -35,9 +39,11 @@ const (
 	FOR UPDATE SKIP LOCKED`
 
 	claimReadyCandidateSQL = `SELECT ` + taskColumns + `
-	FROM async_tasks FORCE INDEX (idx_async_tasks_ready_claim)
-	WHERE queue = ?
-	  AND status = 'ready'
+		FROM async_tasks FORCE INDEX (idx_async_tasks_ready_claim)
+		WHERE queue = ?
+		  AND task_type IN (SELECT allowed.task_type FROM JSON_TABLE(?, '$[*]'
+		    COLUMNS(task_type VARCHAR(64) PATH '$')) AS allowed)
+		  AND status = 'ready'
 	  AND available_at <= NOW(6)
 	  AND attempt < max_attempts
 	ORDER BY priority DESC, available_at, id
@@ -59,9 +65,11 @@ WHERE id = ?
   AND attempt < max_attempts`
 
 	takeoverSelectSQL = `SELECT ` + taskColumns + `
-	FROM async_tasks FORCE INDEX (idx_async_tasks_expired_takeover)
-	WHERE queue = ?
-	  AND id = ?
+		FROM async_tasks FORCE INDEX (idx_async_tasks_expired_takeover)
+		WHERE queue = ?
+		  AND task_type IN (SELECT allowed.task_type FROM JSON_TABLE(?, '$[*]'
+		    COLUMNS(task_type VARCHAR(64) PATH '$')) AS allowed)
+		  AND id = ?
 	  AND status = 'running'
 	  AND lease_expires_at <= NOW(6)
 	  AND lease_generation = ?
@@ -69,9 +77,11 @@ WHERE id = ?
 	FOR UPDATE SKIP LOCKED`
 
 	takeoverCandidateSQL = `SELECT ` + taskColumns + `
-	FROM async_tasks FORCE INDEX (idx_async_tasks_expired_takeover)
-	WHERE queue = ?
-	  AND status = 'running'
+		FROM async_tasks FORCE INDEX (idx_async_tasks_expired_takeover)
+		WHERE queue = ?
+		  AND task_type IN (SELECT allowed.task_type FROM JSON_TABLE(?, '$[*]'
+		    COLUMNS(task_type VARCHAR(64) PATH '$')) AS allowed)
+		  AND status = 'running'
 	  AND lease_expires_at <= NOW(6)
 	ORDER BY lease_expires_at, id
 	LIMIT 1`
@@ -138,6 +148,7 @@ WHERE id = ?
 
 type ClaimRequest struct {
 	Queue         Queue
+	TaskTypes     []TaskType
 	Owner         string
 	LeaseDuration time.Duration
 }
@@ -152,7 +163,41 @@ func (r ClaimRequest) Validate() error {
 	if r.LeaseDuration < time.Microsecond {
 		return errors.New("claim lease duration must be positive")
 	}
+	if _, err := r.taskTypeFilter(); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (r ClaimRequest) taskTypeFilter() ([]TaskType, error) {
+	taskTypes := append([]TaskType(nil), r.TaskTypes...)
+	if len(taskTypes) == 0 {
+		taskTypes = taskTypesForQueue(r.Queue)
+	}
+	if len(taskTypes) == 0 || len(taskTypes) > 8 {
+		return nil, errors.New("claim task type filter must contain between one and eight types")
+	}
+	seen := make(map[TaskType]struct{}, len(taskTypes))
+	for _, taskType := range taskTypes {
+		queue, err := QueueForTaskType(taskType)
+		if err != nil || queue != r.Queue {
+			return nil, fmt.Errorf("claim task type %q does not belong to queue %q", taskType, r.Queue)
+		}
+		if _, duplicate := seen[taskType]; duplicate {
+			return nil, fmt.Errorf("claim task type %q is duplicated", taskType)
+		}
+		seen[taskType] = struct{}{}
+	}
+	slices.Sort(taskTypes)
+	return taskTypes, nil
+}
+
+func (r ClaimRequest) taskTypeFilterJSON() ([]byte, error) {
+	taskTypes, err := r.taskTypeFilter()
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(taskTypes)
 }
 
 type Store interface {
@@ -310,7 +355,7 @@ func (r *Repository) Claim(ctx context.Context, request ClaimRequest) (*Executio
 	if err := request.Validate(); err != nil {
 		return nil, err
 	}
-	if _, err := r.ReapExhaustedReady(ctx, request.Queue); err != nil {
+	if _, err := r.ReapExhaustedReadyFor(ctx, request); err != nil {
 		return nil, err
 	}
 	// Recovery is deterministic: an expired running task already consumed an
@@ -337,8 +382,12 @@ func (r *Repository) claimReadyOnce(ctx context.Context, request ClaimRequest) (
 		return nil, err
 	}
 	defer rollback(tx)
+	taskTypeFilter, err := request.taskTypeFilterJSON()
+	if err != nil {
+		return nil, err
+	}
 
-	candidate, err := scanTask(tx.QueryRowContext(ctx, claimReadyCandidateSQL, request.Queue))
+	candidate, err := scanTask(tx.QueryRowContext(ctx, claimReadyCandidateSQL, request.Queue, taskTypeFilter))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNoTask
 	}
@@ -353,6 +402,7 @@ func (r *Repository) claimReadyOnce(ctx context.Context, request ClaimRequest) (
 		ctx,
 		claimReadySelectSQL,
 		request.Queue,
+		taskTypeFilter,
 		candidate.ID,
 		candidate.LeaseGeneration,
 		candidate.ExpectedSubjectVersion,
@@ -419,8 +469,12 @@ func (r *Repository) takeoverExpiredOnce(ctx context.Context, request ClaimReque
 		return nil, err
 	}
 	defer rollback(tx)
+	taskTypeFilter, err := request.taskTypeFilterJSON()
+	if err != nil {
+		return nil, err
+	}
 
-	candidate, err := scanTask(tx.QueryRowContext(ctx, takeoverCandidateSQL, request.Queue))
+	candidate, err := scanTask(tx.QueryRowContext(ctx, takeoverCandidateSQL, request.Queue, taskTypeFilter))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNoTask
 	}
@@ -435,6 +489,7 @@ func (r *Repository) takeoverExpiredOnce(ctx context.Context, request ClaimReque
 		ctx,
 		takeoverSelectSQL,
 		request.Queue,
+		taskTypeFilter,
 		candidate.ID,
 		candidate.LeaseGeneration,
 		candidate.ExpectedSubjectVersion,

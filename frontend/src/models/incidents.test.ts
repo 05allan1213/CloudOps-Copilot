@@ -12,11 +12,11 @@ import {
   statusTone,
 } from "./incidents";
 
-describe("Incident Workbench presentation contract", () => {
+describe("Incident presentation contract", () => {
   it("uses the frozen seven-state lifecycle without deriving a verdict", () => {
-    expect(incidentStatusLabel("verifying")).toBe("Verifying recovery");
+    expect(incidentStatusLabel("verifying")).toBe("恢复验证中");
     expect(incidentStatusLabel("future_state")).toBe("future state");
-    expect(severityLabel("critical")).toBe("Critical");
+    expect(severityLabel("critical")).toBe("严重");
   });
 
   it("restores only API-supported filters from the URL", () => {
@@ -26,6 +26,27 @@ describe("Incident Workbench presentation contract", () => {
     expect(normalizeListQuery({ status: "legacy", limit: "500" })).toEqual({ limit: 100 });
     expect(normalizeListQuery({ cursor: "page-2" })).toEqual({ limit: 50, cursor: "page-2" });
     expect(serializeListQuery({ limit: 50, cursor: "page-2" })).toEqual({ cursor: "page-2" });
+  });
+
+  it("round-trips current-cycle coordination filters", () => {
+    const alert = "7f6c7e54-937a-4a12-9fb4-a315908fd0fd";
+    const normalized = normalizeListQuery({
+      attention: "false",
+      resource: " deployment/demo-api ",
+      alert,
+      from: "2026-07-27T01:00:00Z",
+      to: "2026-07-27T02:00:00+00:00",
+    });
+    expect(normalized).toEqual({
+      limit: 50,
+      attention: false,
+      resource: "deployment/demo-api",
+      alert,
+      from: "2026-07-27T01:00:00Z",
+      to: "2026-07-27T02:00:00+00:00",
+    });
+    expect(serializeListQuery(normalized)).toMatchObject({ attention: "false", resource: "deployment/demo-api", alert });
+    expect(normalizeListQuery({ alert: "internal-id", from: "yesterday" })).toEqual({ limit: 50 });
   });
 
   it("maps transport and persisted resource states explicitly", () => {

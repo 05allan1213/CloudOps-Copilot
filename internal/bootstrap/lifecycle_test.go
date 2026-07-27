@@ -54,6 +54,7 @@ func (r *testActivationRunner) Ready(context.Context) error {
 func TestWorkerOwnsAsyncRunnerAndShutsDown(t *testing.T) {
 	runner := &testTaskRunner{}
 	worker := testWorker(runner, DefaultAsyncWorkerConfig())
+	recovery := worker.recovery.(*testTaskRunner)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -69,6 +70,9 @@ func TestWorkerOwnsAsyncRunnerAndShutsDown(t *testing.T) {
 	}
 	if runner.starts.Load() != 1 || runner.stops.Load() == 0 || runner.shutdowns.Load() != 1 {
 		t.Fatalf("starts=%d stops=%d shutdowns=%d", runner.starts.Load(), runner.stops.Load(), runner.shutdowns.Load())
+	}
+	if recovery.starts.Load() != 1 || recovery.stops.Load() == 0 || recovery.shutdowns.Load() != 1 {
+		t.Fatalf("recovery starts=%d stops=%d shutdowns=%d", recovery.starts.Load(), recovery.stops.Load(), recovery.shutdowns.Load())
 	}
 }
 
@@ -89,6 +93,13 @@ func TestWorkerReadinessRequiresClaimLoopsMySQLAndQueue(t *testing.T) {
 	worker.runner = &testTaskRunner{}
 	worker.stateMu.Lock()
 	worker.runnerStarted = true
+	worker.stateMu.Unlock()
+	if err := worker.readiness(context.Background()); err == nil || !strings.Contains(err.Error(), "recovery") {
+		t.Fatalf("missing recovery readiness err=%v", err)
+	}
+	worker.recovery = &testTaskRunner{}
+	worker.stateMu.Lock()
+	worker.recoveryStarted = true
 	worker.stateMu.Unlock()
 	if err := worker.readiness(context.Background()); err == nil || !strings.Contains(err.Error(), "workspace") {
 		t.Fatalf("missing Workspace readiness err=%v", err)
@@ -188,6 +199,7 @@ func testWorker(runner taskRunner, asyncConfig AsyncWorkerConfig) *Worker {
 	worker := &Worker{
 		cfg:        WorkerConfig{Async: asyncConfig},
 		runner:     runner,
+		recovery:   &testTaskRunner{},
 		workspace:  &testTaskRunner{},
 		activation: &testActivationRunner{},
 		mysqlReady: func(context.Context) error { return nil },

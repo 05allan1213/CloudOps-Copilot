@@ -66,6 +66,7 @@ func TestOpenAPICommandAndSafetyContractsMatchRuntime(t *testing.T) {
 
 	commands := map[string]string{
 		"/api/v1/incidents/{id}/investigations":    "#/components/schemas/VersionedCommand",
+		"/api/v1/incidents/{id}/decision":          "#/components/schemas/RecoveryDecisionCommand",
 		"/api/v1/incidents/{id}/close":             "#/components/schemas/VersionedCommand",
 		"/api/v1/remediation-plans/{id}/decisions": "#/components/schemas/DecisionCommand",
 	}

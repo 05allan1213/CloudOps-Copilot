@@ -4,8 +4,8 @@ import { formatDurationMS, formatJSON, safeExternalURL } from "./workbench";
 
 describe("typed Workbench presentation helpers", () => {
   it("keeps absent and explicit null projections distinct", () => {
-    expect(formatJSON(undefined)).toBe("Not projected");
-    expect(formatJSON(null)).toBe("Not applicable");
+    expect(formatJSON(undefined)).toBe("未投影");
+    expect(formatJSON(null)).toBe("不适用");
     expect(formatJSON({ status: "passed" })).toContain('"status": "passed"');
   });
 

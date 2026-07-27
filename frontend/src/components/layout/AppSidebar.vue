@@ -9,7 +9,7 @@ defineEmits<{ toggle: [] }>();
 
 <template>
   <aside class="app-sidebar" :class="{ 'is-collapsed': collapsed }" aria-label="主导航">
-    <RouterLink class="sidebar-brand" to="/overview" aria-label="CloudOps 总览">
+    <RouterLink class="sidebar-brand" to="/overview" aria-label="CloudOps本地运维控制台">
       <span class="sidebar-brand-icon" aria-hidden="true"><Activity :size="21" /></span>
       <span class="sidebar-brand-copy"><strong>CloudOps</strong><small>本地运维控制台</small></span>
     </RouterLink>

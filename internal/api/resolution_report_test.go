@@ -100,6 +100,7 @@ func TestScanResolutionReportProjectsDurableFields(t *testing.T) {
 		want.CycleStartedAt, want.ResolvedAt, want.MeasuredDurationMS,
 		want.Revisions.BadGitOpsRevision, want.Revisions.FixGitOpsRevision,
 		want.Revisions.SourceRevision, want.Revisions.ImageDigest, want.Revisions.GitOpsRevision,
+		nil, nil, nil, nil,
 		want.VerificationProfile.ID, want.VerificationProfile.Hash,
 		want.Stability.CommonWindowStartedAt, want.Stability.CommonWindowCompletedAt,
 		want.TriggerSignal, want.Diagnosis, want.Evidence, want.RemediationPlan,

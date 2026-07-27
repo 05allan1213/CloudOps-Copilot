@@ -12,10 +12,11 @@ import (
 )
 
 const (
-	GoldenRequiredEnvProfileID = "golden-required-env/v1"
-	NoChangeProfileID          = "no-change/v1"
-	CommonStabilityWindow      = 60 * time.Second
-	RunDeadline                = 300 * time.Second
+	GoldenRequiredEnvProfileID   = "golden-required-env/v1"
+	NoChangeProfileID            = "no-change/v1"
+	OperationalRecoveryProfileID = "operational-recovery/v1"
+	CommonStabilityWindow        = 60 * time.Second
+	RunDeadline                  = 300 * time.Second
 )
 
 var (
@@ -62,6 +63,7 @@ type CompileInput struct {
 	Environment     string
 	Namespace       string
 	Service         string
+	WorkloadKind    string
 	WorkloadName    string
 	AlertNames      []string
 }
@@ -94,6 +96,16 @@ func NoChangeProfile() ProfileDefinition {
 	}}
 }
 
+// OperationalRecoveryProfile is independent of GitHub, Argo CD, and
+// immutable revision identity. Current-cycle Alert relations and the current
+// Kubernetes workload are the only required recovery facts.
+func OperationalRecoveryProfile() ProfileDefinition {
+	return ProfileDefinition{ID: OperationalRecoveryProfileID, Version: 1, Deadline: RunDeadline, Checks: []CheckTemplate{
+		checkTemplate(CheckIncidentAlertsResolved, 0, 0, 5*time.Second, 240*time.Second, 1, "observation", FailureImmediate, "mysql_alert_relations", "", 0),
+		checkTemplate(CheckWorkloadReady, 0, 0, 5*time.Second, 240*time.Second, 1, "workload", FailureResets, "kubernetes_read", "", 0),
+	}}
+}
+
 func checkTemplate(checkType CheckType, initial, lookback, poll, timeout time.Duration, minSamples int, unit string, mode FailureMode, source string, comparison Comparison, threshold float64) CheckTemplate {
 	return CheckTemplate{Type: checkType, TemplateID: string(checkType) + "/v1", TemplateVersion: "v1", Comparison: comparison, Threshold: threshold, InitialDelay: initial, Lookback: lookback, PollInterval: poll, Timeout: timeout, StabilityWindow: CommonStabilityWindow, MinSamples: minSamples, SampleUnit: unit, FailureMode: mode, SourceIdentity: source, Required: true}
 }
@@ -103,18 +115,25 @@ func CompilePlan(input CompileInput) (Plan, error) {
 		return Plan{}, err
 	}
 	profile := GoldenRequiredEnvProfile()
-	if input.TriggerType == "no_change" {
+	switch input.TriggerType {
+	case "no_change":
 		profile = NoChangeProfile()
+	case "operational_recovery":
+		profile = OperationalRecoveryProfile()
 	}
 	profileHash, err := ProfileHash(profile)
 	if err != nil {
 		return Plan{}, err
 	}
+	workloadKind := strings.TrimSpace(input.WorkloadKind)
+	if workloadKind == "" {
+		workloadKind = "Deployment"
+	}
 	subject := Subject{
 		Repository: input.Repository, PullRequest: input.PullRequest, Revision: strings.ToLower(input.TargetRevision),
 		ArgoApplication: input.ArgoApplication, ArgoProject: input.ArgoProject, Cluster: input.Cluster,
 		Environment: input.Environment, Namespace: input.Namespace, Service: input.Service,
-		WorkloadKind: "Deployment", WorkloadName: input.WorkloadName,
+		WorkloadKind: workloadKind, WorkloadName: input.WorkloadName,
 	}
 	alertNames := append([]string(nil), input.AlertNames...)
 	sort.Strings(alertNames)
@@ -157,15 +176,25 @@ func ProfileHash(profile ProfileDefinition) (string, error) {
 }
 
 func ValidatePlan(plan Plan) error {
-	if plan.SchemaVersion != 1 || plan.ProfileVersion != 1 || len(plan.ProfileHash) != 64 || plan.Deadline != RunDeadline || !exactRevisionPattern.MatchString(plan.TargetRevision) || !exactRevisionPattern.MatchString(plan.SourceRevision) || !imageDigestPattern.MatchString(plan.ImageDigest) || !exactRevisionPattern.MatchString(plan.GitOpsRevision) {
+	if plan.SchemaVersion != 1 || plan.ProfileVersion != 1 || len(plan.ProfileHash) != 64 || plan.Deadline != RunDeadline {
 		return fmt.Errorf("%w: verification plan envelope", ErrInvalidArgument)
 	}
-	if plan.TriggerType != "post_delivery" && plan.TriggerType != "no_change" {
+	if plan.TriggerType != "post_delivery" && plan.TriggerType != "no_change" && plan.TriggerType != "operational_recovery" {
 		return fmt.Errorf("%w: verification trigger type", ErrInvalidArgument)
 	}
+	if plan.TriggerType == "operational_recovery" {
+		if plan.TargetRevision != "" || plan.SourceRevision != "" || plan.ImageDigest != "" || plan.GitOpsRevision != "" {
+			return fmt.Errorf("%w: operational recovery cannot carry revision identity", ErrInvalidArgument)
+		}
+	} else if !exactRevisionPattern.MatchString(plan.TargetRevision) || !exactRevisionPattern.MatchString(plan.SourceRevision) || !imageDigestPattern.MatchString(plan.ImageDigest) || !exactRevisionPattern.MatchString(plan.GitOpsRevision) {
+		return fmt.Errorf("%w: verification revision identity", ErrInvalidArgument)
+	}
 	expectedProfile := GoldenRequiredEnvProfile()
-	if plan.TriggerType == "no_change" {
+	switch plan.TriggerType {
+	case "no_change":
 		expectedProfile = NoChangeProfile()
+	case "operational_recovery":
+		expectedProfile = OperationalRecoveryProfile()
 	}
 	hash, _ := ProfileHash(expectedProfile)
 	if plan.ProfileID != expectedProfile.ID || plan.ProfileHash != hash || len(plan.Checks) != len(expectedProfile.Checks) {
@@ -186,7 +215,7 @@ func ValidatePlan(plan Plan) error {
 }
 
 func validateProfile(profile ProfileDefinition) error {
-	if (profile.ID != GoldenRequiredEnvProfileID && profile.ID != NoChangeProfileID) || profile.Version != 1 || profile.Deadline != RunDeadline || len(profile.Checks) == 0 {
+	if (profile.ID != GoldenRequiredEnvProfileID && profile.ID != NoChangeProfileID && profile.ID != OperationalRecoveryProfileID) || profile.Version != 1 || profile.Deadline != RunDeadline || len(profile.Checks) == 0 {
 		return fmt.Errorf("%w: verification profile", ErrInvalidArgument)
 	}
 	seen := map[CheckType]struct{}{}
@@ -203,10 +232,19 @@ func validateProfile(profile ProfileDefinition) error {
 }
 
 func validateCompileInput(input CompileInput) error {
-	if input.TriggerType != "post_delivery" && input.TriggerType != "no_change" {
+	if input.TriggerType != "post_delivery" && input.TriggerType != "no_change" && input.TriggerType != "operational_recovery" {
 		return fmt.Errorf("%w: verification trigger", ErrInvalidArgument)
 	}
-	if !exactRevisionPattern.MatchString(strings.ToLower(input.TargetRevision)) || !exactRevisionPattern.MatchString(strings.ToLower(input.SourceRevision)) || !imageDigestPattern.MatchString(strings.ToLower(input.ImageDigest)) || !exactRevisionPattern.MatchString(strings.ToLower(input.GitOpsRevision)) || input.ArgoApplication == "" || input.ArgoProject == "" || input.Cluster == "" || input.Environment == "" || input.Namespace == "" || input.Service == "" || input.WorkloadName == "" || len(input.AlertNames) == 0 || len(input.AlertNames) > 20 {
+	if input.Cluster == "" || input.Environment == "" || input.Namespace == "" || input.Service == "" || input.WorkloadName == "" {
+		return fmt.Errorf("%w: verification identity", ErrInvalidArgument)
+	}
+	if input.TriggerType == "operational_recovery" {
+		if input.Repository != "" || input.PullRequest != 0 || input.TargetRevision != "" || input.SourceRevision != "" || input.ImageDigest != "" || input.GitOpsRevision != "" || input.ArgoApplication != "" || input.ArgoProject != "" || len(input.AlertNames) != 0 {
+			return fmt.Errorf("%w: operational recovery identity", ErrInvalidArgument)
+		}
+		return nil
+	}
+	if !exactRevisionPattern.MatchString(strings.ToLower(input.TargetRevision)) || !exactRevisionPattern.MatchString(strings.ToLower(input.SourceRevision)) || !imageDigestPattern.MatchString(strings.ToLower(input.ImageDigest)) || !exactRevisionPattern.MatchString(strings.ToLower(input.GitOpsRevision)) || input.ArgoApplication == "" || input.ArgoProject == "" || len(input.AlertNames) == 0 || len(input.AlertNames) > 20 {
 		return fmt.Errorf("%w: verification identity", ErrInvalidArgument)
 	}
 	if input.TriggerType == "post_delivery" && (input.Repository == "" || input.PullRequest <= 0) {
@@ -239,9 +277,21 @@ func expectedForCheck(checkType CheckType, input CompileInput, alertNames []stri
 	case CheckDeploymentRolloutComplete:
 		expected = map[string]any{"desired": 2, "updated": 2, "ready": 2, "available": 2, "unavailable": 0}
 	case CheckWorkloadReady:
-		expected = map[string]any{"ready_pods": 2, "readyz": true}
+		if input.TriggerType == "operational_recovery" {
+			kind := strings.TrimSpace(input.WorkloadKind)
+			if kind == "" {
+				kind = "Deployment"
+			}
+			expected = map[string]any{"health": "healthy", "resource": map[string]string{"kind": kind, "namespace": input.Namespace, "name": input.WorkloadName}}
+		} else {
+			expected = map[string]any{"ready_pods": 2, "readyz": true}
+		}
 	case CheckIncidentAlertsResolved:
-		expected = map[string]any{"alert_names": alertNames, "all_cycle_instances_resolved": true, "prometheus_firing_series": 0}
+		if input.TriggerType == "operational_recovery" {
+			expected = map[string]any{"all_current_cycle_alert_relations_resolved": true}
+		} else {
+			expected = map[string]any{"alert_names": alertNames, "all_cycle_instances_resolved": true, "prometheus_firing_series": 0}
+		}
 	case CheckMetricErrorRateBelow:
 		expected = map[string]any{"comparison": CompareLT, "threshold": .01, "min_requests": 50}
 	case CheckMetricAvailabilityAbove:

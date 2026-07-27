@@ -22,11 +22,11 @@ const props = withDefaults(defineProps<{
   retryable?: boolean;
 }>(), {
   error: null,
-  emptyText: "No persisted facts are available.",
+  emptyText: "没有可用的持久化事实。",
   refreshing: false,
   loadingMore: false,
   projectionNote: "",
-  retryLabel: "Retry",
+  retryLabel: "重试",
   retryable: false,
 });
 
@@ -57,7 +57,7 @@ const traceID = computed(() => typeof props.error === "string" ? "" : props.erro
           role="status"
           aria-live="polite"
         >
-          Updating…
+          正在更新…
         </span>
       </div>
       <slot name="heading" />
@@ -75,7 +75,7 @@ const traceID = computed(() => typeof props.error === "string" ? "" : props.erro
       class="section-skeleton"
       role="status"
       aria-live="polite"
-      :aria-label="`Loading ${title}`"
+      :aria-label="`正在加载 ${title}`"
     >
       <span />
       <span />
@@ -86,8 +86,8 @@ const traceID = computed(() => typeof props.error === "string" ? "" : props.erro
       class="section-message section-message--warning"
       role="alert"
     >
-      <strong>The Local Owner request was denied.</strong>
-      <span>Verify the request Origin and retry this projection.</span>
+      <strong>Local Owner 请求被拒绝。</strong>
+      <span>请核对请求 Origin 后重试此投影。</span>
       <dl
         v-if="requestID || traceID"
         class="request-identity"
@@ -108,7 +108,7 @@ const traceID = computed(() => typeof props.error === "string" ? "" : props.erro
         :disabled="refreshing || loadingMore"
         @click="emit('retry')"
       >
-        {{ refreshing || loadingMore ? "Retrying…" : retryLabel }}
+        {{ refreshing || loadingMore ? "正在重试…" : retryLabel }}
       </button>
     </div>
     <div
@@ -116,7 +116,7 @@ const traceID = computed(() => typeof props.error === "string" ? "" : props.erro
       class="section-message"
       role="status"
     >
-      <strong>Projection not found.</strong>
+      <strong>未找到投影。</strong>
       <span>{{ emptyText }}</span>
     </div>
     <div
@@ -124,8 +124,8 @@ const traceID = computed(() => typeof props.error === "string" ? "" : props.erro
       class="section-message section-message--warning"
       role="alert"
     >
-      <strong>Projection unavailable.</strong>
-      <span>{{ errorMessage || "The API dependency did not return this persisted projection." }}</span>
+      <strong>投影暂不可用。</strong>
+      <span>{{ errorMessage || "API 依赖未返回此持久化投影。" }}</span>
       <dl
         v-if="requestID || traceID"
         class="request-identity"
@@ -146,7 +146,7 @@ const traceID = computed(() => typeof props.error === "string" ? "" : props.erro
         :disabled="refreshing || loadingMore"
         @click="emit('retry')"
       >
-        {{ refreshing || loadingMore ? "Retrying…" : retryLabel }}
+        {{ refreshing || loadingMore ? "正在重试…" : retryLabel }}
       </button>
     </div>
     <div
@@ -154,8 +154,8 @@ const traceID = computed(() => typeof props.error === "string" ? "" : props.erro
       class="section-message section-message--error"
       role="alert"
     >
-      <strong>Projection request failed.</strong>
-      <span>{{ errorMessage || "Failed to load this section." }}</span>
+      <strong>投影请求失败。</strong>
+      <span>{{ errorMessage || "无法加载此区块。" }}</span>
       <dl
         v-if="requestID || traceID"
         class="request-identity"
@@ -176,7 +176,7 @@ const traceID = computed(() => typeof props.error === "string" ? "" : props.erro
         :disabled="refreshing || loadingMore"
         @click="emit('retry')"
       >
-        {{ refreshing || loadingMore ? "Retrying…" : retryLabel }}
+        {{ refreshing || loadingMore ? "正在重试…" : retryLabel }}
       </button>
     </div>
     <div
@@ -185,7 +185,7 @@ const traceID = computed(() => typeof props.error === "string" ? "" : props.erro
       role="status"
     >
       <strong>{{ emptyText }}</strong>
-      <span>No rows were returned for the current Incident cycle.</span>
+      <span>当前 Incident Cycle 未返回记录。</span>
     </div>
     <template v-else>
       <div
@@ -193,7 +193,7 @@ const traceID = computed(() => typeof props.error === "string" ? "" : props.erro
         class="stale-message"
         role="status"
       >
-        The last refresh did not replace the visible projection: {{ errorMessage }}
+        最近一次刷新失败，当前仍显示上次成功投影：{{ errorMessage }}
       </div>
       <slot />
     </template>

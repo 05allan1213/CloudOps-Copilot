@@ -137,6 +137,7 @@ export interface AlertListQuery {
   severity?: AlertSeverity | "";
   namespace?: string;
   search?: string;
+  incident?: string;
 }
 
 const alertBase = "/api/v1/alerts";

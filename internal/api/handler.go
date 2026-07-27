@@ -122,16 +122,19 @@ var routes = []RouteSpec{
 	{Method: http.MethodPost, Path: "/api/v1/alerts/:id/incident-links"},
 	{Method: http.MethodGet, Path: "/api/v1/incidents"},
 	{Method: http.MethodGet, Path: "/api/v1/incidents/:id"},
+	{Method: http.MethodGet, Path: "/api/v1/incidents/:id/alerts"},
 	{Method: http.MethodGet, Path: "/api/v1/incidents/:id/signals"},
 	{Method: http.MethodGet, Path: "/api/v1/incidents/:id/timeline"},
 	{Method: http.MethodGet, Path: "/api/v1/incidents/:id/evidence"},
 	{Method: http.MethodGet, Path: "/api/v1/incidents/:id/investigations"},
+	{Method: http.MethodGet, Path: "/api/v1/incidents/:id/decision"},
 	{Method: http.MethodGet, Path: "/api/v1/incidents/:id/remediation-plans"},
 	{Method: http.MethodGet, Path: "/api/v1/incidents/:id/delivery"},
 	{Method: http.MethodGet, Path: "/api/v1/incidents/:id/verifications"},
 	{Method: http.MethodGet, Path: "/api/v1/incidents/:id/resolution-report"},
 	{Method: http.MethodGet, Path: "/api/v1/incidents/:id/events"},
 	{Method: http.MethodPost, Path: "/api/v1/incidents/:id/investigations"},
+	{Method: http.MethodPost, Path: "/api/v1/incidents/:id/decision"},
 	{Method: http.MethodPost, Path: "/api/v1/incidents/:id/close"},
 	{Method: http.MethodPost, Path: "/api/v1/remediation-plans/:id/decisions"},
 	{Method: http.MethodGet, Path: "/api/v1/monitoring/catalog"},
@@ -211,10 +214,12 @@ func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	queries.GET("/alerts/:id", handler.getAlert)
 	queries.GET("/incidents", handler.listIncidents)
 	queries.GET("/incidents/:id", handler.getIncident)
+	queries.GET("/incidents/:id/alerts", handler.listIncidentAlertRelations)
 	queries.GET("/incidents/:id/signals", handler.listResources(QuerySignals))
-	queries.GET("/incidents/:id/timeline", handler.listResources(QueryTimeline))
-	queries.GET("/incidents/:id/evidence", handler.listResources(QueryEvidence))
-	queries.GET("/incidents/:id/investigations", handler.listResources(QueryInvestigations))
+	queries.GET("/incidents/:id/timeline", handler.listIncidentTimeline)
+	queries.GET("/incidents/:id/evidence", handler.listIncidentEvidence)
+	queries.GET("/incidents/:id/investigations", handler.listIncidentInvestigations)
+	queries.GET("/incidents/:id/decision", handler.getIncidentDecision)
 	queries.GET("/incidents/:id/remediation-plans", handler.listRemediationPlans)
 	queries.GET("/incidents/:id/delivery", handler.getDelivery)
 	queries.GET("/incidents/:id/verifications", handler.listVerifications)
@@ -259,6 +264,7 @@ func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	commands.POST("/alerts/:id/investigations", handler.startAlertInvestigation)
 	commands.POST("/alerts/:id/incident-links", handler.linkAlertIncident)
 	commands.POST("/incidents/:id/investigations", handler.startInvestigation)
+	commands.POST("/incidents/:id/decision", handler.decideIncidentRecovery)
 	commands.POST("/incidents/:id/close", handler.closeIncident)
 	commands.POST("/remediation-plans/:id/decisions", handler.decideRemediation)
 	commands.POST("/monitoring/queries", handler.startMonitoringQuery)
@@ -293,14 +299,16 @@ func (h *Handler) listIncidents(c *gin.Context) {
 		h.writeProblem(c, http.StatusBadRequest, "INVALID_CURSOR", "cursor and limit parameters are invalid")
 		return
 	}
-	status, severity, service, err := parseIncidentFilters(c.Request)
+	filters, err := parseIncidentFilters(c.Request)
 	if err != nil {
-		h.writeProblem(c, http.StatusBadRequest, "INVALID_FILTER", "status, severity, or service filter is invalid")
+		h.writeProblem(c, http.StatusBadRequest, "INVALID_FILTER", "one or more Incident filters are invalid")
 		return
 	}
 	result, err := h.queries.Query(c.Request.Context(), QueryRequest{
 		Kind: QueryIncidents, Cursor: cursor, AfterID: afterID, Limit: limit,
-		Status: status, Severity: severity, Service: service,
+		Status: filters.Status, Severity: filters.Severity, Service: filters.Service,
+		Attention: filters.Attention, Resource: filters.Resource,
+		RelatedAlertID: filters.RelatedAlertID, From: filters.From, To: filters.To,
 	})
 	if err != nil {
 		h.writeQueryError(c, err)
@@ -446,6 +454,12 @@ type decisionCommandBody struct {
 	Reason          string `json:"reason,omitempty"`
 }
 
+type recoveryDecisionCommandBody struct {
+	Decision        string `json:"decision"`
+	ExpectedVersion uint64 `json:"expected_version"`
+	Reason          string `json:"reason"`
+}
+
 func (h *Handler) startInvestigation(c *gin.Context) {
 	var body versionedCommandBody
 	if !h.decodeCommand(c, &body) {
@@ -477,6 +491,28 @@ func (h *Handler) closeIncident(c *gin.Context) {
 		return
 	}
 	h.executeCommand(c, CommandCloseIncident, body.ExpectedVersion, "", body)
+}
+
+func (h *Handler) decideIncidentRecovery(c *gin.Context) {
+	var body recoveryDecisionCommandBody
+	if !h.decodeCommand(c, &body) {
+		return
+	}
+	body.Decision = strings.ToLower(strings.TrimSpace(body.Decision))
+	body.Reason = strings.TrimSpace(body.Reason)
+	if body.Decision != "verify_recovery" {
+		h.writeProblem(c, http.StatusUnprocessableEntity, "INVALID_TRANSITION", "decision must be verify_recovery")
+		return
+	}
+	if body.ExpectedVersion == 0 {
+		h.writeProblem(c, http.StatusBadRequest, "EXPECTED_VERSION_REQUIRED", "expected_version must be positive")
+		return
+	}
+	if body.Reason == "" || len(body.Reason) > 1024 {
+		h.writeProblem(c, http.StatusBadRequest, "INVALID_REQUEST", "reason is required and must not exceed 1024 bytes")
+		return
+	}
+	h.executeCommand(c, CommandDecideRecovery, body.ExpectedVersion, "", body)
 }
 
 func (h *Handler) decideRemediation(c *gin.Context) {

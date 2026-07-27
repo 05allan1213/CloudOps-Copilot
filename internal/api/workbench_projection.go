@@ -295,11 +295,8 @@ func validateVerificationRunView(item *VerificationRunView) error {
 	if item.Kind != "verification" || item.Cycle == 0 || item.Version == 0 || item.Attempt == 0 ||
 		!validVerificationRunStatus(item.Status) || item.Profile.Version == 0 ||
 		item.Profile.ContractVersion == 0 || validateExpectedHash(item.Profile.Hash) != nil ||
-		(item.Profile.ID != "golden-required-env/v1" && item.Profile.ID != "no-change/v1") ||
-		!validResolutionRevision(item.Revisions.TargetRevision) ||
-		!validResolutionRevision(item.Revisions.SourceRevision) ||
-		!validResolutionImageDigest(item.Revisions.ImageDigest) ||
-		!validResolutionRevision(item.Revisions.GitOpsRevision) {
+		(item.Profile.ID != "golden-required-env/v1" && item.Profile.ID != "no-change/v1" &&
+			item.Profile.ID != "operational-recovery/v1") {
 		return fmt.Errorf("%w: invalid verification run identity", ErrInvalidArgument)
 	}
 	if err := validateVerificationRelations(item); err != nil {
@@ -376,15 +373,46 @@ func validateVerificationRelations(item *VerificationRunView) error {
 	}
 	switch item.TriggerType {
 	case "post_delivery":
-		if item.Profile.ID != "golden-required-env/v1" || item.RemediationPlanID == "" || item.ChangeRequestID == "" || item.TriggerSignalID != "" {
+		if item.Profile.ID != "golden-required-env/v1" || item.RemediationPlanID == "" || item.ChangeRequestID == "" || item.TriggerSignalID != "" ||
+			item.RecoveryProvenance != nil || !validVerificationRevisions(item.Revisions) {
 			return fmt.Errorf("%w: invalid post-delivery verification relation", ErrInvalidArgument)
 		}
 	case "no_change_signal":
-		if item.Profile.ID != "no-change/v1" || item.RemediationPlanID != "" || item.ChangeRequestID != "" || item.TriggerSignalID == "" {
+		if item.Profile.ID != "no-change/v1" || item.RemediationPlanID != "" || item.ChangeRequestID != "" || item.TriggerSignalID == "" ||
+			item.RecoveryProvenance != nil || !validVerificationRevisions(item.Revisions) {
 			return fmt.Errorf("%w: invalid no-change verification relation", ErrInvalidArgument)
+		}
+	case "operational_recovery":
+		if item.Profile.ID != "operational-recovery/v1" || item.RemediationPlanID != "" || item.ChangeRequestID != "" || item.TriggerSignalID != "" ||
+			item.Revisions != (VerificationRevisionsView{}) || validateRecoveryProvenance(item.RecoveryProvenance) != nil {
+			return fmt.Errorf("%w: invalid operational recovery verification relation", ErrInvalidArgument)
 		}
 	default:
 		return fmt.Errorf("%w: invalid verification trigger", ErrInvalidArgument)
+	}
+	return nil
+}
+
+func validVerificationRevisions(revisions VerificationRevisionsView) bool {
+	return validResolutionRevision(revisions.TargetRevision) &&
+		validResolutionRevision(revisions.SourceRevision) &&
+		validResolutionImageDigest(revisions.ImageDigest) &&
+		validResolutionRevision(revisions.GitOpsRevision)
+}
+
+func validateRecoveryProvenance(item *RecoveryProvenanceView) error {
+	if item == nil {
+		return ErrInvalidArgument
+	}
+	identities := []*string{
+		&item.ConfigurationRevisionID, &item.OperationalScopeID, &item.InvestigationID, &item.DecisionID,
+	}
+	for _, identity := range identities {
+		value, err := ParsePublicUUID(*identity)
+		if err != nil {
+			return err
+		}
+		*identity = value
 	}
 	return nil
 }

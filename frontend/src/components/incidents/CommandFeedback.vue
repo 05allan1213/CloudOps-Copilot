@@ -15,13 +15,13 @@ const emit = defineEmits<{
 
 const stateLabel = computed(() => {
   if (!props.feedback) return "";
-  if (props.feedback.state === "accepted") return props.feedback.idempotentReplay ? "Accepted · Replay" : `Accepted${props.feedback.httpStatus ? ` · ${props.feedback.httpStatus}` : ""}`;
-  if (props.feedback.state === "submitting") return "Submitting";
-  if (props.feedback.state === "forbidden") return "Forbidden";
-  if (props.feedback.state === "conflict") return "Conflict";
-  if (props.feedback.state === "invalid") return "Invalid Request";
-  if (props.feedback.state === "unavailable") return "Unavailable";
-  return "Failed";
+  if (props.feedback.state === "accepted") return props.feedback.idempotentReplay ? "已接受 · 幂等重放" : `已接受${props.feedback.httpStatus ? ` · ${props.feedback.httpStatus}` : ""}`;
+  if (props.feedback.state === "submitting") return "正在提交";
+  if (props.feedback.state === "forbidden") return "已拒绝";
+  if (props.feedback.state === "conflict") return "版本冲突";
+  if (props.feedback.state === "invalid") return "请求无效";
+  if (props.feedback.state === "unavailable") return "暂不可用";
+  return "失败";
 });
 
 const role = computed(() => {
@@ -65,7 +65,7 @@ const role = computed(() => {
       v-if="feedback.state === 'conflict'"
       class="conflict-guidance"
     >
-      This command is fail-closed. Refresh the current projection before trying again; the rejected payload is not replayed.
+      此命令按 fail-closed 处理。请先刷新当前投影再重试；被拒绝的 payload 不会自动重放。
     </p>
     <div class="feedback-actions">
       <button
@@ -74,7 +74,7 @@ const role = computed(() => {
         :disabled="pending"
         @click="emit('retry')"
       >
-        {{ pending ? "Retrying…" : "Retry With Same Idempotency Key" }}
+        {{ pending ? "正在重试…" : "使用同一 Idempotency Key 重试" }}
       </button>
       <button
         v-if="feedback.state === 'conflict'"
@@ -82,7 +82,7 @@ const role = computed(() => {
         :disabled="pending"
         @click="emit('refresh')"
       >
-        Refresh Current Projection
+        刷新当前投影
       </button>
     </div>
   </section>

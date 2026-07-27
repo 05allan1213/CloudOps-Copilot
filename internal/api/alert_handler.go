@@ -65,10 +65,19 @@ func (h *Handler) listAlerts(c *gin.Context) {
 		}
 		limit = parsed
 	}
+	incidentID := strings.TrimSpace(c.Query("incident"))
+	if incidentID != "" {
+		parsed, parseErr := ParsePublicUUID(incidentID)
+		if parseErr != nil {
+			h.writeProblem(c, http.StatusBadRequest, "INVALID_QUERY", "Incident filter must be a public UUID")
+			return
+		}
+		incidentID = parsed
+	}
 	page, err := h.alerts.List(c.Request.Context(), alertdomain.ListRequest{
 		Cursor: c.Query("cursor"), Limit: limit, Status: strings.TrimSpace(c.Query("status")),
 		Severity: strings.TrimSpace(c.Query("severity")), Namespace: strings.TrimSpace(c.Query("namespace")),
-		Search: strings.TrimSpace(c.Query("search")),
+		Search: strings.TrimSpace(c.Query("search")), IncidentID: incidentID,
 	})
 	if err != nil {
 		h.writeAlertError(c, err)

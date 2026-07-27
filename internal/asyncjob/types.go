@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -61,6 +62,7 @@ const (
 	TaskChangeEnsurePR       TaskType = "change.ensure_pr"
 	TaskDeliveryObserve      TaskType = "delivery.observe"
 	TaskVerificationAdvance  TaskType = "verification.advance"
+	TaskRecoveryVerify       TaskType = "recovery.verify"
 )
 
 var taskTypes = [...]TaskType{
@@ -88,6 +90,7 @@ var queueByTaskType = map[TaskType]Queue{
 	TaskChangeEnsurePR:       QueueDeliver,
 	TaskDeliveryObserve:      QueueObserve,
 	TaskVerificationAdvance:  QueueVerify,
+	TaskRecoveryVerify:       QueueVerify,
 }
 
 func QueueForTaskType(taskType TaskType) (Queue, error) {
@@ -113,9 +116,22 @@ func validDispatchIdentity(taskType TaskType, subjectType, transition string) bo
 		return subjectType == "change_request" && transition == "delivery.observe"
 	case TaskVerificationAdvance:
 		return subjectType == "verification_run" && transition == "verification.advance"
+	case TaskRecoveryVerify:
+		return subjectType == "verification_run" && transition == "recovery.verify"
 	default:
 		return false
 	}
+}
+
+func taskTypesForQueue(queue Queue) []TaskType {
+	result := make([]TaskType, 0, 2)
+	for taskType, candidateQueue := range queueByTaskType {
+		if candidateQueue == queue {
+			result = append(result, taskType)
+		}
+	}
+	slices.Sort(result)
+	return result
 }
 
 type Status string

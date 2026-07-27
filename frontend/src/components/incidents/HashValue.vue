@@ -12,16 +12,16 @@ onBeforeUnmount(() => {
 
 async function copyValue() {
   if (!props.value || !navigator.clipboard) {
-    copyStatus.value = "Copy unavailable";
+    copyStatus.value = "无法复制";
     return;
   }
   try {
     await navigator.clipboard.writeText(props.value);
-    copyStatus.value = "Copied";
+    copyStatus.value = "已复制";
     if (resetTimer !== null) window.clearTimeout(resetTimer);
     resetTimer = window.setTimeout(() => { copyStatus.value = ""; }, 1600);
   } catch {
-    copyStatus.value = "Copy failed";
+    copyStatus.value = "复制失败";
   }
 }
 </script>
@@ -29,13 +29,13 @@ async function copyValue() {
 <template>
   <div class="hash-value">
     <span>{{ label }}</span>
-    <code translate="no">{{ value || "Not projected" }}</code>
+    <code translate="no">{{ value || "未投影" }}</code>
     <button
       v-if="value"
       type="button"
       class="copy-button"
-      :aria-label="`Copy ${label}`"
-      :title="`Copy ${label}`"
+      :aria-label="`复制 ${label}`"
+      :title="`复制 ${label}`"
       @click="copyValue"
     >
       <el-icon aria-hidden="true">

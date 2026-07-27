@@ -77,6 +77,295 @@ func TestMySQLTypedWorkbenchProjections(t *testing.T) {
 	}
 }
 
+func TestMySQLIncidentCoordinationProjectionIsTypedAndCurrentCycle(t *testing.T) {
+	adminDSN := os.Getenv("CLOUDOPS_TEST_MYSQL_ADMIN_DSN")
+	if adminDSN == "" {
+		t.Skip("CLOUDOPS_TEST_MYSQL_ADMIN_DSN is not set; requires disposable MySQL 8 admin scope")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	db := openWorkbenchIntegrationDB(t, ctx, adminDSN)
+	var now time.Time
+	if err := db.QueryRowContext(ctx, "SELECT NOW(6)").Scan(&now); err != nil {
+		t.Fatal(err)
+	}
+	now = now.UTC().Truncate(time.Microsecond)
+
+	var configurationRevisionID uint64
+	var operationalScopeID string
+	if err := db.QueryRowContext(ctx, `SELECT active.configuration_revision_id, scope.public_id
+FROM active_configuration active
+JOIN operational_scopes scope ON scope.configuration_revision_id = active.configuration_revision_id
+WHERE active.singleton_id = 1 AND scope.cluster_id = 'cloudops-local'`).Scan(
+		&configurationRevisionID, &operationalScopeID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	snapshotResult, err := db.ExecContext(ctx, `INSERT INTO topology_snapshots (
+public_id, configuration_revision_id, cluster_id, environment, namespaces_json,
+scope_hash, content_hash, provider_state, source_identity, server_version,
+partial, truncated, node_count, edge_count, projection_json, collected_at,
+fresh_until, last_observed_at
+) VALUES (?, ?, 'cloudops-local', 'local', JSON_ARRAY('demo'), ?, ?, 'available',
+          'integration://task-7', 'v1.36.1', FALSE, FALSE, 1, 0, JSON_OBJECT(),
+          ?, ?, ?)`, uuid.NewString(), configurationRevisionID, strings.Repeat("a", 64),
+		strings.Repeat("b", 64), now.Add(-time.Minute), now.Add(time.Minute), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotID, _ := snapshotResult.LastInsertId()
+	resourceID := "k8s://cloudops-local/apps/v1/namespaces/demo/deployments/checkout"
+	if _, err := db.ExecContext(ctx, `INSERT INTO resource_identities (
+resource_id, cluster_id, api_version, kind, namespace, name, source_uid,
+health_state, last_snapshot_id, first_seen_at, last_seen_at
+) VALUES (?, 'cloudops-local', 'apps/v1', 'Deployment', 'demo', 'checkout',
+          'uid-task-7', 'warning', ?, ?, ?)`, resourceID, snapshotID,
+		now.Add(-15*time.Minute), now); err != nil {
+		t.Fatal(err)
+	}
+
+	incidentPublicID := uuid.NewString()
+	incidentResult, err := db.ExecContext(ctx, `INSERT INTO incidents (
+public_id, fingerprint, correlation_key, correlation_key_version, cluster,
+namespace, service_name, environment, target_kind, target_name, severity,
+status, summary, first_seen_at, last_seen_at, version, cycle_no,
+needs_attention, blocking_reason_code, blocked_at
+) VALUES (?, ?, ?, 2, 'cloudops-local', 'demo', 'checkout', 'local',
+          'Deployment', 'checkout', 'critical', 'investigating',
+          'Task 7 current-cycle coordination fixture', ?, ?, 7, 2, TRUE,
+          'verification_failed', ?)`, incidentPublicID,
+		"task-7-incident-"+incidentPublicID, strings.Repeat("c", 64),
+		now.Add(-10*time.Minute), now, now.Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	incidentID64, _ := incidentResult.LastInsertId()
+	incidentID := uint64(incidentID64)
+
+	insertAlert := func(keyByte string, summary string) (uint64, string) {
+		t.Helper()
+		publicID := uuid.NewString()
+		result, insertErr := db.ExecContext(ctx, `INSERT INTO alerts (
+public_id, source, alert_key, current_alert_instance_key, correlation_key,
+correlation_key_version, fingerprint, status, severity, cluster, environment,
+namespace, service_name, target_kind, target_name, category, summary,
+labels_json, annotations_json, first_seen_at, last_seen_at, starts_at
+) VALUES (?, 'alertmanager', ?, ?, ?, 2, ?, 'firing', 'critical',
+          'cloudops-local', 'local', 'demo', 'checkout', 'Deployment', 'checkout',
+          'availability', ?, JSON_OBJECT(), JSON_OBJECT(), ?, ?, ?)`, publicID,
+			strings.Repeat(keyByte, 64), strings.Repeat(keyByte, 64),
+			strings.Repeat(keyByte, 64), "task-7-alert-"+publicID, summary,
+			now.Add(-9*time.Minute), now, now.Add(-9*time.Minute))
+		if insertErr != nil {
+			t.Fatal(insertErr)
+		}
+		id, _ := result.LastInsertId()
+		return uint64(id), publicID
+	}
+	firstAlertID, firstAlertPublicID := insertAlert("1", "checkout unavailable")
+	secondAlertID, secondAlertPublicID := insertAlert("2", "checkout errors elevated")
+	historicalAlertID, historicalAlertPublicID := insertAlert("3", "previous cycle only")
+	insertRelation := func(alertID uint64, cycle uint64, provenance string) string {
+		t.Helper()
+		publicID := uuid.NewString()
+		if _, insertErr := db.ExecContext(ctx, `INSERT INTO alert_incident_links (
+public_id, alert_id, incident_id, incident_cycle_no, provenance
+) VALUES (?, ?, ?, ?, ?)`, publicID, alertID, incidentID, cycle, provenance); insertErr != nil {
+			t.Fatal(insertErr)
+		}
+		return publicID
+	}
+	firstRelationID := insertRelation(firstAlertID, 2, "owner_created")
+	secondRelationID := insertRelation(secondAlertID, 2, "owner_attached")
+	_ = insertRelation(historicalAlertID, 1, "owner_attached")
+
+	insertEvent := func(cycle uint64, eventType string, occurredAt time.Time) string {
+		t.Helper()
+		publicID := uuid.NewString()
+		if _, insertErr := db.ExecContext(ctx, `INSERT INTO incident_events (
+public_id, incident_id, cycle_no, event_schema_version, event_type, actor_type,
+actor_id, summary, metadata_json, occurred_at
+) VALUES (?, ?, ?, 1, ?, 'system', 'task-7-integration', ?,
+          JSON_OBJECT('cycle', ?), ?)`, publicID, incidentID, cycle, eventType,
+			"event "+eventType, cycle, occurredAt); insertErr != nil {
+			t.Fatal(insertErr)
+		}
+		return publicID
+	}
+	currentEventID := insertEvent(2, "verification_failed", now.Add(-time.Minute))
+	_ = insertEvent(1, "historical_cycle_event", now.Add(-20*time.Minute))
+
+	insertEvidence := func(cycle uint64, keyByte, summary string, collectedAt time.Time) string {
+		t.Helper()
+		publicID := uuid.NewString()
+		hash := strings.Repeat(keyByte, 64)
+		if _, insertErr := db.ExecContext(ctx, `INSERT INTO evidence_items (
+public_id, incident_id, cycle_no, type, source, producer_type,
+producer_dedupe_key, tool_name, resource_ref, query_text, summary, facts_json,
+result_hash, content_hash, raw_ref, truncated, valid, collected_at, observed_at
+) VALUES (?, ?, ?, 'metric', 'prometheus', 'system_enrichment', ?, 'prom.query_range',
+          ?, 'rate(checkout_errors_total[5m])', ?, JSON_OBJECT('facts', JSON_ARRAY()),
+          ?, ?, '', FALSE, TRUE, ?, ?)`, publicID, incidentID, cycle,
+			"task-7-evidence-"+publicID, resourceID, summary, hash, hash,
+			collectedAt, collectedAt); insertErr != nil {
+			t.Fatal(insertErr)
+		}
+		return publicID
+	}
+	currentEvidenceID := insertEvidence(2, "4", "current-cycle error rate", now.Add(-2*time.Minute))
+	_ = insertEvidence(1, "5", "historical-cycle error rate", now.Add(-20*time.Minute))
+
+	insertInvestigation := func(cycle uint64, summary string, completedAt time.Time) string {
+		t.Helper()
+		publicID := uuid.NewString()
+		diagnosis, _ := json.Marshal(map[string]any{"summary": summary})
+		if _, insertErr := db.ExecContext(ctx, `INSERT INTO agent_runs (
+public_id, incident_id, status, model, prompt_version, max_steps, used_steps,
+objective, final_diagnosis, failure_code, completed_at, cycle_no,
+expected_incident_version
+) VALUES (?, ?, 'completed', 'fixture-model', 'incident-agent/v1', 4, 2,
+          'investigate checkout', ?, '', ?, ?, 7)`, publicID, incidentID,
+			diagnosis, completedAt, cycle); insertErr != nil {
+			t.Fatal(insertErr)
+		}
+		return publicID
+	}
+	currentInvestigationID := insertInvestigation(2, "no change; wait for signal recovery", now.Add(-90*time.Second))
+	_ = insertInvestigation(1, "historical diagnosis", now.Add(-30*time.Minute))
+
+	signalPublicID := uuid.NewString()
+	signalResult, err := db.ExecContext(ctx, `INSERT INTO incident_signals (
+public_id, incident_id, cycle_no, source, source_event_id, canonical_schema_version,
+correlation_key_version, fingerprint, alert_instance_key, status, severity, cluster,
+namespace, service_name, environment, target_kind, target_name, category, occurred_at,
+starts_at, received_at, summary, labels_json, annotations_json
+) VALUES (?, ?, 2, 'alertmanager', ?, 1, 2, ?, ?, 'firing', 'critical',
+          'cloudops-local', 'demo', 'checkout', 'local', 'Deployment', 'checkout',
+          'availability', ?, ?, ?, 'verification trigger', JSON_OBJECT(), JSON_OBJECT())`,
+		signalPublicID, incidentID, "task-7-signal-"+signalPublicID,
+		"task-7-signal-"+signalPublicID, strings.Repeat("6", 64),
+		now.Add(-3*time.Minute), now.Add(-3*time.Minute), now.Add(-3*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	signalID64, _ := signalResult.LastInsertId()
+	verificationPublicID := uuid.NewString()
+	revision := strings.Repeat("7", 40)
+	if _, err := db.ExecContext(ctx, `INSERT INTO verification_runs (
+public_id, incident_id, cycle_no, trigger_signal_id, status, trigger_type,
+target_revision, source_revision, image_digest, gitops_revision, plan_json,
+verification_profile_id, verification_profile_version, verification_profile_hash,
+verification_contract_version, common_stability_window_ms, started_at, deadline_at,
+completed_at, attempt, expected_subject_version, result_summary, failure_reason
+) VALUES (?, ?, 2, ?, 'failed', 'no_change_signal', ?, ?, ?, ?, JSON_OBJECT(),
+          'no-change/v1', 1, ?, 1, 60000, ?, ?, ?, 1, 7,
+          'required Alert remains firing', 'required_check_failed')`,
+		verificationPublicID, incidentID, signalID64, revision, revision,
+		"sha256:"+strings.Repeat("8", 64), revision, strings.Repeat("9", 64),
+		now.Add(-80*time.Second), now.Add(5*time.Minute), now.Add(-70*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	port, err := NewMySQLQueryPort(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantAttention := true
+	incidents, err := port.Query(ctx, QueryRequest{
+		Kind: QueryIncidents, Limit: 10, Attention: &wantAttention,
+		Resource: resourceID, RelatedAlertID: firstAlertPublicID,
+		From: now.Add(-15 * time.Minute), To: now.Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(incidents.Incidents) != 1 || incidents.Incidents[0].ID != incidentPublicID {
+		t.Fatalf("filtered Incident projection=%+v", incidents.Incidents)
+	}
+	incidentResultView, err := port.Query(ctx, QueryRequest{Kind: QueryIncident, IncidentID: incidentPublicID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	incident := incidentResultView.Incident
+	if incident == nil || incident.RelatedAlertCount != 2 ||
+		incident.OperationalContext.OperationalScopeID != operationalScopeID ||
+		incident.OperationalContext.Resource.ID != resourceID ||
+		!incident.Attention.Required || incident.Attention.Stage != "investigate" ||
+		incident.Recovery.State != "investigate" || incident.Recovery.FailedVerificationCount != 1 ||
+		incident.Recovery.LatestVerificationID != verificationPublicID || incident.Recovery.CanClose ||
+		incident.Decision == nil || incident.Decision.Kind != "no_change" ||
+		incident.Decision.InvestigationID != currentInvestigationID ||
+		incident.Decision.VerificationID != verificationPublicID {
+		t.Fatalf("Incident coordination projection=%+v", incident)
+	}
+	workspaces := make(map[string]bool, len(incident.ContextLinks))
+	for _, link := range incident.ContextLinks {
+		workspaces[link.Workspace] = true
+		if link.OperationalScopeID != operationalScopeID || link.External {
+			t.Fatalf("Incident Context Link=%+v", link)
+		}
+	}
+	for _, workspace := range []string{"monitoring", "logs", "traces", "agent", "alerts"} {
+		if !workspaces[workspace] {
+			t.Errorf("missing %s Context Link: %+v", workspace, incident.ContextLinks)
+		}
+	}
+	if workspaces["devops"] {
+		t.Fatalf("DevOps Context Link exists without action record: %+v", incident.ContextLinks)
+	}
+
+	relations, err := port.Query(ctx, QueryRequest{Kind: QueryAlertRelations, IncidentID: incidentPublicID, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(relations.AlertRelations) != 2 || relations.AlertRelations[0].Cycle != 2 ||
+		relations.AlertRelations[1].Cycle != 2 {
+		t.Fatalf("current-cycle Alert relations=%+v", relations.AlertRelations)
+	}
+	relationByID := map[string]IncidentAlertRelationView{}
+	for _, relation := range relations.AlertRelations {
+		relationByID[relation.ID] = relation
+	}
+	if relationByID[firstRelationID].AlertID != firstAlertPublicID ||
+		relationByID[firstRelationID].Provenance != "owner_created" ||
+		relationByID[secondRelationID].AlertID != secondAlertPublicID ||
+		relationByID[secondRelationID].Provenance != "owner_attached" {
+		t.Fatalf("Alert relation provenance=%+v", relationByID)
+	}
+	for _, relation := range relations.AlertRelations {
+		if relation.AlertID == historicalAlertPublicID {
+			t.Fatal("historical Alert leaked into current-cycle relations")
+		}
+	}
+
+	timeline, err := port.Query(ctx, QueryRequest{Kind: QueryTimeline, IncidentID: incidentPublicID, Limit: 10})
+	if err != nil || len(timeline.Timeline) != 1 || timeline.Timeline[0].ID != currentEventID || timeline.Timeline[0].Cycle != 2 {
+		t.Fatalf("current-cycle timeline=%+v err=%v", timeline.Timeline, err)
+	}
+	evidence, err := port.Query(ctx, QueryRequest{Kind: QueryEvidence, IncidentID: incidentPublicID, Limit: 10})
+	if err != nil || len(evidence.Evidence) != 1 || evidence.Evidence[0].ID != currentEvidenceID || evidence.Evidence[0].Cycle != 2 {
+		t.Fatalf("current-cycle Evidence=%+v err=%v", evidence.Evidence, err)
+	}
+	investigations, err := port.Query(ctx, QueryRequest{Kind: QueryInvestigations, IncidentID: incidentPublicID, Limit: 10})
+	if err != nil || len(investigations.Investigations) != 1 ||
+		investigations.Investigations[0].ID != currentInvestigationID ||
+		investigations.Investigations[0].Cycle != 2 {
+		t.Fatalf("current-cycle Investigations=%+v err=%v", investigations.Investigations, err)
+	}
+	if err := validateIncidentAlertRelations(relations.AlertRelations); err != nil {
+		t.Fatalf("Alert relation transport validation: %v", err)
+	}
+	if err := validateIncidentTimeline(timeline.Timeline); err != nil {
+		t.Fatalf("timeline transport validation: %v", err)
+	}
+	if err := validateIncidentEvidence(evidence.Evidence); err != nil {
+		t.Fatalf("Evidence transport validation: %v", err)
+	}
+	if err := validateIncidentInvestigations(investigations.Investigations); err != nil {
+		t.Fatalf("Investigation transport validation: %v", err)
+	}
+}
+
 func TestMySQLTypedWorkbenchOptionalResourcesDistinguishAbsentFromMissingIncident(t *testing.T) {
 	adminDSN := os.Getenv("CLOUDOPS_TEST_MYSQL_ADMIN_DSN")
 	if adminDSN == "" {

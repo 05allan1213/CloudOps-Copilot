@@ -45,6 +45,9 @@ var (
 	verificationAdvanceKey = DispatchKey{
 		TaskType: asyncjob.TaskVerificationAdvance, SubjectType: "verification_run", Transition: "verification.advance",
 	}
+	recoveryVerifyKey = DispatchKey{
+		TaskType: asyncjob.TaskRecoveryVerify, SubjectType: "verification_run", Transition: "recovery.verify",
+	}
 )
 
 var frozenDispatchKeys = [...]DispatchKey{

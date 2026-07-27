@@ -3,30 +3,31 @@ import { onBeforeUnmount, reactive, ref } from "vue";
 import { isApiError } from "../../api/client";
 import {
   closeIncident,
-  decideRemediation,
+  decideIncidentRecovery,
   getIncident,
-  getIncidentDelivery,
+  getIncidentDecision,
   getIncidentResolutionReport,
+  listIncidentAlerts,
   listIncidentEvidence,
   listIncidentInvestigations,
-  listIncidentRemediationPlans,
-  listIncidentSignals,
   listIncidentTimeline,
   listIncidentVerifications,
   newCommandKey,
   startInvestigation,
 } from "../../api/incidents";
-import { isCurrentRequest, loadStateForStatus } from "../../models/incidents";
 import { commandFeedbackForFailure, retainCommandAttempt, type CommandAttemptIdentity, type CommandFeedback } from "../../models/commands";
+import { isCurrentRequest, loadStateForStatus } from "../../models/incidents";
 import type {
   CommandOutcome,
-  DeliveryView,
+  IncidentAlertRelationView,
+  IncidentDecisionView,
+  IncidentEvidenceView,
+  IncidentInvestigationView,
   IncidentRealtimeEvent,
+  IncidentTimelineEventView,
   IncidentView,
   LoadState,
-  RemediationPlanView,
   ResolutionReportView,
-  ResourceView,
   VerificationRunView,
 } from "../../types/incidents";
 
@@ -77,13 +78,12 @@ export function useIncidentDetail(incidentID: string) {
   const canRetryCommand = ref(false);
   const refreshing = ref(false);
   const lastUpdatedAt = ref("");
-  const signals = collectionSection<ResourceView>();
-  const timeline = collectionSection<ResourceView>();
-  const evidence = collectionSection<ResourceView>();
-  const investigations = collectionSection<ResourceView>();
-  const remediationPlans = collectionSection<RemediationPlanView>();
+  const alerts = collectionSection<IncidentAlertRelationView>();
+  const timeline = collectionSection<IncidentTimelineEventView>();
+  const evidence = collectionSection<IncidentEvidenceView>();
+  const investigations = collectionSection<IncidentInvestigationView>();
+  const decision = resourceSection<IncidentDecisionView>();
   const verifications = collectionSection<VerificationRunView>();
-  const delivery = resourceSection<DeliveryView>();
   const resolutionReport = resourceSection<ResolutionReportView>();
   const backgroundControllers = new Set<AbortController>();
   const sectionRequestIdentities = new WeakMap<object, number>();
@@ -107,22 +107,19 @@ export function useIncidentDetail(incidentID: string) {
       incident.value = nextIncident;
       pageState.value = "ready";
       await Promise.all([
-        loadCollection(identity, signals, (cursor, requestSignal) => listIncidentSignals(incidentID, cursor, requestSignal), refreshOptions(signals, preserve, signal)),
+        loadCollection(identity, alerts, (cursor, requestSignal) => listIncidentAlerts(incidentID, cursor, requestSignal), refreshOptions(alerts, preserve, signal)),
         loadCollection(identity, timeline, (cursor, requestSignal) => listIncidentTimeline(incidentID, cursor, requestSignal), timelineRefreshOptions(preserve, signal)),
         loadCollection(identity, evidence, (cursor, requestSignal) => listIncidentEvidence(incidentID, cursor, requestSignal), refreshOptions(evidence, preserve, signal)),
         loadCollection(identity, investigations, (cursor, requestSignal) => listIncidentInvestigations(incidentID, cursor, requestSignal), refreshOptions(investigations, preserve, signal)),
-        loadCollection(identity, remediationPlans, (cursor, requestSignal) => listIncidentRemediationPlans(incidentID, cursor, requestSignal), refreshOptions(remediationPlans, preserve, signal)),
+        loadResource(identity, decision, (requestSignal) => getIncidentDecision(incidentID, requestSignal), preserve, signal),
         loadCollection(identity, verifications, (cursor, requestSignal) => listIncidentVerifications(incidentID, cursor, requestSignal), refreshOptions(verifications, preserve, signal)),
-        loadResource(identity, delivery, (requestSignal) => getIncidentDelivery(incidentID, requestSignal), preserve, signal),
         loadResource(identity, resolutionReport, (requestSignal) => getIncidentResolutionReport(incidentID, requestSignal), preserve, signal),
       ]);
       if (isCurrentRequest(identity, requestIdentity)) lastUpdatedAt.value = new Date().toISOString();
     } catch (cause) {
       if (identity !== requestIdentity || signal.aborted) return;
-      pageError.value = normalizeSectionError(cause, "Failed to load Incident");
-      if (!preserve || !incident.value) {
-        pageState.value = loadStateForStatus(pageError.value.status);
-      }
+      pageError.value = normalizeSectionError(cause, "Incident 读取失败");
+      if (!preserve || !incident.value) pageState.value = loadStateForStatus(pageError.value.status);
     } finally {
       if (identity === requestIdentity) refreshing.value = false;
     }
@@ -135,54 +132,75 @@ export function useIncidentDetail(incidentID: string) {
     }
     await withBackgroundController(async (signal) => {
       const identity = requestIdentity;
-      let updated = false;
+      let updates: boolean[] = [];
       switch (resource) {
-        case "incident": {
-          try {
-            const nextIncident = await getIncident(incidentID, signal);
-            if (identity === requestIdentity && !signal.aborted) {
-              incident.value = nextIncident;
-              pageError.value = null;
-              updated = true;
-            }
-          } catch (cause) {
-            if (identity === requestIdentity && !signal.aborted) {
-              pageError.value = normalizeSectionError(cause, "Incident refresh failed");
-            }
-          }
+        case "incident":
+          updates = await Promise.all([
+            refreshIncident(identity, signal),
+            loadCollection(identity, alerts, (cursor, requestSignal) => listIncidentAlerts(incidentID, cursor, requestSignal), refreshOptions(alerts, true, signal)),
+            loadResource(identity, decision, (requestSignal) => getIncidentDecision(incidentID, requestSignal), true, signal),
+          ]);
           break;
-        }
         case "signals":
-          updated = await loadCollection(identity, signals, (cursor, requestSignal) => listIncidentSignals(incidentID, cursor, requestSignal), refreshOptions(signals, true, signal));
+          updates = await Promise.all([
+            refreshIncident(identity, signal),
+            loadCollection(identity, alerts, (cursor, requestSignal) => listIncidentAlerts(incidentID, cursor, requestSignal), refreshOptions(alerts, true, signal)),
+            loadCollection(identity, timeline, (cursor, requestSignal) => listIncidentTimeline(incidentID, cursor, requestSignal), timelineRefreshOptions(true, signal)),
+          ]);
           break;
         case "timeline":
-          updated = await loadCollection(identity, timeline, (cursor, requestSignal) => listIncidentTimeline(incidentID, cursor, requestSignal), timelineRefreshOptions(true, signal));
+          updates = [await loadCollection(identity, timeline, (cursor, requestSignal) => listIncidentTimeline(incidentID, cursor, requestSignal), timelineRefreshOptions(true, signal))];
           break;
         case "evidence":
-          updated = await loadCollection(identity, evidence, (cursor, requestSignal) => listIncidentEvidence(incidentID, cursor, requestSignal), refreshOptions(evidence, true, signal));
+          updates = [await loadCollection(identity, evidence, (cursor, requestSignal) => listIncidentEvidence(incidentID, cursor, requestSignal), refreshOptions(evidence, true, signal))];
           break;
         case "investigations":
-          updated = await loadCollection(identity, investigations, (cursor, requestSignal) => listIncidentInvestigations(incidentID, cursor, requestSignal), refreshOptions(investigations, true, signal));
+          updates = await Promise.all([
+            refreshIncident(identity, signal),
+            loadCollection(identity, investigations, (cursor, requestSignal) => listIncidentInvestigations(incidentID, cursor, requestSignal), refreshOptions(investigations, true, signal)),
+            loadResource(identity, decision, (requestSignal) => getIncidentDecision(incidentID, requestSignal), true, signal),
+          ]);
           break;
         case "remediation_plans":
-          updated = await loadCollection(identity, remediationPlans, (cursor, requestSignal) => listIncidentRemediationPlans(incidentID, cursor, requestSignal), refreshOptions(remediationPlans, true, signal));
-          break;
         case "delivery":
-          updated = await loadResource(identity, delivery, (requestSignal) => getIncidentDelivery(incidentID, requestSignal), true, signal);
+          updates = await Promise.all([
+            refreshIncident(identity, signal),
+            loadResource(identity, decision, (requestSignal) => getIncidentDecision(incidentID, requestSignal), true, signal),
+          ]);
           break;
         case "verifications":
-          updated = await loadCollection(identity, verifications, (cursor, requestSignal) => listIncidentVerifications(incidentID, cursor, requestSignal), refreshOptions(verifications, true, signal));
+          updates = await Promise.all([
+            refreshIncident(identity, signal),
+            loadCollection(identity, verifications, (cursor, requestSignal) => listIncidentVerifications(incidentID, cursor, requestSignal), refreshOptions(verifications, true, signal)),
+            loadResource(identity, decision, (requestSignal) => getIncidentDecision(incidentID, requestSignal), true, signal),
+          ]);
           break;
         case "resolution_report":
-          updated = await loadResource(identity, resolutionReport, (requestSignal) => getIncidentResolutionReport(incidentID, requestSignal), true, signal);
+          updates = await Promise.all([
+            refreshIncident(identity, signal),
+            loadResource(identity, resolutionReport, (requestSignal) => getIncidentResolutionReport(incidentID, requestSignal), true, signal),
+          ]);
           break;
       }
-      if (updated && !signal.aborted && identity === requestIdentity) {
+      if (updates.some(Boolean) && !signal.aborted && identity === requestIdentity) {
         lastUpdatedAt.value = new Date().toISOString();
         return;
       }
       if (!signal.aborted && identity === requestIdentity) throw new Error(`${resource} projection refresh failed`);
     });
+  }
+
+  async function refreshIncident(identity: number, signal: AbortSignal): Promise<boolean> {
+    try {
+      const nextIncident = await getIncident(incidentID, signal);
+      if (identity !== requestIdentity || signal.aborted) return false;
+      incident.value = nextIncident;
+      pageError.value = null;
+      return true;
+    } catch (cause) {
+      if (identity === requestIdentity && !signal.aborted) pageError.value = normalizeSectionError(cause, "Incident 刷新失败");
+      return false;
+    }
   }
 
   async function loadMore<T extends Identified>(section: Section<T[]>, loader: CollectionLoader<T>) {
@@ -202,13 +220,13 @@ export function useIncidentDetail(incidentID: string) {
     request: (idempotencyKey: string) => Promise<CommandOutcome>,
     idempotencyKey = newCommandKey(action.toLowerCase().replace(/\s+/g, "-"), resourceID),
   ): Promise<CommandOutcome> {
-    if (commandPending.value) throw new Error("Another command is already submitting");
+    if (commandPending.value) throw new Error("已有命令正在提交");
     commandPending.value = true;
     commandFeedback.value = {
       state: "submitting",
       action,
       resourceID,
-      message: "Submitting the exact versioned command…",
+      message: "正在提交精确版本命令…",
       code: "",
       httpStatus: 0,
       requestID: "",
@@ -224,9 +242,7 @@ export function useIncidentDetail(incidentID: string) {
         state: "accepted",
         action,
         resourceID,
-        message: outcome.idempotentReplay
-          ? "The server replayed the previously accepted command result."
-          : "The command was persisted and accepted for asynchronous execution.",
+        message: outcome.idempotentReplay ? "服务端返回了先前已接受命令的幂等结果。" : "命令已持久化并进入异步执行。",
         code: outcome.result.status,
         httpStatus: outcome.httpStatus,
         requestID: outcome.requestID,
@@ -263,29 +279,30 @@ export function useIncidentDetail(incidentID: string) {
   }
 
   function investigate(reason: string) {
-    if (!incident.value) throw new Error("Incident is not loaded");
+    if (!incident.value) throw new Error("Incident 尚未加载");
     const body = { expected_version: incident.value.version, reason: reason || undefined };
     return runCommand("Start Investigation", incidentID, (idempotencyKey) => startInvestigation(incidentID, body, { idempotencyKey }));
   }
 
   function close(reason: string) {
-    if (!incident.value) throw new Error("Incident is not loaded");
+    if (!incident.value) throw new Error("Incident 尚未加载");
+    if (!incident.value.recovery.can_close) throw new Error("当前恢复证明尚不允许关闭 Incident");
     const body = { expected_version: incident.value.version, reason: reason || undefined };
     return runCommand("Close Incident", incidentID, (idempotencyKey) => closeIncident(incidentID, body, { idempotencyKey }));
   }
 
-  function decide(plan: RemediationPlanView, decision: "approved" | "rejected", reason: string) {
-    if (!plan.version || !plan.canonical_plan_hash) throw new Error("Plan version and canonical hash are required");
+  function decideRecovery(reason: string) {
+    if (!incident.value) throw new Error("Incident 尚未加载");
+    if (incident.value.status !== "investigating") throw new Error("只有 Investigate 状态可以进入恢复验证");
     const body = {
-      decision,
-      expected_version: plan.version,
-      expected_hash: plan.canonical_plan_hash,
+      decision: "verify_recovery" as const,
+      expected_version: incident.value.version,
       reason,
     };
     return runCommand(
-      decision === "approved" ? "Approve Plan" : "Reject Plan",
-      plan.id,
-      (idempotencyKey) => decideRemediation(plan.id, body, { idempotencyKey }),
+      "Verify Recovery",
+      incidentID,
+      (idempotencyKey) => decideIncidentRecovery(incidentID, body, { idempotencyKey }),
     );
   }
 
@@ -315,10 +332,8 @@ export function useIncidentDetail(incidentID: string) {
       return true;
     } catch (cause) {
       if (!isCurrentSectionRequest(identity, section, sectionIdentity, options.signal)) return false;
-      section.error = normalizeSectionError(cause, "Section unavailable");
-      if (!(options.preserve && section.data.length > 0)) {
-        section.state = loadStateForStatus(section.error.status);
-      }
+      section.error = normalizeSectionError(cause, "投影读取失败");
+      if (!(options.preserve && section.data.length > 0)) section.state = loadStateForStatus(section.error.status);
       return false;
     } finally {
       if (isCurrentSectionRequest(identity, section, sectionIdentity, options.signal, true)) {
@@ -328,7 +343,7 @@ export function useIncidentDetail(incidentID: string) {
     }
   }
 
-  async function loadResource<T extends Identified>(
+  async function loadResource<T>(
     identity: number,
     section: Section<T | null>,
     loader: (signal: AbortSignal) => Promise<T | null>,
@@ -349,7 +364,7 @@ export function useIncidentDetail(incidentID: string) {
       return true;
     } catch (cause) {
       if (!isCurrentSectionRequest(identity, section, sectionIdentity, signal)) return false;
-      section.error = normalizeSectionError(cause, "Section unavailable");
+      section.error = normalizeSectionError(cause, "投影读取失败");
       if (!(preserve && section.data)) {
         section.data = null;
         section.state = section.error.status === 404 ? "empty" : loadStateForStatus(section.error.status);
@@ -361,21 +376,12 @@ export function useIncidentDetail(incidentID: string) {
   }
 
   function refreshOptions<T extends Identified>(section: Section<T[]>, preserve: boolean, signal: AbortSignal): CollectionLoadOptions {
-    return {
-      mode: preserve && section.data.length > 0 ? "prepend" : "replace",
-      preserve,
-      signal,
-    };
+    return { mode: preserve && section.data.length > 0 ? "prepend" : "replace", preserve, signal };
   }
 
   function timelineRefreshOptions(preserve: boolean, signal: AbortSignal): CollectionLoadOptions {
     const tail = preserve ? timeline.data[timeline.data.length - 1]?.id ?? "" : "";
-    return {
-      mode: tail ? "append" : "replace",
-      preserve,
-      signal,
-      cursor: tail,
-    };
+    return { mode: tail ? "append" : "replace", preserve, signal, cursor: tail };
   }
 
   function nextSectionRequest(section: object): number {
@@ -412,13 +418,6 @@ export function useIncidentDetail(incidentID: string) {
     backgroundControllers.clear();
   });
 
-  const moreSignals = () => loadMore(signals, (cursor, signal) => listIncidentSignals(incidentID, cursor, signal));
-  const moreTimeline = () => loadMore(timeline, (cursor, signal) => listIncidentTimeline(incidentID, cursor, signal));
-  const moreEvidence = () => loadMore(evidence, (cursor, signal) => listIncidentEvidence(incidentID, cursor, signal));
-  const moreInvestigations = () => loadMore(investigations, (cursor, signal) => listIncidentInvestigations(incidentID, cursor, signal));
-  const moreRemediationPlans = () => loadMore(remediationPlans, (cursor, signal) => listIncidentRemediationPlans(incidentID, cursor, signal));
-  const moreVerifications = () => loadMore(verifications, (cursor, signal) => listIncidentVerifications(incidentID, cursor, signal));
-
   return {
     incident,
     pageState,
@@ -428,25 +427,23 @@ export function useIncidentDetail(incidentID: string) {
     canRetryCommand,
     refreshing,
     lastUpdatedAt,
-    signals,
+    alerts,
     timeline,
     evidence,
     investigations,
-    remediationPlans,
-    delivery,
+    decision,
     verifications,
     resolutionReport,
     load,
     refreshResource,
-    moreSignals,
-    moreTimeline,
-    moreEvidence,
-    moreInvestigations,
-    moreRemediationPlans,
-    moreVerifications,
+    moreAlerts: () => loadMore(alerts, (cursor, signal) => listIncidentAlerts(incidentID, cursor, signal)),
+    moreTimeline: () => loadMore(timeline, (cursor, signal) => listIncidentTimeline(incidentID, cursor, signal)),
+    moreEvidence: () => loadMore(evidence, (cursor, signal) => listIncidentEvidence(incidentID, cursor, signal)),
+    moreInvestigations: () => loadMore(investigations, (cursor, signal) => listIncidentInvestigations(incidentID, cursor, signal)),
+    moreVerifications: () => loadMore(verifications, (cursor, signal) => listIncidentVerifications(incidentID, cursor, signal)),
     investigate,
+    decideRecovery,
     close,
-    decide,
     retryLastCommand,
     clearCommandFeedback,
   };
@@ -464,7 +461,7 @@ function collectionSection<T extends Identified>(): Section<T[]> {
   }) as Section<T[]>;
 }
 
-function resourceSection<T extends Identified>(): Section<T | null> {
+function resourceSection<T>(): Section<T | null> {
   return reactive({
     state: "loading",
     error: null,
@@ -484,9 +481,7 @@ function mergeAppend<T extends Identified>(current: T[], incoming: T[]): T[] {
 
 function mergePrepend<T extends Identified>(current: T[], incoming: T[]): T[] {
   const merged = new Map(incoming.map((item) => [item.id, item]));
-  for (const item of current) {
-    if (!merged.has(item.id)) merged.set(item.id, item);
-  }
+  for (const item of current) if (!merged.has(item.id)) merged.set(item.id, item);
   return [...merged.values()];
 }
 
@@ -506,7 +501,7 @@ function normalizeCommandFeedback(cause: unknown, action: string, resourceID: st
   const apiError = isApiError(cause) ? cause : null;
   return commandFeedbackForFailure({
     status: apiError?.status ?? null,
-    message: cause instanceof Error ? cause.message : "The command could not be completed.",
+    message: cause instanceof Error ? cause.message : "命令未完成。",
     code: apiError?.code,
     requestID: apiError?.requestID,
     traceID: apiError?.traceID,

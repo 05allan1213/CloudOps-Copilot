@@ -540,6 +540,11 @@ paths:
         - { $ref: "#/components/parameters/IncidentStatus" }
         - { $ref: "#/components/parameters/IncidentSeverity" }
         - { $ref: "#/components/parameters/IncidentService" }
+        - { $ref: "#/components/parameters/IncidentAttention" }
+        - { $ref: "#/components/parameters/IncidentResource" }
+        - { $ref: "#/components/parameters/IncidentAlert" }
+        - { $ref: "#/components/parameters/IncidentFrom" }
+        - { $ref: "#/components/parameters/IncidentTo" }
       responses:
         "200":
           description: Incident page
@@ -572,6 +577,17 @@ paths:
                   incident: { $ref: "#/components/schemas/Incident" }
         "501": { $ref: "#/components/responses/Problem" }
         default: { $ref: "#/components/responses/Problem" }
+  /api/v1/incidents/{id}/alerts:
+    parameters:
+      - { $ref: "#/components/parameters/PublicID" }
+    get:
+      operationId: listIncidentAlertRelations
+      description: Current-cycle Alert relations with explicit relationship provenance.
+      parameters: [{ $ref: "#/components/parameters/Cursor" }, { $ref: "#/components/parameters/Limit" }]
+      responses:
+        "200": { $ref: "#/components/responses/IncidentAlertRelationPage" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
   /api/v1/incidents/{id}/signals:
     parameters:
       - { $ref: "#/components/parameters/PublicID" }
@@ -589,7 +605,7 @@ paths:
       operationId: listIncidentTimeline
       parameters: [{ $ref: "#/components/parameters/AfterID" }, { $ref: "#/components/parameters/Limit" }]
       responses:
-        "200": { $ref: "#/components/responses/ResourcePage" }
+        "200": { $ref: "#/components/responses/IncidentTimelinePage" }
         "501": { $ref: "#/components/responses/Problem" }
         default: { $ref: "#/components/responses/Problem" }
   /api/v1/incidents/{id}/evidence:
@@ -599,7 +615,7 @@ paths:
       operationId: listIncidentEvidence
       parameters: [{ $ref: "#/components/parameters/Cursor" }, { $ref: "#/components/parameters/Limit" }]
       responses:
-        "200": { $ref: "#/components/responses/ResourcePage" }
+        "200": { $ref: "#/components/responses/IncidentEvidencePage" }
         "501": { $ref: "#/components/responses/Problem" }
         default: { $ref: "#/components/responses/Problem" }
   /api/v1/incidents/{id}/investigations:
@@ -609,7 +625,7 @@ paths:
       operationId: listInvestigations
       parameters: [{ $ref: "#/components/parameters/Cursor" }, { $ref: "#/components/parameters/Limit" }]
       responses:
-        "200": { $ref: "#/components/responses/ResourcePage" }
+        "200": { $ref: "#/components/responses/IncidentInvestigationPage" }
         "501": { $ref: "#/components/responses/Problem" }
         default: { $ref: "#/components/responses/Problem" }
     post:
@@ -623,6 +639,36 @@ paths:
         content:
           application/json:
             schema: { $ref: "#/components/schemas/VersionedCommand" }
+      responses:
+        "202": { $ref: "#/components/responses/CommandAccepted" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "413": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/incidents/{id}/decision:
+    parameters:
+      - { $ref: "#/components/parameters/PublicID" }
+    get:
+      operationId: getIncidentDecision
+      description: Current-cycle no-change or action decision projection; decision is null before one exists.
+      responses:
+        "200": { $ref: "#/components/responses/IncidentDecisionProjection" }
+        "501": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+    post:
+      operationId: decideIncidentRecovery
+      description: Local Owner command that binds the terminal current-cycle Investigation to native recovery Verification.
+      parameters:
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+        - { $ref: "#/components/parameters/Origin" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RecoveryDecisionCommand" }
       responses:
         "202": { $ref: "#/components/responses/CommandAccepted" }
         "400": { $ref: "#/components/responses/Problem" }
@@ -1407,6 +1453,26 @@ components:
       name: service
       in: query
       schema: { type: string, maxLength: 255 }
+    IncidentAttention:
+      name: attention
+      in: query
+      schema: { type: boolean }
+    IncidentResource:
+      name: resource
+      in: query
+      schema: { type: string, maxLength: 512 }
+    IncidentAlert:
+      name: alert
+      in: query
+      schema: { type: string, format: uuid }
+    IncidentFrom:
+      name: from
+      in: query
+      schema: { type: string, format: date-time }
+    IncidentTo:
+      name: to
+      in: query
+      schema: { type: string, format: date-time }
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -2273,7 +2339,20 @@ components:
     Incident:
       type: object
       additionalProperties: false
-      required: [id, cycle, status, severity, version, needs_attention, migrated_legacy, migrated_legacy_context]
+      required:
+        - id
+        - cycle
+        - status
+        - severity
+        - version
+        - needs_attention
+        - migrated_legacy
+        - migrated_legacy_context
+        - operational_context
+        - attention
+        - related_alert_count
+        - context_links
+        - recovery
       properties:
         id: { type: string, format: uuid }
         cycle: { type: integer, minimum: 1 }
@@ -2287,8 +2366,208 @@ components:
         blocking_reason_code: { type: string, maxLength: 128 }
         migrated_legacy: { type: boolean }
         migrated_legacy_context: { type: boolean }
+        operational_context: { $ref: "#/components/schemas/IncidentOperationalContext" }
+        attention: { $ref: "#/components/schemas/IncidentAttention" }
+        related_alert_count: { type: integer, minimum: 0 }
+        context_links:
+          type: array
+          maxItems: 6
+          items: { $ref: "#/components/schemas/ContextLink" }
+        decision: { $ref: "#/components/schemas/IncidentDecision" }
+        recovery: { $ref: "#/components/schemas/IncidentRecovery" }
+        first_seen_at: { type: string, format: date-time }
+        last_seen_at: { type: string, format: date-time }
+        resolved_at: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+    IncidentOperationalContext:
+      type: object
+      additionalProperties: false
+      required: [cluster, environment, namespace, service, resource, time_range]
+      properties:
+        operational_scope_id: { type: string, format: uuid }
+        cluster: { type: string, maxLength: 255 }
+        environment: { type: string, maxLength: 255 }
+        namespace: { type: string, maxLength: 255 }
+        service: { type: string, maxLength: 255 }
+        resource: { $ref: "#/components/schemas/IncidentResourceRef" }
+        time_range: { $ref: "#/components/schemas/IncidentTimeRange" }
+    IncidentResourceRef:
+      type: object
+      additionalProperties: false
+      required: [id, kind, namespace, name]
+      properties:
+        id: { type: string, maxLength: 512 }
+        kind: { type: string, maxLength: 64 }
+        namespace: { type: string, maxLength: 255 }
+        name: { type: string, maxLength: 255 }
+    IncidentTimeRange:
+      type: object
+      additionalProperties: false
+      required: [from, to]
+      properties:
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+    IncidentAttention:
+      type: object
+      additionalProperties: false
+      required: [required, stage]
+      properties:
+        required: { type: boolean }
+        reason_code: { type: string, maxLength: 128 }
+        stage: { type: string, enum: [detect, investigate, decide, act, verify, recovered, closed, unknown] }
+    IncidentRecovery:
+      type: object
+      additionalProperties: false
+      required: [state, verification_attempts, failed_verification_count, can_close]
+      properties:
+        state: { type: string, enum: [not_started, awaiting_verification, verifying, investigate, recovered] }
+        verification_attempts: { type: integer, minimum: 0 }
+        failed_verification_count: { type: integer, minimum: 0 }
+        latest_verification_id: { type: string, format: uuid }
+        latest_verification_status: { type: string, enum: [pending, running, passed, failed, inconclusive, timed_out, cancelled] }
+        common_window_started_at: { type: string, format: date-time }
+        common_window_completed_at: { type: string, format: date-time }
+        resolution_report_id: { type: string, format: uuid }
+        can_close: { type: boolean }
+    IncidentAlertRelation:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - cycle
+        - alert_id
+        - status
+        - severity
+        - summary
+        - category
+        - source
+        - cluster
+        - environment
+        - namespace
+        - service
+        - target_kind
+        - target_name
+        - first_seen_at
+        - last_seen_at
+        - provenance
+        - context_link
+        - migrated_legacy
+        - migrated_legacy_context
+        - created_at
+      properties:
+        id: { type: string, format: uuid }
+        cycle: { type: integer, minimum: 1 }
+        alert_id: { type: string, format: uuid }
+        status: { type: string, enum: [firing, resolved] }
+        severity: { type: string, enum: [unknown, info, warning, critical] }
+        summary: { type: string, maxLength: 2048 }
+        category: { type: string, maxLength: 255 }
+        source: { type: string, maxLength: 64 }
+        cluster: { type: string, maxLength: 128 }
+        environment: { type: string, maxLength: 64 }
+        namespace: { type: string, maxLength: 255 }
+        service: { type: string, maxLength: 255 }
+        target_kind: { type: string, maxLength: 64 }
+        target_name: { type: string, maxLength: 255 }
+        first_seen_at: { type: string, format: date-time }
+        last_seen_at: { type: string, format: date-time }
+        resolved_at: { type: string, format: date-time }
+        provenance: { type: string, enum: [owner_created, owner_attached, escalation_policy, legacy_automatic_ingress] }
+        configuration_revision_id: { type: string, format: uuid }
+        escalation_policy_id: { type: string, format: uuid }
+        context_link: { $ref: "#/components/schemas/ContextLink" }
+        migrated_legacy: { type: boolean }
+        migrated_legacy_context: { type: boolean }
+        created_at: { type: string, format: date-time }
+    IncidentTimelineEvent:
+      type: object
+      additionalProperties: false
+      required: [id, cycle, type, actor_type, actor_id, summary, metadata, occurred_at, migrated_legacy, migrated_legacy_context]
+      properties:
+        id: { type: string, format: uuid }
+        cycle: { type: integer, minimum: 1 }
+        type: { type: string, maxLength: 64 }
+        source_status: { type: string, maxLength: 32 }
+        target_status: { type: string, maxLength: 32 }
+        reason_code: { type: string, maxLength: 128 }
+        actor_type: { type: string, maxLength: 32 }
+        actor_id: { type: string, maxLength: 128 }
+        summary: { type: string, maxLength: 2048 }
+        metadata: { type: object }
+        occurred_at: { type: string, format: date-time }
+        migrated_legacy: { type: boolean }
+        migrated_legacy_context: { type: boolean }
+    IncidentEvidence:
+      type: object
+      additionalProperties: false
+      required: [id, cycle, type, source, resource_ref, summary, content_hash, valid, truncated, collected_at, context_link, migrated_legacy, migrated_legacy_context]
+      properties:
+        id: { type: string, format: uuid }
+        cycle: { type: integer, minimum: 1 }
+        type: { type: string, maxLength: 64 }
+        source: { type: string, maxLength: 128 }
+        producer_type: { type: string, maxLength: 64 }
+        producer_id: { type: string, maxLength: 128 }
+        producer_version: { type: string, maxLength: 128 }
+        tool_name: { type: string, maxLength: 128 }
+        resource_ref: { type: string, maxLength: 1024 }
+        time_range: { type: object }
+        query_text: { type: string, maxLength: 4096 }
+        summary: { type: string, maxLength: 4096 }
+        content_hash: { $ref: "#/components/schemas/SHA256" }
+        provenance: { type: object }
+        valid: { type: boolean }
+        truncated: { type: boolean }
+        collected_at: { type: string, format: date-time }
+        observed_at: { type: string, format: date-time }
+        context_link: { $ref: "#/components/schemas/ContextLink" }
+        migrated_legacy: { type: boolean }
+        migrated_legacy_context: { type: boolean }
+    IncidentInvestigation:
+      type: object
+      additionalProperties: false
+      required: [id, cycle, status, version, objective, failure_summary, prompt_version, used_steps, max_steps, created_at, updated_at, context_link, migrated_legacy, migrated_legacy_context]
+      properties:
+        id: { type: string, format: uuid }
+        cycle: { type: integer, minimum: 1 }
+        status: { type: string, enum: [pending, running, completed, failed, cancelled] }
+        version: { type: integer, minimum: 1 }
+        objective: { type: string, maxLength: 2048 }
+        outcome: { type: string, maxLength: 32 }
+        failure_code: { type: string, maxLength: 128 }
+        failure_summary: { type: string, maxLength: 2048 }
+        model_provider: { type: string, maxLength: 64 }
+        actual_model: { type: string, maxLength: 128 }
+        prompt_version: { type: string, maxLength: 128 }
+        used_steps: { type: integer, minimum: 0 }
+        max_steps: { type: integer, minimum: 1 }
+        started_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        context_link: { $ref: "#/components/schemas/ContextLink" }
+        migrated_legacy: { type: boolean }
+        migrated_legacy_context: { type: boolean }
+    IncidentDecision:
+      type: object
+      additionalProperties: false
+      required: [cycle, kind, status, summary]
+      properties:
+        cycle: { type: integer, minimum: 1 }
+        kind: { type: string, enum: [pending, no_change, action, recovery] }
+        status: { type: string, maxLength: 64 }
+        summary: { type: string, maxLength: 2048 }
+        investigation_id: { type: string, format: uuid }
+        remediation_plan_id: { type: string, format: uuid }
+        decision_id: { type: string, format: uuid }
+        decision: { type: string, maxLength: 64 }
+        reason: { type: string, maxLength: 1024 }
+        actor: { type: string, maxLength: 128 }
+        delivery_id: { type: string, format: uuid }
+        verification_id: { type: string, format: uuid }
+        context_link: { $ref: "#/components/schemas/ContextLink" }
+        decided_at: { type: string, format: date-time }
     Resource:
       type: object
       additionalProperties: false
@@ -2561,10 +2840,11 @@ components:
         cycle: { type: integer, minimum: 1 }
         status: { type: string, enum: [pending, running, passed, failed, inconclusive, timed_out, cancelled] }
         version: { type: integer, minimum: 1 }
-        trigger_type: { type: string, enum: [post_delivery, no_change_signal] }
+        trigger_type: { type: string, enum: [post_delivery, no_change_signal, operational_recovery] }
         remediation_plan_id: { type: string, format: uuid }
         change_request_id: { type: string, format: uuid }
         trigger_signal_id: { type: string, format: uuid }
+        recovery_provenance: { $ref: "#/components/schemas/RecoveryProvenance" }
         attempt: { type: integer, minimum: 1 }
         profile: { $ref: "#/components/schemas/VerificationProfile" }
         revisions: { $ref: "#/components/schemas/VerificationRevisions" }
@@ -2588,19 +2868,27 @@ components:
       additionalProperties: false
       required: [id, version, hash, contract_version]
       properties:
-        id: { type: string, enum: [golden-required-env/v1, no-change/v1] }
+        id: { type: string, enum: [golden-required-env/v1, no-change/v1, operational-recovery/v1] }
         version: { type: integer, minimum: 1 }
         hash: { $ref: "#/components/schemas/SHA256" }
         contract_version: { type: integer, minimum: 1 }
     VerificationRevisions:
       type: object
       additionalProperties: false
-      required: [target_revision, source_revision, image_digest, gitops_revision]
       properties:
         target_revision: { $ref: "#/components/schemas/GitObjectID" }
         source_revision: { $ref: "#/components/schemas/GitObjectID" }
         image_digest: { type: string, pattern: "^sha256:[0-9a-f]{64}$" }
         gitops_revision: { $ref: "#/components/schemas/GitObjectID" }
+    RecoveryProvenance:
+      type: object
+      additionalProperties: false
+      required: [configuration_revision_id, operational_scope_id, investigation_id, decision_id]
+      properties:
+        configuration_revision_id: { type: string, format: uuid }
+        operational_scope_id: { type: string, format: uuid }
+        investigation_id: { type: string, format: uuid }
+        decision_id: { type: string, format: uuid }
     VerificationCommonWindow:
       type: object
       additionalProperties: false
@@ -2756,7 +3044,7 @@ components:
         kind: { type: string, const: resolution_report }
         status: { type: string, const: resolved }
         cycle: { type: integer, minimum: 1 }
-        trigger_type: { type: string, enum: [post_delivery, no_change_signal] }
+        trigger_type: { type: string, enum: [post_delivery, no_change_signal, operational_recovery] }
         resolution_reason: { type: string, maxLength: 64 }
         service: { type: string, maxLength: 255 }
         workload: { type: string, maxLength: 255 }
@@ -2769,6 +3057,7 @@ components:
         measured_duration_ms: { type: integer, minimum: 0 }
         generated_at: { type: string, format: date-time }
         revisions: { $ref: "#/components/schemas/ResolutionRevisions" }
+        recovery_provenance: { $ref: "#/components/schemas/RecoveryProvenance" }
         verification_profile: { $ref: "#/components/schemas/ResolutionVerificationProfile" }
         stability: { $ref: "#/components/schemas/ResolutionStability" }
         trigger_signal: { type: object }
@@ -2784,7 +3073,6 @@ components:
     ResolutionRevisions:
       type: object
       additionalProperties: false
-      required: [source_revision, image_digest, gitops_revision]
       properties:
         bad_gitops_revision: { $ref: "#/components/schemas/GitObjectID" }
         fix_gitops_revision: { $ref: "#/components/schemas/GitObjectID" }
@@ -3026,6 +3314,14 @@ components:
         expected_version: { type: integer, minimum: 1 }
         expected_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
         reason: { type: string, minLength: 1, maxLength: 1024 }
+    RecoveryDecisionCommand:
+      type: object
+      additionalProperties: false
+      required: [decision, expected_version, reason]
+      properties:
+        decision: { type: string, enum: [verify_recovery] }
+        expected_version: { type: integer, minimum: 1 }
+        reason: { type: string, minLength: 1, maxLength: 1024 }
     ExactAuthorization:
       type: object
       additionalProperties: false
@@ -3061,6 +3357,69 @@ components:
           minItems: 1
           items: { type: string }
   responses:
+    IncidentAlertRelationPage:
+      description: Bounded current-cycle Alert relation page with provenance
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [items]
+            properties:
+              items:
+                type: array
+                maxItems: 100
+                items: { $ref: "#/components/schemas/IncidentAlertRelation" }
+              next_cursor: { type: string, format: uuid }
+    IncidentTimelinePage:
+      description: Bounded current-cycle Incident timeline page
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [items]
+            properties:
+              items:
+                type: array
+                maxItems: 100
+                items: { $ref: "#/components/schemas/IncidentTimelineEvent" }
+              next_cursor: { type: string, format: uuid }
+    IncidentEvidencePage:
+      description: Bounded current-cycle attributable Evidence page
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [items]
+            properties:
+              items:
+                type: array
+                maxItems: 100
+                items: { $ref: "#/components/schemas/IncidentEvidence" }
+              next_cursor: { type: string, format: uuid }
+    IncidentInvestigationPage:
+      description: Bounded current-cycle Agent Investigation page
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [items]
+            properties:
+              items:
+                type: array
+                maxItems: 100
+                items: { $ref: "#/components/schemas/IncidentInvestigation" }
+              next_cursor: { type: string, format: uuid }
+    IncidentDecisionProjection:
+      description: Current-cycle decision projection; decision is null before one exists
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [decision]
+            properties:
+              decision:
+                allOf: [{ $ref: "#/components/schemas/IncidentDecision" }]
+                nullable: true
     ResourcePage:
       description: Bounded resource page
       content:

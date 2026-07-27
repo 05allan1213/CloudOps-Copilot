@@ -20,6 +20,15 @@ export interface IncidentView {
   blocking_reason_code?: string;
   migrated_legacy: boolean;
   migrated_legacy_context: boolean;
+  operational_context: IncidentOperationalContextView;
+  attention: IncidentAttentionView;
+  related_alert_count: number;
+  context_links: IncidentContextLinkView[];
+  decision?: IncidentDecisionView;
+  recovery: IncidentRecoveryView;
+  first_seen_at?: string;
+  last_seen_at?: string;
+  resolved_at?: string;
   created_at?: string;
   updated_at?: string;
 }
@@ -45,6 +54,161 @@ export type JSONValue =
   | string
   | JSONValue[]
   | { [key: string]: JSONValue };
+
+export interface IncidentResourceRefView {
+  id: string;
+  kind: string;
+  namespace: string;
+  name: string;
+}
+
+export interface IncidentTimeRangeView {
+  from: string;
+  to: string;
+}
+
+export interface IncidentOperationalContextView {
+  operational_scope_id?: string;
+  cluster: string;
+  environment: string;
+  namespace: string;
+  service: string;
+  resource: IncidentResourceRefView;
+  time_range: IncidentTimeRangeView;
+}
+
+export interface IncidentContextLinkView {
+  workspace: "monitoring" | "logs" | "traces" | "agent" | "alerts" | "devops";
+  path: string;
+  query: Record<string, string>;
+  operational_scope_id: string;
+  external: false;
+}
+
+export interface IncidentAttentionView {
+  required: boolean;
+  reason_code?: string;
+  stage: "detect" | "investigate" | "decide" | "act" | "verify" | "recovered" | "closed" | "unknown";
+}
+
+export interface IncidentRecoveryView {
+  state: "not_started" | "awaiting_verification" | "verifying" | "investigate" | "recovered";
+  verification_attempts: number;
+  failed_verification_count: number;
+  latest_verification_id?: string;
+  latest_verification_status?: string;
+  common_window_started_at?: string;
+  common_window_completed_at?: string;
+  resolution_report_id?: string;
+  can_close: boolean;
+}
+
+export interface IncidentAlertRelationView {
+  id: string;
+  cycle: number;
+  alert_id: string;
+  status: "firing" | "resolved";
+  severity: IncidentSeverity;
+  summary: string;
+  category: string;
+  source: string;
+  cluster: string;
+  environment: string;
+  namespace: string;
+  service: string;
+  target_kind: string;
+  target_name: string;
+  first_seen_at: string;
+  last_seen_at: string;
+  resolved_at?: string;
+  provenance: "owner_created" | "owner_attached" | "escalation_policy" | "legacy_automatic_ingress";
+  configuration_revision_id?: string;
+  escalation_policy_id?: string;
+  context_link: IncidentContextLinkView;
+  migrated_legacy: boolean;
+  migrated_legacy_context: boolean;
+  created_at: string;
+}
+
+export interface IncidentTimelineEventView {
+  id: string;
+  cycle: number;
+  type: string;
+  source_status?: string;
+  target_status?: string;
+  reason_code?: string;
+  actor_type: string;
+  actor_id: string;
+  summary: string;
+  metadata: JSONValue;
+  occurred_at: string;
+  migrated_legacy: boolean;
+  migrated_legacy_context: boolean;
+}
+
+export interface IncidentEvidenceView {
+  id: string;
+  cycle: number;
+  type: string;
+  source: string;
+  producer_type?: string;
+  producer_id?: string;
+  producer_version?: string;
+  tool_name?: string;
+  resource_ref: string;
+  time_range?: JSONValue;
+  query_text?: string;
+  summary: string;
+  content_hash: string;
+  provenance?: JSONValue;
+  valid: boolean;
+  truncated: boolean;
+  collected_at: string;
+  observed_at?: string;
+  context_link: IncidentContextLinkView;
+  migrated_legacy: boolean;
+  migrated_legacy_context: boolean;
+}
+
+export interface IncidentInvestigationView {
+  id: string;
+  cycle: number;
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  version: number;
+  objective: string;
+  outcome?: string;
+  failure_code?: string;
+  failure_summary?: string;
+  model_provider?: string;
+  actual_model?: string;
+  prompt_version: string;
+  used_steps: number;
+  max_steps: number;
+  started_at?: string;
+  completed_at?: string;
+  created_at: string;
+  updated_at: string;
+  context_link: IncidentContextLinkView;
+  migrated_legacy: boolean;
+  migrated_legacy_context: boolean;
+}
+
+export interface IncidentDecisionView {
+  cycle: number;
+  kind: "pending" | "no_change" | "action" | "recovery";
+  status: string;
+  summary: string;
+  investigation_id?: string;
+  remediation_plan_id?: string;
+  decision_id?: string;
+  decision?: string;
+  reason?: string;
+  actor?: string;
+  delivery_id?: string;
+  verification_id?: string;
+  context_link?: IncidentContextLinkView;
+  decided_at?: string;
+}
 
 export interface RemediationTargetResourceView {
   api_version: string;
@@ -260,10 +424,11 @@ export interface VerificationRunView {
   cycle: number;
   status: string;
   version: number;
-  trigger_type: "post_delivery" | "no_change_signal";
+  trigger_type: "post_delivery" | "no_change_signal" | "operational_recovery";
   remediation_plan_id?: string;
   change_request_id?: string;
   trigger_signal_id?: string;
+  recovery_provenance?: RecoveryProvenanceView;
   attempt: number;
   profile: {
     id: string;
@@ -272,10 +437,10 @@ export interface VerificationRunView {
     contract_version: number;
   };
   revisions: {
-    target_revision: string;
-    source_revision: string;
-    image_digest: string;
-    gitops_revision: string;
+    target_revision?: string;
+    source_revision?: string;
+    image_digest?: string;
+    gitops_revision?: string;
   };
   started_at?: string;
   deadline_at: string;
@@ -299,7 +464,7 @@ export interface ResolutionReportView {
   kind: "resolution_report";
   status: "resolved";
   cycle: number;
-  trigger_type: "post_delivery" | "no_change_signal";
+  trigger_type: "post_delivery" | "no_change_signal" | "operational_recovery";
   resolution_reason: string;
   service: string;
   workload: string;
@@ -314,10 +479,11 @@ export interface ResolutionReportView {
   revisions: {
     bad_gitops_revision?: string;
     fix_gitops_revision?: string;
-    source_revision: string;
-    image_digest: string;
-    gitops_revision: string;
+    source_revision?: string;
+    image_digest?: string;
+    gitops_revision?: string;
   };
+  recovery_provenance?: RecoveryProvenanceView;
   verification_profile: {
     id: string;
     hash: string;
@@ -379,6 +545,18 @@ export interface DecisionCommand extends VersionedCommand {
   reason: string;
 }
 
+export interface RecoveryDecisionCommand extends VersionedCommand {
+  decision: "verify_recovery";
+  reason: string;
+}
+
+export interface RecoveryProvenanceView {
+  configuration_revision_id: string;
+  operational_scope_id: string;
+  investigation_id: string;
+  decision_id: string;
+}
+
 export interface IncidentRealtimeEvent {
   cursor: string;
   incident_id: string;
@@ -398,6 +576,11 @@ export interface IncidentListQuery {
   status?: IncidentStatus;
   severity?: IncidentSeverity;
   service?: string;
+  attention?: boolean;
+  resource?: string;
+  alert?: string;
+  from?: string;
+  to?: string;
   limit?: number;
   cursor?: string;
 }

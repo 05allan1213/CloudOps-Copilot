@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -30,22 +31,26 @@ type VerificationAdvanceSnapshot struct {
 
 	// Durable identity copied from verification_runs. These fields are kept out
 	// of verification.Run for compatibility with the legacy repository model.
-	CycleNo               uint32
-	IncidentVersion       uint64
-	IncidentStatus        string
-	TriggerType           string
-	TriggerSignalID       uint64
-	RemediationPlanID     uint64
-	ChangeRequestID       uint64
-	SourceRevision        string
-	ImageDigest           string
-	GitOpsRevision        string
-	ProfileID             string
-	ProfileHash           string
-	ContractVersion       int
-	CommonStabilityWindow time.Duration
-	MigratedLegacy        bool
-	MigratedLegacyContext bool
+	CycleNo                 uint32
+	IncidentVersion         uint64
+	IncidentStatus          string
+	TriggerType             string
+	TriggerSignalID         uint64
+	ConfigurationRevisionID uint64
+	OperationalScopeID      uint64
+	InvestigationRunID      uint64
+	DecisionEventID         uint64
+	RemediationPlanID       uint64
+	ChangeRequestID         uint64
+	SourceRevision          string
+	ImageDigest             string
+	GitOpsRevision          string
+	ProfileID               string
+	ProfileHash             string
+	ContractVersion         int
+	CommonStabilityWindow   time.Duration
+	MigratedLegacy          bool
+	MigratedLegacyContext   bool
 }
 
 type VerificationAdvanceReader interface {
@@ -63,18 +68,29 @@ type VerificationAdvanceConfig struct {
 }
 
 func NewVerificationAdvance(config VerificationAdvanceConfig) (Operation, error) {
+	return newVerificationOperation(config, verificationAdvanceKey)
+}
+
+// NewRecoveryVerify reuses the frozen Verification evaluator while preserving
+// the operational recovery dispatch identity across every durable retry.
+func NewRecoveryVerify(config VerificationAdvanceConfig) (Operation, error) {
+	return newVerificationOperation(config, recoveryVerifyKey)
+}
+
+func newVerificationOperation(config VerificationAdvanceConfig, key DispatchKey) (Operation, error) {
 	if config.Reader == nil || config.Store == nil {
-		return nil, errors.New("verification.advance requires observation reader and durable store")
+		return nil, fmt.Errorf("%s requires observation reader and durable store", key.Transition)
 	}
 	if config.Now == nil {
 		config.Now = func() time.Time { return time.Now().UTC() }
 	}
-	operation := &verificationAdvanceOperation{cfg: config}
+	operation := &verificationAdvanceOperation{cfg: config, key: key}
 	return operation.handle, nil
 }
 
 type verificationAdvanceOperation struct {
 	cfg VerificationAdvanceConfig
+	key DispatchKey
 }
 
 type verificationAdvancePayload struct {
@@ -85,10 +101,10 @@ type verificationAdvancePayload struct {
 
 func (o *verificationAdvanceOperation) handle(ctx context.Context, execution asyncjob.Execution) asyncjob.Result {
 	task := execution.Task
-	if dispatchKey(task) != verificationAdvanceKey || task.SubjectID == 0 || task.CycleNo == 0 ||
+	if dispatchKey(task) != o.key || task.SubjectID == 0 || task.CycleNo == 0 ||
 		task.ExpectedSubjectVersion == 0 || task.PayloadSchemaVersion != verificationAdvancePayloadSchema ||
 		execution.Lease.TaskID != task.ID || execution.Lease.ExpectedSubjectVersion != task.ExpectedSubjectVersion {
-		return asyncjob.Dead("invalid_task_subject", "verification.advance task identity is invalid", nil)
+		return asyncjob.Dead("invalid_task_subject", o.key.Transition+" task identity is invalid", nil)
 	}
 	payload, err := decodeVerificationAdvancePayload(task)
 	if err != nil {

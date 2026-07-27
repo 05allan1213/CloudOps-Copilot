@@ -349,8 +349,10 @@ SELECT vr.id, vr.public_id, vr.cycle_no, vr.status, vr.row_version,
        vr.trigger_type, p.public_id, cr.public_id, s.public_id, vr.attempt,
        vr.verification_profile_id, vr.verification_profile_version,
        vr.verification_profile_hash, vr.verification_contract_version,
-       vr.target_revision, vr.source_revision, vr.image_digest,
-       vr.gitops_revision, vr.started_at, vr.deadline_at, vr.completed_at,
+	       vr.target_revision, vr.source_revision, vr.image_digest,
+	       vr.gitops_revision, configuration.public_id, scope.public_id,
+	       investigation.public_id, recovery_decision.public_id,
+	       vr.started_at, vr.deadline_at, vr.completed_at,
        vr.common_stability_window_ms, vr.common_success_since,
        vr.common_window_completed_at, vr.result_summary, vr.failure_reason,
 	       vr.created_at, vr.updated_at, vr.migrated_legacy, vr.migrated_legacy_context
@@ -367,6 +369,20 @@ LEFT JOIN incident_signals s
   ON s.id = vr.trigger_signal_id
  AND s.incident_id = vr.incident_id
  AND s.cycle_no = vr.cycle_no
+LEFT JOIN configuration_revisions configuration
+  ON configuration.id = vr.configuration_revision_id
+LEFT JOIN operational_scopes scope
+  ON scope.id = vr.operational_scope_id
+ AND scope.configuration_revision_id = vr.configuration_revision_id
+LEFT JOIN agent_runs investigation
+  ON investigation.id = vr.originating_agent_run_id
+ AND investigation.incident_id = vr.incident_id
+ AND investigation.cycle_no = vr.cycle_no
+LEFT JOIN incident_events recovery_decision
+  ON recovery_decision.id = vr.decision_event_id
+ AND recovery_decision.incident_id = vr.incident_id
+ AND recovery_decision.cycle_no = vr.cycle_no
+ AND recovery_decision.event_type = 'incident_recovery_decided'
 WHERE %s
 ORDER BY vr.created_at DESC, vr.id DESC
 LIMIT ?`
@@ -377,6 +393,14 @@ type mysqlVerificationRunProjection struct {
 	RemediationPlanID    sql.NullString
 	ChangeRequestID      sql.NullString
 	TriggerSignalID      sql.NullString
+	ConfigurationID      sql.NullString
+	OperationalScopeID   sql.NullString
+	InvestigationID      sql.NullString
+	RecoveryDecisionID   sql.NullString
+	TargetRevision       sql.NullString
+	SourceRevision       sql.NullString
+	ImageDigest          sql.NullString
+	GitOpsRevision       sql.NullString
 	StartedAt            sql.NullTime
 	CompletedAt          sql.NullTime
 	CommonSuccessSince   sql.NullTime
@@ -460,8 +484,8 @@ func scanVerificationRunProjection(scanner workbenchScanner) (mysqlVerificationR
 		&view.TriggerType, &row.RemediationPlanID, &row.ChangeRequestID,
 		&row.TriggerSignalID, &view.Attempt, &view.Profile.ID,
 		&view.Profile.Version, &view.Profile.Hash, &view.Profile.ContractVersion,
-		&view.Revisions.TargetRevision, &view.Revisions.SourceRevision,
-		&view.Revisions.ImageDigest, &view.Revisions.GitOpsRevision,
+		&row.TargetRevision, &row.SourceRevision, &row.ImageDigest, &row.GitOpsRevision,
+		&row.ConfigurationID, &row.OperationalScopeID, &row.InvestigationID, &row.RecoveryDecisionID,
 		&row.StartedAt, &view.DeadlineAt, &row.CompletedAt,
 		&view.CommonWindow.StabilityWindowMS, &row.CommonSuccessSince,
 		&row.CommonWindowComplete, &view.ResultSummary, &view.FailureReason,
@@ -473,6 +497,18 @@ func scanVerificationRunProjection(scanner workbenchScanner) (mysqlVerificationR
 	view.RemediationPlanID = nullStringValue(row.RemediationPlanID)
 	view.ChangeRequestID = nullStringValue(row.ChangeRequestID)
 	view.TriggerSignalID = nullStringValue(row.TriggerSignalID)
+	view.Revisions = VerificationRevisionsView{
+		TargetRevision: nullStringValue(row.TargetRevision), SourceRevision: nullStringValue(row.SourceRevision),
+		ImageDigest: nullStringValue(row.ImageDigest), GitOpsRevision: nullStringValue(row.GitOpsRevision),
+	}
+	if view.TriggerType == "operational_recovery" {
+		view.RecoveryProvenance = &RecoveryProvenanceView{
+			ConfigurationRevisionID: nullStringValue(row.ConfigurationID),
+			OperationalScopeID:      nullStringValue(row.OperationalScopeID),
+			InvestigationID:         nullStringValue(row.InvestigationID),
+			DecisionID:              nullStringValue(row.RecoveryDecisionID),
+		}
+	}
 	view.StartedAt = nullTimePointer(row.StartedAt)
 	view.CompletedAt = nullTimePointer(row.CompletedAt)
 	view.CommonWindow.SuccessSince = nullTimePointer(row.CommonSuccessSince)

@@ -71,14 +71,14 @@ export function verificationDisplayState(status?: string): VerificationDisplaySt
 export function verificationStateLabel(status?: string): string {
   const labels: Record<VerificationDisplayState, string> = {
     not_run: "NOT RUN",
-    pending: "Pending",
-    running: "Running",
-    passed: "Passed",
-    failed: "Failed",
-    timed_out: "Timed out",
-    inconclusive: "Inconclusive",
-    cancelled: "Cancelled",
-    unavailable: "Unavailable",
+    pending: "等待执行",
+    running: "执行中",
+    passed: "已通过",
+    failed: "未通过",
+    timed_out: "已超时",
+    inconclusive: "无明确结论",
+    cancelled: "已取消",
+    unavailable: "暂不可用",
   };
   return labels[verificationDisplayState(status)];
 }
@@ -120,7 +120,7 @@ export function stabilityProgress(run: VerificationRunView, nowMs = Date.now()):
     elapsedMs,
     requiredMs,
     percent,
-    label: `${Math.round(elapsedMs / 1000)}s / ${Math.round(requiredMs / 1000)}s required`,
+    label: `${Math.round(elapsedMs / 1000)}s / 要求 ${Math.round(requiredMs / 1000)}s`,
     source,
   };
 }

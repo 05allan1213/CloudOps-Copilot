@@ -23,12 +23,12 @@ const props = defineProps<{
 }>();
 
 const realtimeDefinition = computed<{ label: string; tone: string; icon: Component }>(() => {
-  if (props.realtimeState === "connected") return { label: "Live", tone: "success", icon: markRaw(CircleCheckFilled) };
+  if (props.realtimeState === "connected") return { label: "实时", tone: "success", icon: markRaw(CircleCheckFilled) };
   if (props.realtimeState === "connecting" || props.realtimeState === "reconnecting") {
-    return { label: props.realtimeState === "connecting" ? "Connecting" : "Reconnecting", tone: "warning", icon: markRaw(Loading) };
+    return { label: props.realtimeState === "connecting" ? "连接中" : "重连中", tone: "warning", icon: markRaw(Loading) };
   }
-  if (props.realtimeState === "disconnected") return { label: "Disconnected", tone: "neutral", icon: markRaw(CircleCloseFilled) };
-  return { label: "Realtime", tone: "neutral", icon: markRaw(Connection) };
+  if (props.realtimeState === "disconnected") return { label: "已断开", tone: "neutral", icon: markRaw(CircleCloseFilled) };
+  return { label: "实时状态", tone: "neutral", icon: markRaw(Connection) };
 });
 
 const projectionUpdatedAt = computed(() => props.lastUpdatedAt || props.incident.updated_at);
@@ -41,15 +41,15 @@ const projectionUpdatedAt = computed(() => props.lastUpdatedAt || props.incident
         <div class="identity-badges">
           <SeverityBadge :severity="incident.severity" />
           <IncidentStatusBadge :status="incident.status" />
-          <AttentionFlag :active="incident.needs_attention" />
+          <AttentionFlag :active="incident.attention.required" />
         </div>
         <p class="incident-id">
           Incident <code translate="no">{{ incident.id }}</code>
         </p>
-        <h1>{{ incident.summary || "Incident cycle in progress" }}</h1>
+        <h1>{{ incident.summary || "Incident Cycle 进行中" }}</h1>
         <p class="identity-context">
-          Cycle {{ incident.cycle }} · Version {{ incident.version }}
-          <span v-if="incident.migrated_legacy_context"> · Legacy context is audit-only</span>
+          Cycle {{ incident.cycle }} · 版本 {{ incident.version }}
+          <span v-if="incident.migrated_legacy_context"> · 迁移的 legacy context 仅用于审计</span>
         </p>
       </div>
 
@@ -72,26 +72,26 @@ const projectionUpdatedAt = computed(() => props.lastUpdatedAt || props.incident
           role="status"
           aria-live="polite"
         >
-          Updating projections…
+          正在更新投影…
         </span>
       </div>
     </div>
 
     <dl class="header-facts">
       <div>
-        <dt>Blocking Reason</dt>
-        <dd>{{ incident.needs_attention ? humanizeCode(incident.blocking_reason_code) : "No blocking reason" }}</dd>
+        <dt>当前阶段</dt>
+        <dd>{{ incident.attention.stage }}<template v-if="incident.attention.required"> · {{ humanizeCode(incident.attention.reason_code) }}</template></dd>
       </div>
       <div>
-        <dt>Created</dt>
-        <dd><time :datetime="incident.created_at">{{ formatIncidentTime(incident.created_at) }}</time></dd>
+        <dt>关联 Alert</dt>
+        <dd>{{ incident.related_alert_count }}</dd>
       </div>
       <div>
-        <dt>Incident Updated</dt>
-        <dd><time :datetime="incident.updated_at">{{ formatIncidentTime(incident.updated_at) }}</time></dd>
+        <dt>恢复状态</dt>
+        <dd>{{ incident.recovery.state }} · {{ incident.recovery.verification_attempts }} 次尝试</dd>
       </div>
       <div>
-        <dt>Projection Refreshed</dt>
+        <dt>投影刷新</dt>
         <dd><time :datetime="projectionUpdatedAt">{{ formatIncidentTime(projectionUpdatedAt) }}</time></dd>
       </div>
     </dl>

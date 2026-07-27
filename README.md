@@ -1,6 +1,6 @@
 # CloudOps-Copilot
 
-CloudOps-Copilot 是运行在本机 Kubernetes 上的云原生运维工作台。当前可运行基线以 Incident 为入口，把 MySQL 中保留的 Signal、Timeline、Evidence、Investigation、Remediation、Delivery 与 Verification 投影到同一个 Workbench，并通过唯一的 `/api/v1` 合同读写。
+CloudOps-Copilot 是运行在本机 Kubernetes 上的统一云原生运维平台。各 Workspace 通过唯一的 `/api/v1` 合同共享 Operational Scope 与 Context Link；Incident 负责协调关联 Alert、Investigation、decision、Verification 与恢复证明，而不再承载整个产品。
 
 当前实施权威是 [CloudOps 全栈实施规范](docs/CloudOps-Implementation-Spec.md) 与 [实施任务书](docs/CloudOps-Implementation-Taskbook.md)。[实施状态](docs/evidence/cloudops-implementation-status.md) 记录逐任务的 `PASS`、`FAIL` 和 `NOT RUN`。带产品代际标签的旧设计、报告和 ADR 只保留为历史迁移输入，不描述当前产品合同。
 
@@ -8,7 +8,7 @@ CloudOps-Copilot 是运行在本机 Kubernetes 上的云原生运维工作台。
 
 - Local Owner 模式：应用只通过 `127.0.0.1` port-forward 暴露，无登录、session 或浏览器 token。
 - 单一 V1 API：OpenAPI 位于 [`docs/api-v1-openapi.yaml`](docs/api-v1-openapi.yaml)，实现位于 `internal/api`。
-- Incident Workbench：当前产品路由为 `/incidents` 与 `/incidents/:incidentId`，直接读取 MySQL projection。
+- Incident 协调：`/incidents` 与 `/incidents/:incidentId` 直接读取 MySQL 当前 Cycle projection，并通过 Context Link 返回独立 Workspace。
 - 独立进程：`cloudops-api`、`cloudops-worker`、`cloudops-migrate`；API 不运行后台 Provider 工作。
 - 单一语义数据基线：`migrations/00001_cloudops_baseline.sql`；旧本地领域数据经一次性转换保留。
 - 可恢复本地生命周期：kind、Helm、MySQL、备份、恢复、重启和诊断都由顶层 `make local-*` 管理。
@@ -88,7 +88,7 @@ internal/asyncjob/      MySQL-backed task runtime
 internal/bootstrap/     process composition and Provider gateway
 internal/infra/         Provider and persistence adapters
 migrations/             one semantic baseline
-frontend/               Vue Incident Workbench
+frontend/               Vue CloudOps Web 应用
 charts/cloudops/        sole deployable Helm chart
 runbooks/               bounded investigation knowledge
 scripts/                lifecycle and contract checks

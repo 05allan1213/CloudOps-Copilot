@@ -30,24 +30,36 @@ const emit = defineEmits<{ retry: [] }>();
 const missingSections = computed(() => {
   if (!props.report) return [];
   const missing: string[] = [];
-  if (props.report.diagnosis === null) missing.push("Diagnosis is not present in this report.");
-  if (props.report.remediation_plan === null) missing.push("No remediation Plan is present; this may be a no-change recovery.");
-  if (props.report.remediation_decision === null) missing.push("No remediation Decision is present.");
-  if (props.report.delivery === null) missing.push("No Delivery is present; this report does not imply an external write.");
+  if (props.report.diagnosis === null) missing.push("此报告没有 Diagnosis。");
+  if (props.report.trigger_type !== "operational_recovery") {
+    if (props.report.remediation_plan === null) missing.push("没有 remediation Plan；这可能是无变更恢复。");
+    if (props.report.remediation_decision === null) missing.push("没有 remediation Decision。");
+    if (props.report.delivery === null) missing.push("没有 Delivery；此报告不代表发生过外部写入。");
+  }
   return missing;
 });
+
+function reportCodeLabel(value: string): string {
+  return ({
+    no_change_signal: "无变更信号",
+    post_delivery: "Delivery 后验证",
+    operational_recovery: "运行恢复验证",
+    verification_passed: "Verification 已通过",
+    recovered: "已证明恢复",
+  } as Record<string, string>)[value] ?? value.replace(/_/g, " ");
+}
 </script>
 
 <template>
   <IncidentSectionShell
     id="resolution-report"
-    title="Resolution Report"
+    title="ResolutionReport"
     :state="state"
     :error="error"
     :refreshing="refreshing"
     :retryable="true"
-    empty-text="No immutable ResolutionReport exists. Recovery is not presented as resolved."
-    projection-note="The report is exposed only when the latest persisted VerificationRun is passed."
+    empty-text="尚无不可变 ResolutionReport，因此不会把恢复显示为已证明。"
+    projection-note="仅当最新持久化 VerificationRun 通过后才公开此报告。"
     @retry="emit('retry')"
   >
     <div
@@ -55,8 +67,8 @@ const missingSections = computed(() => {
       class="report-withheld"
       role="alert"
     >
-      <strong>ResolutionReport withheld by the Workbench.</strong>
-      <span>The current Verification projection is not passed. Refresh the server projections; the browser will not greenwash this mismatch.</span>
+      <strong>ResolutionReport 已被界面隐藏。</strong>
+      <span>当前 Verification 投影未通过。请刷新服务端投影；浏览器不会把此不一致显示为成功。</span>
     </div>
 
     <article
@@ -67,18 +79,18 @@ const missingSections = computed(() => {
         <div>
           <span>ResolutionReport {{ report.id }}</span>
           <h3>{{ report.summary }}</h3>
-          <p>{{ report.resolution_reason.replace(/_/g, " ") }} · {{ report.trigger_type.replace(/_/g, " ") }}</p>
+          <p>{{ reportCodeLabel(report.resolution_reason) }} · {{ reportCodeLabel(report.trigger_type) }}</p>
         </div>
         <ResultBadge :result="report.status" />
       </header>
 
       <div
-        v-if="report.trigger_type === 'no_change_signal'"
+        v-if="report.trigger_type === 'no_change_signal' || report.trigger_type === 'operational_recovery'"
         class="no-change-banner"
         role="status"
       >
-        <strong>No-change resolution</strong>
-        <span>This report does not claim a Plan, approval, PR, Argo sync, or rollout unless those persisted sections are present.</span>
+        <strong>{{ report.trigger_type === "operational_recovery" ? "运行恢复" : "无变更恢复" }}</strong>
+        <span>除非对应持久化区块存在，否则此报告不会声称存在 Plan、批准、PR、Argo 同步或 rollout。</span>
       </div>
 
       <section
@@ -86,32 +98,46 @@ const missingSections = computed(() => {
         aria-labelledby="resolution-impact"
       >
         <h4 id="resolution-impact">
-          Measured Outcome
+          实测结果
         </h4>
         <p>{{ report.impact_summary }}</p>
       </section>
 
       <dl class="report-facts">
         <div><dt>Service / Workload</dt><dd>{{ report.service }} / {{ report.workload }}</dd></div>
-        <div><dt>Environment</dt><dd>{{ report.environment }}</dd></div>
+        <div><dt>环境</dt><dd>{{ report.environment }}</dd></div>
         <div><dt>Cycle</dt><dd>{{ report.cycle }}</dd></div>
-        <div><dt>Cycle Started</dt><dd>{{ formatIncidentTime(report.cycle_started_at) }}</dd></div>
-        <div><dt>Resolved</dt><dd>{{ formatIncidentTime(report.resolved_at) }}</dd></div>
-        <div><dt>Measured Duration</dt><dd>{{ formatDurationMS(report.measured_duration_ms) }}</dd></div>
-        <div><dt>Generated</dt><dd>{{ formatIncidentTime(report.generated_at) }}</dd></div>
-        <div><dt>Stable Window</dt><dd>{{ formatIncidentTime(report.stability.common_window_started_at) }} → {{ formatIncidentTime(report.stability.common_window_completed_at) }}</dd></div>
+        <div><dt>Cycle 开始</dt><dd>{{ formatIncidentTime(report.cycle_started_at) }}</dd></div>
+        <div><dt>恢复时间</dt><dd>{{ formatIncidentTime(report.resolved_at) }}</dd></div>
+        <div><dt>实测时长</dt><dd>{{ formatDurationMS(report.measured_duration_ms) }}</dd></div>
+        <div><dt>生成时间</dt><dd>{{ formatIncidentTime(report.generated_at) }}</dd></div>
+        <div><dt>稳定窗口</dt><dd>{{ formatIncidentTime(report.stability.common_window_started_at) }} → {{ formatIncidentTime(report.stability.common_window_completed_at) }}</dd></div>
       </dl>
+
+      <section
+        v-if="report.recovery_provenance"
+        class="identity-section"
+        aria-labelledby="resolution-provenance"
+      >
+        <h4 id="resolution-provenance">恢复 Provenance</h4>
+        <div class="hash-grid">
+          <HashValue label="Configuration Revision" :value="report.recovery_provenance.configuration_revision_id" />
+          <HashValue label="Operational Scope" :value="report.recovery_provenance.operational_scope_id" />
+          <HashValue label="Investigation" :value="report.recovery_provenance.investigation_id" />
+          <HashValue label="Owner Decision" :value="report.recovery_provenance.decision_id" />
+        </div>
+      </section>
 
       <section
         class="identity-section"
         aria-labelledby="resolution-identities"
       >
         <h4 id="resolution-identities">
-          Immutable Resolution Identity
+          不可变恢复身份
         </h4>
         <div class="hash-grid">
           <HashValue
-            label="Report Hash"
+            label="报告 Hash"
             :value="report.hash"
           />
           <HashValue
@@ -119,23 +145,23 @@ const missingSections = computed(() => {
             :value="report.verification_profile.hash"
           />
           <HashValue
-            label="Bad GitOps Revision"
+            label="异常 GitOps Revision"
             :value="report.revisions.bad_gitops_revision"
           />
           <HashValue
-            label="Fix GitOps Revision"
+            label="修复 GitOps Revision"
             :value="report.revisions.fix_gitops_revision"
           />
           <HashValue
-            label="Source Revision"
+            label="源码 Revision"
             :value="report.revisions.source_revision"
           />
           <HashValue
-            label="Image Digest"
+            label="镜像 Digest"
             :value="report.revisions.image_digest"
           />
           <HashValue
-            label="Deployed GitOps Revision"
+            label="已部署 GitOps Revision"
             :value="report.revisions.gitops_revision"
           />
         </div>
@@ -146,7 +172,7 @@ const missingSections = computed(() => {
         aria-labelledby="resolution-limits"
       >
         <h4 id="resolution-limits">
-          Persisted Limits & Follow-ups
+          持久化边界与后续事项
         </h4>
         <ul>
           <li
@@ -156,17 +182,17 @@ const missingSections = computed(() => {
             {{ item }}
           </li>
           <li v-if="report.migrated_legacy_context">
-            This report includes migrated legacy context; provenance remains explicit.
+            此报告包含迁移的 legacy context；provenance 保持显式。
           </li>
-          <li>Follow-up actions are not projected by the current ResolutionReport contract.</li>
+          <li>当前 ResolutionReport contract 不投影后续 action。</li>
         </ul>
       </section>
 
       <details class="report-package">
-        <summary>Inspect Auditable Persisted Sections</summary>
+        <summary>查看可审计的持久化区块</summary>
         <div>
           <JSONSnapshot
-            title="Trigger Signal"
+            title="触发 Signal"
             :value="report.trigger_signal"
           />
           <JSONSnapshot
@@ -198,7 +224,7 @@ const missingSections = computed(() => {
             :value="report.timeline"
           />
           <JSONSnapshot
-            title="Agent Usage"
+            title="Agent 使用情况"
             :value="report.agent_usage"
           />
         </div>

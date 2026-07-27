@@ -84,9 +84,14 @@ VALUES (?, NOW(6)) ON DUPLICATE KEY UPDATE touched_at = NOW(6)`, alertKey); err 
 			results = append(results, result)
 			continue
 		}
-		result, err := applySignal(ctx, tx, alertKey, signal)
+		result, alertID, eventType, err := applySignal(ctx, tx, alertKey, signal)
 		if err != nil {
 			return nil, err
+		}
+		if eventType == "alert_resolved" && s.recovery != nil {
+			if err := s.recovery.RestartForResolvedAlertIn(ctx, tx, alertID); err != nil {
+				return nil, err
+			}
 		}
 		results = append(results, result)
 	}
@@ -155,17 +160,17 @@ WHERE source_signal.source = ? AND source_signal.source_event_id = ?`, source, s
 	return result, nil
 }
 
-func applySignal(ctx context.Context, tx *sql.Tx, alertKey string, signal insertedSignal) (IngestResult, error) {
+func applySignal(ctx context.Context, tx *sql.Tx, alertKey string, signal insertedSignal) (IngestResult, uint64, string, error) {
 	input := signal.Input
 	row, err := loadAlertByKey(ctx, tx, alertKey, true)
 	if errors.Is(err, sql.ErrNoRows) && input.Status == domain.SignalStatusResolved {
 		if err := rejectUnmatchedResolved(ctx, tx, signal); err != nil {
-			return IngestResult{}, err
+			return IngestResult{}, 0, "", err
 		}
-		return IngestResult{SourceEventID: input.SourceEventID, Rejected: true, RejectionReason: "unmatched_resolved"}, nil
+		return IngestResult{SourceEventID: input.SourceEventID, Rejected: true, RejectionReason: "unmatched_resolved"}, 0, "", nil
 	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return IngestResult{}, err
+		return IngestResult{}, 0, "", err
 	}
 	created := errors.Is(err, sql.ErrNoRows)
 	previousInstanceKey := row.InstanceKey
@@ -176,13 +181,13 @@ func applySignal(ctx context.Context, tx *sql.Tx, alertKey string, signal insert
 		err = updateAlertFromSignal(ctx, tx, &row, signal)
 	}
 	if err != nil {
-		return IngestResult{}, err
+		return IngestResult{}, 0, "", err
 	}
 	provenance := "signal_normalization"
 	if _, err := tx.ExecContext(ctx, `INSERT INTO alert_signal_links
 (public_id, alert_id, signal_id, provenance, created_at) VALUES (?, ?, ?, ?, NOW(6))`,
 		uuid.NewString(), row.ID, signal.ID, provenance); err != nil {
-		return IngestResult{}, err
+		return IngestResult{}, 0, "", err
 	}
 	var eventType string
 	if created {
@@ -199,15 +204,15 @@ func applySignal(ctx context.Context, tx *sql.Tx, alertKey string, signal insert
 	if err := appendAlertEvent(ctx, tx, row, eventType, "source", input.SourceEventID, input.Summary,
 		signal.ID, input.OccurredAt, map[string]any{"source": input.Source, "source_event_id": input.SourceEventID, "status": input.Status},
 		hashCanonical("alert-event", input.Source, input.SourceEventID)); err != nil {
-		return IngestResult{}, err
+		return IngestResult{}, 0, "", err
 	}
 	severityIncreased := severityRank(row.Severity) > severityRank(previousSeverity)
 	if (created || eventType == "alert_recurred" || severityIncreased) && row.Status == "firing" {
 		if err := createOwnerNotification(ctx, tx, row); err != nil {
-			return IngestResult{}, err
+			return IngestResult{}, 0, "", err
 		}
 	}
-	return IngestResult{SourceEventID: input.SourceEventID, AlertPublicID: row.PublicID}, nil
+	return IngestResult{SourceEventID: input.SourceEventID, AlertPublicID: row.PublicID}, row.ID, eventType, nil
 }
 
 func severityRank(value string) int {

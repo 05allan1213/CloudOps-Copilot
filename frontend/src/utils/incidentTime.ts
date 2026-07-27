@@ -8,14 +8,14 @@ const formatter = new Intl.DateTimeFormat("en-GB", {
 });
 
 export function formatIncidentTime(value?: string): string {
-  if (!value) return "Unknown";
+  if (!value) return "未知";
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Unknown";
+  if (Number.isNaN(date.getTime())) return "未知";
   return `${formatter.format(date)} UTC`;
 }
 
 export function formatDuration(seconds?: number): string {
-  if (seconds === undefined || !Number.isFinite(seconds) || seconds < 0) return "Unknown";
+  if (seconds === undefined || !Number.isFinite(seconds) || seconds < 0) return "未知";
   const rounded = Math.floor(seconds);
   const days = Math.floor(rounded / 86400);
   const hours = Math.floor((rounded % 86400) / 3600);

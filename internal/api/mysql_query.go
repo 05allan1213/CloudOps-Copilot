@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -36,8 +37,16 @@ func (p *MySQLQueryPort) Query(ctx context.Context, request QueryRequest) (Query
 		return p.listIncidents(ctx, request)
 	case QueryIncident:
 		return p.getIncident(ctx, request.IncidentID)
-	case QuerySignals, QueryEvidence, QueryInvestigations:
+	case QueryAlertRelations:
+		return p.listIncidentAlertRelations(ctx, request)
+	case QuerySignals:
 		return p.listIncidentResources(ctx, request)
+	case QueryEvidence:
+		return p.listIncidentEvidence(ctx, request)
+	case QueryInvestigations:
+		return p.listIncidentInvestigations(ctx, request)
+	case QueryDecision:
+		return p.getIncidentDecision(ctx, request)
 	case QueryRemediationPlans:
 		return p.listRemediationPlans(ctx, request)
 	case QueryTimeline:
@@ -86,38 +95,66 @@ func (p *MySQLQueryPort) listIncidents(ctx context.Context, request QueryRequest
 		if !validIncidentStatus(request.Status) {
 			return QueryResponse{}, ErrInvalidArgument
 		}
-		where = append(where, "status = ?")
+		where = append(where, "i.status = ?")
 		args = append(args, request.Status)
 	}
 	if request.Severity != "" {
 		if !validSeverity(request.Severity) {
 			return QueryResponse{}, ErrInvalidArgument
 		}
-		where = append(where, "severity = ?")
+		where = append(where, "i.severity = ?")
 		args = append(args, request.Severity)
 	}
 	if request.Service != "" {
 		if len(request.Service) > 255 || containsControl(request.Service) {
 			return QueryResponse{}, ErrInvalidArgument
 		}
-		where = append(where, "service_name = ?")
+		where = append(where, "i.service_name = ?")
 		args = append(args, request.Service)
+	}
+	if request.Attention != nil {
+		where = append(where, "i.needs_attention = ?")
+		args = append(args, *request.Attention)
+	}
+	if request.Resource != "" {
+		where = append(where, `(i.target_name = ? OR EXISTS (
+			SELECT 1 FROM resource_identities resource
+			WHERE resource.resource_id = ? AND resource.cluster_id = i.cluster
+			  AND resource.namespace = i.namespace AND resource.kind = i.target_kind
+			  AND resource.name = i.target_name))`)
+		args = append(args, request.Resource, request.Resource)
+	}
+	if request.RelatedAlertID != "" {
+		where = append(where, `EXISTS (
+			SELECT 1 FROM alert_incident_links relation
+			JOIN alerts alert ON alert.id = relation.alert_id
+			WHERE relation.incident_id = i.id AND relation.incident_cycle_no = i.cycle_no
+			  AND alert.public_id = ?)`)
+		args = append(args, request.RelatedAlertID)
+	}
+	if !request.From.IsZero() {
+		where = append(where, "i.last_seen_at >= ?")
+		args = append(args, request.From.UTC())
+	}
+	if !request.To.IsZero() {
+		where = append(where, "i.first_seen_at <= ?")
+		args = append(args, request.To.UTC())
 	}
 	if request.Cursor != "" {
 		cursor, err := p.incidentCursor(ctx, request.Cursor)
 		if err != nil {
 			return QueryResponse{}, err
 		}
-		where = append(where, "(updated_at < ? OR (updated_at = ? AND id < ?))")
+		where = append(where, "(i.updated_at < ? OR (i.updated_at = ? AND i.id < ?))")
 		args = append(args, cursor.At, cursor.At, cursor.ID)
 	}
 	args = append(args, request.Limit+1)
 	rows, err := p.db.QueryContext(ctx, `
-	SELECT id, public_id, cycle_no, status, severity, summary, version,
-	       needs_attention, blocking_reason_code, migrated_legacy, migrated_legacy_context, created_at, updated_at
-FROM incidents
+	SELECT i.id, i.public_id, i.cycle_no, i.status, i.severity, i.summary, i.version,
+	       i.needs_attention, i.blocking_reason_code, i.migrated_legacy, i.migrated_legacy_context, i.created_at, i.updated_at
+FROM incidents i
 WHERE `+strings.Join(where, " AND ")+`
-ORDER BY updated_at DESC, id DESC
+ORDER BY i.updated_at DESC, i.id DESC
 LIMIT ?`, args...)
 	if err != nil {
 		return QueryResponse{}, fmt.Errorf("list Incidents: %w", err)
@@ -158,6 +195,9 @@ LIMIT ?`, args...)
 	for index := 0; index < len(items) && index < request.Limit; index++ {
 		response.Incidents = append(response.Incidents, items[index].View)
 	}
+	if err := p.enrichIncidentViews(ctx, response.Incidents); err != nil {
+		return QueryResponse{}, err
+	}
 	if len(items) > request.Limit && request.Limit > 0 {
 		last := items[request.Limit-1]
 		response.NextCursor = last.PublicID
@@ -191,6 +231,16 @@ WHERE public_id = ?`, id).Scan(
 	if blocking.Valid {
 		item.BlockingReasonCode = boundProjectionText(blocking.String, 128)
 	}
+	enriched := []IncidentView{item}
+	if err := p.enrichIncidentViews(ctx, enriched); err != nil {
+		return QueryResponse{}, err
+	}
+	item = enriched[0]
+	decision, err := p.getIncidentDecision(ctx, QueryRequest{Kind: QueryDecision, IncidentID: item.ID, Limit: 1})
+	if err != nil {
+		return QueryResponse{}, err
+	}
+	item.Decision = decision.Decision
 	if err := validateIncidentView(&item); err != nil {
 		return QueryResponse{}, fmt.Errorf("invalid Incident projection: %w", err)
 	}
@@ -302,8 +352,9 @@ func (p *MySQLQueryPort) listTimeline(ctx context.Context, request QueryRequest)
 		}
 	}
 	rows, err := p.db.QueryContext(ctx, `
-	SELECT id, public_id, cycle_no, event_type, NULL, summary, NULL,
-	       created_at, created_at, occurred_at, migrated_legacy, migrated_legacy_context
+	SELECT id, public_id, cycle_no, event_type, source_status, target_status,
+	       reason_code, actor_type, actor_id, summary, metadata_json,
+	       occurred_at, migrated_legacy, migrated_legacy_context
 FROM incident_events
 WHERE incident_id = ? AND cycle_no = ?
   AND public_id IS NOT NULL AND id > ?
@@ -313,25 +364,50 @@ LIMIT ?`, incident.ID, incident.CycleNo, afterNumeric, request.Limit+1)
 		return QueryResponse{}, fmt.Errorf("list Incident timeline: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	items, more, err := scanMySQLResourceRows(rows, "timeline_event", request.Limit)
-	if err != nil {
-		return QueryResponse{}, err
+	values := make([]IncidentTimelineEventView, 0, request.Limit+1)
+	for rows.Next() {
+		var numericID uint64
+		var item IncidentTimelineEventView
+		var source, target, reason sql.NullString
+		var metadata []byte
+		if err := rows.Scan(
+			&numericID, &item.ID, &item.Cycle, &item.Type, &source, &target,
+			&reason, &item.ActorType, &item.ActorID, &item.Summary, &metadata,
+			&item.OccurredAt, &item.MigratedLegacy, &item.MigratedLegacyContext,
+		); err != nil {
+			return QueryResponse{}, fmt.Errorf("scan Incident timeline: %w", err)
+		}
+		item.SourceStatus = source.String
+		item.TargetStatus = target.String
+		item.ReasonCode = reason.String
+		item.Metadata = validRawJSON(metadata)
+		if len(item.Metadata) == 0 {
+			item.Metadata = json.RawMessage(`{}`)
+		}
+		item.OccurredAt = item.OccurredAt.UTC()
+		values = append(values, item)
 	}
-	next := ""
-	if more != "" && len(items) > 0 {
-		// The scanner drops the look-ahead row; its opaque public UUID is the
-		// correct monotonic resume cursor for the returned page.
-		next = items[len(items)-1].ID
+	if err := rows.Err(); err != nil {
+		return QueryResponse{}, fmt.Errorf("iterate Incident timeline: %w", err)
 	}
-	return QueryResponse{Items: items, NextCursor: next}, nil
+	response := QueryResponse{Timeline: []IncidentTimelineEventView{}}
+	for index := 0; index < len(values) && index < request.Limit; index++ {
+		response.Timeline = append(response.Timeline, values[index])
+	}
+	if len(values) > request.Limit && request.Limit > 0 {
+		response.NextCursor = values[request.Limit-1].ID
+	}
+	return response, nil
 }
 
 const resolutionReportQuery = `
 SELECT r.public_id, r.report_schema_version, r.cycle_no, r.trigger_type,
        r.resolution_reason, r.service, r.workload, r.environment,
        r.impact_summary, r.cycle_started_at, r.resolved_at,
-       r.measured_duration_ms, r.bad_gitops_revision, r.fix_gitops_revision,
-       r.source_revision, r.image_digest, r.gitops_revision,
+	       r.measured_duration_ms, r.bad_gitops_revision, r.fix_gitops_revision,
+	       r.source_revision, r.image_digest, r.gitops_revision,
+	       configuration.public_id, scope.public_id, investigation.public_id,
+	       recovery_decision.public_id,
        r.verification_profile_id, r.verification_profile_hash,
        r.common_window_started_at, r.common_window_completed_at,
        r.trigger_signal_json, r.diagnosis_json, r.evidence_json,
@@ -342,6 +418,20 @@ FROM resolution_reports r
 JOIN incidents i
   ON i.id = r.incident_id
  AND i.cycle_no = r.cycle_no
+LEFT JOIN configuration_revisions configuration
+  ON configuration.id = r.configuration_revision_id
+LEFT JOIN operational_scopes scope
+  ON scope.id = r.operational_scope_id
+ AND scope.configuration_revision_id = r.configuration_revision_id
+LEFT JOIN agent_runs investigation
+  ON investigation.id = r.investigation_run_id
+ AND investigation.incident_id = r.incident_id
+ AND investigation.cycle_no = r.cycle_no
+LEFT JOIN incident_events recovery_decision
+  ON recovery_decision.id = r.decision_event_id
+ AND recovery_decision.incident_id = r.incident_id
+ AND recovery_decision.cycle_no = r.cycle_no
+ AND recovery_decision.event_type = 'incident_recovery_decided'
 WHERE i.public_id = ?
   AND r.cycle_no = i.cycle_no
 LIMIT 1`
@@ -365,9 +455,13 @@ type mysqlResolutionReportRow struct {
 	MeasuredDurationMS      uint64
 	BadGitOpsRevision       sql.NullString
 	FixGitOpsRevision       sql.NullString
-	SourceRevision          string
-	ImageDigest             string
-	GitOpsRevision          string
+	SourceRevision          sql.NullString
+	ImageDigest             sql.NullString
+	GitOpsRevision          sql.NullString
+	ConfigurationID         sql.NullString
+	OperationalScopeID      sql.NullString
+	InvestigationID         sql.NullString
+	RecoveryDecisionID      sql.NullString
 	VerificationProfileID   string
 	VerificationProfileHash string
 	CommonWindowStartedAt   time.Time
@@ -416,6 +510,7 @@ func scanResolutionReport(scanner resolutionReportScanner) (*ResolutionReportVie
 		&row.ImpactSummary, &row.CycleStartedAt, &row.ResolvedAt,
 		&row.MeasuredDurationMS, &row.BadGitOpsRevision, &row.FixGitOpsRevision,
 		&row.SourceRevision, &row.ImageDigest, &row.GitOpsRevision,
+		&row.ConfigurationID, &row.OperationalScopeID, &row.InvestigationID, &row.RecoveryDecisionID,
 		&row.VerificationProfileID, &row.VerificationProfileHash,
 		&row.CommonWindowStartedAt, &row.CommonWindowCompletedAt,
 		&row.TriggerSignalJSON, &row.DiagnosisJSON, &row.EvidenceJSON,
@@ -446,9 +541,9 @@ func scanResolutionReport(scanner resolutionReportScanner) (*ResolutionReportVie
 		MeasuredDurationMS: row.MeasuredDurationMS,
 		GeneratedAt:        row.GeneratedAt,
 		Revisions: ResolutionRevisionsView{
-			SourceRevision: row.SourceRevision,
-			ImageDigest:    row.ImageDigest,
-			GitOpsRevision: row.GitOpsRevision,
+			SourceRevision: row.SourceRevision.String,
+			ImageDigest:    row.ImageDigest.String,
+			GitOpsRevision: row.GitOpsRevision.String,
 		},
 		VerificationProfile: ResolutionVerificationProfileView{
 			ID: row.VerificationProfileID, Hash: row.VerificationProfileHash,
@@ -466,6 +561,14 @@ func scanResolutionReport(scanner resolutionReportScanner) (*ResolutionReportVie
 		Timeline:              append([]byte(nil), row.TimelineJSON...),
 		AgentUsage:            append([]byte(nil), row.AgentUsageJSON...),
 		MigratedLegacyContext: row.MigratedLegacyContext,
+	}
+	if row.TriggerType == "operational_recovery" {
+		item.RecoveryProvenance = &RecoveryProvenanceView{
+			ConfigurationRevisionID: row.ConfigurationID.String,
+			OperationalScopeID:      row.OperationalScopeID.String,
+			InvestigationID:         row.InvestigationID.String,
+			DecisionID:              row.RecoveryDecisionID.String,
+		}
 	}
 	if row.BadGitOpsRevision.Valid {
 		item.Revisions.BadGitOpsRevision = row.BadGitOpsRevision.String

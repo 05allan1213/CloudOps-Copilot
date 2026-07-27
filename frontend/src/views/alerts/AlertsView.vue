@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { BellRing, Check, ChevronRight, FilterX, Link2, RefreshCw, Search, VolumeX } from "lucide-vue-next";
 import { useRoute, useRouter } from "vue-router";
 
@@ -27,6 +27,7 @@ const filters = reactive({
   severity: queryValue(route.query.severity) as AlertSeverity | "",
   namespace: queryValue(route.query.namespace),
   search: queryValue(route.query.search),
+  incident: queryValue(route.query.incident),
 });
 
 const firingCount = computed(() => items.value.filter((item) => item.status === "firing").length);
@@ -56,6 +57,7 @@ function currentQuery(cursor = ""): AlertListQuery {
     severity: filters.severity || undefined,
     namespace: filters.namespace.trim() || undefined,
     search: filters.search.trim() || undefined,
+    incident: filters.incident || undefined,
   };
 }
 
@@ -90,6 +92,7 @@ async function applyFilters() {
       severity: filters.severity || undefined,
       namespace: filters.namespace.trim() || undefined,
       search: filters.search.trim() || undefined,
+      incident: filters.incident || undefined,
     },
   });
   await load(true);
@@ -107,11 +110,17 @@ function detailLocation(item: AlertView) {
   return {
     name: "alert-detail",
     params: { alertId: item.id },
-    query: { cluster_id: item.cluster, namespace: item.namespace },
+    query: { cluster_id: item.cluster, namespace: item.namespace, incident: filters.incident || undefined },
   };
 }
 
 onMounted(() => void load(true));
+watch(() => route.query.incident, (value) => {
+  const next = queryValue(value);
+  if (next === filters.incident) return;
+  filters.incident = next;
+  void load(true);
+});
 onBeforeUnmount(() => controller?.abort());
 </script>
 
@@ -119,14 +128,20 @@ onBeforeUnmount(() => controller?.abort());
   <article class="alerts-view">
     <header class="page-heading">
       <div>
-        <p class="eyebrow">Alert Lifecycle</p>
+        <p class="eyebrow">CloudOps Alerts</p>
         <h1>告警</h1>
-        <p>来自 Signal normalization 的独立 triage 队列。</p>
+        <p>独立 Alert lifecycle 与精确 Incident 关联。</p>
       </div>
       <button type="button" class="icon-action" :disabled="loading" aria-label="刷新告警" title="刷新告警" @click="load(true)">
         <RefreshCw :size="18" aria-hidden="true" />
       </button>
     </header>
+
+    <div v-if="filters.incident" class="incident-filter-band" role="status">
+      <Link2 :size="16" aria-hidden="true" />
+      <span>当前仅显示 Incident <code translate="no">{{ filters.incident }}</code> 的关联 Alert</span>
+      <RouterLink :to="{ name: 'incident-detail', params: { incidentId: filters.incident } }">返回 Incident</RouterLink>
+    </div>
 
     <dl class="summary-strip">
       <div><dt>当前结果</dt><dd>{{ items.length }}</dd></div>
@@ -138,8 +153,8 @@ onBeforeUnmount(() => controller?.abort());
     <form class="filter-bar" aria-label="Alert filters" @submit.prevent="applyFilters">
       <label><span>状态</span><select v-model="filters.status" name="status"><option value="">全部</option><option value="firing">Firing</option><option value="resolved">Resolved</option></select></label>
       <label><span>Severity</span><select v-model="filters.severity" name="severity"><option value="">全部</option><option value="critical">Critical</option><option value="warning">Warning</option><option value="info">Info</option><option value="unknown">Unknown</option></select></label>
-      <label><span>Namespace</span><input v-model="filters.namespace" name="namespace" type="text" autocomplete="off" spellcheck="false" placeholder="例如：demo"></label>
-      <label class="search-field"><span>搜索</span><input v-model="filters.search" name="search" type="search" autocomplete="off" placeholder="摘要、目标或服务"></label>
+      <label><span>Namespace</span><input v-model="filters.namespace" name="namespace" type="text" autocomplete="off" spellcheck="false" placeholder="例如：demo…"></label>
+      <label class="search-field"><span>搜索</span><input v-model="filters.search" name="search" type="search" autocomplete="off" placeholder="摘要、目标或服务…"></label>
       <button type="submit" class="primary-action"><Search :size="17" aria-hidden="true" />查询</button>
       <button type="button" class="icon-action" aria-label="清除筛选" title="清除筛选" @click="clearFilters"><FilterX :size="18" aria-hidden="true" /></button>
     </form>
@@ -193,6 +208,11 @@ onBeforeUnmount(() => controller?.abort());
 .page-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--co-space-4); }
 .page-heading h1 { margin: 0; font-size: 30px; }
 .page-heading p:not(.eyebrow) { margin: var(--co-space-2) 0 0; color: var(--co-text-secondary); }
+.incident-filter-band { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: var(--co-space-2); padding: var(--co-space-3) var(--co-space-4); border-left: 3px solid var(--co-action-primary); color: var(--co-text-secondary); background: var(--co-bg-active); font-size: 12px; }
+.incident-filter-band span { min-width: 0; overflow-wrap: anywhere; }
+.incident-filter-band a { margin-left: auto; color: var(--co-action-primary); font-weight: 700; }
+.incident-filter-band a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.incident-filter-band a:focus-visible { outline: 2px solid var(--co-action-primary); outline-offset: 2px; }
 .eyebrow { margin: 0 0 var(--co-space-2); color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 11px; font-weight: 750; text-transform: uppercase; }
 .icon-action, .primary-action, .secondary-action, .load-more { display: inline-flex; min-height: 42px; align-items: center; justify-content: center; gap: var(--co-space-2); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); cursor: pointer; font-weight: 750; }
 .icon-action { width: 42px; flex: 0 0 42px; padding: 0; color: var(--co-text-secondary); background: var(--co-bg-surface); }

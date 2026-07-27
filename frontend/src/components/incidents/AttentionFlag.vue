@@ -18,7 +18,7 @@ defineProps<{
       <WarningFilled v-if="active" />
       <CircleCheckFilled v-else />
     </el-icon>
-    {{ active ? "Needs attention" : "No attention" }}
+    {{ active ? "需要关注" : "无需关注" }}
   </span>
 </template>
 

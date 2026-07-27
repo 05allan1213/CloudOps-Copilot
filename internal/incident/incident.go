@@ -25,17 +25,14 @@ const (
 var transitions = map[Status]map[Status]struct{}{
 	StatusDetected: {
 		StatusInvestigating: {},
-		StatusClosed:        {},
 	},
 	StatusInvestigating: {
 		StatusAwaitingApproval: {},
 		StatusVerifying:        {},
-		StatusClosed:           {},
 	},
 	StatusAwaitingApproval: {
 		StatusDelivering:    {},
 		StatusInvestigating: {},
-		StatusClosed:        {},
 	},
 	StatusDelivering: {
 		StatusVerifying:     {},
@@ -47,6 +44,7 @@ var transitions = map[Status]map[Status]struct{}{
 	},
 	StatusResolved: {
 		StatusInvestigating: {},
+		StatusClosed:        {},
 	},
 }
 
@@ -98,10 +96,13 @@ type Incident struct {
 // CloseGuard captures the child and external-effect facts that must be locked
 // and checked in the same transaction as close.
 type CloseGuard struct {
-	HasChangeRequest      bool
-	ExternalWriteStarted  bool
-	ExternalResultUnknown bool
-	HasActiveVerification bool
+	HasPassingVerification  bool
+	CommonWindowComplete    bool
+	HasResolutionReport     bool
+	HasActiveExternalEffect bool
+	ExternalResultUnknown   bool
+	HasActiveVerification   bool
+	HasActiveTask           bool
 }
 
 // Validate rejects malformed aggregate state.
@@ -121,11 +122,11 @@ func (i Incident) Validate() error {
 	if _, ok := transitions[i.Status]; !ok && i.Status != StatusClosed {
 		return fmt.Errorf("%w: unknown status %q", ErrInvalidArgument, i.Status)
 	}
-	if i.Status == StatusResolved && i.ResolvedAt == nil {
+	if (i.Status == StatusResolved || i.Status == StatusClosed) && i.ResolvedAt == nil {
 		return fmt.Errorf("%w: resolved_at is required", ErrInvalidArgument)
 	}
-	if i.Status != StatusResolved && i.ResolvedAt != nil {
-		return fmt.Errorf("%w: resolved_at is only valid for resolved", ErrInvalidArgument)
+	if i.Status != StatusResolved && i.Status != StatusClosed && i.ResolvedAt != nil {
+		return fmt.Errorf("%w: resolved_at is only valid for recovered incidents", ErrInvalidArgument)
 	}
 	if (i.Status == StatusResolved || i.Status == StatusClosed) && i.TerminalAt == nil {
 		return fmt.Errorf("%w: terminal_at is required", ErrInvalidArgument)
@@ -166,7 +167,9 @@ func (i *Incident) Close(expectedVersion, expectedCycle uint64, guard CloseGuard
 	if err := i.checkFence(expectedVersion, expectedCycle, at); err != nil {
 		return err
 	}
-	if guard.HasChangeRequest || guard.ExternalWriteStarted || guard.ExternalResultUnknown || guard.HasActiveVerification {
+	if !guard.HasPassingVerification || !guard.CommonWindowComplete || !guard.HasResolutionReport ||
+		guard.HasActiveExternalEffect || guard.ExternalResultUnknown ||
+		guard.HasActiveVerification || guard.HasActiveTask {
 		return ErrCloseBlocked
 	}
 	if !CanTransition(i.Status, StatusClosed) {

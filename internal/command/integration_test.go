@@ -148,36 +148,21 @@ WHERE actor_identity_hash = ? AND command_scope = ? AND idempotency_key = ? AND 
 			1, base.ActorIdentityHash, base.CommandScope, base.IdempotencyKey)
 	})
 
-	t.Run("close atomically fences running task and attempt", func(t *testing.T) {
-		publicID := uuid.NewString()
-		result, err := db.ExecContext(ctx, `INSERT INTO incidents (
-public_id, fingerprint, correlation_key, correlation_key_version, cluster, namespace,
-service_name, environment, target_kind, target_name, severity, summary,
-first_seen_at, last_seen_at, version, status, cycle_no
-) VALUES (?, ?, ?, 1, 'kind', 'demo', 'checkout', 'demo', 'Deployment', 'checkout',
-          'warning', 'command close fixture', NOW(6), NOW(6), 1,
-          'investigating', 1)`, publicID, "command-close-"+publicID, strings.Repeat("9", 64))
+	t.Run("close requires completed recovery proof and preserves it", func(t *testing.T) {
+		fixture := insertResolvedCloseFixture(t, ctx, db)
+		result, err := db.ExecContext(ctx, `INSERT INTO async_tasks (
+public_id, incident_id, cycle_no, queue, task_type, subject_type, subject_id,
+transition, expected_subject_version, payload_schema_version, payload_json,
+configuration_revision_id, dedupe_key, max_attempts, status
+) VALUES (?, ?, 2, 'verify', 'verification.advance', 'verification_run', ?,
+          'verification.advance', 1, 1, JSON_OBJECT(),
+          (SELECT configuration_revision_id FROM active_configuration WHERE singleton_id = 1),
+          ?, 3, 'ready')`, uuid.NewString(), fixture.incidentID,
+			fixture.verificationID, strings.Repeat("f", 64))
 		if err != nil {
 			t.Fatal(err)
 		}
-		incidentID, err := result.LastInsertId()
-		if err != nil {
-			t.Fatal(err)
-		}
-		queue, err := asyncjob.NewRepository(db)
-		if err != nil {
-			t.Fatal(err)
-		}
-		task, err := queue.Enqueue(ctx, asyncjob.NewTask{
-			IncidentID: uint64(incidentID), CycleNo: 1, Type: asyncjob.TaskInvestigationAdvance,
-			SubjectType: "incident", SubjectID: uint64(incidentID), Transition: "investigation.start",
-			ExpectedSubjectVersion: 1, PayloadSchemaVersion: 1, Payload: []byte(`{"mode":"start"}`),
-			DedupeKey: strings.Repeat("f", 64), MaxAttempts: 3,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		execution, err := queue.ClaimReady(ctx, asyncjob.ClaimRequest{Queue: asyncjob.QueueInvestigate, Owner: "command-close-worker", LeaseDuration: time.Second})
+		taskID, err := result.LastInsertId()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -186,38 +171,59 @@ first_seen_at, last_seen_at, version, status, cycle_no
 			t.Fatal(err)
 		}
 		request := api.CommandRequest{
-			Kind: api.CommandCloseIncident, ResourceID: publicID,
+			Kind: api.CommandCloseIncident, ResourceID: fixture.publicID,
 			Actor:          api.OwnerIdentity{Subject: "local-owner", Provider: "local", Login: "owner", Role: "owner"},
-			IdempotencyKey: "close-running-task", ExpectedVersion: 1,
-			CanonicalBody: []byte(`{"expected_version":1}`), RequestID: uuid.NewString(),
+			IdempotencyKey: "close-running-task", ExpectedVersion: 5,
+			CanonicalBody: []byte(`{"expected_version":5}`), RequestID: uuid.NewString(),
 		}
+		blocked, err := port.Execute(ctx, request)
+		if !errors.Is(err, api.ErrInvalidTransition) || blocked.Replayed {
+			t.Fatalf("close with active task result=%+v err=%v", blocked, err)
+		}
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incidents
+WHERE id = ? AND status = 'resolved' AND version = 5 AND resolved_at = ?`, 1,
+			fixture.incidentID, fixture.resolvedAt)
+		if _, err := db.ExecContext(ctx, `UPDATE async_tasks
+SET status = 'cancelled', cancelled_at = NOW(6), updated_at = NOW(6)
+WHERE id = ? AND status = 'ready'`, taskID); err != nil {
+			t.Fatal(err)
+		}
+		var taskStatus string
+		if err := db.QueryRowContext(ctx, `SELECT status FROM async_tasks WHERE id = ?`, taskID).Scan(&taskStatus); err != nil {
+			t.Fatal(err)
+		}
+		if taskStatus != "cancelled" {
+			t.Fatalf("task status=%q", taskStatus)
+		}
+
+		request.IdempotencyKey = "close-after-recovery-proof"
 		closed, err := port.Execute(ctx, request)
-		if err != nil {
-			t.Fatal(err)
+		if err != nil || closed.Status != "closed" || closed.Version != 6 || closed.Replayed {
+			t.Fatalf("close result=%+v err=%v", closed, err)
 		}
-		if closed.Status != "closed" || closed.Version != 2 {
-			t.Fatalf("close result=%+v", closed)
-		}
-		var taskStatus, attemptStatus string
-		var generation uint64
-		if err := db.QueryRowContext(ctx, `SELECT status, lease_generation FROM async_tasks WHERE id = ?`, task.ID).Scan(&taskStatus, &generation); err != nil {
-			t.Fatal(err)
-		}
-		if err := db.QueryRowContext(ctx, `SELECT status FROM async_task_attempts WHERE task_id = ? AND attempt = ?`, task.ID, execution.Lease.Attempt).Scan(&attemptStatus); err != nil {
-			t.Fatal(err)
-		}
-		if taskStatus != "cancelled" || attemptStatus != "cancelled" || generation != execution.Lease.Generation+1 {
-			t.Fatalf("task/attempt/generation=%q/%q/%d", taskStatus, attemptStatus, generation)
-		}
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incidents
+WHERE id = ? AND status = 'closed' AND version = 6 AND resolved_at = ?`, 1,
+			fixture.incidentID, fixture.resolvedAt)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM verification_runs
+WHERE public_id = ? AND status = 'passed' AND common_window_completed_at IS NOT NULL`, 1,
+			fixture.verificationPublicID)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM resolution_reports
+WHERE public_id = ? AND incident_id = ? AND cycle_no = 2`, 1,
+			fixture.reportPublicID, fixture.incidentID)
 		request.RequestID = uuid.NewString()
 		replayed, err := port.Execute(ctx, request)
 		if err != nil || replayed.Status != "closed" || replayed.Version != closed.Version || !replayed.Replayed {
 			t.Fatalf("idempotent close replay=%+v err=%v", replayed, err)
 		}
-		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_events WHERE incident_id = ? AND event_type = 'incident_closed'`, 1, incidentID)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_events
+WHERE incident_id = ? AND cycle_no = 2 AND event_type = 'incident_closed'
+  AND JSON_UNQUOTE(JSON_EXTRACT(metadata_json, '$.verification_run_id')) = ?
+  AND JSON_UNQUOTE(JSON_EXTRACT(metadata_json, '$.resolution_report_id')) = ?
+  AND JSON_EXTRACT(metadata_json, '$.resolved_history_preserved') = TRUE`, 1,
+			fixture.incidentID, fixture.verificationPublicID, fixture.reportPublicID)
 	})
 
-	t.Run("close rejects any existing change request including terminal", func(t *testing.T) {
+	t.Run("close rejects an unrecovered Incident even when change work is terminal", func(t *testing.T) {
 		publicID := uuid.NewString()
 		result, err := db.ExecContext(ctx, `INSERT INTO incidents (
 public_id, fingerprint, correlation_key, correlation_key_version, cluster, namespace,
@@ -308,7 +314,12 @@ func TestMySQLInvestigationRetryAuthorizationIsDurableConcurrentAndHardBounded(t
 			t.Fatal(err)
 		}
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_cycle_budget_authorizations WHERE incident_id = ?`, 0, incidentID)
-		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks WHERE incident_id = ? AND transition = 'investigation.start'`, 1, incidentID)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*)
+		FROM agent_workspace_tasks task
+		JOIN agent_runs run ON run.id = task.agent_run_id
+		WHERE run.incident_id = ? AND run.cycle_no = 1 AND run.run_kind = 'workspace'
+		  AND run.subject_type = 'incident' AND task.task_type = 'workspace.run'
+		  AND task.status = 'ready'`, 1, incidentID)
 	})
 
 	t.Run("active run rejects a second start without orphan work", func(t *testing.T) {
@@ -333,6 +344,10 @@ func TestMySQLInvestigationRetryAuthorizationIsDurableConcurrentAndHardBounded(t
 		}
 
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks WHERE incident_id = ?`, 0, incidentID)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*)
+		FROM agent_workspace_tasks task
+		JOIN agent_runs run ON run.id = task.agent_run_id
+		WHERE run.incident_id = ?`, 0, incidentID)
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_cycle_budget_authorizations WHERE incident_id = ?`, 0, incidentID)
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_events WHERE incident_id = ? AND event_type = 'investigation_requested'`, 0, incidentID)
 	})
@@ -366,14 +381,17 @@ func TestMySQLInvestigationRetryAuthorizationIsDurableConcurrentAndHardBounded(t
 
 		request := newInvestigationStartRequest(publicID, 1, "reconcile-dead-run", actor, "retry after terminal task failure")
 		accepted, err := port.Execute(ctx, request)
-		if err != nil || accepted.Status != "accepted" {
+		if err != nil || accepted.Status != "investigating" || accepted.Version != 2 {
 			t.Fatalf("reconciled investigation command=%+v error=%v", accepted, err)
 		}
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM agent_runs
 		WHERE id = ? AND status = 'failed' AND row_version = 4
 		  AND failure_code = 'invalid_agent_run_state'`, 1, runID)
-		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks
-		WHERE incident_id = ? AND transition = 'investigation.start' AND status = 'ready'`, 1, incidentID)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*)
+		FROM agent_workspace_tasks task
+		JOIN agent_runs run ON run.id = task.agent_run_id
+		WHERE run.incident_id = ? AND run.cycle_no = 1 AND run.run_kind = 'workspace'
+		  AND task.status = 'ready'`, 1, incidentID)
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_events
 		WHERE incident_id = ? AND event_type = 'agent_run_failed'`, 1, incidentID)
 	})
@@ -448,28 +466,32 @@ func TestMySQLInvestigationRetryAuthorizationIsDurableConcurrentAndHardBounded(t
 		}
 		close(start)
 		wait.Wait()
-		successes, conflicts := 0, 0
+		successes, rejected := 0, 0
 		successfulRequest := -1
 		for index, commandErr := range errs {
 			switch {
 			case commandErr == nil:
 				successes++
 				successfulRequest = index
-			case errors.Is(commandErr, api.ErrConflict):
-				conflicts++
+			case errors.Is(commandErr, api.ErrConflict), errors.Is(commandErr, api.ErrStaleVersion):
+				rejected++
 			default:
 				t.Fatalf("unexpected concurrent retry error: %v", commandErr)
 			}
 		}
-		if successes != 1 || conflicts != 1 {
-			t.Fatalf("successes=%d conflicts=%d results=%+v", successes, conflicts, results)
+		if successes != 1 || rejected != 1 {
+			t.Fatalf("successes=%d rejected=%d results=%+v", successes, rejected, results)
 		}
 		replayed, err := port.Execute(ctx, requests[successfulRequest])
 		if err != nil || !replayed.Replayed {
 			t.Fatalf("authorization command replay=%+v err=%v", replayed, err)
 		}
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_cycle_budget_authorizations WHERE incident_id = ? AND cycle_no = 1 AND slot_no = 4`, 1, incidentID)
-		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks WHERE incident_id = ? AND transition = 'investigation.start' AND status = 'ready'`, 1, incidentID)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*)
+		FROM agent_workspace_tasks task
+		JOIN agent_runs run ON run.id = task.agent_run_id
+		WHERE run.incident_id = ? AND run.cycle_no = 1 AND run.run_kind = 'workspace'
+		  AND task.status = 'ready'`, 1, incidentID)
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_events WHERE incident_id = ? AND event_type = 'agent_run_retry_authorized'`, 1, incidentID)
 		var reason, authorizationPublicID string
 		if err := db.QueryRowContext(ctx, `SELECT reason, public_id FROM incident_cycle_budget_authorizations WHERE incident_id = ?`, incidentID).Scan(&reason, &authorizationPublicID); err != nil {
@@ -478,18 +500,24 @@ func TestMySQLInvestigationRetryAuthorizationIsDurableConcurrentAndHardBounded(t
 		if strings.TrimSpace(reason) == "" {
 			t.Fatal("retry authorization reason is empty")
 		}
-		var payload []byte
-		if err := db.QueryRowContext(ctx, `SELECT payload_json FROM async_tasks WHERE incident_id = ? AND transition = 'investigation.start'`, incidentID).Scan(&payload); err != nil {
+		var boundAuthorizationPublicID string
+		if err := db.QueryRowContext(ctx, `SELECT authorization.public_id
+		FROM agent_runs run
+		JOIN incident_cycle_budget_authorizations authorization
+		  ON authorization.id = run.business_budget_authorization_id
+		WHERE run.incident_id = ? AND run.cycle_no = 1 AND run.run_kind = 'workspace'`, incidentID).Scan(&boundAuthorizationPublicID); err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(string(payload), authorizationPublicID) {
-			t.Fatalf("task payload does not reference durable authorization: %s", payload)
+		if boundAuthorizationPublicID != authorizationPublicID {
+			t.Fatalf("Workspace run authorization=%q, want %q", boundAuthorizationPublicID, authorizationPublicID)
 		}
 
-		missing := newInvestigationStartRequest(publicID, 1, "retry-slot-four-missing-reason", actor, "")
+		missingIncidentID, missingPublicID := insertCommandBudgetIncident(t, ctx, db, 3)
+		missing := newInvestigationStartRequest(missingPublicID, 1, "retry-slot-four-missing-reason", actor, "")
 		if _, err := port.Execute(ctx, missing); !errors.Is(err, api.ErrInvalidArgument) {
 			t.Fatalf("missing retry reason error=%v", err)
 		}
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_cycle_budget_authorizations WHERE incident_id = ?`, 0, missingIncidentID)
 	})
 
 	t.Run("imported authorization cannot unlock a current retry", func(t *testing.T) {
@@ -525,6 +553,10 @@ WHERE public_id = ? AND imported_history = TRUE`, 1, authorizationPublicID)
 		}
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_cycle_budget_authorizations WHERE incident_id = ?`, 0, incidentID)
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks WHERE incident_id = ? AND transition = 'investigation.start'`, 0, incidentID)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*)
+		FROM agent_workspace_tasks task
+		JOIN agent_runs run ON run.id = task.agent_run_id
+		WHERE run.incident_id = ?`, 0, incidentID)
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_events WHERE incident_id = ? AND event_type = 'agent_run_hard_limit_exhausted'`, 1, incidentID)
 		var attention bool
 		var version uint64
@@ -766,6 +798,117 @@ WHERE plan_id = ? AND imported_history = TRUE`, 1, fixture.plan.ID)
 	})
 }
 
+type resolvedCloseFixture struct {
+	incidentID           uint64
+	publicID             string
+	verificationID       uint64
+	verificationPublicID string
+	reportPublicID       string
+	resolvedAt           time.Time
+}
+
+func insertResolvedCloseFixture(t *testing.T, ctx context.Context, db *sql.DB) resolvedCloseFixture {
+	t.Helper()
+	var databaseNow time.Time
+	if err := db.QueryRowContext(ctx, "SELECT NOW(6)").Scan(&databaseNow); err != nil {
+		t.Fatal(err)
+	}
+	resolvedAt := databaseNow.UTC().Truncate(time.Microsecond)
+	cycleStartedAt := resolvedAt.Add(-5 * time.Minute)
+	commonStartedAt := resolvedAt.Add(-time.Minute)
+	publicID := uuid.NewString()
+	result, err := db.ExecContext(ctx, `INSERT INTO incidents (
+public_id, fingerprint, correlation_key, correlation_key_version, cluster, namespace,
+service_name, environment, target_kind, target_name, severity, summary,
+first_seen_at, last_seen_at, resolved_at, terminal_at, version, status, cycle_no
+) VALUES (?, ?, ?, 1, 'cloudops-local', 'demo', 'checkout', 'local', 'Deployment',
+          'checkout', 'warning', 'verified recovery ready to close', ?, ?, ?, ?, 5,
+          'resolved', 2)`, publicID, "command-close-"+publicID,
+		canonicalHash("command-close", publicID), cycleStartedAt, resolvedAt, resolvedAt, resolvedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	incidentID64, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	incidentID := uint64(incidentID64)
+
+	signalPublicID := uuid.NewString()
+	result, err = db.ExecContext(ctx, `INSERT INTO incident_signals (
+public_id, incident_id, cycle_no, source, source_event_id, canonical_schema_version,
+correlation_key_version, fingerprint, alert_instance_key, status, severity, cluster,
+namespace, service_name, environment, target_kind, target_name, category, occurred_at,
+starts_at, ends_at, received_at, summary, labels_json, annotations_json
+) VALUES (?, ?, 2, 'alertmanager', ?, 1, 1, ?, ?, 'resolved', 'warning',
+          'cloudops-local', 'demo', 'checkout', 'local', 'Deployment', 'checkout',
+          'availability', ?, ?, ?, ?, 'recovery signal', JSON_OBJECT(), JSON_OBJECT())`,
+		signalPublicID, incidentID, "close-signal-"+signalPublicID,
+		"close-signal-"+signalPublicID, strings.Repeat("1", 64), cycleStartedAt,
+		cycleStartedAt, resolvedAt, resolvedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signalID64, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	signalID := uint64(signalID64)
+
+	verificationPublicID := uuid.NewString()
+	revision := strings.Repeat("a", 40)
+	profileHash := strings.Repeat("b", 64)
+	result, err = db.ExecContext(ctx, `INSERT INTO verification_runs (
+public_id, incident_id, cycle_no, trigger_signal_id, status, trigger_type,
+target_revision, source_revision, image_digest, gitops_revision, plan_json,
+verification_profile_id, verification_profile_version, verification_profile_hash,
+verification_contract_version, common_stability_window_ms, common_success_since,
+common_window_completed_at, started_at, deadline_at, completed_at, attempt,
+expected_subject_version, result_summary, failure_reason
+) VALUES (?, ?, 2, ?, 'passed', 'no_change_signal', ?, ?, ?, ?, JSON_OBJECT(),
+          'no-change/v1', 1, ?, 1, 60000, ?, ?, ?, ?, ?, 1, 5,
+          'all required checks passed for the common window', '')`,
+		verificationPublicID, incidentID, signalID, revision, revision,
+		"sha256:"+strings.Repeat("c", 64), revision, profileHash, commonStartedAt,
+		resolvedAt, commonStartedAt, resolvedAt.Add(time.Minute), resolvedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verificationID64, err := result.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	verificationID := uint64(verificationID64)
+
+	reportPublicID := uuid.NewString()
+	_, err = db.ExecContext(ctx, `INSERT INTO resolution_reports (
+public_id, report_schema_version, incident_id, cycle_no, verification_run_id,
+initial_signal_id, trigger_signal_id, trigger_type, resolution_reason, service,
+workload, environment, impact_summary, cycle_started_at, resolved_at,
+measured_duration_ms, source_revision, image_digest, gitops_revision,
+verification_profile_id, verification_profile_hash, common_window_started_at,
+common_window_completed_at, trigger_signal_json, evidence_json, verification_json,
+timeline_json, agent_usage_json, summary, content_hash, generated_at
+) VALUES (?, 1, ?, 2, ?, ?, ?, 'no_change_signal', 'recovered_without_change',
+          'checkout', 'checkout', 'local', 'availability recovered without delivery',
+          ?, ?, 300000, ?, ?, ?, 'no-change/v1', ?, ?, ?,
+          JSON_OBJECT('public_id', ?), JSON_OBJECT('evidence_count', 0),
+          JSON_OBJECT('public_id', ?), JSON_OBJECT('event_count', 1),
+          JSON_OBJECT('run_count', 0), 'verified recovery proof', ?, ?)`,
+		reportPublicID, incidentID, verificationID, signalID, signalID, cycleStartedAt,
+		resolvedAt, revision, "sha256:"+strings.Repeat("c", 64), revision, profileHash,
+		commonStartedAt, resolvedAt, signalPublicID, verificationPublicID,
+		strings.Repeat("d", 64), resolvedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolvedCloseFixture{
+		incidentID: incidentID, publicID: publicID, verificationID: verificationID,
+		verificationPublicID: verificationPublicID, reportPublicID: reportPublicID,
+		resolvedAt: resolvedAt,
+	}
+}
+
 type commandRemediationFixture struct {
 	incidentID uint64
 	plan       remediation.RemediationPlan
@@ -988,7 +1131,7 @@ func insertCommandBudgetIncident(t *testing.T, ctx context.Context, db *sql.DB, 
 public_id, fingerprint, correlation_key, correlation_key_version, cluster, namespace,
 service_name, environment, target_kind, target_name, severity, summary,
 first_seen_at, last_seen_at, version, status, cycle_no
-) VALUES (?, ?, ?, 1, 'kind', 'demo', 'checkout', 'demo', 'Deployment', 'checkout',
+) VALUES (?, ?, ?, 1, 'cloudops-local', 'demo', 'checkout', 'local', 'Deployment', 'checkout',
           'warning', 'business budget command fixture', NOW(6), NOW(6), 1,
 	          'investigating', 1)`, publicID, "budget-command-"+publicID, canonicalHash("budget-command", publicID))
 	if err != nil {

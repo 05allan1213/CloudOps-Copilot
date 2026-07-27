@@ -144,4 +144,18 @@ describe("Agent Workspace accessibility IDs", () => {
     ]));
     for (const reference of references) expect(idSet.has(reference), `${reference} must resolve to an element`).toBe(true);
   });
+
+  it("honors an exact Investigation Context Link selection", async () => {
+    const pinia = createPinia();
+    const store = useAgentWorkspaceStore(pinia);
+    const run = agentFixture().active_run!;
+    store.investigations = [run];
+    store.selection = "investigation";
+    store.selectedID = run.id;
+    store.investigation = run;
+
+    await expect(store.selectInvestigationFromRoute(run.id)).resolves.toBe(true);
+    await expect(store.selectInvestigationFromRoute("missing-run")).resolves.toBe(false);
+    expect(store.error).toContain("不在当前持久化索引中");
+  });
 });

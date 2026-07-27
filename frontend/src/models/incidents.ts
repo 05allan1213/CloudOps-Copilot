@@ -18,24 +18,43 @@ export const incidentStatuses: IncidentStatus[] = [
 
 export function incidentStatusLabel(value: string): string {
   const labels: Record<string, string> = {
-    detected: "Detected",
-    investigating: "Investigating",
-    awaiting_approval: "Awaiting approval",
-    delivering: "Delivering",
-    verifying: "Verifying recovery",
-    resolved: "Resolved",
-    closed: "Closed",
+    detected: "已发现",
+    investigating: "调查中",
+    awaiting_approval: "等待决策",
+    delivering: "执行中",
+    verifying: "恢复验证中",
+    resolved: "已恢复",
+    closed: "已关闭",
   };
-  return labels[value] ?? (value.replace(/_/g, " ") || "Unknown");
+  return labels[value] ?? (value.replace(/_/g, " ") || "未知");
 }
 
 export function severityLabel(value: IncidentSeverity): string {
-  return ({ critical: "Critical", warning: "Warning", info: "Info", unknown: "Unknown" })[value];
+  return ({ critical: "严重", warning: "警告", info: "信息", unknown: "未知" })[value];
 }
 
 export function humanizeCode(value?: string): string {
   const normalized = value?.trim();
-  if (!normalized) return "No blocking reason";
+  if (!normalized) return "无阻塞原因";
+  const labels: Record<string, string> = {
+    pending: "等待执行",
+    running: "执行中",
+    passed: "已通过",
+    failed: "未通过",
+    timed_out: "已超时",
+    inconclusive: "无明确结论",
+    cancelled: "已取消",
+    unavailable: "暂不可用",
+    completed: "已完成",
+    approved: "已批准",
+    rejected: "已拒绝",
+    valid: "有效",
+    invalid: "无效",
+    firing: "触发中",
+    resolved: "已恢复",
+    closed: "已关闭",
+  };
+  if (labels[normalized]) return labels[normalized];
   return normalized
     .replace(/[_-]+/g, " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -59,10 +78,20 @@ export function normalizeListQuery(query: Record<string, unknown>): IncidentList
   const status = normalizedString(query.status);
   const severity = normalizedString(query.severity);
   const service = normalizedString(query.service);
+  const resource = normalizedString(query.resource);
+  const alert = normalizedString(query.alert);
+  const from = normalizedString(query.from);
+  const to = normalizedString(query.to);
+  const attention = normalizedString(query.attention);
   const cursor = normalizedString(query.cursor);
   if (status && incidentStatuses.includes(status as IncidentStatus)) result.status = status as IncidentStatus;
   if (severity && ["critical", "warning", "info", "unknown"].includes(severity)) result.severity = severity as IncidentSeverity;
   if (service) result.service = service.slice(0, 255);
+  if (resource) result.resource = resource.slice(0, 512);
+  if (isPublicID(alert)) result.alert = alert;
+  if (isRFC3339(from)) result.from = from;
+  if (isRFC3339(to)) result.to = to;
+  if (attention === "true" || attention === "false") result.attention = attention === "true";
   if (cursor && cursor.length <= 512) result.cursor = cursor;
   return result;
 }
@@ -72,6 +101,11 @@ export function serializeListQuery(query: IncidentListQuery): Record<string, str
   if (query.status) result.status = query.status;
   if (query.severity) result.severity = query.severity;
   if (query.service) result.service = query.service;
+  if (query.attention !== undefined) result.attention = String(query.attention);
+  if (query.resource) result.resource = query.resource;
+  if (query.alert) result.alert = query.alert;
+  if (query.from) result.from = query.from;
+  if (query.to) result.to = query.to;
   if (query.cursor) result.cursor = query.cursor;
   if (query.limit && query.limit !== 50) result.limit = String(query.limit);
   return result;
@@ -105,4 +139,13 @@ function positiveInt(value: unknown, fallback: number): number {
   const raw = Array.isArray(value) ? value[0] : value;
   const parsed = typeof raw === "string" || typeof raw === "number" ? Number(raw) : Number.NaN;
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function isPublicID(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function isRFC3339(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/.test(value)
+    && Number.isFinite(Date.parse(value));
 }

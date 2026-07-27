@@ -307,26 +307,39 @@ func (r *Repository) ReapExhaustedReady(ctx context.Context, queue Queue) (bool,
 	if !queue.Valid() {
 		return false, fmt.Errorf("invalid async task queue %q", queue)
 	}
+	return r.ReapExhaustedReadyFor(ctx, ClaimRequest{Queue: queue, Owner: "system:attempt-reaper", LeaseDuration: time.Second})
+}
+
+func (r *Repository) ReapExhaustedReadyFor(ctx context.Context, request ClaimRequest) (bool, error) {
+	if err := request.Validate(); err != nil {
+		return false, err
+	}
 	return retryTransactionValue(ctx, func() (bool, error) {
-		return r.reapExhaustedReadyOnce(ctx, queue)
+		return r.reapExhaustedReadyOnce(ctx, request)
 	})
 }
 
-func (r *Repository) reapExhaustedReadyOnce(ctx context.Context, queue Queue) (bool, error) {
+func (r *Repository) reapExhaustedReadyOnce(ctx context.Context, request ClaimRequest) (bool, error) {
 	tx, err := r.begin(ctx)
 	if err != nil {
 		return false, err
 	}
 	defer rollback(tx)
+	taskTypeFilter, err := request.taskTypeFilterJSON()
+	if err != nil {
+		return false, err
+	}
 	const selectSQL = `SELECT ` + taskColumns + `
-FROM async_tasks FORCE INDEX (idx_async_tasks_ready_claim)
-WHERE queue = ?
+	FROM async_tasks FORCE INDEX (idx_async_tasks_ready_claim)
+	WHERE queue = ?
+	  AND task_type IN (SELECT allowed.task_type FROM JSON_TABLE(?, '$[*]'
+	    COLUMNS(task_type VARCHAR(64) PATH '$')) AS allowed)
   AND status = 'ready'
   AND available_at <= NOW(6)
   AND attempt >= max_attempts
 	ORDER BY priority DESC, available_at, id
 	LIMIT 1`
-	candidate, err := scanTask(tx.QueryRowContext(ctx, selectSQL, queue))
+	candidate, err := scanTask(tx.QueryRowContext(ctx, selectSQL, request.Queue, taskTypeFilter))
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -339,15 +352,18 @@ WHERE queue = ?
 	}
 	const lockSQL = `SELECT ` + taskColumns + `
 FROM async_tasks FORCE INDEX (idx_async_tasks_ready_claim)
-WHERE id = ?
-  AND queue = ?
+	WHERE id = ?
+	  AND queue = ?
+	  AND task_type IN (SELECT allowed.task_type FROM JSON_TABLE(?, '$[*]'
+	    COLUMNS(task_type VARCHAR(64) PATH '$')) AS allowed)
   AND status = 'ready'
   AND available_at <= NOW(6)
   AND attempt >= max_attempts
   AND lease_generation = ?
   AND expected_subject_version = ?
 FOR UPDATE SKIP LOCKED`
-	task, err := scanTask(tx.QueryRowContext(ctx, lockSQL, candidate.ID, queue, candidate.LeaseGeneration, candidate.ExpectedSubjectVersion))
+	task, err := scanTask(tx.QueryRowContext(ctx, lockSQL, candidate.ID, request.Queue, taskTypeFilter,
+		candidate.LeaseGeneration, candidate.ExpectedSubjectVersion))
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}

@@ -61,6 +61,11 @@ func (s *Service) List(ctx context.Context, request ListRequest) (Page, error) {
 	if len(request.Namespace) > 255 || len(request.Search) > 255 {
 		return Page{}, ErrInvalid
 	}
+	if request.IncidentID != "" {
+		if _, err := uuid.Parse(request.IncidentID); err != nil {
+			return Page{}, ErrInvalid
+		}
+	}
 	cursor, err := decodeAlertCursor(request.Cursor)
 	if err != nil {
 		return Page{}, err
@@ -84,6 +89,14 @@ func (s *Service) List(ctx context.Context, request ListRequest) (Page, error) {
 		search := "%" + strings.TrimSpace(request.Search) + "%"
 		query += " AND (summary LIKE ? OR category LIKE ? OR target_name LIKE ? OR service_name LIKE ?)"
 		args = append(args, search, search, search, search)
+	}
+	if request.IncidentID != "" {
+		query += ` AND EXISTS (
+			SELECT 1 FROM alert_incident_links relation
+			JOIN incidents incident ON incident.id = relation.incident_id
+			WHERE relation.alert_id = alerts.id AND incident.public_id = ?
+			  AND relation.incident_cycle_no = incident.cycle_no)`
+		args = append(args, request.IncidentID)
 	}
 	if cursor.ID != 0 {
 		query += " AND (updated_at < ? OR (updated_at = ? AND id < ?))"

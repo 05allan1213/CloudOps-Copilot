@@ -76,13 +76,13 @@ describe("approval fail-closed presentation", () => {
 describe("verification and ResolutionReport gating", () => {
   it.each([
     [undefined, "not_run", "NOT RUN"],
-    ["pending", "pending", "Pending"],
-    ["running", "running", "Running"],
-    ["passed", "passed", "Passed"],
-    ["failed", "failed", "Failed"],
-    ["timed_out", "timed_out", "Timed out"],
-    ["inconclusive", "inconclusive", "Inconclusive"],
-    ["cancelled", "cancelled", "Cancelled"],
+    ["pending", "pending", "等待执行"],
+    ["running", "running", "执行中"],
+    ["passed", "passed", "已通过"],
+    ["failed", "failed", "未通过"],
+    ["timed_out", "timed_out", "已超时"],
+    ["inconclusive", "inconclusive", "无明确结论"],
+    ["cancelled", "cancelled", "已取消"],
     ["unexpected", "not_run", "NOT RUN"],
   ] as const)("keeps %s distinct", (status, state, label) => {
     expect(verificationDisplayState(status)).toBe(state);

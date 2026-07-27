@@ -114,7 +114,7 @@ export const useAgentWorkspaceStore = defineStore("agent-workspace", {
   },
 
   actions: {
-    async loadIndex(force = false) {
+    async loadIndex(force = false, preferredInvestigationID = "") {
       if ((this.loading || this.loaded) && !force) return;
       this.loading = true;
       this.error = "";
@@ -132,7 +132,9 @@ export const useAgentWorkspaceStore = defineStore("agent-workspace", {
         this.runbooks = runbooks;
         this.operationPlans = plans;
         this.loaded = true;
-        if (!this.selectedID) {
+        if (preferredInvestigationID) {
+          await this.selectInvestigationFromRoute(preferredInvestigationID);
+        } else if (!this.selectedID) {
           if (consultations.length) await this.selectConsultation(consultations[0].id);
           else if (investigations.length) await this.selectInvestigation(investigations[0].id);
         }
@@ -141,6 +143,17 @@ export const useAgentWorkspaceStore = defineStore("agent-workspace", {
       } finally {
         this.loading = false;
       }
+    },
+
+    async selectInvestigationFromRoute(id: string): Promise<boolean> {
+      if (!id) return false;
+      if (!this.investigations.some((item) => item.id === id)) {
+        this.error = `Context Link 指向的 Investigation ${id} 不在当前持久化索引中。`;
+        return false;
+      }
+      if (this.selection === "investigation" && this.selectedID === id && this.investigation) return true;
+      await this.selectInvestigation(id);
+      return this.selection === "investigation" && this.selectedID === id && this.investigation !== null;
     },
 
     setRoute(route: string) {

@@ -40,13 +40,13 @@ defineEmits<{
 }>();
 
 const definitions: Record<StateBlockState, { title: string; message: string; icon: Component; tone: string }> = {
-  loading: { title: "Loading", message: "Fetching the latest server projection…", icon: markRaw(Refresh), tone: "neutral" },
-  empty: { title: "No incidents found", message: "No Incidents match the current filters.", icon: markRaw(RemoveFilled), tone: "neutral" },
-  error: { title: "Incidents could not be loaded", message: "Retry the request. If it continues to fail, use the request identifiers below.", icon: markRaw(CircleCloseFilled), tone: "danger" },
-  forbidden: { title: "Request forbidden", message: "The Local Owner boundary rejected this request. Verify its Origin and exact command preconditions.", icon: markRaw(Lock), tone: "warning" },
-  not_found: { title: "Projection not found", message: "The requested Incident projection does not exist or is no longer available.", icon: markRaw(InfoFilled), tone: "neutral" },
-  unavailable: { title: "Incident projection unavailable", message: "The API cannot serve this projection right now. Retry after the dependency recovers.", icon: markRaw(WarningFilled), tone: "warning" },
-  disabled: { title: "Action unavailable", message: "This action is not available in the current state.", icon: markRaw(Lock), tone: "neutral" },
+  loading: { title: "正在加载", message: "正在获取最新服务端投影…", icon: markRaw(Refresh), tone: "neutral" },
+  empty: { title: "没有 Incident", message: "当前筛选条件没有匹配的 Incident。", icon: markRaw(RemoveFilled), tone: "neutral" },
+  error: { title: "无法加载 Incident", message: "请重试；若持续失败，请使用下方请求标识排查。", icon: markRaw(CircleCloseFilled), tone: "danger" },
+  forbidden: { title: "请求被拒绝", message: "Local Owner 边界拒绝了此请求，请核对 Origin 与精确命令前置条件。", icon: markRaw(Lock), tone: "warning" },
+  not_found: { title: "未找到投影", message: "请求的 Incident 投影不存在或已不可用。", icon: markRaw(InfoFilled), tone: "neutral" },
+  unavailable: { title: "Incident 投影暂不可用", message: "API 当前无法提供此投影，请在依赖恢复后重试。", icon: markRaw(WarningFilled), tone: "warning" },
+  disabled: { title: "操作不可用", message: "当前状态不允许此操作。", icon: markRaw(Lock), tone: "neutral" },
 };
 
 const definition = computed(() => definitions[props.state]);

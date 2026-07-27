@@ -23,6 +23,10 @@ const emit = defineEmits<{
 const { isDark, toggleTheme } = useTheme();
 const environmentLabel = import.meta.env.VITE_ENVIRONMENT_LABEL || "Demo / kind";
 const themeActionLabel = computed(() => (isDark.value ? "切换浅色主题" : "切换深色主题"));
+const notificationCountLabel = computed(() => (props.unreadCount > 99 ? "99+" : String(props.unreadCount)));
+const notificationActionLabel = computed(() => props.unreadCount > 0
+  ? `打开通知收件箱，${notificationCountLabel.value} 条未读`
+  : "打开通知收件箱");
 const scopeDetail = computed(() => props.activeScope
   ? `${props.activeScope.environment} · ${props.activeScope.namespaces.join(", ")}`
   : "Operational Scope 暂不可用");
@@ -76,9 +80,9 @@ function changeScope(event: Event) {
       <button type="button" class="icon-button" aria-label="打开全局 Agent 面板" title="Agent" @click="emit('openAgent')">
         <Bot :size="19" aria-hidden="true" />
       </button>
-      <button type="button" class="icon-button notification-button" aria-label="打开通知收件箱" title="通知" @click="openNotifications">
+      <button type="button" class="icon-button notification-button" :aria-label="notificationActionLabel" title="通知" @click="openNotifications">
         <Bell :size="19" aria-hidden="true" />
-        <span v-if="unreadCount" class="notification-count">{{ unreadCount > 99 ? "99+" : unreadCount }}</span>
+        <span v-if="unreadCount" class="notification-count">{{ notificationCountLabel }}</span>
       </button>
       <button type="button" class="icon-button" :aria-label="themeActionLabel" :title="themeActionLabel" @click="toggleTheme">
         <Sun v-if="isDark" :size="19" aria-hidden="true" />

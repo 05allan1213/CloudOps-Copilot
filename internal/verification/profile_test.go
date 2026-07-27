@@ -1,6 +1,7 @@
 package verification
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -46,6 +47,39 @@ func TestProfilesAreFrozenDistinctAndLokiFree(t *testing.T) {
 	changedHash, err := ProfileHash(changed)
 	if err != nil || changedHash == golden.ProfileHash {
 		t.Fatal("profile hash did not change with threshold")
+	}
+}
+
+func TestOperationalRecoveryProfileHasOnlyNativeRecoveryChecks(t *testing.T) {
+	plan, err := CompilePlan(CompileInput{
+		TriggerType: "operational_recovery", Cluster: "kind-cloudops", Environment: "local",
+		Namespace: "cloudops-demo", Service: "checkout", WorkloadName: "checkout",
+	})
+	if err != nil {
+		t.Fatalf("compile operational recovery plan: %v", err)
+	}
+	if plan.ProfileID != OperationalRecoveryProfileID || plan.TriggerType != "operational_recovery" {
+		t.Fatalf("unexpected operational plan identity: %+v", plan)
+	}
+	if plan.TargetRevision != "" || plan.SourceRevision != "" || plan.ImageDigest != "" || plan.GitOpsRevision != "" {
+		t.Fatalf("operational plan leaked revision identity: %+v", plan)
+	}
+	if len(plan.Checks) != 2 || plan.Checks[0].Type != CheckIncidentAlertsResolved || plan.Checks[0].FailureMode != FailureImmediate || plan.Checks[1].Type != CheckWorkloadReady || plan.Checks[1].FailureMode != FailureResets {
+		t.Fatalf("unexpected operational checks: %+v", plan.Checks)
+	}
+	if err := ValidatePlan(plan); err != nil {
+		t.Fatalf("validate operational recovery plan: %v", err)
+	}
+}
+
+func TestOperationalRecoveryRejectsRevisionAndProviderIdentity(t *testing.T) {
+	_, err := CompilePlan(CompileInput{
+		TriggerType: "operational_recovery", Cluster: "kind-cloudops", Environment: "local",
+		Namespace: "cloudops-demo", Service: "checkout", WorkloadName: "checkout",
+		TargetRevision: strings.Repeat("a", 40),
+	})
+	if !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("expected invalid operational identity, got %v", err)
 	}
 }
 

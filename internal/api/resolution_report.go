@@ -41,10 +41,7 @@ func validateResolutionReportView(item *ResolutionReportView) error {
 		!validResolutionText(item.Summary, 2048, true) {
 		return fmt.Errorf("%w: invalid ResolutionReport text", ErrInvalidArgument)
 	}
-	if validateExpectedHash(item.Hash) != nil || validateExpectedHash(item.VerificationProfile.Hash) != nil ||
-		!validResolutionRevision(item.Revisions.SourceRevision) ||
-		!validResolutionRevision(item.Revisions.GitOpsRevision) ||
-		!validResolutionImageDigest(item.Revisions.ImageDigest) {
+	if validateExpectedHash(item.Hash) != nil || validateExpectedHash(item.VerificationProfile.Hash) != nil {
 		return fmt.Errorf("%w: invalid ResolutionReport revision or hash", ErrInvalidArgument)
 	}
 	if item.CycleStartedAt.IsZero() || item.ResolvedAt.IsZero() || item.GeneratedAt.IsZero() ||
@@ -116,15 +113,23 @@ func validateResolutionPath(item *ResolutionReportView) error {
 			return fmt.Errorf("%w: invalid post-delivery resolution reason", ErrInvalidArgument)
 		}
 		if item.VerificationProfile.ID != "golden-required-env/v1" ||
+			item.RecoveryProvenance != nil ||
 			!validResolutionRevision(item.Revisions.BadGitOpsRevision) ||
 			!validResolutionRevision(item.Revisions.FixGitOpsRevision) ||
+			!validResolutionRevision(item.Revisions.SourceRevision) ||
+			!validResolutionRevision(item.Revisions.GitOpsRevision) ||
+			!validResolutionImageDigest(item.Revisions.ImageDigest) ||
 			len(item.Diagnosis) == 0 || len(item.RemediationPlan) == 0 ||
 			len(item.RemediationDecision) == 0 || len(item.Delivery) == 0 {
 			return fmt.Errorf("%w: incomplete post-delivery ResolutionReport", ErrInvalidArgument)
 		}
 	case "no_change_signal":
 		if item.VerificationProfile.ID != "no-change/v1" ||
+			item.RecoveryProvenance != nil ||
 			item.Revisions.BadGitOpsRevision != "" || item.Revisions.FixGitOpsRevision != "" ||
+			!validResolutionRevision(item.Revisions.SourceRevision) ||
+			!validResolutionRevision(item.Revisions.GitOpsRevision) ||
+			!validResolutionImageDigest(item.Revisions.ImageDigest) ||
 			len(item.RemediationPlan) != 0 || len(item.RemediationDecision) != 0 || len(item.Delivery) != 0 {
 			return fmt.Errorf("%w: invalid no-change ResolutionReport path", ErrInvalidArgument)
 		}
@@ -132,6 +137,15 @@ func validateResolutionPath(item *ResolutionReportView) error {
 		case "recovered_before_diagnosis", "recovered_without_change":
 		default:
 			return fmt.Errorf("%w: invalid no-change resolution reason", ErrInvalidArgument)
+		}
+	case "operational_recovery":
+		if item.VerificationProfile.ID != "operational-recovery/v1" ||
+			item.ResolutionReason != "recovered_without_change" ||
+			item.Revisions != (ResolutionRevisionsView{}) ||
+			validateRecoveryProvenance(item.RecoveryProvenance) != nil ||
+			len(item.Diagnosis) == 0 || len(item.RemediationDecision) == 0 ||
+			len(item.RemediationPlan) != 0 || len(item.Delivery) != 0 {
+			return fmt.Errorf("%w: invalid operational recovery ResolutionReport path", ErrInvalidArgument)
 		}
 	default:
 		return fmt.Errorf("%w: invalid ResolutionReport trigger type", ErrInvalidArgument)
@@ -294,7 +308,8 @@ func forbiddenResolutionJSONKey(key string) bool {
 
 func publicResolutionJSONIDKey(key string) bool {
 	switch key {
-	case "id", "public_id", "run_id", "incident_id", "verification_run_id", "creator_agent_run_id":
+	case "id", "public_id", "run_id", "incident_id", "verification_run_id", "creator_agent_run_id",
+		"configuration_revision_id", "operational_scope_id", "investigation_id", "decision_id", "decision_event_id":
 		return true
 	default:
 		return false

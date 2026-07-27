@@ -40,6 +40,18 @@ _Avoid_: Unconditional ingestion, hidden correlation, notification route
 A coordinated response case for investigation, remediation and recovery verification. An Incident may group multiple related Alerts, while an Alert may exist without an Incident.
 _Avoid_: Alert, raw signal
 
+**Incident Cycle**:
+One isolated response attempt within an Incident, containing only the Alerts, investigation, decision and recovery proof attributable to that attempt.
+_Avoid_: Incident version, mixed history
+
+**Recovery Verification**:
+The authoritative determination that an Incident has recovered, based on all required observations remaining successful through one common stable window.
+_Avoid_: Delivery health, rollout completion, manual resolution
+
+**ResolutionReport**:
+The immutable recovery proof for one Incident Cycle, binding its final passing Recovery Verification to the attributable history and outcome.
+_Avoid_: Postmortem draft, mutable summary, close reason
+
 **Provider-backed Capability**:
 A capability presented and governed as part of CloudOps while its source facts or external effects remain owned by a specialized cloud-native provider.
 _Avoid_: External link, embedded provider console, duplicated provider

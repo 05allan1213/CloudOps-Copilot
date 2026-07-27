@@ -18,7 +18,7 @@ const props = defineProps<{
 }>();
 
 const tone = computed(() => statusTone(props.result));
-const text = computed(() => props.label ?? (props.result.trim() ? humanizeCode(props.result) : "Unknown"));
+const text = computed(() => props.label ?? (props.result.trim() ? humanizeCode(props.result) : "未知"));
 const icons: Record<StatusTone, Component> = {
   success: markRaw(CircleCheckFilled),
   warning: markRaw(Clock),

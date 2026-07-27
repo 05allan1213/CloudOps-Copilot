@@ -27,16 +27,18 @@ const {
 } = useIncidentList(router, route.query);
 
 const resultAnnouncement = computed(() => {
-  if (loading.value && items.value.length > 0) return `Updating ${items.value.length} loaded incidents…`;
-  if (state.value === "empty") return "No incidents match the current filters.";
-  if (items.value.length === 1) return "1 incident loaded.";
-  return `${items.value.length} incidents loaded.`;
+  if (loading.value && items.value.length > 0) return `正在更新 ${items.value.length} 条 Incident…`;
+  if (state.value === "empty") return "没有符合条件的 Incident。";
+  return `已加载 ${items.value.length} 条 Incident。`;
 });
 
 const refreshLabel = computed(() =>
-  lastUpdatedAt.value ? formatIncidentTime(lastUpdatedAt.value) : "Not refreshed yet",
+  lastUpdatedAt.value ? formatIncidentTime(lastUpdatedAt.value) : "尚未刷新",
 );
-const hasActiveFilters = computed(() => Boolean(filters.status || filters.severity || filters.service));
+const hasActiveFilters = computed(() => Boolean(
+  filters.status || filters.severity || filters.service || filters.attention !== undefined
+  || filters.resource || filters.alert || filters.from || filters.to,
+));
 
 function recoverEmptyState() {
   return hasActiveFilters.value ? reset() : load(false);
@@ -55,20 +57,20 @@ onMounted(() => {
     <header class="page-header">
       <div class="page-heading">
         <p class="eyebrow">
-          Evidence-First Operations
+          CloudOps 运维平台
         </p>
         <h1 id="incident-list-title">
-          Incident Workbench
+          Incident
         </h1>
-        <p>Compare current lifecycle, severity, attention, and freshness before opening the full Incident chain.</p>
+        <p>按生命周期、运行范围、Attention 与恢复状态协调响应。</p>
       </div>
       <dl class="page-facts">
         <div>
-          <dt>Loaded</dt>
+          <dt>已加载</dt>
           <dd>{{ items.length }}</dd>
         </div>
         <div>
-          <dt>Last Refresh</dt>
+          <dt>最近刷新</dt>
           <dd>{{ refreshLabel }}</dd>
         </div>
       </dl>
@@ -78,6 +80,11 @@ onMounted(() => {
       v-model:status="filters.status"
       v-model:severity="filters.severity"
       v-model:service="filters.service"
+      v-model:attention="filters.attention"
+      v-model:resource="filters.resource"
+      v-model:alert="filters.alert"
+      v-model:from="filters.from"
+      v-model:to="filters.to"
       :loading="loading && !loadingMore"
       @apply="syncURLAndLoad"
       @reset="reset"
@@ -86,9 +93,9 @@ onMounted(() => {
     <div class="results-heading">
       <div>
         <h2 id="incident-results-title">
-          Incidents
+          Incident 列表
         </h2>
-        <p>Server order defaults to most recently updated. Table sort controls apply to loaded cursor results.</p>
+        <p>服务端默认按最近更新时间排序；表头排序仅作用于已加载结果。</p>
       </div>
       <span
         class="result-count"
@@ -109,7 +116,7 @@ onMounted(() => {
       class="incident-skeleton"
       role="status"
       aria-live="polite"
-      aria-label="Loading incidents"
+      aria-label="正在加载 Incident"
     >
       <div class="skeleton-header" />
       <div
@@ -131,7 +138,7 @@ onMounted(() => {
       :message="error?.message"
       :request-i-d="error?.requestID"
       :trace-i-d="error?.traceID"
-      primary-action-label="Retry Access Check"
+      primary-action-label="重试访问"
       @primary-action="load(false)"
     />
 
@@ -142,7 +149,7 @@ onMounted(() => {
       :message="error?.message"
       :request-i-d="error?.requestID"
       :trace-i-d="error?.traceID"
-      primary-action-label="Retry Incidents"
+      primary-action-label="重试"
       @primary-action="load(false)"
     />
 
@@ -150,8 +157,8 @@ onMounted(() => {
       v-else-if="state === 'empty'"
       state="empty"
       :busy="loading"
-      :primary-action-label="hasActiveFilters ? 'Clear Filters' : 'Retry Incidents'"
-      :secondary-action-label="hasActiveFilters ? 'Retry' : undefined"
+      :primary-action-label="hasActiveFilters ? '清除筛选' : '重试'"
+      :secondary-action-label="hasActiveFilters ? '重试' : undefined"
       @primary-action="recoverEmptyState"
       @secondary-action="load(false)"
     />
@@ -161,11 +168,11 @@ onMounted(() => {
         v-if="error"
         state="error"
         :busy="loading"
-        title="Additional results could not be loaded"
+        title="更多结果加载失败"
         :message="error.message"
         :request-i-d="error.requestID"
         :trace-i-d="error.traceID"
-        primary-action-label="Retry"
+        primary-action-label="重试"
         @primary-action="nextCursor ? loadMore() : load(false)"
       />
       <IncidentTable

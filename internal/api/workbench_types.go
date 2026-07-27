@@ -165,6 +165,7 @@ type VerificationRunView struct {
 	RemediationPlanID     string                       `json:"remediation_plan_id,omitempty"`
 	ChangeRequestID       string                       `json:"change_request_id,omitempty"`
 	TriggerSignalID       string                       `json:"trigger_signal_id,omitempty"`
+	RecoveryProvenance    *RecoveryProvenanceView      `json:"recovery_provenance,omitempty"`
 	Attempt               uint64                       `json:"attempt"`
 	Profile               VerificationProfileView      `json:"profile"`
 	Revisions             VerificationRevisionsView    `json:"revisions"`
@@ -189,10 +190,20 @@ type VerificationProfileView struct {
 }
 
 type VerificationRevisionsView struct {
-	TargetRevision string `json:"target_revision"`
-	SourceRevision string `json:"source_revision"`
-	ImageDigest    string `json:"image_digest"`
-	GitOpsRevision string `json:"gitops_revision"`
+	TargetRevision string `json:"target_revision,omitempty"`
+	SourceRevision string `json:"source_revision,omitempty"`
+	ImageDigest    string `json:"image_digest,omitempty"`
+	GitOpsRevision string `json:"gitops_revision,omitempty"`
+}
+
+// RecoveryProvenanceView binds a native recovery attempt to the exact active
+// configuration, scope, terminal Investigation, and Owner decision that
+// authorized it. Every field is a public UUID.
+type RecoveryProvenanceView struct {
+	ConfigurationRevisionID string `json:"configuration_revision_id"`
+	OperationalScopeID      string `json:"operational_scope_id"`
+	InvestigationID         string `json:"investigation_id"`
+	DecisionID              string `json:"decision_id"`
 }
 
 type VerificationCommonWindowView struct {

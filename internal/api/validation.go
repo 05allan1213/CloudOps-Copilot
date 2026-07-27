@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/google/uuid"
@@ -56,24 +57,72 @@ func parseListOptions(request *http.Request) (cursor, afterID string, limit int,
 	return cursor, afterID, limit, nil
 }
 
-func parseIncidentFilters(request *http.Request) (status, severity, service string, err error) {
+type incidentFilters struct {
+	Status         string
+	Severity       string
+	Service        string
+	Resource       string
+	RelatedAlertID string
+	Attention      *bool
+	From           time.Time
+	To             time.Time
+}
+
+func parseIncidentFilters(request *http.Request) (incidentFilters, error) {
 	if request == nil {
-		return "", "", "", fmt.Errorf("%w: request is required", ErrInvalidArgument)
+		return incidentFilters{}, fmt.Errorf("%w: request is required", ErrInvalidArgument)
 	}
 	values := request.URL.Query()
-	status = strings.TrimSpace(values.Get("status"))
-	severity = strings.TrimSpace(values.Get("severity"))
-	service = strings.TrimSpace(values.Get("service"))
-	if status != "" && !validIncidentStatus(status) {
-		return "", "", "", fmt.Errorf("%w: invalid Incident status filter", ErrInvalidArgument)
+	result := incidentFilters{
+		Status:   strings.TrimSpace(values.Get("status")),
+		Severity: strings.TrimSpace(values.Get("severity")),
+		Service:  strings.TrimSpace(values.Get("service")),
+		Resource: strings.TrimSpace(values.Get("resource")),
 	}
-	if severity != "" && !validSeverity(severity) {
-		return "", "", "", fmt.Errorf("%w: invalid Incident severity filter", ErrInvalidArgument)
+	if result.Status != "" && !validIncidentStatus(result.Status) {
+		return incidentFilters{}, fmt.Errorf("%w: invalid Incident status filter", ErrInvalidArgument)
 	}
-	if len(service) > 255 || containsControl(service) {
-		return "", "", "", fmt.Errorf("%w: invalid service filter", ErrInvalidArgument)
+	if result.Severity != "" && !validSeverity(result.Severity) {
+		return incidentFilters{}, fmt.Errorf("%w: invalid Incident severity filter", ErrInvalidArgument)
 	}
-	return status, severity, service, nil
+	if len(result.Service) > 255 || containsControl(result.Service) {
+		return incidentFilters{}, fmt.Errorf("%w: invalid service filter", ErrInvalidArgument)
+	}
+	if len(result.Resource) > 512 || containsControl(result.Resource) {
+		return incidentFilters{}, fmt.Errorf("%w: invalid resource filter", ErrInvalidArgument)
+	}
+	if raw := strings.TrimSpace(values.Get("attention")); raw != "" {
+		if raw != "true" && raw != "false" {
+			return incidentFilters{}, fmt.Errorf("%w: invalid attention filter", ErrInvalidArgument)
+		}
+		value := raw == "true"
+		result.Attention = &value
+	}
+	if raw := strings.TrimSpace(values.Get("alert")); raw != "" {
+		id, err := ParsePublicUUID(raw)
+		if err != nil {
+			return incidentFilters{}, fmt.Errorf("%w: invalid Alert filter", ErrInvalidArgument)
+		}
+		result.RelatedAlertID = id
+	}
+	if raw := strings.TrimSpace(values.Get("from")); raw != "" {
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return incidentFilters{}, fmt.Errorf("%w: invalid time filter", ErrInvalidArgument)
+		}
+		result.From = parsed.UTC()
+	}
+	if raw := strings.TrimSpace(values.Get("to")); raw != "" {
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return incidentFilters{}, fmt.Errorf("%w: invalid time filter", ErrInvalidArgument)
+		}
+		result.To = parsed.UTC()
+	}
+	if !result.From.IsZero() && !result.To.IsZero() && result.To.Before(result.From) {
+		return incidentFilters{}, fmt.Errorf("%w: invalid time range", ErrInvalidArgument)
+	}
+	return result, nil
 }
 
 func validateIdempotencyKey(value string) (string, error) {

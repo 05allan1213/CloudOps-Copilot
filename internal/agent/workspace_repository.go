@@ -73,6 +73,166 @@ func (r *WorkspaceRepository) StartAlertInvestigation(ctx context.Context, alert
 	return r.WorkspaceRun(ctx, publicID)
 }
 
+// StartIncidentInvestigationTx creates an Incident-scoped Workspace Run,
+// immutable Context Snapshot, and durable Workspace task in the caller's
+// command transaction. The Incident transition and current Run pointer are
+// committed with the Workspace identities.
+func (r *WorkspaceRepository) StartIncidentInvestigationTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	incidentPublicID, idempotencyKey, reason string,
+	expectedVersion, authorizationID uint64,
+) (string, error) {
+	if tx == nil || expectedVersion == 0 {
+		return "", ErrInvalidArgument
+	}
+	incidentPublicID = strings.TrimSpace(incidentPublicID)
+	idempotencyKey = strings.TrimSpace(idempotencyKey)
+	if incidentPublicID == "" || idempotencyKey == "" || len(idempotencyKey) > 128 {
+		return "", ErrInvalidArgument
+	}
+
+	var (
+		incidentID, revisionID, scopeID                           uint64
+		cycleNo, version                                          uint64
+		clusterID, environment, namespace, targetKind, targetName string
+		summary, scopePublicID                                    string
+		firstSeenAt, lastSeenAt                                   time.Time
+		migratedLegacyContext                                     bool
+	)
+	err := tx.QueryRowContext(ctx, `SELECT incident.id, incident.cycle_no, incident.version,
+incident.cluster, incident.environment, incident.namespace, incident.target_kind, incident.target_name,
+incident.summary, incident.first_seen_at, incident.last_seen_at,
+incident.migrated_legacy_context,
+active.configuration_revision_id, scope.id, scope.public_id
+FROM incidents AS incident
+JOIN active_configuration AS active ON active.singleton_id = 1
+JOIN operational_scopes AS scope
+  ON scope.configuration_revision_id = active.configuration_revision_id
+ AND scope.cluster_id = incident.cluster
+WHERE incident.public_id = ?
+ORDER BY scope.is_default DESC, scope.id
+LIMIT 1 FOR UPDATE`, incidentPublicID).Scan(
+		&incidentID, &cycleNo, &version, &clusterID, &environment, &namespace, &targetKind, &targetName,
+		&summary, &firstSeenAt, &lastSeenAt, &migratedLegacyContext,
+		&revisionID, &scopeID, &scopePublicID,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("lock Incident Workspace subject: %w", err)
+	}
+	if version != expectedVersion || cycleNo == 0 {
+		return "", ErrConflict
+	}
+
+	var existing string
+	err = tx.QueryRowContext(ctx, `SELECT public_id FROM agent_runs
+WHERE run_kind='workspace' AND subject_type='incident' AND incident_id=? AND cycle_no=? AND idempotency_key=?
+ORDER BY id DESC LIMIT 1`, incidentID, cycleNo, idempotencyKey).Scan(&existing)
+	if err == nil {
+		return existing, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+
+	now := r.now().UTC()
+	objective := strings.TrimSpace(reason)
+	if objective == "" {
+		objective = "调查 Incident：" + summary
+	}
+	var authorization any
+	if authorizationID != 0 {
+		authorization = authorizationID
+	}
+	runPublicID := uuid.NewString()
+	result, err := tx.ExecContext(ctx, `INSERT INTO agent_runs (
+public_id, subject_type, incident_id, alert_id, consultation_id, configuration_revision_id,
+context_snapshot_id, cycle_no, expected_incident_version, business_budget_authorization_id,
+idempotency_key, run_kind, status, objective, model, prompt_version,
+max_steps, max_tool_calls, max_model_calls, token_budget, max_evidence_items,
+max_runtime_ms, tool_timeout_ms, max_evidence_bytes, max_checkpoint_bytes,
+max_step_retries, failure_code, uncertainty, migrated_legacy_context, created_at, updated_at
+) VALUES (?, 'incident', ?, NULL, NULL, ?, NULL, ?, ?, ?, ?, 'workspace', 'pending',
+?, 'provider-pending', ?, 12, 8, 1, 12000, 12, 120000, 15000, 16384, 32768, 1, '',
+'unknown', ?, ?, ?)`, runPublicID, incidentID, revisionID, cycleNo, expectedVersion+1,
+		authorization, idempotencyKey, objective, WorkspacePromptVersion, migratedLegacyContext, now, now)
+	if err != nil {
+		return "", fmt.Errorf("persist Incident Investigation run: %w", err)
+	}
+	runIDValue, err := result.LastInsertId()
+	if err != nil || runIDValue <= 0 {
+		return "", fmt.Errorf("read Incident Investigation run id: %w", err)
+	}
+	runID := uint64(runIDValue)
+
+	from := firstSeenAt.UTC().Add(-5 * time.Minute)
+	to := lastSeenAt.UTC().Add(5 * time.Minute)
+	if to.Before(now) {
+		to = now
+	}
+	if to.Sub(from) > 24*time.Hour {
+		from = to.Add(-24 * time.Hour)
+	}
+	resources := []telemetry.ResourceReference{{
+		ID:   workspaceKubernetesResourceID(clusterID, targetKind, namespace, targetName),
+		Kind: targetKind, Namespace: namespace, Name: targetName,
+	}}
+	namespacesJSON, _ := json.Marshal([]string{namespace})
+	resourcesJSON, _ := json.Marshal(resources)
+	filtersJSON, _ := json.Marshal(map[string]any{
+		"incident_id": incidentPublicID, "cycle_no": cycleNo, "operational_scope_id": scopePublicID,
+	})
+	canonical, _ := json.Marshal(map[string]any{
+		"subject_type": "incident", "incident_id": incidentPublicID, "cycle_no": cycleNo,
+		"configuration_revision_id": revisionID, "operational_scope_id": scopeID,
+		"cluster_id": clusterID, "environment": environment, "namespaces": []string{namespace},
+		"resources": resources, "from": from, "to": to,
+	})
+	snapshotPublicID := uuid.NewString()
+	snapshotResult, err := tx.ExecContext(ctx, `INSERT INTO context_snapshots (
+public_id, consultation_id, agent_run_id, subject_type, configuration_revision_id, cluster_id,
+environment, namespaces_json, resource_refs_json, filters_json, range_start, range_end,
+query_execution_refs_json, query_definition_refs_json, evidence_refs_json, content_hash,
+created_by, created_at
+) VALUES (?, NULL, ?, 'incident', ?, ?, ?, ?, ?, ?, ?, ?, JSON_ARRAY(), JSON_ARRAY(), JSON_ARRAY(), ?, 'local-owner', ?)`,
+		snapshotPublicID, runID, revisionID, clusterID, environment, namespacesJSON, resourcesJSON,
+		filtersJSON, from, to, workspaceSHA256(canonical), now)
+	if err != nil {
+		return "", fmt.Errorf("persist Incident Context Snapshot: %w", err)
+	}
+	snapshotID, err := snapshotResult.LastInsertId()
+	if err != nil || snapshotID <= 0 {
+		return "", fmt.Errorf("read Incident Context Snapshot id: %w", err)
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE agent_runs SET context_snapshot_id=? WHERE id=? AND context_snapshot_id IS NULL`, snapshotID, runID); err != nil {
+		return "", err
+	}
+	if err = enqueueWorkspaceTask(ctx, tx, runID, revisionID, now); err != nil {
+		return "", err
+	}
+	updated, err := tx.ExecContext(ctx, `UPDATE incidents
+SET status='investigating', current_agent_run_id=?, version=version+1, updated_at=?
+WHERE id=? AND cycle_no=? AND version=? AND status IN ('detected','investigating')`,
+		runID, now, incidentID, cycleNo, expectedVersion)
+	if err != nil {
+		return "", fmt.Errorf("advance Incident Investigation: %w", err)
+	}
+	if affected, _ := updated.RowsAffected(); affected != 1 {
+		return "", ErrConflict
+	}
+	if err = insertWorkspaceEvent(ctx, tx, runID, nil, 1, "run.created", map[string]any{
+		"run_id": runPublicID, "subject_type": "incident", "incident_id": incidentPublicID,
+		"cycle_no": cycleNo, "context_snapshot_id": snapshotPublicID,
+		"migrated_legacy_context": migratedLegacyContext,
+	}, now); err != nil {
+		return "", err
+	}
+	return runPublicID, nil
+}
+
 // StartAlertInvestigationTx creates the immutable Alert snapshot and durable
 // Workspace task in the caller's Alert command transaction.
 func (r *WorkspaceRepository) StartAlertInvestigationTx(ctx context.Context, tx *sql.Tx, alertPublicID, idempotencyKey, reason string) (string, error) {

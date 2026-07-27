@@ -69,11 +69,26 @@ func (s *fakeStore) Claim(ctx context.Context, request ClaimRequest) (*Execution
 	defer s.mu.Unlock()
 	s.claimCalls[request.Queue]++
 	items := s.pending[request.Queue]
-	if len(items) == 0 {
+	allowed, err := request.taskTypeFilter()
+	if err != nil {
+		return nil, err
+	}
+	allowedSet := make(map[TaskType]struct{}, len(allowed))
+	for _, taskType := range allowed {
+		allowedSet[taskType] = struct{}{}
+	}
+	index := -1
+	for candidate := range items {
+		if _, ok := allowedSet[items[candidate].Type]; ok {
+			index = candidate
+			break
+		}
+	}
+	if index < 0 {
 		return nil, ErrNoTask
 	}
-	task := items[0]
-	s.pending[request.Queue] = items[1:]
+	task := items[index]
+	s.pending[request.Queue] = append(items[:index], items[index+1:]...)
 	task.Status = StatusRunning
 	task.Attempt++
 	task.LeaseGeneration++

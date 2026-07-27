@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/05allan1213/CloudOps-Copilot/internal/infra/incidentstore"
+	recoverydomain "github.com/05allan1213/CloudOps-Copilot/internal/recovery"
 	"github.com/05allan1213/CloudOps-Copilot/internal/schemaversion"
 	"github.com/google/uuid"
 )
@@ -28,7 +29,12 @@ type Service struct {
 	provider      SilenceProvider
 	investigation InvestigationStarter
 	rejections    *incidentstore.Store
+	recovery      recoveryCoordinator
 	now           func() time.Time
+}
+
+type recoveryCoordinator interface {
+	RestartForResolvedAlertIn(context.Context, *sql.Tx, uint64) error
 }
 
 func NewService(db *sql.DB, provider SilenceProvider, investigation InvestigationStarter) (*Service, error) {
@@ -39,7 +45,11 @@ func NewService(db *sql.DB, provider SilenceProvider, investigation Investigatio
 	if err != nil {
 		return nil, err
 	}
-	return &Service{db: db, provider: provider, investigation: investigation, rejections: rejections, now: time.Now}, nil
+	recovery, err := recoverydomain.NewCoordinator(db)
+	if err != nil {
+		return nil, err
+	}
+	return &Service{db: db, provider: provider, investigation: investigation, rejections: rejections, recovery: recovery, now: time.Now}, nil
 }
 
 func (s *Service) Ready(ctx context.Context) error {

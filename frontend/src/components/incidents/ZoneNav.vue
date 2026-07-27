@@ -26,7 +26,7 @@ function navigateToZone(zoneID: string) {
   if (!props.zones.some((zone) => zone.id === zoneID)) return;
   activeZone.value = zoneID;
   document.getElementById(zoneID)?.scrollIntoView({ block: "start" });
-  replaceZoneHash(zoneID);
+  syncZoneHash(zoneID);
 }
 
 function onDesktopZoneClick(event: MouseEvent, zoneID: string) {
@@ -37,9 +37,11 @@ function onDesktopZoneClick(event: MouseEvent, zoneID: string) {
   navigateToZone(zoneID);
 }
 
-function replaceZoneHash(zoneID: string) {
+function syncZoneHash(zoneID: string) {
   const nextHash = `#${zoneID}`;
   if (route.hash === nextHash) return;
+  // The user action or document scroll remains the scroll owner. The router
+  // synchronizes this shareable location without initiating another scroll.
   void router.replace({
     path: route.path,
     query: route.query,
@@ -72,7 +74,7 @@ onMounted(async () => {
       const next = visible[0]?.target.id;
       if (!next || next === activeZone.value) return;
       activeZone.value = next;
-      replaceZoneHash(next);
+      syncZoneHash(next);
     }, {
       root: null,
       rootMargin: "-12px 0px -68% 0px",
@@ -165,7 +167,7 @@ onBeforeUnmount(() => observer?.disconnect());
 }
 
 .desktop-zone-list a span {
-  color: var(--co-text-muted);
+  color: var(--co-text-secondary);
   font-family: var(--co-font-mono);
   font-size: 11px;
 }
@@ -193,7 +195,7 @@ onBeforeUnmount(() => observer?.disconnect());
   }
 
   .mobile-zone-select label {
-    color: var(--co-text-muted);
+    color: var(--co-text-secondary);
     font-size: 11px;
     font-weight: 700;
     text-transform: uppercase;

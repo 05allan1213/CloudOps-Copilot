@@ -32,6 +32,8 @@ const (
 	defaultDeliveryObservePoll    = 5 * time.Second
 	defaultDeliveryObserveTimeout = 30 * time.Minute
 	deliveryObserveMaxAttempts    = 8
+	deliveryCompletionStatus      = "verifying"
+	deliverySourceIncidentStatus  = "delivering"
 )
 
 var (
@@ -1172,7 +1174,7 @@ FOR UPDATE`, snapshot.PlanID, task.IncidentID, task.CycleNo).Scan(&originatingAg
 	if runMigratedLegacy != task.MigratedLegacy || runMigratedLegacyContext != task.MigratedLegacyContext {
 		return asyncjob.ErrSubjectVersionMismatch
 	}
-	updated, err := tx.ExecContext(ctx, `UPDATE incidents SET status = 'verifying', version = version + 1, updated_at = ? WHERE id = ? AND cycle_no = ? AND version = ? AND status = 'delivering'`, outcome.ObservedAt.UTC(), task.IncidentID, task.CycleNo, incidentVersion)
+	updated, err := tx.ExecContext(ctx, `UPDATE incidents SET status = ?, version = version + 1, updated_at = ? WHERE id = ? AND cycle_no = ? AND version = ? AND status = ?`, deliveryCompletionStatus, outcome.ObservedAt.UTC(), task.IncidentID, task.CycleNo, incidentVersion, deliverySourceIncidentStatus)
 	if err != nil {
 		return err
 	}

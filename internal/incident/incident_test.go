@@ -13,18 +13,16 @@ func TestStatusSetAndTransitions(t *testing.T) {
 	}
 	allowed := [][2]Status{
 		{StatusDetected, StatusInvestigating},
-		{StatusDetected, StatusClosed},
 		{StatusInvestigating, StatusAwaitingApproval},
 		{StatusInvestigating, StatusVerifying},
-		{StatusInvestigating, StatusClosed},
 		{StatusAwaitingApproval, StatusDelivering},
 		{StatusAwaitingApproval, StatusInvestigating},
-		{StatusAwaitingApproval, StatusClosed},
 		{StatusDelivering, StatusVerifying},
 		{StatusDelivering, StatusInvestigating},
 		{StatusVerifying, StatusResolved},
 		{StatusVerifying, StatusInvestigating},
 		{StatusResolved, StatusInvestigating},
+		{StatusResolved, StatusClosed},
 	}
 	for _, transition := range allowed {
 		if !CanTransition(transition[0], transition[1]) {
@@ -81,14 +79,19 @@ func TestV3IncidentFencingResolutionAndReopen(t *testing.T) {
 
 func TestV3CloseAndBlockContracts(t *testing.T) {
 	now := time.Date(2026, 7, 18, 9, 0, 0, 0, time.UTC)
+	proof := CloseGuard{HasPassingVerification: true, CommonWindowComplete: true, HasResolutionReport: true}
 	for name, guard := range map[string]CloseGuard{
-		"change":       {HasChangeRequest: true},
-		"write":        {ExternalWriteStarted: true},
-		"unknown":      {ExternalResultUnknown: true},
-		"verification": {HasActiveVerification: true},
+		"missing verification": {CommonWindowComplete: true, HasResolutionReport: true},
+		"missing window":       {HasPassingVerification: true, HasResolutionReport: true},
+		"missing report":       {HasPassingVerification: true, CommonWindowComplete: true},
+		"active effect":        {HasPassingVerification: true, CommonWindowComplete: true, HasResolutionReport: true, HasActiveExternalEffect: true},
+		"unknown effect":       {HasPassingVerification: true, CommonWindowComplete: true, HasResolutionReport: true, ExternalResultUnknown: true},
+		"active verification":  {HasPassingVerification: true, CommonWindowComplete: true, HasResolutionReport: true, HasActiveVerification: true},
+		"active task":          {HasPassingVerification: true, CommonWindowComplete: true, HasResolutionReport: true, HasActiveTask: true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			item := Incident{CycleNo: 1, Version: 1, Status: StatusInvestigating}
+			resolvedAt := now.Add(-time.Minute)
+			item := Incident{CycleNo: 1, Version: 1, Status: StatusResolved, ResolvedAt: &resolvedAt, TerminalAt: &resolvedAt}
 			if err := item.Close(1, 1, guard, now); !errors.Is(err, ErrCloseBlocked) {
 				t.Fatalf("error=%v", err)
 			}
@@ -98,13 +101,17 @@ func TestV3CloseAndBlockContracts(t *testing.T) {
 	if err := directClose.Transition(1, 1, StatusClosed, now); !errors.Is(err, ErrCloseBlocked) {
 		t.Fatalf("direct close error=%v", err)
 	}
-	if err := directClose.Close(1, 1, CloseGuard{}, now); err != nil {
-		t.Fatalf("guarded close error=%v", err)
-	}
-	if directClose.Status != StatusClosed || directClose.TerminalAt == nil || directClose.Version != 2 {
-		t.Fatalf("guarded close projection=%+v", directClose)
+	if err := directClose.Close(1, 1, proof, now); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("unresolved close error=%v", err)
 	}
 	resolvedAt := now.Add(-time.Minute)
+	directClose = Incident{CycleNo: 1, Version: 1, Status: StatusResolved, ResolvedAt: &resolvedAt, TerminalAt: &resolvedAt}
+	if err := directClose.Close(1, 1, proof, now); err != nil {
+		t.Fatalf("guarded close error=%v", err)
+	}
+	if directClose.Status != StatusClosed || directClose.TerminalAt == nil || directClose.ResolvedAt == nil || directClose.Version != 2 {
+		t.Fatalf("guarded close projection=%+v", directClose)
+	}
 	directReopen := Incident{
 		CycleNo: 1, Version: 1, Status: StatusResolved,
 		ResolvedAt: &resolvedAt, TerminalAt: &resolvedAt,

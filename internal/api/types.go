@@ -44,18 +44,27 @@ type OwnerIdentity struct {
 // IncidentView is a projection DTO. ID is always a public UUID; numeric
 // database keys are intentionally absent from transport types.
 type IncidentView struct {
-	ID                    string    `json:"id"`
-	Cycle                 uint64    `json:"cycle"`
-	Status                string    `json:"status"`
-	Severity              string    `json:"severity"`
-	Summary               string    `json:"summary,omitempty"`
-	Version               uint64    `json:"version"`
-	NeedsAttention        bool      `json:"needs_attention"`
-	BlockingReasonCode    string    `json:"blocking_reason_code,omitempty"`
-	MigratedLegacy        bool      `json:"migrated_legacy"`
-	MigratedLegacyContext bool      `json:"migrated_legacy_context"`
-	CreatedAt             time.Time `json:"created_at,omitempty"`
-	UpdatedAt             time.Time `json:"updated_at,omitempty"`
+	ID                    string                         `json:"id"`
+	Cycle                 uint64                         `json:"cycle"`
+	Status                string                         `json:"status"`
+	Severity              string                         `json:"severity"`
+	Summary               string                         `json:"summary,omitempty"`
+	Version               uint64                         `json:"version"`
+	NeedsAttention        bool                           `json:"needs_attention"`
+	BlockingReasonCode    string                         `json:"blocking_reason_code,omitempty"`
+	MigratedLegacy        bool                           `json:"migrated_legacy"`
+	MigratedLegacyContext bool                           `json:"migrated_legacy_context"`
+	OperationalContext    IncidentOperationalContextView `json:"operational_context"`
+	Attention             IncidentAttentionView          `json:"attention"`
+	RelatedAlertCount     uint64                         `json:"related_alert_count"`
+	ContextLinks          []IncidentContextLinkView      `json:"context_links"`
+	Decision              *IncidentDecisionView          `json:"decision,omitempty"`
+	Recovery              IncidentRecoveryView           `json:"recovery"`
+	FirstSeenAt           time.Time                      `json:"first_seen_at,omitempty"`
+	LastSeenAt            time.Time                      `json:"last_seen_at,omitempty"`
+	ResolvedAt            *time.Time                     `json:"resolved_at,omitempty"`
+	CreatedAt             time.Time                      `json:"created_at,omitempty"`
+	UpdatedAt             time.Time                      `json:"updated_at,omitempty"`
 }
 
 // ResourceView is the bounded common shape used by child Query
@@ -96,6 +105,7 @@ type ResolutionReportView struct {
 	MeasuredDurationMS    uint64                            `json:"measured_duration_ms"`
 	GeneratedAt           time.Time                         `json:"generated_at"`
 	Revisions             ResolutionRevisionsView           `json:"revisions"`
+	RecoveryProvenance    *RecoveryProvenanceView           `json:"recovery_provenance,omitempty"`
 	VerificationProfile   ResolutionVerificationProfileView `json:"verification_profile"`
 	Stability             ResolutionStabilityView           `json:"stability"`
 	TriggerSignal         json.RawMessage                   `json:"trigger_signal"`
@@ -113,9 +123,9 @@ type ResolutionReportView struct {
 type ResolutionRevisionsView struct {
 	BadGitOpsRevision string `json:"bad_gitops_revision,omitempty"`
 	FixGitOpsRevision string `json:"fix_gitops_revision,omitempty"`
-	SourceRevision    string `json:"source_revision"`
-	ImageDigest       string `json:"image_digest"`
-	GitOpsRevision    string `json:"gitops_revision"`
+	SourceRevision    string `json:"source_revision,omitempty"`
+	ImageDigest       string `json:"image_digest,omitempty"`
+	GitOpsRevision    string `json:"gitops_revision,omitempty"`
 }
 
 type ResolutionVerificationProfileView struct {
@@ -141,10 +151,12 @@ type QueryKind string
 const (
 	QueryIncidents        QueryKind = "incidents"
 	QueryIncident         QueryKind = "incident"
+	QueryAlertRelations   QueryKind = "alert_relations"
 	QuerySignals          QueryKind = "signals"
 	QueryTimeline         QueryKind = "timeline"
 	QueryEvidence         QueryKind = "evidence"
 	QueryInvestigations   QueryKind = "investigations"
+	QueryDecision         QueryKind = "decision"
 	QueryRemediationPlans QueryKind = "remediation_plans"
 	QueryDelivery         QueryKind = "delivery"
 	QueryVerifications    QueryKind = "verifications"
@@ -153,15 +165,20 @@ const (
 )
 
 type QueryRequest struct {
-	Kind        QueryKind
-	IncidentID  string
-	Cursor      string
-	AfterID     string
-	LastEventID string
-	Limit       int
-	Status      string
-	Severity    string
-	Service     string
+	Kind           QueryKind
+	IncidentID     string
+	Cursor         string
+	AfterID        string
+	LastEventID    string
+	Limit          int
+	Status         string
+	Severity       string
+	Service        string
+	Attention      *bool
+	Resource       string
+	RelatedAlertID string
+	From           time.Time
+	To             time.Time
 }
 
 type QueryResponse struct {
@@ -170,6 +187,11 @@ type QueryResponse struct {
 	ResolutionReport *ResolutionReportView
 	Delivery         *DeliveryView
 	Incidents        []IncidentView
+	AlertRelations   []IncidentAlertRelationView
+	Timeline         []IncidentTimelineEventView
+	Evidence         []IncidentEvidenceView
+	Investigations   []IncidentInvestigationView
+	Decision         *IncidentDecisionView
 	Items            []ResourceView
 	RemediationPlans []RemediationPlanView
 	Verifications    []VerificationRunView
@@ -187,6 +209,7 @@ type CommandKind string
 
 const (
 	CommandStartInvestigation CommandKind = "investigation.start"
+	CommandDecideRecovery     CommandKind = "incident.decision"
 	CommandCloseIncident      CommandKind = "incident.close"
 	CommandDecideRemediation  CommandKind = "remediation_plan.decide"
 )

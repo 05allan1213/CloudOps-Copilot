@@ -30,6 +30,7 @@ type Runner struct {
 	stopOnce       sync.Once
 
 	semaphores map[Queue]chan struct{}
+	queues     []Queue
 	activeMu   sync.Mutex
 	active     map[Queue]int
 	activeZero chan struct{}
@@ -44,12 +45,13 @@ func NewRunner(config RunnerConfig) (*Runner, error) {
 	close(zero)
 	runner := &Runner{
 		cfg:        config,
-		semaphores: make(map[Queue]chan struct{}, len(queues)),
-		active:     make(map[Queue]int, len(queues)),
+		queues:     config.activeQueues(),
+		semaphores: make(map[Queue]chan struct{}, len(config.activeQueues())),
+		active:     make(map[Queue]int, len(config.activeQueues())),
 		activeZero: zero,
 		claimsDone: make(chan struct{}),
 	}
-	for _, queue := range queues {
+	for _, queue := range runner.queues {
 		runner.semaphores[queue] = make(chan struct{}, config.Pools[queue].MaxInFlight)
 	}
 	return runner, nil
@@ -75,8 +77,8 @@ func (r *Runner) Start(ctx context.Context) error {
 	r.claimCtx, r.cancelClaims = context.WithCancel(ctx)
 	r.handlerCtx, r.cancelHandlers = context.WithCancelCause(context.WithoutCancel(ctx))
 	r.started = true
-	r.claimWG.Add(len(queues))
-	for _, queue := range queues {
+	r.claimWG.Add(len(r.queues))
+	for _, queue := range r.queues {
 		go r.runPool(queue)
 	}
 	claimsDone := r.claimsDone
@@ -213,6 +215,7 @@ func (r *Runner) runPool(queue Queue) {
 		}
 		execution, err := r.cfg.Store.Claim(r.claimCtx, ClaimRequest{
 			Queue:         queue,
+			TaskTypes:     r.cfg.taskTypesForQueue(queue),
 			Owner:         r.cfg.Owner,
 			LeaseDuration: pool.LeaseDuration,
 		})
@@ -237,7 +240,7 @@ func (r *Runner) runPool(queue Queue) {
 
 func (r *Runner) executionMatchesPool(queue Queue, execution Execution) bool {
 	expected, err := QueueForTaskType(execution.Task.Type)
-	if err != nil || expected != queue || execution.Task.Queue != queue {
+	if err != nil || expected != queue || execution.Task.Queue != queue || r.cfg.Handlers[execution.Task.Type] == nil {
 		return false
 	}
 	return execution.Lease.Validate() == nil && execution.Task.ID == execution.Lease.TaskID
@@ -359,7 +362,7 @@ func (r *Runner) doneActive(queue Queue) {
 
 func (r *Runner) totalActiveLocked() int {
 	total := 0
-	for _, queue := range queues {
+	for _, queue := range r.queues {
 		total += r.active[queue]
 	}
 	return total

@@ -93,6 +93,21 @@ func NewMySQLVerificationAdvance(config MySQLVerificationAdvanceConfig) (Operati
 	return NewVerificationAdvance(VerificationAdvanceConfig{Reader: reader, Store: store, Now: config.Now})
 }
 
+// NewMySQLRecoveryVerify creates the isolated operational recovery operation.
+// It shares the deterministic evaluator with verification.advance but never
+// promotes a DeploymentBaseline or dispatches an Investigation task.
+func NewMySQLRecoveryVerify(config MySQLVerificationAdvanceConfig) (Operation, error) {
+	if config.DB == nil || config.Tasks == nil || config.Observations == nil || config.Reports == nil {
+		return nil, errors.New("recovery.verify requires MySQL, task, observation, and resolution-report adapters")
+	}
+	if config.Now == nil {
+		config.Now = func() time.Time { return time.Now().UTC() }
+	}
+	reader := &mysqlVerificationAdvanceReader{db: config.DB, observations: config.Observations}
+	store := &mysqlVerificationAdvanceStore{tasks: config.Tasks, reports: config.Reports, now: config.Now, recovery: true}
+	return NewRecoveryVerify(VerificationAdvanceConfig{Reader: reader, Store: store, Now: config.Now})
+}
+
 type mysqlVerificationAdvanceReader struct {
 	db           *sql.DB
 	observations VerificationObservationSource
@@ -125,6 +140,7 @@ func (r *mysqlVerificationAdvanceReader) Load(ctx context.Context, task asyncjob
 		profileVersion        sql.NullInt64
 		contractVersion       sql.NullInt64
 		commonWindowMS        sql.NullInt64
+		targetRevision        sql.NullString
 		sourceRevision        sql.NullString
 		imageDigest           sql.NullString
 		gitopsRevision        sql.NullString
@@ -135,6 +151,10 @@ func (r *mysqlVerificationAdvanceReader) Load(ctx context.Context, task asyncjob
 		remediationPlanID     nullableUint64
 		changeRequestID       nullableUint64
 		triggerSignalID       nullableUint64
+		configurationID       nullableUint64
+		operationalScopeID    nullableUint64
+		investigationRunID    nullableUint64
+		decisionEventID       nullableUint64
 		rowVersion            uint64
 		createdAt             time.Time
 		updatedAt             time.Time
@@ -146,10 +166,12 @@ func (r *mysqlVerificationAdvanceReader) Load(ctx context.Context, task asyncjob
 	)
 	err = r.db.QueryRowContext(ctx, `
 SELECT vr.public_id, vr.incident_id, i.public_id, i.version, i.status, vr.remediation_plan_id,
-       vr.change_request_id, vr.status, vr.target_revision,
-       vr.plan_json, vr.started_at, vr.deadline_at, vr.completed_at, vr.row_version,
-       vr.created_at, vr.updated_at, vr.cycle_no, vr.trigger_type, vr.trigger_signal_id,
-       vr.source_revision, vr.image_digest, vr.gitops_revision,
+	       vr.change_request_id, vr.status, vr.target_revision,
+	       vr.plan_json, vr.started_at, vr.deadline_at, vr.completed_at, vr.row_version,
+	       vr.created_at, vr.updated_at, vr.cycle_no, vr.trigger_type, vr.trigger_signal_id,
+	       vr.configuration_revision_id, vr.operational_scope_id,
+	       vr.originating_agent_run_id, vr.decision_event_id,
+	       vr.source_revision, vr.image_digest, vr.gitops_revision,
 		vr.verification_contract_version, vr.verification_profile_id,
 	       vr.verification_profile_hash, vr.verification_profile_version, vr.common_stability_window_ms,
 		vr.migrated_legacy, vr.migrated_legacy_context, NOW(6)
@@ -157,9 +179,10 @@ FROM verification_runs vr
 JOIN incidents i ON i.id = vr.incident_id
 WHERE vr.id = ? AND vr.incident_id = ? AND vr.cycle_no = ?`, task.SubjectID, task.IncidentID, task.CycleNo).Scan(
 		&run.PublicID, &run.IncidentID, &run.IncidentPublicID, &incidentVersion, &incidentStatus, &remediationPlanID,
-		&changeRequestID, &status, &run.TargetRevision, &planJSON, &startedAt, &deadlineAt,
+		&changeRequestID, &status, &targetRevision, &planJSON, &startedAt, &deadlineAt,
 		&completedAt, &rowVersion, &createdAt, &updatedAt, &cycleNo, &triggerType,
-		&triggerSignalID, &sourceRevision, &imageDigest, &gitopsRevision, &contractVersion,
+		&triggerSignalID, &configurationID, &operationalScopeID, &investigationRunID,
+		&decisionEventID, &sourceRevision, &imageDigest, &gitopsRevision, &contractVersion,
 		&profileID, &profileHash, &profileVersion, &commonWindowMS, &migratedLegacy, &migratedLegacyContext, &observedNow,
 	)
 	if err != nil {
@@ -190,12 +213,13 @@ WHERE vr.id = ? AND vr.incident_id = ? AND vr.cycle_no = ?`, task.SubjectID, tas
 	if expectedTrigger == "no_change" {
 		expectedTrigger = "no_change_signal"
 	}
-	if triggerType.String != expectedTrigger || run.Plan.TargetRevision != run.TargetRevision ||
+	if triggerType.String != expectedTrigger || run.Plan.TargetRevision != targetRevision.String ||
 		run.Plan.SourceRevision != sourceRevision.String || run.Plan.ImageDigest != imageDigest.String ||
 		run.Plan.GitOpsRevision != gitopsRevision.String || run.Plan.ProfileVersion != int(profileVersion.Int64) {
 		return VerificationAdvanceSnapshot{}, fmt.Errorf("%w: verification run differs from its frozen plan", verification.ErrInvalidArgument)
 	}
 	run.ID = task.SubjectID
+	run.TargetRevision = targetRevision.String
 	run.Status = verification.RunStatus(status)
 	run.StartedAt, run.CompletedAt = verificationNullableTime(startedAt), verificationNullableTime(completedAt)
 	run.DeadlineAt, run.RowVersion, run.CreatedAt, run.UpdatedAt = deadlineAt, rowVersion, createdAt, updatedAt
@@ -221,6 +245,8 @@ WHERE vr.id = ? AND vr.incident_id = ? AND vr.cycle_no = ?`, task.SubjectID, tas
 		return VerificationAdvanceSnapshot{Run: run, Checks: checks, Now: observedNow,
 			CycleNo: cycleNo, IncidentVersion: incidentVersion, IncidentStatus: incidentStatus,
 			TriggerType: triggerType.String, TriggerSignalID: triggerSignalID.value(),
+			ConfigurationRevisionID: configurationID.value(), OperationalScopeID: operationalScopeID.value(),
+			InvestigationRunID: investigationRunID.value(), DecisionEventID: decisionEventID.value(),
 			RemediationPlanID: remediationPlanID.value(), ChangeRequestID: changeRequestID.value(),
 			SourceRevision: sourceRevision.String, ImageDigest: imageDigest.String, GitOpsRevision: gitopsRevision.String,
 			ProfileID: profileID.String, ProfileHash: profileHash.String, ContractVersion: int(contractVersion.Int64),
@@ -235,6 +261,8 @@ WHERE vr.id = ? AND vr.incident_id = ? AND vr.cycle_no = ?`, task.SubjectID, tas
 		CheckDeadlineAt: deadline,
 		CycleNo:         cycleNo, IncidentVersion: incidentVersion, IncidentStatus: incidentStatus,
 		TriggerType: triggerType.String, TriggerSignalID: triggerSignalID.value(),
+		ConfigurationRevisionID: configurationID.value(), OperationalScopeID: operationalScopeID.value(),
+		InvestigationRunID: investigationRunID.value(), DecisionEventID: decisionEventID.value(),
 		RemediationPlanID: remediationPlanID.value(), ChangeRequestID: changeRequestID.value(),
 		SourceRevision: sourceRevision.String, ImageDigest: imageDigest.String, GitOpsRevision: gitopsRevision.String,
 		ProfileID: profileID.String, ProfileHash: profileHash.String, ContractVersion: int(contractVersion.Int64),
@@ -430,10 +458,19 @@ type mysqlVerificationAdvanceStore struct {
 	baselines    VerificationBaselineStore
 	now          func() time.Time
 	maxAgentRuns int
+	recovery     bool
 }
 
 func (s *mysqlVerificationAdvanceStore) PersistIn(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, snapshot VerificationAdvanceSnapshot, check verification.Check, sample verification.Sample, status verification.RunStatus, reason string, commonStart *time.Time) error {
 	if s == nil || tx == nil || snapshot.Run.ID != task.SubjectID || snapshot.Run.IncidentID != task.IncidentID || snapshot.Run.RowVersion != task.ExpectedSubjectVersion || snapshot.CycleNo != task.CycleNo {
+		return asyncjob.ErrSubjectVersionMismatch
+	}
+	operationalRecovery := task.Type == asyncjob.TaskRecoveryVerify && task.Transition == "recovery.verify"
+	if operationalRecovery != s.recovery || (s.recovery && (snapshot.TriggerType != "operational_recovery" ||
+		snapshot.ProfileID != verification.OperationalRecoveryProfileID || snapshot.ConfigurationRevisionID == 0 ||
+		snapshot.OperationalScopeID == 0 || snapshot.InvestigationRunID == 0 || snapshot.DecisionEventID == 0 ||
+		snapshot.RemediationPlanID != 0 || snapshot.ChangeRequestID != 0 || snapshot.TriggerSignalID != 0 ||
+		snapshot.SourceRevision != "" || snapshot.ImageDigest != "" || snapshot.GitOpsRevision != "")) {
 		return asyncjob.ErrSubjectVersionMismatch
 	}
 	if len(sample.Observed) == 0 || len(sample.Observed) > verificationMaxObserved || !json.Valid(sample.Observed) {
@@ -449,18 +486,21 @@ func (s *mysqlVerificationAdvanceStore) PersistIn(ctx context.Context, tx asyncj
 	var rowVersion uint64
 	var currentStatus string
 	var storedPlanID, storedChangeID nullableUint64
+	var storedConfigurationID, storedScopeID, storedInvestigationID, storedDecisionID nullableUint64
 	var storedTrigger, storedSource, storedImage, storedGitOps string
 	var storedProfileID, storedProfileHash string
 	var storedMigratedLegacy, storedMigratedLegacyContext bool
 	if err := tx.QueryRowContext(ctx, `
 SELECT row_version, status, remediation_plan_id, change_request_id,
-       COALESCE(trigger_type,''), COALESCE(source_revision,''), COALESCE(image_digest,''),
+	       configuration_revision_id, operational_scope_id, originating_agent_run_id, decision_event_id,
+	       COALESCE(trigger_type,''), COALESCE(source_revision,''), COALESCE(image_digest,''),
 	       COALESCE(gitops_revision,''), COALESCE(verification_profile_id,''),
 	       COALESCE(verification_profile_hash,''), migrated_legacy, migrated_legacy_context
 FROM verification_runs
 WHERE id = ? AND incident_id = ? AND cycle_no = ?
 FOR UPDATE`, task.SubjectID, task.IncidentID, task.CycleNo).Scan(
-		&rowVersion, &currentStatus, &storedPlanID, &storedChangeID, &storedTrigger,
+		&rowVersion, &currentStatus, &storedPlanID, &storedChangeID,
+		&storedConfigurationID, &storedScopeID, &storedInvestigationID, &storedDecisionID, &storedTrigger,
 		&storedSource, &storedImage, &storedGitOps, &storedProfileID, &storedProfileHash,
 		&storedMigratedLegacy, &storedMigratedLegacyContext); err != nil {
 		return err
@@ -469,6 +509,8 @@ FOR UPDATE`, task.SubjectID, task.IncidentID, task.CycleNo).Scan(
 		return asyncjob.ErrSubjectVersionMismatch
 	}
 	if storedPlanID.value() != snapshot.RemediationPlanID || storedChangeID.value() != snapshot.ChangeRequestID ||
+		storedConfigurationID.value() != snapshot.ConfigurationRevisionID || storedScopeID.value() != snapshot.OperationalScopeID ||
+		storedInvestigationID.value() != snapshot.InvestigationRunID || storedDecisionID.value() != snapshot.DecisionEventID ||
 		storedTrigger != snapshot.TriggerType || storedSource != snapshot.SourceRevision || storedImage != snapshot.ImageDigest ||
 		storedGitOps != snapshot.GitOpsRevision || storedProfileID != snapshot.ProfileID || storedProfileHash != snapshot.ProfileHash ||
 		storedMigratedLegacy != snapshot.MigratedLegacy || storedMigratedLegacyContext != snapshot.MigratedLegacyContext ||
@@ -527,8 +569,10 @@ WHERE id = ? AND incident_id = ? AND cycle_no = ? AND row_version = ?`,
 		if err := markRemainingChecksPassed(ctx, tx, task, now); err != nil {
 			return err
 		}
-		if err := promotePassingDeploymentBaseline(ctx, tx, s.baselines, task, snapshot, commonStart, now); err != nil {
-			return fmt.Errorf("promote passing DeploymentBaseline: %w", err)
+		if !operationalRecovery {
+			if err := promotePassingDeploymentBaseline(ctx, tx, s.baselines, task, snapshot, commonStart, now); err != nil {
+				return fmt.Errorf("promote passing DeploymentBaseline: %w", err)
+			}
 		}
 		if err := resolveIncident(ctx, tx, task, snapshot, now); err != nil {
 			return err
@@ -541,6 +585,9 @@ WHERE id = ? AND incident_id = ? AND cycle_no = ? AND row_version = ?`,
 	if verification.TerminalRun(status) {
 		if err := persistVerificationFailureEvidence(ctx, tx, task, snapshot, check, sample, sampleID, samplePublicID, contentHash, now); err != nil {
 			return err
+		}
+		if operationalRecovery {
+			return returnRecoveryToInvestigation(ctx, tx, task, status, reason)
 		}
 		return requeueInvestigation(ctx, tx, s.tasks, task, status, reason, s.maxAgentRuns)
 	}
@@ -625,14 +672,59 @@ func enqueueVerificationAdvance(ctx context.Context, tx asyncjob.DBTX, tasks Ver
 	if tasks == nil {
 		return asyncjob.ErrInvalidMutation
 	}
+	taskType, transition, priority := asyncjob.TaskVerificationAdvance, "verification.advance", 50
+	if task.Type == asyncjob.TaskRecoveryVerify && task.Transition == "recovery.verify" {
+		taskType, transition, priority = asyncjob.TaskRecoveryVerify, "recovery.verify", 70
+	} else if task.Type != asyncjob.TaskVerificationAdvance || task.Transition != "verification.advance" {
+		return asyncjob.ErrInvalidMutation
+	}
 	_, err := tasks.EnqueueIn(ctx, tx, asyncjob.NewTask{
-		IncidentID: task.IncidentID, CycleNo: task.CycleNo, Type: asyncjob.TaskVerificationAdvance,
-		SubjectType: "verification_run", SubjectID: task.SubjectID, Transition: "verification.advance",
+		IncidentID: task.IncidentID, CycleNo: task.CycleNo, Type: taskType,
+		SubjectType: "verification_run", SubjectID: task.SubjectID, Transition: transition,
 		ExpectedSubjectVersion: expectedVersion, PayloadSchemaVersion: 1, Payload: payload,
-		DedupeKey: hashVerificationTask(runPublicID, expectedVersion), Priority: 50,
+		DedupeKey: hashVerificationTask(transition, runPublicID, expectedVersion), Priority: priority,
 		MigratedLegacy: task.MigratedLegacy, MigratedLegacyContext: task.MigratedLegacyContext,
 		AvailableAt: verificationTimePtr(available.UTC()), MaxAttempts: 5,
 	})
+	return err
+}
+
+func returnRecoveryToInvestigation(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, status verification.RunStatus, reason string) error {
+	var incidentVersion uint64
+	var incidentStatus string
+	if err := tx.QueryRowContext(ctx, `SELECT version, status FROM incidents
+WHERE id = ? AND cycle_no = ? FOR UPDATE`, task.IncidentID, task.CycleNo).Scan(&incidentVersion, &incidentStatus); err != nil {
+		return err
+	}
+	if incidentStatus != "verifying" {
+		return asyncjob.ErrSubjectVersionMismatch
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE incidents
+SET status = 'investigating', needs_attention = FALSE,
+    blocking_reason_code = ?, blocked_at = NULL, version = version + 1, updated_at = NOW(6)
+WHERE id = ? AND cycle_no = ? AND version = ? AND status = 'verifying'`,
+		boundVerificationText("recovery_verification_"+string(status)+":"+reason, 128),
+		task.IncidentID, task.CycleNo, incidentVersion)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return asyncjob.ErrSubjectVersionMismatch
+	}
+	metadata, _ := json.Marshal(map[string]any{
+		"verification_run_id": task.SubjectID, "status": status, "reason": reason, "cycle_no": task.CycleNo,
+	})
+	_, err = tx.ExecContext(ctx, `INSERT IGNORE INTO incident_events
+ (public_id, incident_id, cycle_no, event_schema_version,
+  event_type, source_status, target_status, reason_code, idempotency_key,
+  migrated_legacy_context, migrated_legacy, actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
+VALUES (?, ?, ?, 1, 'verification_failed', 'verifying', 'investigating', ?, ?, ?, ?,
+        'system', 'recovery.verify', ?, ?, NOW(6), NOW(6))`,
+		uuid.NewString(), task.IncidentID, task.CycleNo,
+		boundVerificationText("recovery_verification_"+string(status), 128),
+		hashVerificationTask("recovery_verification_failed", task.SubjectID, status, reason),
+		task.MigratedLegacyContext, task.MigratedLegacy,
+		"Recovery verification did not establish recovery; Incident returned to Investigate", metadata)
 	return err
 }
 
@@ -722,11 +814,11 @@ WHERE id = ? AND cycle_no = ?
 INSERT IGNORE INTO incident_events
  (public_id, incident_id, cycle_no, event_schema_version,
   event_type, idempotency_key, migrated_legacy_context, migrated_legacy, actor_type, actor_id, summary, metadata_json, occurred_at, created_at)
-VALUES (?, ?, ?, 1, 'incident_resolved', ?, ?, ?, 'system', 'verification.advance', ?, ?, ?, NOW(6))`,
+VALUES (?, ?, ?, 1, 'incident_resolved', ?, ?, ?, 'system', ?, ?, ?, ?, NOW(6))`,
 		uuid.NewString(), task.IncidentID, task.CycleNo,
 		hashVerificationTask("resolved", fmt.Sprint(task.IncidentID), fmt.Sprint(task.CycleNo), fmt.Sprint(task.SubjectID)),
 		task.MigratedLegacyContext, task.MigratedLegacy,
-		"Incident resolved after a passing verification window", metadata, now)
+		task.Transition, "Incident resolved after a passing verification window", metadata, now)
 	return err
 }
 
@@ -875,14 +967,15 @@ func (w *mysqlResolutionReportWriter) PersistIn(ctx context.Context, tx asyncjob
 		incidentStatus                                                    string
 		incidentVersion                                                   uint64
 		incidentResolvedAt                                                sql.NullTime
+		incidentFirstSeenAt                                               time.Time
 	)
 	if err := tx.QueryRowContext(ctx, `
-	SELECT public_id, service_name, target_name, environment, summary, version, status, resolved_at
-	FROM incidents
-	WHERE id = ? AND cycle_no = ?
-FOR UPDATE`, task.IncidentID, task.CycleNo).Scan(
+		SELECT public_id, service_name, target_name, environment, summary, version, status, resolved_at, first_seen_at
+		FROM incidents
+		WHERE id = ? AND cycle_no = ?
+	FOR UPDATE`, task.IncidentID, task.CycleNo).Scan(
 		&incidentPublicID, &service, &workload, &environment, &incidentSummary, &incidentVersion,
-		&incidentStatus, &incidentResolvedAt); err != nil {
+		&incidentStatus, &incidentResolvedAt, &incidentFirstSeenAt); err != nil {
 		return err
 	}
 	if incidentStatus != "resolved" || !incidentResolvedAt.Valid ||
@@ -897,25 +990,52 @@ FOR UPDATE`, task.IncidentID, task.CycleNo).Scan(
 			triggerType = "no_change_signal"
 		}
 	}
-	initialID, triggerSignal, cycleStartedAt, err := reportSignals(ctx, tx, task.IncidentID, task.CycleNo, triggerType, snapshot.TriggerSignalID)
-	if err != nil {
-		return err
+	operationalRecovery := triggerType == "operational_recovery"
+	var initialID uint64
+	var triggerSignal map[string]any
+	var err error
+	cycleStartedAt := incidentFirstSeenAt.UTC()
+	if operationalRecovery {
+		triggerSignal = map[string]any{
+			"kind": "operational_recovery",
+		}
+	} else {
+		initialID, triggerSignal, cycleStartedAt, err = reportSignals(ctx, tx, task.IncidentID, task.CycleNo, triggerType, snapshot.TriggerSignalID)
+		if err != nil {
+			return err
+		}
 	}
 	evidence, err := reportEvidence(ctx, tx, task)
 	if err != nil {
 		return err
 	}
-	creatorAgentRunID, expectedDiagnosisHash, err := reportDiagnosisIdentity(ctx, tx, task, snapshot.RemediationPlanID)
-	if err != nil {
-		return err
-	}
-	diagnosis, err := reportDiagnosis(ctx, tx, task, creatorAgentRunID, expectedDiagnosisHash)
-	if err != nil {
-		return err
-	}
-	plan, decision, delivery, decisionID, badRevision, fixRevision, err := reportRemediation(ctx, tx, task, snapshot)
-	if err != nil {
-		return err
+	var diagnosis, plan, decision, delivery []byte
+	var decisionID uint64
+	var badRevision, fixRevision string
+	if operationalRecovery {
+		diagnosis, err = reportOperationalDiagnosis(ctx, tx, task, snapshot.InvestigationRunID)
+		if err != nil {
+			return err
+		}
+		var decisionPublicID string
+		decision, decisionPublicID, err = reportOperationalDecision(ctx, tx, task, snapshot)
+		if err != nil {
+			return err
+		}
+		triggerSignal["decision_id"] = decisionPublicID
+	} else {
+		creatorAgentRunID, expectedDiagnosisHash, identityErr := reportDiagnosisIdentity(ctx, tx, task, snapshot.RemediationPlanID)
+		if identityErr != nil {
+			return identityErr
+		}
+		diagnosis, err = reportDiagnosis(ctx, tx, task, creatorAgentRunID, expectedDiagnosisHash)
+		if err != nil {
+			return err
+		}
+		plan, decision, delivery, decisionID, badRevision, fixRevision, err = reportRemediation(ctx, tx, task, snapshot)
+		if err != nil {
+			return err
+		}
 	}
 	samples, err := reportSamples(ctx, tx, task)
 	if err != nil {
@@ -949,13 +1069,17 @@ FOR UPDATE`, task.IncidentID, task.CycleNo).Scan(
 	if profileHash == "" {
 		profileHash = snapshot.Run.Plan.ProfileHash
 	}
-	if len(profileHash) != 64 || profileID == "" || snapshot.SourceRevision == "" || snapshot.ImageDigest == "" || snapshot.GitOpsRevision == "" {
+	if len(profileHash) != 64 || profileID == "" ||
+		(!operationalRecovery && (snapshot.SourceRevision == "" || snapshot.ImageDigest == "" || snapshot.GitOpsRevision == "")) ||
+		(operationalRecovery && (profileID != verification.OperationalRecoveryProfileID || snapshot.SourceRevision != "" ||
+			snapshot.ImageDigest != "" || snapshot.GitOpsRevision != "" || snapshot.ConfigurationRevisionID == 0 ||
+			snapshot.OperationalScopeID == 0 || snapshot.InvestigationRunID == 0 || snapshot.DecisionEventID == 0)) {
 		return fmt.Errorf("%w: resolution report lacks revision/profile identity", asyncjob.ErrInvalidMutation)
 	}
 	reason := "recovered_after_remediation"
-	if triggerType == "no_change_signal" {
+	if triggerType == "no_change_signal" || operationalRecovery {
 		reason = "recovered_without_change"
-		if len(diagnosis) == 0 {
+		if !operationalRecovery && len(diagnosis) == 0 {
 			reason = "recovered_before_diagnosis"
 		}
 	}
@@ -965,8 +1089,12 @@ FOR UPDATE`, task.IncidentID, task.CycleNo).Scan(
 	if triggerType == "no_change_signal" && (snapshot.TriggerSignalID == 0 || len(plan) != 0 || len(decision) != 0 || len(delivery) != 0) {
 		return fmt.Errorf("%w: no-change resolution report has an invalid remediation path", asyncjob.ErrInvalidMutation)
 	}
-	if triggerType == "post_delivery" && !reportEvidenceNonEmpty(evidence) {
-		return fmt.Errorf("%w: post-delivery resolution report requires Incident evidence", asyncjob.ErrInvalidMutation)
+	if operationalRecovery && (snapshot.TriggerSignalID != 0 || snapshot.RemediationPlanID != 0 || snapshot.ChangeRequestID != 0 ||
+		len(diagnosis) == 0 || len(plan) != 0 || len(decision) == 0 || len(delivery) != 0) {
+		return fmt.Errorf("%w: operational recovery resolution report is incomplete", asyncjob.ErrInvalidMutation)
+	}
+	if (triggerType == "post_delivery" || operationalRecovery) && !reportEvidenceNonEmpty(evidence) {
+		return fmt.Errorf("%w: resolution report requires Incident evidence", asyncjob.ErrInvalidMutation)
 	}
 	if len(samples) == 0 || len(timeline) == 0 {
 		return fmt.Errorf("%w: resolution report requires verification samples and timeline", asyncjob.ErrInvalidMutation)
@@ -996,6 +1124,10 @@ FOR UPDATE`, task.IncidentID, task.CycleNo).Scan(
 	if durationMS < 0 {
 		durationMS = 0
 	}
+	var initialSignalID any
+	if initialID != 0 {
+		initialSignalID = initialID
+	}
 	var triggerID any
 	if snapshot.TriggerSignalID != 0 {
 		triggerID = snapshot.TriggerSignalID
@@ -1013,10 +1145,16 @@ FOR UPDATE`, task.IncidentID, task.CycleNo).Scan(
 	if triggerType == "no_change_signal" {
 		planID, remediationDecisionID, changeID, badRevision, fixRevision = nil, nil, nil, "", ""
 	}
+	var configurationID, operationalScopeID, investigationID, recoveryDecisionID any
+	if operationalRecovery {
+		configurationID, operationalScopeID = snapshot.ConfigurationRevisionID, snapshot.OperationalScopeID
+		investigationID, recoveryDecisionID = snapshot.InvestigationRunID, snapshot.DecisionEventID
+	}
 	summary := boundVerificationText("Verification passed after the common stability window", 2048)
 	contentHash := hashVerificationTask(
 		"resolution-report-row-v1", verificationReportSchema, task.IncidentID, task.CycleNo,
-		task.SubjectID, initialID, triggerID, planID, remediationDecisionID, changeID,
+		task.SubjectID, configurationID, operationalScopeID, investigationID, recoveryDecisionID,
+		initialSignalID, triggerID, planID, remediationDecisionID, changeID,
 		triggerType, reason, service, workload, environment, incidentSummary,
 		cycleStartedAt.Format(time.RFC3339Nano), resolvedAt.Format(time.RFC3339Nano),
 		durationMS, badRevision, fixRevision, snapshot.SourceRevision, snapshot.ImageDigest,
@@ -1029,9 +1167,10 @@ FOR UPDATE`, task.IncidentID, task.CycleNo).Scan(
 	)
 	insertResult, err := tx.ExecContext(ctx, `
 INSERT INTO resolution_reports
- (public_id, report_schema_version, incident_id, cycle_no,
-  verification_run_id, initial_signal_id, trigger_signal_id, remediation_plan_id,
-  remediation_decision_id, change_request_id, trigger_type, resolution_reason,
+	 (public_id, report_schema_version, incident_id, cycle_no,
+	  verification_run_id, configuration_revision_id, operational_scope_id, investigation_run_id, decision_event_id,
+	  initial_signal_id, trigger_signal_id, remediation_plan_id,
+	  remediation_decision_id, change_request_id, trigger_type, resolution_reason,
   service, workload, environment, impact_summary, cycle_started_at, resolved_at,
   measured_duration_ms, bad_gitops_revision, fix_gitops_revision, source_revision,
   image_digest, gitops_revision, verification_profile_id, verification_profile_hash,
@@ -1039,8 +1178,9 @@ INSERT INTO resolution_reports
   diagnosis_json, evidence_json, remediation_plan_json, remediation_decision_json,
   delivery_json, verification_json, timeline_json, agent_usage_json, summary,
   content_hash, generated_at, migrated_legacy_context)
-	VALUES (?, ?, ?, ?,
-	        ?, ?, ?, ?,
+	 VALUES (?, ?, ?, ?,
+	        ?, ?, ?, ?, ?,
+	        ?, ?, ?,
 	        ?, ?, ?, ?,
 	        ?, ?, ?, ?, ?, ?,
 	        ?, ?, ?, ?,
@@ -1051,10 +1191,11 @@ INSERT INTO resolution_reports
 	        ?, ?, ?)
 	ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
 		uuid.NewString(), verificationReportSchema, task.IncidentID, task.CycleNo, task.SubjectID,
-		initialID, triggerID, planID, remediationDecisionID, changeID, triggerType, reason,
+		configurationID, operationalScopeID, investigationID, recoveryDecisionID,
+		initialSignalID, triggerID, planID, remediationDecisionID, changeID, triggerType, reason,
 		service, workload, environment, incidentSummary, cycleStartedAt, resolvedAt, durationMS,
-		verificationNullableString(badRevision), verificationNullableString(fixRevision), snapshot.SourceRevision, snapshot.ImageDigest,
-		snapshot.GitOpsRevision, profileID, profileHash, commonStartedAt, resolvedAt, triggerJSON,
+		verificationNullableString(badRevision), verificationNullableString(fixRevision), verificationNullableString(snapshot.SourceRevision), verificationNullableString(snapshot.ImageDigest),
+		verificationNullableString(snapshot.GitOpsRevision), profileID, profileHash, commonStartedAt, resolvedAt, triggerJSON,
 		verificationNullableJSON(diagnosis), evidence, verificationNullableJSON(plan), verificationNullableJSON(decision), verificationNullableJSON(delivery),
 		verificationJSON, timeline, usage, summary, contentHash, resolvedAt, snapshot.MigratedLegacyContext)
 	if err != nil {
@@ -1216,6 +1357,77 @@ func reportEvidence(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task) (
 		return nil, err
 	}
 	return projection.encode()
+}
+
+func reportOperationalDiagnosis(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, investigationRunID uint64) ([]byte, error) {
+	if investigationRunID == 0 {
+		return nil, asyncjob.ErrInvalidMutation
+	}
+	var publicID, status string
+	var diagnosis []byte
+	var completedAt sql.NullTime
+	if err := tx.QueryRowContext(ctx, `SELECT public_id, status, final_diagnosis, completed_at
+FROM agent_runs
+WHERE id = ? AND incident_id = ? AND cycle_no = ? AND subject_type = 'incident' AND run_kind = 'workspace'`,
+		investigationRunID, task.IncidentID, task.CycleNo).Scan(&publicID, &status, &diagnosis, &completedAt); err != nil {
+		return nil, err
+	}
+	if publicID == "" || (status != "completed" && status != "failed" && status != "cancelled") ||
+		!completedAt.Valid || len(diagnosis) == 0 || !json.Valid(diagnosis) {
+		return nil, fmt.Errorf("%w: operational recovery requires a terminal attributable Investigation", asyncjob.ErrInvalidMutation)
+	}
+	return boundedJSON(json.RawMessage(diagnosis), 16384)
+}
+
+func reportOperationalDecision(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, snapshot VerificationAdvanceSnapshot) ([]byte, string, error) {
+	if snapshot.DecisionEventID == 0 || snapshot.InvestigationRunID == 0 || snapshot.ConfigurationRevisionID == 0 || snapshot.OperationalScopeID == 0 {
+		return nil, "", asyncjob.ErrInvalidMutation
+	}
+	var publicID, actorType, actorID, summary string
+	var investigationPublicID, configurationPublicID, scopePublicID string
+	var metadata []byte
+	var occurredAt time.Time
+	if err := tx.QueryRowContext(ctx, `SELECT decision.public_id, decision.actor_type, decision.actor_id,
+       decision.summary, decision.metadata_json, decision.occurred_at,
+       investigation.public_id, revision.public_id, scope.public_id
+FROM incident_events decision
+JOIN agent_runs investigation
+  ON investigation.id = ? AND investigation.incident_id = decision.incident_id
+ AND investigation.cycle_no = decision.cycle_no
+JOIN configuration_revisions revision ON revision.id = ?
+JOIN operational_scopes scope
+  ON scope.id = ? AND scope.configuration_revision_id = revision.id
+WHERE decision.id = ? AND decision.incident_id = ? AND decision.cycle_no = ?
+  AND decision.event_type = 'incident_recovery_decided'`,
+		snapshot.InvestigationRunID, snapshot.ConfigurationRevisionID, snapshot.OperationalScopeID,
+		snapshot.DecisionEventID, task.IncidentID, task.CycleNo).Scan(
+		&publicID, &actorType, &actorID, &summary, &metadata, &occurredAt,
+		&investigationPublicID, &configurationPublicID, &scopePublicID); err != nil {
+		return nil, "", err
+	}
+	var identity struct {
+		Decision                string `json:"decision"`
+		Reason                  string `json:"reason"`
+		InvestigationID         string `json:"investigation_id"`
+		ConfigurationRevisionID string `json:"configuration_revision_id"`
+		OperationalScopeID      string `json:"operational_scope_id"`
+		RequestID               string `json:"request_id"`
+	}
+	if publicID == "" || actorType != "owner" || actorID != "local:owner" || !json.Valid(metadata) ||
+		json.Unmarshal(metadata, &identity) != nil || identity.Decision != "verify_recovery" ||
+		identity.InvestigationID != investigationPublicID || identity.ConfigurationRevisionID != configurationPublicID ||
+		identity.OperationalScopeID != scopePublicID || strings.TrimSpace(identity.Reason) == "" ||
+		strings.TrimSpace(identity.RequestID) == "" {
+		return nil, "", fmt.Errorf("%w: operational recovery decision provenance is incomplete", asyncjob.ErrInvalidMutation)
+	}
+	encoded, err := boundedJSON(map[string]any{
+		"id": publicID, "decision": identity.Decision, "reason": identity.Reason,
+		"actor":      map[string]string{"type": actorType, "subject": actorID},
+		"request_id": identity.RequestID, "investigation_id": investigationPublicID,
+		"configuration_revision_id": configurationPublicID, "operational_scope_id": scopePublicID,
+		"summary": summary, "decided_at": occurredAt.UTC().Format(time.RFC3339Nano),
+	}, 8192)
+	return encoded, publicID, err
 }
 
 func reportDiagnosisIdentity(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, planID uint64) (uint64, string, error) {

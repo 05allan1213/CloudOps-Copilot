@@ -90,6 +90,8 @@ export function useIncidentList(router: Router, initialQuery: Record<string, unk
 
   async function syncURLAndLoad() {
     filters.service = filters.service?.trim() || undefined;
+    filters.resource = filters.resource?.trim() || undefined;
+    filters.alert = filters.alert?.trim() || undefined;
     filters.cursor = undefined;
     items.value = [];
     nextCursor.value = "";
@@ -100,7 +102,18 @@ export function useIncidentList(router: Router, initialQuery: Record<string, unk
   }
 
   function reset() {
-    Object.assign(filters, { status: undefined, severity: undefined, service: undefined, limit: 50, cursor: undefined });
+    Object.assign(filters, {
+      status: undefined,
+      severity: undefined,
+      service: undefined,
+      attention: undefined,
+      resource: undefined,
+      alert: undefined,
+      from: undefined,
+      to: undefined,
+      limit: 50,
+      cursor: undefined,
+    });
     return syncURLAndLoad();
   }
 

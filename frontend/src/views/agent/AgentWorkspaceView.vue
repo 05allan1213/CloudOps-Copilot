@@ -25,8 +25,20 @@ function selectPanel(panel: MobilePanel) {
   void router.replace({ query: { ...route.query, agent_view: panel === "conversation" ? undefined : panel } });
 }
 
+function queryValue(value: unknown): string {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return typeof raw === "string" ? raw : "";
+}
+
+async function loadWorkspace() {
+  await store.loadIndex(false, queryValue(route.query.investigation));
+}
+
 watch(() => route.fullPath, (value) => store.setRoute(value), { immediate: true });
-onMounted(() => void store.loadIndex());
+watch(() => route.query.investigation, (value) => {
+  if (store.loaded) void store.selectInvestigationFromRoute(queryValue(value));
+});
+onMounted(() => void loadWorkspace());
 </script>
 
 <template>

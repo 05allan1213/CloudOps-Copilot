@@ -192,12 +192,13 @@ type Page struct {
 }
 
 type ListRequest struct {
-	Cursor    string
-	Limit     int
-	Status    string
-	Severity  string
-	Namespace string
-	Search    string
+	Cursor     string
+	Limit      int
+	Status     string
+	Severity   string
+	Namespace  string
+	Search     string
+	IncidentID string
 }
 
 type AcknowledgeRequest struct {

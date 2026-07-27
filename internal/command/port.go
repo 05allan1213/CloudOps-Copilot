@@ -18,10 +18,12 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/05allan1213/CloudOps-Copilot/internal/agent"
 	"github.com/05allan1213/CloudOps-Copilot/internal/api"
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
 	"github.com/05allan1213/CloudOps-Copilot/internal/businessbudget"
 	"github.com/05allan1213/CloudOps-Copilot/internal/infra/remediationmysql"
+	"github.com/05allan1213/CloudOps-Copilot/internal/recovery"
 	"github.com/05allan1213/CloudOps-Copilot/internal/remediation"
 )
 
@@ -39,6 +41,8 @@ type Port struct {
 	idempotency  *Store
 	tasks        *asyncjob.Repository
 	remediations remediationDecisionRepository
+	workspaces   *agent.WorkspaceRepository
+	recovery     *recovery.Coordinator
 }
 
 func NewPort(db *sql.DB) (*Port, error) {
@@ -54,11 +58,19 @@ func NewPort(db *sql.DB) (*Port, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Port{idempotency: idempotency, tasks: tasks, remediations: remediations}, nil
+	workspaces, err := agent.NewWorkspaceRepository(db)
+	if err != nil {
+		return nil, err
+	}
+	recoveryCoordinator, err := recovery.NewCoordinator(db)
+	if err != nil {
+		return nil, err
+	}
+	return &Port{idempotency: idempotency, tasks: tasks, remediations: remediations, workspaces: workspaces, recovery: recoveryCoordinator}, nil
 }
 
 func (p *Port) Execute(ctx context.Context, request api.CommandRequest) (api.CommandResult, error) {
-	if p == nil || p.idempotency == nil || p.tasks == nil || p.remediations == nil {
+	if p == nil || p.idempotency == nil || p.tasks == nil || p.remediations == nil || p.workspaces == nil || p.recovery == nil {
 		return api.CommandResult{}, api.ErrUnavailable
 	}
 	if request.ResourceID == "" || request.IdempotencyKey == "" || request.ExpectedVersion == 0 || len(request.CanonicalBody) == 0 {
@@ -84,6 +96,8 @@ func (p *Port) Execute(ctx context.Context, request api.CommandRequest) (api.Com
 		switch request.Kind {
 		case api.CommandStartInvestigation:
 			result, commandErr = p.startInvestigation(ctx, tx, request)
+		case api.CommandDecideRecovery:
+			result, commandErr = p.decideRecovery(ctx, tx, request)
 		case api.CommandCloseIncident:
 			result, commandErr = p.closeIncident(ctx, tx, request)
 		case api.CommandDecideRemediation:
@@ -111,6 +125,68 @@ func (p *Port) Execute(ctx context.Context, request api.CommandRequest) (api.Com
 		return stored.Result, errorFromCode(stored.Error)
 	}
 	return stored.Result, nil
+}
+
+type recoveryDecisionCommandBody struct {
+	Decision        string `json:"decision"`
+	ExpectedVersion uint64 `json:"expected_version"`
+	Reason          string `json:"reason"`
+}
+
+func (p *Port) decideRecovery(ctx context.Context, tx *sql.Tx, request api.CommandRequest) (api.CommandResult, error) {
+	body, err := decodeRecoveryDecisionCommand(request)
+	if err != nil {
+		return api.CommandResult{}, err
+	}
+	result, err := p.recovery.DecideIn(ctx, tx, recovery.DecisionInput{
+		IncidentID: request.ResourceID, ExpectedVersion: request.ExpectedVersion,
+		Decision: body.Decision, Reason: body.Reason,
+		ActorProvider: request.Actor.Provider, ActorLogin: request.Actor.Login, ActorRole: request.Actor.Role,
+		RequestID: request.RequestID, IdempotencyKey: request.IdempotencyKey,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, recovery.ErrNotFound):
+			return api.CommandResult{}, api.ErrNotFound
+		case errors.Is(err, recovery.ErrStaleVersion):
+			return api.CommandResult{}, api.ErrStaleVersion
+		case errors.Is(err, recovery.ErrInvalidTransition):
+			return api.CommandResult{}, api.ErrInvalidTransition
+		case errors.Is(err, recovery.ErrConflict):
+			return api.CommandResult{}, api.ErrConflict
+		case errors.Is(err, recovery.ErrInvalid):
+			return api.CommandResult{}, api.ErrInvalidArgument
+		default:
+			return api.CommandResult{}, err
+		}
+	}
+	return api.CommandResult{
+		HTTPStatus: http.StatusAccepted, ResourceID: result.IncidentID, Status: result.Status,
+		Version: result.Version, Cycle: result.Cycle,
+	}, nil
+}
+
+func decodeRecoveryDecisionCommand(request api.CommandRequest) (recoveryDecisionCommandBody, error) {
+	if len(request.CanonicalBody) == 0 || len(request.CanonicalBody) > 4096 {
+		return recoveryDecisionCommandBody{}, api.ErrInvalidArgument
+	}
+	decoder := json.NewDecoder(bytes.NewReader(request.CanonicalBody))
+	decoder.DisallowUnknownFields()
+	var body recoveryDecisionCommandBody
+	if err := decoder.Decode(&body); err != nil {
+		return recoveryDecisionCommandBody{}, api.ErrInvalidArgument
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		return recoveryDecisionCommandBody{}, api.ErrInvalidArgument
+	}
+	body.Decision = strings.ToLower(strings.TrimSpace(body.Decision))
+	body.Reason = strings.TrimSpace(body.Reason)
+	if body.Decision != recovery.DecisionVerifyRecovery || body.ExpectedVersion == 0 ||
+		body.ExpectedVersion != request.ExpectedVersion || body.Reason == "" || len(body.Reason) > 1024 {
+		return recoveryDecisionCommandBody{}, api.ErrInvalidArgument
+	}
+	return body, nil
 }
 
 func isLocalOwner(actor api.OwnerIdentity) bool {
@@ -189,14 +265,7 @@ func (p *Port) startInvestigation(ctx context.Context, tx *sql.Tx, request api.C
 		}
 		return api.CommandResult{}, api.ErrInvalidTransition
 	}
-	dedupeParts := []string{"task", incident.PublicID, fmt.Sprint(incident.CycleNo), "investigation.start", fmt.Sprint(incident.Version)}
-	payloadBody := map[string]any{
-		"mode": "start", "incident_id": incident.PublicID, "cycle_no": incident.CycleNo,
-		"migrated_legacy_context": incident.MigratedLegacyContext,
-	}
 	if authorization.ID != 0 {
-		dedupeParts = append(dedupeParts, authorization.PublicID)
-		payloadBody["business_budget_authorization_id"] = authorization.PublicID
 		metadata, _ := json.Marshal(map[string]any{
 			"authorization_id": authorization.PublicID, "slot": authorization.Slot,
 			"reason": body.Reason, "request_id": request.RequestID,
@@ -205,19 +274,18 @@ func (p *Port) startInvestigation(ctx context.Context, tx *sql.Tx, request api.C
 			return api.CommandResult{}, err
 		}
 	}
-	dedupe := canonicalHash(dedupeParts...)
-	payload, _ := json.Marshal(payloadBody)
-	task, err := p.tasks.EnqueueIn(ctx, tx, asyncjob.NewTask{
-		IncidentID: incident.ID, CycleNo: incident.CycleNo,
-		Type: asyncjob.TaskInvestigationAdvance, SubjectType: "incident", SubjectID: incident.ID,
-		Transition: "investigation.start", ExpectedSubjectVersion: incident.Version,
-		PayloadSchemaVersion: 1, Payload: payload, DedupeKey: dedupe, Priority: 100, MaxAttempts: 5,
-		MigratedLegacyContext: incident.MigratedLegacyContext,
-	})
+	runPublicID, err := p.workspaces.StartIncidentInvestigationTx(ctx, tx, incident.PublicID, request.IdempotencyKey,
+		body.Reason, incident.Version, authorization.ID)
 	if err != nil {
+		if errors.Is(err, agent.ErrConflict) {
+			return api.CommandResult{}, api.ErrConflict
+		}
+		if errors.Is(err, agent.ErrNotFound) {
+			return api.CommandResult{}, api.ErrNotFound
+		}
 		return api.CommandResult{}, err
 	}
-	metadataBody := map[string]any{"task_id": task.PublicID, "request_id": request.RequestID}
+	metadataBody := map[string]any{"agent_run_id": runPublicID, "request_id": request.RequestID}
 	if authorization.ID != 0 {
 		metadataBody["authorization_id"] = authorization.PublicID
 		metadataBody["authorization_slot"] = authorization.Slot
@@ -226,7 +294,7 @@ func (p *Port) startInvestigation(ctx context.Context, tx *sql.Tx, request api.C
 	if err := appendCommandEvent(ctx, tx, incident, "investigation_requested", request.Actor, metadata); err != nil {
 		return api.CommandResult{}, err
 	}
-	return api.CommandResult{HTTPStatus: http.StatusAccepted, ResourceID: incident.PublicID, Status: "accepted", Version: incident.Version, Cycle: uint64(incident.CycleNo)}, nil
+	return api.CommandResult{HTTPStatus: http.StatusAccepted, ResourceID: incident.PublicID, Status: "investigating", Version: incident.Version + 1, Cycle: uint64(incident.CycleNo)}, nil
 }
 
 // reconcileDeadInvestigationRun converts a technical dead task into a terminal
@@ -333,73 +401,75 @@ func (p *Port) closeIncident(ctx context.Context, tx *sql.Tx, request api.Comman
 	if incident.Version != request.ExpectedVersion {
 		return api.CommandResult{}, api.ErrStaleVersion
 	}
-	if incident.Status != "detected" && incident.Status != "investigating" && incident.Status != "awaiting_approval" {
+	if incident.Status != "resolved" {
 		return api.CommandResult{}, api.ErrInvalidTransition
 	}
-	var unsafe int
+	var (
+		verificationPublicID  string
+		reportPublicID        string
+		activeVerification    int
+		activeTask            int
+		activeExternalEffect  int
+		unknownExternalEffect int
+	)
 	if err := tx.QueryRowContext(ctx, `
 SELECT
-  (SELECT COUNT(*) FROM change_requests
-   WHERE incident_id = ? AND cycle_no = ?)
-  +
-  (SELECT COUNT(*) FROM verification_runs
-   WHERE incident_id = ? AND cycle_no = ? AND status IN ('pending','running'))
-  +
-  (SELECT COUNT(*) FROM async_tasks
-   WHERE incident_id = ? AND cycle_no = ? AND status IN ('ready','running')
-     AND task_type IN ('change.ensure_pr','delivery.observe','verification.advance'))`,
-		incident.ID, incident.CycleNo, incident.ID, incident.CycleNo, incident.ID, incident.CycleNo).Scan(&unsafe); err != nil {
+	COALESCE((SELECT verification.public_id
+	 FROM resolution_reports report
+	 JOIN verification_runs verification
+	   ON verification.id = report.verification_run_id
+	  AND verification.incident_id = report.incident_id
+	  AND verification.cycle_no = report.cycle_no
+	 WHERE report.incident_id = ? AND report.cycle_no = ?
+	   AND verification.status = 'passed'
+	   AND verification.common_success_since IS NOT NULL
+	   AND verification.common_window_completed_at IS NOT NULL
+	 ORDER BY report.id DESC LIMIT 1), ''),
+	COALESCE((SELECT report.public_id
+	 FROM resolution_reports report
+	 JOIN verification_runs verification
+	   ON verification.id = report.verification_run_id
+	  AND verification.incident_id = report.incident_id
+	  AND verification.cycle_no = report.cycle_no
+	 WHERE report.incident_id = ? AND report.cycle_no = ?
+	   AND verification.status = 'passed'
+	   AND verification.common_success_since IS NOT NULL
+	   AND verification.common_window_completed_at IS NOT NULL
+	 ORDER BY report.id DESC LIMIT 1), ''),
+	(SELECT COUNT(*) FROM verification_runs
+	 WHERE incident_id = ? AND cycle_no = ? AND status IN ('pending','running')),
+	(SELECT COUNT(*) FROM async_tasks
+	 WHERE incident_id = ? AND cycle_no = ? AND status IN ('ready','running')),
+	(SELECT COUNT(*) FROM change_requests
+	 WHERE incident_id = ? AND cycle_no = ?
+	   AND status IN ('pending','pr_open','merged','syncing','rolling_out')),
+	(SELECT COUNT(*) FROM change_requests
+	 WHERE incident_id = ? AND cycle_no = ?
+	   AND external_write_started_at IS NOT NULL
+	   AND status NOT IN ('delivered','superseded'))`,
+		incident.ID, incident.CycleNo,
+		incident.ID, incident.CycleNo,
+		incident.ID, incident.CycleNo,
+		incident.ID, incident.CycleNo,
+		incident.ID, incident.CycleNo,
+		incident.ID, incident.CycleNo,
+	).Scan(
+		&verificationPublicID, &reportPublicID, &activeVerification, &activeTask,
+		&activeExternalEffect, &unknownExternalEffect,
+	); err != nil {
 		return api.CommandResult{}, err
 	}
-	if unsafe != 0 {
+	if verificationPublicID == "" || reportPublicID == "" || activeVerification != 0 ||
+		activeTask != 0 || activeExternalEffect != 0 || unknownExternalEffect != 0 {
 		return api.CommandResult{}, api.ErrInvalidTransition
-	}
-	if _, err := tx.ExecContext(ctx, `
-UPDATE agent_runs
-SET status = 'cancelled', row_version = row_version + 1,
-    cancel_requested_at = NOW(6), completed_at = NOW(6), updated_at = NOW(6)
-WHERE incident_id = ? AND cycle_no = ? AND status IN ('pending','running')`,
-		incident.ID, incident.CycleNo); err != nil {
-		return api.CommandResult{}, err
-	}
-	if _, err := tx.ExecContext(ctx, `
-UPDATE remediation_plans
-SET status = 'cancelled', row_version = row_version + 1, updated_at = NOW(6)
-WHERE incident_id = ? AND cycle_no = ?
-  AND status IN ('awaiting_approval','approved')`, incident.ID, incident.CycleNo); err != nil {
-		return api.CommandResult{}, err
-	}
-	if _, err := tx.ExecContext(ctx, `
-UPDATE async_task_attempts attempt
-JOIN async_tasks task
-  ON task.id = attempt.task_id
- AND task.attempt = attempt.attempt
- AND task.lease_owner = attempt.lease_owner
- AND task.lease_generation = attempt.lease_generation
- AND task.expected_subject_version = attempt.expected_subject_version
-SET attempt.status = 'cancelled', attempt.finished_at = NOW(6),
-    attempt.error_code = 'cancelled', attempt.error_summary = 'task cancelled by Incident close'
-WHERE task.incident_id = ? AND task.cycle_no = ? AND task.status = 'running'
-  AND task.task_type IN ('investigation.advance','remediation.prepare')
-  AND attempt.status = 'running'`, incident.ID, incident.CycleNo); err != nil {
-		return api.CommandResult{}, err
-	}
-	if _, err := tx.ExecContext(ctx, `
-UPDATE async_tasks
-SET status = 'cancelled', lease_owner = NULL, lease_expires_at = NULL,
-    heartbeat_at = NULL, lease_generation = lease_generation + 1,
-    last_error_code = 'cancelled', last_error_summary = 'task cancelled by Incident close',
-    cancelled_at = NOW(6), updated_at = NOW(6)
-WHERE incident_id = ? AND cycle_no = ? AND status IN ('ready','running')
-  AND task_type IN ('investigation.advance','remediation.prepare')`, incident.ID, incident.CycleNo); err != nil {
-		return api.CommandResult{}, err
 	}
 	updated, err := tx.ExecContext(ctx, `
 UPDATE incidents
 SET status = 'closed', version = version + 1,
-    terminal_at = NOW(6), resolved_at = NULL, updated_at = NOW(6)
+	    terminal_at = NOW(6), needs_attention = FALSE,
+	    blocking_reason_code = NULL, blocked_at = NULL, updated_at = NOW(6)
 WHERE id = ? AND cycle_no = ? AND version = ?
-  AND status IN ('detected','investigating','awaiting_approval')`,
+	  AND status = 'resolved' AND resolved_at IS NOT NULL`,
 		incident.ID, incident.CycleNo, incident.Version)
 	if err != nil {
 		return api.CommandResult{}, err
@@ -409,7 +479,10 @@ WHERE id = ? AND cycle_no = ? AND version = ?
 	}
 	incident.Status = "closed"
 	incident.Version++
-	metadata, _ := json.Marshal(map[string]any{"request_id": request.RequestID})
+	metadata, _ := json.Marshal(map[string]any{
+		"request_id": request.RequestID, "verification_run_id": verificationPublicID,
+		"resolution_report_id": reportPublicID, "resolved_history_preserved": true,
+	})
 	if err := appendCommandEvent(ctx, tx, incident, "incident_closed", request.Actor, metadata); err != nil {
 		return api.CommandResult{}, err
 	}

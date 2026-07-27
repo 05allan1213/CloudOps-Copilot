@@ -12,6 +12,9 @@ import (
 )
 
 func TestDeliveryObserveExactIdentityFlowCreatesVerificationOnlyAfterRollout(t *testing.T) {
+	if deliveryCompletionStatus != "verifying" || deliveryCompletionStatus == "resolved" {
+		t.Fatalf("Delivery completion status=%q, want verifying and never resolved", deliveryCompletionStatus)
+	}
 	now := time.Date(2026, 7, 20, 6, 0, 0, 0, time.UTC)
 	snapshot := deliveryTestSnapshot(now)
 
@@ -77,6 +80,9 @@ func TestDeliveryObserveExactIdentityFlowCreatesVerificationOnlyAfterRollout(t *
 		plan.SourceRevision != snapshot.SourceRevision || plan.ImageDigest != snapshot.ImageDigest || plan.GitOpsRevision != mergedSHA ||
 		plan.SourceRevision == plan.GitOpsRevision || plan.ImageDigest == plan.GitOpsRevision {
 		t.Fatalf("verification identity was collapsed: %+v", plan)
+	}
+	if snapshot.IncidentStatus != deliverySourceIncidentStatus {
+		t.Fatalf("Delivery evaluation mutated Incident status=%q, want %q until Verification is persisted", snapshot.IncidentStatus, deliverySourceIncidentStatus)
 	}
 }
 
