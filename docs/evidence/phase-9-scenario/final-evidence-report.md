@@ -6,17 +6,20 @@
 RESULT=DONE_WITH_NOT_RUN
 LOCAL_CORE_SCENARIO=PASS
 DEFINITION_OF_DONE_FAIL=0
-EXTERNAL_DELIVERY=PARTIAL_WITH_NOT_RUN
-BRANCH=codex/v3-refactor
+EXTERNAL_DELIVERY=HOSTED_PASS_WITH_ENV_NOT_RUN
+LOCAL_PHASE9_BRANCH=codex/v3-refactor
 LOCAL_PHASE9_HEAD=7af4144f7cdc4c03b8d3b88fdb751ae06b8686c1
 LOCAL_PHASE9_WORKTREE=DIRTY_AT_CAPTURE
-DELIVERY_PR=https://github.com/05allan1213/CloudOps-Copilot/pull/1
+DELIVERY_PRS=https://github.com/05allan1213/CloudOps-Copilot/pull/1,https://github.com/05allan1213/CloudOps-Copilot/pull/2,https://github.com/05allan1213/CloudOps-Copilot/pull/3
+VALIDATED_MAIN_SHA=44a2ede586f0a624da48a82de384c783fc348cbd
+REQUIRED_CI_RUN=30353151266
+HOSTED_SUPPLY_CHAIN_RUN=30353402682
 FINAL_HELM_REVISION=53
 FINAL_SCHEMA_VERSION=11
 FINAL_SCENARIO_STATE=inactive
 ```
 
-本报告的本地主体只声明 Phase 9 worktree 实际运行的能力；末尾外部交付表持续记录后续真实执行。远端 branch/commit/PR、GitHub-hosted PR CI 与 strict required check 已运行，但产品 GitHub App、human merge、Argo、Registry/post-merge supply chain、staging 与 production 仍存在 `NOT RUN`，因此整项目结论不是无条件 `PASS`。
+本报告的本地主体只声明 Phase 9 worktree 实际运行的能力；末尾外部交付表持续记录后续真实执行。远端 PR/human merge、merged-SHA Required CI、GHCR validation publish、SBOM、attestation、keyless signing、transparency verification 与 cleanup 已真实运行并 `PASS`。产品 GitHub App、Argo、staging、production、第二真实集群与 production DR 仍存在 `NOT RUN`，因此整项目结论仍不是无条件 `PASS`。
 
 ## 2. Authority and preflight audit
 
@@ -297,18 +300,19 @@ Frontend ESLint reports existing formatting warnings but `0 errors`; Vitest logs
 
 DoD summary：`PASS=28`、`FAIL=0`、`NOT RUN=0` for the 28 local-product DoD statements. This does not promote external optional branches to PASS; their run status follows.
 
-## 12. Explicit external NOT RUN
+## 12. External delivery status
 
 | External item | Result | Reason |
 |---|---|---|
 | Product GitHub App runtime read/write | `NOT RUN` | no real App runtime credential; human `gh` identity is not product-adapter evidence |
-| Remote branch/commit/Ready PR | `PASS` | remote `codex/v3-refactor`; PR [#1](https://github.com/05allan1213/CloudOps-Copilot/pull/1) is Ready and mergeable |
-| Required CI exact-head | `PASS` | GitHub-hosted Go/Frontend/Runtime/4 image jobs and aggregate `Required CI` passed; `main` protection is strict and GitHub Actions App-bound |
-| Human merge | `NOT RUN` | intentionally reserved for the repository owner |
+| Remote branch/commit/PR | `PASS` | implementation PR [#1](https://github.com/05allan1213/CloudOps-Copilot/pull/1) and cleanup hardening PRs [#2](https://github.com/05allan1213/CloudOps-Copilot/pull/2), [#3](https://github.com/05allan1213/CloudOps-Copilot/pull/3) were created from remote branches and passed their PR checks |
+| Human merge | `PASS` | repository owner merged PRs #1-#3; final validated implementation merge is `44a2ede586f0a624da48a82de384c783fc348cbd` |
+| Required CI exact merged head | `PASS` | run [30353151266](https://github.com/05allan1213/CloudOps-Copilot/actions/runs/30353151266) covered exact SHA `44a2ede586f0a624da48a82de384c783fc348cbd`; all eight jobs including aggregate `Required CI` passed |
 | Argo Application/exact merged revision/sync/rollout | `NOT RUN` | provider not configured/run |
-| Registry/GHCR publish, SBOM, signing, attestation, cleanup | `NOT RUN` | hosted/external workflow not dispatched |
-| GitHub-hosted PR CI validation | `PASS` | current PR head is covered by the protected `Required CI` result |
-| Hosted supply-chain validation | `NOT RUN` | requires the exact human-merged `main` SHA; pre-merge evidence cannot substitute |
+| GHCR validation publish, SBOM, signing, attestation, cleanup | `PASS` | exact merged-SHA run [30353402682](https://github.com/05allan1213/CloudOps-Copilot/actions/runs/30353402682) passed for api/worker/migrate/demo; all temporary packages and referrers were removed |
+| GitHub-hosted PR CI validation | `PASS` | PR #1-#3 checks passed before each human merge; no local result substitutes for hosted CI |
+| Hosted supply-chain validation | `PASS` | workflow_dispatch on `refs/heads/main` used exact SHA `44a2ede586f0a624da48a82de384c783fc348cbd`; full evidence matrix and artifact names are recorded in [Hosted Supply-Chain Validation Report](hosted-supply-chain-validation-report.md) |
+| Release tag / retained release publication | `NOT RUN` | validation packages were intentionally ephemeral; no tag, GitHub Release, retained production image, or deployment was created |
 | Staging | `NOT RUN` | no staging scope/credential/authorization |
 | Production | `NOT RUN` | outside supported local product and not authorized |
 | Second real cluster / multi-cluster / multi-tenant | `NOT RUN` | not configured; outside current local scope |
