@@ -160,10 +160,11 @@ type StateDelta struct {
 }
 
 type ToolActionPolicy struct {
-	TemplateIDs       []string
-	ParameterKeys     []string
-	ParameterSpecs    map[string]ParameterSpec
-	ExpectedFactTypes []string
+	TemplateIDs              []string
+	ParameterKeys            []string
+	ParameterSpecs           map[string]ParameterSpec
+	ExpectedFactTypes        []string
+	AllowCompositeProvenance bool
 }
 
 type ReducerPolicy struct {

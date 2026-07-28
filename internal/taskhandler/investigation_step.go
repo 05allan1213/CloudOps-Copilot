@@ -688,6 +688,7 @@ func (o *investigationStepOperation) statePolicy(snapshot investigationSnapshot)
 		actions[name] = agent.ToolActionPolicy{
 			TemplateIDs: slices.Clone(policy.TemplateIDs), ParameterKeys: slices.Clone(policy.ParameterKeys),
 			ParameterSpecs: cloneInvestigationParameterSpecs(policy.ParameterSpecs), ExpectedFactTypes: slices.Clone(policy.ExpectedFactTypes),
+			AllowCompositeProvenance: policy.AllowCompositeProvenance,
 		}
 	}
 	scopes := map[string]struct{}{snapshot.ScopeRef: {}}
@@ -913,6 +914,7 @@ func (o *investigationStepOperation) executeTool(ctx context.Context, execution 
 	if err := validateInvestigationToolAction(action, snapshot, o.cfg.ActionPolicies); err != nil {
 		return preparedInvestigationStep{}, err
 	}
+	policy := o.cfg.ActionPolicies[action.Tool]
 	signature, err := agent.ActionSignature(action)
 	if err != nil {
 		return preparedInvestigationStep{}, err
@@ -950,7 +952,7 @@ func (o *investigationStepOperation) executeTool(ctx context.Context, execution 
 		return preparedInvestigationStep{}, err
 	}
 	evidenceID := deterministicPublicID("investigation-evidence", execution.Task.DedupeKey)
-	observation, err = normalizeObservation(observation, snapshot, action, evidenceID)
+	observation, err = normalizeObservation(observation, snapshot, action, evidenceID, policy.AllowCompositeProvenance)
 	if err != nil {
 		return preparedInvestigationStep{}, err
 	}
@@ -1420,7 +1422,7 @@ func minFloat(left, right float64) float64 {
 	return right
 }
 
-func normalizeObservation(value agent.ToolObservation, snapshot investigationSnapshot, action agent.ProposedAction, evidenceID string) (agent.ToolObservation, error) {
+func normalizeObservation(value agent.ToolObservation, snapshot investigationSnapshot, action agent.ProposedAction, evidenceID string, allowCompositeProvenance bool) (agent.ToolObservation, error) {
 	value.SourceSystem = strings.TrimSpace(value.SourceSystem)
 	value.CollectionPath = strings.TrimSpace(value.CollectionPath)
 	value.TemplateVersion = strings.TrimSpace(value.TemplateVersion)
@@ -1464,15 +1466,23 @@ func normalizeObservation(value agent.ToolObservation, snapshot investigationSna
 		if fact.IncidentID != "" && fact.IncidentID != snapshot.IncidentPublicID || fact.CycleNo != 0 && fact.CycleNo != uint64(snapshot.Task.CycleNo) {
 			return agent.ToolObservation{}, fmt.Errorf("%w: observation fact escaped the Incident cycle", agent.ErrPermission)
 		}
-		if fact.SourceSystem != "" && fact.SourceSystem != value.SourceSystem || fact.CollectionPath != "" && fact.CollectionPath != value.CollectionPath {
+		fact.SourceSystem = strings.TrimSpace(fact.SourceSystem)
+		fact.CollectionPath = strings.TrimSpace(fact.CollectionPath)
+		if fact.SourceSystem == "" && fact.CollectionPath == "" {
+			fact.SourceSystem = value.SourceSystem
+			fact.CollectionPath = value.CollectionPath
+		}
+		if fact.SourceSystem == "" || fact.CollectionPath == "" || len(fact.SourceSystem) > 128 || len(fact.CollectionPath) > 1024 ||
+			strings.ContainsAny(fact.SourceSystem, "\x00\r\n\t") || strings.ContainsAny(fact.CollectionPath, "\x00\r\n\t") {
+			return agent.ToolObservation{}, fmt.Errorf("%w: observation fact provenance is incomplete", agent.ErrInvalidArgument)
+		}
+		if !allowCompositeProvenance && (fact.SourceSystem != value.SourceSystem || fact.CollectionPath != value.CollectionPath) {
 			return agent.ToolObservation{}, fmt.Errorf("%w: observation fact provenance diverges from its envelope", agent.ErrInvalidArgument)
 		}
 		fact.EvidenceID = evidenceID
 		fact.IncidentID = snapshot.IncidentPublicID
 		fact.CycleNo = uint64(snapshot.Task.CycleNo)
 		fact.MigratedLegacy = snapshot.RunMigratedLegacy
-		fact.SourceSystem = value.SourceSystem
-		fact.CollectionPath = value.CollectionPath
 		if fact.CollectionStatus == "" {
 			fact.CollectionStatus = value.Status
 		}
@@ -1674,6 +1684,7 @@ func cloneActionPolicies(values map[string]agent.ToolActionPolicy) map[string]ag
 		result[name] = agent.ToolActionPolicy{
 			TemplateIDs: slices.Clone(policy.TemplateIDs), ParameterKeys: slices.Clone(policy.ParameterKeys),
 			ParameterSpecs: cloneInvestigationParameterSpecs(policy.ParameterSpecs), ExpectedFactTypes: slices.Clone(policy.ExpectedFactTypes),
+			AllowCompositeProvenance: policy.AllowCompositeProvenance,
 		}
 	}
 	return result
