@@ -127,7 +127,7 @@ func providerProbeURL(config ProviderConfiguration) (string, error) {
 	case ProviderGitHub:
 		suffix = "/rate_limit"
 	case ProviderArgoCD:
-		suffix = "/api/v1/version"
+		suffix = "/api/version"
 	case ProviderElasticsearch:
 		suffix = ""
 	default:
