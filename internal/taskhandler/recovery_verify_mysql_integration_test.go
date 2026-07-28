@@ -15,6 +15,7 @@ import (
 	drivermysql "github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
 
+	"github.com/05allan1213/CloudOps-Copilot/internal/agent"
 	"github.com/05allan1213/CloudOps-Copilot/internal/alert"
 	"github.com/05allan1213/CloudOps-Copilot/internal/api"
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
@@ -143,8 +144,25 @@ func TestMySQLOperationalRecoveryLifecycleFromAlertsToOwnerClose(t *testing.T) {
 	}
 	startBody := json.RawMessage(`{"expected_version":1,"reason":"investigate correlated checkout alerts"}`)
 	started, err := commands.Execute(ctx, operationalRecoveryCommand(api.CommandStartInvestigation, incidentPublicID, 1, "operational-recovery-start-investigation", startBody))
-	if err != nil || started.Status != "investigating" || started.Version != 2 {
+	if err != nil || started.Status != "investigation_queued" || started.Version != 1 {
 		t.Fatalf("start Investigation=%+v err=%v", started, err)
+	}
+	startTasks, err := asyncjob.NewRepository(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	startExecution, err := startTasks.Claim(ctx, asyncjob.ClaimRequest{
+		Queue: asyncjob.QueueInvestigate, Owner: "operational-recovery-start", LeaseDuration: 30 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("claim investigation.start: %v", err)
+	}
+	startResult := taskhandler.New(taskhandler.Config{AgentRunIdentity: operationalRecoveryRunIdentity()})[asyncjob.TaskInvestigationAdvance].Handle(ctx, *startExecution)
+	if startResult.Disposition != asyncjob.DispositionSucceeded || startResult.Mutate == nil {
+		t.Fatalf("investigation.start result=%+v", startResult)
+	}
+	if err := startTasks.Resolve(ctx, startExecution.Lease, startResult); err != nil {
+		t.Fatalf("resolve investigation.start: %v", err)
 	}
 	investigationID, investigationPublicID, evidencePublicID := completeOperationalRecoveryInvestigation(t, ctx, db, incidentID)
 
@@ -332,12 +350,19 @@ func operationalRecoveryCommand(kind api.CommandKind, resourceID string, expecte
 	}
 }
 
+func operationalRecoveryRunIdentity() agent.RunModelIdentity {
+	return agent.RunModelIdentity{
+		Provider: "fixture", ActualModel: "fixture-model", PromptVersion: "incident-investigation-fixture",
+		PromptHash: strings.Repeat("a", 64), ToolSchemaVersion: "tools/v1", ToolSchemaHash: strings.Repeat("b", 64),
+	}
+}
+
 func completeOperationalRecoveryInvestigation(t *testing.T, ctx context.Context, db *sql.DB, incidentID uint64) (uint64, string, string) {
 	t.Helper()
 	var runID uint64
 	var runPublicID string
 	if err := db.QueryRowContext(ctx, `SELECT id, public_id FROM agent_runs
-	WHERE incident_id = ? AND cycle_no = 1 AND subject_type = 'incident' AND run_kind = 'workspace'
+	WHERE incident_id = ? AND cycle_no = 1 AND subject_type = 'incident' AND run_kind = 'incident'
 	ORDER BY id DESC LIMIT 1`, incidentID).Scan(&runID, &runPublicID); err != nil {
 		t.Fatal(err)
 	}
@@ -372,6 +397,17 @@ func completeOperationalRecoveryInvestigation(t *testing.T, ctx context.Context,
 	SET status = 'succeeded', completed_at = ?, updated_at = ?
 	WHERE agent_run_id = ? AND status = 'ready'`, now, now, runID); err != nil {
 		t.Fatal(err)
+	}
+	stepTask, err := db.ExecContext(ctx, `UPDATE async_tasks
+	SET status = 'succeeded', completed_at = ?, updated_at = ?
+	WHERE incident_id = ? AND cycle_no = 1 AND subject_type = 'agent_run'
+	  AND subject_id = ? AND transition = 'investigation.step' AND status = 'ready'`,
+		now, now, incidentID, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if affected, _ := stepTask.RowsAffected(); affected != 1 {
+		t.Fatalf("completed investigation.step tasks=%d, want 1", affected)
 	}
 	facts := json.RawMessage(`{"schema_version":1,"facts":[{"fact_id":"recovery-state","type":"runtime_observation","value":"workload_ready_alerts_firing"}]}`)
 	contentHash := operationalRecoveryHash("operational-recovery-recovery-evidence", evidencePublicID, string(facts))
@@ -409,6 +445,7 @@ func claimAndRunOperationalRecovery(t *testing.T, ctx context.Context, tasks *as
 	t.Helper()
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	store := &operationalRecoveryStore{Repository: tasks, resolved: make(chan error, 1)}
 	type outcome struct {
 		execution asyncjob.Execution
 		result    asyncjob.Result
@@ -418,7 +455,7 @@ func claimAndRunOperationalRecovery(t *testing.T, ctx context.Context, tasks *as
 	pool.MaxInFlight = 1
 	runner, err := asyncjob.NewRunner(asyncjob.RunnerConfig{
 		Owner: owner,
-		Store: tasks,
+		Store: store,
 		Handlers: map[asyncjob.TaskType]asyncjob.Handler{
 			asyncjob.TaskRecoveryVerify: asyncjob.HandlerFunc(func(handlerCtx context.Context, execution asyncjob.Execution) asyncjob.Result {
 				result := operation(handlerCtx, execution)
@@ -445,6 +482,14 @@ func claimAndRunOperationalRecovery(t *testing.T, ctx context.Context, tasks *as
 	case <-time.After(15 * time.Second):
 		t.Fatal("timed out waiting for recovery.verify")
 	}
+	select {
+	case resolveErr := <-store.resolved:
+		if resolveErr != nil {
+			t.Fatalf("resolve recovery.verify: %v", resolveErr)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("timed out waiting for recovery.verify resolution")
+	}
 	drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer drainCancel()
 	if err := runner.Drain(drainCtx); err != nil {
@@ -454,6 +499,17 @@ func claimAndRunOperationalRecovery(t *testing.T, ctx context.Context, tasks *as
 		t.Fatalf("recovery task %s result=%+v", observed.execution.Task.PublicID, observed.result)
 	}
 	return &observed.execution
+}
+
+type operationalRecoveryStore struct {
+	*asyncjob.Repository
+	resolved chan error
+}
+
+func (s *operationalRecoveryStore) Resolve(ctx context.Context, lease asyncjob.Lease, result asyncjob.Result) error {
+	err := s.Repository.Resolve(ctx, lease, result)
+	s.resolved <- err
+	return err
 }
 
 func openOperationalRecoveryIntegrationDB(t *testing.T, dsn string) *sql.DB {

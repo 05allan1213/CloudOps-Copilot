@@ -248,10 +248,21 @@ func incidentContextLinks(context incidentNavigationContext, investigationID str
 }
 
 func coordinationLink(workspace, path string, query map[string]string, scopeID string) IncidentContextLinkView {
+	if strings.TrimSpace(scopeID) == "" {
+		return IncidentContextLinkView{}
+	}
 	return IncidentContextLinkView{
 		Workspace: workspace, Path: path, Query: cloneStringMap(query),
 		OperationalScopeID: scopeID, External: false,
 	}
+}
+
+func coordinationLinkPointer(workspace, path string, query map[string]string, scopeID string) *IncidentContextLinkView {
+	link := coordinationLink(workspace, path, query, scopeID)
+	if link.Workspace == "" {
+		return nil
+	}
+	return &link
 }
 
 func cloneStringMap(source map[string]string) map[string]string {
@@ -503,8 +514,8 @@ func (p *MySQLQueryPort) listIncidentInvestigations(ctx context.Context, request
 	}
 	args = append(args, request.Limit+1)
 	rows, err := p.db.QueryContext(ctx, `
-SELECT run.id, run.public_id, run.cycle_no, run.status, run.row_version,
-       run.objective, run.outcome, run.failure_code, run.failure_summary,
+	SELECT run.id, run.public_id, run.cycle_no, run.status, run.row_version,
+	       run.objective, run.outcome, run.final_diagnosis, run.failure_code, run.failure_summary,
        run.model_provider, run.actual_model, run.prompt_version,
        run.used_steps, run.max_steps, run.started_at, run.completed_at,
        run.created_at, run.updated_at, run.migrated_legacy, run.migrated_legacy_context
@@ -523,11 +534,12 @@ LIMIT ?`, args...)
 	values := make([]investigationRow, 0, request.Limit+1)
 	for rows.Next() {
 		var row investigationRow
-		var outcome, failureCode, provider, actualModel sql.NullString
+		var status, outcome, failureCode, provider, actualModel sql.NullString
+		var finalDiagnosis []byte
 		var startedAt, completedAt sql.NullTime
 		if err := rows.Scan(
-			&row.NumericID, &row.View.ID, &row.View.Cycle, &row.View.Status,
-			&row.View.Version, &row.View.Objective, &outcome, &failureCode,
+			&row.NumericID, &row.View.ID, &row.View.Cycle, &status,
+			&row.View.Version, &row.View.Objective, &outcome, &finalDiagnosis, &failureCode,
 			&row.View.FailureSummary, &provider, &actualModel, &row.View.PromptVersion,
 			&row.View.UsedSteps, &row.View.MaxSteps, &startedAt, &completedAt,
 			&row.View.CreatedAt, &row.View.UpdatedAt, &row.View.MigratedLegacy,
@@ -535,7 +547,8 @@ LIMIT ?`, args...)
 		); err != nil {
 			return QueryResponse{}, fmt.Errorf("scan Incident Investigation: %w", err)
 		}
-		row.View.Outcome = outcome.String
+		row.View.Status = status.String
+		row.View.Outcome = historicalAgentRunOutcome(outcome.String, status.String, finalDiagnosis)
 		row.View.FailureCode = failureCode.String
 		row.View.ModelProvider = provider.String
 		row.View.ActualModel = actualModel.String
@@ -573,7 +586,9 @@ func (p *MySQLQueryPort) getIncidentDecision(ctx context.Context, request QueryR
 		return QueryResponse{}, err
 	}
 	var (
-		investigationID, outcome, diagnosisSummary                     sql.NullString
+		investigationID, investigationStatus, outcome                  sql.NullString
+		diagnosisJSON                                                  []byte
+		diagnosisSummary                                               sql.NullString
 		planID, planStatus, decisionID, decision, reason, actor        sql.NullString
 		deliveryID, deliveryStatus, verificationID, verificationStatus sql.NullString
 		verificationTrigger                                            sql.NullString
@@ -583,8 +598,12 @@ func (p *MySQLQueryPort) getIncidentDecision(ctx context.Context, request QueryR
 		recoveryDecisionAt                                             sql.NullTime
 	)
 	err = p.db.QueryRowContext(ctx, `
-SELECT investigation.public_id, investigation.outcome,
-       JSON_UNQUOTE(JSON_EXTRACT(investigation.final_diagnosis, '$.summary')),
+	SELECT investigation.public_id, investigation.status, investigation.outcome,
+	       investigation.final_diagnosis,
+	       COALESCE(
+	         JSON_UNQUOTE(JSON_EXTRACT(investigation.final_diagnosis, '$.candidate.summary')),
+	         JSON_UNQUOTE(JSON_EXTRACT(investigation.final_diagnosis, '$.summary'))
+	       ),
        plan.public_id, plan.status, decision.public_id, decision.decision,
        decision.reason, decision.actor_login, decision.created_at,
        change_request.public_id, change_request.status,
@@ -622,7 +641,7 @@ LEFT JOIN verification_runs verification ON verification.id = (
   ORDER BY candidate.created_at DESC, candidate.id DESC LIMIT 1
 )
 WHERE incident.id = ? AND incident.cycle_no = ?`, contextView.IncidentID, contextView.Cycle).Scan(
-		&investigationID, &outcome, &diagnosisSummary, &planID, &planStatus,
+		&investigationID, &investigationStatus, &outcome, &diagnosisJSON, &diagnosisSummary, &planID, &planStatus,
 		&decisionID, &decision, &reason, &actor, &decisionAt, &deliveryID,
 		&deliveryStatus, &verificationID, &verificationStatus, &verificationTrigger,
 		&verificationAt, &recoveryDecisionID, &recoveryDecision, &recoveryReason,
@@ -663,7 +682,7 @@ WHERE incident.id = ? AND incident.cycle_no = ?`, contextView.IncidentID, contex
 		item.Decision = "no_change"
 		item.Summary = firstNonEmpty(diagnosisSummary.String, "未执行变更，进入恢复验证")
 	default:
-		item.Status = firstNonEmpty(outcome.String, verificationStatus.String, "pending")
+		item.Status = firstNonEmpty(historicalAgentRunOutcome(outcome.String, investigationStatus.String, diagnosisJSON), verificationStatus.String, "pending")
 		item.Summary = firstNonEmpty(diagnosisSummary.String, "调查结果等待决策")
 	}
 	if recoveryDecisionID.Valid && recoveryDecisionAt.Valid {
@@ -677,15 +696,13 @@ WHERE incident.id = ? AND incident.cycle_no = ?`, contextView.IncidentID, contex
 		item.DecidedAt = &value
 	}
 	if deliveryID.Valid {
-		link := coordinationLink("devops", "/devops", map[string]string{
+		item.ContextLink = coordinationLinkPointer("devops", "/devops", map[string]string{
 			"incident": contextView.PublicID, "delivery": deliveryID.String,
 		}, contextView.OperationalScopeID)
-		item.ContextLink = &link
 	} else if item.InvestigationID != "" {
 		query := incidentWorkspaceQuery(contextView)
 		query["investigation"] = item.InvestigationID
-		link := coordinationLink("agent", "/agent", query, contextView.OperationalScopeID)
-		item.ContextLink = &link
+		item.ContextLink = coordinationLinkPointer("agent", "/agent", query, contextView.OperationalScopeID)
 	}
 	return QueryResponse{Decision: item}, nil
 }
@@ -697,6 +714,28 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func historicalAgentRunOutcome(explicit, status string, finalDiagnosis []byte) string {
+	if strings.TrimSpace(explicit) != "" {
+		return explicit
+	}
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "failed":
+		return "failed"
+	case "cancelled":
+		return "cancelled"
+	case "completed":
+		var payload map[string]json.RawMessage
+		if json.Unmarshal(finalDiagnosis, &payload) == nil {
+			if candidate, ok := payload["candidate"]; ok && len(candidate) > 0 && string(candidate) != "null" {
+				return "diagnosed"
+			}
+		}
+		return "insufficient"
+	default:
+		return ""
+	}
 }
 
 func incidentWorkspaceQuery(contextView incidentNavigationContext) map[string]string {

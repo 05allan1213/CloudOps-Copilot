@@ -55,6 +55,100 @@ func TestInvestigationStepRunsOneModelDecisionThroughUnifiedRegistryAndCheckpoin
 	}
 }
 
+func TestInvestigationStepProductionPlannerBypassesModelDecision(t *testing.T) {
+	action := testInvestigationAction()
+	planner := &stepTestPlanner{actions: []agent.ProposedAction{action}}
+	model := &stepTestModel{proposeErr: errors.New("planner mode must not request a model decision")}
+	store := &stepTestTaskStore{}
+	snapshot := testInvestigationSnapshot(t, stepModeDecide, nil)
+	operation := testInvestigationOperation(snapshot, model, &stepTestTool{}, store)
+	operation.cfg.Planner = planner
+
+	result := runInvestigationOperation(t, snapshot.Task, operation.handle)
+	if result.Disposition != asyncjob.DispositionSucceeded || result.Mutate == nil {
+		t.Fatalf("result=%+v", result)
+	}
+	if model.proposeCalls != 0 || planner.calls != 1 {
+		t.Fatalf("model decisions=%d planner calls=%d", model.proposeCalls, planner.calls)
+	}
+	var checkpoint investigationStepCheckpoint
+	if err := json.Unmarshal(store.singleCheckpoint(t).Payload, &checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	if checkpoint.NextMode != stepModeTool || checkpoint.NextAction == nil || checkpoint.NextAction.Tool != action.Tool {
+		t.Fatalf("checkpoint=%+v", checkpoint)
+	}
+	if checkpoint.State.Usage.Steps != 1 || checkpoint.State.Usage.ModelCalls != 0 {
+		t.Fatalf("planner decision usage=%+v", checkpoint.State.Usage)
+	}
+}
+
+func TestInvestigationStepProductionPlannerChainsDirectlyToNextTool(t *testing.T) {
+	first := testInvestigationAction()
+	second := agent.ProposedAction{
+		Tool: "query_metrics", ScopeRef: "scope-1", TemplateID: "metrics/v1",
+		BoundedParameters: json.RawMessage(`{"window":"30m"}`),
+		ExpectedFactTypes: []string{"metric.readiness_or_5xx_failure"}, PurposeSummary: "confirm the bounded runtime symptom",
+	}
+	signature, err := agent.ActionSignature(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := testInvestigationState()
+	state.CheckpointVersion = 1
+	state.NextNode = agent.NodeExecuteTool
+	state.ToolAttempts = []agent.ToolAttempt{{Signature: signature, Tool: first.Tool, Status: "proposed"}}
+	state.Usage = agent.Usage{Steps: 1}
+	snapshot := testInvestigationSnapshot(t, stepModeTool, &first)
+	snapshot.State = state
+	snapshot.StateHash = stateHashForTest(t, state)
+	payload, err := json.Marshal(investigationStepPayload{
+		Mode: stepModeTool, AgentRunID: snapshot.RunPublicID, CycleNo: 1,
+		BasisCheckpointVersion: 1, Action: &first,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot.Task.Payload = payload
+	policies := map[string]agent.ToolActionPolicy{
+		first.Tool: {
+			TemplateIDs: []string{first.TemplateID}, ParameterKeys: []string{"include_events"},
+			ExpectedFactTypes: []string{"workload.subject_confirmed"},
+		},
+		second.Tool: {
+			TemplateIDs: []string{second.TemplateID}, ParameterKeys: []string{"window"},
+			ParameterSpecs:    map[string]agent.ParameterSpec{"window": {Type: agent.ParameterString, Enum: []string{"30m"}}},
+			ExpectedFactTypes: []string{"metric.readiness_or_5xx_failure"},
+		},
+	}
+	planner := &stepTestPlanner{actions: []agent.ProposedAction{second}}
+	model := &stepTestModel{proposeErr: errors.New("tool chaining must not request a model decision")}
+	store := &stepTestTaskStore{}
+	tool := &stepTestTool{observation: agent.ToolObservation{
+		Status: agent.CollectionNoData, SourceSystem: "kubernetes", CollectionPath: "kubernetes-api/v1",
+		TemplateVersion: first.TemplateID, Summary: "bounded read completed without facts",
+	}}
+	operation := testInvestigationOperationWithPolicy(snapshot, model, tool, store, planner, testClaimPolicy(), policies)
+
+	result := runInvestigationOperation(t, snapshot.Task, operation.handle)
+	if result.Disposition != asyncjob.DispositionSucceeded || result.Mutate == nil {
+		t.Fatalf("result=%+v", result)
+	}
+	if model.proposeCalls != 0 || planner.calls != 1 {
+		t.Fatalf("model decisions=%d planner calls=%d", model.proposeCalls, planner.calls)
+	}
+	var checkpoint investigationStepCheckpoint
+	if err := json.Unmarshal(store.singleCheckpoint(t).Payload, &checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	if checkpoint.NextMode != stepModeTool || checkpoint.NextAction == nil || checkpoint.NextAction.Tool != second.Tool || checkpoint.State.NextNode != agent.NodeExecuteTool {
+		t.Fatalf("checkpoint=%+v", checkpoint)
+	}
+	if len(checkpoint.State.ToolAttempts) != 2 || checkpoint.State.ToolAttempts[0].Status != string(agent.CollectionNoData) || checkpoint.State.ToolAttempts[1].Status != "proposed" {
+		t.Fatalf("tool attempts=%+v", checkpoint.State.ToolAttempts)
+	}
+}
+
 func TestInvestigationStepReservesSingleRepairBeforeCallingTypedModel(t *testing.T) {
 	action := testInvestigationAction()
 	model := &twoCallStepModel{stepTestModel: stepTestModel{delta: agent.StateDelta{
@@ -589,6 +683,21 @@ type stepTestTool struct {
 	calls       int
 }
 
+type stepTestPlanner struct {
+	actions []agent.ProposedAction
+	calls   int
+}
+
+func (p *stepTestPlanner) NextAction(agent.InvestigationState, []agent.EvidenceFact, string) (*agent.ProposedAction, error) {
+	if p.calls >= len(p.actions) {
+		p.calls++
+		return nil, nil
+	}
+	action := p.actions[p.calls]
+	p.calls++
+	return &action, nil
+}
+
 func (t *stepTestTool) Execute(context.Context, agent.InvestigationToolRequest) (agent.ToolObservation, error) {
 	t.calls++
 	return t.observation, t.err
@@ -720,6 +829,10 @@ func testInvestigationOperation(snapshot investigationSnapshot, model agent.Inve
 	actionPolicies := map[string]agent.ToolActionPolicy{
 		"inspect_workload": {TemplateIDs: []string{"workload-snapshot/v1"}, ParameterKeys: []string{"include_events"}, ExpectedFactTypes: []string{"workload.subject_confirmed"}},
 	}
+	return testInvestigationOperationWithPolicy(snapshot, model, tool, tasks, nil, claimPolicy, actionPolicies)
+}
+
+func testInvestigationOperationWithPolicy(snapshot investigationSnapshot, model agent.InvestigationModel, tool agent.InvestigationReadTool, tasks InvestigationTaskStore, planner agent.InvestigationActionPlanner, claimPolicy agent.ClaimPolicy, actionPolicies map[string]agent.ToolActionPolicy) *investigationStepOperation {
 	claimJSON, _ := json.Marshal(claimPolicy)
 	actionJSON, _ := json.Marshal(actionPolicies)
 	snapshot.State.Coverage.ClaimPolicyVersion = claimPolicy.Version
@@ -729,7 +842,7 @@ func testInvestigationOperation(snapshot investigationSnapshot, model agent.Inve
 	snapshot.StateHash = hashBytesInvestigation(stateJSON)
 	return &investigationStepOperation{
 		cfg: InvestigationStepConfig{
-			Tasks: tasks, Model: model, Tools: tool, ClaimPolicy: claimPolicy, ActionPolicies: actionPolicies,
+			Tasks: tasks, Model: model, Tools: tool, Planner: planner, ClaimPolicy: claimPolicy, ActionPolicies: actionPolicies,
 			RequiredSources: []string{"kubernetes"}, MaxCheckpointBytes: defaultTaskCheckpointBytes,
 			Now: func() time.Time { return time.Date(2026, 7, 19, 10, 0, 0, 0, time.UTC) },
 		},

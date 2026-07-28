@@ -1367,8 +1367,9 @@ func reportOperationalDiagnosis(ctx context.Context, tx asyncjob.DBTX, task asyn
 	var diagnosis []byte
 	var completedAt sql.NullTime
 	if err := tx.QueryRowContext(ctx, `SELECT public_id, status, final_diagnosis, completed_at
-FROM agent_runs
-WHERE id = ? AND incident_id = ? AND cycle_no = ? AND subject_type = 'incident' AND run_kind = 'workspace'`,
+	FROM agent_runs
+	WHERE id = ? AND incident_id = ? AND cycle_no = ? AND subject_type = 'incident'
+	  AND run_kind IN ('incident','workspace')`,
 		investigationRunID, task.IncidentID, task.CycleNo).Scan(&publicID, &status, &diagnosis, &completedAt); err != nil {
 		return nil, err
 	}

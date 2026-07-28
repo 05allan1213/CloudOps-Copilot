@@ -131,7 +131,7 @@ func validateIncidentAlertRelations(items []IncidentAlertRelationView) error {
 			len(item.Summary) > 2048 || item.CreatedAt.IsZero() {
 			return ErrInvalidArgument
 		}
-		if err := validateIncidentContextLink(&item.ContextLink, false); err != nil {
+		if err := validateIncidentContextLink(&item.ContextLink, true); err != nil {
 			return err
 		}
 		item.ID = id

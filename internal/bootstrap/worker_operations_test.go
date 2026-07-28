@@ -45,6 +45,7 @@ func TestAssembleWorkerTaskOperationsFailsClosedForEveryMissingDependency(t *tes
 	}{
 		{"investigation model", func(value *WorkerOperationDependencies) { value.InvestigationModel = nil }},
 		{"investigation read tools", func(value *WorkerOperationDependencies) { value.InvestigationTools = nil }},
+		{"investigation planner", func(value *WorkerOperationDependencies) { value.InvestigationPlanner = nil }},
 		{"remediation loader", func(value *WorkerOperationDependencies) { value.RemediationLoader = nil }},
 		{"remediation store", func(value *WorkerOperationDependencies) { value.RemediationStore = nil }},
 		{"GitHub reader", func(value *WorkerOperationDependencies) { value.GitHubReader = nil }},
@@ -112,6 +113,7 @@ func completeWorkerOperationDependencies() WorkerOperationDependencies {
 	return WorkerOperationDependencies{
 		InvestigationModel:       workerModelStub{},
 		InvestigationTools:       workerToolStub{},
+		InvestigationPlanner:     workerPlannerStub{},
 		RemediationLoader:        workerRemediationLoaderStub{},
 		RemediationStore:         workerRemediationStoreStub{},
 		GitHubReader:             workerExactGitReaderStub{},
@@ -135,6 +137,12 @@ type workerToolStub struct{}
 
 func (workerToolStub) Execute(context.Context, agent.InvestigationToolRequest) (agent.ToolObservation, error) {
 	return agent.ToolObservation{}, nil
+}
+
+type workerPlannerStub struct{}
+
+func (workerPlannerStub) NextAction(agent.InvestigationState, []agent.EvidenceFact, string) (*agent.ProposedAction, error) {
+	return nil, nil
 }
 
 type workerRemediationLoaderStub struct{}

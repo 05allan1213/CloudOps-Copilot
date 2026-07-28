@@ -20,8 +20,9 @@ import (
 // port; assembly deliberately supplies no no-op, forced-dead, or legacy
 // wrapper fallback.
 type WorkerOperationDependencies struct {
-	InvestigationModel agent.InvestigationModel
-	InvestigationTools agent.InvestigationReadTool
+	InvestigationModel   agent.InvestigationModel
+	InvestigationTools   agent.InvestigationReadTool
+	InvestigationPlanner agent.InvestigationActionPlanner
 
 	RemediationLoader taskhandler.RemediationPrepareLoader
 	RemediationStore  taskhandler.RemediationPrepareStore
@@ -75,6 +76,7 @@ func AssembleWorkerTaskOperations(
 
 	investigationStep, err := taskhandler.NewInvestigationStep(taskhandler.InvestigationStepConfig{
 		DB: db, Tasks: tasks, Model: dependencies.InvestigationModel, Tools: dependencies.InvestigationTools,
+		Planner:          dependencies.InvestigationPlanner,
 		AgentRunIdentity: config.AgentRunIdentity,
 		ClaimPolicy:      config.ClaimPolicy, ActionPolicies: config.ActionPolicies,
 		RequiredSources: config.RequiredSources, MaxCheckpointBytes: config.MaxCheckpointBytes, Now: config.Now,
@@ -196,6 +198,9 @@ func validateWorkerOperationDependencies(dependencies WorkerOperationDependencie
 	}
 	if dependencies.InvestigationTools == nil {
 		missing = append(missing, "investigation read tools")
+	}
+	if dependencies.InvestigationPlanner == nil {
+		missing = append(missing, "investigation planner")
 	}
 	if dependencies.RemediationLoader == nil {
 		missing = append(missing, "remediation loader")

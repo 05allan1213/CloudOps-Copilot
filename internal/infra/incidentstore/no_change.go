@@ -406,7 +406,7 @@ ORDER BY category LIMIT 21 FOR SHARE`, incident.id, incident.cycleNo)
 func cancelNoChangeWorkflow(ctx context.Context, tx *sql.Tx, incident incidentRow, decision noChangeDecision) (noChangeCancellation, error) {
 	var summary noChangeCancellation
 	result, err := tx.ExecContext(ctx, `UPDATE agent_runs
-SET status = 'cancelled', row_version = row_version + 1,
+	SET status = 'cancelled', outcome = 'cancelled', row_version = row_version + 1,
     cancel_requested_at = NOW(6), completed_at = NOW(6), failure_code = 'resolved_before_diagnosis',
     failure_summary = 'resolved Signal triggered no-change verification', updated_at = NOW(6)
 WHERE incident_id = ? AND cycle_no = ? AND status IN ('pending','running')`,

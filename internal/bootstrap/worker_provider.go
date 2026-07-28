@@ -372,6 +372,10 @@ func (f ProductionTaskOperationFactory) Build(ctx context.Context, db *sql.DB, t
 		return taskhandler.Config{}, fmt.Errorf("initialize investigation model: %w", err)
 	}
 	actionPolicies := investigationread.GoldenActionPolicies()
+	planner, err := investigationread.NewGoldenAcquisitionPlanner(actionPolicies)
+	if err != nil {
+		return taskhandler.Config{}, fmt.Errorf("initialize investigation planner: %w", err)
+	}
 	modelIdentity, err := model.RuntimeModelIdentity(c.LLMProvider, actionPolicies)
 	if err != nil {
 		return taskhandler.Config{}, fmt.Errorf("freeze investigation model identity: %w", err)
@@ -384,7 +388,7 @@ func (f ProductionTaskOperationFactory) Build(ctx context.Context, db *sql.DB, t
 		DeliveryTarget:       taskhandler.DeliveryObserveTarget{ArgoApplication: target.ArgoApplication, ArgoProject: target.ArgoProject, ArgoRepository: target.ArgoRepositoryURL, ArgoPath: target.ArgoPath, DesiredReplicas: 2},
 		DeliveryPollInterval: c.DeliveryPollInterval, DeliveryTimeout: c.DeliveryTimeout, MaxAgentRuns: taskhandler.DefaultAgentRunBudget,
 	}, WorkerOperationDependencies{
-		InvestigationModel: model, InvestigationTools: investigationTools,
+		InvestigationModel: model, InvestigationTools: investigationTools, InvestigationPlanner: planner,
 		RemediationLoader: remediationLoader, RemediationStore: remediationStore,
 		GitHubReader: githubClient, GitHubWriter: githubWriter,
 		DeliveryObserver: deliveryObserver, VerificationObservations: verificationSource,

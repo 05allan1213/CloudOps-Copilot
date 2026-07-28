@@ -389,7 +389,7 @@ func TestMySQLInvestigationRetryAuthorizationIsDurableConcurrentAndHardBounded(t
 			t.Fatalf("reconciled investigation command=%+v error=%v", accepted, err)
 		}
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM agent_runs
-		WHERE id = ? AND status = 'failed' AND row_version = 4
+		WHERE id = ? AND status = 'failed' AND outcome = 'failed' AND row_version = 4
 		  AND failure_code = 'invalid_agent_run_state'`, 1, runID)
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks
 		WHERE incident_id = ? AND cycle_no = 1 AND subject_type = 'incident'

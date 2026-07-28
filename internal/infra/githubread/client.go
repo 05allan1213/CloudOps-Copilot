@@ -326,6 +326,7 @@ func (c *Client) GetCIStatus(ctx context.Context, repo change.RepositoryRef, sha
 	if err := c.authorizeRef(sha); err != nil {
 		return change.CIStatus{}, err
 	}
+	exactSHA := exactCommitSHA(sha)
 	result := change.CIStatus{CommitSHA: sha, Conclusion: "success"}
 	for page := 1; page <= c.maxPages; page++ {
 		var checks struct {
@@ -361,7 +362,12 @@ func (c *Client) GetCIStatus(ctx context.Context, repo change.RepositoryRef, sha
 			return change.CIStatus{}, err
 		}
 		for _, item := range workflows.WorkflowRuns {
-			if len(c.allowedBranches) > 0 {
+			if exactSHA {
+				if !strings.EqualFold(strings.TrimSpace(item.HeadSHA), strings.TrimSpace(sha)) {
+					result.Degraded = true
+					continue
+				}
+			} else if len(c.allowedBranches) > 0 {
 				if _, allowed := c.allowedBranches[item.HeadBranch]; !allowed {
 					result.Degraded = true
 					continue
@@ -378,6 +384,11 @@ func (c *Client) GetCIStatus(ctx context.Context, repo change.RepositoryRef, sha
 		result.Conclusion = "unknown"
 	}
 	return result, nil
+}
+
+func exactCommitSHA(value string) bool {
+	value = strings.TrimSpace(value)
+	return (len(value) == 40 || len(value) == 64) && change.ValidCommitSHA(value)
 }
 
 func (c *Client) authorize(repo change.RepositoryRef) error {

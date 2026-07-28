@@ -146,9 +146,23 @@ func (t *Toolset) changeDetail(ctx context.Context, request agent.InvestigationT
 	if err != nil {
 		return unavailable(request.Action, "github", "github/change-detail", err), nil
 	}
-	if !strings.EqualFold(commit.SHA, revision) || len(commit.Parents) != 1 || !exactRevision(commit.Parents[0]) {
+	if !strings.EqualFold(commit.SHA, revision) || len(commit.Parents) < 1 || len(commit.Parents) > 2 {
 		return agent.ToolObservation{}, change.ErrInvalidArgument
 	}
+	for _, parent := range commit.Parents {
+		if !exactRevision(parent) {
+			return agent.ToolObservation{}, change.ErrInvalidArgument
+		}
+	}
+	pullRequests, err := t.cfg.GitHub.ListPullRequestsForCommit(ctx, t.cfg.Target.Repository, revision)
+	if err != nil {
+		return unavailable(request.Action, "github", "github/change-detail", err), nil
+	}
+	pullRequest, err := exactMergedPullRequest(pullRequests, t.cfg.Target.Repository, commit)
+	if err != nil {
+		return agent.ToolObservation{}, err
+	}
+	headSHA := strings.ToLower(pullRequest.HeadSHA)
 	current, err := t.cfg.GitHub.GetFileContent(ctx, t.cfg.Target.Repository, revision, t.cfg.Target.GitOpsPath)
 	if err != nil {
 		return unavailable(request.Action, "github", "github/change-detail", err), nil
@@ -159,15 +173,26 @@ func (t *Toolset) changeDetail(ctx context.Context, request agent.InvestigationT
 	}
 	factType := "gitops.required_env_not_removed"
 	patch, patchErr := remediation.RenderRestoreRequiredEnv(current.Content, parent.Content, remediationTarget(t.cfg.Target), t.cfg.Target.EnvKey)
-	attributes := map[string]string{"change_ref": params.ChangeRef, "repository": t.cfg.Target.Repository.FullName(), "path": t.cfg.Target.GitOpsPath, "revision": revision}
+	attributes := map[string]string{
+		"change_ref": params.ChangeRef, "repository": t.cfg.Target.Repository.FullName(), "path": t.cfg.Target.GitOpsPath,
+		"revision": revision, "merge_sha": revision, "head_sha": headSHA, "pull_request_number": strconv.FormatInt(pullRequest.Number, 10),
+	}
 	if patchErr == nil {
 		factType = "gitops.required_env_removed"
 		attributes["before_hash"], attributes["post_image_hash"] = patch.BeforeHash, patch.PostImageHash
 	}
 	facts := []agent.EvidenceFact{typedFact(request, factType, "github", "github/change-detail", "authoritative", "support", true, attributes)}
-	ci, ciErr := t.cfg.GitHub.GetCIStatus(ctx, t.cfg.Target.Repository, revision)
+	ci, ciErr := t.cfg.GitHub.GetCIStatus(ctx, t.cfg.Target.Repository, headSHA)
 	if ciErr != nil {
 		return unavailable(request.Action, "github", "github/change-detail", ciErr), nil
+	}
+	if !strings.EqualFold(ci.CommitSHA, headSHA) {
+		return agent.ToolObservation{}, change.ErrInvalidArgument
+	}
+	for _, workflow := range ci.WorkflowRuns {
+		if !strings.EqualFold(workflow.HeadSHA, headSHA) {
+			return agent.ToolObservation{}, change.ErrInvalidArgument
+		}
 	}
 	ciType := "change.ci_not_succeeded"
 	if strings.EqualFold(ci.Conclusion, "success") && !ci.Degraded {
@@ -175,9 +200,46 @@ func (t *Toolset) changeDetail(ctx context.Context, request agent.InvestigationT
 	}
 	facts = append(facts, typedFact(request, ciType, "github", "github/change-detail", "authoritative", "support", true, map[string]string{
 		"change_ref": params.ChangeRef, "repository": t.cfg.Target.Repository.FullName(), "revision": revision,
-		"conclusion": ci.Conclusion, "check_runs": strconv.Itoa(len(ci.CheckRuns)), "workflow_runs": strconv.Itoa(len(ci.WorkflowRuns)),
+		"merge_sha": revision, "head_sha": headSHA, "ci_commit_sha": strings.ToLower(ci.CommitSHA),
+		"pull_request_number": strconv.FormatInt(pullRequest.Number, 10),
+		"conclusion":          ci.Conclusion, "check_runs": strconv.Itoa(len(ci.CheckRuns)), "workflow_runs": strconv.Itoa(len(ci.WorkflowRuns)),
 	}))
-	return available(request.Action, "github", "github/change-detail", "exact commit, parent file content and CI identity were read through allowlisted GitHub GETs", facts, commit.HTMLURL), nil
+	return available(request.Action, "github", "github/change-detail", "exact merge commit, merged pull request head, parent file content and head CI identity were read through allowlisted GitHub GETs", facts, pullRequest.HTMLURL), nil
+}
+
+func exactMergedPullRequest(values []change.PullRequest, repository change.RepositoryRef, commit change.Commit) (change.PullRequest, error) {
+	var result change.PullRequest
+	matches := 0
+	for _, value := range values {
+		if !strings.EqualFold(strings.TrimSpace(value.MergeCommitSHA), commit.SHA) {
+			continue
+		}
+		if !value.Merged || value.Number <= 0 || !exactRevision(value.HeadSHA) || !exactRevision(value.BaseSHA) ||
+			(value.Repository != "" && !strings.EqualFold(value.Repository, repository.FullName())) ||
+			!pullRequestMatchesCommitParents(value, commit.Parents) {
+			return change.PullRequest{}, change.ErrInvalidArgument
+		}
+		matches++
+		result = value
+	}
+	if matches == 0 {
+		return change.PullRequest{}, change.ErrNotFound
+	}
+	if matches != 1 {
+		return change.PullRequest{}, change.ErrConflict
+	}
+	return result, nil
+}
+
+func pullRequestMatchesCommitParents(pullRequest change.PullRequest, parents []string) bool {
+	switch len(parents) {
+	case 1:
+		return strings.EqualFold(pullRequest.BaseSHA, parents[0])
+	case 2:
+		return strings.EqualFold(pullRequest.BaseSHA, parents[0]) && strings.EqualFold(pullRequest.HeadSHA, parents[1])
+	default:
+		return false
+	}
 }
 
 func (t *Toolset) loadBaseline(ctx context.Context) (returnIdentity baselineIdentity, retErr error) {

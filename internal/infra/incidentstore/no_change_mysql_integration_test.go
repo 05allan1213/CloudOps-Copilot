@@ -86,7 +86,7 @@ func TestMySQLIncidentResolvedSignalCreatesNoChangeVerificationAndFencesAgent(t 
 		t.Fatalf("incident status=%s version=%d current_agent=%+v", incidentStatus, incidentVersion, currentAgent)
 	}
 	assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM agent_runs
-	WHERE incident_id = ? AND cycle_no = 1 AND status = 'cancelled'`, 1, incidentID)
+	WHERE incident_id = ? AND cycle_no = 1 AND status = 'cancelled' AND outcome = 'cancelled'`, 1, incidentID)
 	assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks
 WHERE id = ? AND status = 'cancelled' AND lease_generation > ?`, 1, stale.Task.ID, stale.Lease.Generation)
 	assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_task_attempts
@@ -119,7 +119,7 @@ FROM verification_runs WHERE incident_id = ? AND cycle_no = 1`, incidentID).Scan
 		t.Fatalf("verification run trigger=%s profile=%s plan=%+v", triggerType, profileID, plan)
 	}
 	assertIncidentIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM agent_runs
-WHERE id = ? AND incident_id = ? AND cycle_no = 1 AND status = 'cancelled'`, 1, originatingAgentRunID.Int64, incidentID)
+WHERE id = ? AND incident_id = ? AND cycle_no = 1 AND status = 'cancelled' AND outcome = 'cancelled'`, 1, originatingAgentRunID.Int64, incidentID)
 	var resolvedSignalID uint64
 	if err := db.QueryRowContext(ctx, `SELECT id FROM incident_signals
 WHERE source = ? AND source_event_id = ?`, resolved.Source, resolved.SourceEventID).Scan(&resolvedSignalID); err != nil {

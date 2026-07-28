@@ -561,19 +561,36 @@ func enqueueInvestigationStartWithAuthorization(ctx context.Context, tx *sql.Tx,
 	payload, _ := json.Marshal(payloadBody)
 	dedupe := hashCanonical(dedupeParts...)
 	result, err := tx.ExecContext(ctx, `
-INSERT IGNORE INTO async_tasks
+INSERT INTO async_tasks
     (public_id, incident_id, cycle_no, queue, task_type, subject_type, subject_id, transition,
-     expected_subject_version, payload_schema_version, payload_json, dedupe_key,
+     expected_subject_version, payload_schema_version, payload_json, configuration_revision_id, dedupe_key,
      replay_generation, migrated_legacy_context, status, priority, available_at, attempt, max_attempts, lease_generation)
-VALUES (?, ?, ?, 'investigate', 'investigation.advance', 'incident', ?, 'investigation.start',
-	    ?, 1, ?, ?, 0, ?, 'ready', 100, NOW(6), 0, ?, 0)`,
+SELECT ?, ?, ?, 'investigate', 'investigation.advance', 'incident', ?, 'investigation.start',
+	    ?, 1, ?, active.configuration_revision_id, ?, 0, ?, 'ready', 100, NOW(6), 0, ?, 0
+FROM active_configuration AS active
+WHERE active.singleton_id = 1
+ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
 		uuid.NewString(), incident.id, incident.cycleNo, incident.id, incident.version, payload, dedupe,
 		incident.migratedLegacyContext, startTaskMaxAttempts)
 	if err != nil {
 		return false, false, err
 	}
 	affected, err := result.RowsAffected()
-	return affected == 1, false, err
+	if err != nil {
+		return false, false, err
+	}
+	if affected == 1 {
+		return true, false, nil
+	}
+	var existing int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM async_tasks
+WHERE dedupe_key = ? AND replay_generation = 0`, dedupe).Scan(&existing); err != nil {
+		return false, false, err
+	}
+	if existing != 1 {
+		return false, false, errors.New("active Configuration Revision is unavailable for investigation.start")
+	}
+	return false, false, nil
 }
 
 // refreshInvestigationStartVersion keeps the single live start transition

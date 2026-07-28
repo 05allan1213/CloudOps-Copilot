@@ -182,9 +182,33 @@ func TestClientAppliesPathAndWorkflowBranchAllowlists(t *testing.T) {
 	if err != nil || len(diff.Files) != 2 || diff.Files[0].Redacted || !diff.Files[1].Redacted || diff.Files[1].Patch != "" {
 		t.Fatalf("path boundary diff=%+v err=%v", diff, err)
 	}
-	ci, err := client.GetCIStatus(context.Background(), repo, "deadbeef")
+	ci, err := client.GetCIStatus(context.Background(), repo, "main")
 	if err != nil || len(ci.WorkflowRuns) != 1 || ci.WorkflowRuns[0].HeadBranch != "main" || !ci.Degraded {
 		t.Fatalf("branch boundary ci=%+v err=%v", ci, err)
+	}
+}
+
+func TestClientAllowsExactSHAWorkflowFromPullRequestBranch(t *testing.T) {
+	sha := strings.Repeat("a", 40)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/check-runs"):
+			_, _ = w.Write([]byte(`{"check_runs":[]}`))
+		case strings.Contains(r.URL.Path, "/actions/runs"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"workflow_runs": []map[string]any{{
+				"id": 1, "name": "required", "head_sha": sha, "head_branch": "feature/fix",
+				"status": "completed", "conclusion": "success",
+			}}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	client := newTestClient(t, server.URL, Config{AllowedBranches: []string{"main"}})
+	result, err := client.GetCIStatus(context.Background(), change.RepositoryRef{Owner: "acme", Name: "app"}, sha)
+	if err != nil || result.Degraded || result.Conclusion != "success" || len(result.WorkflowRuns) != 1 ||
+		result.WorkflowRuns[0].HeadSHA != sha || result.WorkflowRuns[0].HeadBranch != "feature/fix" {
+		t.Fatalf("exact SHA CI=%+v err=%v", result, err)
 	}
 }
 
