@@ -20,16 +20,17 @@ scan_paths=(
 path_pattern='(^|/)(v2|v3|phase[-_]?([0-9]+))([._/-]|$)|values-phase'
 content_pattern='(/api/v[23])|\b(V[23]_[A-Z0-9_]+)\b|\b(v[23]_[a-z0-9_]+)\b|\b(phase[-_]?[0-9]+)\b|cloudops[-_]v[23]\b|incident-agent-v[23]\b|domain_schema_version|v3_status|write_phase'
 
-path_failures="$(find "${scan_paths[@]}" -print 2>/dev/null | rg -n -i "${path_pattern}" || true)"
-content_failures="$(rg -n -i "${content_pattern}" "${scan_paths[@]}" \
-  --glob '!scripts/check-first-party-naming.sh' \
-  --glob '!**/*.snap' \
-  --glob '!**/package-lock.json' \
-  --glob '!**/node_modules/**' | \
-  rg -v '^(internal/api/contract_test\.go|internal/router/(api|internal)_test\.go):[0-9]+:.*(/api/v[23])' | \
-  rg -v '^internal/infra/alertmanagerapi/(adapter|adapter_test)\.go:[0-9]+:.*"/api/v2/silence(s|/)' | \
-  rg -v '^scripts/local-lifecycle\.sh:[0-9]+:.*\/api\/v2\/alerts' | \
-  rg -v '^(migrations/baseline_test\.go|internal/api/(resolution_report|workbench_contract)_test\.go|internal/taskhandler/evidence_authority_test\.go):[0-9]+:' || true)"
+path_failures="$(find "${scan_paths[@]}" -print 2>/dev/null | grep -Eni "${path_pattern}" || true)"
+content_failures="$(grep -REni --binary-files=without-match \
+  --exclude='check-first-party-naming.sh' \
+  --exclude='*.snap' \
+  --exclude='package-lock.json' \
+  --exclude-dir='node_modules' \
+  "${content_pattern}" "${scan_paths[@]}" 2>/dev/null | \
+  grep -Ev '^(internal/api/contract_test\.go|internal/router/(api|internal)_test\.go):[0-9]+:.*(/api/v[23])' | \
+  grep -Ev '^internal/infra/alertmanagerapi/(adapter|adapter_test)\.go:[0-9]+:.*"/api/v2/silence(s|/)' | \
+  grep -Ev '^scripts/local-lifecycle\.sh:[0-9]+:.*\/api\/v2\/alerts' | \
+  grep -Ev '^(migrations/baseline_test\.go|internal/api/(resolution_report|workbench_contract)_test\.go|internal/taskhandler/evidence_authority_test\.go):[0-9]+:' || true)"
 
 if [[ -n "${path_failures}" || -n "${content_failures}" ]]; then
   [[ -z "${path_failures}" ]] || printf '%s\n' "${path_failures}" >&2

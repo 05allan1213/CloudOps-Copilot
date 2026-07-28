@@ -150,10 +150,10 @@ check-deps:
 
 check-structure:
 	test "$$(find . -mindepth 2 -name go.mod -not -path './.git/*' -print | wc -l)" -eq 0
-	! rg -n '^replace[[:space:]]' go.mod
-	! rg -n '(^[[:space:]]*"|^import[[:space:]]+")(server-web|server-monitor/pkg)(/|")' --glob '*.go' cmd internal migrations
-	test -z "$$($(GO) list -deps ./cmd/cloudops-worker | rg 'github.com/05allan1213/CloudOps-Copilot/(internal/bootstrap/migrate|internal/migration|migrations)$$')"
-	test -z "$$($(GO) list -deps ./cmd/cloudops-migrate | rg 'github.com/05allan1213/CloudOps-Copilot/internal/(bootstrap$$|startup|service/agentruntime|service/remediation|service/deliveryverification|agent/llm|infra/githubwrite|infra/observabilityread)')"
+	! grep -En '^replace[[:space:]]' go.mod
+	! grep -REn --include='*.go' '(^[[:space:]]*"|^import[[:space:]]+")(server-web|server-monitor/pkg)(/|")' cmd internal migrations
+	! $(GO) list -deps ./cmd/cloudops-worker | grep -E 'github.com/05allan1213/CloudOps-Copilot/(internal/bootstrap/migrate|internal/migration|migrations)$$'
+	! $(GO) list -deps ./cmd/cloudops-migrate | grep -E 'github.com/05allan1213/CloudOps-Copilot/internal/(bootstrap$$|startup|service/agentruntime|service/remediation|service/deliveryverification|agent/llm|infra/githubwrite|infra/observabilityread)'
 
 check-naming:
 	bash $(NAMING_CHECK)

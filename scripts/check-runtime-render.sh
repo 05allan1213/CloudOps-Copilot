@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHART_DIR="${ROOT_DIR}/charts/cloudops"
 VALUES_FILE="${CHART_DIR}/values-local.yaml"
 
-for command_name in helm yq jq rg; do
+for command_name in helm yq jq grep; do
   command -v "${command_name}" >/dev/null 2>&1 || {
     printf 'FAIL: missing command: %s\n' "${command_name}" >&2
     exit 1
@@ -255,7 +255,7 @@ if helm template cloudops "${CHART_DIR}" --namespace cloudops-system --values "$
   printf 'FAIL: unmounted external kubeconfig path unexpectedly rendered\n' >&2
   exit 1
 fi
-rg -q 'kubeconfig must reference a mounted worker credential file' "${invalid_output}" || {
+grep -Eq 'kubeconfig must reference a mounted worker credential file' "${invalid_output}" || {
   printf 'FAIL: invalid external kubeconfig did not fail with the bounded credential contract\n' >&2
   exit 1
 }
@@ -273,7 +273,7 @@ expect_one ClusterRoleBinding cloudops-worker-topology-readonly
   exit 1
 }
 
-if rg -n -i 'oauth|csrf|cloudops\.io/profile|values-phase|V[23]_|/api/v[23]' "${rendered}"; then
+if grep -Eni 'oauth|csrf|cloudops\.io/profile|values-phase|V[23]_|/api/v[23]' "${rendered}"; then
   printf 'FAIL: rendered runtime contains an obsolete auth or generation contract\n' >&2
   exit 1
 fi
@@ -283,7 +283,7 @@ if helm template cloudops "${CHART_DIR}" --namespace cloudops-system --values "$
   printf 'FAIL: active Scenario rendered without the bounded write gate\n' >&2
   exit 1
 fi
-rg -q 'active Demonstration Scenario requires the bounded Kubernetes write gate' "${invalid_output}" || {
+grep -Eq 'active Demonstration Scenario requires the bounded Kubernetes write gate' "${invalid_output}" || {
   printf 'FAIL: missing Scenario write gate did not fail with the exact contract\n' >&2
   exit 1
 }
@@ -292,7 +292,7 @@ if helm template cloudops "${CHART_DIR}" --namespace cloudops-system --values "$
   printf 'FAIL: inactive runtime rendered with Kubernetes writes enabled\n' >&2
   exit 1
 fi
-rg -q 'Kubernetes write access is permitted only while the bounded Scenario is active' "${invalid_output}" || {
+grep -Eq 'Kubernetes write access is permitted only while the bounded Scenario is active' "${invalid_output}" || {
   printf 'FAIL: inactive write gate did not fail with the exact contract\n' >&2
   exit 1
 }
@@ -305,7 +305,7 @@ for required in \
   '--set scenario.enabled=true' \
   '--set-string "scenario.id=${active_scenario_id}"' \
   '--set-string worker.env.K8S_WRITE_ENABLED=true'; do
-  rg -Fq -- "${required}" <<<"${install_runtime_contract}" || {
+  grep -Fq -- "${required}" <<<"${install_runtime_contract}" || {
     printf 'FAIL: install_runtime does not preserve active Scenario contract: %s\n' "${required}" >&2
     exit 1
   }
@@ -318,7 +318,7 @@ for required in \
   'restore_active_scenario_fault_state "${active_scenario_id}" "${active_scenario_fault_replicas}"' \
   'write_scenario_id "${active_scenario_id}"' \
   'pass "active Scenario preserved across local-up: ${active_scenario_id}"'; do
-  rg -Fq -- "${required}" <<<"${local_up_contract}" || {
+  grep -Fq -- "${required}" <<<"${local_up_contract}" || {
     printf 'FAIL: local_up does not preserve active Scenario contract: %s\n' "${required}" >&2
     exit 1
   }
