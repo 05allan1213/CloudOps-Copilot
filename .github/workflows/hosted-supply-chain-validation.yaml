@@ -415,6 +415,8 @@ jobs:
           POST_DELETE_PACKAGE_HTTP=""
           POST_DELETE_PACKAGE_VERSIONS='[]'
           POST_DELETE_PACKAGE_STATE="not_run"
+          PACKAGE_DELETE_HTTP=""
+          PACKAGE_DELETE_STATE="not_run"
           REFERRER_PROBE_EXIT=""
           REFERRER_STATE="not_run"
           REFERRERS='[]'
@@ -554,6 +556,40 @@ jobs:
               DELETE_FAILURES=$((DELETE_FAILURES + 1))
             fi
 
+            package_path="/${CLEANUP_SCOPE}/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE}"
+            package_delete_body="${RUNNER_TEMP}/${PACKAGE}-package-delete.json"
+            package_delete_headers="${RUNNER_TEMP}/${PACKAGE}-package-delete.headers"
+            package_delete_error_file="${RUNNER_TEMP}/${PACKAGE}-package-delete.err"
+            if PACKAGE_DELETE_HTTP="$(api_call DELETE "${package_path}" "${package_delete_body}" "${package_delete_headers}" "${package_delete_error_file}")"; then
+              package_delete_exit=0
+            else
+              package_delete_exit=$?
+            fi
+            package_delete_error="$(tail -c 4000 "${package_delete_error_file}" 2>/dev/null)"
+            package_delete_response="$(tail -c 4000 "${package_delete_body}" 2>/dev/null)"
+            DELETE_ATTEMPTS="$(jq -c \
+              --arg phase package \
+              --arg version_id "" \
+              --arg http "${PACKAGE_DELETE_HTTP}" \
+              --arg error "${package_delete_error}" \
+              --arg response "${package_delete_response}" \
+              --argjson curl_exit "${package_delete_exit}" \
+              '. + [{phase: $phase, version_id: $version_id, http: $http,
+                curl_exit: $curl_exit, error: $error, response: $response}]' <<<"${DELETE_ATTEMPTS}")"
+            if [ "${package_delete_exit}" -ne 0 ]; then
+              PACKAGE_DELETE_STATE="check_failed"
+              DELETE_FAILURES=$((DELETE_FAILURES + 1))
+            else
+              case "${PACKAGE_DELETE_HTTP}" in
+                204) PACKAGE_DELETE_STATE="deleted" ;;
+                404) PACKAGE_DELETE_STATE="already_absent" ;;
+                *)
+                  PACKAGE_DELETE_STATE="delete_failed"
+                  DELETE_FAILURES=$((DELETE_FAILURES + 1))
+                  ;;
+              esac
+            fi
+
             cleanup_iteration=0
             while [ "${cleanup_iteration}" -lt 20 ]; do
               cleanup_iteration=$((cleanup_iteration + 1))
@@ -591,6 +627,12 @@ jobs:
               if [ "${remaining_count}" -eq 0 ]; then
                 POST_DELETE_PACKAGE_STATE="empty"
                 break
+              fi
+
+              if [ "${PACKAGE_DELETE_STATE}" = "deleted" ] || \
+                [ "${PACKAGE_DELETE_STATE}" = "already_absent" ]; then
+                sleep 1
+                continue
               fi
 
               while IFS= read -r version_id; do
@@ -675,6 +717,7 @@ jobs:
 
           if [ "${IDENTITY_STATE}" = "valid" ] && \
             [ "${DELETE_FAILURES}" -eq 0 ] && \
+            { [ "${PACKAGE_DELETE_STATE}" = "deleted" ] || [ "${PACKAGE_DELETE_STATE}" = "already_absent" ]; } && \
             [ "${POST_DELETE_VERSION_STATE}" = "absent" ] && \
             { [ "${POST_DELETE_PACKAGE_STATE}" = "absent" ] || [ "${POST_DELETE_PACKAGE_STATE}" = "empty" ]; } && \
             { [ "${REFERRER_STATE}" = "none" ] || [ "${REFERRER_STATE}" = "subject_not_found" ]; }; then
@@ -695,6 +738,8 @@ jobs:
             --arg post_delete_version_state "${POST_DELETE_VERSION_STATE}" \
             --arg post_delete_package_http "${POST_DELETE_PACKAGE_HTTP}" \
             --arg post_delete_package_state "${POST_DELETE_PACKAGE_STATE}" \
+            --arg package_delete_http "${PACKAGE_DELETE_HTTP}" \
+            --arg package_delete_state "${PACKAGE_DELETE_STATE}" \
             --arg referrer_probe_exit "${REFERRER_PROBE_EXIT}" \
             --argjson identity_errors "${IDENTITY_ERRORS}" \
             --argjson scope_probes "${SCOPE_PROBES}" \
@@ -714,6 +759,8 @@ jobs:
               post_delete_version_state: $post_delete_version_state,
               post_delete_package_http: $post_delete_package_http,
               post_delete_package_state: $post_delete_package_state,
+              package_delete_http: $package_delete_http,
+              package_delete_state: $package_delete_state,
               post_delete_package_versions: $post_delete_package_versions,
               referrer_probe_exit: $referrer_probe_exit, referrer_state: $referrer_state,
               referrers: $referrers,
