@@ -31,6 +31,21 @@ func TestProviderProbeURLNormalizesLLMChatEndpoint(t *testing.T) {
 	}
 }
 
+func TestProviderProbeURLUsesArgoCDVersionEndpoint(t *testing.T) {
+	t.Parallel()
+
+	got, err := providerProbeURL(ProviderConfiguration{
+		Provider: ProviderArgoCD,
+		Endpoint: "https://argocd.example.com/",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "https://argocd.example.com/api/version"; got != want {
+		t.Fatalf("probe URL=%q want=%q", got, want)
+	}
+}
+
 func TestKubernetesValidationProbesEveryRegisteredScope(t *testing.T) {
 	t.Parallel()
 	service := &Service{
