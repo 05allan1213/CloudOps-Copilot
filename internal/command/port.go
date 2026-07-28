@@ -18,7 +18,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/05allan1213/CloudOps-Copilot/internal/agent"
 	"github.com/05allan1213/CloudOps-Copilot/internal/api"
 	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
 	"github.com/05allan1213/CloudOps-Copilot/internal/businessbudget"
@@ -41,7 +40,6 @@ type Port struct {
 	idempotency  *Store
 	tasks        *asyncjob.Repository
 	remediations remediationDecisionRepository
-	workspaces   *agent.WorkspaceRepository
 	recovery     *recovery.Coordinator
 }
 
@@ -58,19 +56,15 @@ func NewPort(db *sql.DB) (*Port, error) {
 	if err != nil {
 		return nil, err
 	}
-	workspaces, err := agent.NewWorkspaceRepository(db)
-	if err != nil {
-		return nil, err
-	}
 	recoveryCoordinator, err := recovery.NewCoordinator(db)
 	if err != nil {
 		return nil, err
 	}
-	return &Port{idempotency: idempotency, tasks: tasks, remediations: remediations, workspaces: workspaces, recovery: recoveryCoordinator}, nil
+	return &Port{idempotency: idempotency, tasks: tasks, remediations: remediations, recovery: recoveryCoordinator}, nil
 }
 
 func (p *Port) Execute(ctx context.Context, request api.CommandRequest) (api.CommandResult, error) {
-	if p == nil || p.idempotency == nil || p.tasks == nil || p.remediations == nil || p.workspaces == nil || p.recovery == nil {
+	if p == nil || p.idempotency == nil || p.tasks == nil || p.remediations == nil || p.recovery == nil {
 		return api.CommandResult{}, api.ErrUnavailable
 	}
 	if request.ResourceID == "" || request.IdempotencyKey == "" || request.ExpectedVersion == 0 || len(request.CanonicalBody) == 0 {
@@ -246,6 +240,13 @@ func (p *Port) startInvestigation(ctx context.Context, tx *sql.Tx, request api.C
 			return api.CommandResult{}, api.ErrConflict
 		}
 	}
+	liveStart, err := hasLiveInvestigationStart(ctx, tx, incident)
+	if err != nil {
+		return api.CommandResult{}, err
+	}
+	if liveStart {
+		return api.CommandResult{}, api.ErrConflict
+	}
 	authorization, budget, err := businessbudget.AuthorizeAgentRun(ctx, tx, incident.ID, incident.CycleNo, businessbudget.Actor{
 		Provider: request.Actor.Provider, Login: request.Actor.Login, Role: request.Actor.Role,
 		Reason: body.Reason, RequestID: request.RequestID,
@@ -274,18 +275,37 @@ func (p *Port) startInvestigation(ctx context.Context, tx *sql.Tx, request api.C
 			return api.CommandResult{}, err
 		}
 	}
-	runPublicID, err := p.workspaces.StartIncidentInvestigationTx(ctx, tx, incident.PublicID, request.IdempotencyKey,
-		body.Reason, incident.Version, authorization.ID)
+	payloadBody := map[string]any{
+		"mode":                    "start",
+		"incident_public_id":      incident.PublicID,
+		"cycle_no":                incident.CycleNo,
+		"migrated_legacy_context": incident.MigratedLegacyContext,
+	}
+	dedupeParts := []string{
+		"owner-command", string(api.CommandStartInvestigation), incident.PublicID,
+		fmt.Sprint(incident.CycleNo), fmt.Sprint(incident.Version), request.IdempotencyKey,
+	}
+	if authorization.ID != 0 {
+		payloadBody["business_budget_authorization_id"] = authorization.PublicID
+		dedupeParts = append(dedupeParts, authorization.PublicID)
+	}
+	payload, err := json.Marshal(payloadBody)
 	if err != nil {
-		if errors.Is(err, agent.ErrConflict) {
-			return api.CommandResult{}, api.ErrConflict
-		}
-		if errors.Is(err, agent.ErrNotFound) {
-			return api.CommandResult{}, api.ErrNotFound
-		}
 		return api.CommandResult{}, err
 	}
-	metadataBody := map[string]any{"agent_run_id": runPublicID, "request_id": request.RequestID}
+	task, err := p.tasks.EnqueueIn(ctx, tx, asyncjob.NewTask{
+		IncidentID: incident.ID, CycleNo: incident.CycleNo,
+		Type: asyncjob.TaskInvestigationAdvance, SubjectType: "incident", SubjectID: incident.ID,
+		Transition: "investigation.start", ExpectedSubjectVersion: incident.Version,
+		PayloadSchemaVersion: 1, Payload: payload, DedupeKey: canonicalHash(dedupeParts...),
+		MigratedLegacyContext: incident.MigratedLegacyContext,
+		Priority:              100,
+		MaxAttempts:           5,
+	})
+	if err != nil {
+		return api.CommandResult{}, err
+	}
+	metadataBody := map[string]any{"async_task_id": task.PublicID, "request_id": request.RequestID}
 	if authorization.ID != 0 {
 		metadataBody["authorization_id"] = authorization.PublicID
 		metadataBody["authorization_slot"] = authorization.Slot
@@ -294,7 +314,24 @@ func (p *Port) startInvestigation(ctx context.Context, tx *sql.Tx, request api.C
 	if err := appendCommandEvent(ctx, tx, incident, "investigation_requested", request.Actor, metadata); err != nil {
 		return api.CommandResult{}, err
 	}
-	return api.CommandResult{HTTPStatus: http.StatusAccepted, ResourceID: incident.PublicID, Status: "investigating", Version: incident.Version + 1, Cycle: uint64(incident.CycleNo)}, nil
+	return api.CommandResult{HTTPStatus: http.StatusAccepted, ResourceID: incident.PublicID, Status: "investigation_queued", Version: incident.Version, Cycle: uint64(incident.CycleNo)}, nil
+}
+
+func hasLiveInvestigationStart(ctx context.Context, tx *sql.Tx, incident lockedIncident) (bool, error) {
+	var count int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*)
+FROM async_tasks
+WHERE incident_id = ? AND cycle_no = ?
+  AND task_type = 'investigation.advance'
+  AND subject_type = 'incident' AND subject_id = ?
+  AND transition = 'investigation.start'
+  AND status IN ('ready','running')`, incident.ID, incident.CycleNo, incident.ID).Scan(&count); err != nil {
+		return false, fmt.Errorf("check live investigation.start task: %w", err)
+	}
+	if count > 1 {
+		return false, fmt.Errorf("incident %s has %d live investigation.start tasks", incident.PublicID, count)
+	}
+	return count == 1, nil
 }
 
 // reconcileDeadInvestigationRun converts a technical dead task into a terminal
