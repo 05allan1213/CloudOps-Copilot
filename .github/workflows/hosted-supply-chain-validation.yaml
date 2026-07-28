@@ -384,80 +384,260 @@ jobs:
             | sed -E 's/^uses:[[:space:]]+//' | sort -u >"${EVIDENCE_DIR}/action-pins.txt"
           sha256sum "${EVIDENCE_DIR}"/*.json >"${EVIDENCE_DIR}/json-evidence.sha256"
 
-      - name: Delete temporary validation package version
+      - name: Delete temporary validation package and referrers
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
           PACKAGE: ${{ steps.image.outputs.package }}
           VALIDATION_TAG: ${{ steps.image.outputs.tag_name }}
           DIGEST: ${{ steps.build-push.outputs.digest }}
+          SERVICE: ${{ matrix.image.name }}
         run: |
           EVIDENCE_DIR="${EVIDENCE_DIR:-${RUNNER_TEMP}/${EVIDENCE_SUBDIR}}"
           mkdir -p "${EVIDENCE_DIR}"
           set +e
+
+          API_ROOT="${GITHUB_API_URL%/}"
+          EXPECTED_PACKAGE=""
+          EXPECTED_TAG="validation-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          IDENTITY_STATE="invalid"
+          DIGEST_STATE="invalid"
+          IDENTITY_ERRORS='[]'
           CLEANUP_SCOPE=""
           CLEANUP_VERSION_ID=""
-          CLEANUP_RESULT="not_found"
+          CLEANUP_RESULT="fail"
+          INITIAL_PACKAGE_VERSIONS='[]'
+          SCOPE_PROBES='[]'
+          DELETE_ATTEMPTS='[]'
+          DELETE_FAILURES=0
           POST_DELETE_VERSION_HTTP=""
           POST_DELETE_VERSION_STATE="not_run"
           POST_DELETE_PACKAGE_HTTP=""
           POST_DELETE_PACKAGE_VERSIONS='[]'
+          POST_DELETE_PACKAGE_STATE="not_run"
           REFERRER_PROBE_EXIT=""
           REFERRER_STATE="not_run"
           REFERRERS='[]'
-          for scope in orgs users; do
-            endpoint="/${scope}/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE}/versions?per_page=100"
-            versions="$(gh api -H 'Accept: application/vnd.github+json' "${endpoint}" 2>/dev/null)" || continue
-            version_id="$(jq -r --arg tag "${VALIDATION_TAG}" '
-              [.[] | select(any(.metadata.container.tags[]?; . == $tag)) | .id][0] // empty
-            ' <<<"${versions}")"
-            if [ -n "${version_id}" ]; then
-              CLEANUP_SCOPE="${scope}"
-              CLEANUP_VERSION_ID="${version_id}"
-              if gh api --method DELETE \
-                -H 'Accept: application/vnd.github+json' \
-                "/${scope}/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE}/versions/${version_id}" \
-                >/dev/null 2>&1; then
-                CLEANUP_RESULT="deleted"
-              else
-                CLEANUP_RESULT="delete_failed"
-              fi
-              break
-            fi
-          done
 
-          if [ "${CLEANUP_RESULT}" = "deleted" ]; then
-            version_endpoint="/${CLEANUP_SCOPE}/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE}/versions/${CLEANUP_VERSION_ID}"
-            post_delete_response="$(gh api --include \
-              -H 'Accept: application/vnd.github+json' \
-              "${version_endpoint}" 2>/dev/null)"
-            POST_DELETE_VERSION_HTTP="$(awk '/^HTTP\// { code=$2 } END { print code }' \
-              <<<"${post_delete_response}")"
-            case "${POST_DELETE_VERSION_HTTP}" in
-              404) POST_DELETE_VERSION_STATE="absent" ;;
-              200) POST_DELETE_VERSION_STATE="present" ;;
-              *) POST_DELETE_VERSION_STATE="check_failed" ;;
-            esac
+          api_call() {
+            local method="$1"
+            local path="$2"
+            local body_file="$3"
+            local headers_file="$4"
+            local error_file="$5"
+            curl --silent --show-error \
+              --request "${method}" \
+              --header 'Accept: application/vnd.github+json' \
+              --header "Authorization: Bearer ${GH_TOKEN}" \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              --dump-header "${headers_file}" \
+              --output "${body_file}" \
+              --write-out '%{http_code}' \
+              "${API_ROOT}${path}" 2>"${error_file}"
+          }
+
+          record_identity_error() {
+            IDENTITY_ERRORS="$(jq -c --arg error "$1" '. + [$error]' <<<"${IDENTITY_ERRORS}")"
+          }
+
+          summarize_versions() {
+            jq -c '[.[] | {
+              id,
+              name,
+              tags: (.metadata.container.tags // []),
+              created_at,
+              updated_at
+            }]' "$1"
+          }
+
+          case "${SERVICE}" in
+            api|worker|migrate|demo)
+              EXPECTED_PACKAGE="cloudops-copilot-validation-${SERVICE}"
+              ;;
+            *)
+              record_identity_error "service is not an approved validation service"
+              ;;
+          esac
+          if [ -n "${EXPECTED_PACKAGE}" ] && [ "${PACKAGE}" != "${EXPECTED_PACKAGE}" ]; then
+            record_identity_error "package does not match the approved validation package"
+          fi
+          if [ "${VALIDATION_TAG}" != "${EXPECTED_TAG}" ]; then
+            record_identity_error "validation tag does not match the current SHA, run, and attempt"
+          fi
+          if [ "$(jq 'length' <<<"${IDENTITY_ERRORS}")" -eq 0 ]; then
+            IDENTITY_STATE="valid"
+          fi
+          if [[ "${DIGEST}" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            DIGEST_STATE="valid"
+          else
+            record_identity_error "image digest is missing or invalid"
           fi
 
-          if [ -n "${CLEANUP_SCOPE}" ]; then
-            post_delete_versions="$(gh api \
-              -H 'Accept: application/vnd.github+json' \
-              "/${CLEANUP_SCOPE}/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE}/versions?per_page=100" \
-              2>/dev/null)"
-            if [ -n "${post_delete_versions}" ] && \
-              jq -e 'type == "array"' <<<"${post_delete_versions}" >/dev/null 2>&1; then
-              POST_DELETE_PACKAGE_HTTP="200"
-              POST_DELETE_PACKAGE_VERSIONS="$(jq -c \
-                '[.[] | {id, name, tags: .metadata.container.tags, created_at, updated_at}]' \
-                <<<"${post_delete_versions}")"
+          if [ "${IDENTITY_STATE}" = "valid" ]; then
+            for scope in orgs users; do
+              probe_body="${RUNNER_TEMP}/${PACKAGE}-${scope}-scope.json"
+              probe_headers="${RUNNER_TEMP}/${PACKAGE}-${scope}-scope.headers"
+              probe_error_file="${RUNNER_TEMP}/${PACKAGE}-${scope}-scope.err"
+              endpoint="/${scope}/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE}/versions?per_page=100&page=1"
+              if probe_http="$(api_call GET "${endpoint}" "${probe_body}" "${probe_headers}" "${probe_error_file}")"; then
+                probe_exit=0
+              else
+                probe_exit=$?
+              fi
+              probe_error="$(tail -c 4000 "${probe_error_file}" 2>/dev/null)"
+              SCOPE_PROBES="$(jq -c \
+                --arg scope "${scope}" \
+                --arg http "${probe_http}" \
+                --arg error "${probe_error}" \
+                --argjson curl_exit "${probe_exit}" \
+                '. + [{scope: $scope, http: $http, curl_exit: $curl_exit, error: $error}]' \
+                <<<"${SCOPE_PROBES}")"
+              if [ "${probe_exit}" -ne 0 ]; then
+                record_identity_error "GitHub Packages scope probe failed"
+                continue
+              fi
+              case "${probe_http}" in
+                200)
+                  if ! jq -e 'type == "array"' "${probe_body}" >/dev/null 2>&1; then
+                    record_identity_error "GitHub Packages scope response was not an array"
+                  elif [ -n "${CLEANUP_SCOPE}" ]; then
+                    record_identity_error "validation package resolved in more than one owner scope"
+                  else
+                    CLEANUP_SCOPE="${scope}"
+                    INITIAL_PACKAGE_VERSIONS="$(summarize_versions "${probe_body}")"
+                  fi
+                  ;;
+                404) ;;
+                *) record_identity_error "GitHub Packages scope probe returned an unexpected status" ;;
+              esac
+            done
+          fi
+
+          if [ -z "${CLEANUP_SCOPE}" ]; then
+            record_identity_error "validation package was not found in an approved owner scope"
+          else
+            tagged_versions="$(jq -c --arg tag "${VALIDATION_TAG}" '
+              [.[] | select(any(.tags[]?; . == $tag))]
+            ' <<<"${INITIAL_PACKAGE_VERSIONS}")"
+            tagged_count="$(jq 'length' <<<"${tagged_versions}")"
+            if [ "${tagged_count}" -ne 1 ]; then
+              record_identity_error "expected exactly one package version with the current validation tag"
             else
-              post_delete_package_response="$(gh api --include \
-                -H 'Accept: application/vnd.github+json' \
-                "/${CLEANUP_SCOPE}/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE}/versions?per_page=100" \
-                2>/dev/null)"
-              POST_DELETE_PACKAGE_HTTP="$(awk '/^HTTP\// { code=$2 } END { print code }' \
-                <<<"${post_delete_package_response}")"
+              CLEANUP_VERSION_ID="$(jq -r '.[0].id' <<<"${tagged_versions}")"
+              tagged_digest="$(jq -r '.[0].name' <<<"${tagged_versions}")"
+              if [ "${DIGEST_STATE}" != "valid" ] || [ "${tagged_digest}" != "${DIGEST}" ]; then
+                record_identity_error "tagged package version does not match the built image digest"
+              fi
+            fi
+          fi
+
+          if [ -n "${CLEANUP_SCOPE}" ] && [ -n "${CLEANUP_VERSION_ID}" ]; then
+            subject_path="/${CLEANUP_SCOPE}/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE}/versions/${CLEANUP_VERSION_ID}"
+            delete_body="${RUNNER_TEMP}/${PACKAGE}-subject-delete.json"
+            delete_headers="${RUNNER_TEMP}/${PACKAGE}-subject-delete.headers"
+            delete_error_file="${RUNNER_TEMP}/${PACKAGE}-subject-delete.err"
+            if delete_http="$(api_call DELETE "${subject_path}" "${delete_body}" "${delete_headers}" "${delete_error_file}")"; then
+              delete_exit=0
+            else
+              delete_exit=$?
+            fi
+            delete_error="$(tail -c 4000 "${delete_error_file}" 2>/dev/null)"
+            DELETE_ATTEMPTS="$(jq -c \
+              --arg phase subject \
+              --arg version_id "${CLEANUP_VERSION_ID}" \
+              --arg http "${delete_http}" \
+              --arg error "${delete_error}" \
+              --argjson curl_exit "${delete_exit}" \
+              '. + [{phase: $phase, version_id: $version_id, http: $http,
+                curl_exit: $curl_exit, error: $error}]' <<<"${DELETE_ATTEMPTS}")"
+            if [ "${delete_exit}" -ne 0 ] || { [ "${delete_http}" != "204" ] && [ "${delete_http}" != "404" ]; }; then
+              DELETE_FAILURES=$((DELETE_FAILURES + 1))
+            fi
+
+            cleanup_iteration=0
+            while [ "${cleanup_iteration}" -lt 20 ]; do
+              cleanup_iteration=$((cleanup_iteration + 1))
+              list_path="/${CLEANUP_SCOPE}/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE}/versions?per_page=100&page=1"
+              list_body="${RUNNER_TEMP}/${PACKAGE}-cleanup-list-${cleanup_iteration}.json"
+              list_headers="${RUNNER_TEMP}/${PACKAGE}-cleanup-list-${cleanup_iteration}.headers"
+              list_error_file="${RUNNER_TEMP}/${PACKAGE}-cleanup-list-${cleanup_iteration}.err"
+              if list_http="$(api_call GET "${list_path}" "${list_body}" "${list_headers}" "${list_error_file}")"; then
+                list_exit=0
+              else
+                list_exit=$?
+              fi
+              if [ "${list_exit}" -ne 0 ]; then
+                DELETE_FAILURES=$((DELETE_FAILURES + 1))
+                POST_DELETE_PACKAGE_HTTP="${list_http}"
+                POST_DELETE_PACKAGE_STATE="check_failed"
+                break
+              fi
+              if [ "${list_http}" = "404" ]; then
+                POST_DELETE_PACKAGE_HTTP="404"
+                POST_DELETE_PACKAGE_VERSIONS='[]'
+                POST_DELETE_PACKAGE_STATE="absent"
+                break
+              fi
+              if [ "${list_http}" != "200" ] || ! jq -e 'type == "array"' "${list_body}" >/dev/null 2>&1; then
+                DELETE_FAILURES=$((DELETE_FAILURES + 1))
+                POST_DELETE_PACKAGE_HTTP="${list_http}"
+                POST_DELETE_PACKAGE_STATE="check_failed"
+                break
+              fi
+
+              POST_DELETE_PACKAGE_HTTP="200"
+              POST_DELETE_PACKAGE_VERSIONS="$(summarize_versions "${list_body}")"
+              remaining_count="$(jq 'length' <<<"${POST_DELETE_PACKAGE_VERSIONS}")"
+              if [ "${remaining_count}" -eq 0 ]; then
+                POST_DELETE_PACKAGE_STATE="empty"
+                break
+              fi
+
+              while IFS= read -r version_id; do
+                residual_path="/${CLEANUP_SCOPE}/${GITHUB_REPOSITORY_OWNER}/packages/container/${PACKAGE}/versions/${version_id}"
+                residual_body="${RUNNER_TEMP}/${PACKAGE}-residual-${version_id}.json"
+                residual_headers="${RUNNER_TEMP}/${PACKAGE}-residual-${version_id}.headers"
+                residual_error_file="${RUNNER_TEMP}/${PACKAGE}-residual-${version_id}.err"
+                if residual_http="$(api_call DELETE "${residual_path}" "${residual_body}" "${residual_headers}" "${residual_error_file}")"; then
+                  residual_exit=0
+                else
+                  residual_exit=$?
+                fi
+                residual_error="$(tail -c 4000 "${residual_error_file}" 2>/dev/null)"
+                DELETE_ATTEMPTS="$(jq -c \
+                  --arg phase residual \
+                  --arg version_id "${version_id}" \
+                  --arg http "${residual_http}" \
+                  --arg error "${residual_error}" \
+                  --argjson curl_exit "${residual_exit}" \
+                  '. + [{phase: $phase, version_id: $version_id, http: $http,
+                    curl_exit: $curl_exit, error: $error}]' <<<"${DELETE_ATTEMPTS}")"
+                if [ "${residual_exit}" -ne 0 ] || { [ "${residual_http}" != "204" ] && [ "${residual_http}" != "404" ]; }; then
+                  DELETE_FAILURES=$((DELETE_FAILURES + 1))
+                fi
+              done < <(jq -r '.[].id' "${list_body}")
+              sleep 1
+            done
+
+            if [ "${POST_DELETE_PACKAGE_STATE}" = "not_run" ]; then
+              POST_DELETE_PACKAGE_STATE="iteration_limit"
+              DELETE_FAILURES=$((DELETE_FAILURES + 1))
+            fi
+
+            version_body="${RUNNER_TEMP}/${PACKAGE}-post-delete-subject.json"
+            version_headers="${RUNNER_TEMP}/${PACKAGE}-post-delete-subject.headers"
+            version_error_file="${RUNNER_TEMP}/${PACKAGE}-post-delete-subject.err"
+            if POST_DELETE_VERSION_HTTP="$(api_call GET "${subject_path}" "${version_body}" "${version_headers}" "${version_error_file}")"; then
+              version_exit=0
+            else
+              version_exit=$?
+            fi
+            if [ "${version_exit}" -eq 0 ] && [ "${POST_DELETE_VERSION_HTTP}" = "404" ]; then
+              POST_DELETE_VERSION_STATE="absent"
+            elif [ "${version_exit}" -eq 0 ] && [ "${POST_DELETE_VERSION_HTTP}" = "200" ]; then
+              POST_DELETE_VERSION_STATE="present"
+            else
+              POST_DELETE_VERSION_STATE="check_failed"
             fi
           fi
 
@@ -486,29 +666,60 @@ jobs:
               REFERRER_STATE="check_failed"
             fi
           fi
+
+          if [ "$(jq 'length' <<<"${IDENTITY_ERRORS}")" -eq 0 ]; then
+            IDENTITY_STATE="valid"
+          else
+            IDENTITY_STATE="invalid"
+          fi
+
+          if [ "${IDENTITY_STATE}" = "valid" ] && \
+            [ "${DELETE_FAILURES}" -eq 0 ] && \
+            [ "${POST_DELETE_VERSION_STATE}" = "absent" ] && \
+            { [ "${POST_DELETE_PACKAGE_STATE}" = "absent" ] || [ "${POST_DELETE_PACKAGE_STATE}" = "empty" ]; } && \
+            { [ "${REFERRER_STATE}" = "none" ] || [ "${REFERRER_STATE}" = "subject_not_found" ]; }; then
+            CLEANUP_RESULT="pass"
+          fi
+
           jq -n \
             --arg result "${CLEANUP_RESULT}" \
             --arg package "${PACKAGE}" \
+            --arg expected_package "${EXPECTED_PACKAGE}" \
             --arg tag "${VALIDATION_TAG}" \
+            --arg expected_tag "${EXPECTED_TAG}" \
+            --arg identity_state "${IDENTITY_STATE}" \
+            --arg digest_state "${DIGEST_STATE}" \
             --arg scope "${CLEANUP_SCOPE}" \
             --arg version_id "${CLEANUP_VERSION_ID}" \
             --arg post_delete_version_http "${POST_DELETE_VERSION_HTTP}" \
             --arg post_delete_version_state "${POST_DELETE_VERSION_STATE}" \
             --arg post_delete_package_http "${POST_DELETE_PACKAGE_HTTP}" \
+            --arg post_delete_package_state "${POST_DELETE_PACKAGE_STATE}" \
             --arg referrer_probe_exit "${REFERRER_PROBE_EXIT}" \
+            --argjson identity_errors "${IDENTITY_ERRORS}" \
+            --argjson scope_probes "${SCOPE_PROBES}" \
+            --argjson initial_package_versions "${INITIAL_PACKAGE_VERSIONS}" \
+            --argjson delete_attempts "${DELETE_ATTEMPTS}" \
+            --argjson delete_failures "${DELETE_FAILURES}" \
             --argjson post_delete_package_versions "${POST_DELETE_PACKAGE_VERSIONS}" \
             --arg referrer_state "${REFERRER_STATE}" \
             --argjson referrers "${REFERRERS}" \
-            '{result: $result, package: $package, tag: $tag, scope: $scope, version_id: $version_id,
+            '{result: $result, package: $package, expected_package: $expected_package,
+              tag: $tag, expected_tag: $expected_tag, identity_state: $identity_state,
+              digest_state: $digest_state, identity_errors: $identity_errors,
+              scope: $scope, scope_probes: $scope_probes, version_id: $version_id,
+              initial_package_versions: $initial_package_versions,
+              delete_attempts: $delete_attempts, delete_failures: $delete_failures,
               post_delete_version_http: $post_delete_version_http,
               post_delete_version_state: $post_delete_version_state,
               post_delete_package_http: $post_delete_package_http,
+              post_delete_package_state: $post_delete_package_state,
               post_delete_package_versions: $post_delete_package_versions,
               referrer_probe_exit: $referrer_probe_exit, referrer_state: $referrer_state,
               referrers: $referrers,
-              note: "Cleanup runs after evidence capture and cannot change the sign/verify result."}' \
+              note: "PASS requires exact validation identity, an absent subject, an absent or empty package, and no discoverable referrers."}' \
             >"${EVIDENCE_DIR}/registry-cleanup.json"
-          exit 0
+          test "${CLEANUP_RESULT}" = "pass"
 
       - name: Upload hosted validation evidence
         if: always()
