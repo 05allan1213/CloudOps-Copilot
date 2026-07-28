@@ -3,6 +3,7 @@ package taskhandler
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -61,7 +62,7 @@ func TestNormalizeObservationRequiresDurableCurrentCycleDerivedInputs(t *testing
 		TemplateVersion: action.TemplateID, Summary: "derived fixture",
 		Facts: []agent.EvidenceFact{{ID: "fact-derived", Type: "workload.derived", CorroborationGroup: "runtime", Authority: "runtime_observation", Integrity: "verified", Freshness: "fresh", Completeness: "complete", ClaimUse: "support", CollectionStatus: agent.CollectionAvailable, DerivedFrom: []string{parent.ID}}},
 	}
-	normalized, err := normalizeObservation(observation, snapshot, action, "evidence-derived")
+	normalized, err := normalizeObservation(observation, snapshot, action, "evidence-derived", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +76,33 @@ func TestNormalizeObservationRequiresDurableCurrentCycleDerivedInputs(t *testing
 	}
 
 	observation.Facts[0].DerivedFrom = []string{"missing-fact"}
-	if _, err := normalizeObservation(observation, snapshot, action, "evidence-invalid"); err == nil {
+	if _, err := normalizeObservation(observation, snapshot, action, "evidence-invalid", false); err == nil {
 		t.Fatal("derived Evidence without a current-cycle durable input was accepted")
+	}
+}
+
+func TestNormalizeObservationRequiresPolicyForCompositeProvenance(t *testing.T) {
+	snapshot := testInvestigationSnapshot(t, stepModeTool, nil)
+	action := agent.ProposedAction{
+		Tool: "get_deployment_context", ScopeRef: snapshot.ScopeRef, TemplateID: "deployment-context/v1",
+		ExpectedFactTypes: []string{"argocd.bad_revision_deployed", "image_digest.unchanged"},
+	}
+	observation := agent.ToolObservation{
+		Status: agent.CollectionAvailable, SourceSystem: "composite", CollectionPath: "composite/deployment-context",
+		TemplateVersion: action.TemplateID, Summary: "deployment identity is bound to the active baseline",
+		Facts: []agent.EvidenceFact{
+			{ID: "fact-argo", Type: "argocd.bad_revision_deployed", SourceSystem: "argocd", CollectionPath: "argocd/deployment-context", CorroborationGroup: "argocd/argocd/deployment-context", Authority: "authoritative", Integrity: "verified", Freshness: "fresh", Completeness: "complete", ClaimUse: "support", CollectionStatus: agent.CollectionAvailable, Direct: true},
+			{ID: "fact-registry", Type: "image_digest.unchanged", SourceSystem: "registry", CollectionPath: "registry/manifest", CorroborationGroup: "registry/registry/manifest", Authority: "authoritative", Integrity: "verified", Freshness: "fresh", Completeness: "complete", ClaimUse: "support", CollectionStatus: agent.CollectionAvailable, Direct: true},
+		},
+	}
+	if _, err := normalizeObservation(observation, snapshot, action, "evidence-composite-denied", false); !errors.Is(err, agent.ErrInvalidArgument) {
+		t.Fatalf("unapproved composite provenance error=%v", err)
+	}
+	normalized, err := normalizeObservation(observation, snapshot, action, "evidence-composite", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if normalized.Facts[0].SourceSystem != "argocd" || normalized.Facts[1].SourceSystem != "registry" || normalized.SourceSystem != "composite" {
+		t.Fatalf("composite provenance was not preserved: %+v", normalized)
 	}
 }

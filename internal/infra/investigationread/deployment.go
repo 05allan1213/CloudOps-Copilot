@@ -104,7 +104,7 @@ func (t *Toolset) deploymentContext(ctx context.Context, request agent.Investiga
 		facts = append(facts, fact)
 		count++
 	}
-	return available(request.Action, "argocd", "argocd/deployment-context", fmt.Sprintf("deployment identity is bound to one baseline and %d opaque change references", count), facts, application.ExternalURL), nil
+	return available(request.Action, "composite", "composite/deployment-context", fmt.Sprintf("deployment identity is bound to one baseline and %d opaque change references", count), facts, application.ExternalURL), nil
 }
 
 func (t *Toolset) changeDetail(ctx context.Context, request agent.InvestigationToolRequest) (agent.ToolObservation, error) {

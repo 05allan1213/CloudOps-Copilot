@@ -188,8 +188,9 @@ func GoldenActionPolicies() map[string]agent.ToolActionPolicy {
 		},
 		ToolGetDeploymentContext: {
 			TemplateIDs: []string{TemplateDeploymentContextV1}, ParameterKeys: []string{"window"},
-			ParameterSpecs:    map[string]agent.ParameterSpec{"window": windowParameterSpec()},
-			ExpectedFactTypes: []string{"argocd.bad_revision_deployed", "argocd.bad_revision_not_deployed", "source_revision.unchanged", "image_digest.unchanged", "deployment.source_and_image_changed", "deployment.change_ref"},
+			ParameterSpecs:           map[string]agent.ParameterSpec{"window": windowParameterSpec()},
+			ExpectedFactTypes:        []string{"argocd.bad_revision_deployed", "argocd.bad_revision_not_deployed", "source_revision.unchanged", "image_digest.unchanged", "deployment.source_and_image_changed", "deployment.change_ref"},
+			AllowCompositeProvenance: true,
 		},
 		ToolGetChangeDetail: {
 			TemplateIDs: []string{TemplateChangeDetailV1}, ParameterKeys: []string{"change_ref"},

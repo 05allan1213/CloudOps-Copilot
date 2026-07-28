@@ -66,6 +66,9 @@ func TestGoldenActionPoliciesFreezeEightToolsWithoutQueryLanguages(t *testing.T)
 		t.Fatalf("policies=%d", len(policies))
 	}
 	for name, policy := range policies {
+		if policy.AllowCompositeProvenance != (name == ToolGetDeploymentContext) {
+			t.Fatalf("tool %s composite provenance policy=%v", name, policy.AllowCompositeProvenance)
+		}
 		for _, key := range policy.ParameterKeys {
 			switch key {
 			case "promql", "dsl", "traceql", "url", "namespace", "repository", "sha":
