@@ -221,14 +221,14 @@ onBeforeUnmount(() => controller?.abort());
         <header><div><p class="eyebrow">Owner Commands</p><h2 id="owner-command-heading">Triage</h2></div><button type="button" class="icon-action" :disabled="refreshing" aria-label="刷新 Alert" title="刷新 Alert" @click="load(true)"><RefreshCw :size="18" aria-hidden="true" /></button></header>
         <div class="command-row">
           <button type="button" class="secondary-action" :disabled="!canAcknowledge || commandPending" @click="acknowledge"><Check :size="17" aria-hidden="true" />Acknowledge</button>
-          <label class="duration-select"><span>Silence</span><select v-model.number="silenceDuration" name="silence_duration" :disabled="!canSilence || commandPending"><option :value="300">5 分钟</option><option :value="900">15 分钟</option><option :value="1800">30 分钟</option><option :value="3600">1 小时</option><option :value="14400">4 小时</option><option :value="86400">24 小时</option></select></label>
+          <label class="duration-select"><span>Silence</span><select v-model.number="silenceDuration" name="silence_duration" autocomplete="off" :disabled="!canSilence || commandPending"><option :value="300">5 分钟</option><option :value="900">15 分钟</option><option :value="1800">30 分钟</option><option :value="3600">1 小时</option><option :value="14400">4 小时</option><option :value="86400">24 小时</option></select></label>
           <button type="button" class="secondary-action" :disabled="!canSilence || commandPending" @click="silence"><VolumeX :size="17" aria-hidden="true" />创建 Silence</button>
           <button type="button" class="secondary-action" :disabled="!canExpireSilence || commandPending" @click="expireSilence"><Volume2 :size="17" aria-hidden="true" />结束 Silence</button>
           <button type="button" class="primary-action" :disabled="alert.status !== 'firing' || commandPending" @click="createIncident"><Siren :size="17" aria-hidden="true" />创建 Incident</button>
           <button type="button" class="secondary-action" :disabled="!canInvestigate || commandPending" @click="investigate"><Bot :size="17" aria-hidden="true" />启动 Investigation</button>
         </div>
         <form class="attach-row" @submit.prevent="attachIncident">
-          <label><span>现有 Incident ID</span><input v-model="attachIncidentID" name="incident_id" type="text" autocomplete="off" spellcheck="false" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"></label>
+          <label><span>现有 Incident ID</span><input v-model="attachIncidentID" name="incident_id" type="text" autocomplete="off" spellcheck="false" placeholder="例如：xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx…"></label>
           <button type="submit" class="secondary-action" :disabled="!attachIncidentID.trim() || commandPending"><Link2 :size="17" aria-hidden="true" />关联 Incident</button>
         </form>
       </section>

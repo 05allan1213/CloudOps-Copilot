@@ -181,6 +181,7 @@ type OperationTarget struct {
 	Namespace    string `json:"namespace"`
 	WorkloadKind string `json:"workload_kind"`
 	WorkloadName string `json:"workload_name"`
+	ScenarioID   string `json:"scenario_id,omitempty"`
 }
 
 type ChangeFreezeState struct {

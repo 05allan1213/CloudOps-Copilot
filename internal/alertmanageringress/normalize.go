@@ -37,6 +37,7 @@ var (
 	bearerPattern      = regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{8,}`)
 	assignmentPattern  = regexp.MustCompile(`(?i)\b(authorization|api[_-]?key|token|password|secret)\b\s*[:=]\s*["']?[^\s,"';]+`)
 	highEntropyPattern = regexp.MustCompile(`[A-Za-z0-9_+/=-]{24,}`)
+	scenarioIDPattern  = regexp.MustCompile(`^scenario-[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$`)
 )
 
 type envelope struct {
@@ -394,11 +395,15 @@ func validateStringMap(values map[string]string) error {
 }
 
 func safeLabels(labels map[string]string) map[string]string {
-	return selectMap(labels, []string{
+	result := selectMap(labels, []string{
 		"alertname", "severity", "cluster", "cluster_id", "cluster_name", "environment", "env",
 		"namespace", "service", "service_name", "workload_kind", "target_kind", "workload", "workload_name",
 		"target_name", "deployment", "statefulset", "daemonset",
 	})
+	if scenarioID := strings.TrimSpace(labels["scenario_id"]); len(scenarioID) <= 63 && scenarioIDPattern.MatchString(scenarioID) {
+		result["scenario_id"] = scenarioID
+	}
+	return result
 }
 
 func safeAnnotations(annotations map[string]string) map[string]string {

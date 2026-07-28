@@ -186,6 +186,15 @@ const traceID = computed(() => typeof props.error === "string" ? "" : props.erro
     >
       <strong>{{ emptyText }}</strong>
       <span>当前 Incident Cycle 未返回记录。</span>
+      <button
+        v-if="retryable"
+        type="button"
+        class="section-retry"
+        :disabled="refreshing || loadingMore"
+        @click="emit('retry')"
+      >
+        {{ refreshing || loadingMore ? "正在重试…" : retryLabel }}
+      </button>
     </div>
     <template v-else>
       <div

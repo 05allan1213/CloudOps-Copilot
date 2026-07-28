@@ -42,6 +42,34 @@ data:
               namespace: {{ .Release.Namespace | quote }}
               workload_kind: Deployment
               workload: cloudops-worker
+      {{- if .Values.scenario.enabled }}
+      - job_name: cloudops-scenario-healthy
+        honor_labels: false
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["cloudops-scenario-healthy.{{ .Values.scenario.namespace }}.svc:8080"]
+            labels:
+              cluster_id: {{ .Values.observability.stack.clusterID | quote }}
+              environment: {{ .Values.observability.stack.environment | quote }}
+              namespace: {{ .Values.scenario.namespace | quote }}
+              workload_kind: Deployment
+              workload: cloudops-scenario-healthy
+              service: cloudops-scenario-healthy
+              scenario_id: {{ .Values.scenario.id | quote }}
+      - job_name: cloudops-scenario-fault
+        honor_labels: false
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["cloudops-scenario-fault.{{ .Values.scenario.namespace }}.svc:8080"]
+            labels:
+              cluster_id: {{ .Values.observability.stack.clusterID | quote }}
+              environment: {{ .Values.observability.stack.environment | quote }}
+              namespace: {{ .Values.scenario.namespace | quote }}
+              workload_kind: Deployment
+              workload: cloudops-scenario-fault
+              service: cloudops-scenario-fault
+              scenario_id: {{ .Values.scenario.id | quote }}
+      {{- end }}
   grafana.ini: |-
     [analytics]
     reporting_enabled = false
@@ -103,7 +131,7 @@ spec:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: metrics-provider
       annotations:
-        checksum/config: {{ toJson .Values.observability.stack | sha256sum }}
+        checksum/config: {{ toJson (dict "stack" .Values.observability.stack "scenario" .Values.scenario) | sha256sum }}
     spec:
       automountServiceAccountToken: false
       enableServiceLinks: false

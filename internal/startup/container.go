@@ -46,7 +46,7 @@ func InitAPIContainer(cfg *config.Config, infra *di.Infra, runtimeReadiness hand
 		container.Settings, err = settings.NewService(infra.MySQL.SQLDB(), cfg.DataDir, settings.BootstrapDiagnostics{
 			ListenBoundary: cfg.ListenAddr, MySQLDatabase: cfg.MySQLDatabase,
 			DataDirectory: cfg.DataDir, WorkerManagementTarget: cfg.WorkerManagementTarget,
-			Lifecycle: "make local-*",
+			Lifecycle: "make local-* / make scenario-*", ScenarioState: cfg.ScenarioState,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("settings service init failed: %w", err)

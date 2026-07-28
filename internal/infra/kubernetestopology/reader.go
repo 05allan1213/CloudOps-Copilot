@@ -473,6 +473,13 @@ func deploymentResource(clusterID string, item appsv1.Deployment) infrastructure
 	}
 	health := replicaHealth(desired, item.Status.ReadyReplicas, "Deployment")
 	resource := baseResource(clusterID, "apps/v1", "Deployment", infrastructure.LayerWorkload, item.Namespace, item.Name, string(item.UID), fmt.Sprintf("%d/%d ready", item.Status.ReadyReplicas, desired), health, item.Labels, item.CreationTimestamp.Time)
+	resource.ResourceVersion = bounded(item.ResourceVersion, 128)
+	resource.Generation = item.Generation
+	resource.Workload = &infrastructure.WorkloadStatus{
+		DesiredReplicas: desired, UpdatedReplicas: item.Status.UpdatedReplicas,
+		ReadyReplicas: item.Status.ReadyReplicas, AvailableReplicas: item.Status.AvailableReplicas,
+		ObservedGeneration: item.Status.ObservedGeneration,
+	}
 	resource.Selector = labelSelector(item.Spec.Selector)
 	for _, condition := range item.Status.Conditions {
 		resource.Conditions = append(resource.Conditions, infrastructure.ResourceCondition{Type: string(condition.Type), Status: string(condition.Status), Reason: bounded(condition.Reason, 128), Message: sanitized(condition.Message, 512), LastTransitionTime: condition.LastTransitionTime.UTC()})
@@ -486,6 +493,9 @@ func statefulSetResource(clusterID string, item appsv1.StatefulSet) infrastructu
 		desired = *item.Spec.Replicas
 	}
 	resource := baseResource(clusterID, "apps/v1", "StatefulSet", infrastructure.LayerWorkload, item.Namespace, item.Name, string(item.UID), fmt.Sprintf("%d/%d ready", item.Status.ReadyReplicas, desired), replicaHealth(desired, item.Status.ReadyReplicas, "StatefulSet"), item.Labels, item.CreationTimestamp.Time)
+	resource.ResourceVersion = bounded(item.ResourceVersion, 128)
+	resource.Generation = item.Generation
+	resource.Workload = &infrastructure.WorkloadStatus{DesiredReplicas: desired, UpdatedReplicas: item.Status.UpdatedReplicas, ReadyReplicas: item.Status.ReadyReplicas, AvailableReplicas: item.Status.AvailableReplicas, ObservedGeneration: item.Status.ObservedGeneration}
 	resource.Selector = labelSelector(item.Spec.Selector)
 	for _, condition := range item.Status.Conditions {
 		resource.Conditions = append(resource.Conditions, infrastructure.ResourceCondition{Type: string(condition.Type), Status: string(condition.Status), Reason: bounded(condition.Reason, 128), Message: sanitized(condition.Message, 512), LastTransitionTime: condition.LastTransitionTime.UTC()})
@@ -496,6 +506,9 @@ func statefulSetResource(clusterID string, item appsv1.StatefulSet) infrastructu
 func daemonSetResource(clusterID string, item appsv1.DaemonSet) infrastructure.Resource {
 	desired := item.Status.DesiredNumberScheduled
 	resource := baseResource(clusterID, "apps/v1", "DaemonSet", infrastructure.LayerWorkload, item.Namespace, item.Name, string(item.UID), fmt.Sprintf("%d/%d ready", item.Status.NumberReady, desired), replicaHealth(desired, item.Status.NumberReady, "DaemonSet"), item.Labels, item.CreationTimestamp.Time)
+	resource.ResourceVersion = bounded(item.ResourceVersion, 128)
+	resource.Generation = item.Generation
+	resource.Workload = &infrastructure.WorkloadStatus{DesiredReplicas: desired, UpdatedReplicas: item.Status.UpdatedNumberScheduled, ReadyReplicas: item.Status.NumberReady, AvailableReplicas: item.Status.NumberAvailable, ObservedGeneration: item.Status.ObservedGeneration}
 	resource.Selector = labelSelector(item.Spec.Selector)
 	for _, condition := range item.Status.Conditions {
 		resource.Conditions = append(resource.Conditions, infrastructure.ResourceCondition{Type: string(condition.Type), Status: string(condition.Status), Reason: bounded(condition.Reason, 128), Message: sanitized(condition.Message, 512), LastTransitionTime: condition.LastTransitionTime.UTC()})

@@ -129,7 +129,7 @@ func NewWorker(ctx context.Context, cfg WorkerConfig) (*Worker, error) {
 	settingsService, err := settings.NewService(mysql.SQLDB(), application.DataDir, settings.BootstrapDiagnostics{
 		ListenBoundary: application.ListenAddr, MySQLDatabase: application.MySQLDatabase,
 		DataDirectory: application.DataDir, WorkerManagementTarget: application.WorkerManagementTarget,
-		Lifecycle: "make local-*",
+		Lifecycle: "make local-* / make scenario-*", ScenarioState: application.ScenarioState,
 	})
 	if err != nil {
 		_ = mysql.Close()

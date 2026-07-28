@@ -130,7 +130,7 @@ export interface BootstrapSnapshot {
   active_revision: ConfigurationRevision;
   active_scope: OperationalScope;
   provider_health: ProviderHealth[];
-  scenario_state: string;
+  scenario_state: "inactive" | "active";
   capabilities: string[];
   collected_at: string;
 }

@@ -119,6 +119,9 @@ func (a *OperationScaleAdapter) Prepare(ctx context.Context, subject operation.S
 	if executor == nil {
 		return operation.PreparedEffect{}, operation.ErrProviderUnavailable
 	}
+	if !executor.AllowsScenario(target.ScenarioID) {
+		return operation.PreparedEffect{}, operation.ErrInvalidArgument
+	}
 	current, err := executor.ObserveDeployment(ctx, target.Namespace, target.WorkloadName)
 	if err != nil {
 		return operation.PreparedEffect{}, fmt.Errorf("%w: %v", operation.ErrProviderUnavailable, err)
@@ -156,6 +159,9 @@ func (a *OperationScaleAdapter) Apply(ctx context.Context, _ operation.Subject, 
 	executor := a.executors[token.Target.ClusterID]
 	if executor == nil {
 		return operation.Observation{}, operation.ErrProviderUnavailable
+	}
+	if !executor.AllowsScenario(token.Target.ScenarioID) {
+		return operation.Observation{}, operation.ErrInvalidArgument
 	}
 	freeze, err := a.freezes.ChangeFreeze(ctx, token.Target)
 	if err != nil {
@@ -212,6 +218,7 @@ func scaleObservation(
 	identity, err := json.Marshal(map[string]any{
 		"provider": "kubernetes", "cluster_id": clusterID, "namespace": value.Namespace,
 		"workload_kind": "Deployment", "workload_name": value.Name,
+		"scenario_id":      freeze.Target.ScenarioID,
 		"resource_version": value.ResourceVersion, "generation": value.Generation,
 	})
 	if err != nil {

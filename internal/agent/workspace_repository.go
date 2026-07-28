@@ -21,7 +21,8 @@ import (
 
 const workspaceRunColumns = `run.id, run.public_id, run.subject_type,
 COALESCE(alert.public_id, ''), COALESCE(incident.public_id, ''), COALESCE(consultation.public_id, ''),
-COALESCE(revision.public_id, ''), COALESCE(snapshot.public_id, ''), run.status, COALESCE(run.outcome, ''),
+COALESCE(revision.public_id, ''), COALESCE(snapshot.public_id, ''),
+COALESCE(JSON_UNQUOTE(JSON_EXTRACT(snapshot.filters_json, '$.scenario_id')), ''), run.status, COALESCE(run.outcome, ''),
 run.uncertainty, run.objective, COALESCE(run.model_provider, ''), COALESCE(run.actual_model, ''),
 COALESCE(JSON_UNQUOTE(JSON_EXTRACT(run.final_diagnosis, '$.answer')), ''),
 run.prompt_version, COALESCE(run.tool_schema_version, ''), run.failure_code, run.failure_summary,
@@ -137,6 +138,10 @@ ORDER BY id DESC LIMIT 1`, incidentID, cycleNo, idempotencyKey).Scan(&existing)
 	if !errors.Is(err, sql.ErrNoRows) {
 		return "", err
 	}
+	scenarioID, err := workspaceIncidentScenarioID(ctx, tx, incidentID, cycleNo)
+	if err != nil {
+		return "", fmt.Errorf("resolve Incident Scenario identity: %w", err)
+	}
 
 	now := r.now().UTC()
 	objective := strings.TrimSpace(reason)
@@ -182,14 +187,18 @@ max_step_retries, failure_code, uncertainty, migrated_legacy_context, created_at
 	}}
 	namespacesJSON, _ := json.Marshal([]string{namespace})
 	resourcesJSON, _ := json.Marshal(resources)
-	filtersJSON, _ := json.Marshal(map[string]any{
+	filters := map[string]any{
 		"incident_id": incidentPublicID, "cycle_no": cycleNo, "operational_scope_id": scopePublicID,
-	})
+	}
+	if scenarioID != "" {
+		filters["scenario_id"] = scenarioID
+	}
+	filtersJSON, _ := json.Marshal(filters)
 	canonical, _ := json.Marshal(map[string]any{
 		"subject_type": "incident", "incident_id": incidentPublicID, "cycle_no": cycleNo,
 		"configuration_revision_id": revisionID, "operational_scope_id": scopeID,
 		"cluster_id": clusterID, "environment": environment, "namespaces": []string{namespace},
-		"resources": resources, "from": from, "to": to,
+		"resources": resources, "filters": filters, "from": from, "to": to,
 	})
 	snapshotPublicID := uuid.NewString()
 	snapshotResult, err := tx.ExecContext(ctx, `INSERT INTO context_snapshots (
@@ -242,14 +251,15 @@ func (r *WorkspaceRepository) StartAlertInvestigationTx(ctx context.Context, tx 
 	var err error
 	var alertID, revisionID uint64
 	var clusterID, environment, namespace, targetKind, targetName, summary string
+	var labelsJSON json.RawMessage
 	var startsAt, lastSeenAt time.Time
 	err = tx.QueryRowContext(ctx, `SELECT alert.id, alert.cluster, alert.environment, alert.namespace,
 alert.target_kind, alert.target_name, alert.summary, alert.starts_at, alert.last_seen_at,
-active.configuration_revision_id
+alert.labels_json, active.configuration_revision_id
 FROM alerts AS alert JOIN active_configuration AS active ON active.singleton_id = 1
 WHERE alert.public_id = ? FOR UPDATE`, strings.TrimSpace(alertPublicID)).Scan(
 		&alertID, &clusterID, &environment, &namespace, &targetKind, &targetName, &summary,
-		&startsAt, &lastSeenAt, &revisionID,
+		&startsAt, &lastSeenAt, &labelsJSON, &revisionID,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrNotFound
@@ -304,11 +314,16 @@ max_step_retries, failure_code, uncertainty, created_at, updated_at
 	}}
 	namespacesJSON, _ := json.Marshal([]string{namespace})
 	resourcesJSON, _ := json.Marshal(resources)
-	filtersJSON, _ := json.Marshal(map[string]string{"alert_id": alertPublicID})
+	scenarioID := workspaceScenarioID(labelsJSON)
+	filters := map[string]string{"alert_id": alertPublicID}
+	if scenarioID != "" {
+		filters["scenario_id"] = scenarioID
+	}
+	filtersJSON, _ := json.Marshal(filters)
 	canonical, _ := json.Marshal(map[string]any{
 		"subject_type": "alert", "alert_id": alertPublicID, "configuration_revision_id": revisionID,
 		"cluster_id": clusterID, "environment": environment, "namespaces": []string{namespace},
-		"resources": resources, "from": from, "to": to,
+		"resources": resources, "filters": filters, "from": from, "to": to,
 	})
 	snapshotPublicID := uuid.NewString()
 	snapshotResult, err := tx.ExecContext(ctx, `INSERT INTO context_snapshots (
@@ -339,6 +354,69 @@ created_by, created_at
 		return "", err
 	}
 	return runPublicID, nil
+}
+
+func workspaceScenarioID(labelsJSON json.RawMessage) string {
+	var labels map[string]string
+	if json.Unmarshal(labelsJSON, &labels) != nil {
+		return ""
+	}
+	value := strings.TrimSpace(labels["scenario_id"])
+	if value == "" || !workspaceScenarioIdentity(value) {
+		return ""
+	}
+	return value
+}
+
+func workspaceScenarioIdentity(value string) bool {
+	const prefix = "scenario-"
+	if len(value) <= len(prefix) || len(value) > 63 || !strings.HasPrefix(value, prefix) {
+		return false
+	}
+	for index := len(prefix); index < len(value); index++ {
+		character := value[index]
+		if (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character == '-' {
+			continue
+		}
+		return false
+	}
+	last := value[len(value)-1]
+	return (last >= 'a' && last <= 'z') || (last >= '0' && last <= '9')
+}
+
+func workspaceIncidentScenarioID(ctx context.Context, tx *sql.Tx, incidentID, cycleNo uint64) (string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT
+COALESCE(JSON_UNQUOTE(JSON_EXTRACT(alert.labels_json, '$.scenario_id')), '')
+FROM alert_incident_links AS relation
+JOIN alerts AS alert ON alert.id = relation.alert_id
+WHERE relation.incident_id = ? AND relation.incident_cycle_no = ?
+ORDER BY 1 LIMIT 2`, incidentID, cycleNo)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = rows.Close() }()
+	identities := make([]string, 0, 2)
+	for rows.Next() {
+		var value string
+		if err = rows.Scan(&value); err != nil {
+			return "", err
+		}
+		value = strings.TrimSpace(value)
+		if value != "" && !workspaceScenarioIdentity(value) {
+			return "", ErrConflict
+		}
+		identities = append(identities, value)
+	}
+	if err = rows.Err(); err != nil {
+		return "", err
+	}
+	if len(identities) > 1 {
+		return "", ErrConflict
+	}
+	if len(identities) == 1 {
+		return identities[0], nil
+	}
+	return "", nil
 }
 
 func (r *WorkspaceRepository) CreateConsultationTurn(ctx context.Context, consultationPublicID string, request SendMessageRequest) (ConsultationMessage, WorkspaceRun, error) {
@@ -718,7 +796,7 @@ func scanWorkspaceRun(scanner interface{ Scan(...any) error }) (workspaceRunReco
 	var provider, model, toolVersion string
 	err := scanner.Scan(&result.internalID, &result.view.ID, &result.view.SubjectType,
 		&result.view.AlertID, &result.view.IncidentID, &result.view.ConsultationID,
-		&result.view.ConfigurationRevisionID, &result.view.ContextSnapshotID, &result.view.Status, &outcome,
+		&result.view.ConfigurationRevisionID, &result.view.ContextSnapshotID, &result.view.ScenarioID, &result.view.Status, &outcome,
 		&result.view.Uncertainty, &result.view.Objective, &provider, &model, &result.view.Answer, &result.view.PromptVersion,
 		&toolVersion, &result.view.FailureCode, &result.view.FailureSummary, &cancel, &started, &completed,
 		&result.view.CreatedAt, &result.view.UpdatedAt, &result.view.EvidenceCount)

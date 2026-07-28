@@ -108,6 +108,7 @@ export interface AgentRun {
   consultation_id?: string;
   configuration_revision_id: string;
   context_snapshot_id: string;
+  scenario_id?: string;
   status: AgentRunStatus;
   outcome?: AgentOutcome;
   uncertainty: string;
@@ -253,6 +254,29 @@ export interface SaveKnowledgeInput {
   expires_at?: string;
 }
 
+export interface OperationPlanProposalInput {
+  run_id: string;
+  action_type: "kubernetes.deployment.scale";
+  target: {
+    cluster_id: string;
+    environment: string;
+    namespace: string;
+    workload_kind: "Deployment";
+    workload_name: string;
+    scenario_id: string;
+  };
+  parameters: { replicas: number };
+  intended_state: { replicas: number };
+  preconditions: Array<
+    | { type: "deployment.replicas"; expected_replicas: number }
+    | { type: "deployment.resource_version"; expected_resource_version: string }
+    | { type: "local.change_freeze"; expected_enabled: false; expected_version: number }
+  >;
+  risk: string;
+  verification_intent: { type: "kubernetes.deployment.scale"; expected_replicas: number };
+  expires_at: string;
+}
+
 export async function getAgentInvestigations(signal?: AbortSignal): Promise<AgentRun[]> {
   return (await getJSON<{ items: AgentRun[] }>("/api/v1/agent/investigations?limit=100", { signal })).items;
 }
@@ -313,6 +337,10 @@ export async function getRunbookGuidance(signal?: AbortSignal): Promise<RunbookG
 
 export async function getOperationPlans(signal?: AbortSignal): Promise<OperationPlan[]> {
   return (await getJSON<{ items: OperationPlan[] }>("/api/v1/operation-plans?limit=100", { signal })).items;
+}
+
+export function proposeOperationPlan(input: OperationPlanProposalInput): Promise<OperationPlan> {
+  return postJSON("/api/v1/operation-plans", input);
 }
 
 export function authorizeActionCard(id: string, expectedHash: string, reason: string): Promise<ActionCard> {

@@ -206,6 +206,9 @@ func applySignal(ctx context.Context, tx *sql.Tx, alertKey string, signal insert
 		hashCanonical("alert-event", input.Source, input.SourceEventID)); err != nil {
 		return IngestResult{}, 0, "", err
 	}
+	if err := syncLinkedIncidentObservationWindows(ctx, tx, row); err != nil {
+		return IngestResult{}, 0, "", err
+	}
 	severityIncreased := severityRank(row.Severity) > severityRank(previousSeverity)
 	if (created || eventType == "alert_recurred" || severityIncreased) && row.Status == "firing" {
 		if err := createOwnerNotification(ctx, tx, row); err != nil {

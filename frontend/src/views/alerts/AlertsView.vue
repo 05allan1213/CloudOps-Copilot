@@ -151,8 +151,8 @@ onBeforeUnmount(() => controller?.abort());
     </dl>
 
     <form class="filter-bar" aria-label="Alert filters" @submit.prevent="applyFilters">
-      <label><span>状态</span><select v-model="filters.status" name="status"><option value="">全部</option><option value="firing">Firing</option><option value="resolved">Resolved</option></select></label>
-      <label><span>Severity</span><select v-model="filters.severity" name="severity"><option value="">全部</option><option value="critical">Critical</option><option value="warning">Warning</option><option value="info">Info</option><option value="unknown">Unknown</option></select></label>
+      <label><span>状态</span><select v-model="filters.status" name="status" autocomplete="off"><option value="">全部</option><option value="firing">Firing</option><option value="resolved">Resolved</option></select></label>
+      <label><span>Severity</span><select v-model="filters.severity" name="severity" autocomplete="off"><option value="">全部</option><option value="critical">Critical</option><option value="warning">Warning</option><option value="info">Info</option><option value="unknown">Unknown</option></select></label>
       <label><span>Namespace</span><input v-model="filters.namespace" name="namespace" type="text" autocomplete="off" spellcheck="false" placeholder="例如：demo…"></label>
       <label class="search-field"><span>搜索</span><input v-model="filters.search" name="search" type="search" autocomplete="off" placeholder="摘要、目标或服务…"></label>
       <button type="submit" class="primary-action"><Search :size="17" aria-hidden="true" />查询</button>

@@ -5,6 +5,9 @@
   {{- if not .Values.mysql.enabled -}}
   {{- fail "bootstrapOnly requires the local MySQL runtime" -}}
   {{- end -}}
+  {{- if .Values.scenario.enabled -}}
+  {{- fail "bootstrapOnly cannot activate the Demonstration Scenario" -}}
+  {{- end -}}
 {{- else -}}
   {{- if not .Values.api.enabled -}}
   {{- fail "the CloudOps runtime requires cloudops-api" -}}
@@ -72,8 +75,27 @@
 {{- fail "the native telemetry stack requires TRACE_OTLP_ENDPOINT" -}}
 {{- end -}}
 
-{{- if ne (index .Values.worker.env "K8S_WRITE_ENABLED" | toString) "false" -}}
-{{- fail "cloudops-worker Kubernetes access must remain read-only by default" -}}
+{{- $writeEnabled := eq (index .Values.worker.env "K8S_WRITE_ENABLED" | toString) "true" -}}
+{{- if .Values.scenario.enabled -}}
+  {{- if eq (trim .Values.scenario.id) "" -}}
+  {{- fail "an active Demonstration Scenario requires scenario.id" -}}
+  {{- end -}}
+  {{- if not $writeEnabled -}}
+  {{- fail "an active Demonstration Scenario requires the bounded Kubernetes write gate" -}}
+  {{- end -}}
+  {{- if ne (index .Values.worker.env "K8S_ENABLED" | toString) "true" -}}
+  {{- fail "an active Demonstration Scenario requires Kubernetes reads" -}}
+  {{- end -}}
+  {{- if not (has .Values.scenario.namespace .Values.worker.providerNamespaces) -}}
+  {{- fail "the Scenario namespace must be present in worker.providerNamespaces" -}}
+  {{- end -}}
+{{- else -}}
+  {{- if ne (trim .Values.scenario.id) "" -}}
+  {{- fail "inactive Scenario values must not retain scenario.id" -}}
+  {{- end -}}
+  {{- if $writeEnabled -}}
+  {{- fail "Kubernetes write access is permitted only while the bounded Scenario is active" -}}
+  {{- end -}}
 {{- end -}}
 {{- if and (eq (index .Values.worker.env "K8S_ENABLED" | toString) "true") (eq (len .Values.worker.providerNamespaces) 0) -}}
 {{- fail "Kubernetes typed reader requires at least one worker.providerNamespaces entry" -}}

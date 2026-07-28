@@ -28,6 +28,7 @@ content_failures="$(rg -n -i "${content_pattern}" "${scan_paths[@]}" \
   --glob '!**/node_modules/**' | \
   rg -v '^(internal/api/contract_test\.go|internal/router/(api|internal)_test\.go):[0-9]+:.*(/api/v[23])' | \
   rg -v '^internal/infra/alertmanagerapi/(adapter|adapter_test)\.go:[0-9]+:.*"/api/v2/silence(s|/)' | \
+  rg -v '^scripts/local-lifecycle\.sh:[0-9]+:.*\/api\/v2\/alerts' | \
   rg -v '^(migrations/baseline_test\.go|internal/api/(resolution_report|workbench_contract)_test\.go|internal/taskhandler/evidence_authority_test\.go):[0-9]+:' || true)"
 
 if [[ -n "${path_failures}" || -n "${content_failures}" ]]; then

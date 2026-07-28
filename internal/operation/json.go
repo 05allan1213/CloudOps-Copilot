@@ -39,6 +39,9 @@ func validateTarget(target OperationTarget) error {
 	if target.WorkloadKind != "Deployment" {
 		return ErrInvalidArgument
 	}
+	if target.ScenarioID != "" && (strings.TrimSpace(target.ScenarioID) != target.ScenarioID || len(target.ScenarioID) > 128 || !operationIdentityPattern.MatchString(target.ScenarioID)) {
+		return ErrInvalidArgument
+	}
 	return nil
 }
 

@@ -69,6 +69,93 @@ WHERE run.public_id=? AND run.alert_id IS NOT NULL AND run.incident_id IS NULL A
 WHERE alert.public_id=? AND event.event_type='alert_investigation_requested'`, 1, alertID)
 }
 
+func TestMySQLIncidentInvestigationBindsUniqueScenarioIdentity(t *testing.T) {
+	db := openAgentWorkspaceIntegrationDB(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	settingsService, err := settings.NewService(db, t.TempDir(), settings.BootstrapDiagnostics{MySQLDatabase: "agent-incident-scenario-integration"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision, err := settingsService.ActiveRevision(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := revision.Scopes[0]
+	scenarioID := "scenario-incident-context"
+	alertID := insertWorkspaceAlert(t, ctx, db, scope, "incident-scenario")
+	if _, err = db.ExecContext(ctx, `UPDATE alerts
+SET labels_json=JSON_OBJECT('alertname','CloudOpsScenarioRequiredEnvMissing','scenario_id',?)
+WHERE public_id=?`, scenarioID, alertID); err != nil {
+		t.Fatal(err)
+	}
+	repository, err := NewWorkspaceRepository(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alertService, err := alertdomain.NewService(db, nil, repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	linked, err := alertService.LinkIncident(ctx, alertdomain.LinkIncidentRequest{
+		AlertID: alertID, ExpectedVersion: 1, IdempotencyKey: workspaceSHA256([]byte("incident-scenario-link")), Create: true,
+		Actor: alertdomain.Actor{Provider: "local", Login: "owner", Role: "owner"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(linked.IncidentLinks) != 1 {
+		t.Fatalf("Incident links=%#v", linked.IncidentLinks)
+	}
+	incidentID := linked.IncidentLinks[0].IncidentID
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID, err := repository.StartIncidentInvestigationTx(ctx, tx, incidentID, "incident-scenario-investigation", "investigate bounded Scenario", 1, 0)
+	if err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	run, err := repository.WorkspaceRun(ctx, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.ScenarioID != scenarioID {
+		t.Fatalf("Incident Investigation Scenario=%q want=%q", run.ScenarioID, scenarioID)
+	}
+	assertAgentWorkspaceCount(t, ctx, db, `SELECT COUNT(*)
+FROM context_snapshots AS snapshot JOIN agent_runs AS run ON run.context_snapshot_id=snapshot.id
+WHERE run.public_id=? AND JSON_UNQUOTE(JSON_EXTRACT(snapshot.filters_json,'$.scenario_id'))=?`, 1, runID, scenarioID)
+
+	conflictingAlertID := insertWorkspaceAlert(t, ctx, db, scope, "incident-scenario-conflict")
+	if _, err = db.ExecContext(ctx, `UPDATE alerts
+SET labels_json=JSON_OBJECT('alertname','CloudOpsScenarioRequiredEnvMissing','scenario_id','scenario-conflict')
+WHERE public_id=?`, conflictingAlertID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.ExecContext(ctx, `INSERT INTO alert_incident_links
+(public_id,alert_id,incident_id,incident_cycle_no,provenance,configuration_revision_id,escalation_policy_id,created_at)
+SELECT ?,alert.id,incident.id,incident.cycle_no,'owner_attached',NULL,NULL,NOW(6)
+FROM alerts AS alert JOIN incidents AS incident ON incident.public_id=?
+WHERE alert.public_id=?`, uuid.NewString(), incidentID, conflictingAlertID); err != nil {
+		t.Fatal(err)
+	}
+	tx, err = db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = repository.StartIncidentInvestigationTx(ctx, tx, incidentID, "incident-scenario-conflict", "must fail closed", 2, 0)
+	_ = tx.Rollback()
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("mixed Scenario identities error=%v", err)
+	}
+	assertAgentWorkspaceCount(t, ctx, db, `SELECT COUNT(*) FROM agent_runs WHERE idempotency_key='incident-scenario-conflict'`, 0)
+}
+
 func TestMySQLWorkspaceLeaseTakeoverAndCancellation(t *testing.T) {
 	db := openAgentWorkspaceIntegrationDB(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

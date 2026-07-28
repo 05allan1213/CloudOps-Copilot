@@ -214,6 +214,7 @@ type BootstrapDiagnostics struct {
 	DataDirectory          string `json:"data_directory"`
 	WorkerManagementTarget string `json:"worker_management_target"`
 	Lifecycle              string `json:"lifecycle"`
+	ScenarioState          string `json:"-"`
 }
 
 type SettingsSnapshot struct {

@@ -118,6 +118,7 @@ func providerProbeURL(config ProviderConfiguration) (string, error) {
 	suffix := ""
 	switch config.Provider {
 	case ProviderLLM:
+		parsed.Path = strings.TrimSuffix(strings.TrimRight(parsed.Path, "/"), "/chat/completions")
 		suffix = "/models"
 	case ProviderPrometheus, ProviderAlertmanager:
 		suffix = "/-/ready"

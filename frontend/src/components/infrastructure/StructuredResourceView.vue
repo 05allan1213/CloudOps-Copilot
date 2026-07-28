@@ -37,7 +37,7 @@ const filtered = computed(() => {
     <header>
       <label>
         <span>搜索资源</span>
-        <span class="search-control"><Search :size="16" aria-hidden="true" /><input v-model="search" name="atlas-resource-search" type="search" autocomplete="off" placeholder="名称、Kind 或 Namespace" /></span>
+        <span class="search-control"><Search :size="16" aria-hidden="true" /><input v-model="search" name="atlas-resource-search" type="search" autocomplete="off" aria-label="资源搜索" placeholder="名称、Kind 或 Namespace…" /></span>
       </label>
       <label>
         <span>资源层</span>

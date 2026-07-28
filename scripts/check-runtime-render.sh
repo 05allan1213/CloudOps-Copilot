@@ -20,14 +20,24 @@ multi_objects="$(mktemp "${TMPDIR:-/tmp}/cloudops-runtime-multi.XXXXXX.json")"
 external_values="$(mktemp "${TMPDIR:-/tmp}/cloudops-runtime-external.XXXXXX.yaml")"
 external_rendered="$(mktemp "${TMPDIR:-/tmp}/cloudops-runtime-external.XXXXXX.rendered.yaml")"
 external_objects="$(mktemp "${TMPDIR:-/tmp}/cloudops-runtime-external.XXXXXX.json")"
+scenario_rendered="$(mktemp "${TMPDIR:-/tmp}/cloudops-runtime-scenario.XXXXXX.yaml")"
+scenario_objects="$(mktemp "${TMPDIR:-/tmp}/cloudops-runtime-scenario.XXXXXX.json")"
 invalid_values="$(mktemp "${TMPDIR:-/tmp}/cloudops-runtime-invalid.XXXXXX.yaml")"
 invalid_output="$(mktemp "${TMPDIR:-/tmp}/cloudops-runtime-invalid.XXXXXX.log")"
-trap 'rm -f "${rendered}" "${objects}" "${multi_values}" "${multi_rendered}" "${multi_objects}" "${external_values}" "${external_rendered}" "${external_objects}" "${invalid_values}" "${invalid_output}"' EXIT
+trap 'rm -f "${rendered}" "${objects}" "${multi_values}" "${multi_rendered}" "${multi_objects}" "${external_values}" "${external_rendered}" "${external_objects}" "${scenario_rendered}" "${scenario_objects}" "${invalid_values}" "${invalid_output}"' EXIT
 
 helm template cloudops "${CHART_DIR}" \
   --namespace cloudops-system \
   --values "${VALUES_FILE}" >"${rendered}"
 yq -o=json 'select(.kind != null)' "${rendered}" | jq -s '.' >"${objects}"
+
+helm template cloudops "${CHART_DIR}" \
+  --namespace cloudops-system \
+  --values "${VALUES_FILE}" \
+  --set scenario.enabled=true \
+  --set-string scenario.id=scenario-render-contract \
+  --set-string worker.env.K8S_WRITE_ENABLED=true >"${scenario_rendered}"
+yq -o=json 'select(.kind != null)' "${scenario_rendered}" | jq -s '.' >"${scenario_objects}"
 
 count() {
   jq -r --arg kind "$1" --arg name "$2" \
@@ -69,6 +79,36 @@ expect_one ConfigMap cloudops-telemetry
 expect_one ServiceAccount filebeat
 expect_one ClusterRole cloudops-filebeat-metadata-readonly
 expect_one ClusterRoleBinding cloudops-filebeat-metadata-readonly
+
+[[ "$(jq -r '[.[] | select((.kind == "Deployment" or .kind == "Service" or .kind == "ServiceAccount") and (.metadata.name | startswith("cloudops-scenario")))] | length' "${objects}")" == "0" ]] || {
+  printf 'FAIL: inactive runtime must not render Scenario resources\n' >&2
+  exit 1
+}
+
+[[ "$(jq -r '[.[] | select(.kind == "Deployment" and (.metadata.name == "cloudops-scenario-healthy" or .metadata.name == "cloudops-scenario-fault" or .metadata.name == "cloudops-scenario-traffic")) | select(.metadata.namespace == "demo" and .metadata.labels["cloudops.io/scenario-id"] == "scenario-render-contract")] | length' "${scenario_objects}")" == "3" ]] || {
+  printf 'FAIL: active runtime must render the exact 3 bounded Scenario Deployments\n' >&2
+  exit 1
+}
+[[ "$(jq -r '[.[] | select(.kind == "Deployment" and (.metadata.name == "cloudops-api" or .metadata.name == "cloudops-worker")) | .spec.template.spec.containers[0].env | select(any(.[]; .name == "SCENARIO_STATE" and .value == "active")) | select(any(.[]; .name == "SCENARIO_ID" and .value == "scenario-render-contract"))] | length' "${scenario_objects}")" == "2" ]] || {
+  printf 'FAIL: API and Worker must receive the exact active Scenario identity\n' >&2
+  exit 1
+}
+[[ "$(jq -r '[.[] | select(.kind == "Deployment" and .metadata.name == "cloudops-worker") | .spec.template.spec.containers[0].env | select(any(.[]; .name == "K8S_WRITE_ENABLED" and .value == "true"))] | length' "${scenario_objects}")" == "1" ]] || {
+  printf 'FAIL: active Scenario must enable the bounded Worker write gate\n' >&2
+  exit 1
+}
+[[ "$(jq -r '[.[] | select(.kind == "Role" and .metadata.namespace == "demo" and .metadata.name == "cloudops-worker-readonly") | .rules[] | select(.resources == ["deployments/scale"] and .resourceNames == ["cloudops-scenario-fault"] and (.verbs | sort) == ["get","update"])] | length' "${scenario_objects}")" == "1" ]] || {
+  printf 'FAIL: active Scenario scale RBAC must bind one exact Deployment subresource\n' >&2
+  exit 1
+}
+[[ "$(jq -r '[.[] | select(.kind == "ConfigMap" and .metadata.name == "cloudops-monitoring") | .data["prometheus.yml"] | select(contains("cloudops-scenario-fault.demo.svc:8080") and contains("scenario_id: \"scenario-render-contract\""))] | length' "${scenario_objects}")" == "1" ]] || {
+  printf 'FAIL: active Scenario Prometheus targets must carry exact identity\n' >&2
+  exit 1
+}
+[[ "$(jq -r '[.[] | select(.kind == "ConfigMap" and .metadata.name == "cloudops-alerting") | .data["cloudops-alerts.yml"] | select(contains("alert: CloudOpsScenarioRequiredEnvMissing") and contains("scenario_id: \"scenario-render-contract\""))] | length' "${scenario_objects}")" == "1" ]] || {
+  printf 'FAIL: active Scenario Alert rule must carry exact identity\n' >&2
+  exit 1
+}
 
 [[ "$(jq -r '[.[] | select(.kind == "Job" and (.metadata.name | startswith("cloudops-migrate-")))] | length' "${objects}")" == "1" ]] || {
   printf 'FAIL: expected one release-revision migration Job\n' >&2
@@ -237,5 +277,51 @@ if rg -n -i 'oauth|csrf|cloudops\.io/profile|values-phase|V[23]_|/api/v[23]' "${
   printf 'FAIL: rendered runtime contains an obsolete auth or generation contract\n' >&2
   exit 1
 fi
+
+if helm template cloudops "${CHART_DIR}" --namespace cloudops-system --values "${VALUES_FILE}" \
+  --set scenario.enabled=true --set-string scenario.id=scenario-invalid >"${invalid_output}" 2>&1; then
+  printf 'FAIL: active Scenario rendered without the bounded write gate\n' >&2
+  exit 1
+fi
+rg -q 'active Demonstration Scenario requires the bounded Kubernetes write gate' "${invalid_output}" || {
+  printf 'FAIL: missing Scenario write gate did not fail with the exact contract\n' >&2
+  exit 1
+}
+if helm template cloudops "${CHART_DIR}" --namespace cloudops-system --values "${VALUES_FILE}" \
+  --set-string worker.env.K8S_WRITE_ENABLED=true >"${invalid_output}" 2>&1; then
+  printf 'FAIL: inactive runtime rendered with Kubernetes writes enabled\n' >&2
+  exit 1
+fi
+rg -q 'Kubernetes write access is permitted only while the bounded Scenario is active' "${invalid_output}" || {
+  printf 'FAIL: inactive write gate did not fail with the exact contract\n' >&2
+  exit 1
+}
+
+install_runtime_contract="$(awk '/^install_runtime\(\) \{/,/^}/' "${ROOT_DIR}/scripts/local-lifecycle.sh")"
+local_up_contract="$(awk '/^local_up\(\) \{/,/^}/' "${ROOT_DIR}/scripts/local-lifecycle.sh")"
+# shellcheck disable=SC2016
+for required in \
+  'local active_scenario_id="${1:-}"' \
+  '--set scenario.enabled=true' \
+  '--set-string "scenario.id=${active_scenario_id}"' \
+  '--set-string worker.env.K8S_WRITE_ENABLED=true'; do
+  rg -Fq -- "${required}" <<<"${install_runtime_contract}" || {
+    printf 'FAIL: install_runtime does not preserve active Scenario contract: %s\n' "${required}" >&2
+    exit 1
+  }
+done
+# shellcheck disable=SC2016
+for required in \
+  'release_values="$(release_scenario_json)"' \
+  'active_scenario_fault_replicas="$(scenario_fault_replicas)"' \
+  'install_runtime "${active_scenario_id}"' \
+  'restore_active_scenario_fault_state "${active_scenario_id}" "${active_scenario_fault_replicas}"' \
+  'write_scenario_id "${active_scenario_id}"' \
+  'pass "active Scenario preserved across local-up: ${active_scenario_id}"'; do
+  rg -Fq -- "${required}" <<<"${local_up_contract}" || {
+    printf 'FAIL: local_up does not preserve active Scenario contract: %s\n' "${required}" >&2
+    exit 1
+  }
+done
 
 printf 'PASS: semantic CloudOps runtime render contract\n'

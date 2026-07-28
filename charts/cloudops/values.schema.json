@@ -13,6 +13,7 @@
     "api",
     "migrate",
     "worker",
+    "scenario",
     "observability"
   ],
   "properties": {
@@ -20,11 +21,12 @@
     "images": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["api", "worker", "migrate"],
+      "required": ["api", "worker", "migrate", "demo"],
       "properties": {
         "api": { "$ref": "#/definitions/image" },
         "worker": { "$ref": "#/definitions/image" },
-        "migrate": { "$ref": "#/definitions/image" }
+        "migrate": { "$ref": "#/definitions/image" },
+        "demo": { "$ref": "#/definitions/image" }
       }
     },
     "commonEnv": { "$ref": "#/definitions/envMap" },
@@ -168,7 +170,7 @@
               "required": ["K8S_ENABLED", "K8S_WRITE_ENABLED", "K8S_IN_CLUSTER", "K8S_CLUSTER_ID", "K8S_CONNECTIONS_JSON", "K8S_ALLOWED_NAMESPACES", "K8S_DEFAULT_NAMESPACE"],
               "properties": {
                 "K8S_ENABLED": { "type": "string", "enum": ["true", "false"] },
-                "K8S_WRITE_ENABLED": { "type": "string", "const": "false" },
+                "K8S_WRITE_ENABLED": { "type": "string", "enum": ["true", "false"] },
                 "K8S_IN_CLUSTER": { "type": "string", "enum": ["true", "false"] },
                 "K8S_CLUSTER_ID": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
                 "K8S_CONNECTIONS_JSON": { "type": "string", "maxLength": 65536 },
@@ -178,6 +180,18 @@
             }
           ]
         },
+        "resources": { "$ref": "#/definitions/resources" }
+      }
+    },
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "id", "namespace", "trafficInterval", "resources"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "id": { "type": "string", "pattern": "^(|scenario-[a-z0-9]([-a-z0-9]*[a-z0-9])?)$", "maxLength": 63 },
+        "namespace": { "type": "string", "const": "demo" },
+        "trafficInterval": { "$ref": "#/definitions/duration" },
         "resources": { "$ref": "#/definitions/resources" }
       }
     },

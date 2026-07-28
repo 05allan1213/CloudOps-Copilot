@@ -53,9 +53,21 @@ spec:
                   key: {{ $name }}
             {{- end }}
             {{- range $name, $value := .Values.api.env }}
+            {{- if ne $name "SIGNAL_TARGET_ALLOWLIST_JSON" }}
             - name: {{ $name }}
               value: {{ $value | quote }}
             {{- end }}
+            {{- end }}
+            - name: SCENARIO_STATE
+              value: {{ ternary "active" "inactive" .Values.scenario.enabled | quote }}
+            - name: SCENARIO_ID
+              value: {{ .Values.scenario.id | quote }}
+            - name: SIGNAL_TARGET_ALLOWLIST_JSON
+              {{- if .Values.scenario.enabled }}
+              value: {{ printf "[{\"cluster_id\":\"%s\",\"environment\":\"%s\",\"namespace\":\"%s\",\"workload_kind\":\"Deployment\",\"workload_name\":\"cloudops-scenario-fault\",\"service_name\":\"cloudops-scenario-fault\",\"match_labels\":{\"cluster\":\"%s\",\"environment\":\"%s\",\"namespace\":\"%s\",\"deployment\":\"cloudops-scenario-fault\",\"scenario_id\":\"%s\"}}]" .Values.observability.stack.clusterID .Values.observability.stack.environment .Values.scenario.namespace .Values.observability.stack.clusterID .Values.observability.stack.environment .Values.scenario.namespace .Values.scenario.id | quote }}
+              {{- else }}
+              value: {{ index .Values.api.env "SIGNAL_TARGET_ALLOWLIST_JSON" | quote }}
+              {{- end }}
             - name: LISTEN_ADDR
               value: {{ printf ":%d" (.Values.api.port | int) | quote }}
             - name: INTERNAL_LISTEN_ADDR

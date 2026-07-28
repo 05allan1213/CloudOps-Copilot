@@ -7,6 +7,9 @@ images:
     tag: local
   migrate:
     tag: local
+  demo:
+    tag: local
+    pullPolicy: Never
 
 # local-up verifies this exact tag against the pinned platform digest before
 # loading it into kind. The local runtime must never fall back to a registry.

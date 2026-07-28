@@ -7,6 +7,30 @@ import (
 	"time"
 )
 
+func TestProviderProbeURLNormalizesLLMChatEndpoint(t *testing.T) {
+	t.Parallel()
+	for name, endpoint := range map[string]string{
+		"base":               "https://api.deepseek.com/v1",
+		"chat endpoint":      "https://api.deepseek.com/v1/chat/completions",
+		"root chat endpoint": "https://api.deepseek.com/chat/completions",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			got, err := providerProbeURL(ProviderConfiguration{Provider: ProviderLLM, Endpoint: endpoint})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "https://api.deepseek.com/models"
+			if name != "root chat endpoint" {
+				want = "https://api.deepseek.com/v1/models"
+			}
+			if got != want {
+				t.Fatalf("probe URL=%q want=%q", got, want)
+			}
+		})
+	}
+}
+
 func TestKubernetesValidationProbesEveryRegisteredScope(t *testing.T) {
 	t.Parallel()
 	service := &Service{

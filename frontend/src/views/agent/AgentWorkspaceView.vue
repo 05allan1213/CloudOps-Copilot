@@ -38,6 +38,9 @@ watch(() => route.fullPath, (value) => store.setRoute(value), { immediate: true 
 watch(() => route.query.investigation, (value) => {
   if (store.loaded) void store.selectInvestigationFromRoute(queryValue(value));
 });
+watch(() => store.loaded, (loaded) => {
+  if (loaded) void store.selectInvestigationFromRoute(queryValue(route.query.investigation));
+}, { immediate: true });
 onMounted(() => void loadWorkspace());
 </script>
 

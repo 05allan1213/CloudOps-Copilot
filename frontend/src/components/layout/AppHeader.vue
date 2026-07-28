@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { Activity, Bell, Bot, ChevronRight, LoaderCircle, Moon, Network, Sun, UserRound } from "lucide-vue-next";
+import { Activity, Bell, Bot, ChevronRight, FlaskConical, LoaderCircle, Moon, Network, Sun, UserRound } from "lucide-vue-next";
 
 import type { OperationalScope, ProviderHealth } from "../../api/platform";
 import { useTheme } from "../../composables/useTheme";
@@ -13,6 +13,7 @@ const props = defineProps<{
   selectedScopeId: string;
   scopeSwitching: boolean;
   providerHealth?: ProviderHealth[];
+  scenarioState: "inactive" | "active";
 }>();
 const emit = defineEmits<{
   changeScope: [scopeID: string];
@@ -33,6 +34,7 @@ const scopeDetail = computed(() => props.activeScope
 const selectableScopes = computed(() => props.scopes.filter((scope): scope is OperationalScope & { id: string } => Boolean(scope.id)));
 const availableProviders = computed(() => props.providerHealth?.filter((item) => item.state === "available").length ?? 0);
 const providerCount = computed(() => props.providerHealth?.length ?? 0);
+const scenarioLabel = computed(() => props.scenarioState === "active" ? "Scenario Active" : "Live Mode");
 
 function openNotifications(event: MouseEvent) {
   emit("openNotifications", event.currentTarget as HTMLElement);
@@ -58,6 +60,10 @@ function changeScope(event: Event) {
       </nav>
     </div>
     <div class="header-actions">
+      <span class="scenario-boundary" :class="{ 'is-active': scenarioState === 'active' }" role="status" :aria-label="`运行模式：${scenarioLabel}`">
+        <FlaskConical :size="14" aria-hidden="true" />
+        <span>{{ scenarioLabel }}</span>
+      </span>
       <label class="environment-boundary" :title="scopeDetail">
         <Network :size="15" aria-hidden="true" />
         <span class="visually-hidden">活动集群</span>
@@ -95,7 +101,7 @@ function changeScope(event: Event) {
 
 <style scoped>
 .app-header { position: sticky; top: 0; z-index: var(--co-z-header); display: flex; min-height: var(--co-header-height); align-items: center; justify-content: space-between; gap: var(--co-space-3); padding: 0 max(var(--co-space-4), env(safe-area-inset-right)) 0 var(--co-space-5); border-bottom: 1px solid var(--co-border-default); background: color-mix(in srgb, var(--co-bg-surface) 94%, transparent); backdrop-filter: blur(12px); }
-.header-leading, .header-actions, .product-mark, .breadcrumb, .environment-boundary, .user-trigger { display: flex; align-items: center; }
+.header-leading, .header-actions, .product-mark, .breadcrumb, .environment-boundary, .scenario-boundary, .user-trigger { display: flex; align-items: center; }
 .header-leading { min-width: 0; gap: var(--co-space-4); }
 .header-actions { flex: 0 0 auto; gap: var(--co-space-2); }
 .product-mark { min-height: 44px; gap: var(--co-space-2); color: var(--co-text-primary); }
@@ -106,6 +112,8 @@ function changeScope(event: Event) {
 .breadcrumb a { color: var(--co-action-primary); }
 .breadcrumb span { overflow: hidden; text-overflow: ellipsis; }
 .environment-boundary { min-height: 34px; max-width: 280px; gap: var(--co-space-2); padding: 0 var(--co-space-2); border: 1px solid var(--co-status-info-border); border-radius: var(--co-radius-pill); color: var(--co-status-info-fg); background: var(--co-status-info-bg); font-size: 11px; font-weight: 700; }
+.scenario-boundary { min-height: 34px; gap: var(--co-space-1); padding: 0 var(--co-space-2); border: 1px solid var(--co-status-success-border); border-radius: var(--co-radius-pill); color: var(--co-status-success-fg); background: var(--co-status-success-bg); font-size: 10px; font-weight: 800; white-space: nowrap; }
+.scenario-boundary.is-active { border-color: var(--co-status-warning-border); color: var(--co-status-warning-fg); background: var(--co-status-warning-bg); }
 .environment-boundary:hover, .environment-boundary:focus-within { border-color: var(--co-action-primary); background: var(--co-bg-active); }
 .environment-boundary select { min-width: 0; max-width: 170px; border: 0; color: var(--co-status-info-fg); background-color: var(--co-status-info-bg); cursor: pointer; font-size: 11px; font-weight: 750; text-overflow: ellipsis; }
 .environment-boundary option { color: var(--co-text-primary); background-color: var(--co-bg-surface); }
@@ -121,6 +129,7 @@ function changeScope(event: Event) {
 .user-copy strong { font-size: 12px; }.user-copy small { color: var(--co-text-muted); font-size: 10px; }
 @keyframes scope-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .scope-spinner { animation: none; } }
+@media (max-width: 1024px) { .scenario-boundary span { display: none; } }
 @media (max-width: 900px) { .user-copy, .product-mark strong { display: none; } .breadcrumb { padding-left: 0; border-left: 0; } .environment-boundary small { display: none; } }
 @media (max-width: 767px) { .app-header { padding-inline: max(var(--co-space-3), env(safe-area-inset-left)) max(var(--co-space-3), env(safe-area-inset-right)); } .product-mark, .user-trigger { display: none; } .header-leading { overflow: hidden; } .breadcrumb a, .breadcrumb svg { display: none; } .breadcrumb span { color: var(--co-text-primary); font-weight: 750; } .environment-boundary { max-width: 118px; padding-inline: var(--co-space-2); } .environment-boundary select { width: 84px; font-size: 16px; } }
 @media (max-width: 359px) { .header-actions { gap: var(--co-space-1); } .environment-boundary { max-width: 108px; } .environment-boundary select { width: 74px; } }

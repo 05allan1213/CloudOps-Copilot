@@ -115,7 +115,11 @@ export const useAgentWorkspaceStore = defineStore("agent-workspace", {
 
   actions: {
     async loadIndex(force = false, preferredInvestigationID = "") {
-      if ((this.loading || this.loaded) && !force) return;
+      if (this.loading && !force) return;
+      if (this.loaded && !force) {
+        if (preferredInvestigationID) await this.selectInvestigationFromRoute(preferredInvestigationID);
+        return;
+      }
       this.loading = true;
       this.error = "";
       try {

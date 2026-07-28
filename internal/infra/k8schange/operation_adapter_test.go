@@ -21,7 +21,7 @@ func TestOperationScaleAdapterUsesExactPreconditionsAndCurrentVerification(t *te
 	replicas := int32(1)
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "cloudops-api", Namespace: "demo", ResourceVersion: "rv-1", Generation: 1,
+			Name: "cloudops-scenario-fault", Namespace: "demo", ResourceVersion: "rv-1", Generation: 1,
 		},
 		Spec: appsv1.DeploymentSpec{Replicas: &replicas},
 		Status: appsv1.DeploymentStatus{
@@ -34,7 +34,7 @@ func TestOperationScaleAdapterUsesExactPreconditionsAndCurrentVerification(t *te
 			return false, nil, nil
 		}
 		return true, &autoscalingv1.Scale{
-			ObjectMeta: metav1.ObjectMeta{Name: "cloudops-api", Namespace: "demo", ResourceVersion: "rv-1"},
+			ObjectMeta: metav1.ObjectMeta{Name: "cloudops-scenario-fault", Namespace: "demo", ResourceVersion: "rv-1"},
 			Spec:       autoscalingv1.ScaleSpec{Replicas: 1},
 		}, nil
 	})
@@ -63,14 +63,16 @@ func TestOperationScaleAdapterUsesExactPreconditionsAndCurrentVerification(t *te
 		}, nil
 	})
 	executor, err := NewControlledScaleExecutor(client, ControlledScaleConfig{
-		AllowedNamespaces: []string{"demo"}, MaxReplicas: 5, RequestTimeout: time.Second,
+		AllowedNamespaces: []string{"demo"}, TargetNamespace: "demo",
+		TargetDeployment: "cloudops-scenario-fault", ScenarioID: "scenario-operation-test",
+		MaxReplicas: 5, RequestTimeout: time.Second,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	target := operation.OperationTarget{
 		ClusterID: "cloudops-local", Environment: "local", Namespace: "demo",
-		WorkloadKind: "Deployment", WorkloadName: "cloudops-api",
+		WorkloadKind: "Deployment", WorkloadName: "cloudops-scenario-fault", ScenarioID: "scenario-operation-test",
 	}
 	freezes := &fixedChangeFreezeReader{state: operation.ChangeFreezeState{Target: target}}
 	adapter, err := NewOperationScaleAdapter(map[string]*ControlledScaleExecutor{
@@ -79,7 +81,7 @@ func TestOperationScaleAdapterUsesExactPreconditionsAndCurrentVerification(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	subject := scaleOperationSubject(t, target, 2, "rv-1", 1, 0)
+	subject := scaleOperationSubject(t, target, 0, "rv-1", 1, 0)
 	prepared, err := adapter.Prepare(context.Background(), subject)
 	if err != nil || !prepared.External || !prepared.Before.Verified {
 		t.Fatalf("prepared=%#v error=%v", prepared, err)
@@ -94,7 +96,7 @@ func TestOperationScaleAdapterUsesExactPreconditionsAndCurrentVerification(t *te
 	if err = json.Unmarshal(observation.Evidence, &evidence); err != nil {
 		t.Fatal(err)
 	}
-	if evidence.Deployment.ResourceVersion != "rv-2" || evidence.Deployment.DesiredReplicas != 2 || evidence.Deployment.AvailableReplicas != 2 {
+	if evidence.Deployment.ResourceVersion != "rv-2" || evidence.Deployment.DesiredReplicas != 0 || evidence.Deployment.AvailableReplicas != 0 {
 		t.Fatalf("current verification evidence=%#v", evidence)
 	}
 	updates := 0
@@ -107,12 +109,15 @@ func TestOperationScaleAdapterUsesExactPreconditionsAndCurrentVerification(t *te
 		t.Fatalf("scale updates=%d actions=%#v", updates, client.Actions())
 	}
 
-	stale := scaleOperationSubject(t, target, 3, "stale-rv", 2, 0)
+	stale := scaleOperationSubject(t, target, 1, "stale-rv", 0, 0)
 	if _, err = adapter.Prepare(context.Background(), stale); !errors.Is(err, operation.ErrPreconditionFailed) {
 		t.Fatalf("stale resourceVersion error=%v", err)
 	}
-	if _, err = executor.ObserveDeployment(context.Background(), "outside", "cloudops-api"); err == nil {
+	if _, err = executor.ObserveDeployment(context.Background(), "outside", "cloudops-scenario-fault"); err == nil {
 		t.Fatal("namespace outside explicit write allowlist unexpectedly observed")
+	}
+	if _, err = executor.ObserveDeployment(context.Background(), "demo", "cloudops-api"); err == nil {
+		t.Fatal("deployment outside exact Scenario target unexpectedly observed")
 	}
 }
 

@@ -3,8 +3,12 @@ import { defineStore } from "pinia";
 import {
   authorizeActionCard,
   authorizeOperationPlan,
+  getAgentInvestigations,
+  proposeOperationPlan,
   type ActionCard,
+  type AgentRun,
   type OperationPlan,
+  type OperationPlanProposalInput,
 } from "../api/agent";
 import { isApiError } from "../api/client";
 import {
@@ -14,6 +18,7 @@ import {
   type DevOpsWorkspace,
   type OperationExecution,
 } from "../api/devops";
+import { getResources, type ResourcePage } from "../api/infrastructure";
 
 function failureMessage(error: unknown, fallback: string): string {
   if (!isApiError(error)) return fallback;
@@ -24,6 +29,9 @@ function failureMessage(error: unknown, fallback: string): string {
 export const useDevOpsWorkspaceStore = defineStore("devops-workspace", {
   state: () => ({
     workspace: null as DevOpsWorkspace | null,
+    scenarioResources: null as ResourcePage | null,
+    investigations: [] as AgentRun[],
+    scenarioPlanningError: "",
     loading: false,
     loaded: false,
     mutatingSubjectID: "",
@@ -43,7 +51,22 @@ export const useDevOpsWorkspaceStore = defineStore("devops-workspace", {
       this.loading = true;
       this.error = "";
       try {
-        this.workspace = await getDevOpsWorkspace(signal);
+        const [workspaceResult, resourceResult, investigationResult] = await Promise.allSettled([
+          getDevOpsWorkspace(signal),
+          getResources({ cluster: "cloudops-local", namespace: "demo", kind: ["Deployment"], search: "cloudops-scenario-fault", limit: 20 }, signal),
+          getAgentInvestigations(signal),
+        ]);
+        if (workspaceResult.status === "rejected") throw workspaceResult.reason;
+        this.workspace = workspaceResult.value;
+        this.scenarioResources = resourceResult.status === "fulfilled" ? resourceResult.value : null;
+        this.investigations = investigationResult.status === "fulfilled" ? investigationResult.value : [];
+        const auxiliaryFailures = [
+          resourceResult.status === "rejected" ? "Kubernetes Deployment projection" : "",
+          investigationResult.status === "rejected" ? "Agent Investigation index" : "",
+        ].filter(Boolean);
+        this.scenarioPlanningError = auxiliaryFailures.length
+          ? `${auxiliaryFailures.join("、")} 读取失败；不会创建不完整的 Operation Plan。`
+          : "";
         this.loaded = true;
       } catch (error) {
         if (signal?.aborted) return;
@@ -84,6 +107,15 @@ export const useDevOpsWorkspaceStore = defineStore("devops-workspace", {
         this.notice = "Operation Plan 已按 exact hash 排队；Worker 将再次检查 authority、expiry 与 preconditions。";
       });
       return execution;
+    },
+
+    async proposeScenarioPlan(input: OperationPlanProposalInput): Promise<OperationPlan | null> {
+      let plan: OperationPlan | null = null;
+      await this.runMutation(input.run_id, async () => {
+        plan = await proposeOperationPlan(input);
+        this.notice = "已基于 Scenario Investigation 与当前 Kubernetes resourceVersion 创建 immutable Operation Plan；尚未授权。";
+      });
+      return plan;
     },
 
     async runMutation(subjectID: string, command: () => Promise<void>) {

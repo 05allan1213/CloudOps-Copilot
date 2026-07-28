@@ -12,7 +12,7 @@ export const appRoutes: RouteRecordRaw[] = [
   { path: "/agent", name: "agent", component: () => import("../views/agent/AgentWorkspaceView.vue"), meta: { title: "Agent", workspace: "agent", provider: "llm", fullBleed: true } },
   { path: "/incidents", name: "incidents", component: () => import("../views/incidents/IncidentListView.vue"), meta: { title: "事件", workspace: "incidents" } },
   { path: "/incidents/:incidentId", name: "incident-detail", component: () => import("../views/incidents/IncidentDetailView.vue"), meta: { title: "事件详情", workspace: "incidents", hidden: true } },
-  { path: "/devops", name: "devops", component: () => import("../views/devops/DevOpsWorkspaceView.vue"), meta: { title: "DevOps", workspace: "devops", fullBleed: true } },
+  { path: "/devops", name: "devops", component: () => import("../views/devops/DevOpsWorkspaceView.vue"), meta: { title: "DevOps", workspace: "devops" } },
   { path: "/settings", name: "settings", component: () => import("../views/settings/SettingsView.vue"), meta: { title: "设置", workspace: "settings" } },
   { path: "/:pathMatch(.*)*", name: "not-found", component: () => import("../pages/NotFoundPage.vue"), meta: { title: "页面不存在", hidden: true } },
 ];

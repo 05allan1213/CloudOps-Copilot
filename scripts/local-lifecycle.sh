@@ -28,6 +28,7 @@ GRAFANA_PORT_FORWARD_PID_FILE="${RUNTIME_DIR}/grafana-port-forward.pid"
 GRAFANA_PORT_FORWARD_LOG="${RUNTIME_DIR}/grafana-port-forward.log"
 TEMPO_PORT_FORWARD_PID_FILE="${RUNTIME_DIR}/tempo-port-forward.pid"
 TEMPO_PORT_FORWARD_LOG="${RUNTIME_DIR}/tempo-port-forward.log"
+SCENARIO_ID_FILE="${RUNTIME_DIR}/scenario-id"
 KIND_NODE_IMAGE="kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5"
 MYSQL_IMAGE="mysql:8.0.46"
 MYSQL_REPOSITORY="mysql"
@@ -67,7 +68,7 @@ MIN_INOTIFY_INSTANCES=512
 BACKUP_FORMAT_VERSION=2
 BACKUP_CONTRACT="cloudops-semantic"
 RESTORE_STAGING_DATABASE="cloudops_restore_staging"
-LATEST_SCHEMA_VERSION=9
+LATEST_SCHEMA_VERSION=11
 DATA_CLAIM="cloudops-data"
 DATA_MOUNT_PATH="/var/lib/cloudops"
 DATA_DIRECTORY="${DATA_MOUNT_PATH}/data"
@@ -428,7 +429,7 @@ build_application_images() {
   [[ "${go_proxy}" =~ ^[A-Za-z0-9:/.,_|-]+$ && "${go_proxy}" != *"@"* ]] ||
     die "CLOUDOPS_GO_PROXY must be a credential-free Go proxy list"
   source_url="$(git -C "${ROOT_DIR}" remote get-url origin 2>/dev/null || printf 'local')"
-  for target in api worker migrate; do
+  for target in api worker migrate demo; do
     note "building cloudops-${target}:local"
     docker build \
       --network host \
@@ -447,7 +448,7 @@ load_runtime_images() {
   verify_mysql_image
   verify_observability_images
   for image in \
-    cloudops-api:local cloudops-worker:local cloudops-migrate:local "${MYSQL_IMAGE}"; do
+    cloudops-api:local cloudops-worker:local cloudops-migrate:local cloudops-demo:local "${MYSQL_IMAGE}"; do
     kind load docker-image "${image}" --name "${CLUSTER_NAME}"
   done
   load_observability_image "${PROMETHEUS_PRELOAD_IMAGE}" "${PROMETHEUS_IMAGE}"
@@ -470,14 +471,30 @@ reconcile_mysql_identities() {
 }
 
 install_runtime() {
-  local helm_args current_status
+  local active_scenario_id="${1:-}" helm_args current_status
   helm_args=(
     --kube-context "${KUBE_CONTEXT}"
     --namespace "${NAMESPACE}"
     --values "${VALUES_FILE}"
     --timeout 12m
   )
+  if [[ -n "${active_scenario_id}" ]]; then
+    valid_scenario_id "${active_scenario_id}" || die "active release has an invalid Scenario identity"
+    helm_args+=(
+      --set scenario.enabled=true
+      --set-string "scenario.id=${active_scenario_id}"
+      --set-string worker.env.K8S_WRITE_ENABLED=true
+    )
+  else
+    helm_args+=(
+      --set scenario.enabled=false
+      --set-string worker.env.K8S_WRITE_ENABLED=false
+    )
+  fi
   current_status="$(release_status 2>/dev/null || true)"
+  if [[ -n "${active_scenario_id}" && "${current_status}" != "deployed" ]]; then
+    die "refusing to replace active Scenario ${active_scenario_id} while release status is ${current_status:-unavailable}"
+  fi
   if [[ "${current_status}" != "deployed" ]]; then
     note "bootstrapping persistent MySQL in the canonical release"
     helm upgrade --install "${RELEASE_NAME}" "${CHART_DIR}" "${helm_args[@]}" \
@@ -511,6 +528,444 @@ install_runtime() {
   kube -n "${NAMESPACE}" rollout status daemonset/filebeat --timeout=5m
   kube -n "${NAMESPACE}" rollout status statefulset/tempo --timeout=5m
   kube -n "${NAMESPACE}" rollout status deployment/otel-collector --timeout=5m
+}
+
+valid_scenario_id() {
+  [[ "$1" =~ ^scenario-[a-z0-9]([-a-z0-9]*[a-z0-9])?$ && ${#1} -le 63 ]]
+}
+
+scenario_id_from_file() {
+  local scenario_id
+  [[ -f "${SCENARIO_ID_FILE}" && ! -L "${SCENARIO_ID_FILE}" ]] || return 1
+  [[ "$(stat -c '%a' "${SCENARIO_ID_FILE}")" == "600" ]] || return 1
+  scenario_id="$(tr -d '[:space:]' <"${SCENARIO_ID_FILE}")"
+  valid_scenario_id "${scenario_id}" || return 1
+  printf '%s\n' "${scenario_id}"
+}
+
+write_scenario_id() {
+  local scenario_id="$1" staged
+  valid_scenario_id "${scenario_id}" || die "invalid generated Scenario identity"
+  ensure_private_directories
+  staged="$(mktemp "${RUNTIME_DIR}/.scenario-id.XXXXXX")"
+  printf '%s\n' "${scenario_id}" >"${staged}"
+  chmod 600 "${staged}"
+  mv "${staged}" "${SCENARIO_ID_FILE}"
+}
+
+release_scenario_json() {
+  release_exists || return 1
+  helm --kube-context "${KUBE_CONTEXT}" -n "${NAMESPACE}" get values "${RELEASE_NAME}" -a -o json
+}
+
+release_scenario_id() {
+  release_scenario_json 2>/dev/null | jq -r 'select(.scenario.enabled == true) | .scenario.id // empty'
+}
+
+release_scenario_active() {
+  [[ "$(release_scenario_json 2>/dev/null | jq -r '.scenario.enabled // false' || true)" == "true" ]]
+}
+
+urlencode() {
+  jq -rn --arg value "$1" '$value | @uri'
+}
+
+service_proxy_get() {
+  local namespace="$1" service="$2" port="$3" path="$4"
+  kube get --raw "/api/v1/namespaces/${namespace}/services/http:${service}:${port}/proxy${path}"
+}
+
+scenario_metric_samples() {
+  local scenario_id="$1" query encoded response value
+  query="count(cloudops_demo_workload_ready{scenario_id=\"${scenario_id}\"})"
+  encoded="$(urlencode "${query}")"
+  response="$(service_proxy_get "${NAMESPACE}" prometheus 9090 "/api/v1/query?query=${encoded}" 2>/dev/null || true)"
+  value="$(jq -r '.data.result[0].value[1] // "0"' <<<"${response}" 2>/dev/null || true)"
+  [[ "${value}" =~ ^[0-9]+([.][0-9]+)?$ ]] || value=0
+  awk -v value="${value}" 'BEGIN {printf "%d\n", value}'
+}
+
+scenario_firing_alerts() {
+  local scenario_id="$1" response value
+  response="$(service_proxy_get "${NAMESPACE}" alertmanager 9093 '/api/v2/alerts?active=true&silenced=false&inhibited=false' 2>/dev/null || true)"
+  value="$(jq -r --arg scenario_id "${scenario_id}" '[.[]? | select(.labels.scenario_id == $scenario_id and .labels.alertname == "CloudOpsScenarioRequiredEnvMissing")] | length' \
+    <<<"${response}" 2>/dev/null || true)"
+  [[ "${value}" =~ ^[0-9]+$ ]] || value=0
+  printf '%s\n' "${value}"
+}
+
+scenario_firing_alerts_strict() {
+  local scenario_id="$1" response value
+  response="$(service_proxy_get "${NAMESPACE}" alertmanager 9093 '/api/v2/alerts?active=true&silenced=false&inhibited=false')" || return 1
+  jq -e 'type == "array"' <<<"${response}" >/dev/null 2>&1 || return 1
+  value="$(jq -r --arg scenario_id "${scenario_id}" '[.[]? | select(.labels.scenario_id == $scenario_id and .labels.alertname == "CloudOpsScenarioRequiredEnvMissing")] | length' \
+    <<<"${response}")" || return 1
+  [[ "${value}" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "${value}"
+}
+
+scenario_log_documents() {
+  local scenario_id="$1" query encoded response value
+  query="scenario_id:\"${scenario_id}\""
+  encoded="$(urlencode "${query}")"
+  response="$(service_proxy_get "${NAMESPACE}" elasticsearch 9200 "/logs-cloudops/_count?q=${encoded}" 2>/dev/null || true)"
+  value="$(jq -r '.count // 0' <<<"${response}" 2>/dev/null || true)"
+  [[ "${value}" =~ ^[0-9]+$ ]] || value=0
+  printf '%s\n' "${value}"
+}
+
+scenario_traces() {
+  local scenario_id="$1" query encoded response value
+  query="{ resource.cloudops.scenario.id = \"${scenario_id}\" }"
+  encoded="$(urlencode "${query}")"
+  response="$(service_proxy_get "${NAMESPACE}" tempo 3200 "/api/search?q=${encoded}&limit=20" 2>/dev/null || true)"
+  value="$(jq -r '(.traces // []) | length' <<<"${response}" 2>/dev/null || true)"
+  [[ "${value}" =~ ^[0-9]+$ ]] || value=0
+  printf '%s\n' "${value}"
+}
+
+scenario_history_count() {
+  local scenario_id="$1" pod
+  valid_scenario_id "${scenario_id}" || return 1
+  pod="$(mysql_pod_if_running || true)"
+  [[ -n "${pod}" ]] || return 1
+  mysql_exec "${pod}" "${DATABASE_NAME}" -e "SELECT
+    (SELECT COUNT(*) FROM alerts WHERE JSON_UNQUOTE(JSON_EXTRACT(labels_json,'$.scenario_id'))='${scenario_id}') +
+    (SELECT COUNT(*) FROM context_snapshots WHERE JSON_UNQUOTE(JSON_EXTRACT(filters_json,'$.scenario_id'))='${scenario_id}') +
+    (SELECT COUNT(*) FROM agent_operation_plans WHERE JSON_UNQUOTE(JSON_EXTRACT(target_json,'$.scenario_id'))='${scenario_id}')"
+}
+
+scenario_persisted_firing_alerts() {
+  local scenario_id="$1" pod
+  valid_scenario_id "${scenario_id}" || return 1
+  pod="$(mysql_pod_if_running)" || return 1
+  mysql_exec "${pod}" "${DATABASE_NAME}" -e "SELECT COUNT(*) FROM alerts
+    WHERE status='firing'
+      AND JSON_UNQUOTE(JSON_EXTRACT(labels_json,'$.scenario_id'))='${scenario_id}'"
+}
+
+scenario_stale_firing_alerts() {
+  local pod
+  pod="$(mysql_pod_if_running)" || return 1
+  mysql_exec "${pod}" "${DATABASE_NAME}" -e "SELECT COUNT(*) FROM alerts
+    WHERE status='firing' AND target_name LIKE 'cloudops-scenario-%'"
+}
+
+scenario_agent_runs() {
+  local scenario_id="$1" pod
+  valid_scenario_id "${scenario_id}" || return 1
+  pod="$(mysql_pod_if_running || true)"
+  [[ -n "${pod}" ]] || return 1
+  mysql_exec "${pod}" "${DATABASE_NAME}" -e "SELECT COUNT(*)
+    FROM agent_runs AS run
+    JOIN context_snapshots AS snapshot ON snapshot.id=run.context_snapshot_id
+    WHERE JSON_UNQUOTE(JSON_EXTRACT(snapshot.filters_json,'$.scenario_id'))='${scenario_id}'"
+}
+
+scenario_fault_replicas() {
+  kube -n "${PROVIDER_NAMESPACE}" get deployment cloudops-scenario-fault \
+    -o jsonpath='{.spec.replicas}' 2>/dev/null || true
+}
+
+scenario_fault_running_pods() {
+  kube -n "${PROVIDER_NAMESPACE}" get pods \
+    -l 'app.kubernetes.io/name=cloudops-scenario-fault' -o json 2>/dev/null |
+    jq -r '[.items[]? | select(.status.phase == "Running")] | length' 2>/dev/null || printf '0\n'
+}
+
+inject_scenario_fault() {
+  local desired ready generation observed running
+  [[ "$(scenario_fault_replicas)" == "1" ]] || return
+  note "injecting bounded Scenario fault by removing REQUIRED_ENV from demo/cloudops-scenario-fault"
+  kube -n "${PROVIDER_NAMESPACE}" set env deployment/cloudops-scenario-fault REQUIRED_ENV- >/dev/null
+  for attempt in {1..120}; do
+    desired="$(scenario_fault_replicas)"
+    ready="$(kube -n "${PROVIDER_NAMESPACE}" get deployment cloudops-scenario-fault -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)"
+    generation="$(kube -n "${PROVIDER_NAMESPACE}" get deployment cloudops-scenario-fault -o jsonpath='{.metadata.generation}' 2>/dev/null || true)"
+    observed="$(kube -n "${PROVIDER_NAMESPACE}" get deployment cloudops-scenario-fault -o jsonpath='{.status.observedGeneration}' 2>/dev/null || true)"
+    running="$(scenario_fault_running_pods)"
+    if [[ "${desired}" == "1" && ("${ready}" == "" || "${ready}" == "0") && "${generation}" =~ ^[0-9]+$ && "${observed}" =~ ^[0-9]+$ ]] &&
+      ((observed >= generation && running >= 1)); then
+      pass "Scenario Kubernetes fault active desired=1 ready=0 running_pods=${running}"
+      return
+    fi
+    if ((attempt % 10 == 0)); then
+      note "waiting for Scenario Kubernetes degradation desired=${desired:-unavailable} ready=${ready:-0} running_pods=${running}"
+    fi
+    sleep 1
+  done
+  die "Scenario Kubernetes fault did not become observable"
+}
+
+recover_scenario_fault_for_shutdown() {
+  local desired running
+  kube -n "${PROVIDER_NAMESPACE}" get deployment cloudops-scenario-fault >/dev/null 2>&1 ||
+    die "Scenario fault Deployment is unavailable before Scenario shutdown"
+  desired="$(scenario_fault_replicas)"
+  if [[ "${desired}" != "0" ]]; then
+    note "ending the bounded Scenario fault before runtime removal"
+    kube -n "${PROVIDER_NAMESPACE}" scale deployment/cloudops-scenario-fault --replicas=0 >/dev/null
+  fi
+  for attempt in {1..120}; do
+    desired="$(scenario_fault_replicas)"
+    running="$(scenario_fault_running_pods)"
+    if [[ "${desired}" == "0" && "${running}" == "0" ]]; then
+      pass "Scenario Kubernetes fault ended desired=0 running_pods=0"
+      return
+    fi
+    if ((attempt % 10 == 0)); then
+      note "waiting for Scenario fault shutdown desired=${desired:-unavailable} running_pods=${running:-unavailable}"
+    fi
+    sleep 1
+  done
+  die "Scenario Kubernetes fault did not end before runtime removal"
+}
+
+restore_active_scenario_fault_state() {
+  local scenario_id="$1" expected_replicas="$2"
+  valid_scenario_id "${scenario_id}" || die "invalid active Scenario identity"
+  case "${expected_replicas}" in
+    1)
+      inject_scenario_fault
+      wait_for_scenario_evidence "${scenario_id}"
+      ;;
+    0)
+      note "restoring the recovered Scenario fault state after runtime reconciliation"
+      kube -n "${PROVIDER_NAMESPACE}" scale deployment/cloudops-scenario-fault --replicas=0 >/dev/null
+      for attempt in {1..120}; do
+        if [[ "$(scenario_fault_replicas)" == "0" && "$(scenario_fault_running_pods)" == "0" ]]; then
+          break
+        fi
+        if [[ "${attempt}" == "120" ]]; then
+          die "recovered Scenario fault state was not restored after local-up"
+        fi
+        sleep 1
+      done
+      ;;
+    *)
+      die "active Scenario fault state is invalid: replicas=${expected_replicas:-unavailable}"
+      ;;
+  esac
+  scenario_core_resources_ready "${scenario_id}" || die "active Scenario Kubernetes state was not restored after local-up"
+}
+
+wait_for_scenario_alert_resolution() {
+  local scenario_id="$1" provider_firing persisted_firing
+  for attempt in {1..180}; do
+    provider_firing="$(scenario_firing_alerts_strict "${scenario_id}" 2>/dev/null || printf 'unavailable')"
+    persisted_firing="$(scenario_persisted_firing_alerts "${scenario_id}" 2>/dev/null || printf 'unavailable')"
+    if [[ "${provider_firing}" == "0" && "${persisted_firing}" == "0" ]]; then
+      pass "Scenario Alert resolution delivered by Alertmanager and persisted by CloudOps"
+      return
+    fi
+    if ((attempt % 10 == 0)); then
+      note "waiting for Scenario Alert resolution provider=${provider_firing} persisted=${persisted_firing}"
+    fi
+    sleep 1
+  done
+  die "Scenario Alert did not resolve before runtime removal provider=${provider_firing} persisted=${persisted_firing}"
+}
+
+scenario_core_resources_ready() {
+  local scenario_id="$1" desired ready running item
+  for item in cloudops-scenario-healthy cloudops-scenario-traffic; do
+    desired="$(kube -n "${PROVIDER_NAMESPACE}" get deployment "${item}" -o jsonpath='{.spec.replicas}' 2>/dev/null || true)"
+    ready="$(kube -n "${PROVIDER_NAMESPACE}" get deployment "${item}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)"
+    [[ "${desired}" == "1" && "${ready}" == "1" ]] || return 1
+    [[ "$(kube -n "${PROVIDER_NAMESPACE}" get deployment "${item}" -o jsonpath='{.metadata.labels.cloudops\.io/scenario-id}' 2>/dev/null || true)" == "${scenario_id}" ]] || return 1
+  done
+  desired="$(scenario_fault_replicas)"
+  ready="$(kube -n "${PROVIDER_NAMESPACE}" get deployment cloudops-scenario-fault -o jsonpath='{.status.readyReplicas}' 2>/dev/null || true)"
+  running="$(scenario_fault_running_pods)"
+  [[ "$(kube -n "${PROVIDER_NAMESPACE}" get deployment cloudops-scenario-fault -o jsonpath='{.metadata.labels.cloudops\.io/scenario-id}' 2>/dev/null || true)" == "${scenario_id}" ]] || return 1
+  [[ "${desired}" == "0" || ("${desired}" == "1" && ("${ready}" == "" || "${ready}" == "0") && "${running}" =~ ^[0-9]+$ && "${running}" -ge 1) ]]
+}
+
+wait_for_scenario_evidence() {
+  local scenario_id="$1" metric_samples=0 firing_alerts=0 log_documents=0 traces=0
+  for attempt in {1..120}; do
+    metric_samples="$(scenario_metric_samples "${scenario_id}")"
+    firing_alerts="$(scenario_firing_alerts "${scenario_id}")"
+    log_documents="$(scenario_log_documents "${scenario_id}")"
+    traces="$(scenario_traces "${scenario_id}")"
+    if ((metric_samples >= 2 && firing_alerts >= 1 && log_documents >= 1 && traces >= 1)); then
+      pass "Scenario Evidence Plane ready metrics=${metric_samples} alerts=${firing_alerts} logs=${log_documents} traces=${traces}"
+      return
+    fi
+    if ((attempt % 10 == 0)); then
+      note "waiting for Scenario Evidence Plane metrics=${metric_samples} alerts=${firing_alerts} logs=${log_documents} traces=${traces}"
+    fi
+    sleep 1
+  done
+  die "Scenario Evidence Plane did not become ready metrics=${metric_samples} alerts=${firing_alerts} logs=${log_documents} traces=${traces}"
+}
+
+scenario_up() {
+  local scenario_id current_id helm_args
+  preflight
+  ensure_private_directories
+  ensure_cluster
+  ensure_namespaces
+  ensure_runtime_secrets
+  if release_scenario_active; then
+    current_id="$(release_scenario_id)"
+    valid_scenario_id "${current_id}" || die "active release has an invalid Scenario identity"
+    write_scenario_id "${current_id}"
+    note "Scenario is already active: ${current_id}"
+    start_port_forward
+    start_grafana_port_forward
+    start_tempo_port_forward
+    inject_scenario_fault
+    wait_for_scenario_evidence "${current_id}"
+    scenario_status
+    return
+  fi
+
+  build_application_images
+  load_runtime_images
+  if ! release_exists; then
+    install_runtime
+  fi
+  scenario_id="scenario-$(date -u +%Y%m%d%H%M%S)-$(openssl rand -hex 4)"
+  write_scenario_id "${scenario_id}"
+  helm_args=(
+    --kube-context "${KUBE_CONTEXT}"
+    --namespace "${NAMESPACE}"
+    --values "${VALUES_FILE}"
+    --timeout 12m
+  )
+  note "activating bounded Scenario ${scenario_id} in the canonical CloudOps release"
+  helm upgrade --install "${RELEASE_NAME}" "${CHART_DIR}" "${helm_args[@]}" \
+    --set scenario.enabled=true \
+    --set-string "scenario.id=${scenario_id}" \
+    --set-string worker.env.K8S_WRITE_ENABLED=true \
+    --wait --wait-for-jobs
+  kube -n "${NAMESPACE}" rollout status deployment/cloudops-api --timeout=5m
+  kube -n "${NAMESPACE}" rollout status deployment/cloudops-worker --timeout=5m
+  kube -n "${NAMESPACE}" rollout status deployment/prometheus --timeout=5m
+  kube -n "${NAMESPACE}" rollout status deployment/alertmanager --timeout=5m
+  kube -n "${PROVIDER_NAMESPACE}" rollout status deployment/cloudops-scenario-healthy --timeout=5m
+  kube -n "${PROVIDER_NAMESPACE}" rollout status deployment/cloudops-scenario-fault --timeout=5m
+  kube -n "${PROVIDER_NAMESPACE}" rollout status deployment/cloudops-scenario-traffic --timeout=5m
+  inject_scenario_fault
+  scenario_core_resources_ready "${scenario_id}" || die "Scenario Kubernetes resources are not ready"
+  start_port_forward
+  start_grafana_port_forward
+  start_tempo_port_forward
+  wait_for_scenario_evidence "${scenario_id}"
+  scenario_status
+}
+
+scenario_status() {
+  local scenario_id file_id write_gate resource_count fault_replicas fault_state stale_firing
+  local metric_samples firing_alerts log_documents traces agent_runs history failed=0
+  validate_fixed_boundaries
+  if ! context_exists || ! release_exists; then
+    printf 'scenario_state=unavailable\nreason=runtime_not_available\n'
+    return 1
+  fi
+  if ! release_scenario_active; then
+    printf 'scenario_state=inactive\nscenario_id=\nscenario_write_gate=false\n'
+    resource_count="$(kube -n "${PROVIDER_NAMESPACE}" get deployments,services,serviceaccounts -o json 2>/dev/null | jq -r '[.items[]? | select(.metadata.name | startswith("cloudops-scenario"))] | length')"
+    printf 'scenario_runtime_resources=%s\n' "${resource_count}"
+    stale_firing="$(scenario_stale_firing_alerts 2>/dev/null || printf 'unavailable')"
+    printf 'scenario_stale_firing_alerts=%s\n' "${stale_firing}"
+    [[ "${resource_count}" == "0" && "${stale_firing}" == "0" ]] || return 1
+    return
+  fi
+  scenario_id="$(release_scenario_id)"
+  valid_scenario_id "${scenario_id}" || die "active release has an invalid Scenario identity"
+  file_id="$(scenario_id_from_file 2>/dev/null || true)"
+  write_gate="$(kube -n "${NAMESPACE}" get deployment cloudops-worker -o json 2>/dev/null | jq -r '[.spec.template.spec.containers[0].env[] | select(.name=="K8S_WRITE_ENABLED") | .value][0] // "unavailable"')"
+  fault_replicas="$(scenario_fault_replicas)"
+  case "${fault_replicas}" in
+    1) fault_state=degraded ;;
+    0) fault_state=recovered ;;
+    *) fault_state=invalid; failed=1 ;;
+  esac
+  resource_count="$(kube -n "${PROVIDER_NAMESPACE}" get deployments,services,serviceaccounts -l "cloudops.io/scenario-id=${scenario_id}" --no-headers 2>/dev/null | wc -l)"
+  metric_samples="$(scenario_metric_samples "${scenario_id}")"
+  firing_alerts="$(scenario_firing_alerts "${scenario_id}")"
+  log_documents="$(scenario_log_documents "${scenario_id}")"
+  traces="$(scenario_traces "${scenario_id}")"
+  agent_runs="$(scenario_agent_runs "${scenario_id}" 2>/dev/null || printf '0')"
+  history="$(scenario_history_count "${scenario_id}" 2>/dev/null || printf '0')"
+  printf 'scenario_state=active\nscenario_id=%s\nscenario_fault_state=%s\nscenario_fault_replicas=%s\nscenario_write_gate=%s\nscenario_runtime_resources=%s\n' \
+    "${scenario_id}" "${fault_state}" "${fault_replicas:-unavailable}" "${write_gate}" "${resource_count}"
+  printf 'scenario_metrics_samples=%s\nscenario_firing_alerts=%s\nscenario_log_documents=%s\nscenario_traces=%s\nscenario_agent_runs=%s\nscenario_history_records=%s\n' \
+    "${metric_samples}" "${firing_alerts}" "${log_documents}" "${traces}" "${agent_runs}" "${history}"
+  if [[ "${file_id}" == "${scenario_id}" ]]; then
+    printf 'scenario_identity_file=PASS\n'
+  else
+    printf 'scenario_identity_file=FAIL\n'
+    failed=1
+  fi
+  if [[ "${write_gate}" == "true" ]]; then
+    printf 'scenario_write_boundary=PASS\n'
+  else
+    printf 'scenario_write_boundary=FAIL\n'
+    failed=1
+  fi
+  if scenario_core_resources_ready "${scenario_id}"; then
+    printf 'scenario_kubernetes=PASS\n'
+  else
+    printf 'scenario_kubernetes=FAIL\n'
+    failed=1
+  fi
+  if [[ "${fault_state}" == "degraded" ]]; then
+    if ((metric_samples >= 2)); then printf 'scenario_metrics=PASS\n'; else printf 'scenario_metrics=FAIL\n'; failed=1; fi
+    if ((firing_alerts >= 1)); then printf 'scenario_alert=PASS\n'; else printf 'scenario_alert=FAIL\n'; failed=1; fi
+  else
+    if ((metric_samples >= 1)); then printf 'scenario_metrics=PASS\n'; else printf 'scenario_metrics=FAIL\n'; failed=1; fi
+    if ((firing_alerts == 0)); then printf 'scenario_alert=PASS_RESOLVED\n'; else printf 'scenario_alert=PENDING_RESOLUTION\n'; fi
+  fi
+  if ((log_documents >= 1)); then printf 'scenario_logs=PASS\n'; else printf 'scenario_logs=FAIL\n'; failed=1; fi
+  if ((traces >= 1)); then printf 'scenario_traces=PASS\n'; else printf 'scenario_traces=FAIL\n'; failed=1; fi
+  if ((agent_runs >= 1)); then printf 'scenario_agent=PASS\n'; else printf 'scenario_agent=NOT_RUN\n'; fi
+  [[ "${failed}" == "0" ]] || return 1
+}
+
+scenario_down() {
+  local scenario_id history_before history_after write_gate remaining helm_args can_write
+  validate_fixed_boundaries
+  ensure_private_directories
+  context_exists || die "Kubernetes context is unavailable: ${KUBE_CONTEXT}"
+  release_exists || die "CloudOps release is unavailable; run make local-up"
+  if ! release_scenario_active; then
+    rm -f "${SCENARIO_ID_FILE}"
+    note "Scenario runtime is already inactive"
+    scenario_status
+    return
+  fi
+  scenario_id="$(release_scenario_id)"
+  valid_scenario_id "${scenario_id}" || die "active release has an invalid Scenario identity"
+  history_before="$(scenario_history_count "${scenario_id}" 2>/dev/null || printf '0')"
+  recover_scenario_fault_for_shutdown
+  wait_for_scenario_alert_resolution "${scenario_id}"
+  helm_args=(
+    --kube-context "${KUBE_CONTEXT}"
+    --namespace "${NAMESPACE}"
+    --values "${VALUES_FILE}"
+    --timeout 12m
+  )
+  note "deactivating bounded Scenario ${scenario_id}; retained history will not be deleted"
+  helm upgrade --install "${RELEASE_NAME}" "${CHART_DIR}" "${helm_args[@]}" \
+    --set scenario.enabled=false \
+    --set-string worker.env.K8S_WRITE_ENABLED=false \
+    --wait --wait-for-jobs
+  kube -n "${NAMESPACE}" rollout status deployment/cloudops-api --timeout=5m
+  kube -n "${NAMESPACE}" rollout status deployment/cloudops-worker --timeout=5m
+  remaining="$(kube -n "${PROVIDER_NAMESPACE}" get deployments,services,serviceaccounts -l "cloudops.io/scenario-id=${scenario_id}" --no-headers 2>/dev/null | wc -l)"
+  [[ "${remaining}" == "0" ]] || die "Scenario runtime resources remain after scenario-down: ${remaining}"
+  write_gate="$(kube -n "${NAMESPACE}" get deployment cloudops-worker -o json | jq -r '[.spec.template.spec.containers[0].env[] | select(.name=="K8S_WRITE_ENABLED") | .value][0] // "unavailable"')"
+  [[ "${write_gate}" == "false" ]] || die "Scenario write gate remained enabled after scenario-down"
+  can_write="$(kube auth can-i update deployments.apps/cloudops-scenario-fault --subresource=scale --as=system:serviceaccount:${NAMESPACE}:cloudops-worker -n "${PROVIDER_NAMESPACE}" 2>/dev/null || true)"
+  [[ "${can_write}" == "no" ]] || die "Scenario scale RBAC remained authorized after scenario-down"
+  history_after="$(scenario_history_count "${scenario_id}" 2>/dev/null || printf '0')"
+  ((history_after >= history_before)) || die "Scenario history was not retained after scenario-down"
+  rm -f "${SCENARIO_ID_FILE}"
+  pass "Scenario runtime removed write_gate=false retained_history_before=${history_before} retained_history_after=${history_after}"
+  scenario_status
 }
 
 port_forward_pid() {
@@ -693,14 +1148,37 @@ start_tempo_port_forward() {
 }
 
 local_up() {
+  local active_scenario_id="" active_scenario_fault_replicas="" release_values scenario_enabled
   preflight
   ensure_private_directories
   ensure_cluster
   ensure_namespaces
   ensure_runtime_secrets
+  if release_exists; then
+    release_values="$(release_scenario_json)" || die "failed to read the current release Scenario state"
+    scenario_enabled="$(jq -er '(.scenario.enabled // false) | if type == "boolean" then tostring else error("scenario.enabled must be boolean") end' <<<"${release_values}")" ||
+      die "current release has an invalid Scenario enabled state"
+    if [[ "${scenario_enabled}" == "true" ]]; then
+      active_scenario_id="$(jq -er '.scenario.id | select(type == "string" and length > 0)' <<<"${release_values}")" ||
+        die "active release is missing its Scenario identity"
+      valid_scenario_id "${active_scenario_id}" || die "active release has an invalid Scenario identity"
+      active_scenario_fault_replicas="$(scenario_fault_replicas)"
+      [[ "${active_scenario_fault_replicas}" == "0" || "${active_scenario_fault_replicas}" == "1" ]] ||
+        die "active release has an invalid Scenario fault state"
+    fi
+  fi
   build_application_images
   load_runtime_images
-  install_runtime
+  install_runtime "${active_scenario_id}"
+  if [[ -n "${active_scenario_id}" ]]; then
+    [[ "$(release_scenario_id)" == "${active_scenario_id}" ]] ||
+      die "local-up changed the active Scenario identity"
+    restore_active_scenario_fault_state "${active_scenario_id}" "${active_scenario_fault_replicas}"
+    write_scenario_id "${active_scenario_id}"
+    pass "active Scenario preserved across local-up: ${active_scenario_id}"
+  else
+    rm -f "${SCENARIO_ID_FILE}"
+  fi
   start_port_forward
   start_grafana_port_forward
   start_tempo_port_forward
@@ -1306,6 +1784,7 @@ print_status() {
   fi
   kube -n "${NAMESPACE}" get pvc -l app.kubernetes.io/instance="${RELEASE_NAME}" \
     -o custom-columns='PVC:.metadata.name,STATUS:.status.phase,CAPACITY:.status.capacity.storage' --no-headers 2>/dev/null || true
+  scenario_status || true
   backup_summary
 }
 
@@ -1570,7 +2049,7 @@ doctor() {
 }
 
 usage() {
-  printf 'usage: %s {up|open|status|logs [COMPONENT]|restart|doctor|down|backup|restore BACKUP|reset}\n' "$0" >&2
+  printf 'usage: %s {up|open|status|logs [COMPONENT]|restart|doctor|down|backup|restore BACKUP|reset|scenario-up|scenario-status|scenario-down}\n' "$0" >&2
   exit 2
 }
 
@@ -1587,5 +2066,8 @@ case "${1:-}" in
   backup) [[ "$#" == "1" ]] || usage; create_backup ;;
   restore) [[ "$#" == "2" ]] || usage; restore_backup "$2" ;;
   reset) [[ "$#" == "1" ]] || usage; local_reset ;;
+  scenario-up) [[ "$#" == "1" ]] || usage; scenario_up ;;
+  scenario-status) [[ "$#" == "1" ]] || usage; scenario_status ;;
+  scenario-down) [[ "$#" == "1" ]] || usage; scenario_down ;;
   *) usage ;;
 esac

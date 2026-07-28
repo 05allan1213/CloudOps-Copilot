@@ -1,36 +1,56 @@
-# Demonstration
+# Demonstration Scenario
 
-当前可演示范围是 Task 0 的本地 Incident baseline，不是完整 Observe-to-Verify Scenario。
+当前可重复演示的是同一 canonical CloudOps release 中的真实 bounded Scenario，不是 Compose、fixture 或旧 Golden harness。
 
-## Current workflow
+## 1. Start and inspect
 
 ```bash
 make local-up
-make local-status
+make scenario-up
+make scenario-status
 make local-open
 ```
 
-浏览器可在 loopback 打开保留的 Incident，查看 MySQL-backed Signal、Timeline、Evidence、Investigation、Remediation、Delivery 和 Verification projection。Network 必须只使用 `/api/v1`，无 login/session 请求。
+`scenario-status` 只有在 Kubernetes workload/traffic/fault、Prometheus sample、Alertmanager Alert、Elasticsearch Logs、Tempo Traces 与至少 1 个 Agent run 可见时才返回对应 `PASS`。Scenario identity 在 shell、Scope、Context Snapshot、Evidence 与 operation target 中保持一致。
 
-持久性演示：
+## 2. Browser flow
 
-```bash
-make local-restart
-make local-down
-make local-up
+在浏览器完成：
+
+```text
+Overview degradation
+  -> Alert detail
+  -> related Logs and exact Trace
+  -> Agent Investigation with provider Evidence
+  -> immutable Operation Plan
+  -> Owner review and exact Authorization
+  -> allowlisted recovery action
+  -> current Metrics / Alert / Kubernetes / Trace Verify
+  -> ResolutionReport and retained history
 ```
 
-以上操作应保留同一 Incident/Agent/Evidence 数据。备份与 restore 使用：
+DevOps Workspace 可展示 optional delivery branch，但 GitHub/Argo 不是核心恢复前置。未配置的外部分支显示 `NOT RUN`。
+
+## 3. Stop without deleting history
 
 ```bash
-make local-backup
-make local-restore BACKUP=.cloudops/backups/<backup-id>
+make scenario-down
+make scenario-status
 ```
 
-## Not implemented yet
+成功结果必须包含：
 
-实施规范中的 `scenario-up`、`scenario-status`、`scenario-down`，以及真实 Kubernetes fault、Metrics/Alerts/Logs/Traces、Agent、Owner-authorized recovery 和 Verify 主链属于 Task 9 与其前置任务。当前 Makefile 没有这些入口，不能使用旧脚本、Compose、fixture、静态截图或历史 Golden 报告替代。
+```text
+scenario_state=inactive
+scenario_write_gate=false
+scenario_runtime_resources=0
+scenario_stale_firing_alerts=0
+```
 
-GitHub/Argo/Registry/LLM 等外部系统默认关闭。任何需要 secret、human merge、PR、Registry publish 或外部 mutation 的演示都必须在对应任务获得明确权限并产生当前 exact-worktree 证据；否则结果是 `NOT RUN`。
+浏览器随后回到 Live Mode，不显示 `Scenario Active` 或 `cloudops-scenario-*` runtime；retained Incident/Alert/Investigation/Plan/Verification history 仍可审计。
 
-当前验收记录见 [实施状态](evidence/cloudops-implementation-status.md)。
+## 4. Evidence boundary
+
+当前验收对象为 Scenario `scenario-20260728045922-4c81122b`；对象 ID、视口、截图、console/network、性能、accessibility 与 cleanup 结果见 [Phase 9 最终证据](evidence/phase-9-scenario/final-evidence-report.md)。
+
+GitHub App write、human merge、Argo exact revision、hosted Actions、Registry publish/sign/attest、staging 与 production 均未由该 Scenario 隐式执行，保持 `NOT RUN`。

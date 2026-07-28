@@ -484,25 +484,25 @@ onBeforeUnmount(() => {
     <template v-else>
       <section class="telemetry-query-band" aria-label="Trace 搜索">
         <div class="context-controls">
-          <label><span>Namespace</span><select v-model="selectedNamespace" name="traces-namespace" @change="changeNamespace"><option v-for="namespace in namespaces" :key="namespace" :value="namespace">{{ namespace }}</option></select></label>
-          <label class="workload-control"><span>Workload</span><select v-model="selectedResourceID" name="traces-workload" @change="changeResource"><option v-for="resource in namespaceWorkloads" :key="resource.id" :value="resource.id">{{ resource.kind }} · {{ resource.name }}</option></select></label>
+          <label><span>Namespace</span><select v-model="selectedNamespace" name="traces-namespace" autocomplete="off" @change="changeNamespace"><option v-for="namespace in namespaces" :key="namespace" :value="namespace">{{ namespace }}</option></select></label>
+          <label class="workload-control"><span>Workload</span><select v-model="selectedResourceID" name="traces-workload" autocomplete="off" @change="changeResource"><option v-for="resource in namespaceWorkloads" :key="resource.id" :value="resource.id">{{ resource.kind }} · {{ resource.name }}</option></select></label>
           <div class="field-group"><span>查询模式</span><div class="segmented-control" role="group" aria-label="Trace 查询模式"><button type="button" :aria-pressed="mode === 'guided'" @click="mode = 'guided'">引导</button><button type="button" :aria-pressed="mode === 'expert'" @click="mode = 'expert'">Expert</button></div></div>
         </div>
 
         <div v-if="mode === 'guided'" class="guided-grid trace-guided-grid">
           <label><span>Service</span><input v-model="serviceFilter" name="trace-service" type="search" autocomplete="off" placeholder="例如：cloudops-api…" /></label>
           <label><span>Operation</span><input v-model="operationFilter" name="trace-operation" type="search" autocomplete="off" placeholder="例如：GET /readyz…" /></label>
-          <label><span>Status</span><select v-model="statusFilter" name="trace-status"><option value="">全部</option><option value="error">Error</option><option value="ok">OK</option></select></label>
+          <label><span>Status</span><select v-model="statusFilter" name="trace-status" autocomplete="off"><option value="">全部</option><option value="error">Error</option><option value="ok">OK</option></select></label>
           <label><span>最短耗时（ms）</span><input v-model.number="minDuration" name="trace-min-duration" type="number" inputmode="numeric" autocomplete="off" min="0" /></label>
           <label><span>最长耗时（ms）</span><input v-model.number="maxDuration" name="trace-max-duration" type="number" inputmode="numeric" autocomplete="off" min="0" /></label>
         </div>
-        <label v-else class="expert-editor"><span>TraceQL span selector</span><textarea v-model="expertQuery" name="trace-expert-query" rows="5" spellcheck="false" /></label>
+        <label v-else class="expert-editor"><span>TraceQL span selector</span><textarea v-model="expertQuery" name="trace-expert-query" autocomplete="off" rows="5" spellcheck="false" /></label>
 
         <div class="time-controls">
           <div class="preset-control" role="group" aria-label="Trace 时间范围快捷选择"><button type="button" @click="selectPreset(15)">15m</button><button type="button" @click="selectPreset(60)">1h</button><button type="button" @click="selectPreset(360)">6h</button></div>
           <label><span>开始</span><input v-model="fromValue" name="traces-from" type="datetime-local" autocomplete="off" /></label>
           <label><span>结束</span><input v-model="toValue" name="traces-to" type="datetime-local" autocomplete="off" /></label>
-          <label><span>上限</span><select v-model.number="limit" name="traces-limit"><option :value="1">1</option><option :value="50">50</option><option :value="100">100</option><option :value="200">200</option></select></label>
+          <label><span>上限</span><select v-model.number="limit" name="traces-limit" autocomplete="off"><option :value="1">1</option><option :value="50">50</option><option :value="100">100</option><option :value="200">200</option></select></label>
         </div>
 
         <div class="query-actions">
@@ -533,7 +533,7 @@ onBeforeUnmount(() => {
               <div class="waterfall" role="list" aria-label="Trace waterfall">
                 <div class="waterfall-header" aria-hidden="true"><span>Span</span><span>0 → {{ formatDuration(detail.duration_ms) }}</span><span>耗时</span></div>
                 <div v-for="span in detail.spans" :key="span.span_id" class="waterfall-row" :class="{ active: inspectedSpan?.span_id === span.span_id }" :style="{ '--span-depth': span.depth }" role="listitem">
-                  <label class="span-label"><input type="checkbox" :checked="selectedSpanIDs.has(span.span_id)" :aria-label="`选择 span ${span.name}`" @change="toggleSpan(span.span_id)" /><span class="span-copy"><strong>{{ span.name }}</strong><small>{{ span.service }}</small></span></label>
+                  <label class="span-label"><input type="checkbox" autocomplete="off" :checked="selectedSpanIDs.has(span.span_id)" :aria-label="`选择 span ${span.name}`" @change="toggleSpan(span.span_id)" /><span class="span-copy"><strong>{{ span.name }}</strong><small>{{ span.service }}</small></span></label>
                   <button class="waterfall-inspect" type="button" :aria-label="`检查 span ${span.name}`" @click="inspectSpan(span)"><span class="span-track" aria-hidden="true"><i class="span-bar" :class="{ 'is-error': span.status === 'error', 'is-critical': span.critical_path }" :style="spanStyle(span)" /></span><span class="span-duration">{{ formatDuration(span.duration_ms) }}</span></button>
                 </div>
               </div>

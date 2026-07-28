@@ -1169,7 +1169,15 @@ paths:
       description: Durable Alert and Incident Investigation history.
       parameters: [{ $ref: "#/components/parameters/Limit" }]
       responses:
-        "200": { description: Investigation summaries }
+        "200":
+          description: Investigation summaries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/AgentRun" } }
         "501": { $ref: "#/components/responses/Problem" }
         default: { $ref: "#/components/responses/Problem" }
   /api/v1/agent/investigations/{id}:
@@ -1178,7 +1186,7 @@ paths:
       operationId: getAgentInvestigation
       description: Exact Investigation with immutable context, bounded tool progress, Evidence citations, and outcome.
       responses:
-        "200": { description: Investigation detail }
+        "200": { description: Investigation detail, content: { application/json: { schema: { $ref: "#/components/schemas/AgentRun" } } } }
         "404": { $ref: "#/components/responses/Problem" }
         "501": { $ref: "#/components/responses/Problem" }
         default: { $ref: "#/components/responses/Problem" }
@@ -1397,7 +1405,15 @@ paths:
       description: Immutable high-impact Operation Plans and exact authorization state.
       parameters: [{ $ref: "#/components/parameters/Limit" }]
       responses:
-        "200": { description: Operation Plan page }
+        "200":
+          description: Operation Plan page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/OperationPlan" } }
         "501": { $ref: "#/components/responses/Problem" }
         default: { $ref: "#/components/responses/Problem" }
     post:
@@ -1406,9 +1422,9 @@ paths:
       parameters: [{ $ref: "#/components/parameters/Origin" }]
       requestBody:
         required: true
-        content: { application/json: { schema: { type: object } } }
+        content: { application/json: { schema: { $ref: "#/components/schemas/ScenarioScaleOperationPlanProposal" } } }
       responses:
-        "201": { description: Immutable high-impact Operation Plan }
+        "201": { description: Immutable high-impact Operation Plan, content: { application/json: { schema: { $ref: "#/components/schemas/OperationPlan" } } } }
         "403": { $ref: "#/components/responses/Problem" }
         "422": { $ref: "#/components/responses/Problem" }
         default: { $ref: "#/components/responses/Problem" }
@@ -1418,7 +1434,7 @@ paths:
       operationId: getAgentOperationPlan
       description: Exact high-impact Operation Plan and authorization state.
       responses:
-        "200": { description: Operation Plan detail }
+        "200": { description: Operation Plan detail, content: { application/json: { schema: { $ref: "#/components/schemas/OperationPlan" } } } }
         "404": { $ref: "#/components/responses/Problem" }
         "501": { $ref: "#/components/responses/Problem" }
         default: { $ref: "#/components/responses/Problem" }
@@ -1867,6 +1883,16 @@ components:
         reason: { type: string, maxLength: 128 }
         message: { type: string, maxLength: 512 }
         last_transition_time: { type: string, format: date-time }
+    KubernetesWorkloadStatus:
+      type: object
+      additionalProperties: false
+      required: [desired_replicas, updated_replicas, ready_replicas, available_replicas, observed_generation]
+      properties:
+        desired_replicas: { type: integer, minimum: 0 }
+        updated_replicas: { type: integer, minimum: 0 }
+        ready_replicas: { type: integer, minimum: 0 }
+        available_replicas: { type: integer, minimum: 0 }
+        observed_generation: { type: integer, minimum: 0 }
     KubernetesContextLink:
       type: object
       additionalProperties: false
@@ -1893,7 +1919,10 @@ components:
         layer: { type: string, enum: [namespace, service, workload, pod, node, gateway] }
         namespace: { type: string, maxLength: 253 }
         name: { type: string, maxLength: 253 }
+        resource_version: { type: string, minLength: 1, maxLength: 128 }
+        generation: { type: integer, minimum: 0 }
         status: { type: string, maxLength: 128 }
+        workload: { $ref: "#/components/schemas/KubernetesWorkloadStatus" }
         health: { $ref: "#/components/schemas/KubernetesResourceHealth" }
         owner_references:
           type: array
@@ -3392,6 +3421,148 @@ components:
         decision: { type: string, enum: [verify_recovery] }
         expected_version: { type: integer, minimum: 1 }
         reason: { type: string, minLength: 1, maxLength: 1024 }
+    AgentRun:
+      type: object
+      description: Durable Agent run projection. Scenario identity is inherited from the immutable Context Snapshot.
+      required: [id, subject_type, configuration_revision_id, context_snapshot_id, status, uncertainty, objective, prompt_version, created_at, updated_at, evidence_count, steps, evidence_citations, guidance_citations, action_cards, operation_plans]
+      properties:
+        id: { type: string, format: uuid }
+        subject_type: { type: string, enum: [alert, incident, consultation] }
+        alert_id: { type: string, format: uuid }
+        incident_id: { type: string, format: uuid }
+        consultation_id: { type: string, format: uuid }
+        configuration_revision_id: { type: string, format: uuid }
+        context_snapshot_id: { type: string, format: uuid }
+        scenario_id: { type: string, pattern: "^scenario-[a-z0-9]([-a-z0-9]*[a-z0-9])?$", maxLength: 63 }
+        status: { type: string, enum: [pending, running, completed, failed, cancelled] }
+        outcome: { type: string, enum: [diagnosed, insufficient, cancelled, failed] }
+        uncertainty: { type: string }
+        objective: { type: string }
+        answer: { type: string }
+        model_provider: { type: string }
+        actual_model: { type: string }
+        prompt_version: { type: string }
+        tool_schema_version: { type: string }
+        failure_code: { type: string }
+        failure_summary: { type: string }
+        cancel_requested_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        evidence_count: { type: integer, minimum: 0 }
+        steps: { type: array, items: { type: object } }
+        evidence_citations: { type: array, items: { type: object } }
+        guidance_citations: { type: array, items: { type: object } }
+        action_cards: { type: array, items: { type: object } }
+        operation_plans: { type: array, items: { $ref: "#/components/schemas/OperationPlan" } }
+    OperationTarget:
+      type: object
+      additionalProperties: false
+      required: [cluster_id, environment, namespace, workload_kind, workload_name]
+      properties:
+        cluster_id: { type: string, minLength: 1, maxLength: 128 }
+        environment: { type: string, minLength: 1, maxLength: 64 }
+        namespace: { type: string, minLength: 1, maxLength: 63 }
+        workload_kind: { type: string, enum: [Deployment] }
+        workload_name: { type: string, minLength: 1, maxLength: 253 }
+        scenario_id: { type: string, pattern: "^scenario-[a-z0-9]([-a-z0-9]*[a-z0-9])?$", maxLength: 63 }
+    ScenarioOperationTarget:
+      allOf:
+        - { $ref: "#/components/schemas/OperationTarget" }
+        - type: object
+          required: [scenario_id]
+          properties:
+            cluster_id: { type: string, const: cloudops-local }
+            environment: { type: string, const: local }
+            namespace: { type: string, const: demo }
+            workload_kind: { type: string, const: Deployment }
+            workload_name: { type: string, const: cloudops-scenario-fault }
+    ScenarioScaleOperationPlanProposal:
+      type: object
+      additionalProperties: false
+      required: [run_id, action_type, target, parameters, intended_state, preconditions, risk, verification_intent, expires_at]
+      properties:
+        run_id: { type: string, format: uuid }
+        action_type: { type: string, const: kubernetes.deployment.scale }
+        target: { $ref: "#/components/schemas/ScenarioOperationTarget" }
+        parameters:
+          type: object
+          additionalProperties: false
+          required: [replicas]
+          properties: { replicas: { type: integer, const: 0 } }
+        intended_state:
+          type: object
+          additionalProperties: false
+          required: [replicas]
+          properties: { replicas: { type: integer, const: 0 } }
+        preconditions:
+          type: array
+          minItems: 3
+          maxItems: 3
+          prefixItems:
+            - type: object
+              additionalProperties: false
+              required: [type, expected_replicas]
+              properties:
+                type: { type: string, const: deployment.replicas }
+                expected_replicas: { type: integer, const: 1 }
+            - type: object
+              additionalProperties: false
+              required: [type, expected_resource_version]
+              properties:
+                type: { type: string, const: deployment.resource_version }
+                expected_resource_version: { type: string, minLength: 1, maxLength: 128 }
+            - type: object
+              additionalProperties: false
+              required: [type, expected_enabled, expected_version]
+              properties:
+                type: { type: string, const: local.change_freeze }
+                expected_enabled: { type: boolean, const: false }
+                expected_version: { type: integer, minimum: 0 }
+        risk: { type: string, minLength: 1, maxLength: 2048 }
+        verification_intent:
+          type: object
+          additionalProperties: false
+          required: [type, expected_replicas]
+          properties:
+            type: { type: string, const: kubernetes.deployment.scale }
+            expected_replicas: { type: integer, const: 0 }
+        expires_at: { type: string, format: date-time }
+    ActionAuthorization:
+      type: object
+      additionalProperties: false
+      required: [id, subject_type, subject_id, authorized_content_hash, authorized_by, reason, expires_at, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        subject_type: { type: string, enum: [action_card, operation_plan] }
+        subject_id: { type: string, format: uuid }
+        authorized_content_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+        authorized_by: { type: string }
+        reason: { type: string }
+        expires_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+    OperationPlan:
+      type: object
+      additionalProperties: false
+      required: [id, run_id, configuration_revision_id, authority, operation_type, target, parameters, intended_state, preconditions, risk, verification_intent, content_hash, status, expires_at, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        run_id: { type: string, format: uuid }
+        configuration_revision_id: { type: string, format: uuid }
+        authority: { type: string, const: high_impact }
+        operation_type: { type: string }
+        target: { $ref: "#/components/schemas/OperationTarget" }
+        parameters: { type: object }
+        intended_state: { type: object }
+        preconditions: { type: array, items: { type: object } }
+        risk: { type: string }
+        verification_intent: { type: object }
+        content_hash: { type: string, pattern: "^[0-9a-f]{64}$" }
+        status: { type: string, enum: [proposed, authorized, expired, cancelled] }
+        expires_at: { type: string, format: date-time }
+        authorization: { $ref: "#/components/schemas/ActionAuthorization" }
+        created_at: { type: string, format: date-time }
     ExactAuthorization:
       type: object
       additionalProperties: false
@@ -3468,7 +3639,7 @@ components:
       description: Durable DevOps projection. Operation Plan and Action Card objects retain their Agent authority schema.
       required: [operation_plans, action_cards, executions, change_freezes, change_candidates, deployment_baselines, deliveries, providers, collected_at]
       properties:
-        operation_plans: { type: array, items: { type: object } }
+        operation_plans: { type: array, items: { $ref: "#/components/schemas/OperationPlan" } }
         action_cards: { type: array, items: { type: object } }
         executions: { type: array, items: { $ref: "#/components/schemas/OperationExecution" } }
         change_freezes: { type: array, items: { $ref: "#/components/schemas/ChangeFreezeState" } }
@@ -3482,16 +3653,7 @@ components:
       additionalProperties: false
       required: [target, enabled, reason, row_version]
       properties:
-        target:
-          type: object
-          additionalProperties: false
-          required: [cluster_id, environment, namespace, workload_kind, workload_name]
-          properties:
-            cluster_id: { type: string }
-            environment: { type: string }
-            namespace: { type: string }
-            workload_kind: { type: string, enum: [Deployment] }
-            workload_name: { type: string }
+        target: { $ref: "#/components/schemas/OperationTarget" }
         enabled: { type: boolean }
         reason: { type: string }
         row_version: { type: integer, minimum: 0 }

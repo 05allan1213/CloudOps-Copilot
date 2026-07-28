@@ -62,6 +62,10 @@ spec:
             - name: {{ $name }}
               value: {{ $value | quote }}
             {{- end }}
+            - name: SCENARIO_STATE
+              value: {{ ternary "active" "inactive" .Values.scenario.enabled | quote }}
+            - name: SCENARIO_ID
+              value: {{ .Values.scenario.id | quote }}
             {{- range $name, $filename := .Values.worker.credentials.files }}
             - name: {{ $name }}
               value: {{ printf "%s/%s" $.Values.worker.credentials.mountPath $filename | quote }}

@@ -40,6 +40,7 @@ input,
 select,
 textarea {
   touch-action: manipulation;
+  -webkit-tap-highlight-color: rgba(113, 169, 255, 0.2);
 }
 
 a {
@@ -151,6 +152,14 @@ pre,
 }
 
 @media (max-width: 767px) {
+  button,
+  select,
+  textarea,
+  input:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]) {
+    min-width: 44px;
+    min-height: 44px !important;
+  }
+
   .el-button,
   .el-input__wrapper,
   .el-select__wrapper {

@@ -129,6 +129,25 @@ func TestOpenAPICommandAndSafetyContractsMatchRuntime(t *testing.T) {
 			}
 		}
 	}
+	proposal := document.Paths["/api/v1/operation-plans"].Post
+	if proposal == nil {
+		t.Fatal("Scenario Operation Plan proposal endpoint is missing")
+	}
+	if got := proposal.RequestBody.Content[JSONMediaType].Schema.Ref; got != "#/components/schemas/ScenarioScaleOperationPlanProposal" {
+		t.Fatalf("Operation Plan proposal schema=%q", got)
+	}
+	for schemaName, fields := range map[string][]string{
+		"AgentRun":           {"scenario_id"},
+		"OperationTarget":    {"scenario_id"},
+		"KubernetesResource": {"resource_version", "generation", "workload"},
+	} {
+		schema := document.Components.Schemas[schemaName]
+		for _, field := range fields {
+			if schema.Properties[field] == nil {
+				t.Errorf("schema %s is missing Phase 9 field %s", schemaName, field)
+			}
+		}
+	}
 	assertSchemaMatchesJSONFields(t, document.Components.Schemas["Incident"], reflect.TypeOf(IncidentView{}))
 	assertSchemaMatchesJSONFields(t, document.Components.Schemas["Resource"], reflect.TypeOf(ResourceView{}))
 }

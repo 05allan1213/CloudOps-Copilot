@@ -16,6 +16,11 @@ images:
     tag: local
     digest: ""
     pullPolicy: IfNotPresent
+  demo:
+    repository: cloudops-demo
+    tag: local
+    digest: ""
+    pullPolicy: IfNotPresent
 
 # Shared non-secret process configuration. Database users and passwords remain
 # workload scoped and are read from pre-created Secrets.
@@ -154,6 +159,19 @@ worker:
     limits:
       cpu: 500m
       memory: 256Mi
+
+scenario:
+  enabled: false
+  id: ""
+  namespace: demo
+  trafficInterval: 1s
+  resources:
+    requests:
+      cpu: 10m
+      memory: 24Mi
+    limits:
+      cpu: 100m
+      memory: 96Mi
 
 observability:
   enabled: false

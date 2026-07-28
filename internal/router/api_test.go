@@ -83,7 +83,6 @@ func newTestRouter(t *testing.T, maxBodyBytes int64) *gin.Engine {
 	cfg := config.Load()
 	cfg.RateLimit.Enabled = false
 	cfg.StaticDir = ""
-	cfg.FastDemoEnabled = false
 	cfg.GlobalMaxBodyBytes = maxBodyBytes
 	engine, err := NewRouter(cfg, Dependencies{Metrics: middleware.NewMetrics(), Handler: &handler.Handler{}})
 	if err != nil {

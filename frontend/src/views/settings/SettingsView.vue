@@ -506,7 +506,7 @@ onBeforeUnmount(() => {
         </dl>
       </section>
 
-      <form id="settings-form" novalidate @submit.prevent="runValidation">
+      <form id="settings-form" autocomplete="off" novalidate @submit.prevent="runValidation">
         <section id="operational-scope" class="settings-section" aria-labelledby="scope-heading">
           <header>
             <div><p class="eyebrow">Scope</p><h2 id="scope-heading">Operational Scope</h2></div>
@@ -562,13 +562,13 @@ onBeforeUnmount(() => {
         <section class="settings-section" aria-labelledby="bounds-heading">
           <header><div><p class="eyebrow">Bounds</p><h2 id="bounds-heading">查询与保留</h2></div></header>
           <div class="form-grid form-grid--three">
-            <label><span>最大回看时间（秒）</span><input v-model.number="draft.general.query_max_lookback_seconds" data-field="general.query_max_lookback_seconds" name="query_max_lookback_seconds" type="number" inputmode="numeric" min="60" max="2592000"></label>
-            <label><span>查询结果上限</span><input v-model.number="draft.general.query_max_results" data-field="general.query_max_results" name="query_max_results" type="number" inputmode="numeric" min="1" max="10000"></label>
-            <label><span>Telemetry 保留天数</span><input v-model.number="draft.general.telemetry_retention_days" data-field="general.telemetry_retention_days" name="telemetry_retention_days" type="number" inputmode="numeric" min="1" max="365"></label>
+            <label><span>最大回看时间（秒）</span><input v-model.number="draft.general.query_max_lookback_seconds" data-field="general.query_max_lookback_seconds" name="query_max_lookback_seconds" type="number" inputmode="numeric" autocomplete="off" min="60" max="2592000"></label>
+            <label><span>查询结果上限</span><input v-model.number="draft.general.query_max_results" data-field="general.query_max_results" name="query_max_results" type="number" inputmode="numeric" autocomplete="off" min="1" max="10000"></label>
+            <label><span>Telemetry 保留天数</span><input v-model.number="draft.general.telemetry_retention_days" data-field="general.telemetry_retention_days" name="telemetry_retention_days" type="number" inputmode="numeric" autocomplete="off" min="1" max="365"></label>
           </div>
           <div class="toggle-row">
-            <label><input v-model="draft.general.browser_notifications_enabled" name="browser_notifications_enabled" type="checkbox" @change="handleBrowserNotificationToggle"><span>浏览器提醒</span></label>
-            <label><input v-model="draft.general.automatic_escalation_enabled" data-field="general.automatic_escalation_enabled" name="automatic_escalation_enabled" type="checkbox"><span>自动 escalation</span></label>
+            <label><input v-model="draft.general.browser_notifications_enabled" name="browser_notifications_enabled" type="checkbox" autocomplete="off" @change="handleBrowserNotificationToggle"><span>浏览器提醒</span></label>
+            <label><input v-model="draft.general.automatic_escalation_enabled" data-field="general.automatic_escalation_enabled" name="automatic_escalation_enabled" type="checkbox" autocomplete="off"><span>自动 escalation</span></label>
           </div>
           <ul v-if="validation?.errors.some((item) => item.field.startsWith('general.'))" class="field-error-list">
             <li v-for="item in validation.errors.filter((candidate) => candidate.field.startsWith('general.'))" :key="`${item.field}-${item.code}`"><code>{{ item.code }}</code> {{ item.message }}</li>
@@ -594,7 +594,7 @@ onBeforeUnmount(() => {
             <article v-for="(policy, index) in draft.escalation_policies" :key="policy.id || `draft-policy-${index}`" class="policy-item">
               <header>
                 <label class="policy-toggle">
-                  <input v-model="policy.enabled" :name="`policy_${index}_enabled`" type="checkbox">
+                  <input v-model="policy.enabled" :name="`policy_${index}_enabled`" type="checkbox" autocomplete="off">
                   <span>{{ policy.enabled ? "已启用" : "已停用" }}</span>
                 </label>
                 <span class="policy-action">创建 Incident</span>
@@ -606,10 +606,10 @@ onBeforeUnmount(() => {
                 <label class="span-two"><span>Policy 名称</span><input v-model="policy.name" :data-field="`escalation_policies.${index}.name`" :name="`policy_${index}_name`" type="text" maxlength="128" autocomplete="off" placeholder="例如：production critical…"></label>
                 <fieldset class="span-two severity-picker" :data-field="`escalation_policies.${index}.severities`">
                   <legend>Severity</legend>
-                  <label v-for="severity in severityOptions" :key="severity"><input v-model="policy.severities" :name="`policy_${index}_severity`" type="checkbox" :value="severity"><span>{{ severity }}</span></label>
+                  <label v-for="severity in severityOptions" :key="severity"><input v-model="policy.severities" :name="`policy_${index}_severity`" type="checkbox" autocomplete="off" :value="severity"><span>{{ severity }}</span></label>
                 </fieldset>
-                <label><span>持续 firing（秒）</span><input v-model.number="policy.minimum_firing_seconds" :data-field="`escalation_policies.${index}.minimum_firing_seconds`" :name="`policy_${index}_duration`" type="number" inputmode="numeric" min="0" max="604800"></label>
-                <label><span>最小复发次数</span><input v-model.number="policy.minimum_recurrence_count" :data-field="`escalation_policies.${index}.minimum_recurrence_count`" :name="`policy_${index}_recurrence`" type="number" inputmode="numeric" min="1" max="100"></label>
+                <label><span>持续 firing（秒）</span><input v-model.number="policy.minimum_firing_seconds" :data-field="`escalation_policies.${index}.minimum_firing_seconds`" :name="`policy_${index}_duration`" type="number" inputmode="numeric" autocomplete="off" min="0" max="604800"></label>
+                <label><span>最小复发次数</span><input v-model.number="policy.minimum_recurrence_count" :data-field="`escalation_policies.${index}.minimum_recurrence_count`" :name="`policy_${index}_recurrence`" type="number" inputmode="numeric" autocomplete="off" min="1" max="100"></label>
                 <label class="span-two"><span>Namespaces（逗号分隔，留空表示不限）</span><input :value="policy.namespaces.join(', ')" :data-field="`escalation_policies.${index}.namespaces`" :name="`policy_${index}_namespaces`" type="text" autocomplete="off" spellcheck="false" placeholder="例如：production, payments…" @input="updatePolicyNamespaces(index, $event)"></label>
                 <label class="span-two"><span>Exact label matchers（每行 name=value）</span><textarea :value="policyMatchersText(policy)" :data-field="`escalation_policies.${index}.label_matchers`" :name="`policy_${index}_matchers`" rows="3" autocomplete="off" spellcheck="false" placeholder="team=platform&#10;service=checkout" @input="updatePolicyMatchers(index, $event)"></textarea></label>
               </div>
@@ -629,13 +629,13 @@ onBeforeUnmount(() => {
             <article v-for="item in draft.providers" :key="item.provider" class="provider-item">
               <header>
                 <div><strong>{{ providerLabels[item.provider] }}</strong><span class="mono-text">{{ item.provider }}</span></div>
-                <label class="provider-toggle"><input v-model="item.enabled" :name="`${item.provider}_enabled`" type="checkbox"><span>{{ item.enabled ? "已启用" : "已停用" }}</span></label>
+                <label class="provider-toggle"><input v-model="item.enabled" :name="`${item.provider}_enabled`" type="checkbox" autocomplete="off"><span>{{ item.enabled ? "已启用" : "已停用" }}</span></label>
               </header>
               <div class="form-grid form-grid--provider">
                 <label class="span-two"><span>Endpoint</span><input v-model="item.endpoint" :data-field="providerField(item.provider, 'endpoint')" :name="`${item.provider}_endpoint`" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="例如：https://provider.example…"></label>
                 <label v-if="item.provider === 'llm'" class="span-two"><span>Model</span><input v-model="item.model" :data-field="providerField(item.provider, 'model')" name="llm_model" type="text" autocomplete="off" spellcheck="false" placeholder="例如：deepseek-chat…"></label>
-                <label><span>Timeout（ms）</span><input v-model.number="item.timeout_ms" :data-field="providerField(item.provider, 'timeout_ms')" :name="`${item.provider}_timeout_ms`" type="number" inputmode="numeric" min="1000" max="60000"></label>
-                <label><span>结果上限</span><input v-model.number="item.max_results" :data-field="providerField(item.provider, 'max_results')" :name="`${item.provider}_max_results`" type="number" inputmode="numeric" min="1" max="10000"></label>
+                <label><span>Timeout（ms）</span><input v-model.number="item.timeout_ms" :data-field="providerField(item.provider, 'timeout_ms')" :name="`${item.provider}_timeout_ms`" type="number" inputmode="numeric" autocomplete="off" min="1000" max="60000"></label>
+                <label><span>结果上限</span><input v-model.number="item.max_results" :data-field="providerField(item.provider, 'max_results')" :name="`${item.provider}_max_results`" type="number" inputmode="numeric" autocomplete="off" min="1" max="10000"></label>
                 <label class="span-two"><span>Context Link base</span><input v-model="item.context_link_base" :data-field="providerField(item.provider, 'context_link_base')" :name="`${item.provider}_context_link_base`" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="例如：https://console.example…"></label>
               </div>
               <ul v-if="validation?.errors.some((errorItem) => errorItem.field.startsWith(`providers.${item.provider}`))" class="field-error-list">
@@ -764,7 +764,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .scope-item { display: grid; min-width: 0; gap: var(--co-space-4); padding: var(--co-space-4); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-panel); background: var(--co-bg-surface); }
 .scope-item.is-default { border-color: var(--co-status-info-border); }
 .scope-item > header { display: flex; min-height: 36px; align-items: center; gap: var(--co-space-3); padding-bottom: var(--co-space-3); border-bottom: 1px solid var(--co-border-default); }
-.scope-default { display: inline-flex; min-height: 36px; align-items: center; gap: var(--co-space-2); color: var(--co-text-primary); cursor: pointer; font-size: 12px; font-weight: 750; }
+.scope-default { display: inline-flex; min-height: 44px; align-items: center; gap: var(--co-space-2); color: var(--co-text-primary); cursor: pointer; font-size: 12px; font-weight: 750; }
 .active-scope-state { margin-left: auto; padding: 3px var(--co-space-2); border: 1px solid var(--co-status-success-border); border-radius: var(--co-radius-pill); color: var(--co-status-success-fg); background: var(--co-status-success-bg); font-size: 10px; font-weight: 750; }
 .scope-remove { display: grid; width: 36px; height: 36px; flex: 0 0 36px; place-items: center; margin-left: auto; padding: 0; border: 1px solid transparent; border-radius: var(--co-radius-control); color: var(--co-text-muted); background: transparent; cursor: pointer; }
 .active-scope-state + .scope-remove { margin-left: 0; }
@@ -784,12 +784,12 @@ input[type="checkbox"], input[type="radio"] { width: 18px; min-height: 18px; pad
 .policy-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--co-space-4); }
 .policy-item { display: grid; min-width: 0; align-content: start; gap: var(--co-space-4); padding: var(--co-space-4); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-panel); background: var(--co-bg-surface); }
 .policy-item > header { display: flex; min-height: 36px; align-items: center; gap: var(--co-space-3); padding-bottom: var(--co-space-3); border-bottom: 1px solid var(--co-border-default); }
-.policy-toggle { display: inline-flex; min-height: 36px; align-items: center; gap: var(--co-space-2); color: var(--co-text-primary); cursor: pointer; font-size: 12px; font-weight: 750; }
+.policy-toggle { display: inline-flex; min-height: 44px; align-items: center; gap: var(--co-space-2); color: var(--co-text-primary); cursor: pointer; font-size: 12px; font-weight: 750; }
 .policy-action { margin-left: auto; padding: 3px var(--co-space-2); border: 1px solid var(--co-status-info-border); border-radius: var(--co-radius-pill); color: var(--co-status-info-fg); background: var(--co-status-info-bg); font-size: 10px; font-weight: 750; }
 .policy-action + .scope-remove { margin-left: 0; }
 .severity-picker { min-width: 0; margin: 0; padding: var(--co-space-3); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); }
 .severity-picker legend { padding: 0 var(--co-space-1); color: var(--co-text-secondary); font-size: 12px; font-weight: 700; }
-.severity-picker label { display: inline-flex; min-height: 36px; align-items: center; gap: var(--co-space-2); margin-right: var(--co-space-4); color: var(--co-text-secondary); cursor: pointer; font-family: var(--co-font-mono); font-size: 12px; }
+.severity-picker label { display: inline-flex; min-height: 44px; align-items: center; gap: var(--co-space-2); margin-right: var(--co-space-4); color: var(--co-text-secondary); cursor: pointer; font-family: var(--co-font-mono); font-size: 12px; }
 .field-error-list { display: grid; gap: var(--co-space-1); margin: 0; padding: var(--co-space-3) var(--co-space-4); border: 1px solid var(--co-status-critical-border); border-radius: var(--co-radius-panel); color: var(--co-status-critical-fg); background: var(--co-status-critical-bg); list-style-position: inside; font-size: 12px; }
 .field-error-list code { color: inherit; }
 .provider-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--co-space-4); }

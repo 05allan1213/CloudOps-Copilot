@@ -297,6 +297,7 @@ onBeforeUnmount(() => {
         :selected-scope-id="selectedScopeID"
         :scope-switching="scopeSwitching"
         :provider-health="bootstrap?.provider_health"
+        :scenario-state="bootstrap?.scenario_state ?? 'inactive'"
         @change-scope="changeActiveScope"
         @open-agent="openAgentPanel()"
         @open-notifications="openNotifications"

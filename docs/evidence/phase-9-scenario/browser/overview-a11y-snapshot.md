@@ -1,0 +1,18 @@
+- generic [ref=f26e2] [box=0,0,844,390]:
+  - link "跳到主要内容" [ref=f26e3] [cursor=pointer] [box=8,-56,128,48]:
+    - /url: "#main-content"
+  - generic [ref=f26e4] [box=0,0,844,390]:
+    - complementary "主导航" [ref=f26e5] [box=0,0,64,390]:
+      - link "CloudOps本地运维控制台" [ref=f26e6] [cursor=pointer] [box=0,0,63,56]:
+        - /url: /overview
+      - navigation "工作区" [ref=f26e10] [box=0,56,63,318]:
+        - generic [ref=f26e12] [box=0,0,0,0]
+        - generic [ref=f26e44] [box=0,0,0,0]
+        - link "设置" [ref=f26e61] [cursor=pointer] [box=8,536,47,44]:
+          - /url: /settings
+    - generic [ref=f26e66] [box=64,0,780,390]:
+      - banner [ref=f26e67] [box=64,0,780,56]:
+        - generic [ref=f26e68] [box=84,6,142,44]
+        - generic [ref=f26e78] [box=411,9,417,38]
+      - main [ref=f26e107] [box=64,56,780,334]:
+        - article [ref=f26e108] [box=64,56,780,334]

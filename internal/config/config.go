@@ -4,11 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -16,8 +14,12 @@ import (
 )
 
 type Config struct {
-	// AppEnv identifies the deployment profile. Fast Demo is allowed only in local-demo.
+	// AppEnv identifies the deployment profile.
 	AppEnv string
+	// ScenarioState is a read-only lifecycle projection controlled by make scenario-*.
+	ScenarioState string
+	// ScenarioID binds the bounded local write gate to one exact Scenario lifecycle.
+	ScenarioID string
 
 	// ListenAddr HTTP 监听地址，格式为 host:port
 	// 默认值：:8080
@@ -92,16 +94,6 @@ type Config struct {
 	IncidentAgentMaxEvidenceBytes   int
 	IncidentAgentMaxCheckpointBytes int
 	IncidentAgentMaxStepRetries     int
-
-	// FastDemo enables the disposable, controlled-direct demonstration path only.
-	FastDemoEnabled           bool
-	FastDemoConfirmDisposable bool
-	FastDemoRevision          string
-	FastDemoCluster           string
-	FastDemoNamespace         string
-	FastDemoWorkload          string
-	FastDemoRecoveryReplicas  int
-	FastDemoMaxReplicas       int
 
 	// Change intelligence is read-only and disabled by default.
 	ChangeIntelligenceEnabled bool
@@ -222,8 +214,7 @@ type Config struct {
 	// RateLimit 限流配置
 	RateLimit RateLimitConfig
 
-	// AgentTool* configures the neutral Agent tool registry. The loader
-	// accepts the old COPILOT_TOOL_* names only as temporary fallback aliases.
+	// AgentTool* configures the neutral Agent tool registry.
 	AgentToolRegistryEnabled bool
 	AgentToolDefaultTimeout  time.Duration
 	AgentToolLogArgs         bool
@@ -495,6 +486,8 @@ func Load() Config {
 	prometheusURL := configutil.String("PROMETHEUS_URL", "http://prometheus:9090")
 	result := Config{
 		AppEnv:                          configutil.String("APP_ENV", "development"),
+		ScenarioState:                   configutil.String("SCENARIO_STATE", "inactive"),
+		ScenarioID:                      configutil.String("SCENARIO_ID", ""),
 		ListenAddr:                      configutil.String("LISTEN_ADDR", ":8080"),
 		PrometheusURL:                   prometheusURL,
 		RequestTimeout:                  configutil.DurationSeconds("REQUEST_TIMEOUT_SECONDS", 5),
@@ -522,14 +515,6 @@ func Load() Config {
 		IncidentAgentMaxEvidenceBytes:   configutil.PositiveInt("INCIDENT_AGENT_MAX_EVIDENCE_BYTES", 16384),
 		IncidentAgentMaxCheckpointBytes: configutil.PositiveInt("INCIDENT_AGENT_MAX_CHECKPOINT_BYTES", 32768),
 		IncidentAgentMaxStepRetries:     configutil.NonNegativeInt("INCIDENT_AGENT_MAX_STEP_RETRIES", 1),
-		FastDemoEnabled:                 configutil.Bool("FAST_DEMO_ENABLED", false),
-		FastDemoConfirmDisposable:       configutil.Bool("FAST_DEMO_CONFIRM_DISPOSABLE", false),
-		FastDemoRevision:                configutil.String("FAST_DEMO_REVISION", ""),
-		FastDemoCluster:                 configutil.String("FAST_DEMO_CLUSTER", "kind-cloudops-demo"),
-		FastDemoNamespace:               configutil.String("FAST_DEMO_NAMESPACE", "default"),
-		FastDemoWorkload:                configutil.String("FAST_DEMO_WORKLOAD", "cloudops-demo-workload"),
-		FastDemoRecoveryReplicas:        configutil.PositiveInt("FAST_DEMO_RECOVERY_REPLICAS", 2),
-		FastDemoMaxReplicas:             positiveIntWithFallback("FAST_DEMO_MAX_REPLICAS", "ACTION_MAX_REPLICAS", 10),
 		ChangeIntelligenceEnabled:       configutil.Bool("CHANGE_INTELLIGENCE_ENABLED", false),
 		ChangeLookback:                  configutil.DurationSeconds("CHANGE_LOOKBACK", 86400),
 		ChangeMaxCandidates:             configutil.PositiveInt("CHANGE_MAX_CANDIDATES", 10),
@@ -634,9 +619,9 @@ func Load() Config {
 			Window:           configutil.DurationSeconds("RATE_LIMIT_WINDOW_SECONDS", 60),
 			OperationTimeout: configutil.DurationMilliseconds("RATE_LIMIT_OPERATION_TIMEOUT_MILLISECONDS", 500),
 		},
-		AgentToolRegistryEnabled:   boolWithFallback("AGENT_TOOL_REGISTRY_ENABLED", "COPILOT_TOOL_REGISTRY_ENABLED", true),
-		AgentToolDefaultTimeout:    durationSecondsWithFallback("AGENT_TOOL_DEFAULT_TIMEOUT_SECONDS", "COPILOT_TOOL_DEFAULT_TIMEOUT_SECONDS", 30),
-		AgentToolLogArgs:           boolWithFallback("AGENT_TOOL_LOG_ARGS", "COPILOT_TOOL_LOG_ARGS", false),
+		AgentToolRegistryEnabled:   configutil.Bool("AGENT_TOOL_REGISTRY_ENABLED", true),
+		AgentToolDefaultTimeout:    configutil.DurationSeconds("AGENT_TOOL_DEFAULT_TIMEOUT_SECONDS", 30),
+		AgentToolLogArgs:           configutil.Bool("AGENT_TOOL_LOG_ARGS", false),
 		RunbookDir:                 configutil.String("RUNBOOK_DIR", "runbooks"),
 		RunbookMaxFiles:            configutil.PositiveInt("RUNBOOK_MAX_FILES", 100),
 		RunbookMaxFileBytes:        int64(configutil.PositiveInt("RUNBOOK_MAX_FILE_BYTES", 65536)),
@@ -733,6 +718,15 @@ func (c *Config) Validate() error {
 			return err
 		}
 	}
+	if c.ScenarioState != "inactive" && c.ScenarioState != "active" {
+		return fmt.Errorf("SCENARIO_STATE must be inactive or active")
+	}
+	if c.ScenarioState == "inactive" && strings.TrimSpace(c.ScenarioID) != "" {
+		return fmt.Errorf("SCENARIO_ID must be empty while SCENARIO_STATE is inactive")
+	}
+	if c.ScenarioState == "active" && !regexp.MustCompile(`^scenario-[a-z0-9]([-a-z0-9]*[a-z0-9])?$`).MatchString(c.ScenarioID) {
+		return fmt.Errorf("SCENARIO_ID must identify the active bounded Scenario")
+	}
 	if err := configutil.ValidatePort("MYSQL_PORT", c.MySQLPort); err != nil {
 		return err
 	}
@@ -762,8 +756,8 @@ func (c *Config) Validate() error {
 		if !c.AgentToolRegistryEnabled {
 			return fmt.Errorf("AGENT_TOOL_REGISTRY_ENABLED must remain true while INCIDENT_AGENT_ENABLED is true")
 		}
-		if (!c.FastDemoEnabled && strings.TrimSpace(c.LLMAPIKey) == "") || strings.TrimSpace(c.MySQLHost) == "" {
-			return fmt.Errorf("LLM_API_KEY and MySQL configuration are required when INCIDENT_AGENT_ENABLED is true outside fast demo mode")
+		if strings.TrimSpace(c.LLMAPIKey) == "" || strings.TrimSpace(c.MySQLHost) == "" {
+			return fmt.Errorf("LLM_API_KEY and MySQL configuration are required when INCIDENT_AGENT_ENABLED is true")
 		}
 		if c.IncidentAgentPollInterval <= 0 || c.IncidentAgentLeaseDuration <= 0 || c.IncidentAgentHeartbeatPeriod <= 0 || c.IncidentAgentHeartbeatPeriod >= c.IncidentAgentLeaseDuration || c.IncidentAgentMaxRuntime <= 0 || c.IncidentAgentToolTimeout <= 0 {
 			return fmt.Errorf("incident agent timing configuration is invalid")
@@ -771,25 +765,6 @@ func (c *Config) Validate() error {
 		if c.IncidentAgentMaxSteps <= 0 || c.IncidentAgentMaxToolCalls <= 0 || c.IncidentAgentMaxModelCalls <= 0 || c.IncidentAgentTokenBudget <= 0 || c.IncidentAgentMaxEvidenceItems <= 0 || c.IncidentAgentMaxEvidenceBytes < 256 || c.IncidentAgentMaxCheckpointBytes < 1024 || c.IncidentAgentMaxStepRetries < 0 {
 			return fmt.Errorf("incident agent budget configuration is invalid")
 		}
-	}
-	if c.FastDemoEnabled {
-		if c.AppEnv != "local-demo" || !c.FastDemoConfirmDisposable {
-			return fmt.Errorf("FAST_DEMO_ENABLED requires APP_ENV=local-demo and FAST_DEMO_CONFIRM_DISPOSABLE=true")
-		}
-		if !c.IncidentAgentEnabled || !c.K8SEnabled || !c.K8SWriteEnabled || strings.TrimSpace(c.MySQLHost) == "" {
-			return fmt.Errorf("FAST_DEMO_ENABLED requires incident Agent, Kubernetes read/write and MySQL")
-		}
-		if c.K8SInCluster || strings.TrimSpace(c.K8SKubeconfig) == "" {
-			return fmt.Errorf("FAST_DEMO_ENABLED requires an explicit disposable kubeconfig and K8S_IN_CLUSTER=false")
-		}
-		if !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(strings.ToLower(strings.TrimSpace(c.FastDemoRevision))) {
-			return fmt.Errorf("FAST_DEMO_REVISION must be an exact 40-character commit SHA")
-		}
-		if !strings.HasPrefix(strings.TrimSpace(c.FastDemoCluster), "kind-") || strings.TrimSpace(c.FastDemoNamespace) == "" || c.FastDemoNamespace == "default" || strings.TrimSpace(c.FastDemoWorkload) == "" || c.FastDemoRecoveryReplicas < 1 || c.FastDemoRecoveryReplicas > c.FastDemoMaxReplicas {
-			return fmt.Errorf("fast demo target or recovery replica configuration is invalid")
-		}
-	} else if c.FastDemoConfirmDisposable {
-		return fmt.Errorf("FAST_DEMO_CONFIRM_DISPOSABLE must be false when FAST_DEMO_ENABLED is false")
 	}
 	if c.ChangeIntelligenceEnabled {
 		if strings.TrimSpace(c.MySQLHost) == "" {
@@ -884,12 +859,12 @@ func (c *Config) Validate() error {
 	if c.LLMMaxTokens <= 0 {
 		return fmt.Errorf("LLM_MAX_TOKENS must be positive, got %d", c.LLMMaxTokens)
 	}
-	if c.FastDemoMaxReplicas < 1 || c.FastDemoMaxReplicas > 100 {
-		return fmt.Errorf("FAST_DEMO_MAX_REPLICAS must be in range 1-100, got %d", c.FastDemoMaxReplicas)
-	}
 	if c.K8SWriteEnabled {
 		if !c.K8SEnabled {
 			return fmt.Errorf("K8S_ENABLED must be true when K8S_WRITE_ENABLED is true")
+		}
+		if c.ScenarioState != "active" || c.ScenarioID == "" {
+			return fmt.Errorf("K8S_WRITE_ENABLED requires an active bounded Scenario identity")
 		}
 		for _, namespace := range c.K8SAllowedNamespaces {
 			if namespace == "*" {
@@ -1073,40 +1048,4 @@ func defaultList(values, defaults []string) []string {
 		return values
 	}
 	return defaults
-}
-
-func envWithFallback(primary, legacy string) (string, bool) {
-	if value, ok := os.LookupEnv(primary); ok {
-		return strings.TrimSpace(value), true
-	}
-	value, ok := os.LookupEnv(legacy)
-	return strings.TrimSpace(value), ok
-}
-
-func boolWithFallback(primary, legacy string, fallback bool) bool {
-	value, ok := envWithFallback(primary, legacy)
-	if !ok || value == "" {
-		return fallback
-	}
-	parsed, err := strconv.ParseBool(value)
-	if err != nil {
-		return fallback
-	}
-	return parsed
-}
-
-func positiveIntWithFallback(primary, legacy string, fallback int) int {
-	value, ok := envWithFallback(primary, legacy)
-	if !ok || value == "" {
-		return fallback
-	}
-	parsed, err := strconv.Atoi(value)
-	if err != nil || parsed <= 0 {
-		return fallback
-	}
-	return parsed
-}
-
-func durationSecondsWithFallback(primary, legacy string, fallback int) time.Duration {
-	return time.Duration(positiveIntWithFallback(primary, legacy, fallback)) * time.Second
 }

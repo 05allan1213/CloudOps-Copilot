@@ -283,7 +283,7 @@ onBeforeUnmount(() => {
         </label>
         <label class="search-field">
           <span>资源搜索</span>
-          <span class="search-input"><Search :size="16" aria-hidden="true" /><input v-model="searchValue" name="resource-search" type="search" autocomplete="off" placeholder="名称、Kind 或 Namespace" /></span>
+          <span class="search-input"><Search :size="16" aria-hidden="true" /><input v-model="searchValue" name="resource-search" type="search" autocomplete="off" aria-label="资源搜索" placeholder="名称、Kind 或 Namespace…" /></span>
         </label>
         <button type="submit">应用筛选</button>
       </form>

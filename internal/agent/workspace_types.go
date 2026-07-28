@@ -39,6 +39,7 @@ type WorkspaceRun struct {
 	ConsultationID          string             `json:"consultation_id,omitempty"`
 	ConfigurationRevisionID string             `json:"configuration_revision_id"`
 	ContextSnapshotID       string             `json:"context_snapshot_id"`
+	ScenarioID              string             `json:"scenario_id,omitempty"`
 	Status                  RunStatus          `json:"status"`
 	Outcome                 WorkspaceOutcome   `json:"outcome,omitempty"`
 	Uncertainty             string             `json:"uncertainty"`

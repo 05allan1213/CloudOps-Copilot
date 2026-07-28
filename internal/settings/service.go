@@ -33,6 +33,13 @@ func NewService(db *sql.DB, dataDir string, bootstrap BootstrapDiagnostics) (*Se
 	if err := ensurePrivateDataDirectory(dataDir); err != nil {
 		return nil, err
 	}
+	bootstrap.ScenarioState = strings.TrimSpace(bootstrap.ScenarioState)
+	if bootstrap.ScenarioState == "" {
+		bootstrap.ScenarioState = "inactive"
+	}
+	if bootstrap.ScenarioState != "inactive" && bootstrap.ScenarioState != "active" {
+		return nil, errors.New("settings Scenario state is invalid")
+	}
 	return &Service{
 		db: db, dataDir: dataDir, bootstrap: bootstrap,
 		now: time.Now, httpTimeout: 5 * time.Second,
@@ -429,7 +436,7 @@ func (s *Service) Bootstrap(ctx context.Context) (BootstrapSnapshot, error) {
 	}
 	return BootstrapSnapshot{
 		Product: "CloudOps", Contract: "V1", ActiveRevision: active, ActiveScope: active.Scope,
-		ProviderHealth: health, ScenarioState: "inactive",
+		ProviderHealth: health, ScenarioState: s.bootstrap.ScenarioState,
 		Capabilities: []string{"settings", "operational_scope", "notifications", "incidents", "infrastructure", "operations_atlas"},
 		CollectedAt:  s.now().UTC(),
 	}, nil

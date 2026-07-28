@@ -1,6 +1,6 @@
 # API
 
-CloudOps 只有一个公开产品合同：V1。权威描述是 [OpenAPI 3.1](api-v1-openapi.yaml)，实现位于 [`internal/api`](../internal/api/)。浏览器和第一方 client 只允许访问 `/api/v1`。
+CloudOps 只有一个公开产品合同：V1。权威描述为 [OpenAPI 3.1](api-v1-openapi.yaml)，实现位于 [`internal/api`](../internal/api/)。浏览器和第一方 client 只访问 `/api/v1`。
 
 ## 1. Transport contract
 
@@ -9,76 +9,50 @@ CloudOps 只有一个公开产品合同：V1。权威描述是 [OpenAPI 3.1](api
 - Error：`application/problem+json`
 - Event stream：`text/event-stream`
 - Public ID：canonical UUID
-- Local Owner：固定 `local-owner` 审计身份，无 login、session、RBAC、CSRF 或 bearer token
+- Local Owner：固定 `local-owner` 审计身份，无 login、session 或 browser bearer
 
-每个错误包含稳定 semantic `code`、HTTP status、request ID 与 trace ID。客户端只根据 code/status 处理行为，不解析英文 detail。
+错误包含稳定 semantic `code`、HTTP status、request ID 与 trace ID。客户端只根据 code/status 决定行为，不解析英文 detail。`202` 只表示命令已 durable 接受，不等于 Provider 工作完成。
 
-## 2. Query endpoints
+## 2. Endpoint families
 
-| Method | Path | 内容 |
+| Family | 代表路径 | 所有权 |
 |---|---|---|
-| GET | `/incidents` | status/severity/service filter 与 cursor page |
-| GET | `/incidents/{id}` | Incident current projection |
-| GET | `/incidents/{id}/signals` | bounded Signal page |
-| GET | `/incidents/{id}/timeline` | monotonic Timeline page |
-| GET | `/incidents/{id}/evidence` | sanitized Evidence facts/provenance projection |
-| GET | `/incidents/{id}/investigations` | AgentRun/step summary |
-| GET | `/incidents/{id}/remediation-plans` | Plan、diff、hash 与 decision |
-| GET | `/incidents/{id}/delivery` | Change/PR/CI/rollout projection |
-| GET | `/incidents/{id}/verifications` | run/check/sample projection |
-| GET | `/incidents/{id}/resolution-report` | current-cycle deterministic report |
-| GET | `/incidents/{id}/events` | Incident-scoped SSE refresh hints |
+| Bootstrap / Scope | `/bootstrap`、`/scopes`、`/overview` | active scope、Scenario identity、Provider health 与 shell bootstrap |
+| Infrastructure | `/topology`、`/resources` | Kubernetes topology、structured resource 与 events |
+| Settings | `/settings`、`/configuration-revisions`、`/secrets`、`/providers/{provider}/tests` | validate/apply/restore、write-only secret 与 provider test |
+| Notifications | `/notifications`、`/notification-events` | Inbox、read state 与 SSE refresh |
+| Alerts | `/alerts`、`/alerts/{id}`、ack/silence/investigation/incident links | Alertmanager-backed lifecycle 与 domain relation |
+| Monitoring | `/monitoring/catalog`、`/monitoring/queries`、definitions/authorizations | bounded Metrics query 与 exact query authority |
+| Logs | `/logs/catalog`、`/logs/queries`、`/logs/queries/{id}/evidence` | Elasticsearch query/history/Evidence |
+| Traces | `/traces/catalog`、`/traces/searches`、`/traces/{trace_id}` | Tempo search/detail/Evidence |
+| Agent | `/agent/investigations`、`/agent/consultations`、`/knowledge-items`、`/agent/action-cards` | durable conversation/run/Evidence/Knowledge/authority |
+| Incidents | `/incidents`、detail relations、decision、verification、resolution report、events | current-cycle coordination and history |
+| Operations / DevOps | `/operation-plans`、`/operations`、`/devops` | immutable Plan、Authorization、Execution、Verify 与 optional delivery projection |
 
-Timeline 使用 `after_id`；其他 collection 使用 opaque cursor。`limit` 有服务端上限。SSE 接受 `Last-Event-ID`，只发送 `incident.refresh` hint；客户端收到后重新读取权威 projection。
+完整 method、request/response schema、cursor 和 bounds 以 OpenAPI 为准；本文不复制易漂移的字段清单。
 
-## 3. Command endpoints
+## 3. Query and Context Link contract
 
-| Method | Path | 命令 |
-|---|---|---|
-| POST | `/incidents/{id}/investigations` | 启动 bounded investigation |
-| POST | `/incidents/{id}/close` | closed-no-action transition |
-| POST | `/remediation-plans/{id}/decisions` | approve/reject exact Plan/hash |
+查询必须绑定当前 Scope、provider/resource identity 与绝对 `from/to`。Context Link 在 Workspace 间传递同一 cluster、Namespace、resource、Incident/Alert/Investigation/Evidence ID 和时间窗；目标页面不能用“最近 N 分钟”悄悄替换原时间范围。
 
-所有 mutation 必须满足：
+Collection 使用服务端上限与 opaque cursor；Timeline 使用 `after_id`。Logs/Trace query 还受 lookback、result count、response bytes 与 timeout 约束。SSE 只发送 refresh hint，客户端收到后重新读取权威 projection。
+
+## 4. Mutation safeguards
+
+所有 mutation 至少要求：
 
 - `Content-Type: application/json`；
 - same-origin 或 allowlisted `Origin`；
 - bounded `Idempotency-Key`；
-- body 中的 positive `expected_version`；
-- decision body 中的 lowercase SHA-256 `expected_hash`。
+- positive `expected_version`；
+- decision/authorization/execution 使用 lowercase SHA-256 `expected_hash`；
+- unknown-field rejection 与 body size limit。
 
-相同 identity/resource/command/key 与相同 canonical payload 重放原结果；相同 key 配不同 payload 返回 `IDEMPOTENCY_KEY_REUSED`。服务端以固定 Owner identity 写审计 actor，浏览器不能覆盖。
-
-## 4. Examples
-
-读取当前 Incident：
-
-```bash
-BASE_URL=http://127.0.0.1:18080
-curl --fail --silent --show-error \
-  "${BASE_URL}/api/v1/incidents?limit=20"
-```
-
-Mutation 示例保留 Origin、version 和 idempotency 约束：
-
-```bash
-BASE_URL=http://127.0.0.1:18080
-INCIDENT_ID=<canonical-uuid>
-
-curl --fail --silent --show-error \
-  -X POST \
-  -H "Origin: ${BASE_URL}" \
-  -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: owner-investigation-001' \
-  --data '{"expected_version":1,"reason":"owner requested investigation"}' \
-  "${BASE_URL}/api/v1/incidents/${INCIDENT_ID}/investigations"
-```
-
-命令是否成功还取决于当前领域状态和 Provider availability；`202` 只表示命令被 durable 接受，不代表 Provider 工作已完成。
+相同 identity/resource/command/key 与相同 canonical payload 重放原结果；相同 key 配不同 payload 返回 `IDEMPOTENCY_KEY_REUSED`。Operation 执行还会在 effect 前重验 Plan hash、Authorization、expiry、Configuration Revision 与 precondition。
 
 ## 5. Internal listener
 
-`/webhooks/alertmanager` 不属于浏览器 V1 API。它只存在于 `cloudops-api` 的内部 listener/Service，要求 secret file 提供的 bearer token，并将规范化 Signal 写入当前领域模型。用户 Service 不暴露该 route，内部 Service 不暴露 `/api/v1`。
+`/webhooks/alertmanager` 不属于浏览器 V1 API。它只存在于 API internal listener/Service，要求只读 secret file 中的 bearer，并将规范化 Signal 写入领域模型。用户 Service 不暴露该 route，internal Service 不暴露 `/api/v1`。
 
 ## 6. Verification
 
@@ -88,4 +62,4 @@ rg -n '^  /api/v1/' docs/api-v1-openapi.yaml
 make check-naming
 ```
 
-OpenAPI、runtime route、typed frontend client 和 contract tests 必须在同一变更中保持一致。当前 live 联调证据见 [实施状态](evidence/cloudops-implementation-status.md)；静态 route 存在不能替代该证据。
+OpenAPI、runtime route、typed frontend client 与 contract test 必须在同一变更中保持一致。真实 UI -> API -> Provider 证据见 [实施状态](evidence/cloudops-implementation-status.md)；静态 route 或 fixture 不能替代该证据。

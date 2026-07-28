@@ -138,7 +138,10 @@ export function useIncidentDetail(incidentID: string) {
           updates = await Promise.all([
             refreshIncident(identity, signal),
             loadCollection(identity, alerts, (cursor, requestSignal) => listIncidentAlerts(incidentID, cursor, requestSignal), refreshOptions(alerts, true, signal)),
+            loadCollection(identity, timeline, (cursor, requestSignal) => listIncidentTimeline(incidentID, cursor, requestSignal), timelineRefreshOptions(true, signal)),
             loadResource(identity, decision, (requestSignal) => getIncidentDecision(incidentID, requestSignal), true, signal),
+            loadCollection(identity, verifications, (cursor, requestSignal) => listIncidentVerifications(incidentID, cursor, requestSignal), refreshOptions(verifications, true, signal)),
+            loadResource(identity, resolutionReport, (requestSignal) => getIncidentResolutionReport(incidentID, requestSignal), true, signal),
           ]);
           break;
         case "signals":
@@ -171,13 +174,17 @@ export function useIncidentDetail(incidentID: string) {
         case "verifications":
           updates = await Promise.all([
             refreshIncident(identity, signal),
+            loadCollection(identity, timeline, (cursor, requestSignal) => listIncidentTimeline(incidentID, cursor, requestSignal), timelineRefreshOptions(true, signal)),
             loadCollection(identity, verifications, (cursor, requestSignal) => listIncidentVerifications(incidentID, cursor, requestSignal), refreshOptions(verifications, true, signal)),
             loadResource(identity, decision, (requestSignal) => getIncidentDecision(incidentID, requestSignal), true, signal),
+            loadResource(identity, resolutionReport, (requestSignal) => getIncidentResolutionReport(incidentID, requestSignal), true, signal),
           ]);
           break;
         case "resolution_report":
           updates = await Promise.all([
             refreshIncident(identity, signal),
+            loadCollection(identity, timeline, (cursor, requestSignal) => listIncidentTimeline(incidentID, cursor, requestSignal), timelineRefreshOptions(true, signal)),
+            loadCollection(identity, verifications, (cursor, requestSignal) => listIncidentVerifications(incidentID, cursor, requestSignal), refreshOptions(verifications, true, signal)),
             loadResource(identity, resolutionReport, (requestSignal) => getIncidentResolutionReport(incidentID, requestSignal), true, signal),
           ]);
           break;

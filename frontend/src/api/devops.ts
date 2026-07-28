@@ -7,6 +7,7 @@ export interface OperationTarget {
   namespace: string;
   workload_kind: "Deployment" | string;
   workload_name: string;
+  scenario_id?: string;
 }
 
 export interface OperationContextLink {

@@ -183,7 +183,7 @@ tbody tr:hover { background: var(--co-bg-hover); }
   .mobile-incident-list li + li { border-top: 1px solid var(--co-border-default); }
   .mobile-incident-list article { display: grid; min-width: 0; gap: var(--co-space-3); padding: var(--co-space-4); }
   .mobile-incident-badges { display: flex; flex-wrap: wrap; gap: var(--co-space-2); }
-  .mobile-incident-link { display: grid; min-width: 0; gap: 4px; }
+  .mobile-incident-link { display: grid; min-width: 0; min-height: 44px; align-content: center; gap: 4px; }
   .mobile-incident-link strong { color: var(--co-text-primary); font-size: 14px; overflow-wrap: anywhere; }
   .mobile-incident-link span { color: var(--co-text-muted); font-size: 11px; }
   .mobile-incident-list dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--co-space-3); margin: 0; }

@@ -1,7 +1,16 @@
-# Historical End-to-End Harness Notice
+# Historical Golden Harness Notice
 
-旧 external GitOps/Golden harness 已随平行 runtime、Compose、raw manifests 和旧脚本删除。本文档不再提供可执行入口，也不能作为当前 CloudOps 联调证据。
+旧 external GitOps/Golden harness、demo GitOps contract、Argo manifests、Compose、raw manifests 与平行 runtime 已删除。本文不再提供可执行入口，也不能作为当前 CloudOps 联调证据。
 
-当前真实 Scenario 由 [实施规范 Task 9](../CloudOps-Implementation-Spec.md#phase-9真实-scenario视觉质量与最终收敛) 定义，前置依赖是 Task 0-8 的当前能力。计划入口为 `make scenario-up`、`make scenario-status` 和 `make scenario-down`；在这些命令实际实现并完成当前 UI -> `/api/v1` -> Provider 验收前，Scenario、GitHub/Argo integration、human merge、hosted Actions、LLM 和完整 Observe-to-Verify 一律为 `NOT RUN`。
+当前真实端到端入口只有：
 
-历史逐阶段报告保留其 exact revision 的 provenance，但不允许复用为当前 worktree 的 PASS。当前结果只记录在 [实施状态](cloudops-implementation-status.md)。
+```bash
+make local-up
+make scenario-up
+make scenario-status
+make scenario-down
+```
+
+Phase 9 已在 canonical Helm release 上完成 Kubernetes、Metrics、Alerts、Logs、Traces、Agent、Owner-authorized recovery、Verify、retained history 与 post-down Live Mode 验收。当前证据见 [Phase 9 最终报告](phase-9-scenario/final-evidence-report.md)。
+
+GitHub App write、human merge、Argo exact revision/sync observation、hosted Actions、Registry publish/sign/attest、staging 与 production 没有在本地 Scenario 中运行，均保持 `NOT RUN`。历史逐阶段报告只证明其 exact revision/run，不能复用为当前 worktree 的 PASS。

@@ -85,7 +85,6 @@ func runtimeApplication(t *testing.T, dsn string) appconfig.Config {
 	application.RemediationEnabled = false
 	application.DeliveryTrackingEnabled = false
 	application.VerificationEnabled = false
-	application.FastDemoEnabled = false
 	return application
 }
 

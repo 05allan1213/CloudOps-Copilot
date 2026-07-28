@@ -497,28 +497,28 @@ onBeforeUnmount(() => {
     <template v-else>
       <section class="telemetry-query-band" aria-label="日志查询">
         <div class="context-controls">
-          <label><span>Namespace</span><select v-model="selectedNamespace" name="logs-namespace" @change="changeNamespace"><option v-for="namespace in namespaces" :key="namespace" :value="namespace">{{ namespace }}</option></select></label>
-          <label class="workload-control"><span>Workload</span><select v-model="selectedResourceID" name="logs-workload" @change="changeResource"><option v-for="resource in namespaceWorkloads" :key="resource.id" :value="resource.id">{{ resource.kind }} · {{ resource.name }}</option></select></label>
+          <label><span>Namespace</span><select v-model="selectedNamespace" name="logs-namespace" autocomplete="off" @change="changeNamespace"><option v-for="namespace in namespaces" :key="namespace" :value="namespace">{{ namespace }}</option></select></label>
+          <label class="workload-control"><span>Workload</span><select v-model="selectedResourceID" name="logs-workload" autocomplete="off" @change="changeResource"><option v-for="resource in namespaceWorkloads" :key="resource.id" :value="resource.id">{{ resource.kind }} · {{ resource.name }}</option></select></label>
           <div class="field-group"><span>查询模式</span><div class="segmented-control" role="group" aria-label="日志查询模式"><button type="button" :aria-pressed="mode === 'guided'" @click="mode = 'guided'">引导</button><button type="button" :aria-pressed="mode === 'expert'" @click="mode = 'expert'">Expert</button></div></div>
         </div>
 
         <div v-if="mode === 'guided'" class="guided-grid">
           <label><span>文本</span><input v-model="textFilter" name="logs-text" type="search" autocomplete="off" placeholder="例如：timeout…" /></label>
           <label><span>trace_id</span><input v-model="traceFilter" class="mono-text" name="logs-trace-id" type="text" inputmode="text" autocomplete="off" spellcheck="false" placeholder="例如：038cbd20…" /></label>
-          <fieldset class="level-filter"><legend>级别</legend><label v-for="value in allowedLogLevels" :key="value"><input v-model="levels" name="logs-level" type="checkbox" :value="value" />{{ value.toUpperCase() }}</label></fieldset>
+          <fieldset class="level-filter"><legend>级别</legend><label v-for="value in allowedLogLevels" :key="value"><input v-model="levels" name="logs-level" type="checkbox" autocomplete="off" :value="value" />{{ value.toUpperCase() }}</label></fieldset>
         </div>
-        <label v-else class="expert-editor"><span>Elasticsearch query clause</span><textarea v-model="expertQuery" name="logs-expert-query" rows="5" spellcheck="false" /></label>
+        <label v-else class="expert-editor"><span>Elasticsearch query clause</span><textarea v-model="expertQuery" name="logs-expert-query" autocomplete="off" rows="5" spellcheck="false" /></label>
 
         <div class="time-controls">
           <div class="preset-control" role="group" aria-label="日志时间范围快捷选择"><button type="button" @click="selectPreset(15)">15m</button><button type="button" @click="selectPreset(60)">1h</button><button type="button" @click="selectPreset(360)">6h</button></div>
           <label><span>开始</span><input v-model="fromValue" name="logs-from" type="datetime-local" autocomplete="off" /></label>
           <label><span>结束</span><input v-model="toValue" name="logs-to" type="datetime-local" autocomplete="off" /></label>
-          <label><span>上限</span><select v-model.number="limit" name="logs-limit"><option :value="1">1</option><option :value="100">100</option><option :value="200">200</option><option :value="500">500</option><option :value="1000">1000</option></select></label>
+          <label><span>上限</span><select v-model.number="limit" name="logs-limit" autocomplete="off"><option :value="1">1</option><option :value="100">100</option><option :value="200">200</option><option :value="500">500</option><option :value="1000">1000</option></select></label>
         </div>
 
         <div class="query-actions">
           <div class="bound-summary"><span>Lookback ≤ {{ Math.round((catalog?.bounds.max_lookback_seconds ?? 0) / 3600) }}h</span><span>Rows ≤ {{ catalog?.bounds.max_results ?? 0 }}</span><span>Response ≤ {{ formatBytes(catalog?.bounds.max_response_bytes ?? 0) }}</span><span>Timeout {{ catalog?.bounds.timeout_ms ?? 0 }}ms</span></div>
-          <label class="binary-control"><input v-model="tail" name="logs-tail" type="checkbox" />Tail（有界）</label>
+          <label class="binary-control"><input v-model="tail" name="logs-tail" type="checkbox" autocomplete="off" />Tail（有界）</label>
           <button class="command-button is-primary" type="button" :disabled="!canRun" @click="runQuery"><LoaderCircle v-if="querying" :size="17" class="spinning" aria-hidden="true" /><Play v-else :size="17" aria-hidden="true" />执行查询</button>
         </div>
 
@@ -537,7 +537,7 @@ onBeforeUnmount(() => {
           <section class="result-header">
             <div><span class="section-kicker">Query Execution</span><h2>日志结果</h2></div>
             <div class="result-actions">
-              <label class="binary-control"><input v-model="wrapRows" name="logs-wrap" type="checkbox" /><TextWrap :size="15" aria-hidden="true" />换行</label>
+              <label class="binary-control"><input v-model="wrapRows" name="logs-wrap" type="checkbox" autocomplete="off" /><TextWrap :size="15" aria-hidden="true" />换行</label>
               <button class="command-button" type="button" :disabled="selectedEntryIDs.size === 0 || savingEvidence" @click="retainSelectedEvidence"><Save :size="16" aria-hidden="true" />保存 Evidence</button>
               <RouterLink class="command-button" :to="workloadLocation"><Server :size="16" aria-hidden="true" />Workload</RouterLink>
             </div>
@@ -553,7 +553,7 @@ onBeforeUnmount(() => {
             <div class="virtual-spacer" :style="{ height: `${windowState.totalHeight}px` }">
               <div class="virtual-window" :style="{ transform: `translateY(${windowState.offset}px)` }">
                 <article v-for="entry in visibleEntries" :key="entry.id" class="log-row" :class="{ 'is-inspected': inspectedEntry?.id === entry.id }" :style="{ height: `${rowHeight}px` }" role="listitem">
-                  <label class="row-selector" @click.stop><input type="checkbox" :checked="selectedEntryIDs.has(entry.id)" :aria-label="`选择 ${formatTime(entry.timestamp)} 的日志`" @change="toggleEntry(entry.id)" /></label>
+                  <label class="row-selector" @click.stop><input type="checkbox" autocomplete="off" :checked="selectedEntryIDs.has(entry.id)" :aria-label="`选择 ${formatTime(entry.timestamp)} 的日志`" @change="toggleEntry(entry.id)" /></label>
                   <button class="log-row-inspect" type="button" :aria-label="`检查 ${formatTime(entry.timestamp)} 的日志`" @click="inspectEntry(entry)">
                     <time :datetime="entry.timestamp">{{ formatTime(entry.timestamp) }}</time>
                     <span class="level-mark" :data-level="entry.level || 'info'">{{ levelLabel(entry.level) }}</span>

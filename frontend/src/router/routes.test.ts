@@ -31,6 +31,6 @@ describe("CloudOps product routes", () => {
     expect(agent?.meta?.fullBleed).toBe(true);
     const devops = appRoutes.find((route) => route.path === "/devops");
     expect(devops?.component).not.toBe(appRoutes.find((route) => route.path === "/settings")?.component);
-    expect(devops?.meta?.fullBleed).toBe(true);
+    expect(devops?.meta?.fullBleed).not.toBe(true);
   });
 });

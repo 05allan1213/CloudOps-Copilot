@@ -1,0 +1,103 @@
+4. [GET] http://127.0.0.1:18080/api/v1/agent/investigations?limit=100 => [200] OK
+5. [GET] http://127.0.0.1:18080/api/v1/agent/consultations?limit=100 => [200] OK
+6. [GET] http://127.0.0.1:18080/api/v1/knowledge-items?limit=100 => [200] OK
+7. [GET] http://127.0.0.1:18080/api/v1/runbook-guidance => [200] OK
+8. [GET] http://127.0.0.1:18080/api/v1/operation-plans?limit=100 => [200] OK
+9. [GET] http://127.0.0.1:18080/api/v1/notifications?limit=50 => [200] OK
+10. [GET] http://127.0.0.1:18080/api/v1/bootstrap => [200] OK
+11. [GET] http://127.0.0.1:18080/api/v1/scopes => [200] OK
+18. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126 => [200] OK
+21. [GET] http://127.0.0.1:18080/api/v1/bootstrap => [200] OK
+23. [GET] http://127.0.0.1:18080/api/v1/resources?cluster=cloudops-local&kind=Deployment&kind=StatefulSet&kind=DaemonSet&limit=500 => [200] OK
+24. [GET] http://127.0.0.1:18080/api/v1/logs/catalog?cluster_id=cloudops-local&namespace=cloudops-system&resource_id=k8s_Y2xvdWRvcHMtbG9jYWwAYXBwcy92MQBEYWVtb25TZXQAY2xvdWRvcHMtc3lzdGVtAGZpbGViZWF0&resource_kind=DaemonSet&resource_name=filebeat => [200] OK
+25. [GET] http://127.0.0.1:18080/api/v1/logs/queries?cluster_id=cloudops-local&namespace=cloudops-system&resource_id=k8s_Y2xvdWRvcHMtbG9jYWwAYXBwcy92MQBEYWVtb25TZXQAY2xvdWRvcHMtc3lzdGVtAGZpbGViZWF0&limit=30 => [200] OK
+26. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126 => [200] OK
+27. [GET] http://127.0.0.1:18080/api/v1/agent/investigations?limit=100 => [200] OK
+28. [GET] http://127.0.0.1:18080/api/v1/agent/consultations?limit=100 => [200] OK
+29. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126 => [200] OK
+30. [GET] http://127.0.0.1:18080/api/v1/agent/investigations?limit=100 => [200] OK
+31. [GET] http://127.0.0.1:18080/api/v1/agent/consultations?limit=100 => [200] OK
+32. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126 => [200] OK
+33. [GET] http://127.0.0.1:18080/api/v1/agent/investigations?limit=100 => [200] OK
+34. [GET] http://127.0.0.1:18080/api/v1/agent/consultations?limit=100 => [200] OK
+37. [GET] http://127.0.0.1:18080/api/v1/logs/catalog?cluster_id=cloudops-local&namespace=demo&resource_id=k8s_Y2xvdWRvcHMtbG9jYWwAYXBwcy92MQBEZXBsb3ltZW50AGRlbW8AY2xvdWRvcHMtc2NlbmFyaW8tZmF1bHQ&resource_kind=Deployment&resource_name=cloudops-scenario-fault => [200] OK
+38. [GET] http://127.0.0.1:18080/api/v1/logs/queries?cluster_id=cloudops-local&namespace=demo&resource_id=k8s_Y2xvdWRvcHMtbG9jYWwAYXBwcy92MQBEZXBsb3ltZW50AGRlbW8AY2xvdWRvcHMtc2NlbmFyaW8tZmF1bHQ&limit=30 => [200] OK
+42. [POST] http://127.0.0.1:18080/api/v1/logs/queries => [202] Accepted
+48. [POST] http://127.0.0.1:18080/api/v1/logs/queries => [202] Accepted
+64. [GET] http://127.0.0.1:18080/api/v1/agent/investigations?limit=100 => [200] OK
+65. [GET] http://127.0.0.1:18080/api/v1/agent/consultations?limit=100 => [200] OK
+66. [GET] http://127.0.0.1:18080/api/v1/knowledge-items?limit=100 => [200] OK
+67. [GET] http://127.0.0.1:18080/api/v1/runbook-guidance => [200] OK
+68. [GET] http://127.0.0.1:18080/api/v1/operation-plans?limit=100 => [200] OK
+69. [GET] http://127.0.0.1:18080/api/v1/notifications?limit=50 => [200] OK
+70. [GET] http://127.0.0.1:18080/api/v1/bootstrap => [200] OK
+71. [GET] http://127.0.0.1:18080/api/v1/scopes => [200] OK
+82. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126 => [200] OK
+85. [GET] http://127.0.0.1:18080/api/v1/devops?limit=100 => [200] OK
+86. [GET] http://127.0.0.1:18080/api/v1/resources?cluster=cloudops-local&namespace=demo&kind=Deployment&search=cloudops-scenario-fault&limit=20 => [200] OK
+87. [GET] http://127.0.0.1:18080/api/v1/agent/investigations?limit=100 => [200] OK
+89. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126 => [200] OK
+90. [GET] http://127.0.0.1:18080/api/v1/agent/investigations?limit=100 => [200] OK
+91. [GET] http://127.0.0.1:18080/api/v1/agent/consultations?limit=100 => [200] OK
+92. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126 => [200] OK
+93. [GET] http://127.0.0.1:18080/api/v1/agent/investigations?limit=100 => [200] OK
+94. [GET] http://127.0.0.1:18080/api/v1/agent/consultations?limit=100 => [200] OK
+95. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126 => [200] OK
+96. [GET] http://127.0.0.1:18080/api/v1/agent/investigations?limit=100 => [200] OK
+97. [GET] http://127.0.0.1:18080/api/v1/agent/consultations?limit=100 => [200] OK
+104. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [200] OK
+105. [GET] http://127.0.0.1:18080/api/v1/notification-events => [503] Service Unavailable
+106. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_EMPTY_RESPONSE
+107. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+108. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+109. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+110. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+111. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+112. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+113. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+114. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+115. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+116. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+117. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+118. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+119. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+120. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+121. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+122. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+123. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+124. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+125. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+126. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+127. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+128. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+129. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+130. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+131. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+132. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+133. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+134. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+135. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+136. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+137. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+138. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+139. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+140. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+141. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+142. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+144. [GET] http://127.0.0.1:18080/api/v1/agent/consultations/069a999e-4bf5-4fd5-8564-5ae9c6c9d126/events => [FAILED] net::ERR_CONNECTION_REFUSED
+151. [GET] http://127.0.0.1:18080/api/v1/agent/investigations?limit=100 => [500] Internal Server Error
+152. [GET] http://127.0.0.1:18080/api/v1/agent/consultations?limit=100 => [500] Internal Server Error
+153. [GET] http://127.0.0.1:18080/api/v1/knowledge-items?limit=100 => [500] Internal Server Error
+154. [GET] http://127.0.0.1:18080/api/v1/runbook-guidance => [200] OK
+155. [GET] http://127.0.0.1:18080/api/v1/operation-plans?limit=100 => [500] Internal Server Error
+156. [GET] http://127.0.0.1:18080/api/v1/notifications?limit=50 => [503] Service Unavailable
+157. [GET] http://127.0.0.1:18080/api/v1/bootstrap => [503] Service Unavailable
+158. [GET] http://127.0.0.1:18080/api/v1/scopes => [503] Service Unavailable
+161. [GET] http://127.0.0.1:18080/api/v1/agent/investigations?limit=100 => [200] OK
+162. [GET] http://127.0.0.1:18080/api/v1/agent/consultations?limit=100 => [200] OK
+163. [GET] http://127.0.0.1:18080/api/v1/knowledge-items?limit=100 => [500] Internal Server Error
+164. [GET] http://127.0.0.1:18080/api/v1/runbook-guidance => [200] OK
+165. [GET] http://127.0.0.1:18080/api/v1/operation-plans?limit=100 => [200] OK
+167. [GET] http://127.0.0.1:18080/api/v1/notification-events => [503] Service Unavailable
+
+Note: 62 static requests not shown, run with "static" option to see them.

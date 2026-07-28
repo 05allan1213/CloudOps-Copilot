@@ -6,7 +6,9 @@
 >
 > Task 0 开工基线：`10a1f2b659b4ee9adb1a3efcb7725f83504b9d1f`
 >
-> 最后更新：2026-07-28 05:44（Asia/Shanghai）
+> 最后更新：2026-07-28 15:40（Asia/Shanghai）
+>
+> 下方任务 0–8 分节保留各任务当时的 exact-run provenance；Phase 9 关闭的本地 `NOT RUN` 不回写成历史任务当时已运行。当前最终结论以状态总览、任务 9 分节与 [Phase 9 最终证据报告](phase-9-scenario/final-evidence-report.md) 为准。
 
 ## 状态总览
 
@@ -18,10 +20,10 @@
 | 任务 3：Monitoring | `DONE_WITH_NOT_RUN` | 任务 0；任务 1 Provider/Scope/Query | 真实 UI -> `/api/v1` -> Prometheus、bounded query、Definition/Execution/Authorization、审计、Workspace 与精确 Context Link 已完成；外部环境与真实 Agent runtime 明确 `NOT RUN` |
 | 任务 4：Logs 与 Traces | `DONE_WITH_NOT_RUN` | 任务 1；任务 2/3 context contract | 真实 UI -> `/api/v1` -> Elasticsearch/Tempo、Kubernetes correlation、Evidence 与不可变 Context Snapshot 已完成；缺少的专用 MCP 与外部控制台明确 `NOT RUN` |
 | 任务 5：Alerts | `DONE_WITH_NOT_RUN` | 任务 0；任务 1 notification/Settings/Context Link | 本地真实 Alertmanager firing/resolved、Signal-to-Alert、ack、provider-backed silence、显式 Incident、Owner Notification、Workspace 与幂等重投已完成；专用 Alertmanager MCP 明确 `NOT RUN` |
-| 任务 6：Agent | `DONE_WITH_NOT_RUN` | 任务 1；任务 2-5 真实 Evidence source | 真实 Alert Investigation、Logs Consultation、bounded tools、Evidence/Guidance、snapshot、SSE、Knowledge、Agent UI 与三层 authority 已完成；真实 LLM 诊断明确 `NOT RUN` |
-| 任务 7：Incidents 与 Verify | `DONE_WITH_NOT_RUN` | 任务 5、6；任务 2-4 Context Link | `/api/v1` Incident 协调、当前 Cycle 投影、Recovery Verification、ResolutionReport、close 与真实 UI/API/MySQL 主链已完成；真实 Kubernetes recovery、外部 Provider 与真实模型明确 `NOT RUN` |
-| 任务 8：Operations 与 DevOps | `DONE_WITH_NOT_RUN` | 任务 6；Incident 链另需任务 7 | immutable Plan、exact Authorization、本地可逆执行、审计/验证、delivery identity 与 DevOps Workspace 已完成；live Kubernetes/GitHub/Argo 写入明确 `NOT RUN` |
-| 任务 9：Scenario 与最终收敛 | `READY` | 任务 0-8 本地必需能力 | 任务 0-8 本地必需能力已完成；Task 9 尚未开始，必须按独立范围执行最终 Scenario 与收敛验收 |
+| 任务 6：Agent | `DONE_WITH_NOT_RUN` | 任务 1；任务 2-5 真实 Evidence source | Agent runtime/authority 已完成；Phase 9 已补真实 DeepSeek Investigation 与 token/hash provenance，外部 Agent Quality/hosted 分支仍 `NOT RUN` |
+| 任务 7：Incidents 与 Verify | `DONE_WITH_NOT_RUN` | 任务 5、6；任务 2-4 Context Link | Phase 9 已用真实 Kubernetes fault/recovery、Metrics/Alert/Trace Verify 与 ResolutionReport 完成主链；外部环境仍 `NOT RUN` |
+| 任务 8：Operations 与 DevOps | `DONE_WITH_NOT_RUN` | 任务 6；Incident 链另需任务 7 | Phase 9 已完成 exact Plan/Authorization 与 Scenario Deployment scale 的真实本地执行/验证；GitHub/Argo/hosted 分支仍 `NOT RUN` |
+| 任务 9：Scenario 与最终收敛 | `DONE_WITH_NOT_RUN` | 任务 0-8 本地必需能力 | 真实 Observe-to-Verify、视觉/响应式/性能/失败态、清理、历史文档和 `scenario-down` 均 `PASS`；外部项显式 `NOT RUN` |
 
 ## 任务 0：语义基线与本地生命周期
 
@@ -764,3 +766,64 @@ Chrome 首次连接 `18081` 时，命令执行器已经回收 `local-up` 的后�
 - Argo exact revision/sync observation：active revision disabled，当前工具面无 Argo MCP；未读取外部 Application，也未 sync/override/rollback。
 - Incident-bound live recovery execution：Task 7 contract 可用，但本轮未制造新的 Incident fault/recovery。Task 8 Operation Verification 的真实 MySQL/local action proof 不冒充 live Incident Recovery Verification。
 - hosted/staging/production、真实 LLM/model、外部 Scenario、PR、tag、默认分支与任何未授权 Provider write：`NOT RUN`。
+
+## 任务 9：真实 Scenario、视觉质量与最终收敛
+
+### 结果
+
+```text
+TASK_9_STATUS=DONE_WITH_NOT_RUN
+LOCAL_CORE_SCENARIO=PASS
+FINAL_DOD_FAIL=0
+EXTERNAL_PROVIDER_BRANCHES=NOT_RUN
+BRANCH=codex/v3-refactor
+HEAD=7af4144f7cdc4c03b8d3b88fdb751ae06b8686c1
+FINAL_HELM_REVISION=53
+FINAL_SCENARIO_STATE=inactive
+```
+
+任务 0–8 的本地硬依赖逐项审计为可用后才开始最终 Scenario。历史 task-specific `NOT RUN` 继续保留；Phase 9 仅把本轮真实运行的本地 Kubernetes/observability/LLM/recovery 分支更新为当前 `PASS`。
+
+### Scenario 与主链
+
+| 项目 | 结果 | 当前证据 |
+|---|---|---|
+| Scenario lifecycle | `PASS` | `make scenario-up/status/down` 真实执行；ID `scenario-20260728045922-4c81122b`；active runtime resources `6`，最终 inactive resources `0` |
+| Kubernetes / traffic / fault | `PASS` | healthy 与 traffic `1/1`；fault 从 degraded 进入 recovered `0/0`；全部资源带同一 Scenario label |
+| Evidence Plane | `PASS` | Metrics `PASS`、Alert `PASS_RESOLVED`、Logs `PASS`（最终 active status 23,300 documents）、Traces `PASS`（20 traces）、Agent `PASS` |
+| Observe-to-Verify | `PASS` | Alert `077751b1-d5f9-4576-9687-95c8d732fd99` -> Incident `fee1939f-e291-4dac-b1c2-c52848b616a9` -> Investigation `af47fc82-dcd1-4b6a-a01f-3ffd9af65bd7` -> Plan `ba8eadf7-ffef-4bdf-b944-b2e106757ffa` -> execution `fbebe225-fca5-49a4-8451-56fa9c26938d` -> Verification `10a6e87f-a678-4ae5-a97f-b36cced39119` -> ResolutionReport `3a4b63da-d444-4675-86d2-3592466b58e8` |
+| Exact authority | `PASS` | Plan hash `1e40bef86a26da12122d70f72d14bd22f692fdb977cdf24b0b732dceb3968c2d`；Owner exact authorization 后才 scale，material drift invalidation 由当前实现/tests 覆盖 |
+| Real model | `PASS` | DeepSeek `deepseek-v4-flash`，1 model call，710 input / 233 output tokens，Prompt/Tool Schema hash 落库；4 个 provider tool steps 与 4 条 Evidence |
+| Post-down retention | `PASS` | `scenario-down` 前后 retained history `4 -> 4`；write gate `false`；Worker scale RBAC `no`；stale firing alerts `0` |
+
+### Browser、视觉与失败态
+
+| 项目 | 结果 | 当前证据 |
+|---|---|---|
+| Full browser flow | `PASS` | Overview、Alert、Logs、exact Trace、Agent、Incident、DevOps 全链使用真实 `/api/v1`/Provider 数据；clean run 212 API responses 全部 `200` |
+| Final bundle regression | `PASS` | Helm revision 52：8 route matrix 在 390px 下 overflow `0`；225 API responses 无 bad response；console/page error `0` |
+| Canvas | `PASS` | Revision 52 CSS/drawing buffer `888x748`、PNG data nonblank、WebGL error `0`；desktop/mobile 截图已保存 |
+| Responsive / scroll | `PASS` | 1440x900、1024x768、768x1024、390x844、320x568 与 landscape；200% zoom、dark、reduced-motion、long content、bounded internal scroll 均完成 |
+| Logs virtualization | `PASS` | 200 rows、`scrollHeight=10800`，实际仅渲染 16 行；document overflow `0` |
+| Accessibility | `PASS` | Lighthouse desktop/mobile Accessibility `100`、Best Practices `100`；390px 可见交互目标小于 44px 的数量为 `0` |
+| Performance | `PASS` | LCP `338ms`、CLS `0.00`；trace 已保存 |
+| Failure state | `PASS` | Offline refresh 保留真实 40-node stale projection，显示 `REQUEST_FAILED`/Network Error/重试；恢复网络后回到 40-node projection |
+| Post-down Live Mode | `PASS` | `Scenario Active=false`、Scenario runtime name=false、Live Mode=true、34 nodes、overflow `0`；21 API responses 无 bad response，console/page error `0` |
+
+### 清理与文档
+
+`PASS`：删除 temporary demo model adapter、GitOps demo contract、旧 Argo manifests、inactive `WorkspaceStatusView`、旧 `server-monitor` path、dead links 与平行部署说明。旧 ignored kubeconfig 已移入 `.cloudops/retired/phase-9/` 并保持 `0600`。README、architecture、API、operations、security、reliability、demo、risk register 与 historical Golden notice 已按当前事实收敛。
+
+### 最终门禁
+
+`PASS`：`make test-go`、`make test-race`、`make vet`、`make lint-go`（0 issues）、`make build-go`、`make test-frontend`（19 files / 67 tests）、`make build-frontend`、gofmt、goimports、dependency、structure、naming、actionlint、ShellCheck、Helm strict lint/template/contracts、kubeconform `38/38`、runtime render 与 `git diff --check`。前端 ESLint 为 0 error，保留既有 formatting warning；真实浏览器没有 Vue warning。
+
+### 外部 `NOT RUN`
+
+- GitHub App read/write、branch/commit/Draft PR、required CI、human merge。
+- Argo Application/exact merged revision、sync/rollout observation。
+- Registry/GHCR publish、SBOM/sign/attest、referrer/cleanup。
+- Hosted workflow、staging、production、release/tag/default branch mutation。
+- 第二真实集群、多集群/多租户与 production backup/DR。
+
+上述分支没有被 local adapter、fixture、旧 Golden 报告或本地 Kubernetes recovery 包装为 `PASS`。完整 Definition of Done、视口、对象、raw evidence 链接与限制见 [Phase 9 最终证据报告](phase-9-scenario/final-evidence-report.md)。

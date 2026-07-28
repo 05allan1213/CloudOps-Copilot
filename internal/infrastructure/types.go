@@ -115,6 +115,14 @@ type ResourceCondition struct {
 	LastTransitionTime time.Time `json:"last_transition_time,omitempty"`
 }
 
+type WorkloadStatus struct {
+	DesiredReplicas    int32 `json:"desired_replicas"`
+	UpdatedReplicas    int32 `json:"updated_replicas"`
+	ReadyReplicas      int32 `json:"ready_replicas"`
+	AvailableReplicas  int32 `json:"available_replicas"`
+	ObservedGeneration int64 `json:"observed_generation"`
+}
+
 type ContextLink struct {
 	Kind         string    `json:"kind"`
 	Label        string    `json:"label"`
@@ -135,7 +143,10 @@ type Resource struct {
 	Layer           ResourceLayer       `json:"layer"`
 	Namespace       string              `json:"namespace,omitempty"`
 	Name            string              `json:"name"`
+	ResourceVersion string              `json:"resource_version,omitempty"`
+	Generation      int64               `json:"generation,omitempty"`
 	Status          string              `json:"status,omitempty"`
+	Workload        *WorkloadStatus     `json:"workload,omitempty"`
 	Health          ResourceHealth      `json:"health"`
 	OwnerReferences []ResourceReference `json:"owner_references"`
 	Selector        map[string]string   `json:"selector"`

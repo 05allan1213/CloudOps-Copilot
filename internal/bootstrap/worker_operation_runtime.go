@@ -23,12 +23,18 @@ func newWorkerOperationRunner(cfg WorkerConfig, db *sql.DB) (*operation.Runner, 
 	}
 	adapters := []operation.Adapter{localAdapter}
 	if cfg.Application.K8SWriteEnabled {
+		if cfg.Application.ScenarioState != "active" || cfg.Application.ScenarioID == "" {
+			return nil, errors.New("operation Kubernetes writer requires one active bounded Scenario")
+		}
 		connections, connectionErr := cfg.Application.KubernetesTopologyConnections()
 		if connectionErr != nil {
 			return nil, connectionErr
 		}
 		executors := make(map[string]*k8schange.ControlledScaleExecutor, len(connections))
 		for _, connection := range connections {
+			if connection.ClusterID != cfg.Application.K8SClusterID {
+				continue
+			}
 			if slices.Contains(connection.AllowedNamespaces, "*") {
 				return nil, errors.New("operation Kubernetes writer requires explicit namespace allowlists")
 			}
@@ -42,6 +48,9 @@ func newWorkerOperationRunner(cfg WorkerConfig, db *sql.DB) (*operation.Runner, 
 			}
 			executor, executorErr := k8schange.NewControlledScaleExecutor(client, k8schange.ControlledScaleConfig{
 				AllowedNamespaces: connection.AllowedNamespaces,
+				TargetNamespace:   "demo",
+				TargetDeployment:  "cloudops-scenario-fault",
+				ScenarioID:        cfg.Application.ScenarioID,
 				MaxReplicas:       cfg.Application.OperationMaxReplicas,
 				RequestTimeout:    connection.RequestTimeout,
 			})
@@ -49,6 +58,9 @@ func newWorkerOperationRunner(cfg WorkerConfig, db *sql.DB) (*operation.Runner, 
 				return nil, fmt.Errorf("initialize operation Kubernetes executor %q: %w", connection.ClusterID, executorErr)
 			}
 			executors[connection.ClusterID] = executor
+		}
+		if len(executors) != 1 {
+			return nil, errors.New("operation Kubernetes writer requires exactly one local Scenario cluster")
 		}
 		kubernetesAdapter, adapterErr := k8schange.NewOperationScaleAdapter(executors, repository, 500*time.Millisecond)
 		if adapterErr != nil {

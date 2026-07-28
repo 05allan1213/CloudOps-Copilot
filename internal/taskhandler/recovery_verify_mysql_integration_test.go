@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -98,6 +99,43 @@ func TestMySQLOperationalRecoveryLifecycleFromAlertsToOwnerClose(t *testing.T) {
 	if err != nil || len(secondView.IncidentLinks) != 1 || secondView.IncidentLinks[0].Provenance != "owner_attached" {
 		t.Fatalf("attach second Alert view=%+v err=%v", secondView, err)
 	}
+	var observationStart, observationEnd time.Time
+	if err := db.QueryRowContext(ctx, "SELECT first_seen_at, last_seen_at FROM incidents WHERE public_id = ?", incidentPublicID).
+		Scan(&observationStart, &observationEnd); err != nil {
+		t.Fatal(err)
+	}
+	if !observationStart.UTC().Equal(firstSignal.OccurredAt) || !observationEnd.UTC().Equal(secondSignal.OccurredAt) {
+		t.Fatalf("Incident observation window=%s..%s want=%s..%s", observationStart, observationEnd, firstSignal.OccurredAt, secondSignal.OccurredAt)
+	}
+
+	scenarioSignal := operationalRecoverySignal("3", "f", correlationKey, domain.SignalStatusFiring, now.Add(-3*time.Minute), now.Add(-3*time.Minute), nil)
+	scenarioSignal.Labels = json.RawMessage(`{"service":"checkout","scenario_id":"scenario-incident-isolation"}`)
+	scenarioAlert := ingestOneOperationalRecoveryAlert(t, ctx, alerts, scenarioSignal)
+	_, err = alerts.LinkIncident(ctx, alert.LinkIncidentRequest{
+		AlertID: scenarioAlert.AlertPublicID, ExpectedVersion: 1, IdempotencyKey: operationalRecoveryHash("operational-recovery-reject-cross-scenario-attach"),
+		IncidentID: incidentPublicID, Actor: operationalRecoveryAlertOwner(),
+	})
+	if !errors.Is(err, alert.ErrConflict) {
+		t.Fatalf("cross-Scenario Incident attach error=%v want=%v", err, alert.ErrConflict)
+	}
+	scenarioView, err := alerts.LinkIncident(ctx, alert.LinkIncidentRequest{
+		AlertID: scenarioAlert.AlertPublicID, ExpectedVersion: 1, IdempotencyKey: operationalRecoveryHash("operational-recovery-create-scenario-incident"),
+		Create: true, Actor: operationalRecoveryAlertOwner(),
+	})
+	if err != nil || len(scenarioView.IncidentLinks) != 1 || scenarioView.IncidentLinks[0].IncidentID == incidentPublicID {
+		t.Fatalf("Scenario Incident isolation view=%+v err=%v", scenarioView, err)
+	}
+	scenarioIncidentPublicID := scenarioView.IncidentLinks[0].IncidentID
+	repeatedScenarioSignal := operationalRecoverySignal("4", "9", correlationKey, domain.SignalStatusFiring, now.Add(-2*time.Minute), now.Add(-2*time.Minute), nil)
+	repeatedScenarioSignal.Labels = json.RawMessage(`{"service":"checkout","scenario_id":"scenario-incident-isolation"}`)
+	repeatedScenarioAlert := ingestOneOperationalRecoveryAlert(t, ctx, alerts, repeatedScenarioSignal)
+	repeatedScenarioView, err := alerts.LinkIncident(ctx, alert.LinkIncidentRequest{
+		AlertID: repeatedScenarioAlert.AlertPublicID, ExpectedVersion: 1, IdempotencyKey: operationalRecoveryHash("operational-recovery-reuse-scenario-incident"),
+		Create: true, Actor: operationalRecoveryAlertOwner(),
+	})
+	if err != nil || len(repeatedScenarioView.IncidentLinks) != 1 || repeatedScenarioView.IncidentLinks[0].IncidentID != scenarioIncidentPublicID {
+		t.Fatalf("same Scenario Incident reuse view=%+v err=%v", repeatedScenarioView, err)
+	}
 
 	var incidentID uint64
 	if err := db.QueryRowContext(ctx, "SELECT id FROM incidents WHERE public_id = ?", incidentPublicID).Scan(&incidentID); err != nil {
@@ -163,6 +201,13 @@ WHERE active.singleton_id = 1 AND scope.cluster_id = 'cloudops-local'`).Scan(&co
 	secondResolvedAt := now.Add(-30 * time.Second)
 	secondResolved := operationalRecoverySignal("2", "e", correlationKey, domain.SignalStatusResolved, secondSignal.StartsAt, secondResolvedAt, &secondResolvedAt)
 	ingestOneOperationalRecoveryAlert(t, ctx, alerts, secondResolved)
+	if err := db.QueryRowContext(ctx, "SELECT first_seen_at, last_seen_at FROM incidents WHERE public_id = ?", incidentPublicID).
+		Scan(&observationStart, &observationEnd); err != nil {
+		t.Fatal(err)
+	}
+	if !observationStart.UTC().Equal(firstSignal.OccurredAt) || !observationEnd.UTC().Equal(secondResolvedAt) {
+		t.Fatalf("resolved Incident observation window=%s..%s want=%s..%s", observationStart, observationEnd, firstSignal.OccurredAt, secondResolvedAt)
+	}
 	assertOperationalRecoveryCount(t, ctx, db, "SELECT COUNT(*) FROM verification_runs WHERE incident_id = ? AND trigger_type = 'operational_recovery'", 2, incidentID)
 	assertOperationalRecoveryValue(t, ctx, db, "SELECT status FROM incidents WHERE id = ?", "verifying", incidentID)
 

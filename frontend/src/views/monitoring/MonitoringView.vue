@@ -715,7 +715,7 @@ onBeforeUnmount(() => {
           </label>
           <label v-else class="query-field expert-field">
             <span>PromQL <b>{{ queryByteLength }} / 8192 bytes</b></span>
-            <textarea v-model="expertQuery" name="expert-promql" rows="4" spellcheck="false" @input="clearDefinitionBinding" />
+            <textarea v-model="expertQuery" name="expert-promql" autocomplete="off" rows="4" spellcheck="false" @input="clearDefinitionBinding" />
           </label>
 
           <div class="time-controls">
@@ -726,11 +726,11 @@ onBeforeUnmount(() => {
             </div>
             <label>
               <span>开始</span>
-              <input v-model="fromValue" type="datetime-local" name="monitoring-from" @change="clearDefinitionBinding" />
+              <input v-model="fromValue" type="datetime-local" name="monitoring-from" autocomplete="off" @change="clearDefinitionBinding" />
             </label>
             <label>
               <span>结束</span>
-              <input v-model="toValue" type="datetime-local" name="monitoring-to" @change="clearDefinitionBinding" />
+              <input v-model="toValue" type="datetime-local" name="monitoring-to" autocomplete="off" @change="clearDefinitionBinding" />
             </label>
             <label class="step-control">
               <span>Step</span>
@@ -1005,7 +1005,7 @@ onBeforeUnmount(() => {
       </label>
       <label>
         <span>说明</span>
-        <textarea v-model="saveDescription" name="query-definition-description" rows="3" maxlength="512" />
+        <textarea v-model="saveDescription" name="query-definition-description" autocomplete="off" rows="3" maxlength="512" />
       </label>
       <div class="dialog-actions">
         <button class="command-button" type="button" @click="saveDialogOpen = false">取消</button>

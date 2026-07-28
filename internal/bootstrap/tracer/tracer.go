@@ -23,6 +23,7 @@ type Config struct {
 	PodUID         string
 	WorkloadKind   string
 	WorkloadName   string
+	ScenarioID     string
 	SourceRevision string
 	OTLPEndpoint   string
 	SampleRate     float64
@@ -51,6 +52,7 @@ func Init(ctx context.Context, cfg Config) (func(context.Context) error, error) 
 		{"k8s.pod.uid", cfg.PodUID},
 		{"k8s.workload.kind", cfg.WorkloadKind},
 		{"k8s.workload.name", cfg.WorkloadName},
+		{"cloudops.scenario.id", cfg.ScenarioID},
 		{"cloudops.source.revision", cfg.SourceRevision},
 	} {
 		if strings.TrimSpace(item.value) != "" {

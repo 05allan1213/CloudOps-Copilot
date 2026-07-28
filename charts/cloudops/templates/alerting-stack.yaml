@@ -13,7 +13,7 @@ data:
       resolve_timeout: 1m
     route:
       receiver: cloudops-webhook
-      group_by: [alertname, cluster, environment, namespace, deployment]
+      group_by: [alertname, cluster, environment, namespace, deployment, scenario_id]
       group_wait: {{ .Values.observability.stack.alertmanager.groupWait }}
       group_interval: {{ .Values.observability.stack.alertmanager.groupInterval }}
       repeat_interval: {{ .Values.observability.stack.alertmanager.repeatInterval }}
@@ -44,6 +44,22 @@ data:
             annotations:
               summary: Controlled Alert lifecycle validation
               description: Real Prometheus and Alertmanager integration signal
+          {{- if .Values.scenario.enabled }}
+          - alert: CloudOpsScenarioRequiredEnvMissing
+            expr: cloudops_demo_workload_ready{job="cloudops-scenario-fault",scenario_id={{ .Values.scenario.id | quote }}} == 0
+            for: 5s
+            labels:
+              severity: critical
+              cluster: {{ .Values.observability.stack.clusterID | quote }}
+              environment: {{ .Values.observability.stack.environment | quote }}
+              namespace: {{ .Values.scenario.namespace | quote }}
+              deployment: cloudops-scenario-fault
+              service: cloudops-scenario-fault
+              scenario_id: {{ .Values.scenario.id | quote }}
+            annotations:
+              summary: Scenario workload is failing because REQUIRED_ENV is missing
+              description: The bounded Scenario fault workload is live and serving real HTTP 500 responses.
+          {{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment

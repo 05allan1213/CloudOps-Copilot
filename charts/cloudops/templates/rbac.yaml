@@ -36,6 +36,12 @@ rules:
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
     verbs: ["get", "list"]
+  {{- if and $.Values.scenario.enabled (eq . $.Values.scenario.namespace) (eq (index $.Values.worker.env "K8S_WRITE_ENABLED" | toString) "true") }}
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    resourceNames: ["cloudops-scenario-fault"]
+    verbs: ["get", "update"]
+  {{- end }}
   - apiGroups: ["discovery.k8s.io"]
     resources: ["endpointslices"]
     verbs: ["get", "list"]

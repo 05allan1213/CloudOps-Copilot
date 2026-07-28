@@ -28,6 +28,7 @@ type Config struct {
 	SourceRevision string
 	Environment    string
 	RequiredEnv    string
+	ScenarioID     string
 	ReadTimeout    time.Duration
 	WriteTimeout   time.Duration
 	IdleTimeout    time.Duration
@@ -155,11 +156,11 @@ func (s *Server) work(w http.ResponseWriter, r *http.Request) {
 	ctx, span := otel.Tracer(s.cfg.ServiceName).Start(r.Context(), "demo.request")
 	defer span.End()
 	if strings.TrimSpace(s.cfg.RequiredEnv) == "" {
-		logger.FromContext(ctx).Warn("demo request failed", zap.String("reason", "required_env_missing"), zap.String("route", knownRoute(r.URL.Path)))
+		logger.FromContext(ctx).Warn("demo request failed", zap.String("reason", "required_env_missing"), zap.String("route", knownRoute(r.URL.Path)), zap.String("scenario_id", s.cfg.ScenarioID))
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "required_env_missing"})
 		return
 	}
-	logger.FromContext(ctx).Info("demo request served", zap.String("route", knownRoute(r.URL.Path)))
+	logger.FromContext(ctx).Info("demo request served", zap.String("route", knownRoute(r.URL.Path)), zap.String("scenario_id", s.cfg.ScenarioID))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "service": s.cfg.ServiceName})
 }
 

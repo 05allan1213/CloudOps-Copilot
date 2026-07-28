@@ -48,6 +48,14 @@ export interface ResourceCondition {
   last_transition_time?: string;
 }
 
+export interface WorkloadStatus {
+  desired_replicas: number;
+  updated_replicas: number;
+  ready_replicas: number;
+  available_replicas: number;
+  observed_generation: number;
+}
+
 export interface InfrastructureContextLink {
   kind: "internal" | "provider" | "source" | "operation";
   label: string;
@@ -68,7 +76,10 @@ export interface KubernetesResource {
   layer: ResourceLayer;
   namespace?: string;
   name: string;
+  resource_version?: string;
+  generation?: number;
   status?: string;
+  workload?: WorkloadStatus;
   health: { state: ResourceHealthState; summary: string };
   owner_references: ResourceReference[];
   selector: Record<string, string>;

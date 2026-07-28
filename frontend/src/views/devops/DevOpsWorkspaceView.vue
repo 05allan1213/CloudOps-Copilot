@@ -23,7 +23,7 @@ import {
 } from "lucide-vue-next";
 import { useRoute, useRouter } from "vue-router";
 
-import type { ActionCard, OperationPlan } from "../../api/agent";
+import type { ActionCard, OperationPlan, OperationPlanProposalInput } from "../../api/agent";
 import type { OperationExecution, ProviderBranch } from "../../api/devops";
 import HashValue from "../../components/incidents/HashValue.vue";
 import JSONSnapshot from "../../components/incidents/JSONSnapshot.vue";
@@ -77,6 +77,49 @@ const selectedPayload = computed(() => {
 const proposedCount = computed(() => [...plans.value, ...cards.value].filter((item) => item.status === "proposed").length);
 const authorizedCount = computed(() => [...plans.value, ...cards.value].filter((item) => item.status === "authorized").length);
 const verifiedCount = computed(() => executions.value.filter((item) => item.verification?.status === "passed").length);
+const scenarioDeployment = computed(() => store.scenarioResources?.items.find((item) =>
+  item.kind === "Deployment"
+  && item.namespace === "demo"
+  && item.name === "cloudops-scenario-fault"
+  && Boolean(item.labels["cloudops.io/scenario-id"]),
+) ?? null);
+const scenarioID = computed(() => scenarioDeployment.value?.labels["cloudops.io/scenario-id"] ?? "");
+const scenarioInvestigation = computed(() => store.investigations.find((item) =>
+  item.subject_type === "alert"
+  && item.scenario_id === scenarioID.value
+  && item.status === "completed"
+  && item.evidence_count > 0,
+) ?? null);
+const scenarioFreeze = computed(() => workspace.value?.change_freezes.find((item) =>
+  item.target.cluster_id === store.scenarioResources?.scope.cluster_id
+  && item.target.namespace === "demo"
+  && item.target.workload_name === "cloudops-scenario-fault"
+  && item.target.scenario_id === scenarioID.value,
+) ?? null);
+const scenarioPlan = computed(() => plans.value.find((item) => {
+  const target = objectValue(item.target);
+  return item.operation_type === "kubernetes.deployment.scale" && target?.scenario_id === scenarioID.value;
+}) ?? null);
+const canProposeScenarioPlan = computed(() => Boolean(
+  scenarioDeployment.value
+  && scenarioID.value
+  && scenarioDeployment.value.resource_version
+  && scenarioDeployment.value.workload?.desired_replicas === 1
+  && scenarioInvestigation.value
+  && !scenarioFreeze.value?.enabled
+  && !scenarioPlan.value
+  && !store.scenarioPlanningError,
+));
+const scenarioProposalBlocker = computed(() => {
+  if (store.scenarioPlanningError) return store.scenarioPlanningError;
+  if (!scenarioDeployment.value || !scenarioID.value) return "Scenario Deployment 不可用；先运行 make scenario-up。";
+  if (scenarioDeployment.value.workload?.desired_replicas === 0) return "Scenario fault 已恢复到 0 replicas，无需重复创建 Plan。";
+  if (!scenarioDeployment.value.resource_version) return "当前 Kubernetes projection 缺少 resourceVersion，拒绝创建弱 precondition Plan。";
+  if (!scenarioInvestigation.value) return "尚无同一 Scenario 的已完成 Agent Investigation 与 Evidence。";
+  if (scenarioFreeze.value?.enabled) return "当前 target 已进入 change freeze，不能创建 recovery Plan。";
+  if (scenarioPlan.value) return `该 Scenario 已有 ${scenarioPlan.value.status} Operation Plan。`;
+  return "";
+});
 
 function queryValue(value: unknown): string {
   const raw = Array.isArray(value) ? value[0] : value;
@@ -85,6 +128,12 @@ function queryValue(value: unknown): string {
 
 function isOperationPlan(subject: AuthoritySubject): subject is OperationPlan {
   return subject.authority === "high_impact";
+}
+
+function objectValue(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
 }
 
 function subjectType(subject: AuthoritySubject): string {
@@ -188,6 +237,46 @@ async function executeSelected() {
   }
 }
 
+async function proposeScenarioRecovery() {
+  const deployment = scenarioDeployment.value;
+  const run = scenarioInvestigation.value;
+  const resourceVersion = deployment?.resource_version;
+  if (!canProposeScenarioPlan.value || !deployment || !run || !resourceVersion || !scenarioID.value || !store.scenarioResources) return;
+  try {
+    await ElMessageBox.confirm(
+      `Target: demo/cloudops-scenario-fault\nScenario: ${scenarioID.value}\nresourceVersion: ${resourceVersion}\n\n创建操作不会授权或执行 Kubernetes mutation。`,
+      "基于 Agent Evidence 创建 immutable Recovery Plan",
+      { confirmButtonText: "创建 exact Plan", cancelButtonText: "取消", type: "warning" },
+    );
+  } catch {
+    return;
+  }
+  const input: OperationPlanProposalInput = {
+    run_id: run.id,
+    action_type: "kubernetes.deployment.scale",
+    target: {
+      cluster_id: store.scenarioResources.scope.cluster_id,
+      environment: store.scenarioResources.scope.environment,
+      namespace: "demo",
+      workload_kind: "Deployment",
+      workload_name: "cloudops-scenario-fault",
+      scenario_id: scenarioID.value,
+    },
+    parameters: { replicas: 0 },
+    intended_state: { replicas: 0 },
+    preconditions: [
+      { type: "deployment.replicas", expected_replicas: 1 },
+      { type: "deployment.resource_version", expected_resource_version: resourceVersion },
+      { type: "local.change_freeze", expected_enabled: false, expected_version: scenarioFreeze.value?.row_version ?? 0 },
+    ],
+    risk: "Scale only the bounded failing Scenario Deployment to 0 replicas; healthy traffic and retained CloudOps history remain.",
+    verification_intent: { type: "kubernetes.deployment.scale", expected_replicas: 0 },
+    expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+  };
+  const plan = await store.proposeScenarioPlan(input);
+  if (plan) await router.replace({ query: { ...route.query, view: undefined, subject: plan.id, operation: undefined } });
+}
+
 watch(() => workspace.value?.collected_at, ensureSelection);
 
 onMounted(async () => {
@@ -253,6 +342,19 @@ onBeforeUnmount(() => {
 
       <main v-else-if="activeView === 'operations'" class="operations-layout">
         <aside class="authority-queue" aria-label="Authority review queue">
+          <section class="scenario-plan-builder" aria-labelledby="scenario-plan-heading">
+            <header><TriangleAlert :size="15" aria-hidden="true" /><h2 id="scenario-plan-heading">Scenario Recovery</h2><span>{{ scenarioID ? "ACTIVE" : "NOT RUN" }}</span></header>
+            <dl v-if="scenarioDeployment" class="scenario-plan-facts">
+              <div><dt>Target</dt><dd><code translate="no">demo/cloudops-scenario-fault</code></dd></div>
+              <div><dt>Scenario</dt><dd><code translate="no">{{ scenarioID }}</code></dd></div>
+              <div><dt>Replicas</dt><dd>{{ scenarioDeployment.workload?.ready_replicas ?? 0 }} / {{ scenarioDeployment.workload?.desired_replicas ?? 0 }} ready</dd></div>
+              <div><dt>Agent Evidence</dt><dd>{{ scenarioInvestigation ? `${scenarioInvestigation.evidence_count} citations` : "NOT RUN" }}</dd></div>
+            </dl>
+            <p v-if="scenarioProposalBlocker" class="scenario-plan-note">{{ scenarioProposalBlocker }}</p>
+            <button type="button" class="scenario-plan-command" :disabled="!canProposeScenarioPlan || Boolean(store.mutatingSubjectID)" @click="proposeScenarioRecovery">
+              <Workflow :size="15" aria-hidden="true" />创建 exact Recovery Plan
+            </button>
+          </section>
           <section>
             <header><LockKeyhole :size="15" aria-hidden="true" /><h2>Operation Plans</h2><span>{{ plans.length }}</span></header>
             <p v-if="!plans.length" class="empty-row">无持久化 Plan。</p>
@@ -390,8 +492,8 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.devops-workspace { height: 100%; min-width: 0; overflow: hidden; background: var(--co-bg-canvas); }
-.workspace-scroll { height: 100%; overflow-y: auto; overscroll-behavior: contain; }
+.devops-workspace { min-width: 0; background: var(--co-bg-canvas); }
+.workspace-scroll { min-width: 0; }
 .workspace-header { display: grid; min-height: 76px; grid-template-columns: minmax(240px, 1fr) auto 40px; align-items: center; gap: var(--co-space-5); padding: 0 var(--co-space-5); border-bottom: 1px solid var(--co-border-default); background: var(--co-bg-surface); }
 .title-block, .title-block > div, .provider-band > header, .provider-item, .provider-item > div, .authority-queue section > header, .subject-header, .detail-section > header, .detail-section > header > div, .identity-section > header, .identity-section > header > div { display: flex; min-width: 0; align-items: center; }
 .title-block { gap: var(--co-space-3); }
@@ -421,7 +523,7 @@ onBeforeUnmount(() => {
 .provider-item strong { font-size: 11px; text-transform: capitalize; }
 .provider-item small { color: var(--co-text-muted); font-size: 8px; text-transform: uppercase; }
 .provider-item p { grid-column: 2 / -1; min-width: 0; margin: -4px 0 0; color: var(--co-text-muted); font-size: 9px; overflow-wrap: anywhere; }
-.workspace-tabs { position: sticky; top: 0; z-index: var(--co-z-sticky); display: flex; min-height: 46px; padding: 0 var(--co-space-5); border-bottom: 1px solid var(--co-border-default); background: var(--co-bg-surface); }
+.workspace-tabs { position: sticky; top: var(--co-header-height); z-index: var(--co-z-sticky); display: flex; min-height: 46px; padding: 0 var(--co-space-5); border-bottom: 1px solid var(--co-border-default); background: var(--co-bg-surface); }
 .workspace-tabs button { display: inline-flex; min-width: 150px; align-items: center; justify-content: center; gap: var(--co-space-2); padding: 0 var(--co-space-4); border: 0; border-bottom: 2px solid transparent; color: var(--co-text-secondary); background: transparent; cursor: pointer; font-size: 11px; font-weight: 750; }
 .workspace-tabs button:hover { color: var(--co-text-primary); background: var(--co-bg-hover); }
 .workspace-tabs button[aria-selected="true"] { border-bottom-color: var(--co-action-primary); color: var(--co-action-primary); }
@@ -432,6 +534,17 @@ onBeforeUnmount(() => {
 .authority-queue section > header { gap: var(--co-space-2); margin-bottom: var(--co-space-2); }
 .authority-queue h2 { flex: 1; margin: 0; font-size: 11px; }
 .authority-queue header > span { color: var(--co-text-muted); font-size: 9px; }
+.scenario-plan-builder { background: var(--co-status-warning-bg); }
+.scenario-plan-facts { display: grid; gap: var(--co-space-2); margin: 0; }
+.scenario-plan-facts div { display: grid; min-width: 0; grid-template-columns: 72px minmax(0, 1fr); gap: var(--co-space-2); }
+.scenario-plan-facts dt { color: var(--co-text-muted); font-size: 8px; text-transform: uppercase; }
+.scenario-plan-facts dd { min-width: 0; margin: 0; color: var(--co-text-secondary); font-size: 9px; overflow-wrap: anywhere; }
+.scenario-plan-facts code { font-size: 8px; }
+.scenario-plan-note { margin: var(--co-space-3) 0; color: var(--co-status-warning-fg); font-size: 9px; line-height: 1.5; overflow-wrap: anywhere; }
+.scenario-plan-command { display: inline-flex; width: 100%; min-height: 44px; align-items: center; justify-content: center; gap: var(--co-space-2); padding: 0 var(--co-space-3); border: 1px solid var(--co-status-warning-border); border-radius: var(--co-radius-control); color: var(--co-status-warning-fg); background: var(--co-bg-surface); cursor: pointer; font-size: 10px; font-weight: 800; }
+.scenario-plan-command:hover:not(:disabled) { border-color: var(--co-action-primary); color: var(--co-action-primary); background: var(--co-bg-hover); }
+.scenario-plan-command:disabled { cursor: not-allowed; opacity: .55; }
+.scenario-plan-command:focus-visible { outline: 2px solid var(--co-focus-ring); outline-offset: 2px; }
 .queue-item { display: grid; width: 100%; min-height: 66px; grid-template-columns: minmax(0, 1fr) auto; gap: 4px var(--co-space-2); margin-top: 4px; padding: var(--co-space-2); border: 1px solid transparent; border-radius: var(--co-radius-control); color: var(--co-text-primary); background: transparent; cursor: pointer; text-align: left; }
 .queue-item:hover { border-color: var(--co-border-default); background: var(--co-bg-hover); }
 .queue-item.selected { border-color: var(--co-status-info-border); background: var(--co-bg-active); }
@@ -477,7 +590,7 @@ onBeforeUnmount(() => {
 .execution-rail small, .execution-rail code { color: var(--co-text-muted); font-size: 8px; }
 .execution-rail code { grid-column: 1 / -1; }
 .verification-links { display: flex; flex-wrap: wrap; gap: var(--co-space-2); margin-top: var(--co-space-3); }
-.verification-links a { display: inline-flex; min-height: 34px; align-items: center; gap: 5px; padding: 0 var(--co-space-3); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); color: var(--co-action-primary); background: var(--co-bg-surface); font-size: 9px; font-weight: 700; }
+.verification-links a { display: inline-flex; min-height: 44px; align-items: center; gap: 5px; padding: 0 var(--co-space-3); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); color: var(--co-action-primary); background: var(--co-bg-surface); font-size: 9px; font-weight: 700; }
 .verification-links a span { padding-left: var(--co-space-2); color: var(--co-text-muted); }
 .audit-timeline { display: grid; gap: 0; margin: var(--co-space-4) 0 0; padding: 0; list-style: none; }
 .audit-timeline > li { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: var(--co-space-3); }
@@ -514,9 +627,6 @@ tbody tr:last-child td { border-bottom: 0; }
   .authority-queue { border-right: 0; border-bottom: 1px solid var(--co-border-default); }
   .authority-queue { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .authority-queue section:last-child { grid-column: 1 / -1; }
-}
-@media (max-width: 767px) {
-  .workspace-scroll { box-sizing: border-box; padding-bottom: calc(58px + env(safe-area-inset-bottom)); }
 }
 @media (max-width: 560px) {
   .workspace-header { min-height: 64px; }

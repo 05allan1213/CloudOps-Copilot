@@ -122,6 +122,7 @@ func TestTargetAllowlistRejectsUnknownConflictAndAmbiguity(t *testing.T) {
 func TestExternalTextIsAllowlistedControlCleanedAndSecretRedacted(t *testing.T) {
 	item := testAlert("firing", "abc123", "WorkloadNotReady", "critical")
 	secretCanary := "AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+	item.Labels["scenario_id"] = "scenario-20260728031028-38f39d2c"
 	item.Annotations = map[string]string{
 		"summary":     "failure\nBearer bearer-token-0123456789 token=token-value-0123456789 " + secretCanary,
 		"description": "-----BEGIN PRIVATE KEY-----\nprivate-material\n-----END PRIVATE KEY-----",
@@ -139,6 +140,13 @@ func TestExternalTextIsAllowlistedControlCleanedAndSecretRedacted(t *testing.T) 
 	var annotations map[string]string
 	if err := json.Unmarshal(signal.Annotations, &annotations); err != nil {
 		t.Fatal(err)
+	}
+	var labels map[string]string
+	if err := json.Unmarshal(signal.Labels, &labels); err != nil {
+		t.Fatal(err)
+	}
+	if labels["scenario_id"] != item.Labels["scenario_id"] {
+		t.Fatalf("bounded Scenario identity was not retained: labels=%v", labels)
 	}
 	combined := signal.Summary + " " + string(signal.Annotations) + " " + string(signal.Labels)
 	for _, forbidden := range []string{"bearer-token-0123456789", "token-value-0123456789", secretCanary, "private-material", "must-never-be-selected", "label-secret-must-never-be-selected", `"token"`, `"api_key"`, "\n"} {
@@ -167,6 +175,29 @@ func TestExternalTextIsAllowlistedControlCleanedAndSecretRedacted(t *testing.T) 
 	for _, forbidden := range []string{secretCanary, "private-material", "token-value"} {
 		if strings.Contains(string(rejectionJSON), forbidden) {
 			t.Fatalf("rejection retained secret %q: %s", forbidden, rejectionJSON)
+		}
+	}
+}
+
+func TestScenarioIdentityRejectsInvalidExternalValues(t *testing.T) {
+	for _, value := range []string{
+		"Scenario-uppercase",
+		"scenario-contains_underscore",
+		"scenario-trailing-",
+		"scenario-" + strings.Repeat("a", 64),
+	} {
+		item := testAlert("firing", "abc123", "WorkloadNotReady", "critical")
+		item.Labels["scenario_id"] = value
+		batch, err := normalizeEnvelope(testEnvelope(item), mustTargets(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var labels map[string]string
+		if err := json.Unmarshal(batch.Signals[0].Labels, &labels); err != nil {
+			t.Fatal(err)
+		}
+		if _, exists := labels["scenario_id"]; exists {
+			t.Fatalf("invalid Scenario identity %q was retained: labels=%v", value, labels)
 		}
 	}
 }

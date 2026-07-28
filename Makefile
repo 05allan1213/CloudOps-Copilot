@@ -24,7 +24,7 @@ SHELL_FILES := $(shell find scripts -type f -name '*.sh' -print 2>/dev/null | so
 
 .PHONY: help \
 	local-up local-open local-status local-logs local-restart local-doctor local-down \
-	local-backup local-restore local-reset \
+	local-backup local-restore local-reset scenario-up scenario-status scenario-down \
 	build build-go build-api build-worker build-migrate build-demo build-frontend frontend-install \
 	test test-go test-race test-frontend frontend-lint frontend-typecheck frontend-unit frontend-e2e \
 	vet lint lint-go check-gofmt check-goimports check-deps check-structure check-naming \
@@ -64,6 +64,15 @@ local-restore: ## Restore BACKUP into an explicitly confirmed target database.
 
 local-reset: ## Backup first, then remove CloudOps persistent state with explicit confirmation.
 	bash $(LOCAL_LIFECYCLE) reset
+
+scenario-up: ## Start the bounded real Kubernetes fault Scenario.
+	bash $(LOCAL_LIFECYCLE) scenario-up
+
+scenario-status: ## Show Scenario resources, fault, Evidence Plane, Agent, and write-gate state.
+	bash $(LOCAL_LIFECYCLE) scenario-status
+
+scenario-down: ## Remove only Scenario runtime resources and retain CloudOps history.
+	bash $(LOCAL_LIFECYCLE) scenario-down
 
 build: build-go build-frontend ## Build all local application artifacts.
 

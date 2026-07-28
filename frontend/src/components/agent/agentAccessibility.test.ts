@@ -1,7 +1,7 @@
 import { createPinia } from "pinia";
 import { renderToString } from "@vue/server-renderer";
 import { createSSRApp, defineComponent } from "vue";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { AgentContextSnapshot, AgentRun, ConsultationDetail } from "../../api/agent";
 import { useAgentWorkspaceStore } from "../../stores/agentWorkspace";
@@ -157,5 +157,17 @@ describe("Agent Workspace accessibility IDs", () => {
     await expect(store.selectInvestigationFromRoute(run.id)).resolves.toBe(true);
     await expect(store.selectInvestigationFromRoute("missing-run")).resolves.toBe(false);
     expect(store.error).toContain("不在当前持久化索引中");
+  });
+
+  it("honors a preferred Investigation after the global Agent panel preloads the index", async () => {
+    const pinia = createPinia();
+    const store = useAgentWorkspaceStore(pinia);
+    const selectFromRoute = vi.spyOn(store, "selectInvestigationFromRoute").mockResolvedValue(true);
+    store.loaded = true;
+
+    await store.loadIndex(false, "run-from-context-link");
+
+    expect(selectFromRoute).toHaveBeenCalledOnce();
+    expect(selectFromRoute).toHaveBeenCalledWith("run-from-context-link");
   });
 });
