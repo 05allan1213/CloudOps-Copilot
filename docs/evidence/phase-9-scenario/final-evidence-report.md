@@ -6,16 +6,17 @@
 RESULT=DONE_WITH_NOT_RUN
 LOCAL_CORE_SCENARIO=PASS
 DEFINITION_OF_DONE_FAIL=0
-EXTERNAL_ITEMS=NOT_RUN
+EXTERNAL_DELIVERY=PARTIAL_WITH_NOT_RUN
 BRANCH=codex/v3-refactor
-HEAD=7af4144f7cdc4c03b8d3b88fdb751ae06b8686c1
-WORKTREE=DIRTY_PHASE_9_IMPLEMENTATION
+LOCAL_PHASE9_HEAD=7af4144f7cdc4c03b8d3b88fdb751ae06b8686c1
+LOCAL_PHASE9_WORKTREE=DIRTY_AT_CAPTURE
+DELIVERY_PR=https://github.com/05allan1213/CloudOps-Copilot/pull/1
 FINAL_HELM_REVISION=53
 FINAL_SCHEMA_VERSION=11
 FINAL_SCENARIO_STATE=inactive
 ```
 
-本报告只声明当前 worktree 实际运行的能力。外部 GitHub、Argo、Registry、hosted、staging 与 production 分支未运行，因此整项目结论不是无条件 `PASS`。
+本报告的本地主体只声明 Phase 9 worktree 实际运行的能力；末尾外部交付表持续记录后续真实执行。远端 branch/commit/PR、GitHub-hosted PR CI 与 strict required check 已运行，但产品 GitHub App、human merge、Argo、Registry/post-merge supply chain、staging 与 production 仍存在 `NOT RUN`，因此整项目结论不是无条件 `PASS`。
 
 ## 2. Authority and preflight audit
 
@@ -300,11 +301,14 @@ DoD summary：`PASS=28`、`FAIL=0`、`NOT RUN=0` for the 28 local-product DoD st
 
 | External item | Result | Reason |
 |---|---|---|
-| GitHub App read/write, branch/commit/Draft PR | `NOT RUN` | no authorized external Plan/credentialed run |
-| Required CI exact-head and human merge | `NOT RUN` | no current PR/head |
+| Product GitHub App runtime read/write | `NOT RUN` | no real App runtime credential; human `gh` identity is not product-adapter evidence |
+| Remote branch/commit/Ready PR | `PASS` | remote `codex/v3-refactor`; PR [#1](https://github.com/05allan1213/CloudOps-Copilot/pull/1) is Ready and mergeable |
+| Required CI exact-head | `PASS` | GitHub-hosted Go/Frontend/Runtime/4 image jobs and aggregate `Required CI` passed; `main` protection is strict and GitHub Actions App-bound |
+| Human merge | `NOT RUN` | intentionally reserved for the repository owner |
 | Argo Application/exact merged revision/sync/rollout | `NOT RUN` | provider not configured/run |
 | Registry/GHCR publish, SBOM, signing, attestation, cleanup | `NOT RUN` | hosted/external workflow not dispatched |
-| Hosted Actions validation | `NOT RUN` | local static checks do not substitute |
+| GitHub-hosted PR CI validation | `PASS` | current PR head is covered by the protected `Required CI` result |
+| Hosted supply-chain validation | `NOT RUN` | requires the exact human-merged `main` SHA; pre-merge evidence cannot substitute |
 | Staging | `NOT RUN` | no staging scope/credential/authorization |
 | Production | `NOT RUN` | outside supported local product and not authorized |
 | Second real cluster / multi-cluster / multi-tenant | `NOT RUN` | not configured; outside current local scope |

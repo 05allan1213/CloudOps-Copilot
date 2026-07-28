@@ -6,7 +6,7 @@
 >
 > Task 0 开工基线：`10a1f2b659b4ee9adb1a3efcb7725f83504b9d1f`
 >
-> 最后更新：2026-07-28 15:40（Asia/Shanghai）
+> 最后更新：2026-07-28 17:17（Asia/Shanghai）
 >
 > 下方任务 0–8 分节保留各任务当时的 exact-run provenance；Phase 9 关闭的本地 `NOT RUN` 不回写成历史任务当时已运行。当前最终结论以状态总览、任务 9 分节与 [Phase 9 最终证据报告](phase-9-scenario/final-evidence-report.md) 为准。
 
@@ -22,8 +22,8 @@
 | 任务 5：Alerts | `DONE_WITH_NOT_RUN` | 任务 0；任务 1 notification/Settings/Context Link | 本地真实 Alertmanager firing/resolved、Signal-to-Alert、ack、provider-backed silence、显式 Incident、Owner Notification、Workspace 与幂等重投已完成；专用 Alertmanager MCP 明确 `NOT RUN` |
 | 任务 6：Agent | `DONE_WITH_NOT_RUN` | 任务 1；任务 2-5 真实 Evidence source | Agent runtime/authority 已完成；Phase 9 已补真实 DeepSeek Investigation 与 token/hash provenance，外部 Agent Quality/hosted 分支仍 `NOT RUN` |
 | 任务 7：Incidents 与 Verify | `DONE_WITH_NOT_RUN` | 任务 5、6；任务 2-4 Context Link | Phase 9 已用真实 Kubernetes fault/recovery、Metrics/Alert/Trace Verify 与 ResolutionReport 完成主链；外部环境仍 `NOT RUN` |
-| 任务 8：Operations 与 DevOps | `DONE_WITH_NOT_RUN` | 任务 6；Incident 链另需任务 7 | Phase 9 已完成 exact Plan/Authorization 与 Scenario Deployment scale 的真实本地执行/验证；GitHub/Argo/hosted 分支仍 `NOT RUN` |
-| 任务 9：Scenario 与最终收敛 | `DONE_WITH_NOT_RUN` | 任务 0-8 本地必需能力 | 真实 Observe-to-Verify、视觉/响应式/性能/失败态、清理、历史文档和 `scenario-down` 均 `PASS`；外部项显式 `NOT RUN` |
+| 任务 8：Operations 与 DevOps | `DONE_WITH_NOT_RUN` | 任务 6；Incident 链另需任务 7 | Phase 9 已完成 exact Plan/Authorization 与 Scenario Deployment scale 的真实本地执行/验证；远端 branch/commit/PR、GitHub-hosted PR CI 与 strict required check 已 `PASS`，产品 GitHub App、Argo 与 post-merge supply chain 仍 `NOT RUN` |
+| 任务 9：Scenario 与最终收敛 | `DONE_WITH_NOT_RUN` | 任务 0-8 本地必需能力 | 真实 Observe-to-Verify、本地质量门禁及 GitHub-hosted PR CI 均 `PASS`；human merge 与其后的外部环境项显式 `NOT RUN` |
 
 ## 任务 0：语义基线与本地生命周期
 
@@ -818,12 +818,21 @@ FINAL_SCENARIO_STATE=inactive
 
 `PASS`：`make test-go`、`make test-race`、`make vet`、`make lint-go`（0 issues）、`make build-go`、`make test-frontend`（19 files / 67 tests）、`make build-frontend`、gofmt、goimports、dependency、structure、naming、actionlint、ShellCheck、Helm strict lint/template/contracts、kubeconform `38/38`、runtime render 与 `git diff --check`。前端 ESLint 为 0 error，保留既有 formatting warning；真实浏览器没有 Vue warning。
 
-### 外部 `NOT RUN`
+### 外部交付状态
 
-- GitHub App read/write、branch/commit/Draft PR、required CI、human merge。
+`PASS`：
+
+- 远端 `codex/v3-refactor` branch、commits 与 Ready PR [#1](https://github.com/05allan1213/CloudOps-Copilot/pull/1)。
+- GitHub-hosted PR CI：Go、Frontend、Runtime、4 个 image build 与聚合 `Required CI` 均成功。
+- `main` branch protection：strict、绑定 GitHub Actions App 的 `Required CI`、管理员同样受约束、required approvals 为 0。
+
+`NOT RUN`：
+
+- 产品 GitHub App read/write：没有真实 App runtime 凭据，human `gh` 身份不替代产品 adapter 证据。
+- human merge；合并前不能产生 exact merged `main` revision。
 - Argo Application/exact merged revision、sync/rollout observation。
-- Registry/GHCR publish、SBOM/sign/attest、referrer/cleanup。
-- Hosted workflow、staging、production、release/tag/default branch mutation。
+- Registry/GHCR publish、SBOM/sign/attest、referrer/cleanup，以及 post-merge hosted supply-chain workflow。
+- staging、production、release/tag/default branch mutation。
 - 第二真实集群、多集群/多租户与 production backup/DR。
 
-上述分支没有被 local adapter、fixture、旧 Golden 报告或本地 Kubernetes recovery 包装为 `PASS`。完整 Definition of Done、视口、对象、raw evidence 链接与限制见 [Phase 9 最终证据报告](phase-9-scenario/final-evidence-report.md)。
+上述未运行分支没有被 human CLI、local adapter、fixture、旧 Golden 报告或本地 Kubernetes recovery 包装为 `PASS`。完整 Definition of Done、视口、对象、raw evidence 链接与限制见 [Phase 9 最终证据报告](phase-9-scenario/final-evidence-report.md)。
