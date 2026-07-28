@@ -1,0 +1,46 @@
+:root {
+  --co-font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --co-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", monospace;
+  --co-text-on-action: #ffffff;
+
+  --co-space-1: 4px;
+  --co-space-2: 8px;
+  --co-space-3: 12px;
+  --co-space-4: 16px;
+  --co-space-5: 20px;
+  --co-space-6: 24px;
+  --co-space-8: 32px;
+  --co-space-10: 40px;
+
+  --co-radius-control: 4px;
+  --co-radius-panel: 6px;
+  --co-radius-overlay: 8px;
+  --co-radius-pill: 999px;
+
+  --co-shadow-overlay: 0 8px 24px rgb(0 0 0 / 18%);
+  --co-motion-fast: 150ms;
+  --co-motion-standard: 200ms;
+  --co-ease-out: cubic-bezier(0.2, 0, 0, 1);
+
+  --co-header-height: 56px;
+  --co-sidebar-width: 220px;
+  --co-sidebar-rail-width: 64px;
+  --co-content-max-width: 1600px;
+
+  --co-z-base: 0;
+  --co-z-sticky: 20;
+  --co-z-header: 40;
+  --co-z-overlay: 100;
+  --co-z-skip-link: 1000;
+
+  --el-font-family: var(--co-font-sans);
+  --el-font-size-base: 14px;
+  --el-font-size-small: 13px;
+  --el-border-radius-base: var(--co-radius-control);
+  --el-border-radius-small: var(--co-radius-control);
+  --el-border-radius-round: var(--co-radius-pill);
+  --el-transition-duration: var(--co-motion-standard);
+  --el-transition-duration-fast: var(--co-motion-fast);
+}

@@ -1,0 +1,170 @@
+{{- if .Values.worker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudops-worker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cloudops.labels" . | nindent 4 }}
+    app.kubernetes.io/name: cloudops-worker
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudops-worker
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cloudops-worker
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: worker
+        cloudops.io/monitoring: enabled
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: cloudops-worker
+      automountServiceAccountToken: {{ eq (include "cloudops.kubernetesInClusterEnabled" .) "true" }}
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 65
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: cloudops-worker
+          image: {{ include "cloudops.image" .Values.images.worker | quote }}
+          imagePullPolicy: {{ .Values.images.worker.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          {{- if .Values.worker.providerConfigSecretName }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.worker.providerConfigSecretName }}
+          {{- end }}
+          env:
+            {{- range $name, $_ := .Values.commonEnv }}
+            - name: {{ $name }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "cloudops.configMapName" $ }}
+                  key: {{ $name }}
+            {{- end }}
+            {{- range $name, $value := .Values.worker.env }}
+            - name: {{ $name }}
+              value: {{ $value | quote }}
+            {{- end }}
+            - name: SCENARIO_STATE
+              value: {{ ternary "active" "inactive" .Values.scenario.enabled | quote }}
+            - name: SCENARIO_ID
+              value: {{ .Values.scenario.id | quote }}
+            {{- range $name, $filename := .Values.worker.credentials.files }}
+            - name: {{ $name }}
+              value: {{ printf "%s/%s" $.Values.worker.credentials.mountPath $filename | quote }}
+            {{- end }}
+            - name: ASYNC_WORKER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: CLOUDOPS_DATA_DIR
+              value: {{ .Values.data.dataDir | quote }}
+            - name: MYSQL_USER
+              value: {{ .Values.database.worker.user | quote }}
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.worker.secretName }}
+                  key: {{ .Values.database.worker.passwordKey }}
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            - name: WORKLOAD_KIND
+              value: Deployment
+            - name: WORKLOAD_NAME
+              value: cloudops-worker
+          ports:
+            - name: management
+              containerPort: {{ .Values.worker.managementPort }}
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: management
+            failureThreshold: 30
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: management
+            periodSeconds: 20
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: management
+            periodSeconds: 10
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          volumeMounts:
+            {{- if gt (len .Values.worker.credentials.files) 0 }}
+            - name: worker-credentials
+              mountPath: {{ .Values.worker.credentials.mountPath }}
+              readOnly: true
+            {{- end }}
+            - name: worker-tmp
+              mountPath: /tmp
+            - name: operational-data
+              mountPath: {{ .Values.data.mountPath }}
+      volumes:
+        {{- if gt (len .Values.worker.credentials.files) 0 }}
+        - name: worker-credentials
+          secret:
+            secretName: {{ .Values.worker.credentials.secretName }}
+            items:
+              {{- range $name, $filename := .Values.worker.credentials.files }}
+              - key: {{ $filename }}
+                path: {{ $filename }}
+              {{- end }}
+        {{- end }}
+        - name: worker-tmp
+          emptyDir: {}
+        - name: operational-data
+          persistentVolumeClaim:
+            claimName: {{ include "cloudops.dataClaimName" . }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cloudops-worker-management
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cloudops.labels" . | nindent 4 }}
+    app.kubernetes.io/name: cloudops-worker
+    app.kubernetes.io/component: worker-management
+    cloudops.io/monitoring: enabled
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: cloudops-worker
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: management
+      port: {{ .Values.worker.managementPort }}
+      targetPort: management
+      protocol: TCP
+{{- end }}

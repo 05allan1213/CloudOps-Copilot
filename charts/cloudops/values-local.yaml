@@ -1,0 +1,56 @@
+# Local images are built and loaded by `make local-up`; Provider credentials
+# remain optional and are never rendered into Helm values.
+images:
+  api:
+    tag: local
+  worker:
+    tag: local
+  migrate:
+    tag: local
+  demo:
+    tag: local
+    pullPolicy: Never
+
+# local-up verifies this exact tag against the pinned platform digest before
+# loading it into kind. The local runtime must never fall back to a registry.
+mysql:
+  image:
+    digest: ""
+    pullPolicy: Never
+
+commonEnv:
+  APP_ENV: local
+  TRACE_OTLP_ENDPOINT: otel-collector.cloudops-system.svc:4317
+
+observability:
+  stack:
+    enabled: true
+    prometheus:
+      image:
+        digest: ""
+        pullPolicy: Never
+    alertmanager:
+      image:
+        digest: ""
+        pullPolicy: Never
+    grafana:
+      anonymousRole: Editor
+      image:
+        digest: ""
+        pullPolicy: Never
+    elasticsearch:
+      image:
+        digest: ""
+        pullPolicy: Never
+    filebeat:
+      image:
+        digest: ""
+        pullPolicy: Never
+    tempo:
+      image:
+        digest: ""
+        pullPolicy: Never
+    otelCollector:
+      image:
+        digest: ""
+        pullPolicy: Never

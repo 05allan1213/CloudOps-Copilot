@@ -1,0 +1,816 @@
+{{- if and .Values.observability.stack.enabled (not .Values.bootstrapOnly) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudops-telemetry
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cloudops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: telemetry-config
+data:
+  elasticsearch-policy.json: |-
+    {
+      "policy": {
+        "phases": {
+          "hot": {
+            "actions": {
+              "rollover": {
+                "max_age": "1d",
+                "max_primary_shard_size": {{ .Values.observability.stack.elasticsearch.rolloverMaxSize | quote }}
+              }
+            }
+          },
+          "delete": {
+            "min_age": {{ printf "%dd" (.Values.observability.stack.elasticsearch.retentionDays | int) | quote }},
+            "actions": { "delete": {} }
+          }
+        }
+      }
+    }
+  elasticsearch-template.json: |-
+    {
+      "index_patterns": ["logs-cloudops-*"],
+      "priority": 500,
+      "template": {
+        "settings": {
+          "index.lifecycle.name": "cloudops-logs-retention",
+          "index.lifecycle.rollover_alias": "logs-cloudops",
+          "number_of_shards": 1,
+          "number_of_replicas": 0
+        },
+        "mappings": {
+          "dynamic": true,
+          "properties": {
+            "@timestamp": { "type": "date_nanos" },
+            "message": { "type": "text" },
+            "level": { "type": "keyword", "ignore_above": 32 },
+            "service": { "type": "keyword", "ignore_above": 256 },
+            "trace_id": { "type": "keyword", "ignore_above": 32 },
+            "span_id": { "type": "keyword", "ignore_above": 16 },
+            "scenario_id": { "type": "keyword", "ignore_above": 128 },
+            "caller": { "type": "keyword", "ignore_above": 1024 },
+            "logger": { "type": "keyword", "ignore_above": 256 },
+            "cloudops": {
+              "properties": {
+                "cluster_id": { "type": "keyword", "ignore_above": 128 },
+                "environment": { "type": "keyword", "ignore_above": 128 }
+              }
+            },
+            "kubernetes": {
+              "properties": {
+                "namespace": { "type": "keyword", "ignore_above": 253 },
+                "pod": { "properties": { "name": { "type": "keyword", "ignore_above": 253 } } },
+                "container": { "properties": { "name": { "type": "keyword", "ignore_above": 253 } } },
+                "node": { "properties": { "name": { "type": "keyword", "ignore_above": 253 } } },
+                "deployment": { "properties": { "name": { "type": "keyword", "ignore_above": 253 } } },
+                "statefulset": { "properties": { "name": { "type": "keyword", "ignore_above": 253 } } },
+                "daemonset": { "properties": { "name": { "type": "keyword", "ignore_above": 253 } } }
+              }
+            }
+          }
+        }
+      }
+    }
+  bootstrap-elasticsearch.sh: |-
+    #!/bin/sh
+    set -eu
+    endpoint="http://elasticsearch.{{ .Release.Namespace }}.svc:{{ .Values.observability.stack.elasticsearch.port }}"
+    attempts=0
+    until curl --fail --silent --show-error --max-time 5 "${endpoint}" >/dev/null; do
+      attempts=$((attempts + 1))
+      if [ "${attempts}" -ge 90 ]; then
+        echo "Elasticsearch did not become ready within the bounded bootstrap window" >&2
+        exit 1
+      fi
+      sleep 2
+    done
+    curl --fail --silent --show-error --max-time 10 \
+      -X PUT -H 'Content-Type: application/json' \
+      --data-binary @/etc/cloudops-telemetry/elasticsearch-policy.json \
+      "${endpoint}/_ilm/policy/cloudops-logs-retention" >/dev/null
+    curl --fail --silent --show-error --max-time 10 \
+      -X PUT -H 'Content-Type: application/json' \
+      --data-binary @/etc/cloudops-telemetry/elasticsearch-template.json \
+      "${endpoint}/_index_template/logs-cloudops" >/dev/null
+    if ! curl --fail --silent --max-time 5 "${endpoint}/_alias/logs-cloudops" >/dev/null; then
+      curl --fail --silent --show-error --max-time 10 \
+        -X PUT -H 'Content-Type: application/json' \
+        --data-binary '{"aliases":{"logs-cloudops":{"is_write_index":true}}}' \
+        "${endpoint}/logs-cloudops-000001" >/dev/null
+    fi
+  filebeat.yml: |-
+    filebeat.inputs:
+      - type: filestream
+        id: cloudops-kubernetes-containers
+        enabled: true
+        paths:
+          - /var/log/containers/*_{{ .Release.Namespace }}_*.log
+          - /var/log/containers/*_demo_*.log
+        prospector.scanner.symlinks: true
+        parsers:
+          - container:
+              stream: all
+              format: auto
+    processors:
+      - add_kubernetes_metadata:
+          host: ${NODE_NAME}
+          matchers:
+            - logs_path:
+                logs_path: /var/log/containers/
+          add_resource_metadata:
+            namespace:
+              enabled: true
+            node:
+              enabled: true
+            deployment: true
+            cronjob: false
+      - drop_event:
+          when:
+            equals:
+              kubernetes.container.name: filebeat
+      - add_fields:
+          target: cloudops
+          fields:
+            cluster_id: {{ .Values.observability.stack.clusterID | quote }}
+            environment: {{ .Values.observability.stack.environment | quote }}
+      - decode_json_fields:
+          fields: [message]
+          target: json
+          overwrite_keys: true
+          add_error_key: false
+      - drop_fields:
+          when:
+            has_fields: [json.msg]
+          fields: [message]
+          ignore_missing: true
+      - rename:
+          when:
+            has_fields: [json.msg]
+          fields:
+            - from: json.msg
+              to: message
+            - from: json.level
+              to: level
+            - from: json.service
+              to: service
+            - from: json.trace_id
+              to: trace_id
+            - from: json.span_id
+              to: span_id
+            - from: json.scenario_id
+              to: scenario_id
+            - from: json.caller
+              to: caller
+            - from: json.logger
+              to: logger
+          ignore_missing: true
+          fail_on_error: false
+      - drop_fields:
+          fields: [json]
+          ignore_missing: true
+    queue.mem:
+      events: 1024
+      flush.min_events: 128
+      flush.timeout: 1s
+    output.elasticsearch:
+      hosts: ["http://elasticsearch.{{ .Release.Namespace }}.svc:{{ .Values.observability.stack.elasticsearch.port }}"]
+      index: logs-cloudops
+      worker: 1
+      bulk_max_size: 256
+      compression_level: 1
+    setup.ilm.enabled: false
+    setup.template.enabled: false
+    logging.level: info
+    logging.json: true
+  tempo.yaml: |-
+    stream_over_http_enabled: true
+    usage_report:
+      reporting_enabled: false
+    server:
+      http_listen_port: {{ .Values.observability.stack.tempo.httpPort }}
+      grpc_listen_port: 9095
+    distributor:
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:{{ .Values.observability.stack.tempo.otlpGRPCPort }}
+    backend_scheduler:
+      provider:
+        compaction:
+          compaction:
+            block_retention: {{ .Values.observability.stack.tempo.retention }}
+            compacted_block_retention: 1h
+    backend_worker:
+      compaction:
+        block_retention: {{ .Values.observability.stack.tempo.retention }}
+        compacted_block_retention: 1h
+    storage:
+      trace:
+        backend: local
+        wal:
+          path: /var/tempo/wal
+        local:
+          path: /var/tempo/blocks
+        pool:
+          max_workers: 20
+          queue_depth: 1000
+  otel-collector.yaml: |-
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:{{ .Values.observability.stack.otelCollector.healthPort }}
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:{{ .Values.observability.stack.otelCollector.grpcPort }}
+          http:
+            endpoint: 0.0.0.0:{{ .Values.observability.stack.otelCollector.httpPort }}
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: {{ .Values.observability.stack.otelCollector.memoryLimitMiB }}
+        spike_limit_mib: 48
+      batch:
+        send_batch_size: 512
+        timeout: 1s
+      resource:
+        attributes:
+          - key: cloudops.cluster_id
+            value: {{ .Values.observability.stack.clusterID | quote }}
+            action: upsert
+          - key: deployment.environment.name
+            value: {{ .Values.observability.stack.environment | quote }}
+            action: upsert
+    exporters:
+      otlp/tempo:
+        endpoint: tempo.{{ .Release.Namespace }}.svc:{{ .Values.observability.stack.tempo.otlpGRPCPort }}
+        tls:
+          insecure: true
+    service:
+      extensions: [health_check]
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, resource, batch]
+          exporters: [otlp/tempo]
+      telemetry:
+        logs:
+          level: info
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: elasticsearch
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cloudops.labels" . | nindent 4 }}
+    app.kubernetes.io/name: elasticsearch
+    app.kubernetes.io/component: logs-provider
+spec:
+  serviceName: elasticsearch
+  replicas: 1
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: elasticsearch
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: elasticsearch
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: logs-provider
+      annotations:
+        checksum/config: {{ toJson .Values.observability.stack.elasticsearch | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: prepare-config
+          image: {{ include "cloudops.image" .Values.observability.stack.elasticsearch.image | quote }}
+          imagePullPolicy: {{ .Values.observability.stack.elasticsearch.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -ec
+            - >-
+              cp -R /usr/share/elasticsearch/config/. /writable-config/ &&
+              sed -i 's|file=gc.log|file=/tmp/elasticsearch-gc.log|' /writable-config/jvm.options
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          volumeMounts:
+            - name: config
+              mountPath: /writable-config
+      containers:
+        - name: elasticsearch
+          image: {{ include "cloudops.image" .Values.observability.stack.elasticsearch.image | quote }}
+          imagePullPolicy: {{ .Values.observability.stack.elasticsearch.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: discovery.type
+              value: single-node
+            - name: xpack.security.enabled
+              value: "false"
+            - name: xpack.security.enrollment.enabled
+              value: "false"
+            - name: xpack.ml.enabled
+              value: "false"
+            - name: ES_JAVA_OPTS
+              value: {{ printf "-Xms%s -Xmx%s" .Values.observability.stack.elasticsearch.jvmHeap .Values.observability.stack.elasticsearch.jvmHeap | quote }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.observability.stack.elasticsearch.port }}
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+            failureThreshold: 60
+            periodSeconds: 5
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 3
+          resources:
+            {{- toYaml .Values.observability.stack.elasticsearch.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /usr/share/elasticsearch/data
+            - name: config
+              mountPath: /usr/share/elasticsearch/config
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          emptyDir:
+            sizeLimit: 32Mi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 128Mi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "cloudops.labels" . | nindent 10 }}
+          app.kubernetes.io/component: logs-storage
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.observability.stack.elasticsearch.persistence.storageClassName }}
+        storageClassName: {{ .Values.observability.stack.elasticsearch.persistence.storageClassName | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.observability.stack.elasticsearch.persistence.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cloudops.labels" . | nindent 4 }}
+    app.kubernetes.io/name: elasticsearch
+    app.kubernetes.io/component: logs-provider
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: elasticsearch
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: {{ .Values.observability.stack.elasticsearch.port }}
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: filebeat
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cloudops.labels" . | nindent 4 }}
+    app.kubernetes.io/name: filebeat
+    app.kubernetes.io/component: log-collector
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cloudops-filebeat-metadata-readonly
+  labels:
+    {{- include "cloudops.labels" . | nindent 4 }}
+    app.kubernetes.io/name: filebeat
+    app.kubernetes.io/component: log-collector
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces", "nodes", "pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["daemonsets", "deployments", "replicasets", "statefulsets"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cloudops-filebeat-metadata-readonly
+  labels:
+    {{- include "cloudops.labels" . | nindent 4 }}
+    app.kubernetes.io/name: filebeat
+    app.kubernetes.io/component: log-collector
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cloudops-filebeat-metadata-readonly
+subjects:
+  - kind: ServiceAccount
+    name: filebeat
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: filebeat
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cloudops.labels" . | nindent 4 }}
+    app.kubernetes.io/name: filebeat
+    app.kubernetes.io/component: log-collector
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: filebeat
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: filebeat
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: log-collector
+      annotations:
+        checksum/config: {{ toJson (dict "stack" .Values.observability.stack "scenario" .Values.scenario) | sha256sum }}
+    spec:
+      serviceAccountName: filebeat
+      automountServiceAccountToken: true
+      enableServiceLinks: false
+      nodeSelector:
+        kubernetes.io/os: linux
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: bootstrap-index
+          image: {{ include "cloudops.image" .Values.observability.stack.elasticsearch.image | quote }}
+          imagePullPolicy: {{ .Values.observability.stack.elasticsearch.image.pullPolicy }}
+          command: ["/bin/sh", "/etc/cloudops-telemetry/bootstrap-elasticsearch.sh"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          volumeMounts:
+            - name: telemetry-config
+              mountPath: /etc/cloudops-telemetry
+              readOnly: true
+            - name: init-tmp
+              mountPath: /tmp
+      containers:
+        - name: filebeat
+          image: {{ include "cloudops.image" .Values.observability.stack.filebeat.image | quote }}
+          imagePullPolicy: {{ .Values.observability.stack.filebeat.image.pullPolicy }}
+          args: ["-e", "-c", "/etc/cloudops-telemetry/filebeat.yml", "--strict.perms=false"]
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.observability.stack.filebeat.resources | nindent 12 }}
+          volumeMounts:
+            - name: telemetry-config
+              mountPath: /etc/cloudops-telemetry
+              readOnly: true
+            - name: container-logs
+              mountPath: /var/log/containers
+              readOnly: true
+            - name: pod-logs
+              mountPath: /var/log/pods
+              readOnly: true
+            - name: filebeat-data
+              mountPath: /usr/share/filebeat/data
+            - name: filebeat-tmp
+              mountPath: /tmp
+      volumes:
+        - name: telemetry-config
+          configMap:
+            name: cloudops-telemetry
+            defaultMode: 0444
+        - name: container-logs
+          hostPath:
+            path: /var/log/containers
+            type: Directory
+        - name: pod-logs
+          hostPath:
+            path: /var/log/pods
+            type: Directory
+        - name: filebeat-data
+          emptyDir:
+            sizeLimit: 64Mi
+        - name: filebeat-tmp
+          emptyDir:
+            sizeLimit: 32Mi
+        - name: init-tmp
+          emptyDir:
+            sizeLimit: 16Mi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: tempo
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cloudops.labels" . | nindent 4 }}
+    app.kubernetes.io/name: tempo
+    app.kubernetes.io/component: traces-provider
+spec:
+  serviceName: tempo
+  replicas: 1
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tempo
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tempo
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: traces-provider
+      annotations:
+        checksum/config: {{ toJson .Values.observability.stack | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: tempo
+          image: {{ include "cloudops.image" .Values.observability.stack.tempo.image | quote }}
+          imagePullPolicy: {{ .Values.observability.stack.tempo.image.pullPolicy }}
+          args: ["-config.file=/etc/cloudops-telemetry/tempo.yaml", "-target=all"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.observability.stack.tempo.httpPort }}
+              protocol: TCP
+            - name: otlp-grpc
+              containerPort: {{ .Values.observability.stack.tempo.otlpGRPCPort }}
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /ready
+              port: http
+            failureThreshold: 40
+            periodSeconds: 3
+            timeoutSeconds: 2
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 2
+          resources:
+            {{- toYaml .Values.observability.stack.tempo.resources | nindent 12 }}
+          volumeMounts:
+            - name: telemetry-config
+              mountPath: /etc/cloudops-telemetry/tempo.yaml
+              subPath: tempo.yaml
+              readOnly: true
+            - name: data
+              mountPath: /var/tempo
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: telemetry-config
+          configMap:
+            name: cloudops-telemetry
+            defaultMode: 0444
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "cloudops.labels" . | nindent 10 }}
+          app.kubernetes.io/component: traces-storage
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.observability.stack.tempo.persistence.storageClassName }}
+        storageClassName: {{ .Values.observability.stack.tempo.persistence.storageClassName | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.observability.stack.tempo.persistence.size }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tempo
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cloudops.labels" . | nindent 4 }}
+    app.kubernetes.io/name: tempo
+    app.kubernetes.io/component: traces-provider
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: tempo
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: {{ .Values.observability.stack.tempo.httpPort }}
+      targetPort: http
+      protocol: TCP
+    - name: otlp-grpc
+      port: {{ .Values.observability.stack.tempo.otlpGRPCPort }}
+      targetPort: otlp-grpc
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cloudops.labels" . | nindent 4 }}
+    app.kubernetes.io/name: otel-collector
+    app.kubernetes.io/component: trace-collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: otel-collector
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: otel-collector
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: trace-collector
+      annotations:
+        checksum/config: {{ toJson .Values.observability.stack | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: otel-collector
+          image: {{ include "cloudops.image" .Values.observability.stack.otelCollector.image | quote }}
+          imagePullPolicy: {{ .Values.observability.stack.otelCollector.image.pullPolicy }}
+          args: ["--config=/etc/cloudops-telemetry/otel-collector.yaml"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: otlp-grpc
+              containerPort: {{ .Values.observability.stack.otelCollector.grpcPort }}
+              protocol: TCP
+            - name: otlp-http
+              containerPort: {{ .Values.observability.stack.otelCollector.httpPort }}
+              protocol: TCP
+            - name: health
+              containerPort: {{ .Values.observability.stack.otelCollector.healthPort }}
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /
+              port: health
+            failureThreshold: 30
+            periodSeconds: 3
+            timeoutSeconds: 2
+          readinessProbe:
+            httpGet:
+              path: /
+              port: health
+            periodSeconds: 5
+            timeoutSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /
+              port: health
+            periodSeconds: 20
+            timeoutSeconds: 2
+          resources:
+            {{- toYaml .Values.observability.stack.otelCollector.resources | nindent 12 }}
+          volumeMounts:
+            - name: telemetry-config
+              mountPath: /etc/cloudops-telemetry/otel-collector.yaml
+              subPath: otel-collector.yaml
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: telemetry-config
+          configMap:
+            name: cloudops-telemetry
+            defaultMode: 0444
+        - name: tmp
+          emptyDir:
+            sizeLimit: 32Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cloudops.labels" . | nindent 4 }}
+    app.kubernetes.io/name: otel-collector
+    app.kubernetes.io/component: trace-collector
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: otel-collector
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: otlp-grpc
+      port: {{ .Values.observability.stack.otelCollector.grpcPort }}
+      targetPort: otlp-grpc
+      protocol: TCP
+    - name: otlp-http
+      port: {{ .Values.observability.stack.otelCollector.httpPort }}
+      targetPort: otlp-http
+      protocol: TCP
+{{- end }}

@@ -1,0 +1,375 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "bootstrapOnly",
+    "images",
+    "commonEnv",
+    "database",
+    "data",
+    "mysql",
+    "webhook",
+    "api",
+    "migrate",
+    "worker",
+    "scenario",
+    "observability"
+  ],
+  "properties": {
+    "bootstrapOnly": { "type": "boolean" },
+    "images": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["api", "worker", "migrate", "demo"],
+      "properties": {
+        "api": { "$ref": "#/definitions/image" },
+        "worker": { "$ref": "#/definitions/image" },
+        "migrate": { "$ref": "#/definitions/image" },
+        "demo": { "$ref": "#/definitions/image" }
+      }
+    },
+    "commonEnv": { "$ref": "#/definitions/envMap" },
+    "database": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["api", "worker", "migrate"],
+      "properties": {
+        "api": { "$ref": "#/definitions/mysqlIdentity" },
+        "worker": { "$ref": "#/definitions/mysqlIdentity" },
+        "migrate": { "$ref": "#/definitions/mysqlIdentity" }
+      }
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mountPath", "dataDir", "persistence"],
+      "properties": {
+        "mountPath": { "$ref": "#/definitions/absolutePath" },
+        "dataDir": { "$ref": "#/definitions/absolutePath" },
+        "persistence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["existingClaim", "size", "storageClassName"],
+          "properties": {
+            "existingClaim": {
+              "oneOf": [
+                { "type": "string", "maxLength": 0 },
+                { "$ref": "#/definitions/kubernetesName" }
+              ]
+            },
+            "size": { "type": "string", "pattern": "^[1-9][0-9]*(Mi|Gi|Ti)$" },
+            "storageClassName": { "type": "string" }
+          }
+        }
+      }
+    },
+    "mysql": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "image", "database", "rootSecretName", "rootPasswordKey", "persistence", "resources"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "image": { "$ref": "#/definitions/image" },
+        "database": { "$ref": "#/definitions/mysqlName" },
+        "rootSecretName": { "$ref": "#/definitions/kubernetesName" },
+        "rootPasswordKey": { "$ref": "#/definitions/nonEmptyString" },
+        "persistence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["size", "storageClassName"],
+          "properties": {
+            "size": { "type": "string", "pattern": "^[1-9][0-9]*(Mi|Gi|Ti)$" },
+            "storageClassName": { "type": "string" }
+          }
+        },
+        "resources": { "$ref": "#/definitions/resources" }
+      }
+    },
+    "webhook": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["secretName", "secretKey", "mountPath", "tokenFile"],
+      "properties": {
+        "secretName": { "$ref": "#/definitions/kubernetesName" },
+        "secretKey": { "$ref": "#/definitions/nonEmptyString" },
+        "mountPath": { "$ref": "#/definitions/absolutePath" },
+        "tokenFile": { "$ref": "#/definitions/absolutePath" }
+      }
+    },
+    "api": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "replicas", "port", "managementPort", "env", "resources"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "replicas": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "port": { "type": "integer", "enum": [8080] },
+        "managementPort": { "type": "integer", "enum": [8082] },
+        "env": { "$ref": "#/definitions/envMap" },
+        "resources": { "$ref": "#/definitions/resources" }
+      }
+    },
+    "migrate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "backoffLimit", "activeDeadlineSeconds", "ttlSecondsAfterFinished", "resources"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "backoffLimit": { "type": "integer", "minimum": 0, "maximum": 10 },
+        "activeDeadlineSeconds": { "type": "integer", "minimum": 30, "maximum": 900 },
+        "ttlSecondsAfterFinished": { "type": "integer", "minimum": 0 },
+        "resources": { "$ref": "#/definitions/resources" }
+      }
+    },
+    "worker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "replicas", "managementPort", "providerNamespaces", "providerConfigSecretName", "credentials", "env", "resources"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "replicas": { "type": "integer", "minimum": 1, "maximum": 5 },
+        "managementPort": { "type": "integer", "enum": [8081] },
+        "providerNamespaces": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": { "$ref": "#/definitions/kubernetesName" }
+        },
+        "providerConfigSecretName": {
+          "oneOf": [
+            { "type": "string", "maxLength": 0 },
+            { "$ref": "#/definitions/kubernetesName" }
+          ]
+        },
+        "credentials": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["secretName", "mountPath", "files"],
+          "properties": {
+            "secretName": {
+              "oneOf": [
+                { "type": "string", "maxLength": 0 },
+                { "$ref": "#/definitions/kubernetesName" }
+              ]
+            },
+            "mountPath": { "$ref": "#/definitions/absolutePath" },
+            "files": {
+              "type": "object",
+              "propertyNames": { "pattern": "^[A-Z_][A-Z0-9_]*_FILE$" },
+              "additionalProperties": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" }
+            }
+          }
+        },
+        "env": {
+          "allOf": [
+            { "$ref": "#/definitions/envMap" },
+            {
+              "type": "object",
+              "required": ["K8S_ENABLED", "K8S_WRITE_ENABLED", "K8S_IN_CLUSTER", "K8S_CLUSTER_ID", "K8S_CONNECTIONS_JSON", "K8S_ALLOWED_NAMESPACES", "K8S_DEFAULT_NAMESPACE"],
+              "properties": {
+                "K8S_ENABLED": { "type": "string", "enum": ["true", "false"] },
+                "K8S_WRITE_ENABLED": { "type": "string", "enum": ["true", "false"] },
+                "K8S_IN_CLUSTER": { "type": "string", "enum": ["true", "false"] },
+                "K8S_CLUSTER_ID": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+                "K8S_CONNECTIONS_JSON": { "type": "string", "maxLength": 65536 },
+                "K8S_ALLOWED_NAMESPACES": { "type": "string", "minLength": 1, "maxLength": 8192 },
+                "K8S_DEFAULT_NAMESPACE": { "$ref": "#/definitions/kubernetesName" }
+              }
+            }
+          ]
+        },
+        "resources": { "$ref": "#/definitions/resources" }
+      }
+    },
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "id", "namespace", "trafficInterval", "resources"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "id": { "type": "string", "pattern": "^(|scenario-[a-z0-9]([-a-z0-9]*[a-z0-9])?)$", "maxLength": 63 },
+        "namespace": { "type": "string", "const": "demo" },
+        "trafficInterval": { "$ref": "#/definitions/duration" },
+        "resources": { "$ref": "#/definitions/resources" }
+      }
+    },
+    "observability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "serviceMonitor", "stack"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "serviceMonitor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["interval", "scrapeTimeout"],
+          "properties": {
+            "interval": { "$ref": "#/definitions/duration" },
+            "scrapeTimeout": { "$ref": "#/definitions/duration" }
+          }
+        },
+        "stack": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "clusterID", "environment", "scrapeInterval", "scrapeTimeout", "prometheus", "alertmanager", "grafana", "elasticsearch", "filebeat", "tempo", "otelCollector"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "clusterID": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+            "environment": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+            "scrapeInterval": { "$ref": "#/definitions/duration" },
+            "scrapeTimeout": { "$ref": "#/definitions/duration" },
+            "prometheus": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["image", "port", "retentionTime", "retentionSize", "resources"],
+              "properties": {
+                "image": { "$ref": "#/definitions/image" },
+                "port": { "type": "integer", "enum": [9090] },
+                "retentionTime": { "$ref": "#/definitions/duration" },
+                "retentionSize": { "type": "string", "pattern": "^[1-9][0-9]*(KB|MB|GB)$" },
+                "resources": { "$ref": "#/definitions/resources" }
+              }
+            },
+            "alertmanager": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["image", "port", "retention", "groupWait", "groupInterval", "repeatInterval", "resources"],
+              "properties": {
+                "image": { "$ref": "#/definitions/image" },
+                "port": { "type": "integer", "enum": [9093] },
+                "retention": { "$ref": "#/definitions/duration" },
+                "groupWait": { "$ref": "#/definitions/duration" },
+                "groupInterval": { "$ref": "#/definitions/duration" },
+                "repeatInterval": { "$ref": "#/definitions/duration" },
+                "resources": { "$ref": "#/definitions/resources" }
+              }
+            },
+            "grafana": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["image", "port", "rootURL", "anonymousRole", "resources"],
+              "properties": {
+                "image": { "$ref": "#/definitions/image" },
+                "port": { "type": "integer", "enum": [3000] },
+                "rootURL": { "type": "string", "pattern": "^http://(127\\.0\\.0\\.1|localhost):[1-9][0-9]{3,4}$" },
+                "anonymousRole": { "type": "string", "enum": ["Viewer", "Editor"] },
+                "resources": { "$ref": "#/definitions/resources" }
+              }
+            },
+            "elasticsearch": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["image", "port", "jvmHeap", "retentionDays", "rolloverMaxSize", "persistence", "resources"],
+              "properties": {
+                "image": { "$ref": "#/definitions/image" },
+                "port": { "type": "integer", "enum": [9200] },
+                "jvmHeap": { "type": "string", "pattern": "^[1-9][0-9]*(m|g)$" },
+                "retentionDays": { "type": "integer", "minimum": 1, "maximum": 30 },
+                "rolloverMaxSize": { "type": "string", "pattern": "^[1-9][0-9]*(kb|mb|gb)$" },
+                "persistence": { "$ref": "#/definitions/persistence" },
+                "resources": { "$ref": "#/definitions/resources" }
+              }
+            },
+            "filebeat": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["image", "resources"],
+              "properties": {
+                "image": { "$ref": "#/definitions/image" },
+                "resources": { "$ref": "#/definitions/resources" }
+              }
+            },
+            "tempo": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["image", "httpPort", "otlpGRPCPort", "retention", "persistence", "resources"],
+              "properties": {
+                "image": { "$ref": "#/definitions/image" },
+                "httpPort": { "type": "integer", "enum": [3200] },
+                "otlpGRPCPort": { "type": "integer", "enum": [4317] },
+                "retention": { "$ref": "#/definitions/duration" },
+                "persistence": { "$ref": "#/definitions/persistence" },
+                "resources": { "$ref": "#/definitions/resources" }
+              }
+            },
+            "otelCollector": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["image", "grpcPort", "httpPort", "healthPort", "memoryLimitMiB", "resources"],
+              "properties": {
+                "image": { "$ref": "#/definitions/image" },
+                "grpcPort": { "type": "integer", "enum": [4317] },
+                "httpPort": { "type": "integer", "enum": [4318] },
+                "healthPort": { "type": "integer", "enum": [13133] },
+                "memoryLimitMiB": { "type": "integer", "minimum": 64, "maximum": 2048 },
+                "resources": { "$ref": "#/definitions/resources" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "nonEmptyString": { "type": "string", "minLength": 1 },
+    "absolutePath": { "type": "string", "pattern": "^/[^[:space:]]+$" },
+    "duration": { "type": "string", "pattern": "^[1-9][0-9]*(ms|s|m|h)$" },
+    "persistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["size", "storageClassName"],
+      "properties": {
+        "size": { "type": "string", "pattern": "^[1-9][0-9]*(Mi|Gi|Ti)$" },
+        "storageClassName": { "type": "string" }
+      }
+    },
+    "kubernetesName": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", "maxLength": 63 },
+    "mysqlName": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$" },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "tag", "digest", "pullPolicy"],
+      "properties": {
+        "repository": { "$ref": "#/definitions/nonEmptyString" },
+        "tag": { "$ref": "#/definitions/nonEmptyString" },
+        "digest": { "type": "string", "pattern": "^(|sha256:[a-f0-9]{64})$" },
+        "pullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] }
+      }
+    },
+    "mysqlIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["user", "secretName", "passwordKey"],
+      "properties": {
+        "user": { "type": "string", "pattern": "^[A-Za-z0-9_][A-Za-z0-9_-]{0,31}$" },
+        "secretName": { "$ref": "#/definitions/kubernetesName" },
+        "passwordKey": { "$ref": "#/definitions/nonEmptyString" }
+      }
+    },
+    "envMap": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[A-Z_][A-Z0-9_]*$" },
+      "additionalProperties": { "type": "string" }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requests", "limits"],
+      "properties": {
+        "requests": { "$ref": "#/definitions/resourcePair" },
+        "limits": { "$ref": "#/definitions/resourcePair" }
+      }
+    },
+    "resourcePair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cpu", "memory"],
+      "properties": {
+        "cpu": { "type": "string", "minLength": 1 },
+        "memory": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{{- if not .Values.data.persistence.existingClaim }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "cloudops.dataClaimName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cloudops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: operational-data
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- if .Values.data.persistence.storageClassName }}
+  storageClassName: {{ .Values.data.persistence.storageClassName | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.data.persistence.size | quote }}
+{{- end }}

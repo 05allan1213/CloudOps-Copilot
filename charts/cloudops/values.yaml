@@ -1,0 +1,305 @@
+bootstrapOnly: false
+
+images:
+  api:
+    repository: cloudops-api
+    tag: local
+    digest: ""
+    pullPolicy: IfNotPresent
+  worker:
+    repository: cloudops-worker
+    tag: local
+    digest: ""
+    pullPolicy: IfNotPresent
+  migrate:
+    repository: cloudops-migrate
+    tag: local
+    digest: ""
+    pullPolicy: IfNotPresent
+  demo:
+    repository: cloudops-demo
+    tag: local
+    digest: ""
+    pullPolicy: IfNotPresent
+
+# Shared non-secret process configuration. Database users and passwords remain
+# workload scoped and are read from pre-created Secrets.
+commonEnv:
+  APP_ENV: local
+  LOG_LEVEL: info
+  GIN_MODE: release
+  PROMETHEUS_URL: ""
+  REDIS_ADDR: ""
+  KAFKA_BROKERS: ""
+  MYSQL_HOST: mysql
+  MYSQL_PORT: "3306"
+  MYSQL_DATABASE: cloudops
+  MYSQL_STARTUP_TIMEOUT_SECONDS: "60"
+  MYSQL_PING_TIMEOUT_SECONDS: "3"
+  TRACE_OTLP_ENDPOINT: ""
+  TRACE_SAMPLE_RATE: "1.0"
+  SERVICE_VERSION: local
+  SOURCE_REVISION: local-worktree
+
+database:
+  api:
+    user: cloudops-api
+    secretName: cloudops-api-database
+    passwordKey: MYSQL_PASSWORD
+  worker:
+    user: cloudops-worker
+    secretName: cloudops-worker-database
+    passwordKey: MYSQL_PASSWORD
+  migrate:
+    user: cloudops-migrate
+    secretName: cloudops-migrate-database
+    passwordKey: MYSQL_PASSWORD
+
+data:
+  mountPath: /var/lib/cloudops
+  dataDir: /var/lib/cloudops/data
+  persistence:
+    existingClaim: ""
+    size: 1Gi
+    storageClassName: ""
+
+mysql:
+  enabled: true
+  image:
+    repository: mysql
+    tag: 8.0.46
+    digest: sha256:62fb722c78b24245ddff1796a0fcee4a49cc5b87e0aaaf20c92d1da9e0a2497b
+    pullPolicy: IfNotPresent
+  database: cloudops
+  rootSecretName: cloudops-mysql-root
+  rootPasswordKey: MYSQL_ROOT_PASSWORD
+  persistence:
+    size: 2Gi
+    storageClassName: ""
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+webhook:
+  secretName: cloudops-alertmanager-webhook
+  secretKey: token
+  mountPath: /var/run/secrets/cloudops/alertmanager
+  tokenFile: /var/run/secrets/cloudops/alertmanager/token
+
+api:
+  enabled: true
+  replicas: 1
+  port: 8080
+  managementPort: 8082
+  env:
+    RATE_LIMIT_ENABLED: "false"
+    INCIDENT_AGENT_ENABLED: "false"
+    CHANGE_INTELLIGENCE_ENABLED: "false"
+    REMEDIATION_ENABLED: "false"
+    DELIVERY_TRACKING_ENABLED: "false"
+    VERIFICATION_ENABLED: "false"
+    K8S_ENABLED: "false"
+    K8S_WRITE_ENABLED: "false"
+    STATIC_DIR: /app/static
+    ALERTMANAGER_WEBHOOK_REQUIRE_BEARER: "true"
+    SIGNAL_TARGET_ALLOWLIST_JSON: '[{"cluster_id":"cloudops-local","environment":"local","namespace":"demo","workload_kind":"Deployment","workload_name":"demo","service_name":"demo","match_labels":{"cluster":"cloudops-local","environment":"local","namespace":"demo","deployment":"demo"}}]'
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+migrate:
+  enabled: true
+  backoffLimit: 6
+  activeDeadlineSeconds: 300
+  ttlSecondsAfterFinished: 300
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 250m
+      memory: 128Mi
+
+worker:
+  enabled: true
+  replicas: 1
+  managementPort: 8081
+  providerNamespaces:
+    - cloudops-system
+    - demo
+  # When empty and PROVIDER_GATEWAY_ENABLED=false, the Worker stays ready in
+  # standby and deliberately does not claim Provider-backed work.
+  providerConfigSecretName: ""
+  credentials:
+    secretName: ""
+    mountPath: /var/run/secrets/cloudops/worker
+    files: {}
+  env:
+    WORKER_MANAGEMENT_ADDR: ":8081"
+    PROVIDER_GATEWAY_ENABLED: "false"
+    K8S_ENABLED: "true"
+    K8S_WRITE_ENABLED: "false"
+    K8S_IN_CLUSTER: "true"
+    K8S_CLUSTER_ID: cloudops-local
+    K8S_CONNECTIONS_JSON: ""
+    K8S_ALLOWED_NAMESPACES: cloudops-system,demo
+    K8S_DEFAULT_NAMESPACE: cloudops-system
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+scenario:
+  enabled: false
+  id: ""
+  namespace: demo
+  trafficInterval: 1s
+  resources:
+    requests:
+      cpu: 10m
+      memory: 24Mi
+    limits:
+      cpu: 100m
+      memory: 96Mi
+
+observability:
+  enabled: false
+  serviceMonitor:
+    interval: 15s
+    scrapeTimeout: 5s
+  stack:
+    enabled: false
+    clusterID: cloudops-local
+    environment: local
+    scrapeInterval: 5s
+    scrapeTimeout: 3s
+    prometheus:
+      image:
+        repository: quay.io/prometheus/prometheus
+        tag: v3.13.1-distroless
+        digest: sha256:214f8427c8fba80c327bb94a75feb802ae12f2d6ca30812aa6e7d22f09bbea80
+        pullPolicy: IfNotPresent
+      port: 9090
+      retentionTime: 6h
+      retentionSize: 256MB
+      resources:
+        requests:
+          cpu: 100m
+          memory: 192Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+    alertmanager:
+      image:
+        repository: quay.io/prometheus/alertmanager
+        tag: v0.33.1
+        digest: sha256:9e082985f56f4c8c9f724e18f2288c6708f472e56a5286b8863d080434ea065d
+        pullPolicy: IfNotPresent
+      port: 9093
+      retention: 24h
+      groupWait: 1s
+      groupInterval: 5s
+      repeatInterval: 4h
+      resources:
+        requests:
+          cpu: 25m
+          memory: 48Mi
+        limits:
+          cpu: 250m
+          memory: 128Mi
+    grafana:
+      image:
+        repository: grafana/grafana
+        tag: 12.3.1
+        digest: sha256:2175aaa91c96733d86d31cf270d5310b278654b03f5718c59de12a865380a31f
+        pullPolicy: IfNotPresent
+      port: 3000
+      rootURL: http://127.0.0.1:18081
+      anonymousRole: Viewer
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          cpu: 300m
+          memory: 256Mi
+    elasticsearch:
+      image:
+        repository: docker.elastic.co/elasticsearch/elasticsearch
+        tag: 9.4.3
+        digest: sha256:851ff5f9615ab7d2f00931114f6db32850f0208ec9fe7e841f135ac78f5f13d5
+        pullPolicy: IfNotPresent
+      port: 9200
+      jvmHeap: 384m
+      retentionDays: 7
+      rolloverMaxSize: 128mb
+      persistence:
+        size: 1Gi
+        storageClassName: ""
+      resources:
+        requests:
+          cpu: 200m
+          memory: 640Mi
+        limits:
+          cpu: "1"
+          memory: 1Gi
+    filebeat:
+      image:
+        repository: docker.elastic.co/beats/filebeat
+        tag: 9.4.3
+        digest: sha256:61bf789ac881c88c0edee6d490434e7a6d464d5f46a2bb1f5540a2301d4bdec3
+        pullPolicy: IfNotPresent
+      resources:
+        requests:
+          cpu: 50m
+          memory: 96Mi
+        limits:
+          cpu: 300m
+          memory: 256Mi
+    tempo:
+      image:
+        repository: grafana/tempo
+        tag: 3.0.2
+        digest: sha256:cda87c212d8c584dc0b89e337e7ed648a5100feb657e5d528480ee4fa03dbbe3
+        pullPolicy: IfNotPresent
+      httpPort: 3200
+      otlpGRPCPort: 4317
+      retention: 72h
+      persistence:
+        size: 1Gi
+        storageClassName: ""
+      resources:
+        requests:
+          cpu: 100m
+          memory: 192Mi
+        limits:
+          cpu: 500m
+          memory: 512Mi
+    otelCollector:
+      image:
+        repository: otel/opentelemetry-collector-contrib
+        tag: 0.156.0
+        digest: sha256:125bdbeb7590cc1952c5b3430ecf14063568980c2c93d5b38676cc0446ed8108
+        pullPolicy: IfNotPresent
+      grpcPort: 4317
+      httpPort: 4318
+      healthPort: 13133
+      memoryLimitMiB: 192
+      resources:
+        requests:
+          cpu: 50m
+          memory: 96Mi
+        limits:
+          cpu: 300m
+          memory: 256Mi

@@ -1,3 +1,0 @@
-# HELP cloudops_demo_workload_ready Disposable demo workload readiness.
-# TYPE cloudops_demo_workload_ready gauge
-cloudops_demo_workload_ready 1

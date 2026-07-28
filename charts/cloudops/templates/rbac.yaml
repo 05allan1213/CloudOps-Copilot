@@ -1,0 +1,98 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cloudops-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cloudops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+automountServiceAccountToken: false
+{{- if .Values.worker.enabled }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cloudops-worker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cloudops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+automountServiceAccountToken: {{ eq (include "cloudops.kubernetesInClusterEnabled" .) "true" }}
+{{- if eq (include "cloudops.kubernetesInClusterEnabled" .) "true" }}
+{{- range .Values.worker.providerNamespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cloudops-worker-readonly
+  namespace: {{ . }}
+  labels:
+    {{- include "cloudops.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: worker
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "events"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+    verbs: ["get", "list"]
+  {{- if and $.Values.scenario.enabled (eq . $.Values.scenario.namespace) (eq (index $.Values.worker.env "K8S_WRITE_ENABLED" | toString) "true") }}
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    resourceNames: ["cloudops-scenario-fault"]
+    verbs: ["get", "update"]
+  {{- end }}
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cloudops-worker-readonly
+  namespace: {{ . }}
+  labels:
+    {{- include "cloudops.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: worker
+subjects:
+  - kind: ServiceAccount
+    name: cloudops-worker
+    namespace: {{ $.Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cloudops-worker-readonly
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cloudops-worker-topology-readonly
+  labels:
+    {{- include "cloudops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces", "nodes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cloudops-worker-topology-readonly
+  labels:
+    {{- include "cloudops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+subjects:
+  - kind: ServiceAccount
+    name: cloudops-worker
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cloudops-worker-topology-readonly
+{{- end }}
+{{- end }}

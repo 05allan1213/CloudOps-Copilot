@@ -1,0 +1,362 @@
+{{- if and .Values.observability.stack.enabled (not .Values.bootstrapOnly) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudops-monitoring
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cloudops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monitoring-config
+data:
+  prometheus.yml: |-
+    global:
+      scrape_interval: {{ .Values.observability.stack.scrapeInterval }}
+      scrape_timeout: {{ .Values.observability.stack.scrapeTimeout }}
+      evaluation_interval: {{ .Values.observability.stack.scrapeInterval }}
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets: ["alertmanager.{{ .Release.Namespace }}.svc:{{ .Values.observability.stack.alertmanager.port }}"]
+    rule_files:
+      - /etc/prometheus/rules/cloudops-alerts.yml
+    scrape_configs:
+      - job_name: cloudops-api
+        honor_labels: false
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["cloudops-api-management.{{ .Release.Namespace }}.svc:{{ .Values.api.managementPort }}"]
+            labels:
+              cluster_id: {{ .Values.observability.stack.clusterID | quote }}
+              environment: {{ .Values.observability.stack.environment | quote }}
+              namespace: {{ .Release.Namespace | quote }}
+              workload_kind: Deployment
+              workload: cloudops-api
+      - job_name: cloudops-worker
+        honor_labels: false
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["cloudops-worker-management.{{ .Release.Namespace }}.svc:{{ .Values.worker.managementPort }}"]
+            labels:
+              cluster_id: {{ .Values.observability.stack.clusterID | quote }}
+              environment: {{ .Values.observability.stack.environment | quote }}
+              namespace: {{ .Release.Namespace | quote }}
+              workload_kind: Deployment
+              workload: cloudops-worker
+      {{- if .Values.scenario.enabled }}
+      - job_name: cloudops-scenario-healthy
+        honor_labels: false
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["cloudops-scenario-healthy.{{ .Values.scenario.namespace }}.svc:8080"]
+            labels:
+              cluster_id: {{ .Values.observability.stack.clusterID | quote }}
+              environment: {{ .Values.observability.stack.environment | quote }}
+              namespace: {{ .Values.scenario.namespace | quote }}
+              workload_kind: Deployment
+              workload: cloudops-scenario-healthy
+              service: cloudops-scenario-healthy
+              scenario_id: {{ .Values.scenario.id | quote }}
+      - job_name: cloudops-scenario-fault
+        honor_labels: false
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["cloudops-scenario-fault.{{ .Values.scenario.namespace }}.svc:8080"]
+            labels:
+              cluster_id: {{ .Values.observability.stack.clusterID | quote }}
+              environment: {{ .Values.observability.stack.environment | quote }}
+              namespace: {{ .Values.scenario.namespace | quote }}
+              workload_kind: Deployment
+              workload: cloudops-scenario-fault
+              service: cloudops-scenario-fault
+              scenario_id: {{ .Values.scenario.id | quote }}
+      {{- end }}
+  grafana.ini: |-
+    [analytics]
+    reporting_enabled = false
+    check_for_updates = false
+    check_for_plugin_updates = false
+    [auth]
+    disable_login_form = true
+    [auth.anonymous]
+    enabled = true
+    org_name = Main Org.
+    org_role = {{ .Values.observability.stack.grafana.anonymousRole }}
+    [explore]
+    enabled = true
+    [security]
+    disable_initial_admin_creation = true
+    cookie_secure = false
+    [server]
+    domain = 127.0.0.1
+    root_url = {{ .Values.observability.stack.grafana.rootURL }}
+    serve_from_sub_path = false
+    [users]
+    default_theme = dark
+  prometheus-datasource.yaml: |-
+    apiVersion: 1
+    deleteDatasources:
+      - name: Prometheus
+        orgId: 1
+    datasources:
+      - name: Prometheus
+        uid: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus.{{ .Release.Namespace }}.svc:{{ .Values.observability.stack.prometheus.port }}
+        isDefault: true
+        editable: false
+        jsonData:
+          httpMethod: POST
+          timeInterval: {{ .Values.observability.stack.scrapeInterval }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cloudops.labels" . | nindent 4 }}
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/component: metrics-provider
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: prometheus
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: metrics-provider
+      annotations:
+        checksum/config: {{ toJson (dict "stack" .Values.observability.stack "scenario" .Values.scenario) | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: prometheus
+          image: {{ include "cloudops.image" .Values.observability.stack.prometheus.image | quote }}
+          imagePullPolicy: {{ .Values.observability.stack.prometheus.image.pullPolicy }}
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time={{ .Values.observability.stack.prometheus.retentionTime }}
+            - --storage.tsdb.retention.size={{ .Values.observability.stack.prometheus.retentionSize }}
+            - --web.listen-address=:{{ .Values.observability.stack.prometheus.port }}
+            - --web.enable-lifecycle
+            - --log.level=info
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.observability.stack.prometheus.port }}
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            failureThreshold: 30
+            periodSeconds: 3
+            timeoutSeconds: 2
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 2
+          resources:
+            {{- toYaml .Values.observability.stack.prometheus.resources | nindent 12 }}
+          volumeMounts:
+            - name: monitoring-config
+              mountPath: /etc/prometheus/prometheus.yml
+              subPath: prometheus.yml
+              readOnly: true
+            - name: alerting-config
+              mountPath: /etc/prometheus/rules
+              readOnly: true
+            - name: prometheus-data
+              mountPath: /prometheus
+            - name: prometheus-tmp
+              mountPath: /tmp
+      volumes:
+        - name: monitoring-config
+          configMap:
+            name: cloudops-monitoring
+            defaultMode: 0444
+        - name: alerting-config
+          configMap:
+            name: cloudops-alerting
+            defaultMode: 0444
+        - name: prometheus-data
+          emptyDir:
+            sizeLimit: 384Mi
+        - name: prometheus-tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cloudops.labels" . | nindent 4 }}
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/component: metrics-provider
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: {{ .Values.observability.stack.prometheus.port }}
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cloudops.labels" . | nindent 4 }}
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/component: metrics-console
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: grafana
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: metrics-console
+      annotations:
+        checksum/config: {{ toJson .Values.observability.stack | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 472
+        runAsGroup: 472
+        fsGroup: 472
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: grafana
+          image: {{ include "cloudops.image" .Values.observability.stack.grafana.image | quote }}
+          imagePullPolicy: {{ .Values.observability.stack.grafana.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            - name: GF_PATHS_CONFIG
+              value: /etc/grafana/grafana.ini
+            - name: GF_PATHS_DATA
+              value: /var/lib/grafana
+            - name: GF_PATHS_LOGS
+              value: /var/log/grafana
+            - name: GF_PATHS_PLUGINS
+              value: /var/lib/grafana/plugins
+            - name: GF_PATHS_PROVISIONING
+              value: /etc/grafana/provisioning
+          ports:
+            - name: http
+              containerPort: {{ .Values.observability.stack.grafana.port }}
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            failureThreshold: 40
+            periodSeconds: 3
+            timeoutSeconds: 2
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 2
+          resources:
+            {{- toYaml .Values.observability.stack.grafana.resources | nindent 12 }}
+          volumeMounts:
+            - name: monitoring-config
+              mountPath: /etc/grafana/grafana.ini
+              subPath: grafana.ini
+              readOnly: true
+            - name: monitoring-config
+              mountPath: /etc/grafana/provisioning/datasources/prometheus.yaml
+              subPath: prometheus-datasource.yaml
+              readOnly: true
+            - name: grafana-data
+              mountPath: /var/lib/grafana
+            - name: grafana-logs
+              mountPath: /var/log/grafana
+            - name: grafana-tmp
+              mountPath: /tmp
+      volumes:
+        - name: monitoring-config
+          configMap:
+            name: cloudops-monitoring
+            defaultMode: 0444
+        - name: grafana-data
+          emptyDir:
+            sizeLimit: 256Mi
+        - name: grafana-logs
+          emptyDir:
+            sizeLimit: 32Mi
+        - name: grafana-tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cloudops.labels" . | nindent 4 }}
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/component: metrics-console
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: grafana
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: {{ .Values.observability.stack.grafana.port }}
+      targetPort: http
+      protocol: TCP
+{{- end }}

@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "cloudops.configMapName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cloudops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: config
+data:
+  {{- range $name, $value := .Values.commonEnv }}
+  {{ $name }}: {{ $value | quote }}
+  {{- end }}

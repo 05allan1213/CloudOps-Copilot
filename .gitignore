@@ -24,9 +24,6 @@ go.work.sum
 # env file
 .env
 
-# Generated local cluster credentials
-server-monitor/docker/kubeconfig
-
 # Editor/IDE
 .idea/
 .vscode/
@@ -49,15 +46,21 @@ Thumbs.db
 # Node.js
 node_modules/
 package-lock.json
+!frontend/package-lock.json
 
 # Frontend build outputs
 **/frontend/dist/
 **/frontend/.vite/
+frontend/playwright-report/
+frontend/test-results/
 
 # Project build outputs
 main
 probe
 web
+
+# Private local lifecycle state, backups, and managed secrets
+.cloudops/
 
 # AI file
 .agents/

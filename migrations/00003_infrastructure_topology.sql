@@ -1,0 +1,57 @@
+-- +goose Up
+-- +goose NO TRANSACTION
+
+CREATE TABLE `topology_snapshots` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `public_id` char(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `configuration_revision_id` bigint unsigned NOT NULL,
+  `cluster_id` varchar(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `environment` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `namespaces_json` json NOT NULL,
+  `scope_hash` char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `content_hash` char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `provider_state` varchar(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `source_identity` varchar(255) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `server_version` varchar(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT '',
+  `partial` tinyint(1) NOT NULL DEFAULT '0',
+  `truncated` tinyint(1) NOT NULL DEFAULT '0',
+  `node_count` int unsigned NOT NULL,
+  `edge_count` int unsigned NOT NULL,
+  `projection_json` json NOT NULL,
+  `collected_at` datetime(6) NOT NULL,
+  `fresh_until` datetime(6) NOT NULL,
+  `last_observed_at` datetime(6) NOT NULL,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_topology_snapshots_public_id` (`public_id`),
+  UNIQUE KEY `uk_topology_snapshots_content` (`configuration_revision_id`,`scope_hash`,`content_hash`),
+  KEY `idx_topology_snapshots_scope_time` (`cluster_id`,`collected_at`,`id`),
+  CONSTRAINT `fk_topology_snapshots_revision` FOREIGN KEY (`configuration_revision_id`) REFERENCES `configuration_revisions` (`id`) ON DELETE RESTRICT,
+  CONSTRAINT `chk_topology_snapshots_hashes` CHECK (((char_length(`scope_hash`) = 64) and (char_length(`content_hash`) = 64))),
+  CONSTRAINT `chk_topology_snapshots_state` CHECK ((`provider_state` in (_ascii'available',_ascii'partial'))),
+  CONSTRAINT `chk_topology_snapshots_bounds` CHECK (((json_type(`namespaces_json`) = _utf8mb4'ARRAY') and (json_length(`namespaces_json`) between 1 and 100) and (json_storage_size(`namespaces_json`) <= 8192) and (json_type(`projection_json`) = _utf8mb4'OBJECT') and (json_storage_size(`projection_json`) <= 1048576) and (`node_count` <= 500) and (`edge_count` <= 2000) and (`fresh_until` >= `collected_at`) and (`last_observed_at` >= `collected_at`)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE `resource_identities` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `resource_id` varchar(512) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `cluster_id` varchar(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `api_version` varchar(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `kind` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `namespace` varchar(253) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT '',
+  `name` varchar(253) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `source_uid` varchar(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT '',
+  `health_state` varchar(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  `last_snapshot_id` bigint unsigned NOT NULL,
+  `first_seen_at` datetime(6) NOT NULL,
+  `last_seen_at` datetime(6) NOT NULL,
+  `created_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  `updated_at` datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_resource_identities_resource` (`resource_id`),
+  KEY `idx_resource_identities_scope_kind` (`cluster_id`,`namespace`,`kind`,`name`),
+  KEY `idx_resource_identities_snapshot` (`last_snapshot_id`,`id`),
+  CONSTRAINT `fk_resource_identities_snapshot` FOREIGN KEY (`last_snapshot_id`) REFERENCES `topology_snapshots` (`id`) ON DELETE RESTRICT,
+  CONSTRAINT `chk_resource_identities_health` CHECK ((`health_state` in (_ascii'healthy',_ascii'warning',_ascii'critical',_ascii'unknown'))),
+  CONSTRAINT `chk_resource_identities_time` CHECK ((`last_seen_at` >= `first_seen_at`))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

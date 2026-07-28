@@ -1,0 +1,188 @@
+{{- if .Values.bootstrapOnly -}}
+  {{- if or .Values.api.enabled .Values.worker.enabled .Values.migrate.enabled -}}
+  {{- fail "bootstrapOnly requires API, Worker, and Migrate to be disabled" -}}
+  {{- end -}}
+  {{- if not .Values.mysql.enabled -}}
+  {{- fail "bootstrapOnly requires the local MySQL runtime" -}}
+  {{- end -}}
+  {{- if .Values.scenario.enabled -}}
+  {{- fail "bootstrapOnly cannot activate the Demonstration Scenario" -}}
+  {{- end -}}
+{{- else -}}
+  {{- if not .Values.api.enabled -}}
+  {{- fail "the CloudOps runtime requires cloudops-api" -}}
+  {{- end -}}
+  {{- if not .Values.worker.enabled -}}
+  {{- fail "the CloudOps runtime requires cloudops-worker" -}}
+  {{- end -}}
+  {{- if not .Values.migrate.enabled -}}
+  {{- fail "the CloudOps runtime requires cloudops-migrate" -}}
+  {{- end -}}
+{{- end -}}
+
+{{- if or (hasKey .Values.commonEnv "MYSQL_USER") (hasKey .Values.commonEnv "MYSQL_PASSWORD") -}}
+{{- fail "commonEnv must not contain workload-scoped MySQL credentials" -}}
+{{- end -}}
+
+{{- if or
+  (eq .Values.database.api.user .Values.database.worker.user)
+  (eq .Values.database.api.user .Values.database.migrate.user)
+  (eq .Values.database.worker.user .Values.database.migrate.user) -}}
+{{- fail "API, Worker, and Migrate must use different MySQL users" -}}
+{{- end -}}
+{{- if or
+  (eq .Values.database.api.secretName .Values.database.worker.secretName)
+  (eq .Values.database.api.secretName .Values.database.migrate.secretName)
+  (eq .Values.database.worker.secretName .Values.database.migrate.secretName) -}}
+{{- fail "API, Worker, and Migrate must use different MySQL credential Secrets" -}}
+{{- end -}}
+{{- range $name, $identity := .Values.database -}}
+  {{- if eq $identity.secretName $.Values.mysql.rootSecretName -}}
+  {{- fail (printf "database.%s must not reuse the MySQL root Secret" $name) -}}
+  {{- end -}}
+{{- end -}}
+
+{{- range $name, $image := .Values.images -}}
+  {{- if eq (lower ($image.tag | toString)) "latest" -}}
+  {{- fail (printf "images.%s.tag must not be latest" $name) -}}
+  {{- end -}}
+{{- end -}}
+{{- if eq (lower (.Values.mysql.image.tag | toString)) "latest" -}}
+{{- fail "mysql.image.tag must not be latest" -}}
+{{- end -}}
+{{- if eq (lower (.Values.observability.stack.prometheus.image.tag | toString)) "latest" -}}
+{{- fail "observability.stack.prometheus.image.tag must not be latest" -}}
+{{- end -}}
+{{- if eq (lower (.Values.observability.stack.grafana.image.tag | toString)) "latest" -}}
+{{- fail "observability.stack.grafana.image.tag must not be latest" -}}
+{{- end -}}
+{{- if eq (lower (.Values.observability.stack.elasticsearch.image.tag | toString)) "latest" -}}
+{{- fail "observability.stack.elasticsearch.image.tag must not be latest" -}}
+{{- end -}}
+{{- if eq (lower (.Values.observability.stack.filebeat.image.tag | toString)) "latest" -}}
+{{- fail "observability.stack.filebeat.image.tag must not be latest" -}}
+{{- end -}}
+{{- if eq (lower (.Values.observability.stack.tempo.image.tag | toString)) "latest" -}}
+{{- fail "observability.stack.tempo.image.tag must not be latest" -}}
+{{- end -}}
+{{- if eq (lower (.Values.observability.stack.otelCollector.image.tag | toString)) "latest" -}}
+{{- fail "observability.stack.otelCollector.image.tag must not be latest" -}}
+{{- end -}}
+{{- if and .Values.observability.enabled .Values.observability.stack.enabled -}}
+{{- fail "Operator-managed and native local observability modes are mutually exclusive" -}}
+{{- end -}}
+{{- if and .Values.observability.stack.enabled (eq (trim (index .Values.commonEnv "TRACE_OTLP_ENDPOINT" | toString)) "") -}}
+{{- fail "the native telemetry stack requires TRACE_OTLP_ENDPOINT" -}}
+{{- end -}}
+
+{{- $writeEnabled := eq (index .Values.worker.env "K8S_WRITE_ENABLED" | toString) "true" -}}
+{{- if .Values.scenario.enabled -}}
+  {{- if eq (trim .Values.scenario.id) "" -}}
+  {{- fail "an active Demonstration Scenario requires scenario.id" -}}
+  {{- end -}}
+  {{- if not $writeEnabled -}}
+  {{- fail "an active Demonstration Scenario requires the bounded Kubernetes write gate" -}}
+  {{- end -}}
+  {{- if ne (index .Values.worker.env "K8S_ENABLED" | toString) "true" -}}
+  {{- fail "an active Demonstration Scenario requires Kubernetes reads" -}}
+  {{- end -}}
+  {{- if not (has .Values.scenario.namespace .Values.worker.providerNamespaces) -}}
+  {{- fail "the Scenario namespace must be present in worker.providerNamespaces" -}}
+  {{- end -}}
+{{- else -}}
+  {{- if ne (trim .Values.scenario.id) "" -}}
+  {{- fail "inactive Scenario values must not retain scenario.id" -}}
+  {{- end -}}
+  {{- if $writeEnabled -}}
+  {{- fail "Kubernetes write access is permitted only while the bounded Scenario is active" -}}
+  {{- end -}}
+{{- end -}}
+{{- if and (eq (index .Values.worker.env "K8S_ENABLED" | toString) "true") (eq (len .Values.worker.providerNamespaces) 0) -}}
+{{- fail "Kubernetes typed reader requires at least one worker.providerNamespaces entry" -}}
+{{- end -}}
+{{- $connectionsRaw := trim (index .Values.worker.env "K8S_CONNECTIONS_JSON" | toString) -}}
+{{- if ne $connectionsRaw "" -}}
+  {{- $connections := mustFromJson $connectionsRaw -}}
+  {{- if not (kindIs "slice" $connections) -}}
+  {{- fail "K8S_CONNECTIONS_JSON must be a JSON array" -}}
+  {{- end -}}
+  {{- if or (lt (len $connections) 1) (gt (len $connections) 10) -}}
+  {{- fail "K8S_CONNECTIONS_JSON must register 1 to 10 clusters" -}}
+  {{- end -}}
+  {{- $seenClusters := dict -}}
+  {{- $credentialPaths := dict -}}
+  {{- range $_, $filename := .Values.worker.credentials.files -}}
+    {{- $_ := set $credentialPaths (printf "%s/%s" $.Values.worker.credentials.mountPath $filename) true -}}
+  {{- end -}}
+  {{- $allowedFields := list "cluster_id" "kubeconfig" "context" "in_cluster" "allowed_namespaces" "default_namespace" "request_timeout_seconds" -}}
+  {{- $inClusterConnections := 0 -}}
+  {{- range $index, $connection := $connections -}}
+    {{- if not (kindIs "map" $connection) -}}
+    {{- fail (printf "K8S_CONNECTIONS_JSON entry %d must be an object" $index) -}}
+    {{- end -}}
+    {{- range $field, $_ := $connection -}}
+      {{- if not (has $field $allowedFields) -}}
+      {{- fail (printf "K8S_CONNECTIONS_JSON entry %d contains unsupported field %s" $index $field) -}}
+      {{- end -}}
+    {{- end -}}
+    {{- $clusterID := trim (get $connection "cluster_id" | default "" | toString) -}}
+    {{- if not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" $clusterID) -}}
+    {{- fail (printf "K8S_CONNECTIONS_JSON entry %d has invalid cluster_id" $index) -}}
+    {{- end -}}
+    {{- if hasKey $seenClusters $clusterID -}}
+    {{- fail (printf "K8S_CONNECTIONS_JSON contains duplicate cluster_id %s" $clusterID) -}}
+    {{- end -}}
+    {{- $_ := set $seenClusters $clusterID true -}}
+    {{- $inCluster := eq (get $connection "in_cluster" | default false | toString) "true" -}}
+    {{- if $inCluster -}}
+      {{- $inClusterConnections = add1 $inClusterConnections -}}
+    {{- end -}}
+    {{- $kubeconfig := trim (get $connection "kubeconfig" | default "" | toString) -}}
+    {{- if and (not $inCluster) (or (not (regexMatch "^/[^[:space:]]+$" $kubeconfig)) (eq $kubeconfig "/")) -}}
+    {{- fail (printf "K8S_CONNECTIONS_JSON cluster %s requires an absolute kubeconfig file" $clusterID) -}}
+    {{- end -}}
+    {{- if and (not $inCluster) (not (hasKey $credentialPaths $kubeconfig)) -}}
+    {{- fail (printf "K8S_CONNECTIONS_JSON cluster %s kubeconfig must reference a mounted worker credential file" $clusterID) -}}
+    {{- end -}}
+    {{- $contextName := trim (get $connection "context" | default "" | toString) -}}
+    {{- if and (ne $contextName "") (or (eq $kubeconfig "") (gt (len $contextName) 253) (regexMatch "[\\r\\n]" $contextName)) -}}
+    {{- fail (printf "K8S_CONNECTIONS_JSON cluster %s has an invalid kubeconfig context" $clusterID) -}}
+    {{- end -}}
+    {{- $namespaces := get $connection "allowed_namespaces" -}}
+    {{- if or (not (kindIs "slice" $namespaces)) (lt (len $namespaces) 1) (gt (len $namespaces) 100) -}}
+    {{- fail (printf "K8S_CONNECTIONS_JSON cluster %s requires 1 to 100 allowed_namespaces" $clusterID) -}}
+    {{- end -}}
+    {{- $seenNamespaces := dict -}}
+    {{- range $namespace := $namespaces -}}
+      {{- $namespace = trim ($namespace | toString) -}}
+      {{- if or (gt (len $namespace) 63) (not (regexMatch "^(\\*|[a-z0-9]([-a-z0-9.]*[a-z0-9])?)$" $namespace)) -}}
+      {{- fail (printf "K8S_CONNECTIONS_JSON cluster %s contains invalid namespace %s" $clusterID $namespace) -}}
+      {{- end -}}
+      {{- if and $inCluster (or (eq $namespace "*") (not (has $namespace $.Values.worker.providerNamespaces))) -}}
+      {{- fail (printf "K8S_CONNECTIONS_JSON in-cluster namespace %s requires a bounded worker.providerNamespaces Role" $namespace) -}}
+      {{- end -}}
+      {{- $_ := set $seenNamespaces $namespace true -}}
+    {{- end -}}
+    {{- $defaultNamespace := trim (get $connection "default_namespace" | default "" | toString) -}}
+    {{- if and (not (hasKey $seenNamespaces $defaultNamespace)) (not (hasKey $seenNamespaces "*")) -}}
+    {{- fail (printf "K8S_CONNECTIONS_JSON cluster %s default_namespace must be allowed" $clusterID) -}}
+    {{- end -}}
+    {{- if hasKey $connection "request_timeout_seconds" -}}
+      {{- $timeoutSeconds := int (get $connection "request_timeout_seconds") -}}
+      {{- if or (lt $timeoutSeconds 1) (gt $timeoutSeconds 60) -}}
+      {{- fail (printf "K8S_CONNECTIONS_JSON cluster %s request timeout must be 1 to 60 seconds" $clusterID) -}}
+      {{- end -}}
+    {{- end -}}
+  {{- end -}}
+  {{- if gt $inClusterConnections 1 -}}
+  {{- fail "K8S_CONNECTIONS_JSON may register only one in_cluster connection" -}}
+  {{- end -}}
+{{- end -}}
+{{- if eq (index .Values.worker.env "PROVIDER_GATEWAY_ENABLED" | toString) "true" -}}
+  {{- if not .Values.worker.providerConfigSecretName -}}
+  {{- fail "Provider Gateway requires worker.providerConfigSecretName" -}}
+  {{- end -}}
+  {{- if eq (len .Values.worker.credentials.files) 0 -}}
+  {{- fail "Provider Gateway requires bounded credential file references" -}}
+  {{- end -}}
+{{- end -}}
