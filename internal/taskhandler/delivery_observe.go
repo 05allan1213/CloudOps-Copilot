@@ -1245,6 +1245,23 @@ func appendDeliveryIncidentEvent(ctx context.Context, tx asyncjob.DBTX, snapshot
 	return err
 }
 
+const deliveryEvidenceInsertSQL = `INSERT INTO evidence_items
+	 (public_id, incident_id, evidence_contract_version, cycle_no, migrated_legacy, migrated_legacy_context,
+  change_request_id, type, source, producer_type, producer_id, producer_version,
+  producer_dedupe_key, adapter_version, query_template_id, query_template_version,
+  scope_snapshot_hash, arguments_hash, tool_name, resource_ref, time_range_json, query_text,
+  summary, facts_json, fact_schema_version, fact_schema_hash, provenance_json, provenance_hash,
+  trust_axes_json, claim_use, corroboration_groups_json, input_evidence_ids_json,
+  input_sample_ids_json, input_hashes_json, result_hash, content_hash, raw_ref,
+  safe_raw_reference, redaction_json, redaction_policy_version, redaction_counts_json,
+  prompt_safety_flags_json, source_revision, resource_version, truncated, valid,
+  idempotency_key, collected_at, observed_at, created_at)
+	 VALUES (?, ?, 1, ?, ?, ?, ?, 'delivery_observation', ?, 'delivery_observation', ?,
+         'delivery-observation-evidence/v1', ?, 'delivery-observer/v1', ?, 'v1', ?, ?, '', ?,
+         NULL, '', ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?,
+         'delivery-observation-redaction/v1', ?, ?, ?, ?, FALSE, TRUE, ?, ?, ?, ?)
+	 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`
+
 func appendDeliveryEvidence(ctx context.Context, tx asyncjob.DBTX, snapshot DeliveryObserveSnapshot, outcome DeliveryObserveOutcome, at time.Time) error {
 	evidencePublicID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("delivery-evidence\x00"+snapshot.ChangeRequestPublicID+"\x00"+string(outcome.Kind)+"\x00"+outcome.Projection.TargetRevision)).String()
 	fact := agent.EvidenceFact{
@@ -1284,22 +1301,7 @@ func appendDeliveryEvidence(ctx context.Context, tx asyncjob.DBTX, snapshot Deli
 	case DeliveryObserveRollout:
 		resourceRef = "kubernetes:" + snapshot.Namespace + "/" + snapshot.WorkloadName
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO evidence_items
-	 (public_id, incident_id, evidence_contract_version, cycle_no, migrated_legacy, migrated_legacy_context,
-  change_request_id, type, source, producer_type, producer_id, producer_version,
-  producer_dedupe_key, adapter_version, query_template_id, query_template_version,
-  scope_snapshot_hash, arguments_hash, tool_name, resource_ref, time_range_json, query_text,
-  summary, facts_json, fact_schema_version, fact_schema_hash, provenance_json, provenance_hash,
-  trust_axes_json, claim_use, corroboration_groups_json, input_evidence_ids_json,
-  input_sample_ids_json, input_hashes_json, result_hash, content_hash, raw_ref,
-  safe_raw_reference, redaction_json, redaction_policy_version, redaction_counts_json,
-  prompt_safety_flags_json, source_revision, resource_version, truncated, valid,
-  idempotency_key, collected_at, observed_at, created_at)
-	 VALUES (?, ?, 1, ?, ?, ?, ?, 'delivery_observation', ?, 'delivery_observation', ?,
-         'delivery-observation-evidence/v1', ?, 'delivery-observer/v1', ?, 'v1', ?, ?, '', ?,
-         NULL, '', ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?,
-         'delivery-observation-redaction/v1', ?, ?, ?, ?, FALSE, TRUE, ?, ?, ?, ?)
-	 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`, evidencePublicID, snapshot.IncidentID, snapshot.CycleNo,
+	_, err = tx.ExecContext(ctx, deliveryEvidenceInsertSQL, evidencePublicID, snapshot.IncidentID, snapshot.CycleNo,
 		snapshot.MigratedLegacy, snapshot.MigratedLegacyContext, snapshot.ChangeRequestID, outcome.SourceSystem, snapshot.ChangeRequestPublicID, producerKey,
 		"delivery/"+string(outcome.Kind), hashCanonical("delivery-scope", snapshot.IncidentPublicID, fmt.Sprint(snapshot.CycleNo), snapshot.ChangeRequestPublicID),
 		hashCanonical("delivery-arguments", string(outcome.Kind), snapshot.SourceRevision, outcome.Projection.TargetRevision), resourceRef,
