@@ -101,6 +101,31 @@ func TestCompileRestoreRequiredEnvBindsCompletePlan(t *testing.T) {
 	}
 }
 
+func TestRestoreEnvPolicyHashMatchesCompiledPlanSnapshot(t *testing.T) {
+	request := validRestoreRequest()
+	want, err := RestoreEnvPolicyHash(request.Policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := CompileRestoreRequiredEnv(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.PolicySnapshotHash != want || HashBytes(plan.PolicySnapshot) != want {
+		t.Fatalf("policy hash mismatch: helper=%s plan=%s snapshot=%s", want, plan.PolicySnapshotHash, HashBytes(plan.PolicySnapshot))
+	}
+
+	// Guard the live failure mode: encoding a struct preserves declaration
+	// order, while the persisted Plan snapshot uses canonical object-key order.
+	nonCanonical, err := json.Marshal(request.Policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if HashBytes(nonCanonical) == want {
+		t.Fatal("test policy no longer distinguishes direct struct JSON from the canonical Plan snapshot")
+	}
+}
+
 func TestCompileRestoreRequiredEnvUsesMySQLTimePrecision(t *testing.T) {
 	request := validRestoreRequest()
 	request.CreatedAt = request.CreatedAt.Add(987654321 * time.Nanosecond)
