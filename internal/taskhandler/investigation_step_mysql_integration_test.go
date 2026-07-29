@@ -114,12 +114,14 @@ func TestMySQLInvestigationStepPersistsStableExecutionErrorCode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var errorCode, summary string
-	if err := db.QueryRowContext(ctx, `SELECT error_code, result_summary FROM agent_steps WHERE agent_run_id = ?`, agentRunID).
-		Scan(&errorCode, &summary); err != nil {
+	var errorCode, summary, outcome string
+	if err := db.QueryRowContext(ctx, `SELECT step.error_code, step.result_summary, run.outcome
+	FROM agent_steps step JOIN agent_runs run ON run.id = step.agent_run_id
+	WHERE step.agent_run_id = ?`, agentRunID).
+		Scan(&errorCode, &summary, &outcome); err != nil {
 		t.Fatal(err)
 	}
-	if errorCode != "step_execution_malformed_model_output" || strings.Contains(summary, providerDetail) {
-		t.Fatalf("persisted error_code=%q summary=%q", errorCode, summary)
+	if errorCode != "step_execution_malformed_model_output" || outcome != "insufficient" || strings.Contains(summary, providerDetail) {
+		t.Fatalf("persisted error_code=%q outcome=%q summary=%q", errorCode, outcome, summary)
 	}
 }

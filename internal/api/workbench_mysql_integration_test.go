@@ -218,7 +218,10 @@ result_hash, content_hash, raw_ref, truncated, valid, collected_at, observed_at
 	insertInvestigation := func(cycle uint64, summary string, completedAt time.Time) string {
 		t.Helper()
 		publicID := uuid.NewString()
-		diagnosis, _ := json.Marshal(map[string]any{"summary": summary})
+		diagnosis, _ := json.Marshal(map[string]any{
+			"candidate":      map[string]any{"summary": summary},
+			"diagnosis_hash": strings.Repeat("d", 64),
+		})
 		if _, insertErr := db.ExecContext(ctx, `INSERT INTO agent_runs (
 public_id, incident_id, status, model, prompt_version, max_steps, used_steps,
 objective, final_diagnosis, failure_code, completed_at, cycle_no,
@@ -295,7 +298,8 @@ completed_at, attempt, expected_subject_version, result_summary, failure_reason
 		incident.Recovery.LatestVerificationID != verificationPublicID || incident.Recovery.CanClose ||
 		incident.Decision == nil || incident.Decision.Kind != "no_change" ||
 		incident.Decision.InvestigationID != currentInvestigationID ||
-		incident.Decision.VerificationID != verificationPublicID {
+		incident.Decision.VerificationID != verificationPublicID ||
+		incident.Decision.Summary != "no change; wait for signal recovery" {
 		t.Fatalf("Incident coordination projection=%+v", incident)
 	}
 	workspaces := make(map[string]bool, len(incident.ContextLinks))
@@ -349,7 +353,8 @@ completed_at, attempt, expected_subject_version, result_summary, failure_reason
 	investigations, err := port.Query(ctx, QueryRequest{Kind: QueryInvestigations, IncidentID: incidentPublicID, Limit: 10})
 	if err != nil || len(investigations.Investigations) != 1 ||
 		investigations.Investigations[0].ID != currentInvestigationID ||
-		investigations.Investigations[0].Cycle != 2 {
+		investigations.Investigations[0].Cycle != 2 ||
+		investigations.Investigations[0].Outcome != "diagnosed" {
 		t.Fatalf("current-cycle Investigations=%+v err=%v", investigations.Investigations, err)
 	}
 	if err := validateIncidentAlertRelations(relations.AlertRelations); err != nil {

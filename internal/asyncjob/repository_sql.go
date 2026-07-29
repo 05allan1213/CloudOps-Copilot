@@ -415,13 +415,15 @@ WHERE id = ?
 }
 
 func recordReadyDeadAttempt(ctx context.Context, tx *sql.Tx, task Task, code, summary string) error {
-	result, err := tx.ExecContext(ctx, `INSERT IGNORE INTO async_task_attempts (
+	result, err := tx.ExecContext(ctx, `INSERT INTO async_task_attempts (
 public_id, task_id, attempt, expected_subject_version, lease_owner,
-lease_generation, claim_kind, status, started_at, finished_at, error_code,
+lease_generation, claim_kind, configuration_revision_id, status, started_at, finished_at, error_code,
 error_summary, created_at
-	) VALUES (?, ?, ?, ?, 'system:attempt-reaper', ?, 'ready', 'dead', NOW(6),
-	          NOW(6), ?, ?, NOW(6))`,
-		uuid.NewString(), task.ID, task.Attempt, task.ExpectedSubjectVersion, task.LeaseGeneration+1, code, summary)
+	) VALUES (?, ?, ?, ?, 'system:attempt-reaper', ?, 'ready', ?, 'dead', NOW(6),
+	          NOW(6), ?, ?, NOW(6))
+ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`,
+		uuid.NewString(), task.ID, task.Attempt, task.ExpectedSubjectVersion, task.LeaseGeneration+1,
+		task.ConfigurationRevisionID, code, summary)
 	if err != nil {
 		return fmt.Errorf("record exhausted ready async task attempt: %w", err)
 	}
@@ -429,11 +431,16 @@ error_summary, created_at
 		return fmt.Errorf("read exhausted ready async task attempt result: %w", err)
 	}
 	var count int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM async_task_attempts WHERE task_id = ? AND attempt = ?`, task.ID, task.Attempt).Scan(&count); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM async_task_attempts
+WHERE task_id = ? AND attempt = ? AND expected_subject_version = ?
+  AND lease_owner = 'system:attempt-reaper' AND lease_generation = ?
+  AND claim_kind = 'ready' AND configuration_revision_id = ? AND status = 'dead'`,
+		task.ID, task.Attempt, task.ExpectedSubjectVersion, task.LeaseGeneration+1,
+		task.ConfigurationRevisionID).Scan(&count); err != nil {
 		return fmt.Errorf("verify exhausted ready async task attempt: %w", err)
 	}
 	if count != 1 {
-		return errors.New("exhausted ready async task has no attempt audit")
+		return errors.New("exhausted ready async task attempt does not match task lineage")
 	}
 	return nil
 }

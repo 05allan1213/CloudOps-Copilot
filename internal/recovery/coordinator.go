@@ -216,9 +216,9 @@ func (c *Coordinator) restartIncident(ctx context.Context, tx *sql.Tx, incidentI
    WHERE relation.incident_id = ? AND relation.incident_cycle_no = ? AND alert.status <> 'resolved'),
   (SELECT COUNT(*) FROM verification_runs run
    WHERE run.incident_id = ? AND run.cycle_no = ? AND run.status IN ('pending','running')),
-  (SELECT COUNT(*) FROM agent_runs run
-   WHERE run.incident_id = ? AND run.cycle_no = ? AND run.subject_type = 'incident'
-     AND run.run_kind = 'workspace' AND run.status IN ('pending','running'))`,
+	  (SELECT COUNT(*) FROM agent_runs run
+	   WHERE run.incident_id = ? AND run.cycle_no = ? AND run.subject_type = 'incident'
+	     AND run.run_kind IN ('incident','workspace') AND run.status IN ('pending','running'))`,
 		incident.ID, incident.Cycle, incident.ID, incident.Cycle,
 		incident.ID, incident.Cycle, incident.ID, incident.Cycle,
 	).Scan(&total, &firing, &activeRuns, &activeInvestigations); err != nil {
@@ -437,7 +437,8 @@ func loadTerminalInvestigation(ctx context.Context, tx asyncjob.DBTX, incident i
 	var completed sql.NullTime
 	err := tx.QueryRowContext(ctx, `SELECT id, public_id, status, completed_at
 FROM agent_runs
-WHERE incident_id = ? AND cycle_no = ? AND subject_type = 'incident' AND run_kind = 'workspace'
+	WHERE incident_id = ? AND cycle_no = ? AND subject_type = 'incident'
+	  AND run_kind IN ('incident','workspace')
 ORDER BY created_at DESC, id DESC LIMIT 1 FOR UPDATE`, incident.ID, incident.Cycle).Scan(
 		&result.ID, &result.PublicID, &result.Status, &completed)
 	if errors.Is(err, sql.ErrNoRows) {

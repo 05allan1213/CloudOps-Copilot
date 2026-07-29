@@ -375,7 +375,7 @@ func reconcileDeadInvestigationRun(ctx context.Context, tx *sql.Tx, incident loc
 	}
 
 	result, err := tx.ExecContext(ctx, `UPDATE agent_runs
-	SET status = 'failed', failure_code = ?, failure_summary = ?,
+	SET status = 'failed', outcome = 'failed', failure_code = ?, failure_summary = ?,
 	    completed_at = NOW(6), row_version = row_version + 1, updated_at = NOW(6)
 	WHERE id = ? AND incident_id = ? AND cycle_no = ?
 	  AND row_version = ? AND status IN ('pending','running')`,

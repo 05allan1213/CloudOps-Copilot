@@ -1097,7 +1097,11 @@ func assertIntegrationAttentionAndAttempt(t *testing.T, ctx context.Context, db 
 func assertIntegrationAttemptStatus(t *testing.T, ctx context.Context, db *sql.DB, taskID uint64, attemptStatus string) {
 	t.Helper()
 	var count int
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM async_task_attempts WHERE task_id = ? AND status = ?`, taskID, attemptStatus).Scan(&count); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*)
+FROM async_task_attempts attempt
+JOIN async_tasks task ON task.id = attempt.task_id
+WHERE attempt.task_id = ? AND attempt.status = ?
+  AND attempt.configuration_revision_id = task.configuration_revision_id`, taskID, attemptStatus).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	if count != 1 {

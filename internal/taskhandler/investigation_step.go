@@ -48,6 +48,7 @@ type InvestigationStepConfig struct {
 	Tasks              InvestigationTaskStore
 	Model              agent.InvestigationModel
 	Tools              agent.InvestigationReadTool
+	Planner            agent.InvestigationActionPlanner
 	AgentRunIdentity   agent.RunModelIdentity
 	ClaimPolicy        agent.ClaimPolicy
 	ActionPolicies     map[string]agent.ToolActionPolicy
@@ -844,6 +845,9 @@ func (o *investigationStepOperation) executeDecision(ctx context.Context, execut
 	if err != nil {
 		return preparedInvestigationStep{}, err
 	}
+	if o.cfg.Planner != nil {
+		return o.executePlannedDecision(snapshot, sufficiency)
+	}
 	view := agent.ModelView{
 		State: snapshot.State, Facts: slices.Clone(snapshot.Facts), ScopeRef: snapshot.ScopeRef,
 		AllowedActions:   modelActionSchemas(o.cfg.ActionPolicies),
@@ -906,6 +910,58 @@ func (o *investigationStepOperation) executeDecision(ctx context.Context, execut
 			return preparedInvestigationStep{}, errors.New("validated continue decision lost its action")
 		}
 		checkpoint.NextMode, checkpoint.NextAction = stepModeTool, cloneAction(delta.ProposedAction)
+	}
+	return finalizePrepared(checkpoint, state)
+}
+
+func (o *investigationStepOperation) executePlannedDecision(snapshot investigationSnapshot, sufficiency agent.SufficiencyResult) (preparedInvestigationStep, error) {
+	if sufficiency.Outcome == agent.SufficiencyInsufficient {
+		return o.prepareInsufficient(snapshot, investigationStepPayload{Mode: stepModeDecide}, "deterministic_sufficiency_stop", o.cfg.Now())
+	}
+	var action *agent.ProposedAction
+	proposedStop := agent.StopDiagnose
+	if sufficiency.Outcome != agent.SufficiencyReady {
+		var err error
+		action, err = o.cfg.Planner.NextAction(snapshot.State, snapshot.Facts, snapshot.ScopeRef)
+		if err != nil {
+			return preparedInvestigationStep{}, err
+		}
+		if action == nil {
+			return o.prepareInsufficient(snapshot, investigationStepPayload{Mode: stepModeDecide}, "acquisition_plan_exhausted", o.cfg.Now())
+		}
+		if err := validateInvestigationToolAction(*action, snapshot, o.cfg.ActionPolicies); err != nil {
+			return preparedInvestigationStep{}, err
+		}
+		proposedStop = agent.StopContinue
+	}
+	usage := agent.Usage{Steps: 1}
+	if err := snapshot.State.Usage.CanCharge(usage, snapshot.State.Limits); err != nil {
+		return o.prepareInsufficient(snapshot, investigationStepPayload{Mode: stepModeDecide}, "decision_budget_exhausted", o.cfg.Now())
+	}
+	delta := agent.StateDelta{
+		SchemaVersion: agent.InvestigationStateSchemaVersion, BasisCheckpointVersion: snapshot.State.CheckpointVersion,
+		ProposedAction: cloneAction(action), ProposedStop: proposedStop,
+	}
+	policy := o.statePolicy(snapshot)
+	policy.StepUsage = usage
+	state, _, err := agent.ReduceStateDelta(snapshot.State, delta, policy)
+	if err != nil {
+		return preparedInvestigationStep{}, err
+	}
+	captured := o.cfg.Now().UTC()
+	state.UpdatedAt = captured
+	checkpoint := investigationStepCheckpoint{
+		SchemaVersion: investigationTaskCheckpointSchema, Mode: stepModeDecide,
+		SubjectVersion: snapshot.Task.ExpectedSubjectVersion, BasisCheckpointVersion: snapshot.State.CheckpointVersion,
+		BasisCheckpointHash: snapshot.StateHash, Delta: &delta, Sufficiency: sufficiency, Usage: usage,
+		StepNode: agent.NodeSelectAction, StepSummary: "selected the next deterministic symptom-first acquisition action",
+		CapturedAt: captured,
+	}
+	if sufficiency.Outcome == agent.SufficiencyReady {
+		state.NextNode = agent.NodeProduceDiagnosis
+		checkpoint.NextMode = stepModeSynthesize
+	} else {
+		checkpoint.NextMode, checkpoint.NextAction = stepModeTool, cloneAction(action)
 	}
 	return finalizePrepared(checkpoint, state)
 }
@@ -1000,9 +1056,50 @@ func (o *investigationStepOperation) executeTool(ctx context.Context, execution 
 		state.NextNode, state.TerminalOutcome = agent.NodeEnd, "insufficient_evidence"
 		checkpoint.TerminalOutcome = state.TerminalOutcome
 	default:
-		checkpoint.NextMode = stepModeDecide
+		if o.cfg.Planner == nil {
+			checkpoint.NextMode = stepModeDecide
+			break
+		}
+		next, planErr := o.cfg.Planner.NextAction(state, facts, snapshot.ScopeRef)
+		if planErr != nil {
+			return preparedInvestigationStep{}, planErr
+		}
+		if next == nil {
+			state.NextNode, state.TerminalOutcome = agent.NodeEnd, "insufficient_evidence"
+			sufficiency.Outcome = agent.SufficiencyInsufficient
+			sufficiency.ConfidenceCap = minFloat(sufficiency.ConfidenceCap, 0.3)
+			sufficiency.ReasonCodes = appendStableString(sufficiency.ReasonCodes, "acquisition_plan_exhausted")
+			checkpoint.Sufficiency = sufficiency
+			checkpoint.TerminalOutcome = state.TerminalOutcome
+			break
+		}
+		if err := scheduleInvestigationAction(&state, *next, snapshot, o.cfg.ActionPolicies); err != nil {
+			return preparedInvestigationStep{}, err
+		}
+		checkpoint.NextMode, checkpoint.NextAction = stepModeTool, cloneAction(next)
 	}
 	return finalizePrepared(checkpoint, state)
+}
+
+func scheduleInvestigationAction(state *agent.InvestigationState, action agent.ProposedAction, snapshot investigationSnapshot, policies map[string]agent.ToolActionPolicy) error {
+	if state == nil {
+		return agent.ErrInvalidArgument
+	}
+	if err := validateInvestigationToolAction(action, snapshot, policies); err != nil {
+		return err
+	}
+	signature, err := agent.ActionSignature(action)
+	if err != nil {
+		return err
+	}
+	for _, attempt := range state.ToolAttempts {
+		if attempt.Tool == action.Tool || attempt.Signature == signature {
+			return fmt.Errorf("%w: deterministic acquisition action was already attempted", agent.ErrConflict)
+		}
+	}
+	state.ToolAttempts = append(state.ToolAttempts, agent.ToolAttempt{Signature: signature, Tool: action.Tool, Status: "proposed"})
+	state.NextNode = agent.NodeExecuteTool
+	return nil
 }
 
 func (o *investigationStepOperation) executeSynthesis(ctx context.Context, execution asyncjob.Execution, snapshot investigationSnapshot) (preparedInvestigationStep, error) {
@@ -1192,7 +1289,7 @@ func failInvestigationRunFromTask(task asyncjob.Task, reason, summary string, at
 		}
 
 		result, err := tx.ExecContext(ctx, `UPDATE agent_runs
-		SET status = 'failed', failure_code = ?, failure_summary = ?,
+		SET status = 'failed', outcome = 'failed', failure_code = ?, failure_summary = ?,
 		    completed_at = ?, row_version = row_version + 1, updated_at = ?
 		WHERE id = ? AND incident_id = ? AND cycle_no = ?
 		  AND row_version = ? AND status IN ('pending','running')`,
@@ -1825,11 +1922,20 @@ func (o *investigationStepOperation) applyPrepared(ctx context.Context, tx async
 	}
 	terminal := checkpoint.TerminalOutcome != ""
 	status := "running"
+	var outcome any
 	var completedAt any
 	var finalDiagnosis any
 	if terminal {
 		status = "completed"
 		completedAt = checkpoint.CapturedAt.UTC()
+		switch checkpoint.TerminalOutcome {
+		case "diagnosed":
+			outcome = "diagnosed"
+		case "insufficient_evidence":
+			outcome = "insufficient"
+		default:
+			return fmt.Errorf("%w: unsupported investigation terminal outcome %q", asyncjob.ErrInvalidMutation, checkpoint.TerminalOutcome)
+		}
 		if checkpoint.Diagnosis != nil {
 			final, marshalErr := json.Marshal(checkpoint.Diagnosis)
 			if marshalErr != nil || len(final) > 32*1024 {
@@ -1841,15 +1947,15 @@ func (o *investigationStepOperation) applyPrepared(ctx context.Context, tx async
 		}
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE agent_runs
-SET status = ?, started_at = COALESCE(started_at, ?), completed_at = ?,
-    final_diagnosis = ?,
+	SET status = ?, started_at = COALESCE(started_at, ?), completed_at = ?,
+	    final_diagnosis = ?, outcome = ?,
     used_steps = ?, used_tool_calls = ?, used_model_calls = ?, input_tokens = ?, output_tokens = ?,
     used_evidence_items = ?, current_checkpoint = ?, checkpoint_version = ?, checkpoint_schema_version = 1,
     checkpoint_hash = ?, row_version = row_version + 1, updated_at = ?
  WHERE id = ? AND incident_id = ? AND cycle_no = ?
 	  AND status IN ('pending','running')
 	  AND row_version = ?`,
-		status, checkpoint.CapturedAt.UTC(), completedAt, finalDiagnosis,
+		status, checkpoint.CapturedAt.UTC(), completedAt, finalDiagnosis, outcome,
 		state.Usage.Steps, state.Usage.ToolCalls, state.Usage.ModelCalls, state.Usage.InputTokens, state.Usage.OutputTokens,
 		state.Usage.Evidence, stateJSON, state.CheckpointVersion, stateHash, checkpoint.CapturedAt.UTC(),
 		snapshot.Task.SubjectID, snapshot.Task.IncidentID, snapshot.Task.CycleNo, snapshot.Task.ExpectedSubjectVersion)
@@ -2536,7 +2642,7 @@ func (o *investigationStepOperation) failRunMutation(snapshot investigationSnaps
 	at := o.cfg.Now().UTC()
 	return func(ctx context.Context, tx asyncjob.DBTX) error {
 		result, err := tx.ExecContext(ctx, `UPDATE agent_runs
-	SET status = 'failed', failure_code = ?, failure_summary = ?,
+	SET status = 'failed', outcome = 'failed', failure_code = ?, failure_summary = ?,
 	    completed_at = ?, row_version = row_version + 1, updated_at = ?
 WHERE id = ? AND incident_id = ? AND cycle_no = ?
   AND status IN ('pending','running')

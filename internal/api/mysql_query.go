@@ -289,7 +289,7 @@ var mysqlResourceQueries = map[QueryKind]resourceQuerySpec{
 	},
 	QueryInvestigations: {
 		Kind: "investigation", Table: "agent_runs", Status: "status", Version: "row_version",
-		Summary: "COALESCE(JSON_UNQUOTE(JSON_EXTRACT(final_diagnosis, '$.summary')), failure_summary, failure_code, '')",
+		Summary: "COALESCE(JSON_UNQUOTE(JSON_EXTRACT(final_diagnosis, '$.candidate.summary')), JSON_UNQUOTE(JSON_EXTRACT(final_diagnosis, '$.summary')), failure_summary, failure_code, '')",
 		Hash:    "NULL", CreatedAt: "created_at", UpdatedAt: "updated_at", SortColumn: "created_at",
 		MigratedLegacy: "migrated_legacy", MigratedLegacyContext: "migrated_legacy_context",
 	},

@@ -70,6 +70,13 @@ type InvestigationModelCallBudget interface {
 	MaxProviderCallsPerInvocation() int
 }
 
+// InvestigationActionPlanner owns a deterministic, read-only acquisition
+// sequence. A nil action means the bounded plan is exhausted; model-generated
+// diagnosis remains a separate terminal step.
+type InvestigationActionPlanner interface {
+	NextAction(InvestigationState, []EvidenceFact, string) (*ProposedAction, error)
+}
+
 type DiagnosisConfidence string
 
 const (
