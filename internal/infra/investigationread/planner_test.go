@@ -51,6 +51,15 @@ func TestGoldenAcquisitionPlannerUsesFrozenSixToolOrderAndCurrentChangeRef(t *te
 				t.Fatalf("change_ref=%q", parameters["change_ref"])
 			}
 		}
+		if action.Tool == ToolQueryLogs {
+			var parameters map[string]string
+			if err := json.Unmarshal(action.BoundedParameters, &parameters); err != nil {
+				t.Fatal(err)
+			}
+			if parameters["window"] != "30m" || parameters["severity"] != "warning" {
+				t.Fatalf("log parameters=%v", parameters)
+			}
+		}
 		state.ToolAttempts = append(state.ToolAttempts, agent.ToolAttempt{Tool: action.Tool})
 	}
 	if !reflect.DeepEqual(got, want) {
