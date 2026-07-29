@@ -30,7 +30,7 @@ func TestElasticsearchUsesFixedReadOnlyDSLAndRedactsSamples(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	observation, err := client.Search(context.Background(), ElasticQuery{Service: "demo", Namespace: "demo", Environment: "local", Workload: "demo", Lookback: 5 * time.Minute, Severity: "error", Keyword: "required_env_missing", Limit: 3})
+	observation, err := client.Search(context.Background(), ElasticQuery{Service: "demo", Namespace: "demo", Environment: "local", Workload: "demo", Lookback: 30 * time.Second, Severity: "error", Keyword: "required_env_missing", Limit: 3})
 	if err != nil || observation.Status != verification.ObservationAvailable || observation.MatchedCount != 1 || len(observation.RedactedExamples) != 1 || strings.Contains(observation.RedactedExamples[0], "secret") {
 		t.Fatalf("observation=%+v err=%v", observation, err)
 	}

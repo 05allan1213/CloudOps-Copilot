@@ -22,10 +22,11 @@ import (
 )
 
 const (
-	defaultMaxBytes   = int64(256 * 1024)
-	defaultMaxSamples = 1000
-	defaultMaxSeries  = 20
-	defaultMaxTraces  = 100
+	defaultMaxBytes            = int64(256 * 1024)
+	defaultMaxSamples          = 1000
+	defaultMaxSeries           = 20
+	defaultMaxTraces           = 100
+	minimumObservationLookback = 30 * time.Second
 )
 
 type Config struct {
@@ -255,7 +256,7 @@ func (c *client) authorize(q verification.SignalQuery) error {
 	if _, ok := c.environments[q.Environment]; !ok {
 		return verification.ErrNotAllowed
 	}
-	if q.Lookback < time.Minute || q.Lookback > c.maxLookback || q.Step < time.Second || q.MaxSeries < 1 || q.MaxSeries > c.maxSeries || q.MaxSamples < 1 || q.MaxSamples > c.maxSamples {
+	if q.Lookback < minimumObservationLookback || q.Lookback > c.maxLookback || q.Step < time.Second || q.MaxSeries < 1 || q.MaxSeries > c.maxSeries || q.MaxSamples < 1 || q.MaxSamples > c.maxSamples {
 		return verification.ErrInvalidArgument
 	}
 	return nil

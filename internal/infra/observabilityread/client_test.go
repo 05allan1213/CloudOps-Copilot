@@ -19,7 +19,7 @@ func testConfig(server *httptest.Server) Config {
 }
 
 func query(check verification.CheckType) verification.SignalQuery {
-	return verification.SignalQuery{Template: string(check), Service: "checkout\"api", Namespace: "shop", Environment: "staging", Lookback: 5 * time.Minute, Step: 10 * time.Second, MaxSeries: 2, MaxSamples: 10}
+	return verification.SignalQuery{Template: string(check), Service: "checkout\"api", Namespace: "shop", Environment: "staging", Lookback: 30 * time.Second, Step: 10 * time.Second, MaxSeries: 2, MaxSamples: 10}
 }
 
 func TestPrometheusFixedTemplateBoundsAndStatuses(t *testing.T) {
@@ -87,7 +87,7 @@ func TestV3ErrorRateTreatsMissingErrorSeriesAsVerifiedZero(t *testing.T) {
 	}
 	observation, err := client.ObserveBoundedMetric(context.Background(), MetricQuery{
 		Kind: MetricErrorRate, Service: "checkout\"api", Namespace: "shop", Environment: "staging",
-		WorkloadName: "demo", Lookback: 30 * time.Minute,
+		WorkloadName: "demo", Lookback: 30 * time.Second,
 	})
 	if err != nil || observation.Status != verification.ObservationAvailable || observation.Value != 0 || observation.Denominator != 100 || observation.SampleCount != 100 {
 		t.Fatalf("observation=%+v err=%v", observation, err)
