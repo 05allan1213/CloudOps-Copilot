@@ -419,6 +419,10 @@ func TestInvestigationStepBindsDiagnosisToCurrentFactsAndClaimPolicy(t *testing.
 	if model.synthesisCalls != 1 || model.proposeCalls != 0 {
 		t.Fatalf("model calls propose=%d synthesize=%d", model.proposeCalls, model.synthesisCalls)
 	}
+	required := model.lastDiagnosisView.RequiredEvidenceByClaim["test-claim/v1"]
+	if !slices.Equal(required, []string{fact.ID}) {
+		t.Fatalf("required diagnosis evidence=%v, want [%s]", required, fact.ID)
+	}
 }
 
 func TestInvestigationStepEnqueuesNextTaskWithNextSubjectVersionDedupe(t *testing.T) {
@@ -653,13 +657,14 @@ func TestInvestigationStepRejectsToolPayloadOutsideFrozenPolicy(t *testing.T) {
 }
 
 type stepTestModel struct {
-	delta          agent.StateDelta
-	diagnosis      agent.DiagnosisCandidate
-	usage          agent.ModelUsage
-	proposeErr     error
-	proposeCalls   int
-	synthesisCalls int
-	lastView       agent.ModelView
+	delta             agent.StateDelta
+	diagnosis         agent.DiagnosisCandidate
+	usage             agent.ModelUsage
+	proposeErr        error
+	proposeCalls      int
+	synthesisCalls    int
+	lastView          agent.ModelView
+	lastDiagnosisView agent.DiagnosisView
 }
 
 type twoCallStepModel struct{ stepTestModel }
@@ -672,8 +677,9 @@ func (m *stepTestModel) ProposeDelta(_ context.Context, view agent.ModelView) (a
 	return m.delta, m.usage, m.proposeErr
 }
 
-func (m *stepTestModel) SynthesizeDiagnosis(context.Context, agent.DiagnosisView) (agent.DiagnosisCandidate, agent.ModelUsage, error) {
+func (m *stepTestModel) SynthesizeDiagnosis(_ context.Context, view agent.DiagnosisView) (agent.DiagnosisCandidate, agent.ModelUsage, error) {
 	m.synthesisCalls++
+	m.lastDiagnosisView = view
 	return m.diagnosis, m.usage, nil
 }
 

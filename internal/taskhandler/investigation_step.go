@@ -1112,8 +1112,13 @@ func (o *investigationStepOperation) executeSynthesis(ctx context.Context, execu
 	}
 	view := agent.DiagnosisView{
 		State: snapshot.State, Facts: slices.Clone(snapshot.Facts), Sufficiency: sufficiency,
-		AllowedClaimTypes:  []string{snapshot.State.Coverage.ClaimType},
-		SufficiencyByClaim: map[string]agent.SufficiencyResult{snapshot.State.Coverage.ClaimType: sufficiency},
+		AllowedClaimTypes: []string{snapshot.State.Coverage.ClaimType},
+		SufficiencyByClaim: map[string]agent.SufficiencyResult{
+			snapshot.State.Coverage.ClaimType: sufficiency,
+		},
+		RequiredEvidenceByClaim: map[string][]string{
+			o.cfg.ClaimPolicy.ClaimType: slices.Clone(sufficiency.SupportingIDs),
+		},
 	}
 	input, _ := json.Marshal(view)
 	reservation := agent.Usage{Steps: 1, ModelCalls: reservedModelCalls(o.cfg.Model), InputTokens: estimatedTokens(input), OutputTokens: 1}
