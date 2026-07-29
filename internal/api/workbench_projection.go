@@ -99,7 +99,7 @@ func validateRemediationPlanView(item *RemediationPlanView) error {
 	if err := json.Unmarshal(item.PolicySnapshot, &policyEnvelope); err != nil || policyEnvelope.Version != item.PolicyVersion {
 		return fmt.Errorf("%w: remediation policy version mismatch", ErrInvalidArgument)
 	}
-	item.VerificationPlan, err = projectWorkbenchJSON(item.VerificationPlan, maxWorkbenchVerificationJSONBytes, true, true)
+	item.VerificationPlan, err = projectWorkbenchVerificationPlanJSON(item.VerificationPlan, maxWorkbenchVerificationJSONBytes, true, true)
 	if err != nil {
 		return err
 	}
@@ -530,6 +530,14 @@ func validateVerificationSample(sample *VerificationSampleView) error {
 }
 
 func projectWorkbenchJSON(raw json.RawMessage, maxBytes int, required, objectOnly bool) (json.RawMessage, error) {
+	return projectWorkbenchJSONWithSemanticProfileID(raw, maxBytes, required, objectOnly, false)
+}
+
+func projectWorkbenchVerificationPlanJSON(raw json.RawMessage, maxBytes int, required, objectOnly bool) (json.RawMessage, error) {
+	return projectWorkbenchJSONWithSemanticProfileID(raw, maxBytes, required, objectOnly, true)
+}
+
+func projectWorkbenchJSONWithSemanticProfileID(raw json.RawMessage, maxBytes int, required, objectOnly, allowSemanticProfileID bool) (json.RawMessage, error) {
 	if len(raw) == 0 {
 		if required {
 			return nil, fmt.Errorf("%w: required Workbench JSON is missing", ErrInvalidArgument)
@@ -552,7 +560,7 @@ func projectWorkbenchJSON(raw json.RawMessage, maxBytes int, required, objectOnl
 			return nil, fmt.Errorf("%w: Workbench JSON must be an object", ErrInvalidArgument)
 		}
 	}
-	if err := validateWorkbenchJSONValue(value, 0); err != nil {
+	if err := validateWorkbenchJSONValue(value, 0, "", allowSemanticProfileID); err != nil {
 		return nil, err
 	}
 	canonical, err := json.Marshal(value)
@@ -577,7 +585,7 @@ func validateWorkbenchNextCursor(value string) error {
 	return err
 }
 
-func validateWorkbenchJSONValue(value any, depth int) error {
+func validateWorkbenchJSONValue(value any, depth int, path string, allowSemanticProfileID bool) error {
 	if depth > maxWorkbenchJSONDepth {
 		return fmt.Errorf("%w: Workbench JSON nesting exceeds its bound", ErrInvalidArgument)
 	}
@@ -585,10 +593,19 @@ func validateWorkbenchJSONValue(value any, depth int) error {
 	case map[string]any:
 		for key, child := range typed {
 			normalized := normalizeResolutionJSONKey(key)
+			childPath := normalized
+			if path != "" {
+				childPath = path + "." + normalized
+			}
 			if forbiddenResolutionJSONKey(normalized) {
 				return fmt.Errorf("%w: forbidden Workbench JSON field %q", ErrInvalidArgument, key)
 			}
-			if workbenchPublicIDKey(normalized) {
+			if allowSemanticProfileID && childPath == "profile.id" {
+				identity, ok := child.(string)
+				if !ok || !validWorkbenchText(identity, 128, true) {
+					return fmt.Errorf("%w: invalid Workbench semantic profile identity", ErrInvalidArgument)
+				}
+			} else if workbenchPublicIDKey(normalized) {
 				identity, ok := child.(string)
 				if !ok {
 					return fmt.Errorf("%w: malformed Workbench public identity", ErrInvalidArgument)
@@ -602,14 +619,14 @@ func validateWorkbenchJSONValue(value any, depth int) error {
 					return fmt.Errorf("%w: numeric identity in Workbench JSON", ErrInvalidArgument)
 				}
 			}
-			if err := validateWorkbenchJSONValue(child, depth+1); err != nil {
+			if err := validateWorkbenchJSONValue(child, depth+1, childPath, allowSemanticProfileID); err != nil {
 				return err
 			}
 		}
 		return nil
 	case []any:
 		for _, child := range typed {
-			if err := validateWorkbenchJSONValue(child, depth+1); err != nil {
+			if err := validateWorkbenchJSONValue(child, depth+1, path, allowSemanticProfileID); err != nil {
 				return err
 			}
 		}
