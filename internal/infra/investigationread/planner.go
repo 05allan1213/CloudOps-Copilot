@@ -58,7 +58,7 @@ func (p *GoldenAcquisitionPlanner) NextAction(state agent.InvestigationState, fa
 		{ToolQueryMetrics, json.RawMessage(`{"window":"30m"}`), "confirm the bounded readiness and HTTP error symptom"},
 		{ToolQueryLogs, json.RawMessage(`{"window":"30m","severity":"warning"}`), "confirm the required environment failure in bounded logs"},
 		{ToolQueryTraces, json.RawMessage(`{"window":"30m","status":"error","limit":50}`), "confirm failed requests in bounded traces"},
-		{ToolGetDeploymentContext, json.RawMessage(`{"window":"30m"}`), "bind the runtime symptom to the exact deployed GitOps revision and image"},
+		{ToolGetDeploymentContext, json.RawMessage(`{"window":"24h"}`), "bind the runtime symptom to the exact deployed GitOps revision and image"},
 	}
 	for _, step := range steps {
 		if _, ok := used[step.tool]; ok {

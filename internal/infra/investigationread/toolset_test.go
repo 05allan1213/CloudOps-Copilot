@@ -78,8 +78,14 @@ func TestGoldenActionPoliciesFreezeEightToolsWithoutQueryLanguages(t *testing.T)
 			if !ok {
 				t.Fatalf("tool %s parameter %s has no scalar value contract", name, key)
 			}
-			if key == "window" && (spec.Type != agent.ParameterString || len(spec.Enum) != 4) {
-				t.Fatalf("tool %s window contract=%+v", name, spec)
+			if key == "window" {
+				wantValues := 4
+				if name == ToolGetDeploymentContext {
+					wantValues = 7
+				}
+				if spec.Type != agent.ParameterString || len(spec.Enum) != wantValues {
+					t.Fatalf("tool %s window contract=%+v", name, spec)
+				}
 			}
 		}
 	}
