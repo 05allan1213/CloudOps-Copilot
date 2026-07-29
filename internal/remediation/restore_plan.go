@@ -91,6 +91,18 @@ type RestoreEnvPolicy struct {
 	VerificationVersion string `json:"verification_version"`
 }
 
+// RestoreEnvPolicyHash returns the hash used by immutable remediation Plans.
+// Callers that revalidate a persisted Plan must use this helper instead of
+// hashing json.Marshal(policy) directly: the Plan snapshot is canonicalized
+// through a generic JSON representation so object keys have one stable order.
+func RestoreEnvPolicyHash(policy RestoreEnvPolicy) (string, error) {
+	payload, err := canonicalJSON(policy)
+	if err != nil {
+		return "", fmt.Errorf("%w: canonicalize restore policy", ErrInvalidArgument)
+	}
+	return hashBytes(payload), nil
+}
+
 type RestoreEnvCompileRequest struct {
 	IncidentPublicID      string
 	IncidentID            uint64
@@ -160,7 +172,10 @@ func CompileRestoreRequiredEnv(request RestoreEnvCompileRequest) (RemediationPla
 	if err != nil {
 		return RemediationPlan{}, err
 	}
-	policyHash := hashBytes(policyBytes)
+	policyHash, err := RestoreEnvPolicyHash(request.Policy)
+	if err != nil {
+		return RemediationPlan{}, err
+	}
 	verificationHash := hashBytes(verificationBytes)
 	createdAt := normalizeTime(request.CreatedAt)
 	expiresAt := normalizeTime(request.ExpiresAt)

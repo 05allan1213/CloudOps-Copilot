@@ -2,10 +2,7 @@ package bootstrap
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -335,7 +332,7 @@ func (f ProductionTaskOperationFactory) Build(ctx context.Context, db *sql.DB, t
 	}
 
 	policy := restoreEnvPolicy(target)
-	policyHash, err := restorePolicyHash(policy)
+	policyHash, err := remediation.RestoreEnvPolicyHash(policy)
 	if err != nil {
 		return taskhandler.Config{}, err
 	}
@@ -442,14 +439,6 @@ func buildGitHubWrite(c appconfig.Config, repository string) (*githubwrite.Clien
 	return client, nil
 }
 
-func restorePolicyHash(policy remediation.RestoreEnvPolicy) (string, error) {
-	payload, err := json.Marshal(policy)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(payload)
-	return hex.EncodeToString(sum[:]), nil
-}
 func oneSet(value string) map[string]struct{} { return map[string]struct{}{value: {}} }
 func changeRepository(target OperationalTargetConfig) change.RepositoryRef {
 	return change.RepositoryRef{Owner: target.RepositoryOwner, Name: target.RepositoryName}
