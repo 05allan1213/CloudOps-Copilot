@@ -164,7 +164,7 @@ func (e *Elastic) Search(ctx context.Context, query ElasticQuery) (verification.
 	query.Severity = strings.ToLower(strings.TrimSpace(query.Severity))
 	query.Keyword = strings.ToLower(strings.TrimSpace(query.Keyword))
 	query.TraceID = strings.ToLower(strings.TrimSpace(query.TraceID))
-	if query.Lookback < time.Minute || query.Lookback > e.maxLookback || query.Workload == "" || len(query.Workload) > 253 ||
+	if query.Lookback < minimumObservationLookback || query.Lookback > e.maxLookback || query.Workload == "" || len(query.Workload) > 253 ||
 		(query.Severity != "all" && query.Severity != "error" && query.Severity != "warning") ||
 		(query.Keyword != "required_env_missing" && query.Keyword != "request_failure") ||
 		(query.TraceID != "" && !traceIDPattern.MatchString(query.TraceID)) {
