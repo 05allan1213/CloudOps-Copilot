@@ -56,7 +56,7 @@ func (p *GoldenAcquisitionPlanner) NextAction(state agent.InvestigationState, fa
 	}{
 		{ToolInspectWorkload, json.RawMessage(`{}`), "confirm the exact workload and required environment state"},
 		{ToolQueryMetrics, json.RawMessage(`{"window":"30m"}`), "confirm the bounded readiness and HTTP error symptom"},
-		{ToolQueryLogs, json.RawMessage(`{"window":"30m"}`), "confirm the required environment failure in bounded logs"},
+		{ToolQueryLogs, json.RawMessage(`{"window":"30m","severity":"warning"}`), "confirm the required environment failure in bounded logs"},
 		{ToolQueryTraces, json.RawMessage(`{"window":"30m","status":"error","limit":50}`), "confirm failed requests in bounded traces"},
 		{ToolGetDeploymentContext, json.RawMessage(`{"window":"30m"}`), "bind the runtime symptom to the exact deployed GitOps revision and image"},
 	}
