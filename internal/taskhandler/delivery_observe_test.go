@@ -3,6 +3,7 @@ package taskhandler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -158,6 +159,66 @@ func TestSameGitHubRepositoryAcceptsSlugAndExactArgoURL(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDeliveryEvidenceInsertHasMatchingColumnAndValueCounts(t *testing.T) {
+	columns, err := sqlTupleExpressions(deliveryEvidenceInsertSQL, strings.Index(deliveryEvidenceInsertSQL, "("))
+	if err != nil {
+		t.Fatal(err)
+	}
+	valuesAt := strings.Index(deliveryEvidenceInsertSQL, "VALUES")
+	if valuesAt < 0 {
+		t.Fatal("delivery Evidence INSERT has no VALUES tuple")
+	}
+	valueStart := strings.Index(deliveryEvidenceInsertSQL[valuesAt:], "(")
+	if valueStart < 0 {
+		t.Fatal("delivery Evidence INSERT has no VALUES opening parenthesis")
+	}
+	values, err := sqlTupleExpressions(deliveryEvidenceInsertSQL, valuesAt+valueStart)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(columns) != 50 || len(values) != len(columns) {
+		t.Fatalf("delivery Evidence INSERT columns=%d values=%d, want 50 matching expressions", len(columns), len(values))
+	}
+}
+
+func sqlTupleExpressions(statement string, start int) ([]string, error) {
+	if start < 0 || start >= len(statement) || statement[start] != '(' {
+		return nil, fmt.Errorf("SQL tuple start is invalid")
+	}
+	depth, itemStart := 0, start+1
+	inQuote := false
+	items := make([]string, 0, 50)
+	for index := start; index < len(statement); index++ {
+		switch statement[index] {
+		case '\'':
+			if inQuote && index+1 < len(statement) && statement[index+1] == '\'' {
+				index++
+				continue
+			}
+			inQuote = !inQuote
+		case '(':
+			if !inQuote {
+				depth++
+			}
+		case ')':
+			if inQuote {
+				continue
+			}
+			depth--
+			if depth == 0 {
+				items = append(items, strings.TrimSpace(statement[itemStart:index]))
+				return items, nil
+			}
+		case ',':
+			if !inQuote && depth == 1 {
+				items = append(items, strings.TrimSpace(statement[itemStart:index]))
+				itemStart = index + 1
+			}
+		}
+	}
+	return nil, fmt.Errorf("SQL tuple is unterminated")
 }
 
 func deliveryTestSnapshot(now time.Time) DeliveryObserveSnapshot {

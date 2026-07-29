@@ -145,13 +145,15 @@ func (g *DeliveryGitHub) commitIdentity(ctx context.Context, repository change.R
 func selectRequiredCheck(checks []change.CheckRun, name string, appID int64) (change.CheckRun, bool) {
 	var result change.CheckRun
 	for _, check := range checks {
-		if check.Name != name || check.AppID != appID {
+		if check.ID <= 0 || check.Name != name || check.AppID != appID {
 			continue
 		}
-		if result.ID != 0 {
+		if check.ID == result.ID && (check.Status != result.Status || check.Conclusion != result.Conclusion) {
 			return change.CheckRun{}, false
 		}
-		result = check
+		if check.ID > result.ID {
+			result = check
+		}
 	}
 	return result, result.ID > 0
 }
@@ -159,13 +161,15 @@ func selectRequiredCheck(checks []change.CheckRun, name string, appID int64) (ch
 func selectRequiredWorkflow(workflows []change.WorkflowRun, headSHA string, workflowID int64, workflowPath string) (change.WorkflowRun, bool) {
 	var result change.WorkflowRun
 	for _, workflow := range workflows {
-		if workflow.WorkflowID != workflowID || workflow.Path != workflowPath || !strings.EqualFold(workflow.HeadSHA, headSHA) {
+		if workflow.ID <= 0 || workflow.WorkflowID != workflowID || workflow.Path != workflowPath || !strings.EqualFold(workflow.HeadSHA, headSHA) {
 			continue
 		}
-		if result.ID != 0 {
+		if workflow.ID == result.ID && (workflow.Status != result.Status || workflow.Conclusion != result.Conclusion) {
 			return change.WorkflowRun{}, false
 		}
-		result = workflow
+		if workflow.ID > result.ID {
+			result = workflow
+		}
 	}
 	return result, result.ID > 0
 }

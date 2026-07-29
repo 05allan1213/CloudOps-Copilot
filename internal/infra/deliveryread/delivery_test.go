@@ -105,6 +105,38 @@ func TestDeliveryGitHubBindsTreeContentActorAndRequiredCIIdentity(t *testing.T) 
 	}
 }
 
+func TestDeliveryGitHubSelectsLatestExactHeadRequiredRuns(t *testing.T) {
+	head := strings.Repeat("a", 40)
+	check, checkOK := selectRequiredCheck([]change.CheckRun{
+		{ID: 10, Name: "gitops-required-check", Status: "completed", Conclusion: "failure", AppID: 42},
+		{ID: 11, Name: "gitops-required-check", Status: "completed", Conclusion: "success", AppID: 42},
+	}, "gitops-required-check", 42)
+	workflow, workflowOK := selectRequiredWorkflow([]change.WorkflowRun{
+		{ID: 20, WorkflowID: 99, Path: ".github/workflows/gitops-required-check.yml", HeadSHA: head, Status: "completed", Conclusion: "failure"},
+		{ID: 21, WorkflowID: 99, Path: ".github/workflows/gitops-required-check.yml", HeadSHA: head, Status: "completed", Conclusion: "success"},
+	}, head, 99, ".github/workflows/gitops-required-check.yml")
+	status, conclusion := requiredCIResult(check, workflow, checkOK && workflowOK)
+	if !checkOK || !workflowOK || check.ID != 11 || workflow.ID != 21 || status != "completed" || conclusion != "success" {
+		t.Fatalf("latest exact-head CI selection check=%+v workflow=%+v status=%s conclusion=%s", check, workflow, status, conclusion)
+	}
+}
+
+func TestDeliveryGitHubRejectsConflictingDuplicateRunIdentity(t *testing.T) {
+	head := strings.Repeat("a", 40)
+	if _, ok := selectRequiredCheck([]change.CheckRun{
+		{ID: 11, Name: "gitops-required-check", Status: "completed", Conclusion: "success", AppID: 42},
+		{ID: 11, Name: "gitops-required-check", Status: "completed", Conclusion: "failure", AppID: 42},
+	}, "gitops-required-check", 42); ok {
+		t.Fatal("conflicting duplicate required CheckRun identity was accepted")
+	}
+	if _, ok := selectRequiredWorkflow([]change.WorkflowRun{
+		{ID: 21, WorkflowID: 99, Path: ".github/workflows/gitops-required-check.yml", HeadSHA: head, Status: "completed", Conclusion: "success"},
+		{ID: 21, WorkflowID: 99, Path: ".github/workflows/gitops-required-check.yml", HeadSHA: head, Status: "completed", Conclusion: "failure"},
+	}, head, 99, ".github/workflows/gitops-required-check.yml"); ok {
+		t.Fatal("conflicting duplicate required WorkflowRun identity was accepted")
+	}
+}
+
 func TestDeliveryGitHubRejectsAbbreviatedRevisionAndMismatchedBlobIdentity(t *testing.T) {
 	head := strings.Repeat("a", 40)
 	reader := &exactGitHubStub{
