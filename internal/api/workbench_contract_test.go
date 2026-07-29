@@ -127,6 +127,13 @@ func TestTypedWorkbenchProjectionRejectsUnsafeOrUnboundedData(t *testing.T) {
 		t.Fatal("non-canonical Evidence binding order was accepted")
 	}
 
+	plan = validRemediationPlanFixture()
+	plan.VerificationPlan = json.RawMessage(`{"profile":{"id":42},"schema_version":3}`)
+	plan.VerificationPlanHash = sha256Hex(plan.VerificationPlan)
+	if err := validateRemediationPlanView(&plan); err == nil {
+		t.Fatal("numeric verification profile identity was accepted")
+	}
+
 	delivery := validDeliveryFixture()
 	delivery.ResourceHealth = json.RawMessage(`{"secret":"do not expose"}`)
 	if err := validateDeliveryView(&delivery); err == nil {
@@ -173,7 +180,7 @@ func validRemediationPlanFixture() RemediationPlanView {
 	created := time.Date(2026, 7, 21, 2, 0, 0, 0, time.UTC)
 	manifest := json.RawMessage(`{"base_blob_sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","file_mode":"100644","path":"apps/api.yaml","post_image_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}`)
 	policy := json.RawMessage(`{"version":"restore-required-env/v1"}`)
-	verificationPlan := json.RawMessage(`{"profile_id":"golden-required-env/v1","schema_version":3}`)
+	verificationPlan := json.RawMessage(`{"profile":{"id":"golden-required-env/v1"},"schema_version":3}`)
 	evidence := []EvidenceBindingView{{ID: workbenchEvidenceID, ContentHash: strings.Repeat("d", 64)}}
 	item := RemediationPlanView{
 		ID: workbenchPlanID, Kind: "remediation_plan", Cycle: 1, Status: "approved", Version: 2,
