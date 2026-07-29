@@ -133,6 +133,33 @@ func TestDeliveryObserveRejectsSupersededApprovalBeforeProviderRead(t *testing.T
 	}
 }
 
+func TestSameGitHubRepositoryAcceptsSlugAndExactArgoURL(t *testing.T) {
+	tests := []struct {
+		name       string
+		repository string
+		argoURL    string
+		want       bool
+	}{
+		{name: "canonical", repository: "05allan1213/cloudops-gitops-demo", argoURL: "https://github.com/05allan1213/cloudops-gitops-demo.git", want: true},
+		{name: "without suffix", repository: "05allan1213/cloudops-gitops-demo", argoURL: "https://github.com/05allan1213/cloudops-gitops-demo", want: true},
+		{name: "case insensitive identity", repository: "05Allan1213/CloudOps-GitOps-Demo", argoURL: "https://github.com/05allan1213/cloudops-gitops-demo.git", want: true},
+		{name: "different repository", repository: "05allan1213/cloudops-gitops-demo", argoURL: "https://github.com/05allan1213/other.git"},
+		{name: "lookalike host", repository: "05allan1213/cloudops-gitops-demo", argoURL: "https://github.com.example/05allan1213/cloudops-gitops-demo.git"},
+		{name: "userinfo", repository: "05allan1213/cloudops-gitops-demo", argoURL: "https://owner@github.com/05allan1213/cloudops-gitops-demo.git"},
+		{name: "query", repository: "05allan1213/cloudops-gitops-demo", argoURL: "https://github.com/05allan1213/cloudops-gitops-demo.git?ref=main"},
+		{name: "fragment", repository: "05allan1213/cloudops-gitops-demo", argoURL: "https://github.com/05allan1213/cloudops-gitops-demo.git#main"},
+		{name: "extra path", repository: "05allan1213/cloudops-gitops-demo", argoURL: "https://github.com/05allan1213/cloudops-gitops-demo/tree/main"},
+		{name: "malformed slug", repository: "05allan1213/cloudops/gitops-demo", argoURL: "https://github.com/05allan1213/cloudops-gitops-demo.git"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := sameGitHubRepository(test.repository, test.argoURL); got != test.want {
+				t.Fatalf("sameGitHubRepository(%q, %q)=%t, want %t", test.repository, test.argoURL, got, test.want)
+			}
+		})
+	}
+}
+
 func deliveryTestSnapshot(now time.Time) DeliveryObserveSnapshot {
 	deadline := now.Add(20 * time.Minute)
 	return DeliveryObserveSnapshot{

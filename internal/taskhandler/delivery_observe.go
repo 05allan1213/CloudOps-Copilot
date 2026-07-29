@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -872,7 +873,7 @@ func (s *mysqlDeliveryObserveStore) Load(ctx context.Context, task asyncjob.Task
 	if snapshot.ExpectedReplicas <= 0 {
 		return DeliveryObserveSnapshot{}, fmt.Errorf("%w: desired replica contract is invalid", verification.ErrInvalidArgument)
 	}
-	if snapshot.Repository != s.cfg.Target.ArgoRepository {
+	if !sameGitHubRepository(snapshot.Repository, s.cfg.Target.ArgoRepository) {
 		return DeliveryObserveSnapshot{}, fmt.Errorf("%w: change repository is outside fixed Argo repository", asyncjob.ErrPolicyViolation)
 	}
 	var baselineCount int
@@ -929,6 +930,22 @@ LIMIT 2`, snapshot.Cluster, snapshot.Environment, snapshot.Namespace, snapshot.W
 	// no provider query language is accepted here.
 	snapshot.AlertNames = []string{snapshot.IncidentFingerprint}
 	return snapshot, nil
+}
+
+func sameGitHubRepository(repository, repositoryURL string) bool {
+	repository = strings.Trim(strings.TrimSpace(repository), "/")
+	parts := strings.Split(repository, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" || strings.ContainsAny(repository, "?#@") {
+		return false
+	}
+	parsed, err := url.Parse(strings.TrimSpace(repositoryURL))
+	if err != nil || parsed == nil || !strings.EqualFold(parsed.Scheme, "https") ||
+		!strings.EqualFold(parsed.Host, "github.com") || parsed.User != nil || parsed.RawPath != "" ||
+		parsed.RawQuery != "" || parsed.Fragment != "" {
+		return false
+	}
+	path := strings.Trim(strings.TrimSuffix(parsed.Path, ".git"), "/")
+	return strings.Count(path, "/") == 1 && strings.EqualFold(path, repository)
 }
 
 func (s *mysqlDeliveryObserveStore) PersistIn(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, snapshot DeliveryObserveSnapshot, outcome DeliveryObserveOutcome) error {
