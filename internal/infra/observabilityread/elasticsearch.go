@@ -191,6 +191,7 @@ func (e *Elastic) Search(ctx context.Context, query ElasticQuery) (verification.
 	case "warning":
 		filters = append(filters, map[string]any{"bool": map[string]any{"should": []any{
 			map[string]any{"term": map[string]any{"log.level": "warn"}}, map[string]any{"term": map[string]any{"log.level": "warning"}},
+			map[string]any{"match_phrase": map[string]any{"message": "\"level\":\"warn\""}}, map[string]any{"match_phrase": map[string]any{"message": "\"level\":\"warning\""}},
 		}, "minimum_should_match": 1}})
 	}
 	if query.TraceID != "" {

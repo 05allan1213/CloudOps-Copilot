@@ -188,7 +188,7 @@ func GoldenActionPolicies() map[string]agent.ToolActionPolicy {
 		},
 		ToolGetDeploymentContext: {
 			TemplateIDs: []string{TemplateDeploymentContextV1}, ParameterKeys: []string{"window"},
-			ParameterSpecs:           map[string]agent.ParameterSpec{"window": windowParameterSpec()},
+			ParameterSpecs:           map[string]agent.ParameterSpec{"window": deploymentWindowParameterSpec()},
 			ExpectedFactTypes:        []string{"argocd.bad_revision_deployed", "argocd.bad_revision_not_deployed", "source_revision.unchanged", "image_digest.unchanged", "deployment.source_and_image_changed", "deployment.change_ref"},
 			AllowCompositeProvenance: true,
 		},
@@ -209,6 +209,10 @@ func GoldenActionPolicies() map[string]agent.ToolActionPolicy {
 
 func windowParameterSpec() agent.ParameterSpec {
 	return agent.ParameterSpec{Type: agent.ParameterString, Enum: []string{"1m", "5m", "15m", "30m"}}
+}
+
+func deploymentWindowParameterSpec() agent.ParameterSpec {
+	return agent.ParameterSpec{Type: agent.ParameterString, Enum: []string{"1m", "5m", "15m", "30m", "1h", "6h", "24h"}}
 }
 
 func RequiredSources() []string {
@@ -448,6 +452,12 @@ func boundedWindow(raw string, fallback time.Duration) (time.Duration, error) {
 		return 15 * time.Minute, nil
 	case "30m":
 		return 30 * time.Minute, nil
+	case "1h":
+		return time.Hour, nil
+	case "6h":
+		return 6 * time.Hour, nil
+	case "24h":
+		return 24 * time.Hour, nil
 	default:
 		return 0, agent.ErrInvalidArgument
 	}

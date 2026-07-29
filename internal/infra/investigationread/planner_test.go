@@ -60,6 +60,15 @@ func TestGoldenAcquisitionPlannerUsesFrozenSixToolOrderAndCurrentChangeRef(t *te
 				t.Fatalf("log parameters=%v", parameters)
 			}
 		}
+		if action.Tool == ToolGetDeploymentContext {
+			var parameters map[string]string
+			if err := json.Unmarshal(action.BoundedParameters, &parameters); err != nil {
+				t.Fatal(err)
+			}
+			if parameters["window"] != "24h" {
+				t.Fatalf("deployment-context parameters=%v", parameters)
+			}
+		}
 		state.ToolAttempts = append(state.ToolAttempts, agent.ToolAttempt{Tool: action.Tool})
 	}
 	if !reflect.DeepEqual(got, want) {
