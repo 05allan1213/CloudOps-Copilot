@@ -4,7 +4,7 @@
 >
 > 产品契约：V1
 >
-> 文档日期：2026-07-26（Asia/Shanghai）
+> 文档日期：2026-07-26（Asia/Shanghai）；前端权威对齐：2026-07-30
 >
 > 产品实现状态：`NOT RUN`
 >
@@ -15,6 +15,8 @@
 本文是 CloudOps 统一平台的实施规范，取代旧的两页 Incident 前端计划，并取代以多个产品代际描述目标架构的旧重构设计。`CONTEXT.md` 定义领域语言，`docs/adr/0018` 至 `docs/adr/0045` 定义已接受决策；发生冲突时，编号更高且明确 supersede/refine 的 ADR 优先。
 
 配套执行入口是 [`CloudOps-Implementation-Taskbook.md`](CloudOps-Implementation-Taskbook.md)。任务书只负责任务依赖、状态和 Codex 提示词，不改变本文的规范权威。
+
+前端重构由 `/home/monody/k8s/vue.md` 和 [`CloudOps-Frontend-Refactor-Plan.md`](CloudOps-Frontend-Refactor-Plan.md) refinement：前者定义前端方向与硬约束，后者定义 Gate、迁移顺序、浏览器矩阵和证据要求。该 refinement 只覆盖前端组件体系、桌面产品形态、页面编排和前端验收，不改变本文的 API、Provider、Owner、安全、滚动和领域语义。
 
 本文允许用 `Phase` 表达实施依赖和验收边界。Phase 只是文档组织方式，不得进入 CloudOps 自有源码、测试、文件名、配置键、Chart profile、资源名、数据库结构或持久数据。
 
@@ -34,7 +36,7 @@
 4. Owner 可在 Settings 中修改 LLM、集群、Provider、查询授权和保留策略，而不是反复编辑环境变量。
 5. 高影响操作必须先形成不可变 Operation Plan，再由 Owner 对精确内容授权。
 6. GitHub、Grafana、Kibana、Tempo、Argo CD 等只作为精确 Context Link 或可选执行分支；核心流程不依赖手动打开 Provider 首页。
-7. 桌面、平板和手机保留完整能力，所有普通路由只有一个主纵向滚动容器。
+7. 十个 Workspace 面向桌面浏览器保留完整能力；以 1920x1080、1440x900 为主体验，并在 1280x800、1024x768 与 125%/150% zoom 下渐进收起辅助区域。所有普通路由只有一个主纵向滚动容器。
 8. 最终第一方实现只有 V1 契约，不存在平行产品代际、阶段化运行时或兼容 UI。
 
 ## 2. 不可妥协的边界
@@ -313,18 +315,22 @@ Endpoint 实现时必须同步生成 OpenAPI、Go contract tests 与前端 typed
 
 ### 8.1 Overview `/overview`
 
-**主要任务**：用一个活动集群的真实 Operations Atlas 展示当前系统状态，并让 Owner 进入 Operational Loop 的下一步。
+**主要任务**：作为 Operations Agent Command Center，用一个活动 Scope 的真实运维事实回答“发生了什么、Agent 调查到了什么、建议或执行什么、是否恢复并得到验证”，并让 Owner 进入 Operational Loop 的下一步。
 
 **界面**：
 
-- 首屏是全宽 2.5D Atlas，不放在装饰 Card 中。
-- 顶部保留 cluster/environment/Namespace/time selector、Provider health、Scenario 标记和 Notification Inbox。
-- Atlas 使用 Namespace、Service、Workload 作为默认层，选择或缩放后展开 Pod、Node、Ingress/Gateway。
-- Metrics、Alerts、Logs/Traces availability 和 Agent activity 使用可辨识 overlay，不伪造结构 edge。
-- 提供与 Canvas 同数据的结构化资源视图，支持键盘、搜索和无 WebGL fallback。
-- Loop rail 仅呈现有真实事件的 Observe/Detect/Investigate/Decide/Act/Verify 状态，不做静态营销流程图。
+- 首屏使用紧凑状态总览、活跃 Incidents 与未关联 Alerts、Agent 最新调查摘要与 Evidence/置信边界，以及最近 Delivery/Verification 摘要；全部来自现有 typed API、Provider 和领域投影。
+- Atlas 在 Overview 中是同源真实预览和专业视图入口，不是首页主体，也不放入装饰 Card 墙。
+- 无活跃 Incident 时展示健康、近期已解决和上次调查摘要，并扩展 Atlas 与 Delivery/Verification 摘要，不退化为空卡片墙。
+- Provider health、Scenario、Notification、Scope 和时间上下文遵循 App Shell 的单一职责，不在 Header 与页面重复同一选择器。
+- Overview 只允许 Scope-bound 只读调查入口；Approval、Delivery、Verification、配置、执行和 rollback 必须进入其专属工作面。
+- Loop 状态只呈现真实事件和领域事实，不做静态营销流程图。
 
-**操作与链接**：选择资源可进入 Infrastructure；选择 Alert 进入 Alerts；选择 Agent activity 进入具体 Investigation；选择 telemetry overlay 带相同时间范围进入 Monitoring、Logs 或 Traces。
+**操作与链接**：选择 Incident 进入 Incident Inspector 或详情；选择资源进入 Infrastructure 或 `/atlas`；选择 Alert 进入 Alerts；选择 Agent activity 进入具体 Investigation；选择 telemetry 上下文带相同 Scope/资源/时间范围进入 Monitoring、Logs 或 Traces。Overview 不拥有事故写操作。
+
+### 8.1.1 Operations Atlas `/atlas`
+
+`/atlas` 是 additive、route-lazy 的专业视图，不作为第十一个主 Workspace 导航组。它使用真实 topology 与全部可用工作区，保留 Canvas/structured switch、资源 Inspector、深链接、WebGL failure/context loss、hidden-page pause 和资源 dispose。现有 `/overview?view=atlas|canvas|structured&resource=...` 链接必须兼容解析，并以 history replace 归一化到 `/atlas`，不破坏 Back/Forward 上下文。本轮不提供内置图片导出，也不为截图开启 `preserveDrawingBuffer`。
 
 ### 8.2 Infrastructure `/infrastructure`
 
@@ -376,7 +382,7 @@ Endpoint 实现时必须同步生成 OpenAPI、Go contract tests 与前端 typed
 
 **界面**：
 
-- 左侧为 Consultation/Investigation history，中间为当前工作区，右侧为 Context Snapshot/Evidence/authorization inspector；移动端按 tabs 分层。
+- 左侧为 Consultation/Investigation history，中间为当前工作区，右侧为 Context Snapshot/Evidence/authorization inspector；1280、1024 和浏览器缩放下按主任务优先渐进收起辅助栏。
 - tool progress 展示 tool、target、scope、status、duration 和 Evidence output，不展示 chain-of-thought。
 - 每个 answer 引用 Evidence ID、source time、query revision、Knowledge Item/Runbook revision 和 uncertainty。
 - 全局 Agent 面板可在其他 Workspace 打开，但初次绑定的 Context Snapshot 不随导航静默变化；Owner 必须显式“附加当前上下文”。
@@ -421,7 +427,7 @@ Endpoint 实现时必须同步生成 OpenAPI、Go contract tests 与前端 typed
 
 ### 9.2 全局 Agent 面板
 
-- Desktop 是可固定的侧面工作区，mobile 是全屏 sheet；两者与 `/agent` 使用同一 Consultation state。
+- Desktop 使用可固定的侧面工作区，并与 `/agent` 使用同一 Consultation state；1024 和浏览器缩放下使用同一桌面 overlay/rail 合同，不建立手机专用工作流。
 - 从任意资源发起时，先展示将被冻结的 scope、resource、time range、queries 与 Evidence。
 - 导航后显示“当前页面上下文与会话快照不同”，但不自动替换。
 - Action proposal 只生成 Action Card 或 Operation Plan，不在聊天输入框直接执行。
@@ -563,10 +569,12 @@ scripts/
 
 ### 14.1 技术栈
 
-- 保留 Vue 3、Vite、Vue Router、Pinia、TypeScript、Element Plus controls 与 Sass/CSS tokens。
-- 删除 `@element-plus/icons-vue`，使用 `lucide-vue-next`。
-- 增加 Three.js，只在 Overview/Atlas route lazy-load。
-- 图表优先使用成熟、可访问且支持大数据的现有库；选型在 Monitoring Phase 开始时通过 bundle、交互和维护性核对，不手写 time-series engine。
+- 保留 Vue 3、Vite、Vue Router、Pinia 与 TypeScript；通用 UI 锁定为 Nuxt UI 4.10.0，CSS 系统锁定为 Tailwind CSS 4.3.3。
+- Element Plus 只允许在有界迁移期服务尚未迁移的 route；最终删除依赖、全局注册、样式 import、组件 import、theme mapping 和 legacy overrides，不形成长期双库。
+- 所有可见图标统一使用 Lucide；Nuxt UI/Iconify 只允许 `i-lucide-*`，删除 `@element-plus/icons-vue`、emoji、手绘 SVG 和混合图标体系。
+- Three.js 0.185.1 只负责 lazy `/atlas`；uPlot 1.6.32 只负责 Monitoring；TanStack Vue Virtual 3.13.35 只负责大数据虚拟化。Trace 保留现有语义 renderer 并增加虚拟化。
+- `frontend/src/styles/tokens.css` 是 Primitive -> Semantic -> Component raw value 的唯一规范来源，并单向映射 Tailwind `@theme`、Nuxt UI 与专业 renderer；最终删除平行 Sass/raw theme source。
+- 不手写 time-series engine，不引入第二套通用 UI，不复制 Nuxt UI 源码或用脆弱页面 CSS 重建基础控件。
 - Provider/query parsing 使用正式 parser 或 Provider API，不在组件内以字符串拼接实现。
 
 ### 14.2 路由与状态
@@ -588,13 +596,13 @@ scripts/
 
 ### 14.4 Responsive navigation
 
-| Viewport | Navigation |
+| 桌面条件 | Navigation |
 |---|---|
-| Desktop | 分组 sidebar，可显式 collapse |
-| Tablet | Lucide icon rail，hover/focus Tooltip 与 accessible name |
-| Mobile | bottom nav：Overview、Alerts、Agent、Incidents、More |
+| 1920x1080、1440x900 | 分组 sidebar，默认展开并可显式 collapse |
+| 1280x800、1024x768 | Lucide icon rail 或渐进 collapse，hover/focus Tooltip 与 accessible name |
+| 125%/150% zoom、200% text | 保持桌面导航和全部路由可达，优先收起辅助区域，不产生主任务页面级横向滚动 |
 
-More sheet 直接列出 Infrastructure、Monitoring、Logs、Traces、DevOps、Settings。手机保留查询、配置、Agent 与 confirmed mutation，不退化为只读版。
+不建设手机 Bottom Navigation、手机 Drawer 导航、手机手势或手机专用工作流。删除 `MobileBottomNav`、`mobilePrimaryNavigation` 和 `mobileMoreNavigation` 后，十个 Workspace、详情、404 与 additive `/atlas` 仍通过桌面 Sidebar/rail、直接链接和浏览器历史完整可达。
 
 ### 14.5 Visual language
 
@@ -612,16 +620,16 @@ More sheet 直接列出 Infrastructure、Monitoring、Logs、Traces、DevOps、S
 - action 使用 button，navigation 使用 RouterLink/a；不得用 clickable div/span。
 - form 有可见 label、name、适当 input type/inputmode/autocomplete，错误贴近字段并 focus first error。
 - async status 使用 `aria-live=polite`，dialog/drawer 关闭后恢复 trigger focus。
-- touch target 至少 44 x 44 px；200% zoom 与 320 px viewport 不遮挡操作。
+- 交互目标保持至少 44 x 44 px；200% text、125%/150% zoom 与 1024x768 桌面降级不遮挡操作。
 - 长中文、Namespace、resource name、URL、SHA、query 与 log line 有 wrap/truncate/expand 策略。
 - 超过 50 行的 Logs、resource、Alert 和 Timeline 使用 virtualization 或 `content-visibility`。
 
 ### 14.7 Performance targets
 
-- Lighthouse Performance：desktop >= 90，mobile >= 85；Accessibility >= 95。
+- Lighthouse Performance：desktop >= 90；Accessibility >= 95。
 - LCP <= 2.5 s、INP <= 200 ms、CLS <= 0.1。
 - 初始 shell JavaScript <= 300 KiB gzip；Three.js/Atlas 不阻塞其他 route 首屏。
-- Atlas 标准 200 visible nodes：desktop 目标 60 fps，mobile 不低于 30 fps。
+- Atlas 标准 200 visible nodes：在受支持桌面基线上目标 60 fps；同时验证 resize、Inspector、context loss、hidden pause、dispose 和 structured fallback。
 - Atlas 按能力降低 DPR、label density、shadow/postprocessing；不隐藏 Alert 或篡改 topology。
 - 页面 hidden 时暂停高频刷新与 rendering；WebGL failure 显示同投影结构化 fallback，不能出现 blank canvas。
 
@@ -683,7 +691,7 @@ More sheet 直接列出 Infrastructure、Monitoring、Logs、Traces、DevOps、S
 
 **MCP 验收**：Settings 修改一个非 secret LLM/provider value -> validate -> apply -> 页面显示新 revision -> Worker boundary 使用新 revision；写入 secret 后 response 不回显；Back/Forward 与长 Settings 页面滚动正常。
 
-**退出条件**：Bootstrap/Operational Configuration 分层正常，失败 apply 不影响 active revision，mobile 可访问全部 Workspace，scroll bug 消失。
+**退出条件**：Bootstrap/Operational Configuration 分层正常，失败 apply 不影响 active revision，十个 Workspace 在支持的桌面矩阵与直接链接中可达，scroll bug 消失。
 
 ### Phase 2：Infrastructure 与 Operations Atlas
 
@@ -692,13 +700,13 @@ More sheet 直接列出 Infrastructure、Monitoring、Logs、Traces、DevOps、S
 **实施范围**：
 
 - Kubernetes typed reader、topology projection、resource/events API、provider health。
-- Overview Three.js Atlas、structured fallback、Infrastructure resource explorer。
+- Overview Command Center 的真实 Atlas 预览、additive lazy `/atlas` Three.js 专业视图、structured fallback、Infrastructure resource explorer。
 - 多 cluster configuration 与单 active cluster selector。
 - 真实 structure edges、stable layout、progressive detail、Context Links。
 
 **MCP 验收**：从 Atlas 选择真实 Workload -> Infrastructure detail -> 查看 Pod/Event -> 切换 Namespace -> Back 返回原 selection；停止 Kubernetes Provider 后显示 partial/unavailable 而非 fake topology。通过 screenshot 与 canvas pixel check 验证非空 scene。
 
-**退出条件**：真实 topology 与结构化视图一致；WebGL fallback 可用；desktop/mobile 无遮挡或 blank canvas。
+**退出条件**：真实 topology 与结构化视图一致；WebGL fallback 可用；1920/1440 主体验及 1280/1024/zoom 降级无关键遮挡、页面级横向滚动或 blank canvas。
 
 ### Phase 3：Monitoring
 
@@ -801,13 +809,13 @@ More sheet 直接列出 Infrastructure、Monitoring、Logs、Traces、DevOps、S
 
 - `scenario-up/status/down`、真实 workload/traffic/fault、Scenario identity。
 - 完整 Observe-to-Verify browser flow；DevOps branch 可选。
-- Atlas/route responsive、Canvas、performance、accessibility、long content 与 failure-state diagnostics。
+- Atlas/route 桌面降级、Canvas、performance、accessibility、long content 与 failure-state diagnostics。
 - 删除 temporary adapters、fixture claims、dead docs/links、parallel deployment path 和 inactive UI。
 - 更新 README、architecture、API、operations、security、reliability 与 evidence report。
 
 **MCP 验收**：启动 Scenario -> Atlas degradation -> Alert -> related Logs/Trace -> Agent Evidence -> Owner-authorized recovery -> Metrics/Alert/Kubernetes/Trace Verify -> retained history -> scenario-down 后 Live Mode 无假数据。
 
-**退出条件**：核心真实联调 PASS；所有未运行外部项显式 `NOT RUN`；命名、data retention、scroll、mobile、Context Link 和 notification final checks 完成。
+**退出条件**：核心真实联调 PASS；所有未运行外部项显式 `NOT RUN`；命名、data retention、scroll、桌面降级、Context Link 和 notification final checks 完成。
 
 ## 17. 验证策略
 
@@ -836,11 +844,11 @@ Fixture Playwright 可验证 presentation，但不能证明 Provider integration
 
 ### 17.3 浏览器矩阵
 
-- Desktop：1440 x 900
-- Tablet：1024 x 768 与 768 x 1024
-- Mobile：390 x 844、320 x 568、landscape
-- light、dark、reduced-motion、200% zoom、长中文/英文/resource/SHA/log/query
-- Back/Forward、deep link、drawer/sheet、notification、Agent panel、table/log/diff bounded scroll
+- 主体验：1920x1080、1440x900。
+- 桌面降级：1280x800、1024x768、125%/150% browser zoom、200% text。
+- Chromium 覆盖 Light/Dark、reduced-motion、长中文/英文/resource/SHA/log/query；Firefox 和 WebKit 分别记录关键只读流程，不从一个浏览器推断另一个浏览器结果。
+- 覆盖 Back/Forward、deep link、Inspector/Modal/Slideover、notification、Agent panel、table/log/diff bounded scroll、Focus entry/restore 和 topmost Escape。
+- 手机 viewport、Bottom Navigation 和手机专用工作流不属于本规范的前端验收范围。
 
 每个普通 route 断言 document 无横向 overflow，且不存在第二个主纵向 scroller。Atlas 另做 nonblank pixel、camera framing、structured fallback 与 interaction check。
 
@@ -856,7 +864,7 @@ Fixture Playwright 可验证 presentation，但不能证明 Provider integration
 
 ### Product
 
-- [ ] 十个 Workspace 可直接导航、deep link、Back/Forward，mobile 无手动 URL 才能访问的页面。
+- [ ] 十个 Workspace、详情、404 与 additive `/atlas` 可通过桌面 Sidebar/rail、直接链接、refresh 和 Back/Forward 完整访问。
 - [ ] 中文优先、Lucide-only、无 emoji、无 Incident-only 品牌。
 - [ ] Operational Context 和 Context Links 贯穿同一资源与时间窗口。
 - [ ] Notification Inbox 与全局 Agent panel 可用。
@@ -893,8 +901,10 @@ Fixture Playwright 可验证 presentation，但不能证明 Provider integration
 ### Frontend Quality
 
 - [ ] 普通 route 只有 document 主滚动；原严重 scroll bug 不再出现。
-- [ ] 320 px 到 1440 px 无关键内容遮挡或页面级横向 overflow。
-- [ ] keyboard、focus、form、aria-live、dialog restore、44 px touch target 正常。
+- [ ] 1920x1080、1440x900 主体验和 1280x800、1024x768、125%/150% zoom、200% text 无关键内容遮挡、重叠或主任务页面级横向 overflow。
+- [ ] keyboard、focus、form、aria-live、dialog/Inspector restore、44 px interaction target 正常。
+- [ ] Nuxt UI 4.10.0 是唯一通用 UI；Element Plus、mobile navigation、legacy token/override、非 Lucide icon 和孤立 prototype import 为零。
+- [ ] Overview 是 Operations Agent Command Center；`/atlas` 保留真实 Canvas、structured equivalent、legacy Atlas Query 兼容和完整生命周期。
 - [ ] Atlas、bundle、Core Web Vitals 与 accessibility diagnostics 如实记录。
 
 ### Validation
