@@ -39,6 +39,7 @@ import {
   type TraceSummary,
 } from "../../api/telemetry";
 import { waterfallPosition } from "../../models/telemetry";
+import { safeExternalURL } from "../../models/workbench";
 import { openAgentPanel, publishAgentContext, type AgentPageContext } from "../../utils/agentContext";
 import { OPERATIONAL_SCOPE_CHANGED_EVENT } from "../../utils/operationalScope";
 
@@ -98,7 +99,7 @@ const validTimeRange = computed(() => {
 const canSearch = computed(() => Boolean(selectedResource.value && providerReady.value && validTimeRange.value && !searching.value));
 const canFreeze = computed(() => Boolean(detail.value?.query_id || currentSearch.value?.status === "succeeded"));
 const workloadLocation = computed(() => ({ path: "/infrastructure", query: contextRouteQuery() }));
-const tempoLink = computed(() => detail.value?.links.find((link) => link.provider === "tempo" && link.target === "external"));
+const tempoURL = computed(() => safeExternalURL(detail.value?.links.find((link) => link.provider === "tempo" && link.target === "external")?.href));
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "medium" });
 
 function queryValue(value: unknown): string {
@@ -527,7 +528,7 @@ onBeforeUnmount(() => {
 
           <div v-if="detailLoading" class="telemetry-loading" role="status"><LoaderCircle :size="22" class="spinning" aria-hidden="true" />正在读取 Tempo Trace detail…</div>
           <template v-else-if="detail">
-            <section class="trace-detail-heading"><div><span class="section-kicker">Trace detail</span><h2>{{ detail.root_service }} · {{ detail.root_operation }}</h2><p>{{ detail.trace_id }}</p></div><div class="result-actions"><button class="command-button" type="button" :disabled="selectedSpanIDs.size === 0 || savingEvidence" @click="retainSelectedEvidence"><Save :size="16" aria-hidden="true" />保存 Evidence</button><a v-if="tempoLink" class="command-button" :href="tempoLink.href" target="_blank" rel="noopener noreferrer"><ExternalLink :size="16" aria-hidden="true" />Tempo</a></div></section>
+            <section class="trace-detail-heading"><div><span class="section-kicker">Trace detail</span><h2>{{ detail.root_service }} · {{ detail.root_operation }}</h2><p>{{ detail.trace_id }}</p></div><div class="result-actions"><button class="command-button" type="button" :disabled="selectedSpanIDs.size === 0 || savingEvidence" @click="retainSelectedEvidence"><Save :size="16" aria-hidden="true" />保存 Evidence</button><a v-if="tempoURL" class="command-button" :href="tempoURL" target="_blank" rel="noopener noreferrer"><ExternalLink :size="16" aria-hidden="true" />Tempo</a></div></section>
             <div class="execution-meta"><span><b>{{ detail.spans.length }}</b> spans</span><span><b>{{ formatDuration(detail.duration_ms) }}</b></span><span><b>{{ formatBytes(detail.response_bytes) }}</b></span><span v-if="detail.partial" class="is-warning">部分结果</span><span v-if="detail.truncated" class="is-warning">已截断</span></div>
             <div class="waterfall-scroll" data-testid="trace-waterfall">
               <div class="waterfall" role="list" aria-label="Trace waterfall">

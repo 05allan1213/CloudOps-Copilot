@@ -1,6 +1,7 @@
 import { defineConfig } from "@playwright/test";
 
 const browserExecutable = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
+const networkIsolated = process.env.PLAYWRIGHT_NETWORK_ISOLATED === "1";
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -24,7 +25,10 @@ export default defineConfig({
     timezoneId: "UTC",
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
-    launchOptions: browserExecutable ? { executablePath: browserExecutable } : {},
+    launchOptions: {
+      ...(browserExecutable ? { executablePath: browserExecutable } : {}),
+      ...(networkIsolated ? { args: ["--no-sandbox"] } : {}),
+    },
   },
   webServer: [
     {

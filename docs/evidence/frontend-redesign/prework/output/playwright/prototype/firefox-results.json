@@ -1,0 +1,170 @@
+{
+  "config": {
+    "argv": [
+      "/home/monody/.nvm/versions/node/v24.13.0/bin/node",
+      "/home/monody/k8s/CloudOps-Copilot/docs/evidence/frontend-redesign/prework/prototypes/cloudops-prework/node_modules/.bin/playwright",
+      "test",
+      "--project=firefox"
+    ],
+    "configFile": "/home/monody/k8s/CloudOps-Copilot/docs/evidence/frontend-redesign/prework/prototypes/cloudops-prework/playwright.config.ts",
+    "rootDir": "/home/monody/k8s/CloudOps-Copilot/docs/evidence/frontend-redesign/prework/prototypes/cloudops-prework/tests",
+    "failOnFlakyTests": false,
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/home/monody/k8s/CloudOps-Copilot/docs/evidence/frontend-redesign/prework/output/playwright/prototype/firefox-artifacts",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium",
+        "name": "chromium",
+        "testDir": "/home/monody/k8s/CloudOps-Copilot/docs/evidence/frontend-redesign/prework/prototypes/cloudops-prework/tests",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.spec.ts"
+        ],
+        "timeout": 45000
+      },
+      {
+        "outputDir": "/home/monody/k8s/CloudOps-Copilot/docs/evidence/frontend-redesign/prework/output/playwright/prototype/firefox-artifacts",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "firefox",
+        "name": "firefox",
+        "testDir": "/home/monody/k8s/CloudOps-Copilot/docs/evidence/frontend-redesign/prework/prototypes/cloudops-prework/tests",
+        "testIgnore": [],
+        "testMatch": [
+          "**/cross-browser.spec.ts"
+        ],
+        "timeout": 45000
+      },
+      {
+        "outputDir": "/home/monody/k8s/CloudOps-Copilot/docs/evidence/frontend-redesign/prework/output/playwright/prototype/firefox-artifacts",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "webkit",
+        "name": "webkit",
+        "testDir": "/home/monody/k8s/CloudOps-Copilot/docs/evidence/frontend-redesign/prework/prototypes/cloudops-prework/tests",
+        "testIgnore": [],
+        "testMatch": [
+          "**/cross-browser.spec.ts"
+        ],
+        "timeout": 45000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "list",
+        null
+      ],
+      [
+        "json",
+        {
+          "outputFile": "/home/monody/k8s/CloudOps-Copilot/docs/evidence/frontend-redesign/prework/output/playwright/prototype//results.json"
+        }
+      ],
+      [
+        "html",
+        {
+          "outputFolder": "/home/monody/k8s/CloudOps-Copilot/docs/evidence/frontend-redesign/prework/output/playwright/prototype//html-report",
+          "open": "never"
+        }
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.61.1",
+    "workers": 1,
+    "webServer": {
+      "command": "npm run dev -- --port 4187 --strictPort",
+      "url": "http://127.0.0.1:4187",
+      "reuseExistingServer": true,
+      "timeout": 30000
+    }
+  },
+  "suites": [
+    {
+      "title": "cross-browser.spec.ts",
+      "file": "cross-browser.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "critical read-only shell, theme and Inspector flow works",
+          "ok": true,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 45000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "firefox",
+              "projectName": "firefox",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "passed",
+                  "duration": 7969,
+                  "errors": [],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-30T12:21:53.615Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "browser-diagnostics",
+                      "contentType": "application/json",
+                      "body": "ewogICJlcnJvcnMiOiBbXSwKICAid2FybmluZ3MiOiBbXSwKICAidW5leHBlY3RlZFdhcm5pbmdzIjogW10KfQ=="
+                    }
+                  ]
+                }
+              ],
+              "status": "expected"
+            }
+          ],
+          "id": "988e5ab7a922d34581e7-4a694cf58f8d9a15157f",
+          "file": "cross-browser.spec.ts",
+          "line": 5,
+          "column": 1
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-07-30T12:21:52.884Z",
+    "duration": 9621.779,
+    "expected": 1,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

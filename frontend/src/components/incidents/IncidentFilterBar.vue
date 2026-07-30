@@ -82,7 +82,12 @@ function toLocalDateTime(value?: string): string {
 </script>
 
 <template>
-  <form class="filter-bar" aria-labelledby="incident-filters-title" @submit.prevent="$emit('apply')">
+  <form
+    class="filter-bar"
+    aria-labelledby="incident-filters-title"
+    data-testid="incident-filter-form"
+    @submit.prevent="$emit('apply')"
+  >
     <div class="filter-heading">
       <div><h2 id="incident-filters-title">筛选 Incident</h2><p id="incident-filter-help">筛选条件与 URL 保持同步。</p></div>
       <span class="filter-contract">URL 已同步</span>
@@ -100,8 +105,25 @@ function toLocalDateTime(value?: string): string {
     </div>
 
     <div class="filter-actions">
-      <button type="submit" class="primary-action" :disabled="loading"><Search :size="16" aria-hidden="true" />{{ loading ? "正在查询…" : "查询" }}</button>
-      <button type="button" class="secondary-action" :disabled="!hasFilters || loading" @click="$emit('reset')"><FilterX :size="16" aria-hidden="true" />清除筛选</button>
+      <button
+        type="submit"
+        class="primary-action"
+        data-testid="incident-filter-apply"
+        :disabled="loading"
+      >
+        <Search :size="16" aria-hidden="true" />
+        {{ loading ? "正在查询…" : "查询" }}
+      </button>
+      <button
+        type="button"
+        class="secondary-action"
+        data-testid="incident-filter-reset"
+        :disabled="!hasFilters || loading"
+        @click="$emit('reset')"
+      >
+        <FilterX :size="16" aria-hidden="true" />
+        清除筛选
+      </button>
     </div>
   </form>
 </template>

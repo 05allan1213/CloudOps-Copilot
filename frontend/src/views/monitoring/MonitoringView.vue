@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import {
   Activity,
   Ban,
@@ -44,6 +44,7 @@ import {
   type QuerySeries,
 } from "../../api/monitoring";
 import { getBootstrap, type BootstrapSnapshot } from "../../api/platform";
+import { safeExternalURL } from "../../models/workbench";
 import { OPERATIONAL_SCOPE_CHANGED_EVENT } from "../../utils/operationalScope";
 
 interface RequestFailure {
@@ -91,6 +92,8 @@ const statusMessage = ref("");
 const saveDialogOpen = ref(false);
 const saveTitle = ref("");
 const saveDescription = ref("");
+const saveTitleInput = ref<HTMLInputElement | null>(null);
+const saveDialogTrigger = ref<HTMLElement | null>(null);
 const selectedManagementTab = ref<"definitions" | "authorizations">("definitions");
 let mounted = true;
 let requestGeneration = 0;
@@ -114,7 +117,11 @@ const validTimeRange = computed(() => {
 });
 const canRun = computed(() => Boolean(selectedResource.value && providerReady.value && !queryRunning.value && validTimeRange.value));
 const queryByteLength = computed(() => new TextEncoder().encode(expertQuery.value).length);
-const providerLink = computed(() => currentExecution.value?.links.find((link) => link.kind === "provider" && link.provider === "grafana"));
+const providerLink = computed(() => {
+  const link = currentExecution.value?.links.find((item) => item.kind === "provider" && item.provider === "grafana");
+  const href = safeExternalURL(link?.href);
+  return link && href ? { ...link, href } : undefined;
+});
 const chartSeries = computed(() => currentExecution.value?.result?.series.filter((series) => series.points.length > 0) ?? []);
 const tableRows = computed<TableRow[]>(() => chartSeries.value.map((series, index) => {
   const latest = series.points[series.points.length - 1];
@@ -489,9 +496,19 @@ async function openExecution(id: string, updateRoute = true) {
 function openSaveDialog() {
   const execution = currentExecution.value;
   if (!execution || execution.status !== "succeeded") return;
+  saveDialogTrigger.value = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   saveTitle.value = `${execution.resource.name} ${mode.value === "guided" ? selectedCatalogEntry.value?.title ?? "指标查询" : "PromQL"}`;
   saveDescription.value = "";
   saveDialogOpen.value = true;
+}
+
+function focusSaveTitle() {
+  void nextTick(() => saveTitleInput.value?.focus());
+}
+
+function restoreSaveDialogFocus() {
+  saveDialogTrigger.value?.focus();
+  saveDialogTrigger.value = null;
 }
 
 async function saveDefinition() {
@@ -787,7 +804,13 @@ onBeforeUnmount(() => {
               <button class="icon-button" type="button" title="复制 PromQL" aria-label="复制 PromQL" @click="copyQuery">
                 <Clipboard :size="17" aria-hidden="true" />
               </button>
-              <button class="command-button" type="button" :disabled="currentExecution.status !== 'succeeded'" @click="openSaveDialog">
+              <button
+                class="command-button"
+                type="button"
+                data-testid="monitoring-save-trigger"
+                :disabled="currentExecution.status !== 'succeeded'"
+                @click="openSaveDialog"
+              >
                 <Save :size="16" aria-hidden="true" />
                 保存定义
               </button>
@@ -953,12 +976,36 @@ onBeforeUnmount(() => {
             <h2 id="management-heading">查询资产</h2>
           </div>
           <div class="segmented-control" role="tablist" aria-label="查询资产视图">
-            <button type="button" role="tab" :aria-selected="selectedManagementTab === 'definitions'" :aria-pressed="selectedManagementTab === 'definitions'" @click="selectedManagementTab = 'definitions'">已保存</button>
-            <button type="button" role="tab" :aria-selected="selectedManagementTab === 'authorizations'" :aria-pressed="selectedManagementTab === 'authorizations'" @click="selectedManagementTab = 'authorizations'">Agent 授权</button>
+            <button
+              id="monitoring-definitions-tab"
+              type="button"
+              role="tab"
+              :aria-selected="selectedManagementTab === 'definitions'"
+              aria-controls="monitoring-definitions-panel"
+              @click="selectedManagementTab = 'definitions'"
+            >
+              已保存
+            </button>
+            <button
+              id="monitoring-authorizations-tab"
+              type="button"
+              role="tab"
+              :aria-selected="selectedManagementTab === 'authorizations'"
+              aria-controls="monitoring-authorizations-panel"
+              @click="selectedManagementTab = 'authorizations'"
+            >
+              Agent 授权
+            </button>
           </div>
         </div>
 
-        <div v-if="selectedManagementTab === 'definitions'" class="asset-list" role="tabpanel">
+        <div
+          v-if="selectedManagementTab === 'definitions'"
+          id="monitoring-definitions-panel"
+          class="asset-list"
+          role="tabpanel"
+          aria-labelledby="monitoring-definitions-tab"
+        >
           <div v-if="!definitions.length" class="asset-empty">暂无 Query Definition</div>
           <article v-for="definition in definitions" :key="definition.id" class="asset-row">
             <div>
@@ -979,7 +1026,13 @@ onBeforeUnmount(() => {
           </article>
         </div>
 
-        <div v-else class="asset-list" role="tabpanel">
+        <div
+          v-else
+          id="monitoring-authorizations-panel"
+          class="asset-list"
+          role="tabpanel"
+          aria-labelledby="monitoring-authorizations-tab"
+        >
           <div v-if="!authorizations.length" class="asset-empty">暂无 Agent Query Authorization</div>
           <article v-for="authorization in authorizations" :key="authorization.id" class="asset-row authorization-row">
             <div>
@@ -997,18 +1050,38 @@ onBeforeUnmount(() => {
     </template>
   </section>
 
-  <el-dialog v-model="saveDialogOpen" title="保存 Query Definition" width="min(520px, calc(100vw - 32px))" append-to-body>
-    <form class="save-form" @submit.prevent="saveDefinition">
+  <el-dialog
+    v-model="saveDialogOpen"
+    class="monitoring-save-dialog"
+    title="保存 Query Definition"
+    width="min(520px, calc(100vw - 32px))"
+    append-to-body
+    data-testid="monitoring-save-dialog"
+    @opened="focusSaveTitle"
+    @closed="restoreSaveDialogFocus"
+  >
+    <form
+      class="save-form"
+      data-testid="monitoring-save-form"
+      @submit.prevent="saveDefinition"
+    >
       <label>
         <span>名称</span>
-        <input v-model="saveTitle" name="query-definition-title" autocomplete="off" required maxlength="128" />
+        <input
+          ref="saveTitleInput"
+          v-model="saveTitle"
+          name="query-definition-title"
+          autocomplete="off"
+          required
+          maxlength="128"
+        >
       </label>
       <label>
         <span>说明</span>
         <textarea v-model="saveDescription" name="query-definition-description" autocomplete="off" rows="3" maxlength="512" />
       </label>
       <div class="dialog-actions">
-        <button class="command-button" type="button" @click="saveDialogOpen = false">取消</button>
+        <button class="command-button" type="button" data-testid="monitoring-save-cancel" @click="saveDialogOpen = false">取消</button>
         <button class="command-button command-button--primary" type="submit" :disabled="saving || !saveTitle.trim()">
           <LoaderCircle v-if="saving" :size="16" class="spinning" aria-hidden="true" />
           <Save v-else :size="16" aria-hidden="true" />

@@ -41,7 +41,12 @@ function receiveOpen(event: Event) {
   open.value = true;
   view.value = "conversation";
   void store.loadIndex().then(() => {
+    if (!open.value && route.path !== "/agent") {
+      store.stopStream();
+      return;
+    }
     if (detail.consultationId) void store.selectConsultation(detail.consultationId);
+    else if (store.selection === "consultation" && store.selectedID && store.streamState === "stopped") void store.selectConsultation(store.selectedID);
   });
 }
 
@@ -50,10 +55,12 @@ function receiveContext(event: Event) {
 }
 
 watch(() => route.fullPath, (value) => store.setRoute(value), { immediate: true });
+watch([open, () => route.path], ([isOpen, path]) => {
+  if (!isOpen && path !== "/agent") store.stopStream();
+});
 onMounted(() => {
   window.addEventListener(AGENT_OPEN_EVENT, receiveOpen);
   window.addEventListener(AGENT_CONTEXT_EVENT, receiveContext);
-  void store.loadIndex();
 });
 onBeforeUnmount(() => {
   window.removeEventListener(AGENT_OPEN_EVENT, receiveOpen);
@@ -75,6 +82,7 @@ onBeforeUnmount(() => {
     :close-on-press-escape="true"
     :show-close="false"
     title="全局 Agent 面板"
+    data-testid="global-agent-drawer"
   >
     <template #header>
       <div class="agent-drawer-header">

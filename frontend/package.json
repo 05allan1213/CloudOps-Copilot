@@ -8,8 +8,12 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "lint": "eslint . --ext .ts,.vue",
+    "lint:no-new-warnings": "eslint . --ext .ts,.vue --max-warnings 2608",
+    "typecheck": "vue-tsc --noEmit",
+    "typecheck:e2e": "tsc -p tsconfig.e2e.json --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:e2e:stable": "playwright test tests/e2e/baseline-readonly.spec.ts",
     "test:e2e:update": "playwright test --update-snapshots"
   },
   "dependencies": {
@@ -23,6 +27,7 @@
   },
   "devDependencies": {
     "@playwright/test": "1.61.1",
+    "@types/node": "^20.19.43",
     "@types/three": "^0.185.1",
     "@typescript-eslint/eslint-plugin": "^7.18.0",
     "@typescript-eslint/parser": "^7.18.0",

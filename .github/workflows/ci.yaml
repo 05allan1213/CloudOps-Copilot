@@ -113,10 +113,17 @@ jobs:
 
       - name: Lint, typecheck, test, and build
         run: |
-          npm run lint
-          npm exec -- vue-tsc --noEmit
+          npm run lint:no-new-warnings
+          npm run typecheck
+          npm run typecheck:e2e
           npm test
           npm run build
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Stable read-only E2E
+        run: npm run test:e2e:stable
 
   runtime-contracts:
     name: Runtime contracts

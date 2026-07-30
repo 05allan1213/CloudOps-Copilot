@@ -1,0 +1,15 @@
+{
+  "sha": "c8e709fd10ea47976b262dea22440e5496385c1e",
+  "url": "http://127.0.0.1:4187/states",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "browser": "chromium",
+  "dataSource": "deterministic isolated fixture",
+  "readOnly": true,
+  "theme": "light",
+  "surface": "Exceptional domain state and SSE lifecycle",
+  "candidate": "Nuxt UI 4.10.0 + Tailwind CSS 4.3.3",
+  "rendererVersions": "uPlot 1.6.32; Three.js 0.185.1; TanStack Vue Virtual 3.13.35"
+}

@@ -82,7 +82,12 @@ function stageLabel(value: IncidentView["attention"]["stage"]): string {
 </script>
 
 <template>
-  <section class="incident-results" :aria-busy="pending" aria-labelledby="incident-results-title">
+  <section
+    class="incident-results"
+    :aria-busy="pending"
+    aria-labelledby="incident-results-title"
+    data-testid="incident-results"
+  >
     <div class="desktop-table-wrap" role="region" aria-label="Incident 列表，可横向滚动查看全部列。" tabindex="0">
       <table>
         <caption class="visually-hidden">当前已加载的 Incident；表头排序仅作用于当前 cursor 结果。</caption>
@@ -100,7 +105,13 @@ function stageLabel(value: IncidentView["attention"]["stage"]): string {
           <tr v-for="incident in sortedItems" :key="incident.id">
             <td data-label="级别"><SeverityBadge :severity="incident.severity" /></td>
             <td class="incident-identity" data-label="Incident">
-              <RouterLink :to="incidentDetailPath(incident.id)"><strong>{{ incident.summary || "Incident Cycle 进行中" }}</strong><span><code translate="no">{{ compactID(incident.id) }}</code> · Cycle {{ incident.cycle }} · v{{ incident.version }}</span></RouterLink>
+              <RouterLink
+                data-testid="incident-row-link"
+                :to="incidentDetailPath(incident.id)"
+              >
+                <strong>{{ incident.summary || "Incident Cycle 进行中" }}</strong>
+                <span><code translate="no">{{ compactID(incident.id) }}</code> · Cycle {{ incident.cycle }} · v{{ incident.version }}</span>
+              </RouterLink>
               <span v-if="incident.migrated_legacy_context" class="legacy-context">迁移的 legacy context</span>
             </td>
             <td class="scope-cell" data-label="Scope / Alerts">

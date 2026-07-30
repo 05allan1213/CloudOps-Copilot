@@ -1,0 +1,15 @@
+{
+  "sha": "c8e709fd10ea47976b262dea22440e5496385c1e",
+  "url": "http://127.0.0.1:4187/incidents?selected=inc-2026-07-08",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "browser": "chromium",
+  "dataSource": "deterministic isolated fixture",
+  "readOnly": true,
+  "theme": "dark",
+  "surface": "Incident dense table and Inspector",
+  "candidate": "Nuxt UI 4.10.0 + Tailwind CSS 4.3.3",
+  "rendererVersions": "uPlot 1.6.32; Three.js 0.185.1; TanStack Vue Virtual 3.13.35"
+}

@@ -32,7 +32,7 @@ async function buildScene() {
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x090c10);
     const camera = new THREE.OrthographicCamera(-12, 12, 8, -8, 0.1, 300);
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance", preserveDrawingBuffer: true });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, window.innerWidth < 768 ? 1.25 : 2));
     renderer.domElement.dataset.atlasCanvas = "true";

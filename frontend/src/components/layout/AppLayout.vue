@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, ref, type Component } from "vue";
+import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, ref, watch, type Component } from "vue";
 import {
   Gauge,
   GitPullRequest,
@@ -55,6 +55,8 @@ const scopeSwitchError = ref("");
 const streamState = ref<"connected" | "reconnecting" | "stopped">("stopped");
 let closeNotificationStream: (() => void) | undefined;
 let streamStartedAt = 0;
+let headingObserver: MutationObserver | undefined;
+let headingObserverTimeout: number | undefined;
 
 const pageTitle = computed(() => (typeof route.meta.title === "string" ? route.meta.title : ""));
 const isFullBleed = computed(() => route.meta.fullBleed === true);
@@ -256,14 +258,35 @@ async function readAllNotifications() {
   }
 }
 
+function stopHeadingObserver() {
+  headingObserver?.disconnect();
+  headingObserver = undefined;
+  if (headingObserverTimeout !== undefined) window.clearTimeout(headingObserverTimeout);
+  headingObserverTimeout = undefined;
+}
+
 function focusRouteHeading() {
+  stopHeadingObserver();
   void nextTick(() => {
-    const heading = document.querySelector<HTMLElement>("#main-content h1");
-    if (!heading) return;
-    if (!heading.hasAttribute("tabindex")) heading.setAttribute("tabindex", "-1");
-    heading.focus({ preventScroll: true });
+    const focusHeading = () => {
+      const heading = document.querySelector<HTMLElement>("#main-content > :not(.fade-leave-active):not(.fade-leave-to) h1");
+      if (!heading) return false;
+      if (!heading.hasAttribute("tabindex")) heading.setAttribute("tabindex", "-1");
+      heading.focus({ preventScroll: true });
+      return true;
+    };
+    if (focusHeading()) return;
+    const main = document.querySelector<HTMLElement>("#main-content");
+    if (!main) return;
+    headingObserver = new MutationObserver(() => {
+      if (focusHeading()) stopHeadingObserver();
+    });
+    headingObserver.observe(main, { childList: true, subtree: true });
+    headingObserverTimeout = window.setTimeout(stopHeadingObserver, 2_000);
   });
 }
+
+watch(() => route.path, () => focusRouteHeading(), { flush: "post" });
 
 onMounted(async () => {
   await Promise.all([refreshNotifications(), refreshBootstrap()]);
@@ -278,6 +301,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  stopHeadingObserver();
   closeNotificationStream?.();
   streamState.value = "stopped";
   window.removeEventListener("cloudops:configuration-applied", handleConfigurationApplied);
@@ -309,7 +333,13 @@ onBeforeUnmount(() => {
           <X :size="17" aria-hidden="true" />
         </button>
       </div>
-      <main id="main-content" class="app-main" :class="{ 'app-main--full-bleed': isFullBleed }">
+      <main
+        id="main-content"
+        class="app-main"
+        data-testid="app-main"
+        tabindex="-1"
+        :class="{ 'app-main--full-bleed': isFullBleed }"
+      >
         <RouterView v-slot="{ Component }">
           <Transition name="fade" @after-enter="focusRouteHeading">
             <component :is="Component" :key="route.path" />

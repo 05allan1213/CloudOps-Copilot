@@ -1,0 +1,44 @@
+{
+  "status": "PASS",
+  "recorded_at": "2026-07-30T10:28:51.325Z",
+  "base_url": "http://127.0.0.1:18080",
+  "route": "http://127.0.0.1:18080/overview?view=structured&resource=k8s_Y2xvdWRvcHMtbG9jYWwAYXBwcy92MQBEYWVtb25TZXQAY2xvdWRvcHMtc3lzdGVtAGZpbGViZWF0",
+  "browser": "chromium",
+  "viewport": "1440x900",
+  "theme": "light",
+  "data_source": "real local CloudOps API backed by the Kubernetes typed Provider",
+  "request": {
+    "method": "GET",
+    "path": "/api/v1/overview",
+    "status": 200,
+    "request_id": "dkbu2sf25lj5-2t",
+    "trace_id": "64e625e7f721eff165904a0143f006d0"
+  },
+  "contract": {
+    "product": "CloudOps",
+    "version": "V1",
+    "scope_id": "6d585eaa-4ab3-4501-b22c-19dd5506ea13",
+    "cluster_id": "cloudops-local"
+  },
+  "provider": {
+    "state": "available",
+    "identity": "kubernetes://cloudops-local",
+    "server_version": "v1.36.1",
+    "collected_at": "2026-07-30T10:28:50.163219752Z",
+    "freshness": "fresh",
+    "nodes": 35,
+    "edges": 85,
+    "issues": 0,
+    "partial": false,
+    "truncated": false
+  },
+  "mutations": [],
+  "console_errors": [],
+  "browser_warnings": [
+    "[.WebGL-0x299c00167400]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels",
+    "[.WebGL-0x299c00167400]GL Driver Message (OpenGL, Performance, GL_CLOSE_PATH_NV, High): GPU stall due to ReadPixels"
+  ],
+  "page_errors": [],
+  "failed_requests": [],
+  "failed_responses": []
+}

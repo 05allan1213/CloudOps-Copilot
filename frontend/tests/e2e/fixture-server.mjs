@@ -1,11 +1,13 @@
 import http from "node:http";
 
-const fixtureSchemaVersion = 2;
+const fixtureSchemaVersion = 3;
 const port = Number(process.env.CLOUDOPS_E2E_FIXTURE_PORT || 18082);
 const appOrigin = process.env.CLOUDOPS_E2E_APP_ORIGIN || "http://127.0.0.1:4173";
 const incidentID = "00000000-0000-4000-8000-000000000001";
 const planID = "00000050-0000-4000-8000-000000000001";
 const deliveryID = "00000060-0000-4000-8000-000000000001";
+const scopeID = "00000070-0000-4000-8000-000000000001";
+const revisionID = "00000071-0000-4000-8000-000000000001";
 const defaultFixture = Object.freeze({
   command: "202",
   plan: "valid",
@@ -22,6 +24,7 @@ const metrics = {
   listRequests: 0,
   timelineRequests: 0,
   eventConnections: 0,
+  notificationEventConnections: 0,
   sseAttempts: 0,
   lastEventID: "",
 };
@@ -41,6 +44,88 @@ function gitSHA(character) {
 
 function at(second) {
   return new Date(Date.UTC(2026, 6, 23, 3, 0, second)).toISOString();
+}
+
+function contextLink(workspace, path, query = {}) {
+  return {
+    workspace,
+    path,
+    query: {
+      cluster_id: "fixture-cluster",
+      namespace: "checkout",
+      ...query,
+    },
+    operational_scope_id: scopeID,
+    external: false,
+  };
+}
+
+function operationalScope() {
+  return {
+    id: scopeID,
+    name: "Fixture CloudOps",
+    cluster_id: "fixture-cluster",
+    environment: "test",
+    namespaces: ["checkout", "cloudops-system"],
+    configuration_revision_id: revisionID,
+    configuration_revision_hash: sha256("c"),
+    active: true,
+  };
+}
+
+function activeRevision() {
+  const scope = operationalScope();
+  return {
+    id: revisionID,
+    number: 3,
+    hash: sha256("c"),
+    summary: "Deterministic read-only browser fixture",
+    general: {
+      query_max_lookback_seconds: 86400,
+      query_max_results: 1000,
+      telemetry_retention_days: 7,
+      browser_notifications_enabled: false,
+      automatic_escalation_enabled: false,
+    },
+    scope,
+    scopes: [scope],
+    providers: [],
+    escalation_policies: [],
+    secret_references: [],
+    created_by: "fixture-owner",
+    created_at: at(0),
+    active: true,
+    worker_boundary: {
+      task_id: publicID(72, 1),
+      revision_id: revisionID,
+      status: "succeeded",
+      worker_id: "fixture-worker",
+      observed_hash: sha256("c"),
+      observed_at: at(1),
+    },
+  };
+}
+
+function bootstrapSnapshot() {
+  return {
+    product: "CloudOps",
+    contract: "V1",
+    active_revision: activeRevision(),
+    active_scope: operationalScope(),
+    provider_health: [
+      {
+        provider: "mysql",
+        configuration_revision_id: revisionID,
+        state: "available",
+        detail: "Deterministic fixture projection is available",
+        checked_at: at(2),
+        updated_at: at(2),
+      },
+    ],
+    scenario_state: "inactive",
+    capabilities: ["operational_scope", "notifications", "incidents"],
+    collected_at: at(3),
+  };
 }
 
 function cors(request) {
@@ -91,17 +176,63 @@ async function requestBody(request) {
 
 function currentIncident() {
   const noChange = fixture.verification === "no_change";
+  const recovered = noChange || fixture.verification === "passed";
   return {
     id: incidentID,
     cycle: 3,
-    status: noChange ? "resolved" : "awaiting_approval",
+    status: recovered ? "resolved" : "awaiting_approval",
     severity: "critical",
     summary: "Checkout API recovery requires an exact, hash-bound GitOps remediation decision",
     version: 7,
-    needs_attention: !noChange,
-    blocking_reason_code: noChange ? "" : "approval_required",
+    needs_attention: !recovered,
+    blocking_reason_code: recovered ? "" : "approval_required",
     migrated_legacy: false,
     migrated_legacy_context: false,
+    operational_context: {
+      operational_scope_id: scopeID,
+      cluster: "fixture-cluster",
+      environment: "test",
+      namespace: "checkout",
+      service: "checkout-api",
+      resource: {
+        id: "deployment/checkout/checkout-api",
+        kind: "Deployment",
+        namespace: "checkout",
+        name: "checkout-api",
+      },
+      time_range: {
+        from: at(-900),
+        to: at(900),
+      },
+    },
+    attention: {
+      required: !recovered,
+      reason_code: recovered ? "" : "approval_required",
+      stage: recovered ? "recovered" : "decide",
+    },
+    related_alert_count: 2,
+    context_links: [
+      contextLink("monitoring", "/monitoring", { service: "checkout-api" }),
+      contextLink("logs", "/logs", { service: "checkout-api" }),
+      contextLink("traces", "/traces", { service: "checkout-api" }),
+      contextLink("agent", "/agent", { incident: incidentID }),
+      contextLink("alerts", "/alerts", { incident: incidentID }),
+      contextLink("devops", "/devops", { incident: incidentID }),
+    ],
+    recovery: {
+      state: recovered ? "recovered" : "not_started",
+      verification_attempts: recovered ? (noChange ? 1 : 3) : 0,
+      failed_verification_count: 0,
+      latest_verification_id: recovered ? publicID(70, noChange ? 101 : 103) : "",
+      latest_verification_status: recovered ? "passed" : "",
+      common_window_started_at: recovered ? at(60) : undefined,
+      common_window_completed_at: recovered ? at(120) : undefined,
+      resolution_report_id: recovered ? publicID(90, 1) : "",
+      can_close: recovered,
+    },
+    first_seen_at: at(0),
+    last_seen_at: at(900),
+    resolved_at: recovered ? at(900) : "",
     created_at: at(0),
     updated_at: at(900),
   };
@@ -145,43 +276,136 @@ const generic = {
     summary: "Checkout API p99 latency exceeded the persisted threshold after an exact GitOps revision.", hash: sha256("1"),
     migrated_legacy: false, migrated_legacy_context: false, created_at: at(1), updated_at: at(1),
   }],
+  alerts: [{
+    id: publicID(11, 1),
+    cycle: 3,
+    alert_id: publicID(12, 1),
+    status: "firing",
+    severity: "critical",
+    summary: "Checkout API p99 latency exceeded the persisted threshold.",
+    category: "latency",
+    source: "alertmanager",
+    cluster: "fixture-cluster",
+    environment: "test",
+    namespace: "checkout",
+    service: "checkout-api",
+    target_kind: "Deployment",
+    target_name: "checkout-api",
+    first_seen_at: at(1),
+    last_seen_at: at(30),
+    provenance: "owner_attached",
+    configuration_revision_id: revisionID,
+    context_link: contextLink("alerts", `/alerts/${publicID(12, 1)}`),
+    migrated_legacy: false,
+    migrated_legacy_context: false,
+    created_at: at(1),
+  }],
   timeline: [{
-    id: publicID(20, 1), kind: "timeline_event", status: "awaiting_approval", cycle: 3, version: 1,
-    summary: "The server persisted a bounded remediation Plan and now requires an Owner Decision.", hash: sha256("2"),
-    migrated_legacy: false, migrated_legacy_context: false, created_at: at(2), updated_at: at(2),
+    id: publicID(20, 1),
+    cycle: 3,
+    type: "remediation_plan_created",
+    source_status: "investigating",
+    target_status: "awaiting_approval",
+    reason_code: "approval_required",
+    actor_type: "worker",
+    actor_id: "fixture-worker",
+    summary: "The server persisted a bounded remediation Plan and now requires an Owner Decision.",
+    metadata: { plan_id: planID },
+    occurred_at: at(2),
+    migrated_legacy: false,
+    migrated_legacy_context: false,
   }],
   evidence: [{
-    id: publicID(40, 1), kind: "evidence_item", status: "available", cycle: 3, version: 1,
-    summary: "Persisted deployment and configuration evidence bound to the remediation Plan.", hash: sha256("3"),
-    migrated_legacy: false, migrated_legacy_context: false, created_at: at(3), updated_at: at(3),
+    id: publicID(40, 1),
+    cycle: 3,
+    type: "kubernetes_deployment_snapshot",
+    source: "kubernetes",
+    producer_type: "provider",
+    producer_id: "fixture-kubernetes",
+    producer_version: "v1",
+    tool_name: "get_deployment",
+    resource_ref: "Deployment/checkout/checkout-api",
+    time_range: { from: at(0), to: at(30) },
+    query_text: "deployment checkout-api in namespace checkout",
+    summary: "Persisted deployment and configuration evidence bound to the remediation Plan.",
+    content_hash: sha256("3"),
+    provenance: { provider: "kubernetes", cluster_id: "fixture-cluster" },
+    valid: true,
+    truncated: false,
+    collected_at: at(3),
+    observed_at: at(3),
+    context_link: contextLink("devops", "/devops", { evidence: publicID(40, 1) }),
+    migrated_legacy: false,
+    migrated_legacy_context: false,
   }],
   investigations: [{
-    id: publicID(30, 1), kind: "investigation", status: "diagnosed", cycle: 3, version: 2,
-    summary: "Bounded Investigation identified a missing required environment variable without exposing private reasoning.", hash: sha256("4"),
-    migrated_legacy: false, migrated_legacy_context: false, created_at: at(4), updated_at: at(4),
+    id: publicID(30, 1),
+    cycle: 3,
+    status: "completed",
+    version: 2,
+    objective: "Identify the bounded cause of the checkout-api degradation.",
+    outcome: "A required environment variable is absent from the GitOps manifest.",
+    model_provider: "fixture",
+    actual_model: "deterministic-fixture",
+    prompt_version: "incident-investigation/v3",
+    used_steps: 4,
+    max_steps: 8,
+    started_at: at(4),
+    completed_at: at(12),
+    created_at: at(4),
+    updated_at: at(12),
+    context_link: contextLink("agent", "/agent", { incident: incidentID, run: publicID(30, 1) }),
+    migrated_legacy: false,
+    migrated_legacy_context: false,
   }],
 };
+
+function incidentDecision() {
+  return {
+    cycle: 3,
+    kind: "action",
+    status: fixture.decision?.decision || "awaiting_approval",
+    summary: "Restore the exact missing environment value through the bounded GitOps path.",
+    investigation_id: publicID(30, 1),
+    remediation_plan_id: planID,
+    ...(fixture.decision ? {
+      decision_id: fixture.decision.id,
+      decision: fixture.decision.decision,
+      reason: fixture.decision.reason,
+      actor: fixture.decision.actor.login,
+      decided_at: fixture.decision.created_at,
+    } : {}),
+    context_link: contextLink("devops", "/devops", { incident: incidentID, plan: planID }),
+  };
+}
 
 function resourceStateItems(resource) {
   if (resource === "evidence") {
     return ["available", "partial", "no_data", "unavailable", "invalid", "superseded"].map((status, index) => ({
       ...generic.evidence[0],
       id: publicID(40, index + 1),
-      status,
-      version: index + 1,
       summary: `Persisted Evidence state ${status} remains explicit and is never inferred from color.`,
-      hash: sha256(String((index + 3) % 10)),
-      updated_at: at(10 + index),
+      content_hash: sha256(String((index + 3) % 10)),
+      valid: !["invalid", "unavailable"].includes(status),
+      truncated: status === "partial",
+      provenance: { state: status },
+      collected_at: at(10 + index),
+      observed_at: at(10 + index),
+      context_link: contextLink("devops", "/devops", { evidence: publicID(40, index + 1), state: status }),
     }));
   }
   if (resource === "investigations") {
     return ["pending", "running", "diagnosed", "insufficient", "failed", "cancelled"].map((status, index) => ({
       ...generic.investigations[0],
       id: publicID(30, index + 1),
-      status,
+      status: status === "diagnosed" || status === "insufficient" ? "completed" : status,
       version: index + 1,
-      summary: `Bounded Investigation state ${status} exposes persisted execution facts without private reasoning.`,
-      hash: sha256(String((index + 4) % 10)),
+      objective: `Bounded Investigation state ${status}`,
+      outcome: status === "insufficient" ? "Persisted evidence was insufficient." : `Persisted ${status} result without private reasoning.`,
+      failure_code: status === "failed" ? "FIXTURE_FAILURE" : undefined,
+      failure_summary: status === "failed" ? "Deterministic fixture failure." : undefined,
+      used_steps: Math.min(index + 1, 4),
+      context_link: contextLink("agent", "/agent", { incident: incidentID, run: publicID(30, index + 1), state: status }),
       updated_at: at(20 + index),
     }));
   }
@@ -192,12 +416,11 @@ function timelineEvents(count = 205) {
   return Array.from({ length: count }, (_, index) => ({
     ...generic.timeline[0],
     id: publicID(20, index + 1),
-    status: index % 3 === 0 ? "investigating" : index % 3 === 1 ? "awaiting_approval" : "verifying",
-    version: index + 1,
+    source_status: index % 3 === 0 ? "detected" : index % 3 === 1 ? "investigating" : "awaiting_approval",
+    target_status: index % 3 === 0 ? "investigating" : index % 3 === 1 ? "awaiting_approval" : "verifying",
     summary: `Persisted Timeline event ${String(index + 1).padStart(3, "0")} remains in the exact server page order.`,
-    hash: sha256(String((index + 2) % 10)),
-    created_at: at(index + 2),
-    updated_at: at(index + 2),
+    metadata: { sequence: index + 1 },
+    occurred_at: at(index + 2),
   }));
 }
 
@@ -539,6 +762,7 @@ const server = http.createServer(async (request, response) => {
       metrics.listRequests = 0;
       metrics.timelineRequests = 0;
       metrics.eventConnections = 0;
+      metrics.notificationEventConnections = 0;
       metrics.sseAttempts = 0;
       metrics.lastEventID = "";
     }
@@ -557,6 +781,38 @@ const server = http.createServer(async (request, response) => {
 
   if (url.pathname === "/fixture/metrics") {
     json(request, response, 200, metrics);
+    return;
+  }
+
+  if (url.pathname === "/api/v1/bootstrap") {
+    json(request, response, 200, bootstrapSnapshot());
+    return;
+  }
+
+  if (url.pathname === "/api/v1/scopes") {
+    json(request, response, 200, { items: [operationalScope()] });
+    return;
+  }
+
+  if (url.pathname === "/api/v1/notifications") {
+    json(request, response, 200, { items: [], unread_count: 0 });
+    return;
+  }
+
+  if (url.pathname === "/api/v1/notification-events") {
+    metrics.notificationEventConnections += 1;
+    response.writeHead(200, {
+      ...cors(request),
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+    response.write(": connected\n\n");
+    activeStreams.add(response);
+    request.on("close", () => {
+      activeStreams.delete(response);
+      response.end();
+    });
     return;
   }
 
@@ -699,6 +955,10 @@ const server = http.createServer(async (request, response) => {
       json(request, response, 503, problem(url, 503, "EVIDENCE_UNAVAILABLE", "The Evidence projection is temporarily unavailable."));
       return;
     }
+    if (resource === "decision") {
+      json(request, response, 200, { decision: fixture.sections === "empty" ? null : incidentDecision() });
+      return;
+    }
     if (resource in generic) {
       if (resource === "timeline") metrics.timelineRequests += 1;
       if (fixture.sections === "empty") {
@@ -713,12 +973,11 @@ const server = http.createServer(async (request, response) => {
         const appended = {
           ...generic.timeline[0],
           id: publicID(20, 2),
-          status: "verifying",
-          version: 2,
+          source_status: "awaiting_approval",
+          target_status: "verifying",
           summary: "A finite SSE refresh hint appended this persisted Timeline event without replacing visible content.",
-          hash: sha256("5"),
-          created_at: at(5),
-          updated_at: at(5),
+          metadata: { source: "finite-sse" },
+          occurred_at: at(5),
         };
         const afterID = url.searchParams.get("after_id") || "";
         json(request, response, 200, { items: afterID ? [appended] : [generic.timeline[0], appended] });

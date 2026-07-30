@@ -36,6 +36,7 @@ import {
   type TelemetryQueryMode,
 } from "../../api/telemetry";
 import { virtualWindow } from "../../models/telemetry";
+import { safeExternalURL } from "../../models/workbench";
 import { openAgentPanel, publishAgentContext, type AgentPageContext } from "../../utils/agentContext";
 import { OPERATIONAL_SCOPE_CHANGED_EVENT } from "../../utils/operationalScope";
 
@@ -104,6 +105,7 @@ const workloadLocation = computed(() => ({
   query: contextRouteQuery(),
 }));
 const canFreeze = computed(() => currentQuery.value?.status === "succeeded" && !currentQuery.value.result_expired);
+const kibanaURL = computed(() => safeExternalURL(currentQuery.value?.links.find((link) => link.provider === "kibana")?.href));
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "medium" });
 
@@ -586,7 +588,7 @@ onBeforeUnmount(() => {
             <div v-if="historyItems.length === 0" class="aside-empty">尚无持久化执行元数据。</div>
             <button v-for="item in historyItems" :key="item.id" class="history-row" :class="{ active: currentQuery?.id === item.id }" type="button" @click="openHistory(item.id)"><span>{{ item.mode }} · {{ item.result_count }} rows</span><small>{{ formatTime(item.created_at) }}<template v-if="item.result_expired"> · 结果已过期</template></small></button>
           </section>
-          <a v-if="currentQuery?.links.find((link) => link.provider === 'kibana')" class="provider-link" :href="currentQuery.links.find((link) => link.provider === 'kibana')?.href" target="_blank" rel="noopener noreferrer"><ExternalLink :size="16" aria-hidden="true" />在 Kibana 打开精确查询</a>
+          <a v-if="kibanaURL" class="provider-link" :href="kibanaURL" target="_blank" rel="noopener noreferrer"><ExternalLink :size="16" aria-hidden="true" />在 Kibana 打开精确查询</a>
         </aside>
       </div>
     </template>
