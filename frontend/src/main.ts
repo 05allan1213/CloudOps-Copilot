@@ -1,5 +1,6 @@
 import { createApp } from "vue";
 import { createPinia } from "pinia";
+import ui from "@nuxt/ui/vue-plugin";
 import {
   ElButton,
   ElDialog,
@@ -31,6 +32,7 @@ import "element-plus/theme-chalk/dark/css-vars.css";
 import App from "./App.vue";
 import { initializeTheme } from "./composables/useTheme";
 import { router } from "./router";
+import "./styles/app.css";
 import "./style.css";
 import "./styles/variables.scss";
 import "./styles/dark.scss";
@@ -54,4 +56,4 @@ for (const component of [
 ]) {
   app.component(component.name!, component);
 }
-app.use(createPinia()).use(router).mount("#app");
+app.use(ui).use(createPinia()).use(router).mount("#app");

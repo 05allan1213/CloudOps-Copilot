@@ -118,6 +118,7 @@ jobs:
           npm run typecheck:e2e
           npm test
           npm run build
+          npm run bundle:check
 
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
