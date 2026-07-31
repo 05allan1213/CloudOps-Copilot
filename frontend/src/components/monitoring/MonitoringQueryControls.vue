@@ -86,7 +86,7 @@ function inputValue(event: Event): string {
           label-key="label"
           aria-label="Namespace"
           :disabled="queryInFlight"
-          @update:model-value="(value) => emit('update:namespace', stringValue(value))"
+          @update:model-value="emit('update:namespace', stringValue($event))"
           @change="emit('namespaceChange')"
         />
       </label>
@@ -99,7 +99,7 @@ function inputValue(event: Event): string {
           label-key="label"
           aria-label="Workload"
           :disabled="queryInFlight"
-          @update:model-value="(value) => emit('update:resourceID', stringValue(value))"
+          @update:model-value="emit('update:resourceID', stringValue($event))"
           @change="emit('resourceChange')"
         />
       </label>
@@ -137,7 +137,7 @@ function inputValue(event: Event): string {
           label-key="label"
           aria-label="指标视图"
           :disabled="queryInFlight"
-          @update:model-value="(value) => emit('update:guidedKey', stringValue(value))"
+          @update:model-value="emit('update:guidedKey', stringValue($event))"
           @change="emit('guidedChange')"
         />
       </label>
@@ -222,7 +222,7 @@ function inputValue(event: Event): string {
           label-key="label"
           aria-label="查询 Step"
           :disabled="queryInFlight"
-          @update:model-value="(value) => emit('update:stepSeconds', numberValue(value))"
+          @update:model-value="emit('update:stepSeconds', numberValue($event))"
           @change="emit('queryChange')"
         />
       </label>

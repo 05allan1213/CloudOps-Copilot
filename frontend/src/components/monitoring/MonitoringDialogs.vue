@@ -29,6 +29,10 @@ const emit = defineEmits<{
   confirm: [];
 }>();
 
+function updateConfirmationOpen(value: boolean) {
+  if (!value) emit("closeConfirmation");
+}
+
 function inputValue(event: Event): string {
   return (event.currentTarget as HTMLInputElement | HTMLTextAreaElement).value;
 }
@@ -105,7 +109,7 @@ function inputValue(event: Event): string {
     :dismissible="!confirming"
     :close="!confirming"
     :ui="{ content: 'monitoring-dialog', footer: 'shrink-0' }"
-    @update:open="(value) => { if (!value) emit('closeConfirmation') }"
+    @update:open="updateConfirmationOpen"
   >
     <template #body>
       <div

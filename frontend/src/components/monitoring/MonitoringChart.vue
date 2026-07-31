@@ -39,7 +39,7 @@ const tooltipRows = computed(() => {
 const tooltipTimestamp = computed(() => {
   const index = hoverIndex.value;
   const timestamp = index === null ? null : projection.value.timestamps[index];
-  return timestamp === undefined ? "" : new Date(timestamp * 1000).toLocaleString("zh-CN");
+  return timestamp == null ? "" : new Date(timestamp * 1000).toLocaleString("zh-CN");
 });
 const keyboardSummary = computed(() => tooltipRows.value.length
   ? `${tooltipTimestamp.value}，${tooltipRows.value.map((row) => `${row.label} ${row.value ?? "无值"}`).join("，")}`
