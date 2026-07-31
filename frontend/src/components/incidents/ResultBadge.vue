@@ -39,12 +39,11 @@ const icon = computed(() => {
     class="result-badge"
     :class="`result-badge--${tone}`"
   >
-    <el-icon
+    <component
+      :is="icon"
       :size="14"
       aria-hidden="true"
-    >
-      <component :is="icon" />
-    </el-icon>
+    />
     {{ text }}
   </span>
 </template>

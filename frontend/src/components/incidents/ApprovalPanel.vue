@@ -404,9 +404,10 @@ function submitDecision() {
           aria-label="Close Decision dialog"
           @click="closeDialog"
         >
-          <el-icon aria-hidden="true">
-            <Close />
-          </el-icon>
+          <Close
+            :size="16"
+            aria-hidden="true"
+          />
         </button>
       </header>
       <div class="dialog-body">

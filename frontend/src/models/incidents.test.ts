@@ -4,12 +4,14 @@ import {
   incidentDetailPath,
   incidentStatusLabel,
   humanizeCode,
+  incidentInspectorFailureKind,
   isCurrentRequest,
   loadStateForStatus,
   normalizeListQuery,
   serializeListQuery,
   severityLabel,
   statusTone,
+  toIncidentListAPIQuery,
 } from "./incidents";
 
 describe("Incident presentation contract", () => {
@@ -26,6 +28,38 @@ describe("Incident presentation contract", () => {
     expect(normalizeListQuery({ status: "legacy", limit: "500" })).toEqual({ limit: 100 });
     expect(normalizeListQuery({ cursor: "page-2" })).toEqual({ limit: 50, cursor: "page-2" });
     expect(serializeListQuery({ limit: 50, cursor: "page-2" })).toEqual({ cursor: "page-2" });
+  });
+
+  it("keeps client-owned sort and Inspector state in the URL contract", () => {
+    const selected = "00000000-0000-4000-8000-000000000001";
+    const normalized = normalizeListQuery({ sort: "severity", direction: "asc", selected });
+    expect(normalized).toMatchObject({ sort: "severity", direction: "asc", selected });
+    expect(serializeListQuery(normalized)).toMatchObject({ sort: "severity", direction: "asc", selected });
+    expect(normalizeListQuery({ sort: "created", direction: "sideways", selected: "internal-id" })).toEqual({ limit: 50 });
+  });
+
+  it("separates API filters from URL-owned presentation state", () => {
+    const selected = "00000000-0000-4000-8000-000000000001";
+    expect(toIncidentListAPIQuery({
+      limit: 50,
+      status: "investigating",
+      sort: "severity",
+      direction: "asc",
+      selected,
+    })).toEqual({ limit: 50, status: "investigating" });
+  });
+
+  it("classifies Inspector targets without discarding transport identity", () => {
+    const incidentID = "00000000-0000-4000-8000-000000000001";
+    expect(incidentInspectorFailureKind("not-a-public-id")).toBe("invalid");
+    expect(incidentInspectorFailureKind(incidentID)).toBe("ready");
+    expect(incidentInspectorFailureKind(incidentID, null, "REQUEST_FAILED")).toBe("error");
+    expect(incidentInspectorFailureKind(incidentID, 401, "UNAUTHENTICATED")).toBe("permission-denied");
+    expect(incidentInspectorFailureKind(incidentID, 403, "FORBIDDEN")).toBe("permission-denied");
+    expect(incidentInspectorFailureKind(incidentID, 404, "RESOURCE_NOT_FOUND")).toBe("deleted");
+    expect(incidentInspectorFailureKind(incidentID, 410, "GONE")).toBe("expired");
+    expect(incidentInspectorFailureKind(incidentID, 409, "AUTHORIZATION_EXPIRED")).toBe("expired");
+    expect(incidentInspectorFailureKind(incidentID, 503, "PROVIDER_UNAVAILABLE")).toBe("error");
   });
 
   it("round-trips current-cycle coordination filters", () => {

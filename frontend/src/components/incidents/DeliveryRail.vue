@@ -18,11 +18,13 @@ interface SectionProblem {
 }
 
 const props = withDefaults(defineProps<{
+  sectionID?: string;
   state: LoadState;
   error?: SectionProblem | null;
   delivery: DeliveryView | null;
   refreshing?: boolean;
 }>(), {
+  sectionID: "delivery",
   error: null,
   refreshing: false,
 });
@@ -72,7 +74,7 @@ const stages = computed(() => {
 
 <template>
   <IncidentSectionShell
-    id="delivery"
+    :id="sectionID"
     title="Delivery Rail"
     :state="state"
     :error="error"
@@ -123,9 +125,10 @@ const stages = computed(() => {
           target="_blank"
           rel="noopener noreferrer"
         >
-          <el-icon aria-hidden="true">
-            <LinkIcon />
-          </el-icon>
+          <LinkIcon
+            :size="16"
+            aria-hidden="true"
+          />
           Open GitHub PR<span v-if="delivery.pr_number"> #{{ delivery.pr_number }}</span> in new tab
         </a>
         <span v-else>No safe HTTP pull-request link was projected.</span>

@@ -1,9 +1,14 @@
-import { onBeforeUnmount, reactive, ref } from "vue";
+import { onBeforeUnmount, reactive, ref, watch } from "vue";
 import type { LocationQueryRaw, Router } from "vue-router";
 
 import { listIncidents } from "../../api/incidents";
 import { isApiError } from "../../api/client";
-import { loadStateForStatus, normalizeListQuery, serializeListQuery } from "../../models/incidents";
+import {
+  loadStateForStatus,
+  normalizeListQuery,
+  serializeListQuery,
+  toIncidentListAPIQuery,
+} from "../../models/incidents";
 import type { IncidentListQuery, IncidentView, LoadState } from "../../types/incidents";
 
 export interface IncidentListError {
@@ -22,13 +27,35 @@ interface IncidentListCacheEntry {
 
 const listSessionCache = new Map<string, IncidentListCacheEntry>();
 
-function cacheKey(query: IncidentListQuery): string {
-  return JSON.stringify(serializeListQuery(query));
+const incidentListQueryKeys = [
+  "status",
+  "severity",
+  "service",
+  "attention",
+  "resource",
+  "alert",
+  "from",
+  "to",
+  "limit",
+  "cursor",
+  "sort",
+  "direction",
+  "selected",
+] as const satisfies readonly (keyof IncidentListQuery)[];
+
+export function incidentListAPIIdentity(query: IncidentListQuery): string {
+  return JSON.stringify(serializeListQuery(toIncidentListAPIQuery(query)));
+}
+
+export function applyIncidentListRouteQuery(target: IncidentListQuery, next: IncidentListQuery) {
+  for (const key of incidentListQueryKeys) {
+    Object.assign(target, { [key]: next[key] });
+  }
 }
 
 export function useIncidentList(router: Router, initialQuery: Record<string, unknown>) {
   const filters = reactive<IncidentListQuery>(normalizeListQuery(initialQuery));
-  const cached = listSessionCache.get(cacheKey(filters));
+  const cached = listSessionCache.get(incidentListAPIIdentity(filters));
   const items = ref<IncidentView[]>(cached?.items ?? []);
   const nextCursor = ref(cached?.nextCursor ?? "");
   const state = ref<LoadState>(cached ? (cached.items.length > 0 ? "ready" : "empty") : "loading");
@@ -49,7 +76,7 @@ export function useIncidentList(router: Router, initialQuery: Record<string, unk
     if (!append && items.value.length === 0) state.value = "loading";
     error.value = null;
     try {
-      const query: IncidentListQuery = { ...filters };
+      const query = toIncidentListAPIQuery(filters);
       const requestedCursor = append ? nextCursor.value : (query.cursor ?? "");
       if (append && requestedCursor) query.cursor = requestedCursor;
       const result = await listIncidents(query, controller.signal);
@@ -62,7 +89,7 @@ export function useIncidentList(router: Router, initialQuery: Record<string, unk
       }
       state.value = items.value.length === 0 ? "empty" : "ready";
       lastUpdatedAt.value = new Date().toISOString();
-      listSessionCache.set(cacheKey(filters), {
+      listSessionCache.set(incidentListAPIIdentity(filters), {
         items: [...items.value],
         nextCursor: nextCursor.value,
         lastUpdatedAt: lastUpdatedAt.value,
@@ -101,6 +128,23 @@ export function useIncidentList(router: Router, initialQuery: Record<string, unk
     await load(false);
   }
 
+  function updatePresentation(sort: IncidentListQuery["sort"], direction: IncidentListQuery["direction"]) {
+    filters.sort = sort;
+    filters.direction = direction;
+    return router.replace({ query: serializeListQuery(filters) as LocationQueryRaw });
+  }
+
+  watch(
+    () => router.currentRoute.value.query,
+    (query) => {
+      const next = normalizeListQuery(query);
+      const apiChanged = incidentListAPIIdentity(filters) !== incidentListAPIIdentity(next);
+      applyIncidentListRouteQuery(filters, next);
+      if (apiChanged) void load(false);
+    },
+    { deep: true },
+  );
+
   function reset() {
     Object.assign(filters, {
       status: undefined,
@@ -132,6 +176,7 @@ export function useIncidentList(router: Router, initialQuery: Record<string, unk
     load,
     loadMore: () => load(true),
     syncURLAndLoad,
+    updatePresentation,
     reset,
   };
 }

@@ -29,12 +29,11 @@ const definition = computed(() => definitions[props.severity] ?? definitions.unk
     class="severity-badge"
     :class="`severity-badge--${definition.tone}`"
   >
-    <el-icon
+    <component
+      :is="definition.icon"
       :size="14"
       aria-hidden="true"
-    >
-      <component :is="definition.icon" />
-    </el-icon>
+    />
     {{ severityLabel(severity) }}
   </span>
 </template>

@@ -583,7 +583,14 @@ export interface IncidentListQuery {
   to?: string;
   limit?: number;
   cursor?: string;
+  /** Client-owned list presentation state; the API adapter strips these keys. */
+  sort?: IncidentListSort;
+  direction?: IncidentListDirection;
+  selected?: string;
 }
+
+export type IncidentListSort = "severity" | "status" | "updated";
+export type IncidentListDirection = "asc" | "desc";
 
 export type LoadState =
   | "loading"
