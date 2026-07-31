@@ -279,8 +279,8 @@ export function getLogsCatalog(context: TelemetryContext, signal?: AbortSignal):
   return getJSON(`/api/v1/logs/catalog?${contextQuery(context)}`, { signal });
 }
 
-export function startLogQuery(input: StartLogQueryInput): Promise<LogQuery> {
-  return postJSON("/api/v1/logs/queries", input);
+export function startLogQuery(input: StartLogQueryInput, signal?: AbortSignal): Promise<LogQuery> {
+  return postJSON("/api/v1/logs/queries", input, { signal });
 }
 
 export function getLogQuery(id: string, signal?: AbortSignal): Promise<LogQuery> {
@@ -300,8 +300,8 @@ export function getTracesCatalog(context: TelemetryContext, signal?: AbortSignal
   return getJSON(`/api/v1/traces/catalog?${contextQuery(context)}`, { signal });
 }
 
-export function startTraceSearch(input: StartTraceSearchInput): Promise<TraceSearch> {
-  return postJSON("/api/v1/traces/searches", input);
+export function startTraceSearch(input: StartTraceSearchInput, signal?: AbortSignal): Promise<TraceSearch> {
+  return postJSON("/api/v1/traces/searches", input, { signal });
 }
 
 export function getTraceSearch(id: string, signal?: AbortSignal): Promise<TraceSearch> {
