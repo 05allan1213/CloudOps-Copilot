@@ -67,9 +67,10 @@ const role = computed(() => ["error", "forbidden", "unavailable"].includes(props
       class="state-icon"
       aria-hidden="true"
     >
-      <el-icon :size="22">
-        <component :is="definition.icon" />
-      </el-icon>
+      <component
+        :is="definition.icon"
+        :size="22"
+      />
     </span>
     <div class="state-copy">
       <component :is="headingTag">
@@ -93,22 +94,23 @@ const role = computed(() => ["error", "forbidden", "unavailable"].includes(props
         v-if="primaryActionLabel || secondaryActionLabel"
         class="state-actions"
       >
-        <el-button
+        <UButton
           v-if="primaryActionLabel"
-          type="primary"
+          color="primary"
+          icon="i-lucide-refresh-cw"
+          :label="primaryActionLabel"
           :loading="busy"
           :disabled="busy"
           @click="$emit('primaryAction')"
-        >
-          {{ primaryActionLabel }}
-        </el-button>
-        <el-button
+        />
+        <UButton
           v-if="secondaryActionLabel"
+          color="neutral"
+          variant="outline"
+          :label="secondaryActionLabel"
           :disabled="busy"
           @click="$emit('secondaryAction')"
-        >
-          {{ secondaryActionLabel }}
-        </el-button>
+        />
       </div>
     </div>
   </section>

@@ -1,6 +1,7 @@
 import type { AxiosRequestConfig } from "axios";
 
 import { ApiError, getJSON, postJSONWithMeta } from "./client";
+import { toIncidentListAPIQuery } from "../models/incidents";
 import type {
   CollectionResponse,
   CommandOutcome,
@@ -31,7 +32,10 @@ export interface CommandRequestOptions {
 }
 
 export function listIncidents(query: IncidentListQuery, signal?: AbortSignal): Promise<CollectionResponse<IncidentView>> {
-  return getJSON<CollectionResponse<IncidentView>>(base, { params: query, signal });
+  return getJSON<CollectionResponse<IncidentView>>(base, {
+    params: toIncidentListAPIQuery(query),
+    signal,
+  });
 }
 
 export async function getIncident(incidentID: string, signal?: AbortSignal): Promise<IncidentView> {

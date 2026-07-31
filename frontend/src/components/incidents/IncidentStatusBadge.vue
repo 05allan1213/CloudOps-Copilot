@@ -51,12 +51,11 @@ const tone = computed(() => statusTone(normalizedStatus.value));
     class="status-badge"
     :class="`status-badge--${tone}`"
   >
-    <el-icon
+    <component
+      :is="icon"
       :size="14"
       aria-hidden="true"
-    >
-      <component :is="icon" />
-    </el-icon>
+    />
     {{ text }}
   </span>
 </template>

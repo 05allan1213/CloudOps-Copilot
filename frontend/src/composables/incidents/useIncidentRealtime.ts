@@ -4,11 +4,12 @@ import { incidentRealtimeURL } from "../../api/incidents";
 import type { IncidentRealtimeEvent } from "../../types/incidents";
 
 export type RealtimeState = "connecting" | "connected" | "reconnecting" | "disconnected";
+export type ProjectionResyncState = "idle" | "resyncing" | "failed";
 
 export const maximumReconnectAttempts = 8;
 export const successfulStreamPollDelay = 2000;
 
-const refreshResources = new Set([
+const refreshResources = new Set<IncidentRealtimeEvent["resource"]>([
   "incident",
   "signals",
   "timeline",
@@ -19,6 +20,116 @@ const refreshResources = new Set([
   "verifications",
   "resolution_report",
 ]);
+
+interface ProjectionRefreshQueueHooks {
+  onStart?: (resource: IncidentRealtimeEvent["resource"]) => void;
+  onSuccess?: (resource: IncidentRealtimeEvent["resource"]) => void;
+  onFailure?: (resource: IncidentRealtimeEvent["resource"], cause: unknown) => void;
+  onIdle?: (failed: boolean) => void;
+  onQueueChange?: (count: number) => void;
+}
+
+export interface ProjectionRefreshQueue {
+  enqueue: (resource: IncidentRealtimeEvent["resource"]) => void;
+  stop: () => void;
+  whenIdle: () => Promise<void>;
+  pendingCount: () => number;
+}
+
+export function createProjectionRefreshQueue(
+  resync: (resource: IncidentRealtimeEvent["resource"]) => Promise<void>,
+  hooks: ProjectionRefreshQueueHooks = {},
+): ProjectionRefreshQueue {
+  const pending = new Set<IncidentRealtimeEvent["resource"]>();
+  const idleWaiters = new Set<() => void>();
+  let scheduled = false;
+  let running = false;
+  let stopped = false;
+  let activeResource: IncidentRealtimeEvent["resource"] | null = null;
+
+  function queueSize() {
+    return pending.size + (activeResource ? 1 : 0);
+  }
+
+  function reportQueueSize() {
+    hooks.onQueueChange?.(queueSize());
+  }
+
+  function settleIdle() {
+    if (scheduled || running || pending.size > 0) return;
+    for (const resolve of idleWaiters) resolve();
+    idleWaiters.clear();
+  }
+
+  function scheduleDrain() {
+    if (scheduled || running || stopped) return;
+    scheduled = true;
+    queueMicrotask(() => {
+      scheduled = false;
+      void drain();
+    });
+  }
+
+  async function drain() {
+    if (running || stopped) {
+      settleIdle();
+      return;
+    }
+    running = true;
+    let failed = false;
+    try {
+      while (!stopped && pending.size > 0) {
+        const batch = [...pending];
+        pending.clear();
+        reportQueueSize();
+        for (const resource of batch) {
+          if (stopped) break;
+          activeResource = resource;
+          reportQueueSize();
+          hooks.onStart?.(resource);
+          try {
+            await resync(resource);
+            if (!stopped) hooks.onSuccess?.(resource);
+          } catch (cause) {
+            failed = true;
+            if (!stopped) hooks.onFailure?.(resource, cause);
+          } finally {
+            activeResource = null;
+            reportQueueSize();
+          }
+        }
+      }
+    } finally {
+      running = false;
+      if (!stopped) hooks.onIdle?.(failed);
+      reportQueueSize();
+      settleIdle();
+      if (!stopped && pending.size > 0) scheduleDrain();
+    }
+  }
+
+  function enqueue(resource: IncidentRealtimeEvent["resource"]) {
+    if (stopped || pending.has(resource)) return;
+    pending.add(resource);
+    reportQueueSize();
+    scheduleDrain();
+  }
+
+  function stop() {
+    stopped = true;
+    scheduled = false;
+    pending.clear();
+    reportQueueSize();
+    settleIdle();
+  }
+
+  function whenIdle() {
+    if (!scheduled && !running && pending.size === 0) return Promise.resolve();
+    return new Promise<void>((resolve) => idleWaiters.add(resolve));
+  }
+
+  return { enqueue, stop, whenIdle, pendingCount: queueSize };
+}
 
 export function reconnectDelayForAttempt(attempt: number): number | null {
   if (!Number.isInteger(attempt) || attempt < 0 || attempt >= maximumReconnectAttempts) return null;
@@ -34,9 +145,11 @@ export function acceptRealtimeEvent(lastCursor: string, event: IncidentRealtimeE
 
 export function useIncidentRealtime(incidentID: string, resync: (resource: IncidentRealtimeEvent["resource"]) => Promise<void>) {
   const state = ref<RealtimeState>("disconnected");
+  const resyncState = ref<ProjectionResyncState>("idle");
   const lastCursor = ref("");
   const notice = ref("");
   const lastEventAt = ref("");
+  const queuedResources = ref(0);
   const seenCursors = new Set<string>();
   const cursorOrder: string[] = [];
   let controller: AbortController | null = null;
@@ -44,6 +157,22 @@ export function useIncidentRealtime(incidentID: string, resync: (resource: Incid
   let reconnectAttempts = 0;
   let stopped = false;
   let hasConnected = false;
+  let refreshQueue = newRefreshQueue();
+
+  function newRefreshQueue() {
+    return createProjectionRefreshQueue(resync, {
+      onStart: () => { resyncState.value = "resyncing"; },
+      onSuccess: (resource) => { notice.value = `${resource.replace(/_/g, " ")} projection updated.`; },
+      onFailure: () => {
+        resyncState.value = "failed";
+        notice.value = "An update arrived, but the latest projection could not be refreshed. Existing content is stale.";
+      },
+      onIdle: (failed) => {
+        if (!failed) resyncState.value = "idle";
+      },
+      onQueueChange: (count) => { queuedResources.value = count; },
+    });
+  }
 
   function clearTimer() {
     if (reconnectTimer !== null) {
@@ -90,12 +219,7 @@ export function useIncidentRealtime(incidentID: string, resync: (resource: Incid
               lastCursor.value = accepted;
               rememberCursor(accepted);
               lastEventAt.value = new Date().toISOString();
-              try {
-                await resync(event.resource);
-                notice.value = `${event.resource.replace(/_/g, " ")} projection updated.`;
-              } catch {
-                notice.value = "An update arrived, but the latest projection could not be refreshed.";
-              }
+              refreshQueue.enqueue(event.resource);
             }
           }
           separator = buffer.indexOf("\n\n");
@@ -103,9 +227,7 @@ export function useIncidentRealtime(incidentID: string, resync: (resource: Incid
         if (done) break;
       }
     } catch (cause) {
-      if (!stopped && !(cause instanceof DOMException && cause.name === "AbortError")) {
-        failed = true;
-      }
+      if (!stopped && !(cause instanceof DOMException && cause.name === "AbortError")) failed = true;
     } finally {
       controller = null;
       if (!stopped) {
@@ -133,15 +255,18 @@ export function useIncidentRealtime(incidentID: string, resync: (resource: Incid
   }
 
   function start() {
+    if (stopped) refreshQueue = newRefreshQueue();
     stopped = false;
     reconnectAttempts = 0;
     hasConnected = false;
+    resyncState.value = "idle";
     void connect();
   }
 
   function stop() {
     stopped = true;
     clearTimer();
+    refreshQueue.stop();
     controller?.abort();
     controller = null;
     state.value = "disconnected";
@@ -158,7 +283,7 @@ export function useIncidentRealtime(incidentID: string, resync: (resource: Incid
   }
 
   onBeforeUnmount(stop);
-  return { state, lastCursor, notice, lastEventAt, start, stop };
+  return { state, resyncState, lastCursor, notice, lastEventAt, queuedResources, start, stop };
 }
 
 export function parseRefreshEvent(block: string): IncidentRealtimeEvent | null {
