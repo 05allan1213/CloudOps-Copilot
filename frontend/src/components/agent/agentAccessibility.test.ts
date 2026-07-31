@@ -1,6 +1,8 @@
 import { createPinia } from "pinia";
 import { renderToString } from "@vue/server-renderer";
+import UApp from "@nuxt/ui/components/App.vue";
 import { createSSRApp, defineComponent } from "vue";
+import { createMemoryHistory, createRouter } from "vue-router";
 import { describe, expect, it, vi } from "vitest";
 
 import type { AgentContextSnapshot, AgentRun, ConsultationDetail } from "../../api/agent";
@@ -103,20 +105,28 @@ function agentFixture(): ConsultationDetail {
 describe("Agent Workspace accessibility IDs", () => {
   it("keeps full and compact Agent surfaces uniquely labelled", async () => {
     const root = defineComponent({
-      components: { AgentConversation, AgentHistory, AgentInspector },
+      components: { AgentConversation, AgentHistory, AgentInspector, UApp },
       template: `
-        <main>
-          <AgentHistory />
-          <AgentConversation />
-          <AgentInspector />
-          <AgentHistory compact />
-          <AgentConversation compact />
-          <AgentInspector compact />
-        </main>
+        <UApp>
+          <main>
+            <AgentHistory />
+            <AgentConversation />
+            <AgentInspector />
+            <AgentHistory compact />
+            <AgentConversation compact />
+            <AgentInspector compact />
+          </main>
+        </UApp>
       `,
     });
     const pinia = createPinia();
-    const app = createSSRApp(root).use(pinia);
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: "/:pathMatch(.*)*", component: { template: "<div />" } }],
+    });
+    await router.push("/agent");
+    await router.isReady();
+    const app = createSSRApp(root).use(pinia).use(router);
     const store = useAgentWorkspaceStore(pinia);
     store.selectedID = "consultation-1";
     store.selection = "consultation";
