@@ -1,65 +1,169 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { ElMessage, ElMessageBox } from "element-plus";
-import {
-  ArrowLeft,
-  Bot,
-  Check,
-  ExternalLink,
-  Link2,
-  RefreshCw,
-  Siren,
-  Volume2,
-  VolumeX,
-} from "lucide-vue-next";
-import { useRoute } from "vue-router";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
+import type { LocationQueryRaw, RouteLocationRaw } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 
 import {
   acknowledgeAlert,
+  alertCommandKey,
+  alertContextRouteLinks,
+  alertListRouteQuery,
   attachAlertToIncident,
+  canonicalAlertResourceQuery,
   createAlertSilence,
   createIncidentFromAlert,
   expireAlertSilence,
   getAlert,
+  isAlertPublicID,
+  parseAlertListRouteQuery,
   startAlertInvestigation,
+  type AlertCommandResult,
   type AlertDetail,
   type AlertIncidentLink,
+  type AlertRouteQuery,
 } from "../../api/alerts";
-import { isApiError } from "../../api/client";
 import AlertBadges from "../../components/alerts/AlertBadges.vue";
+import ApiErrorNotice from "../../components/workspace/ApiErrorNotice.vue";
+import WorkspaceHeader from "../../components/workspace/WorkspaceHeader.vue";
+import WorkspaceState from "../../components/workspace/WorkspaceState.vue";
+
+type DetailCommand =
+  | "acknowledge"
+  | "silence"
+  | "expire-silence"
+  | "create-incident"
+  | "attach-incident"
+  | "investigation";
+
+type CommandColor = "primary" | "warning" | "error" | "info" | "neutral";
+
+interface DetailCommandDefinition {
+  title: string;
+  description: string;
+  confirmLabel: string;
+  icon: string;
+  color: CommandColor;
+  needsReason: boolean;
+}
+
+interface AlertCommandFeedback {
+  label: string;
+  receivedAt: string;
+  result: AlertCommandResult<unknown>;
+}
+
+const commandDefinitions: Record<DetailCommand, DetailCommandDefinition> = {
+  acknowledge: {
+    title: "确认已知悉此 Alert",
+    description: "记录当前 recurrence 已被 Owner 看到；不会创建 Silence、解决 Alert 或关闭 Incident。",
+    confirmLabel: "记录 Acknowledge",
+    icon: "i-lucide-circle-check",
+    color: "primary",
+    needsReason: true,
+  },
+  silence: {
+    title: "创建 Provider-backed Silence",
+    description: "在选定时间内抑制匹配通知；Alert firing、acknowledgement 与 Incident 状态保持独立。",
+    confirmLabel: "创建 Silence",
+    icon: "i-lucide-volume-x",
+    color: "warning",
+    needsReason: true,
+  },
+  "expire-silence": {
+    title: "提前结束当前 Silence",
+    description: "Alertmanager 通知将恢复；Alert firing 状态不会因此改变。",
+    confirmLabel: "结束 Silence",
+    icon: "i-lucide-volume-2",
+    color: "warning",
+    needsReason: false,
+  },
+  "create-incident": {
+    title: "创建或复用 active Incident",
+    description: "按 correlation identity 显式升级到 Incident 生命周期；后续决策、交付与验证仅在 Incident 中执行。",
+    confirmLabel: "创建 Incident",
+    icon: "i-lucide-siren",
+    color: "warning",
+    needsReason: false,
+  },
+  "attach-incident": {
+    title: "关联现有 Incident",
+    description: "把此 Alert 加入指定 Incident；不会复制 Approval、Delivery 或 Verification 操作面。",
+    confirmLabel: "关联 Incident",
+    icon: "i-lucide-link-2",
+    color: "warning",
+    needsReason: false,
+  },
+  investigation: {
+    title: "从 Alert 启动 Investigation",
+    description: "仅在存在 active Incident 时提交 Agent 调查，并保留 Alert 与 Incident 上下文。",
+    confirmLabel: "启动 Investigation",
+    icon: "i-lucide-bot",
+    color: "primary",
+    needsReason: true,
+  },
+};
+
+const silenceDurationItems = [
+  { label: "5 分钟", value: 300 },
+  { label: "15 分钟", value: 900 },
+  { label: "30 分钟", value: 1800 },
+  { label: "1 小时", value: 3600 },
+  { label: "4 小时", value: 14400 },
+  { label: "24 小时", value: 86400 },
+];
 
 const route = useRoute();
+const router = useRouter();
 const detail = ref<AlertDetail | null>(null);
 const loading = ref(true);
 const refreshing = ref(false);
+const pageError = ref<unknown>(null);
+const command = ref<DetailCommand | null>(null);
+const commandReason = ref("");
+const commandDuration = ref(1800);
+const commandIncidentID = ref("");
+const commandExpectedVersion = ref(0);
+const commandIdempotencyKey = ref("");
 const commandPending = ref(false);
-const error = ref("");
-const commandError = ref("");
-const silenceDuration = ref(1800);
-const attachIncidentID = ref("");
+const commandError = ref<unknown>(null);
+const commandFeedback = ref<AlertCommandFeedback | null>(null);
 let controller: AbortController | null = null;
 
 const alertID = computed(() => String(route.params.alertId ?? ""));
 const alert = computed(() => detail.value?.alert ?? null);
-const activeIncident = computed(() => alert.value?.incident_links.find((link) => isActiveIncident(link)) ?? null);
+const activeIncident = computed(() => alert.value?.incident_links.find(isActiveIncident) ?? null);
 const canAcknowledge = computed(() => alert.value?.status === "firing" && !alert.value.acknowledgement);
-const canSilence = computed(() => alert.value?.status === "firing" && !["pending", "active"].includes(alert.value.silence?.status ?? ""));
+const canSilence = computed(() => alert.value?.status === "firing"
+  && !["pending", "active"].includes(alert.value.silence?.status ?? ""));
 const canExpireSilence = computed(() => alert.value?.silence?.status === "active");
+const canCreateIncident = computed(() => alert.value?.status === "firing");
 const canInvestigate = computed(() => Boolean(activeIncident.value));
-const contextLinks = computed(() => {
-  if (!alert.value) return [];
-  const shared = {
+const contextLinks = computed(() => alert.value ? alertContextRouteLinks(alert.value) : []);
+const commandDefinition = computed(() => commandDefinitions[command.value ?? "acknowledge"]);
+const commandReady = computed(() => {
+  if (!command.value || !alert.value || commandExpectedVersion.value <= 0 || !commandIdempotencyKey.value) return false;
+  if (commandDefinition.value.needsReason && !commandReason.value.trim()) return false;
+  if (command.value === "attach-incident" && !isAlertPublicID(commandIncidentID.value.trim())) return false;
+  if (command.value === "expire-silence" && !alert.value.silence?.id) return false;
+  return true;
+});
+const listLocation = computed<RouteLocationRaw>(() => {
+  const state = parseAlertListRouteQuery(route.query as unknown as AlertRouteQuery);
+  const query = alertListRouteQuery({ ...state, selected: "" }, route.query as unknown as AlertRouteQuery);
+  return { name: "alerts", query: query as LocationQueryRaw };
+});
+const agentLocation = computed<RouteLocationRaw>(() => {
+  if (!alert.value) return { name: "agent" };
+  const query: LocationQueryRaw = {
+    alert: alert.value.id,
     cluster: alert.value.cluster,
     namespace: alert.value.namespace,
+    resource: alert.value.target_name,
     from: alert.value.starts_at,
     to: alert.value.resolved_at || new Date().toISOString(),
   };
-  return [
-    { label: "基础设施", path: "/infrastructure", query: { ...shared, resource: `${alert.value.target_kind}/${alert.value.namespace}/${alert.value.target_name}` } },
-    { label: "监控", path: "/monitoring", query: { ...shared, resource: alert.value.target_name } },
-    { label: "日志", path: "/logs", query: { ...shared, workload: alert.value.target_name } },
-    { label: "链路", path: "/traces", query: { ...shared, workload: alert.value.target_name } },
-  ];
+  if (activeIncident.value) query.incident = activeIncident.value.incident_id;
+  return { name: "agent", query };
 });
 
 function isActiveIncident(link: AlertIncidentLink): boolean {
@@ -70,17 +174,14 @@ function formatTime(value?: string): string {
   if (!value) return "无";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "medium" }).format(date);
+  return new Intl.DateTimeFormat("zh-CN", {
+    dateStyle: "medium",
+    timeStyle: "medium",
+  }).format(date);
 }
 
 function shortID(value: string): string {
-  return value.length > 18 ? `${value.slice(0, 12)}…` : value;
-}
-
-function describeError(reason: unknown, fallback: string): string {
-  if (!isApiError(reason)) return fallback;
-  const next = reason.nextSteps.length ? `；下一步：${reason.nextSteps.join("；")}` : "";
-  return `${reason.code || "REQUEST_FAILED"}：${reason.message}${next}`;
+  return value.length > 18 ? `${value.slice(0, 10)}...${value.slice(-6)}` : value;
 }
 
 function provenanceLabel(value: AlertIncidentLink["provenance"] | "signal_normalization"): string {
@@ -93,18 +194,37 @@ function provenanceLabel(value: AlertIncidentLink["provenance"] | "signal_normal
   } as Record<string, string>)[value] ?? value;
 }
 
-async function load(preserve = false) {
+async function canonicalizeRouteQuery() {
+  const current = route.query as unknown as AlertRouteQuery;
+  const canonical = canonicalAlertResourceQuery(current);
+  const location = {
+    path: route.path,
+    query: canonical as LocationQueryRaw,
+    hash: route.hash,
+  };
+  if (router.resolve(location).fullPath !== route.fullPath) await router.replace(location);
+}
+
+async function load(preserve: boolean) {
   controller?.abort();
   const requestController = new AbortController();
   controller = requestController;
-  if (preserve) refreshing.value = true;
+  if (preserve && detail.value) refreshing.value = true;
   else loading.value = true;
-  error.value = "";
+  pageError.value = null;
+  if (!isAlertPublicID(alertID.value)) {
+    pageError.value = new Error("Alert ID 不是可读取的 public UUID。");
+    loading.value = false;
+    refreshing.value = false;
+    return;
+  }
   try {
-    detail.value = await getAlert(alertID.value, requestController.signal);
-  } catch (reason) {
-    if (requestController.signal.aborted) return;
-    error.value = describeError(reason, "Alert 详情读取失败。");
+    const next = await getAlert(alertID.value, requestController.signal);
+    if (controller !== requestController) return;
+    detail.value = next;
+  } catch (error) {
+    if (requestController.signal.aborted || controller !== requestController) return;
+    pageError.value = error;
   } finally {
     if (controller === requestController) {
       loading.value = false;
@@ -113,259 +233,962 @@ async function load(preserve = false) {
   }
 }
 
-async function promptReason(title: string, initial = ""): Promise<string | null> {
-  try {
-    const result = await ElMessageBox.prompt("该原因会写入 Alert audit timeline。", title, {
-      confirmButtonText: "提交",
-      cancelButtonText: "取消",
-      inputType: "textarea",
-      inputValue: initial,
-      inputPlaceholder: "输入 1 至 1024 个字符",
-      inputValidator: (value) => {
-        const text = value.trim();
-        if (!text) return "请输入原因。";
-        if (text.length > 1024) return "原因不得超过 1024 个字符。";
-        return true;
-      },
-    });
-    return result.value.trim();
-  } catch {
-    return null;
-  }
+function commandTargetID(nextCommand: DetailCommand): string {
+  if (nextCommand === "expire-silence") return alert.value?.silence?.id ?? alertID.value;
+  return alertID.value;
 }
 
-async function runCommand(label: string, command: () => Promise<unknown>) {
+function openCommand(nextCommand: DetailCommand) {
   if (!alert.value || commandPending.value) return;
+  command.value = nextCommand;
+  commandReason.value = nextCommand === "acknowledge"
+    ? "Owner 已看到并开始 triage"
+    : nextCommand === "silence"
+      ? "Owner triage 期间抑制重复 Provider 通知"
+      : nextCommand === "investigation"
+        ? "调查当前 firing condition"
+        : "";
+  commandIncidentID.value = "";
+  commandExpectedVersion.value = alert.value.version;
+  commandIdempotencyKey.value = alertCommandKey(nextCommand, commandTargetID(nextCommand));
+  commandError.value = null;
+}
+
+function closeCommand() {
+  if (commandPending.value) return;
+  command.value = null;
+  commandError.value = null;
+}
+
+function updateCommandOpen(value: boolean) {
+  if (!value) closeCommand();
+}
+
+async function submitCommand() {
+  const current = alert.value;
+  const nextCommand = command.value;
+  if (!current || !nextCommand || !commandReady.value || commandPending.value) return;
   commandPending.value = true;
-  commandError.value = "";
+  commandError.value = null;
   try {
-    await command();
+    const options = { idempotencyKey: commandIdempotencyKey.value };
+    const result = nextCommand === "acknowledge"
+      ? await acknowledgeAlert(current.id, commandExpectedVersion.value, commandReason.value.trim(), options)
+      : nextCommand === "silence"
+        ? await createAlertSilence(current.id, commandExpectedVersion.value, commandDuration.value, commandReason.value.trim(), options)
+        : nextCommand === "expire-silence"
+          ? await expireAlertSilence(current.silence!.id, commandExpectedVersion.value, options)
+          : nextCommand === "create-incident"
+            ? await createIncidentFromAlert(current.id, commandExpectedVersion.value, options)
+            : nextCommand === "attach-incident"
+              ? await attachAlertToIncident(current.id, commandIncidentID.value.trim(), commandExpectedVersion.value, options)
+              : await startAlertInvestigation(current.id, commandExpectedVersion.value, commandReason.value.trim(), options);
+    commandFeedback.value = {
+      label: `${commandDefinition.value.confirmLabel} 已返回`,
+      receivedAt: new Date().toISOString(),
+      result,
+    };
+    command.value = null;
     await load(true);
-    ElMessage.success(label);
-  } catch (reason) {
-    commandError.value = describeError(reason, `${label}失败。`);
+  } catch (error) {
+    commandError.value = error;
   } finally {
     commandPending.value = false;
   }
 }
 
-async function acknowledge() {
-  const reason = await promptReason("Acknowledge Alert", "Owner 已看到并开始 triage");
-  if (reason === null || !alert.value) return;
-  await runCommand("Alert 已 acknowledge", () => acknowledgeAlert(alertID.value, alert.value!.version, reason));
+function resetForAlert() {
+  detail.value = null;
+  pageError.value = null;
+  command.value = null;
+  commandError.value = null;
+  commandFeedback.value = null;
+  void load(false);
 }
 
-async function silence() {
-  const reason = await promptReason("创建 bounded silence", "Owner triage 期间抑制重复 Provider 通知");
-  if (reason === null || !alert.value) return;
-  await runCommand("Alertmanager silence 已创建", () => createAlertSilence(alertID.value, alert.value!.version, silenceDuration.value, reason));
-}
-
-async function expireSilence() {
-  if (!alert.value?.silence) return;
-  await runCommand("Alertmanager silence 已结束", () => expireAlertSilence(alert.value!.silence!.id, alert.value!.version));
-}
-
-async function createIncident() {
-  if (!alert.value) return;
-  try {
-    await ElMessageBox.confirm("创建或复用同一 correlation identity 的 active Incident？", "显式 Incident escalation", {
-      confirmButtonText: "创建 Incident",
-      cancelButtonText: "取消",
-      type: "warning",
-    });
-  } catch {
-    return;
-  }
-  await runCommand("Alert 已显式关联 Incident", () => createIncidentFromAlert(alertID.value, alert.value!.version));
-}
-
-async function attachIncident() {
-  const incidentID = attachIncidentID.value.trim();
-  if (!incidentID || !alert.value) return;
-  await runCommand("Alert 已关联现有 Incident", () => attachAlertToIncident(alertID.value, incidentID, alert.value!.version));
-  if (!commandError.value) attachIncidentID.value = "";
-}
-
-async function investigate() {
-  const reason = await promptReason("从 Alert 启动 Investigation", "调查当前 firing condition");
-  if (reason === null || !alert.value) return;
-  await runCommand("Investigation 已提交", () => startAlertInvestigation(alertID.value, alert.value!.version, reason));
-}
-
-onMounted(() => void load(false));
+watch(
+  () => [route.query.workload, route.query.resource],
+  () => void canonicalizeRouteQuery(),
+  { immediate: true },
+);
+watch(alertID, resetForAlert, { immediate: true });
 onBeforeUnmount(() => controller?.abort());
 </script>
 
 <template>
-  <article class="alert-detail-view">
-    <RouterLink class="back-link" :to="{ name: 'alerts' }"><ArrowLeft :size="18" aria-hidden="true" />返回告警</RouterLink>
+  <article
+    class="alert-detail-view"
+    data-testid="alert-detail-route"
+  >
+    <WorkspaceHeader
+      :title="alert?.summary ?? '告警详情'"
+      eyebrow="CloudOps Alert"
+      :description="alert ? `${alert.cluster} / ${alert.namespace} / ${alert.target_kind} ${alert.target_name}` : '读取可分享的 Alert lifecycle 深链接。'"
+    >
+      <template
+        v-if="alert"
+        #context
+      >
+        <AlertBadges
+          :status="alert.status"
+          :severity="alert.severity"
+        />
+        <UBadge
+          color="neutral"
+          variant="outline"
+          :label="`v${alert.version}`"
+        />
+        <UBadge
+          color="neutral"
+          variant="soft"
+          icon="i-lucide-radio-tower"
+          :label="alert.source"
+        />
+      </template>
+      <template #actions>
+        <UButton
+          color="neutral"
+          variant="outline"
+          icon="i-lucide-arrow-left"
+          label="返回告警"
+          :to="listLocation"
+        />
+        <UTooltip text="刷新当前 Alert 投影">
+          <UButton
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-refresh-cw"
+            square
+            aria-label="刷新 Alert"
+            :loading="refreshing"
+            :disabled="loading || refreshing || Boolean(command)"
+            @click="load(true)"
+          />
+        </UTooltip>
+      </template>
+    </WorkspaceHeader>
 
-    <div v-if="loading && !detail" class="message-band" role="status" aria-live="polite">正在读取 Alert lifecycle…</div>
-    <div v-else-if="error && !detail" class="message-band is-error" role="alert"><strong>Alert 不可用</strong><span>{{ error }}</span><button type="button" class="secondary-action" @click="load(false)"><RefreshCw :size="17" aria-hidden="true" />重试</button></div>
+    <WorkspaceState
+      v-if="loading && !detail"
+      kind="loading"
+      title="正在读取 Alert lifecycle"
+      description="深链接与 canonical resource 上下文保持稳定。"
+    />
+    <ApiErrorNotice
+      v-else-if="pageError && !detail"
+      :error="pageError"
+      fallback="Alert 详情读取失败。"
+      title="Alert 不可用"
+      retryable
+      @retry="load(false)"
+    />
 
     <template v-if="detail && alert">
-      <header class="detail-heading">
+      <ApiErrorNotice
+        v-if="pageError"
+        :error="pageError"
+        fallback="刷新失败；当前 Alert 投影保持可读。"
+        title="刷新失败"
+        retryable
+        @retry="load(true)"
+      />
+
+      <UAlert
+        v-if="commandFeedback"
+        color="success"
+        variant="soft"
+        icon="i-lucide-circle-check"
+        :title="commandFeedback.label"
+      >
+        <template #description>
+          <dl class="alert-command-identity">
+            <div>
+              <dt>HTTP</dt>
+              <dd>{{ commandFeedback.result.httpStatus }}</dd>
+            </div>
+            <div>
+              <dt>Expected version</dt>
+              <dd>{{ commandFeedback.result.expectedVersion }}</dd>
+            </div>
+            <div>
+              <dt>Idempotent replay</dt>
+              <dd>{{ commandFeedback.result.idempotentReplay ? "YES" : "NO" }}</dd>
+            </div>
+            <div>
+              <dt>Request ID</dt>
+              <dd>{{ commandFeedback.result.requestID || "未返回" }}</dd>
+            </div>
+            <div>
+              <dt>Trace ID</dt>
+              <dd>{{ commandFeedback.result.traceID || "未返回" }}</dd>
+            </div>
+            <div>
+              <dt>Idempotency Key</dt>
+              <dd>{{ commandFeedback.result.idempotencyKey }}</dd>
+            </div>
+            <div>
+              <dt>客户端收到 UTC</dt>
+              <dd>{{ commandFeedback.receivedAt }}</dd>
+            </div>
+          </dl>
+        </template>
+      </UAlert>
+
+      <section
+        class="alert-command-surface"
+        aria-labelledby="alert-owner-commands"
+      >
+        <header>
+          <div>
+            <span class="alert-section-eyebrow">Owner Commands</span>
+            <h2 id="alert-owner-commands">
+              Alert 本地处置
+            </h2>
+          </div>
+          <p>Incident 生命周期动作保留在 Incident Workspace。</p>
+        </header>
+        <div class="alert-command-grid">
+          <UButton
+            color="primary"
+            variant="soft"
+            icon="i-lucide-circle-check"
+            label="Acknowledge"
+            :disabled="!canAcknowledge || commandPending"
+            @click="openCommand('acknowledge')"
+          />
+          <UButton
+            color="warning"
+            variant="soft"
+            icon="i-lucide-volume-x"
+            label="创建 Silence"
+            :disabled="!canSilence || commandPending"
+            @click="openCommand('silence')"
+          />
+          <UButton
+            color="warning"
+            variant="outline"
+            icon="i-lucide-volume-2"
+            label="结束 Silence"
+            :disabled="!canExpireSilence || commandPending"
+            @click="openCommand('expire-silence')"
+          />
+          <UButton
+            color="warning"
+            variant="soft"
+            icon="i-lucide-siren"
+            label="创建 Incident"
+            :disabled="!canCreateIncident || commandPending"
+            @click="openCommand('create-incident')"
+          />
+          <UButton
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-link-2"
+            label="关联 Incident"
+            :disabled="commandPending"
+            @click="openCommand('attach-incident')"
+          />
+          <UButton
+            color="primary"
+            variant="outline"
+            icon="i-lucide-bot"
+            label="启动 Investigation"
+            :disabled="!canInvestigate || commandPending"
+            @click="openCommand('investigation')"
+          />
+        </div>
+      </section>
+
+      <dl
+        class="alert-facet-strip"
+        aria-label="Alert lifecycle facets"
+      >
         <div>
-          <p class="eyebrow">{{ alert.category }}</p>
-          <h1>{{ alert.summary }}</h1>
-          <p>{{ alert.cluster }} / {{ alert.namespace }} / {{ alert.target_kind }} {{ alert.target_name }}</p>
+          <dt>Acknowledgement</dt>
+          <dd>{{ alert.acknowledgement ? `recurrence ${alert.acknowledgement.recurrence_no}` : "未 acknowledge" }}</dd>
+          <small>{{ alert.acknowledgement?.reason || "独立于 silence 与 resolution" }}</small>
         </div>
-        <div class="heading-state"><AlertBadges :status="alert.status" :severity="alert.severity" /><span class="mono-text">v{{ alert.version }}</span></div>
-      </header>
-
-      <div v-if="error" class="message-band is-warning" role="status"><strong>刷新失败</strong><span>{{ error }}</span></div>
-      <div v-if="commandError" class="message-band is-error" role="alert"><strong>命令失败</strong><span>{{ commandError }}</span><button type="button" class="secondary-action" @click="load(true)"><RefreshCw :size="17" aria-hidden="true" />刷新状态</button></div>
-
-      <section class="command-surface" aria-labelledby="owner-command-heading">
-        <header><div><p class="eyebrow">Owner Commands</p><h2 id="owner-command-heading">Triage</h2></div><button type="button" class="icon-action" :disabled="refreshing" aria-label="刷新 Alert" title="刷新 Alert" @click="load(true)"><RefreshCw :size="18" aria-hidden="true" /></button></header>
-        <div class="command-row">
-          <button type="button" class="secondary-action" :disabled="!canAcknowledge || commandPending" @click="acknowledge"><Check :size="17" aria-hidden="true" />Acknowledge</button>
-          <label class="duration-select"><span>Silence</span><select v-model.number="silenceDuration" name="silence_duration" autocomplete="off" :disabled="!canSilence || commandPending"><option :value="300">5 分钟</option><option :value="900">15 分钟</option><option :value="1800">30 分钟</option><option :value="3600">1 小时</option><option :value="14400">4 小时</option><option :value="86400">24 小时</option></select></label>
-          <button type="button" class="secondary-action" :disabled="!canSilence || commandPending" @click="silence"><VolumeX :size="17" aria-hidden="true" />创建 Silence</button>
-          <button type="button" class="secondary-action" :disabled="!canExpireSilence || commandPending" @click="expireSilence"><Volume2 :size="17" aria-hidden="true" />结束 Silence</button>
-          <button type="button" class="primary-action" :disabled="alert.status !== 'firing' || commandPending" @click="createIncident"><Siren :size="17" aria-hidden="true" />创建 Incident</button>
-          <button type="button" class="secondary-action" :disabled="!canInvestigate || commandPending" @click="investigate"><Bot :size="17" aria-hidden="true" />启动 Investigation</button>
+        <div>
+          <dt>Silence</dt>
+          <dd>{{ alert.silence?.status || "无" }}</dd>
+          <small>{{ alert.silence ? `${formatTime(alert.silence.starts_at)} - ${formatTime(alert.silence.ends_at)}` : "Provider notification 未抑制" }}</small>
         </div>
-        <form class="attach-row" @submit.prevent="attachIncident">
-          <label><span>现有 Incident ID</span><input v-model="attachIncidentID" name="incident_id" type="text" autocomplete="off" spellcheck="false" placeholder="例如：xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx…"></label>
-          <button type="submit" class="secondary-action" :disabled="!attachIncidentID.trim() || commandPending"><Link2 :size="17" aria-hidden="true" />关联 Incident</button>
-        </form>
-      </section>
+        <div>
+          <dt>Incident links</dt>
+          <dd>{{ alert.incident_links.length }}</dd>
+          <small>{{ activeIncident ? `active ${shortID(activeIncident.incident_id)}` : "无 active Incident" }}</small>
+        </div>
+        <div>
+          <dt>Investigation</dt>
+          <dd>{{ alert.investigations.length }}</dd>
+          <small>{{ alert.investigations[0]?.status || "尚未启动" }}</small>
+        </div>
+      </dl>
 
-      <section class="facet-strip" aria-label="Alert lifecycle facets">
-        <div><span>Acknowledgement</span><strong>{{ alert.acknowledgement ? `recurrence ${alert.acknowledgement.recurrence_no}` : "未 acknowledge" }}</strong><small>{{ alert.acknowledgement?.reason || "独立于 silence 与 resolution" }}</small></div>
-        <div><span>Silence</span><strong>{{ alert.silence?.status || "无" }}</strong><small>{{ alert.silence ? `${formatTime(alert.silence.starts_at)} - ${formatTime(alert.silence.ends_at)}` : "Provider notification 未抑制" }}</small></div>
-        <div><span>Incident links</span><strong>{{ alert.incident_links.length }}</strong><small>{{ activeIncident ? `active ${shortID(activeIncident.incident_id)}` : "无 active Incident" }}</small></div>
-        <div><span>Investigation</span><strong>{{ alert.investigations.length }}</strong><small>{{ alert.investigations[0]?.status || "尚未启动" }}</small></div>
-      </section>
-
-      <section class="detail-section" aria-labelledby="identity-heading">
-        <header><div><p class="eyebrow">Identity</p><h2 id="identity-heading">Alert aggregate</h2></div></header>
-        <dl class="facts-grid">
-          <div><dt>Alert ID</dt><dd class="mono-text">{{ alert.id }}</dd></div>
-          <div><dt>Source</dt><dd>{{ alert.source }}</dd></div>
-          <div><dt>Fingerprint</dt><dd class="mono-text">{{ alert.fingerprint }}</dd></div>
-          <div><dt>Correlation key</dt><dd class="mono-text">{{ alert.correlation_key }}</dd></div>
-          <div><dt>首次出现</dt><dd>{{ formatTime(alert.first_seen_at) }}</dd></div>
-          <div><dt>最近出现</dt><dd>{{ formatTime(alert.last_seen_at) }}</dd></div>
-          <div><dt>Resolved</dt><dd>{{ formatTime(alert.resolved_at) }}</dd></div>
-          <div><dt>Legacy provenance</dt><dd>{{ alert.migrated_legacy ? "legacy_automatic_ingress" : "native Alert" }}</dd></div>
+      <section
+        class="alert-detail-section"
+        aria-labelledby="alert-identity"
+      >
+        <header>
+          <div>
+            <span class="alert-section-eyebrow">Identity</span>
+            <h2 id="alert-identity">
+              Alert aggregate
+            </h2>
+          </div>
+        </header>
+        <dl class="alert-facts-grid">
+          <div>
+            <dt>Alert ID</dt>
+            <dd>{{ alert.id }}</dd>
+          </div>
+          <div>
+            <dt>Source</dt>
+            <dd>{{ alert.source }}</dd>
+          </div>
+          <div>
+            <dt>Fingerprint</dt>
+            <dd>{{ alert.fingerprint }}</dd>
+          </div>
+          <div>
+            <dt>Correlation key</dt>
+            <dd>{{ alert.correlation_key }}</dd>
+          </div>
+          <div>
+            <dt>首次出现</dt>
+            <dd>{{ formatTime(alert.first_seen_at) }}</dd>
+          </div>
+          <div>
+            <dt>最近出现</dt>
+            <dd>{{ formatTime(alert.last_seen_at) }}</dd>
+          </div>
+          <div>
+            <dt>Resolved</dt>
+            <dd>{{ formatTime(alert.resolved_at) }}</dd>
+          </div>
+          <div>
+            <dt>Provenance</dt>
+            <dd>{{ alert.migrated_legacy ? "legacy_automatic_ingress" : "native Alert" }}</dd>
+          </div>
         </dl>
       </section>
 
-      <section class="detail-section" aria-labelledby="context-links-heading">
-        <header><div><p class="eyebrow">Context Links</p><h2 id="context-links-heading">继续调查</h2></div></header>
-        <nav class="context-links" aria-label="Alert Context Links">
-          <RouterLink v-for="link in contextLinks" :key="link.path" :to="{ path: link.path, query: link.query }">{{ link.label }}<ExternalLink :size="15" aria-hidden="true" /></RouterLink>
-          <RouterLink v-for="link in alert.incident_links" :key="link.id" :to="{ name: 'incident-detail', params: { incidentId: link.incident_id } }">Incident {{ shortID(link.incident_id) }}<ExternalLink :size="15" aria-hidden="true" /></RouterLink>
+      <section
+        class="alert-detail-section"
+        aria-labelledby="alert-context-links"
+      >
+        <header>
+          <div>
+            <span class="alert-section-eyebrow">Context</span>
+            <h2 id="alert-context-links">
+              继续调查
+            </h2>
+          </div>
+        </header>
+        <nav
+          class="alert-link-grid"
+          aria-label="Alert context links"
+        >
+          <UButton
+            v-for="link in contextLinks"
+            :key="link.path"
+            color="neutral"
+            variant="outline"
+            trailing-icon="i-lucide-arrow-up-right"
+            :label="link.label"
+            :to="{ path: link.path, query: link.query }"
+          />
+          <UButton
+            color="primary"
+            variant="outline"
+            icon="i-lucide-bot"
+            label="Agent Workspace"
+            :to="agentLocation"
+          />
+          <UButton
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-settings-2"
+            label="Alertmanager 配置"
+            to="/settings#providers"
+          />
         </nav>
       </section>
 
-      <section class="detail-section" aria-labelledby="incident-links-heading">
-        <header><div><p class="eyebrow">Relationships</p><h2 id="incident-links-heading">Investigation 与 Incident</h2></div></header>
-        <p v-if="alert.incident_links.length === 0" class="empty-line">Alert 尚未关联 Incident。</p>
-        <div v-else class="relation-table" role="region" aria-label="Alert Incident relationships" tabindex="0">
-          <table><thead><tr><th>Incident</th><th>状态</th><th>Cycle</th><th>Provenance</th><th>Configuration Revision / Policy</th></tr></thead><tbody><tr v-for="link in alert.incident_links" :key="link.id"><td><RouterLink :to="{ name: 'incident-detail', params: { incidentId: link.incident_id } }">{{ link.incident_id }}</RouterLink></td><td>{{ link.incident_status }}</td><td>{{ link.incident_cycle }}</td><td>{{ provenanceLabel(link.provenance) }}</td><td><code>{{ link.configuration_revision_id || "Owner command" }}</code><code v-if="link.escalation_policy_id">{{ link.escalation_policy_id }}</code></td></tr></tbody></table>
+      <section
+        class="alert-detail-section"
+        aria-labelledby="alert-relations"
+      >
+        <header>
+          <div>
+            <span class="alert-section-eyebrow">Relationships</span>
+            <h2 id="alert-relations">
+              Incident 与 Investigation
+            </h2>
+          </div>
+        </header>
+        <WorkspaceState
+          v-if="!alert.incident_links.length && !alert.investigations.length"
+          kind="empty"
+          title="尚无 Incident 或 Investigation"
+          description="Alert 仍可独立 acknowledge 或 silence。"
+        />
+        <div
+          v-else
+          class="alert-relations"
+        >
+          <div
+            v-if="alert.incident_links.length"
+            class="alert-relation-table"
+            role="region"
+            aria-label="Alert Incident relationships"
+            tabindex="0"
+          >
+            <table>
+              <thead>
+                <tr>
+                  <th>Incident</th>
+                  <th>状态</th>
+                  <th>Cycle</th>
+                  <th>Provenance</th>
+                  <th>Configuration Revision / Policy</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="link in alert.incident_links"
+                  :key="link.id"
+                >
+                  <td>
+                    <UButton
+                      color="neutral"
+                      variant="link"
+                      trailing-icon="i-lucide-arrow-up-right"
+                      :label="shortID(link.incident_id)"
+                      :to="{ name: 'incident-detail', params: { incidentId: link.incident_id } }"
+                    />
+                  </td>
+                  <td>{{ link.incident_status }}</td>
+                  <td>{{ link.incident_cycle }}</td>
+                  <td>{{ provenanceLabel(link.provenance) }}</td>
+                  <td>
+                    <code>{{ link.configuration_revision_id || "Owner command" }}</code>
+                    <code v-if="link.escalation_policy_id">{{ link.escalation_policy_id }}</code>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div
+            v-if="alert.investigations.length"
+            class="alert-investigation-links"
+          >
+            <UButton
+              v-for="run in alert.investigations"
+              :key="run.id"
+              color="neutral"
+              variant="outline"
+              icon="i-lucide-bot"
+              :label="`Investigation ${shortID(run.id)} · ${run.status}`"
+              :to="{ name: 'agent', query: { investigation: run.id, alert: alert.id, incident: run.incident_id, resource: alert.target_name } }"
+            />
+          </div>
         </div>
       </section>
 
-      <section class="detail-section" aria-labelledby="signals-heading">
-        <header><div><p class="eyebrow">Source Facts</p><h2 id="signals-heading">Signals</h2></div><span>{{ detail.signals.length }}</span></header>
-        <ol class="signal-list">
-          <li v-for="signal in detail.signals" :key="signal.id">
-            <header><AlertBadges :status="signal.status" :severity="signal.severity" /><time :datetime="signal.occurred_at">{{ formatTime(signal.occurred_at) }}</time></header>
+      <section
+        class="alert-detail-section"
+        aria-labelledby="alert-provider-facts"
+      >
+        <header>
+          <div>
+            <span class="alert-section-eyebrow">Provider</span>
+            <h2 id="alert-provider-facts">
+              Alertmanager facts
+            </h2>
+          </div>
+        </header>
+        <dl class="alert-facts-grid">
+          <div>
+            <dt>Provider source</dt>
+            <dd>{{ alert.source }}</dd>
+          </div>
+          <div>
+            <dt>Silence ID</dt>
+            <dd>{{ alert.silence?.id || "无" }}</dd>
+          </div>
+          <div>
+            <dt>Provider silence ID</dt>
+            <dd>{{ alert.silence?.provider_silence_id || "未返回" }}</dd>
+          </div>
+          <div>
+            <dt>Configuration revision</dt>
+            <dd>{{ alert.silence?.configuration_revision_id || "未关联" }}</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section
+        class="alert-detail-section"
+        aria-labelledby="alert-signals"
+      >
+        <header>
+          <div>
+            <span class="alert-section-eyebrow">Source Facts</span>
+            <h2 id="alert-signals">
+              Signals
+            </h2>
+          </div>
+          <UBadge
+            color="neutral"
+            variant="outline"
+            :label="String(detail.signals.length)"
+          />
+        </header>
+        <WorkspaceState
+          v-if="!detail.signals.length"
+          kind="empty"
+          title="没有 Signal 投影"
+          description="当前 Alert 详情未返回来源 Signal。"
+        />
+        <ol
+          v-else
+          class="alert-signal-list"
+        >
+          <li
+            v-for="signal in detail.signals"
+            :key="signal.id"
+          >
+            <header>
+              <AlertBadges
+                :status="signal.status"
+                :severity="signal.severity"
+              />
+              <time :datetime="signal.occurred_at">{{ formatTime(signal.occurred_at) }}</time>
+            </header>
             <strong>{{ signal.summary }}</strong>
-            <dl><div><dt>Signal ID</dt><dd>{{ signal.id }}</dd></div><div><dt>Source event</dt><dd>{{ signal.source_event_id }}</dd></div><div><dt>Alert instance</dt><dd>{{ signal.alert_instance_key }}</dd></div><div><dt>Provenance</dt><dd>{{ provenanceLabel(signal.provenance) }}</dd></div></dl>
-            <details><summary>Labels 与 annotations</summary><pre>{{ JSON.stringify({ labels: signal.labels, annotations: signal.annotations }, null, 2) }}</pre></details>
+            <dl>
+              <div>
+                <dt>Signal ID</dt>
+                <dd>{{ signal.id }}</dd>
+              </div>
+              <div>
+                <dt>Source event</dt>
+                <dd>{{ signal.source_event_id }}</dd>
+              </div>
+              <div>
+                <dt>Alert instance</dt>
+                <dd>{{ signal.alert_instance_key }}</dd>
+              </div>
+              <div>
+                <dt>Provenance</dt>
+                <dd>{{ provenanceLabel(signal.provenance) }}</dd>
+              </div>
+            </dl>
+            <details>
+              <summary>Labels 与 annotations</summary>
+              <pre>{{ JSON.stringify({ labels: signal.labels, annotations: signal.annotations }, null, 2) }}</pre>
+            </details>
           </li>
         </ol>
       </section>
 
-      <section class="detail-section" aria-labelledby="timeline-heading">
-        <header><div><p class="eyebrow">Audit</p><h2 id="timeline-heading">Timeline</h2></div><span>{{ detail.events.length }}</span></header>
-        <ol class="timeline-list">
-          <li v-for="event in detail.events" :key="event.id"><span class="timeline-mark" aria-hidden="true"></span><div><header><strong>{{ event.type }}</strong><time :datetime="event.occurred_at">{{ formatTime(event.occurred_at) }}</time></header><p>{{ event.summary }}</p><small>{{ event.actor_type }} / {{ event.actor_id }}</small><details><summary>Metadata</summary><pre>{{ JSON.stringify(event.metadata, null, 2) }}</pre></details></div></li>
+      <section
+        class="alert-detail-section"
+        aria-labelledby="alert-timeline"
+      >
+        <header>
+          <div>
+            <span class="alert-section-eyebrow">Audit</span>
+            <h2 id="alert-timeline">
+              Timeline
+            </h2>
+          </div>
+          <UBadge
+            color="neutral"
+            variant="outline"
+            :label="String(detail.events.length)"
+          />
+        </header>
+        <WorkspaceState
+          v-if="!detail.events.length"
+          kind="empty"
+          title="没有 Alert event"
+          description="当前详情投影没有可展示的状态历史。"
+        />
+        <ol
+          v-else
+          class="alert-timeline"
+        >
+          <li
+            v-for="event in detail.events"
+            :key="event.id"
+          >
+            <span
+              class="alert-timeline-mark"
+              aria-hidden="true"
+            />
+            <div>
+              <header>
+                <strong>{{ event.type }}</strong>
+                <time :datetime="event.occurred_at">{{ formatTime(event.occurred_at) }}</time>
+              </header>
+              <p>{{ event.summary }}</p>
+              <small>{{ event.actor_type }} / {{ event.actor_id }}</small>
+              <details>
+                <summary>Metadata</summary>
+                <pre>{{ JSON.stringify(event.metadata, null, 2) }}</pre>
+              </details>
+            </div>
+          </li>
         </ol>
       </section>
     </template>
+
+    <UModal
+      :open="Boolean(command)"
+      :title="commandDefinition.title"
+      :description="commandDefinition.description"
+      :dismissible="!commandPending"
+      :close="!commandPending"
+      @update:open="updateCommandOpen"
+    >
+      <template #body>
+        <div class="alert-command-dialog">
+          <UAlert
+            :color="commandDefinition.color === 'primary' ? 'info' : commandDefinition.color"
+            variant="soft"
+            :icon="commandDefinition.icon"
+            :title="commandDefinition.title"
+            :description="commandDefinition.description"
+          />
+          <dl>
+            <div>
+              <dt>Target</dt>
+              <dd>{{ alert?.target_kind }}/{{ alert?.namespace }}/{{ alert?.target_name }}</dd>
+            </div>
+            <div>
+              <dt>Expected version</dt>
+              <dd><code translate="no">{{ commandExpectedVersion }}</code></dd>
+            </div>
+            <div>
+              <dt>Idempotency Key</dt>
+              <dd><code translate="no">{{ commandIdempotencyKey }}</code></dd>
+            </div>
+            <div v-if="command === 'silence'">
+              <dt>恢复</dt>
+              <dd>到期自动解除，也可提前结束；不会改变 firing 状态。</dd>
+            </div>
+            <div v-if="command === 'expire-silence'">
+              <dt>后果</dt>
+              <dd>Provider 通知恢复；当前 Alert 与 Incident 状态保持不变。</dd>
+            </div>
+          </dl>
+          <UForm
+            :state="{ reason: commandReason, duration: commandDuration, incident: commandIncidentID }"
+            @submit="submitCommand"
+          >
+            <UFormField
+              v-if="command === 'silence'"
+              label="Silence 时长"
+              name="duration"
+            >
+              <USelect
+                v-model="commandDuration"
+                :items="silenceDurationItems"
+                value-key="value"
+              />
+            </UFormField>
+            <UFormField
+              v-if="command === 'attach-incident'"
+              label="Incident ID"
+              name="incident"
+              required
+              :error="commandIncidentID.trim() && !isAlertPublicID(commandIncidentID.trim()) ? '请输入完整 public UUID。' : undefined"
+            >
+              <UInput
+                v-model="commandIncidentID"
+                icon="i-lucide-siren"
+                maxlength="128"
+                autocomplete="off"
+                spellcheck="false"
+                placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+              />
+            </UFormField>
+            <UFormField
+              v-if="commandDefinition.needsReason"
+              label="审计原因"
+              name="reason"
+              required
+            >
+              <UTextarea
+                v-model="commandReason"
+                :rows="4"
+                maxlength="1024"
+                autoresize
+              />
+            </UFormField>
+          </UForm>
+          <ApiErrorNotice
+            v-if="commandError"
+            :error="commandError"
+            fallback="Alert 命令失败；输入、Expected version 与 Idempotency Key 已保留。"
+            title="命令未完成"
+          />
+        </div>
+      </template>
+      <template #footer>
+        <div class="alert-command-actions">
+          <UButton
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-arrow-left"
+            label="取消"
+            :disabled="commandPending"
+            @click="closeCommand"
+          />
+          <UButton
+            :color="commandDefinition.color"
+            :icon="commandDefinition.icon"
+            :label="commandError ? `使用同一 Idempotency Key 重试` : commandDefinition.confirmLabel"
+            :loading="commandPending"
+            :disabled="!commandReady"
+            @click="submitCommand"
+          />
+        </div>
+      </template>
+    </UModal>
   </article>
 </template>
 
 <style scoped>
-.alert-detail-view { display: grid; width: min(100%, var(--co-content-max-width)); min-width: 0; margin: 0 auto; gap: var(--co-space-5); }
-.back-link { display: inline-flex; width: fit-content; min-height: 42px; align-items: center; gap: var(--co-space-2); color: var(--co-action-primary); font-size: 13px; font-weight: 750; }
-.back-link:hover { color: var(--co-action-hover); text-decoration: underline; }
-.detail-heading, .command-surface > header, .detail-section > header { display: flex; min-width: 0; align-items: flex-end; justify-content: space-between; gap: var(--co-space-4); }
-.detail-heading h1, .command-surface h2, .detail-section h2 { margin: 0; }
-.detail-heading h1 { max-width: 34ch; overflow-wrap: anywhere; font-size: 30px; }
-.detail-heading p:not(.eyebrow) { margin: var(--co-space-2) 0 0; color: var(--co-text-secondary); overflow-wrap: anywhere; }
-.heading-state { display: flex; flex: 0 0 auto; align-items: center; gap: var(--co-space-3); color: var(--co-text-muted); }
-.eyebrow { margin: 0 0 var(--co-space-2); color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 11px; font-weight: 750; text-transform: uppercase; }
-.primary-action, .secondary-action, .icon-action { display: inline-flex; min-height: 42px; align-items: center; justify-content: center; gap: var(--co-space-2); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); cursor: pointer; font-size: 12px; font-weight: 750; }
-.primary-action { padding: 0 var(--co-space-4); border-color: var(--co-action-primary); color: var(--co-text-on-action); background: var(--co-action-primary); }
-.secondary-action { padding: 0 var(--co-space-3); color: var(--co-text-primary); background: var(--co-bg-surface); }
-.icon-action { width: 42px; flex: 0 0 42px; padding: 0; color: var(--co-text-secondary); background: var(--co-bg-surface); }
-button:hover { border-color: var(--co-border-strong); }
-button:disabled, select:disabled { cursor: not-allowed; opacity: .55; }
-.message-band { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: var(--co-space-3); padding: var(--co-space-4); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-panel); color: var(--co-text-secondary); background: var(--co-bg-surface); overflow-wrap: anywhere; }
-.message-band.is-error { border-color: var(--co-status-critical-border); color: var(--co-status-critical-fg); background: var(--co-status-critical-bg); }
-.message-band.is-warning { border-color: var(--co-status-warning-border); color: var(--co-status-warning-fg); background: var(--co-status-warning-bg); }
-.message-band .secondary-action { margin-left: auto; }
-.command-surface, .detail-section { display: grid; min-width: 0; gap: var(--co-space-4); padding-block: var(--co-space-5); border-block: 1px solid var(--co-border-default); }
-.command-surface h2, .detail-section h2 { font-size: 20px; }
-.command-row { display: flex; min-width: 0; flex-wrap: wrap; align-items: end; gap: var(--co-space-2); }
-.duration-select { display: grid; min-width: 130px; gap: 4px; color: var(--co-text-muted); font-size: 10px; font-weight: 700; }
-.duration-select select, .attach-row input { width: 100%; min-width: 0; min-height: 42px; padding: 0 var(--co-space-3); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); color: var(--co-text-primary); background: var(--co-bg-surface); }
-.attach-row { display: grid; grid-template-columns: minmax(260px, 520px) auto; align-items: end; gap: var(--co-space-2); }
-.attach-row label { display: grid; gap: 4px; color: var(--co-text-muted); font-size: 10px; font-weight: 700; }
-.facet-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-block: 1px solid var(--co-border-default); background: var(--co-bg-surface); }
-.facet-strip div { display: grid; min-width: 0; gap: 2px; padding: var(--co-space-4); border-right: 1px solid var(--co-border-default); }
-.facet-strip div:last-child { border-right: 0; }
-.facet-strip span, .facet-strip small { color: var(--co-text-muted); font-size: 10px; }
-.facet-strip strong, .facet-strip small { overflow-wrap: anywhere; }
-.facts-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; border: 1px solid var(--co-border-default); background: var(--co-bg-surface); }
-.facts-grid div { min-width: 0; padding: var(--co-space-3); border-right: 1px solid var(--co-border-default); border-bottom: 1px solid var(--co-border-default); }
-.facts-grid dt { color: var(--co-text-muted); font-size: 10px; }
-.facts-grid dd { margin: 3px 0 0; overflow-wrap: anywhere; font-size: 11px; font-weight: 700; }
-.context-links { display: flex; min-width: 0; flex-wrap: wrap; gap: var(--co-space-2); }
-.context-links a { display: inline-flex; min-height: 38px; align-items: center; gap: var(--co-space-2); padding: 0 var(--co-space-3); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); color: var(--co-action-primary); background: var(--co-bg-surface); font-size: 12px; font-weight: 750; }
-.context-links a:hover { border-color: var(--co-action-primary); background: var(--co-bg-active); }
-.empty-line { margin: 0; padding: var(--co-space-5); color: var(--co-text-muted); text-align: center; }
-.relation-table { min-width: 0; overflow-x: auto; }
-table { width: 100%; min-width: 920px; border-collapse: collapse; background: var(--co-bg-surface); font-size: 11px; }
-th, td { padding: var(--co-space-3); border-bottom: 1px solid var(--co-border-default); text-align: left; vertical-align: top; }
-th { color: var(--co-text-muted); font-size: 10px; text-transform: uppercase; }
-td a { color: var(--co-action-primary); font-family: var(--co-font-mono); }
-td code { display: block; max-width: 300px; overflow: hidden; color: var(--co-text-muted); text-overflow: ellipsis; white-space: nowrap; }
-.detail-section > header > span { color: var(--co-text-muted); font-family: var(--co-font-mono); }
-.signal-list, .timeline-list { display: grid; gap: var(--co-space-2); margin: 0; padding: 0; list-style: none; }
-.signal-list > li { display: grid; min-width: 0; gap: var(--co-space-3); padding: var(--co-space-4); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-panel); background: var(--co-bg-surface); }
-.signal-list > li > header, .timeline-list header { display: flex; align-items: center; justify-content: space-between; gap: var(--co-space-3); }
-.signal-list time, .timeline-list time { color: var(--co-text-muted); font-size: 11px; }
-.signal-list dl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; }
-.signal-list dl div { min-width: 0; padding: var(--co-space-2); border-left: 1px solid var(--co-border-default); }
-.signal-list dt { color: var(--co-text-muted); font-size: 10px; }
-.signal-list dd { margin: 2px 0 0; overflow-wrap: anywhere; font-family: var(--co-font-mono); font-size: 10px; }
-details summary { width: fit-content; color: var(--co-action-primary); cursor: pointer; font-size: 11px; font-weight: 700; }
-pre { max-height: 320px; margin: var(--co-space-2) 0 0; padding: var(--co-space-3); overflow: auto; border: 1px solid var(--co-border-default); color: var(--co-text-secondary); background: var(--co-bg-subtle); font-size: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.timeline-list > li { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: var(--co-space-2); }
-.timeline-list > li > div { min-width: 0; padding: var(--co-space-3) var(--co-space-4); border-left: 1px solid var(--co-border-default); background: var(--co-bg-surface); }
-.timeline-mark { width: 9px; height: 9px; margin-top: 17px; border: 2px solid var(--co-action-primary); border-radius: 50%; background: var(--co-bg-canvas); }
-.timeline-list p { margin: var(--co-space-1) 0; color: var(--co-text-secondary); overflow-wrap: anywhere; }
-.timeline-list small { color: var(--co-text-muted); }
-@media (max-width: 1050px) { .facet-strip, .facts-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .facet-strip div:nth-child(2) { border-right: 0; } .facet-strip div:nth-child(-n+2) { border-bottom: 1px solid var(--co-border-default); } .signal-list dl { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 767px) {
-  .detail-heading { align-items: flex-start; flex-direction: column; }
-  .detail-heading h1 { font-size: 24px; }
-  .command-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .command-row > * { width: 100%; min-width: 0; }
-  .duration-select select, .attach-row input { font-size: 16px; }
-  .attach-row { grid-template-columns: 1fr; }
-  .facet-strip, .facts-grid, .signal-list dl { grid-template-columns: 1fr; }
-  .facet-strip div { border-right: 0; border-bottom: 1px solid var(--co-border-default); }
-  .signal-list dl div { border-top: 1px solid var(--co-border-default); border-left: 0; }
-  .signal-list > li > header, .timeline-list header { align-items: flex-start; flex-direction: column; }
+.alert-detail-view {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: var(--co-space-4);
 }
-@media (max-width: 420px) { .command-row { grid-template-columns: 1fr; } }
+
+.alert-command-surface,
+.alert-detail-section {
+  display: grid;
+  min-width: 0;
+  gap: var(--co-space-4);
+  padding-block: var(--co-space-4);
+  border-block: 1px solid var(--co-border-default);
+}
+
+.alert-command-surface > header,
+.alert-detail-section > header,
+.alert-signal-list > li > header,
+.alert-timeline header {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--co-space-3);
+}
+
+.alert-command-surface h2,
+.alert-detail-section h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.alert-command-surface > header p {
+  margin: 0;
+  color: var(--co-text-muted);
+  font-size: 11px;
+}
+
+.alert-section-eyebrow {
+  display: block;
+  margin-bottom: var(--co-space-1);
+  color: var(--co-text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.alert-command-grid,
+.alert-link-grid,
+.alert-investigation-links {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: var(--co-space-2);
+}
+
+.alert-facet-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+  border-block: 1px solid var(--co-border-default);
+  background: var(--co-bg-surface);
+}
+
+.alert-facet-strip > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+  padding: var(--co-space-3) var(--co-space-4);
+  border-right: 1px solid var(--co-border-default);
+}
+
+.alert-facet-strip > div:last-child { border-right: 0; }
+.alert-facet-strip dt,
+.alert-facet-strip small { color: var(--co-text-muted); font-size: 10px; }
+.alert-facet-strip dd { margin: 0; font-weight: 700; }
+.alert-facet-strip dd,
+.alert-facet-strip small { overflow-wrap: anywhere; }
+
+.alert-facts-grid,
+.alert-command-identity,
+.alert-command-dialog dl {
+  display: grid;
+  min-width: 0;
+  margin: 0;
+}
+
+.alert-facts-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.alert-facts-grid > div {
+  min-width: 0;
+  padding: var(--co-space-3);
+  border-right: 1px solid var(--co-border-default);
+  border-bottom: 1px solid var(--co-border-default);
+  background: var(--co-bg-surface);
+}
+
+.alert-facts-grid dt,
+.alert-command-identity dt,
+.alert-command-dialog dt { color: var(--co-text-muted); font-size: 10px; }
+.alert-facts-grid dd,
+.alert-command-identity dd,
+.alert-command-dialog dd {
+  min-width: 0;
+  margin: var(--co-space-1) 0 0;
+  overflow-wrap: anywhere;
+}
+.alert-facts-grid dd,
+.alert-command-identity dd { font-family: var(--co-font-mono); font-size: 10px; }
+
+.alert-command-identity { gap: var(--co-space-1); }
+.alert-command-identity > div,
+.alert-command-dialog dl > div {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 132px minmax(0, 1fr);
+  gap: var(--co-space-2);
+  padding: var(--co-space-2) 0;
+  border-bottom: 1px solid var(--co-border-default);
+}
+
+.alert-relations { display: grid; min-width: 0; gap: var(--co-space-3); }
+.alert-relation-table { min-width: 0; overflow-x: auto; }
+.alert-relation-table table {
+  width: 100%;
+  min-width: 900px;
+  border-collapse: collapse;
+  background: var(--co-bg-surface);
+  font-size: 11px;
+}
+.alert-relation-table th,
+.alert-relation-table td {
+  padding: var(--co-space-2) var(--co-space-3);
+  border-bottom: 1px solid var(--co-border-default);
+  text-align: left;
+  vertical-align: middle;
+}
+.alert-relation-table th { color: var(--co-text-muted); font-size: 10px; }
+.alert-relation-table code { display: block; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.alert-signal-list,
+.alert-timeline {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.alert-signal-list { gap: var(--co-space-2); }
+.alert-signal-list > li {
+  display: grid;
+  min-width: 0;
+  gap: var(--co-space-3);
+  padding: var(--co-space-4);
+  border: 1px solid var(--co-border-default);
+  border-radius: var(--co-radius-panel);
+  background: var(--co-bg-surface);
+}
+.alert-signal-list time,
+.alert-timeline time,
+.alert-timeline small { color: var(--co-text-muted); font-size: 10px; }
+.alert-signal-list dl {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0;
+}
+.alert-signal-list dl > div { min-width: 0; padding: var(--co-space-2); border-left: 1px solid var(--co-border-default); }
+.alert-signal-list dt { color: var(--co-text-muted); font-size: 10px; }
+.alert-signal-list dd { margin: 2px 0 0; overflow-wrap: anywhere; font-family: var(--co-font-mono); font-size: 10px; }
+
+.alert-timeline > li {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: var(--co-space-2);
+}
+.alert-timeline > li > div {
+  min-width: 0;
+  padding: var(--co-space-3) var(--co-space-4);
+  border-left: 1px solid var(--co-border-default);
+  background: var(--co-bg-surface);
+}
+.alert-timeline-mark {
+  width: 9px;
+  height: 9px;
+  margin-top: 16px;
+  border: 2px solid var(--co-action-primary);
+  border-radius: 50%;
+  background: var(--co-bg-canvas);
+}
+.alert-timeline p { margin: var(--co-space-1) 0; color: var(--co-text-secondary); overflow-wrap: anywhere; }
+
+details summary { width: fit-content; color: var(--co-action-primary); cursor: pointer; font-size: 11px; font-weight: 700; }
+pre {
+  max-height: 320px;
+  margin: var(--co-space-2) 0 0;
+  padding: var(--co-space-3);
+  overflow: auto;
+  border: 1px solid var(--co-border-default);
+  color: var(--co-text-secondary);
+  background: var(--co-bg-subtle);
+  font-size: 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.alert-command-dialog { display: grid; min-width: 0; gap: var(--co-space-4); }
+.alert-command-dialog dl { gap: var(--co-space-1); }
+.alert-command-actions { display: flex; width: 100%; justify-content: flex-end; gap: var(--co-space-2); }
+
+@media (max-width: 1024px) {
+  .alert-facet-strip,
+  .alert-facts-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .alert-facet-strip > div:nth-child(2) { border-right: 0; }
+  .alert-facet-strip > div:nth-child(-n+2) { border-bottom: 1px solid var(--co-border-default); }
+  .alert-signal-list dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 767px) {
+  .alert-command-surface > header,
+  .alert-detail-section > header,
+  .alert-signal-list > li > header,
+  .alert-timeline header { flex-direction: column; }
+  .alert-facet-strip,
+  .alert-facts-grid,
+  .alert-signal-list dl { grid-template-columns: minmax(0, 1fr); }
+  .alert-facet-strip > div { border-right: 0; border-bottom: 1px solid var(--co-border-default); }
+  .alert-signal-list dl > div { border-top: 1px solid var(--co-border-default); border-left: 0; }
+  .alert-command-actions { display: grid; grid-template-columns: minmax(0, 1fr); }
+}
 </style>
