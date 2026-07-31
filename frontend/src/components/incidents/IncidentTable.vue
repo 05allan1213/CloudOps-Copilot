@@ -224,7 +224,7 @@ defineExpose({ getRowElement, getScrollElement });
 .incident-table-identity, .incident-table-stack { display: grid; min-width: 0; gap: 3px; }
 .incident-table-identity strong, .incident-table-stack strong { color: var(--co-text-primary); font-size: 12px; overflow-wrap: anywhere; }
 .incident-table-identity span, .incident-table-stack span { color: var(--co-text-muted); font-size: 11px; overflow-wrap: anywhere; }
-.incident-table-inline { display: inline-flex !important; align-items: center; gap: 5px; }
+span.incident-table-inline { display: inline-flex; align-items: center; gap: 5px; }
 time { color: var(--co-text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
 @media (max-width: 767px) {
   .results-footer { align-items: stretch; flex-direction: column; }

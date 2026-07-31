@@ -365,7 +365,7 @@ onBeforeUnmount(() => window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT
               block
               class="overview-entity-row incident-row"
               :class="`is-${incident.severity}`"
-              :to="{ name: 'incident-detail', params: { incidentId: incident.id } }"
+              :to="{ name: 'incidents', query: { selected: incident.id } }"
             >
               <span class="entity-copy">
                 <strong>{{ incidentTitle(incident) }}</strong>
@@ -402,7 +402,7 @@ onBeforeUnmount(() => window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT
               color="neutral"
               variant="ghost"
               :label="incidentTitle(incident)"
-              :to="{ name: 'incident-detail', params: { incidentId: incident.id } }"
+              :to="{ name: 'incidents', query: { selected: incident.id } }"
             />
           </div>
 

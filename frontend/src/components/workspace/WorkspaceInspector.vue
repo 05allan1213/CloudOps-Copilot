@@ -59,6 +59,11 @@ function restoreTrigger() {
 </script>
 
 <template>
+  <span
+    v-if="open"
+    class="workspace-inspector-push-anchor"
+    hidden
+  />
   <USlideover
     :open="open"
     class="workspace-inspector-surface"
@@ -125,6 +130,12 @@ function restoreTrigger() {
 </template>
 
 <style>
+.workspace-inspector-push-anchor { display: none; }
+
+#main-content > .route-ui-boundary {
+  transition: margin-right var(--co-motion-standard) var(--co-ease-out);
+}
+
 .workspace-inspector-surface {
   top: var(--co-header-height);
   bottom: 0;
@@ -150,5 +161,15 @@ function restoreTrigger() {
 
 @media (max-width: 1024px) {
   .workspace-inspector-surface { width: min(var(--co-inspector-width), calc(100vw - var(--co-sidebar-rail-width))); }
+}
+
+@media (min-width: 1181px) {
+  #main-content:has(.workspace-inspector-push-anchor) > .route-ui-boundary {
+    margin-right: var(--co-inspector-max-width);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #main-content > .route-ui-boundary { transition: none; }
 }
 </style>

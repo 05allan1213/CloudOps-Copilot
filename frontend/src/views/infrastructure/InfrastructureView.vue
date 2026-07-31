@@ -50,7 +50,15 @@ interface ContextLinkRow {
 
 const route = useRoute();
 const router = useRouter();
-const inspector = useWorkspaceInspector({ selectedKey: "resource" });
+const resourceTable = ref<{
+  getRowElement: (rowID: string) => HTMLElement | null;
+  getScrollElement: () => HTMLElement | null;
+} | null>(null);
+const inspector = useWorkspaceInspector({
+  selectedKey: "resource",
+  scrollElement: () => resourceTable.value?.getScrollElement() ?? null,
+  resolveTrigger: (resourceID) => resourceTable.value?.getRowElement(resourceID) ?? null,
+});
 const UBadge = resolveComponent("UBadge");
 const bootstrap = ref<BootstrapSnapshot | null>(null);
 const topology = ref<TopologySnapshot | null>(null);
@@ -69,6 +77,8 @@ const searchValue = ref(queryValue(route.query.search));
 const resourceType = ref<InfrastructureResourceType>(resourceTypeForKinds(queryValues(route.query.kind)));
 let controller: AbortController | undefined;
 let requestToken = 0;
+let previousWorkspaceSignature = "";
+let previousSelection = "";
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
   dateStyle: "medium",
@@ -430,7 +440,24 @@ watch(() => route.fullPath, () => {
   namespaceValue.value = queryValue(route.query.namespace);
   searchValue.value = queryValue(route.query.search);
   resourceType.value = resourceTypeForKinds(queryValues(route.query.kind));
-  void loadWorkspace();
+  const workspaceSignature = JSON.stringify(currentQuery());
+  const selection = selectedResourceID.value;
+  const selectionOnly = previousWorkspaceSignature === workspaceSignature
+    && previousSelection !== selection;
+  const closedOnly = selectionOnly
+    && Boolean(previousSelection)
+    && !selection;
+  previousWorkspaceSignature = workspaceSignature;
+  previousSelection = selection;
+  if (closedOnly) {
+    detail.value = null;
+    events.value = null;
+    detailError.value = null;
+    eventError.value = null;
+    detailLoading.value = false;
+    return;
+  }
+  void loadWorkspace(selectionOnly);
 }, { immediate: true });
 
 function handleOperationalScopeChanged() {
@@ -630,6 +657,7 @@ onBeforeUnmount(() => {
         </div>
       </header>
       <DenseDataTable
+        ref="resourceTable"
         :rows="resources"
         :columns="columns"
         :row-key="(resource: ResourceRow) => resource.id"

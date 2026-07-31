@@ -33,9 +33,10 @@ function applyTheme(mode: ThemeMode) {
   html.classList.add(mode);
   html.setAttribute("data-theme", mode);
   html.style.colorScheme = mode;
+  const canvasColor = getComputedStyle(html).getPropertyValue("--co-bg-canvas").trim();
   document
     .querySelector('meta[name="theme-color"]')
-    ?.setAttribute("content", mode === "dark" ? "#0B0F14" : "#F4F6F8");
+    ?.setAttribute("content", canvasColor || (mode === "dark" ? "black" : "white"));
 }
 
 export function initializeTheme() {

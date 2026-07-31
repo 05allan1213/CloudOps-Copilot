@@ -49,7 +49,6 @@ let headingObserverTimeout: number | undefined;
 const pageTitle = computed(() => (typeof route.meta.title === "string" ? route.meta.title : ""));
 const isFullBleed = computed(() => route.meta.fullBleed === true);
 const sidebarRail = computed(() => sidebarCollapsed.value || compactDesktop.value);
-const routeUIOwner = computed(() => route.meta.uiOwner === "nuxt-ui" ? "nuxt-ui" : "legacy-element-plus");
 const notificationSlideoverUI = {
   overlay: "notification-slideover-overlay",
   content: "notification-slideover",
@@ -363,8 +362,6 @@ onBeforeUnmount(() => {
             <div
               :key="route.path"
               class="route-ui-boundary"
-              :class="`route-ui-boundary--${routeUIOwner}`"
-              :data-ui-owner="routeUIOwner"
             >
               <component :is="Component" />
             </div>

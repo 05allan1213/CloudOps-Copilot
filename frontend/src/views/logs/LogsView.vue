@@ -610,7 +610,6 @@ onBeforeUnmount(() => {
 <template>
   <section
     class="logs-workspace"
-    :class="{ 'has-inspector': inspectedEntryID }"
     aria-labelledby="logs-heading"
   >
     <WorkspaceHeader
@@ -946,7 +945,6 @@ onBeforeUnmount(() => {
   margin: 0 auto;
   padding: var(--co-space-5) clamp(var(--co-space-4), 2.5vw, var(--co-space-8)) var(--co-space-10);
 }
-.logs-workspace.has-inspector { transition: margin-right var(--co-motion-fast), width var(--co-motion-fast); }
 .logs-workspace code { min-width: 0; overflow-wrap: anywhere; color: var(--co-text-secondary); font-family: var(--co-font-mono); font-size: 11px; }
 .logs-workspace__grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 290px); gap: var(--co-space-6); margin-top: var(--co-space-4); }
 .logs-results { min-width: 0; }
@@ -978,16 +976,4 @@ onBeforeUnmount(() => {
   .logs-results__header > div:last-child { justify-content: flex-start; }
 }
 
-@media (min-width: 1181px) {
-  .logs-workspace.has-inspector {
-    width: auto;
-    max-width: none;
-    margin-right: var(--co-inspector-max-width);
-    margin-left: 0;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .logs-workspace.has-inspector { transition: none; }
-}
 </style>

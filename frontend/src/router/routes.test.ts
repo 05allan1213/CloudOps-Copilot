@@ -34,7 +34,7 @@ describe("CloudOps product routes", () => {
     expect(devops?.meta?.fullBleed).not.toBe(true);
   });
 
-  it("marks only Gate 4 routes as Nuxt UI owned", () => {
+  it("marks every public route as owned by the single Nuxt UI system", () => {
     const owners = Object.fromEntries(appRoutes
       .filter((route) => route.component)
       .map((route) => [route.path, route.meta?.uiOwner]));
@@ -42,7 +42,12 @@ describe("CloudOps product routes", () => {
     expect(owners["/atlas"]).toBe("nuxt-ui");
     expect(owners["/infrastructure"]).toBe("nuxt-ui");
     expect(owners["/:pathMatch(.*)*"]).toBe("nuxt-ui");
-    expect(owners["/monitoring"]).toBe("legacy-element-plus");
+    for (const path of [
+      "/monitoring", "/alerts", "/alerts/:alertId", "/logs", "/traces", "/agent",
+      "/incidents", "/incidents/:incidentId", "/devops", "/settings",
+    ]) {
+      expect(owners[path]).toBe("nuxt-ui");
+    }
   });
 
   it("keeps Atlas hidden from the primary Workspace navigation", () => {

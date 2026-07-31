@@ -561,10 +561,10 @@ function submitDecision() {
 .decision-buttons { flex: 0 0 auto; }
 .decision-buttons button,
 .dialog-actions button { min-height: 44px; padding: 0 var(--co-space-4); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); font-weight: 700; cursor: pointer; }
-.approve-button,
-.submit-decision { border-color: var(--co-status-success-border) !important; color: var(--co-status-success-fg); background: var(--co-status-success-bg); }
-.reject-button,
-.submit-decision--reject { border-color: var(--co-status-critical-border) !important; color: var(--co-status-critical-fg); background: var(--co-status-critical-bg); }
+.decision-buttons .approve-button,
+.dialog-actions .submit-decision { border-color: var(--co-status-success-border); color: var(--co-status-success-fg); background: var(--co-status-success-bg); }
+.decision-buttons .reject-button,
+.dialog-actions .submit-decision--reject { border-color: var(--co-status-critical-border); color: var(--co-status-critical-fg); background: var(--co-status-critical-bg); }
 .decision-buttons button:hover,
 .dialog-actions button:hover { filter: brightness(.96); }
 .decision-buttons button:disabled,
@@ -584,7 +584,7 @@ function submitDecision() {
   box-shadow: var(--co-shadow-overlay);
 }
 
-.decision-dialog::backdrop { background: rgb(0 0 0 / 56%); }
+.decision-dialog::backdrop { background: var(--co-backdrop); }
 .decision-dialog > header { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: var(--co-space-4); padding: max(var(--co-space-4), env(safe-area-inset-top)) max(var(--co-space-5), env(safe-area-inset-right)) var(--co-space-4) max(var(--co-space-5), env(safe-area-inset-left)); border-bottom: 1px solid var(--co-border-default); }
 .decision-dialog h4 { margin: 2px 0 0; font-size: 18px; }
 .dialog-close { display: grid; width: 44px; height: 44px; flex: 0 0 auto; place-items: center; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); color: var(--co-text-primary); background: transparent; cursor: pointer; }
@@ -594,7 +594,7 @@ function submitDecision() {
 .dialog-body label { font-weight: 700; }
 .dialog-body textarea { width: 100%; min-height: 132px; resize: vertical; padding: var(--co-space-3); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); color: var(--co-text-primary); background: var(--co-bg-surface); font-size: 16px; }
 .dialog-body small { color: var(--co-text-muted); }
-.reason-error { color: var(--co-status-critical-fg) !important; }
+.dialog-body .reason-error { color: var(--co-status-critical-fg); }
 .dialog-actions { justify-content: flex-end; padding-top: var(--co-space-2); }
 .dialog-actions button:first-child { color: var(--co-text-secondary); background: transparent; }
 

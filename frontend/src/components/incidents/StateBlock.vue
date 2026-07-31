@@ -191,7 +191,7 @@ const role = computed(() => ["error", "forbidden", "unavailable"].includes(props
   margin-top: var(--co-space-4);
 }
 
-.state-actions :deep(.el-button) {
+.state-actions :deep(button) {
   min-height: 44px;
 }
 
