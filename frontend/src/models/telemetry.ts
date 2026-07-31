@@ -1,25 +1,63 @@
-export interface VirtualWindow {
-  start: number;
-  end: number;
-  offset: number;
-  totalHeight: number;
+export interface TelemetryResourceCandidate {
+  id: string;
+  kind: string;
+  namespace?: string;
+  name: string;
 }
 
-export function virtualWindow(
-  itemCount: number,
-  scrollTop: number,
-  viewportHeight: number,
-  rowHeight: number,
-  overscan = 6,
-): VirtualWindow {
-  if (itemCount <= 0 || viewportHeight <= 0 || rowHeight <= 0) {
-    return { start: 0, end: 0, offset: 0, totalHeight: Math.max(0, itemCount * rowHeight) };
-  }
-  const visibleStart = Math.floor(Math.max(0, scrollTop) / rowHeight);
-  const visibleEnd = Math.ceil((Math.max(0, scrollTop) + viewportHeight) / rowHeight);
-  const start = Math.max(0, visibleStart - overscan);
-  const end = Math.min(itemCount, visibleEnd + overscan);
-  return { start, end, offset: start * rowHeight, totalHeight: itemCount * rowHeight };
+export function resolveTelemetryResourceID(
+  resources: readonly TelemetryResourceCandidate[],
+  resourceID: string,
+  legacyWorkload: string,
+  namespace = "",
+): string {
+  if (resourceID && resources.some((resource) => resource.id === resourceID)) return resourceID;
+  if (!legacyWorkload) return "";
+  const normalized = legacyWorkload.toLocaleLowerCase();
+  return resources.find((resource) => {
+    if (namespace && resource.namespace !== namespace) return false;
+    const candidates = [
+      resource.id,
+      resource.name,
+      `${resource.kind}/${resource.name}`,
+      `${resource.kind.toLocaleLowerCase()}/${resource.namespace ?? ""}/${resource.name}`,
+    ];
+    return candidates.some((value) => value.toLocaleLowerCase() === normalized);
+  })?.id ?? "";
+}
+
+export function logRawValue(message: string): string {
+  return message;
+}
+
+export interface CopyableTraceSpan {
+  span_id: string;
+  parent_span_id?: string;
+  service: string;
+  name: string;
+  kind?: string;
+  start_time: string;
+  duration_ms: number;
+  status: string;
+  critical_path: boolean;
+  attributes: Record<string, string>;
+  events: Array<{ name: string; timestamp: string; attributes: Record<string, string> }>;
+}
+
+export function traceSpanRawValue(span: CopyableTraceSpan): string {
+  return JSON.stringify(span, null, 2);
+}
+
+export function traceServiceColor(service: string): string {
+  const tokens = [
+    "var(--co-action-primary)",
+    "var(--co-status-info-fg)",
+    "var(--co-status-inconclusive-fg)",
+    "var(--co-text-secondary)",
+  ];
+  let hash = 0;
+  for (const character of service) hash = ((hash << 5) - hash + character.charCodeAt(0)) | 0;
+  return tokens[Math.abs(hash) % tokens.length] ?? tokens[0];
 }
 
 export interface WaterfallPosition {
