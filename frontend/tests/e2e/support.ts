@@ -11,6 +11,7 @@ export interface FixtureOptions {
   detail?: "ready" | "loading" | "error" | "forbidden";
   sections?: "ready" | "empty" | "error" | "states" | "paged";
   sse?: "connected" | "reconnect" | "finite" | "offline";
+  notifications?: "empty" | "ready";
 }
 
 export async function configureFixture(request: APIRequestContext, options: FixtureOptions = {}) {

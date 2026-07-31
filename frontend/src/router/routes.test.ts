@@ -33,4 +33,10 @@ describe("CloudOps product routes", () => {
     expect(devops?.component).not.toBe(appRoutes.find((route) => route.path === "/settings")?.component);
     expect(devops?.meta?.fullBleed).not.toBe(true);
   });
+
+  it("marks every current component route as legacy until its migration Gate", () => {
+    const componentRoutes = appRoutes.filter((route) => route.component);
+    expect(componentRoutes.length).toBeGreaterThan(0);
+    expect(componentRoutes.every((route) => route.meta?.uiOwner === "legacy-element-plus")).toBe(true);
+  });
 });

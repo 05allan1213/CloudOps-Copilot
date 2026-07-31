@@ -4,11 +4,24 @@ export type ThemeMode = "dark" | "light";
 
 const STORAGE_KEY = "cloudops-theme";
 
+export function resolveThemePreference(stored: string | null, prefersLight: boolean): ThemeMode {
+  if (stored === "dark" || stored === "light") return stored;
+  return prefersLight ? "light" : "dark";
+}
+
+export function oppositeTheme(mode: ThemeMode): ThemeMode {
+  return mode === "dark" ? "light" : "dark";
+}
+
 function resolveInitialTheme(): ThemeMode {
   if (typeof window === "undefined") return "dark";
-  const stored = window.localStorage.getItem(STORAGE_KEY);
-  if (stored === "dark" || stored === "light") return stored;
-  return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  let stored: string | null = null;
+  try {
+    stored = window.localStorage.getItem(STORAGE_KEY);
+  } catch {
+    // System preference remains a deterministic fallback when storage is blocked.
+  }
+  return resolveThemePreference(stored, window.matchMedia("(prefers-color-scheme: light)").matches);
 }
 
 const theme = ref<ThemeMode>(resolveInitialTheme());
@@ -38,7 +51,7 @@ export function useTheme() {
   const isDark = computed(() => theme.value === "dark");
 
   function toggleTheme() {
-    theme.value = theme.value === "dark" ? "light" : "dark";
+    theme.value = oppositeTheme(theme.value);
   }
 
   return {

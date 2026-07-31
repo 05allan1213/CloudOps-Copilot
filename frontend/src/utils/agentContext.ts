@@ -20,3 +20,7 @@ export function publishAgentContext(context: AgentPageContext | null) {
 export function openAgentPanel(request: AgentOpenRequest = {}) {
   window.dispatchEvent(new CustomEvent<AgentOpenRequest>(AGENT_OPEN_EVENT, { detail: request }));
 }
+
+export function shouldStopGlobalAgent(open: boolean, routePath: string): boolean {
+  return !open && routePath !== "/agent";
+}

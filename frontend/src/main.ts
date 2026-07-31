@@ -4,7 +4,6 @@ import ui from "@nuxt/ui/vue-plugin";
 import {
   ElButton,
   ElDialog,
-  ElDrawer,
   ElDropdown,
   ElDropdownItem,
   ElDropdownMenu,
@@ -16,7 +15,6 @@ import {
 } from "element-plus";
 import "element-plus/es/components/button/style/css";
 import "element-plus/es/components/dialog/style/css";
-import "element-plus/es/components/drawer/style/css";
 import "element-plus/es/components/dropdown/style/css";
 import "element-plus/es/components/dropdown-item/style/css";
 import "element-plus/es/components/dropdown-menu/style/css";
@@ -44,7 +42,6 @@ const app = createApp(App);
 for (const component of [
   ElButton,
   ElDialog,
-  ElDrawer,
   ElDropdown,
   ElDropdownItem,
   ElDropdownMenu,

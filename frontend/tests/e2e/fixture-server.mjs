@@ -1,6 +1,6 @@
 import http from "node:http";
 
-const fixtureSchemaVersion = 3;
+const fixtureSchemaVersion = 4;
 const port = Number(process.env.CLOUDOPS_E2E_FIXTURE_PORT || 18082);
 const appOrigin = process.env.CLOUDOPS_E2E_APP_ORIGIN || "http://127.0.0.1:4173";
 const incidentID = "00000000-0000-4000-8000-000000000001";
@@ -8,6 +8,9 @@ const planID = "00000050-0000-4000-8000-000000000001";
 const deliveryID = "00000060-0000-4000-8000-000000000001";
 const scopeID = "00000070-0000-4000-8000-000000000001";
 const revisionID = "00000071-0000-4000-8000-000000000001";
+const agentRunID = "00000031-0000-4000-8000-000000000001";
+const consultationID = "00000032-0000-4000-8000-000000000001";
+const contextSnapshotID = "00000033-0000-4000-8000-000000000001";
 const defaultFixture = Object.freeze({
   command: "202",
   plan: "valid",
@@ -16,15 +19,21 @@ const defaultFixture = Object.freeze({
   detail: "ready",
   sections: "ready",
   sse: "connected",
+  notifications: "empty",
   decision: null,
 });
 const fixture = { ...defaultFixture };
+const readNotificationIDs = new Set();
 const metrics = {
   commands: [],
   listRequests: 0,
   timelineRequests: 0,
   eventConnections: 0,
   notificationEventConnections: 0,
+  notificationReadCommands: [],
+  agentReadRequests: [],
+  agentEventConnections: 0,
+  activeAgentEventConnections: 0,
   sseAttempts: 0,
   lastEventID: "",
 };
@@ -125,6 +134,184 @@ function bootstrapSnapshot() {
     scenario_state: "inactive",
     capabilities: ["operational_scope", "notifications", "incidents"],
     collected_at: at(3),
+  };
+}
+
+function settingsSnapshot() {
+  const revision = activeRevision();
+  return {
+    bootstrap: {
+      listen_boundary: "fixture-only",
+      mysql_database: "cloudops_fixture",
+      data_directory: "/fixture/data",
+      worker_management_target: "fixture-worker",
+      lifecycle: "read-only",
+    },
+    active_revision: revision,
+    history: [revision],
+    provider_health: bootstrapSnapshot().provider_health,
+  };
+}
+
+function storageStatus() {
+  return {
+    database_tables: 0,
+    configuration_count: 1,
+    notification_count: ownerNotifications().length,
+    secret_version_count: 0,
+    data_capacity_bytes: 0,
+    data_available_bytes: 0,
+    latest_backup_name: "fixture-not-applicable",
+    latest_backup_at: at(3),
+    telemetry_retention_days: activeRevision().general.telemetry_retention_days,
+  };
+}
+
+function ownerNotifications() {
+  if (fixture.notifications !== "ready") return [];
+  return [
+    {
+      id: publicID(16, 1),
+      source_type: "incident",
+      source_id: incidentID,
+      source_state: "awaiting_approval",
+      severity: "P1",
+      reason: "Checkout API 事件正在等待 Owner 审查 exact remediation Plan。",
+      context_link: contextLink("incidents", `/incidents/${incidentID}`, { zone: "decision" }),
+      read: readNotificationIDs.has(publicID(16, 1)),
+      created_at: at(20),
+    },
+    {
+      id: publicID(16, 2),
+      source_type: "provider",
+      source_id: "prometheus",
+      source_state: "partial",
+      severity: "P3",
+      reason: "Prometheus 查询窗口返回部分结果，请核对 Provider 健康明细。",
+      context_link: contextLink("settings", "/settings", { section: "providers" }),
+      read: readNotificationIDs.has(publicID(16, 2)),
+      created_at: at(10),
+    },
+  ];
+}
+
+function agentRun() {
+  return {
+    id: agentRunID,
+    subject_type: "consultation",
+    consultation_id: consultationID,
+    configuration_revision_id: revisionID,
+    context_snapshot_id: contextSnapshotID,
+    status: "completed",
+    outcome: "diagnosed",
+    uncertainty: "low",
+    objective: "核对 checkout-api 在当前 Scope 内的只读运行事实。",
+    answer: "确定性 fixture 显示查询已完成；本结果不代表真实 Provider 集成。",
+    model_provider: "fixture",
+    actual_model: "deterministic-browser-fixture",
+    prompt_version: "agent-workspace/v1",
+    tool_schema_version: "agent-tools/v1",
+    started_at: at(20),
+    completed_at: at(24),
+    created_at: at(20),
+    updated_at: at(24),
+    evidence_count: 0,
+    steps: [
+      {
+        id: publicID(34, 1),
+        sequence: 1,
+        type: "tool",
+        tool: "kubernetes.get_deployment",
+        target: "Deployment/checkout/checkout-api",
+        scope: { cluster_id: "fixture-cluster", namespace: "checkout" },
+        status: "completed",
+        result_summary: "Bounded fixture read completed without a mutation.",
+        duration_ms: 18,
+        started_at: at(21),
+        finished_at: at(22),
+        created_at: at(21),
+      },
+    ],
+    evidence_citations: [],
+    guidance_citations: [],
+    action_cards: [],
+    operation_plans: [],
+  };
+}
+
+function agentContextSnapshot() {
+  return {
+    id: contextSnapshotID,
+    consultation_id: consultationID,
+    run_id: agentRunID,
+    subject_type: "consultation",
+    configuration_revision_id: revisionID,
+    scope: operationalScope(),
+    resource_refs: [
+      {
+        id: "deployment/checkout/checkout-api",
+        kind: "Deployment",
+        namespace: "checkout",
+        name: "checkout-api",
+      },
+    ],
+    filters: { source: "gate-02-shell-fixture" },
+    time_range: { from: at(-900), to: at(900) },
+    query_definition_refs: [],
+    query_execution_refs: [],
+    evidence_refs: [],
+    content_hash: sha256("4"),
+    created_at: at(19),
+  };
+}
+
+function agentConsultationSummary() {
+  return {
+    id: consultationID,
+    title: "Checkout API 只读调查",
+    status: "open",
+    active_snapshot_id: contextSnapshotID,
+    active_run: agentRun(),
+    scope: operationalScope(),
+    message_count: 2,
+    created_at: at(18),
+    updated_at: at(24),
+  };
+}
+
+function agentConsultation() {
+  return {
+    ...agentConsultationSummary(),
+    snapshots: [agentContextSnapshot()],
+    messages: [
+      {
+        id: publicID(35, 1),
+        consultation_id: consultationID,
+        context_snapshot_id: contextSnapshotID,
+        sequence: 1,
+        role: "owner",
+        content: "检查当前 Scope 内 checkout-api 的只读运行事实。",
+        status: "completed",
+        created_at: at(20),
+        completed_at: at(20),
+        evidence_citations: [],
+        guidance_citations: [],
+      },
+      {
+        id: publicID(35, 2),
+        consultation_id: consultationID,
+        run_id: agentRunID,
+        context_snapshot_id: contextSnapshotID,
+        sequence: 2,
+        role: "assistant",
+        content: "只读 fixture 查询已完成；未执行配置、审批、交付或 Provider 写入。",
+        status: "completed",
+        created_at: at(24),
+        completed_at: at(24),
+        evidence_citations: [],
+        guidance_citations: [],
+      },
+    ],
   };
 }
 
@@ -763,10 +950,15 @@ const server = http.createServer(async (request, response) => {
       metrics.timelineRequests = 0;
       metrics.eventConnections = 0;
       metrics.notificationEventConnections = 0;
+      metrics.notificationReadCommands = [];
+      metrics.agentReadRequests = [];
+      metrics.agentEventConnections = 0;
+      metrics.activeAgentEventConnections = 0;
       metrics.sseAttempts = 0;
       metrics.lastEventID = "";
+      readNotificationIDs.clear();
     }
-    for (const key of ["command", "plan", "verification", "list", "detail", "sections", "sse"]) {
+    for (const key of ["command", "plan", "verification", "list", "detail", "sections", "sse", "notifications"]) {
       const value = url.searchParams.get(key);
       if (value) fixture[key] = value;
     }
@@ -794,8 +986,38 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === "GET" && url.pathname === "/api/v1/settings") {
+    json(request, response, 200, settingsSnapshot());
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/v1/storage-status") {
+    json(request, response, 200, storageStatus());
+    return;
+  }
+
   if (url.pathname === "/api/v1/notifications") {
-    json(request, response, 200, { items: [], unread_count: 0 });
+    const items = ownerNotifications();
+    json(request, response, 200, { items, unread_count: items.filter((item) => !item.read).length });
+    return;
+  }
+
+  const notificationReadMatch = url.pathname.match(/^\/api\/v1\/notifications\/([^/]+)\/read$/);
+  if (request.method === "POST" && notificationReadMatch) {
+    const id = decodeURIComponent(notificationReadMatch[1]);
+    readNotificationIDs.add(id);
+    metrics.notificationReadCommands.push({ operation: "read", id });
+    response.writeHead(204, cors(request));
+    response.end();
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/v1/notifications/read-all") {
+    const items = ownerNotifications();
+    const updated = items.filter((item) => !item.read).length;
+    for (const item of items) readNotificationIDs.add(item.id);
+    metrics.notificationReadCommands.push({ operation: "read-all", updated });
+    json(request, response, 200, { updated });
     return;
   }
 
@@ -813,6 +1035,81 @@ const server = http.createServer(async (request, response) => {
       activeStreams.delete(response);
       response.end();
     });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/v1/agent/investigations") {
+    metrics.agentReadRequests.push(request.url);
+    json(request, response, 200, { items: [agentRun()] });
+    return;
+  }
+
+  const agentInvestigationMatch = url.pathname.match(/^\/api\/v1\/agent\/investigations\/([^/]+)$/);
+  if (request.method === "GET" && agentInvestigationMatch) {
+    metrics.agentReadRequests.push(request.url);
+    const id = decodeURIComponent(agentInvestigationMatch[1]);
+    if (id !== agentRunID) {
+      json(request, response, 404, problem(url, 404, "INVESTIGATION_NOT_FOUND", "The fixture Investigation does not exist."));
+      return;
+    }
+    json(request, response, 200, agentRun());
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/v1/agent/consultations") {
+    metrics.agentReadRequests.push(request.url);
+    json(request, response, 200, { items: [agentConsultationSummary()] });
+    return;
+  }
+
+  const agentConsultationMatch = url.pathname.match(/^\/api\/v1\/agent\/consultations\/([^/]+)(?:\/(events))?$/);
+  if (request.method === "GET" && agentConsultationMatch) {
+    metrics.agentReadRequests.push(request.url);
+    const id = decodeURIComponent(agentConsultationMatch[1]);
+    if (id !== consultationID) {
+      json(request, response, 404, problem(url, 404, "CONSULTATION_NOT_FOUND", "The fixture Consultation does not exist."));
+      return;
+    }
+    if (!agentConsultationMatch[2]) {
+      json(request, response, 200, agentConsultation());
+      return;
+    }
+
+    metrics.agentEventConnections += 1;
+    metrics.activeAgentEventConnections += 1;
+    response.writeHead(200, {
+      ...cors(request),
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+    response.write(": connected\n\n");
+    activeStreams.add(response);
+    let closed = false;
+    response.on("close", () => {
+      if (closed) return;
+      closed = true;
+      activeStreams.delete(response);
+      metrics.activeAgentEventConnections = Math.max(0, metrics.activeAgentEventConnections - 1);
+    });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/v1/knowledge-items") {
+    metrics.agentReadRequests.push(request.url);
+    json(request, response, 200, { items: [] });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/v1/runbook-guidance") {
+    metrics.agentReadRequests.push(request.url);
+    json(request, response, 200, { items: [] });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/v1/operation-plans") {
+    metrics.agentReadRequests.push(request.url);
+    json(request, response, 200, { items: [] });
     return;
   }
 
