@@ -42,6 +42,39 @@ export function isApiError(error: unknown): error is ApiError {
   return error instanceof ApiError;
 }
 
+export interface ApiErrorDetails {
+  message: string;
+  status: number | null;
+  code: string;
+  requestID: string;
+  traceID: string;
+  idempotentReplay: boolean | null;
+  nextSteps: readonly string[];
+}
+
+export function apiErrorDetails(error: unknown, fallback: string): ApiErrorDetails {
+  if (isApiError(error)) {
+    return {
+      message: error.message,
+      status: error.status,
+      code: error.code,
+      requestID: error.requestID,
+      traceID: error.traceID,
+      idempotentReplay: error.idempotentReplay,
+      nextSteps: error.nextSteps,
+    };
+  }
+  return {
+    message: error instanceof Error && error.message ? error.message : fallback,
+    status: null,
+    code: "REQUEST_FAILED",
+    requestID: "",
+    traceID: "",
+    idempotentReplay: null,
+    nextSteps: [],
+  };
+}
+
 export async function getApiData<T>(
   url: string,
   config: AxiosRequestConfig = {},

@@ -16,4 +16,28 @@ describe("Context Link", () => {
     expect(contextLocation({ workspace: "alerts", path: "/settings", query: {}, operational_scope_id: scopeID, external: false })).toBeNull();
     expect(contextLocation({ workspace: "alerts", path: "/alerts", query: {}, operational_scope_id: scopeID, external: true })).toBeNull();
   });
+
+  it("rejects normalized path escapes, unsafe query keys, and oversized query payloads", () => {
+    expect(contextLocation({
+      workspace: "alerts",
+      path: "/alerts/%2e%2e/settings",
+      query: {},
+      operational_scope_id: scopeID,
+      external: false,
+    })).toBeNull();
+    expect(contextLocation({
+      workspace: "alerts",
+      path: "/alerts",
+      query: { "bad key": "value" },
+      operational_scope_id: scopeID,
+      external: false,
+    })).toBeNull();
+    expect(contextLocation({
+      workspace: "alerts",
+      path: "/alerts",
+      query: Object.fromEntries(Array.from({ length: 5 }, (_, index) => [`key-${index}`, "x".repeat(500)])),
+      operational_scope_id: scopeID,
+      external: false,
+    })).toBeNull();
+  });
 });

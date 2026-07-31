@@ -75,4 +75,12 @@ describe("document scroll ownership", () => {
       savedPosition,
     )).toBe(savedPosition);
   });
+
+  it("keeps the reader in place for same-Workspace Query changes", () => {
+    expect(resolveScroll(
+      location("/incidents"),
+      location("/incidents"),
+      null,
+    )).toBe(false);
+  });
 });

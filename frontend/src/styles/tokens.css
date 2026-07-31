@@ -120,9 +120,14 @@
   --co-text-content-max-width: 960px;
   --co-inspector-width: 460px;
   --co-inspector-max-width: 520px;
+  --co-confirmation-width: 620px;
   --co-control-height: 40px;
   --co-control-height-comfortable: 44px;
   --co-table-row-height: 48px;
+  --co-table-cell-max-width: 520px;
+  --co-table-viewport-min-height: 320px;
+  --co-table-viewport-max-height: 560px;
+  --co-table-viewport-compact-max-height: 480px;
   --co-severity-marker-width: 3px;
   --co-z-base: 0;
   --co-z-sticky: 20;

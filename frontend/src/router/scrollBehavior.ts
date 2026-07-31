@@ -41,5 +41,8 @@ export const appScrollBehavior: RouterScrollBehavior = (to, from, savedPosition)
   // anchor scroll and pull the document away from its current position.
   if (to.hash && to.path === from.path) return false;
   if (to.hash) return waitForAnchor(to.hash);
+  // URL-backed filters, pagination and Inspector selection must not reset the
+  // reader when only Query state changes inside the current Workspace.
+  if (to.path === from.path) return false;
   return { top: 0 };
 };
