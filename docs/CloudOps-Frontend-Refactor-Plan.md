@@ -4,6 +4,8 @@
 >
 > 生成日期：2026-07-30（Asia/Shanghai）
 >
+> Gate 4+ 实施节奏修订：2026-07-31（Asia/Shanghai），Owner 已确认并行实现、轻量阶段校验、最终真实联调与延后全面验证
+>
 > 前置基线：`main@1568a8198f525edcff4aac0f48c81d3ac055c2fb`，已提交全部授权的前置修复、测试、证据与本文
 >
 > 前置结论：`FRONTEND_PREWORK=PASS`、`OWNER_VISUAL_REVIEW=PASS`
@@ -68,7 +70,115 @@ FRONTEND_REFACTOR_PLAN_APPROVED=YES
 - 依赖、lockfile、构建入口或安全配置发生变化时，才追加对应的构建、依赖审计或预算检查；共享 Router/API/SSE/Token 变化时，追加其直接消费者的最小回归检查。
 - 浏览器矩阵按本阶段风险选择相关的 B* 项，不默认全跑 B1-B8；写链路仍受第 7 节隔离条件约束。
 - 每个阶段报告必须列出实际执行的命令/工具、选择理由、结果和未执行项。未执行项统一记为 `NOT RUN`，不得用 fixture、截图或单个 API 200 替代必要证据。
-- 在整个前端彻底重构完成前，不运行也不声称通过完整 lint、完整 unit、完整 E2E、全浏览器、全量可访问性/性能和整站只读集成套件；除依赖或构建入口变更确需确认外，也不运行整站 build。Gate 12 才执行第 5.3 节的全量验证。
+- 在整个前端彻底重构完成前，不运行也不声称通过完整 lint、完整 unit、完整 E2E、全浏览器、全量可访问性/性能和整站只读集成套件；除依赖或构建入口变更确需确认外，也不运行整站 build。Gate 12B 才执行第 5.3 节的全量验证。
+
+### 0.5 Gate 4+ 并行快速实施修订（2026-07-31 Owner 批准）
+
+本节是 Gate 4 及之后实施节奏、分支所有权、阶段状态和停止条件的当前权威修订。它保留本文后续 Gate 的全部功能范围、文件边界、领域契约、真实数据要求、写链路隔离规则和最终验收清单，只取代以下旧规则：Gate 4-11 全局串行执行、每 Gate 完整浏览器/性能/真实联调退出条件、中间 Owner 视觉阻塞，以及把原 Gate 12 的实现清理与全面验证绑定为同一轮工作。后续各 Gate 中与本节冲突的“进入条件”“验证与浏览器”“退出 Gate”和 Owner 视觉要求保留为历史及 Gate 12B 验证清单，不再阻塞并行页面实现。
+
+#### 0.5.1 产品范围不降级
+
+“前端以展示为主”只用于降低实施期校验强度，不表示把产品改成静态只读 Demo。Gate 4-11 仍须完整实现本文定义的真实 API、SSE、URL/History、Inspector、Agent、Evidence、Approval、Delivery、Verification、写操作入口和错误/异步状态；不得删除能力、使用 fixture 代替生产实现、弱化类型或改变 Go/API/数据库/Provider/Kubernetes 语义。
+
+#### 0.5.2 六条并行实施线
+
+Gate 3 的最终提交 `0b1c6d5c518746d197712e6b6574228d07056471` 已满足所有并行线的共享基础进入条件。六条实施线必须从包含本修订和窗口提示词的同一个“Gate 4+ 并行实施基线”提交创建独立 branch + Git Worktree；不得让多个 Codex 窗口共享同一工作目录。
+
+| 实施线 | Branch | Worktree | Gate 与顺序 | 真正依赖 |
+| --- | --- | --- | --- | --- |
+| Read-only | `frontend/g4-readonly` | `/home/monody/k8s/CloudOps-Copilot-g4` | Gate 4 | Gate 3 |
+| Telemetry | `frontend/g5-g6-telemetry` | `/home/monody/k8s/CloudOps-Copilot-telemetry` | Gate 5 -> Gate 6 | Gate 6 复用 Gate 5 telemetry 基础 |
+| Alerts | `frontend/g7-alerts` | `/home/monody/k8s/CloudOps-Copilot-alerts` | Gate 7 | Gate 3；跨 Incident/Agent 使用兼容链接 |
+| Agent | `frontend/g8-agent` | `/home/monody/k8s/CloudOps-Copilot-agent` | Gate 8 | Gate 3；跨页面上下文在集成阶段闭合 |
+| Incident/DevOps | `frontend/g9-g10-incident-devops` | `/home/monody/k8s/CloudOps-Copilot-incident` | Gate 9 -> Gate 10 | Incident 单一操作面先于 DevOps 去重 |
+| Settings | `frontend/g11-settings` | `/home/monody/k8s/CloudOps-Copilot-settings` | Gate 11 | Gate 3 |
+
+每条线内部按表中顺序实现；六条线之间不互相 merge/rebase，也不等待其他页面线的验证结果。跨线链接先保留现有兼容入口，在 Gate 12A 集成时 canonicalize。分支不得 push、创建 PR、发布或执行外部写入。
+
+#### 0.5.3 页面实施期唯一最低校验
+
+每条线只执行以下最低交付门槛，不得自行扩展为旧 Gate 的完整验证矩阵：
+
+1. 对改动文件执行 targeted lint。
+2. 执行与改动直接相关的 focused unit/route/API/SSE 测试。
+3. 分支交付前执行一次 `npm run typecheck`。
+4. 每个改动路由执行一次 Chromium 1440x900 Light smoke，只确认页面可进入、主要内容可渲染、一个核心交互可用且无阻塞 Console 错误。
+
+Dark、多 viewport、zoom、Firefox/WebKit、性能、大数据、完整 lint/unit/build/E2E、真实前后端联调和证据截图矩阵在页面分支统一记为 `NOT RUN`，不得为了取得旧 Gate `PASS` 而运行。阶段状态只能写为：
+
+```text
+IMPLEMENTATION=COMPLETE
+FOCUSED_SMOKE=PASS
+FULL_VALIDATION=DEFERRED
+```
+
+页面分支不得提前声明旧 Gate 全量退出条件、`FRONTEND_MIGRATION=PASS` 或 release ready。每条线在自己的唯一 handoff 文件中记录 base/final SHA、改动文件、路由、实际命令、结果、共享变更请求和 `NOT RUN`，不建立截图/trace/performance 证据包。
+
+#### 0.5.4 共享文件唯一 Owner
+
+以下文件或目录由集成工作树唯一拥有，页面分支不得直接修改：
+
+```text
+docs/CloudOps-Frontend-Refactor-Plan.md
+frontend/package.json
+frontend/package-lock.json
+frontend/components.d.ts
+frontend/src/styles/tokens.css
+frontend/src/api/client.ts
+frontend/src/components/workspace/
+frontend/src/composables/useWorkspace*
+```
+
+`frontend/src/router/routes.ts` 只允许 Read-only 线为 additive `/atlas` 及 legacy Atlas Query 修改；其他线不得修改。`frontend/src/api/platform.ts` 由 Settings 线唯一拥有，Read-only 线只能消费现有 typed client；若确需共享变更，必须在 handoff 中记录，不得跨线抢改。新 specialist adapter 和领域内组件属于对应实施线。
+
+确需修改其他共享基础时，页面线创建一个与页面提交分离的“shared change request”提交并在 handoff 标记；集成窗口可以采纳、重做或拒绝。`frontend/components.d.ts` 在 Gate 12A 统一重新生成。
+
+#### 0.5.5 本地提交与集成协议
+
+- 页面线按页面或逻辑 Gate 创建小型本地提交，保留干净工作树后交付；不修改其他实施线代码。
+- 每条线只有在 `IMPLEMENTATION=COMPLETE`、`FOCUSED_SMOKE=PASS` 且工作树干净时才能交付。
+- 集成工作树使用 `git merge --no-ff` 合并完整实施线；冲突只由集成窗口处理。
+- 每合并一条线只执行一次 `npm run typecheck`；全部合并后执行一次全路由 Chromium 1440x900 Light smoke，不提前运行全面套件。
+- 当前主 Worktree `/home/monody/k8s/CloudOps-Copilot` 只负责计划、合并、共享文件、Gate 12A、真实联调和最终 Owner 预览，不承担任一页面线的日常实现。
+
+#### 0.5.6 Gate 12A 与 Gate 12B
+
+原 Gate 12 拆分为两个独立阶段：
+
+**Gate 12A（本轮必须完成）**
+
+- 合并六条实施线并闭合跨页面链接、共享文件请求和 route ownership。
+- 删除 Element Plus、旧样式、遗留导航、无消费者代码和双体系残留；重新生成声明。
+- 因依赖与构建入口发生变化，只运行 `npm run typecheck`、`npm run build`、零残留扫描和全路由 Chromium 1440x900 Light smoke。
+- 启动真实前端和后端，对所有公开路由执行真实 UI -> API -> Provider 只读联调；完善真实字段、Loading、Empty、Error、Partial、跨页面上下文和非预期 Console/Network 问题。
+- 联调发现的前端缺陷必须修复并提交。必要后端契约缺口只记录 `BACKEND_GAP`，不得越权修改后端。
+- 真实写链路只有在隔离目标、受限凭据、初始 identity/hash、cleanup 和单独 Owner 授权全部存在时运行；否则保持 `NOT RUN`，不阻塞前端实现完成。
+
+**Gate 12B（后续单独授权）**
+
+- 执行第 5.3 节完整 lint/unit/build/audit/E2E，以及 B1-B8、Light/Dark、多 viewport、Firefox/WebKit、可访问性、性能、大数据、SSE soak 和完整发布就绪验证。
+- 只有 Gate 12B 才能把旧 Gate 的完整退出条件、`FRONTEND_MIGRATION` 和 `FRONTEND_RELEASE_READY` 判为 `PASS`/`YES`。
+
+#### 0.5.7 Owner 视觉与本轮停止条件
+
+Gate 4、8、9、11 的中间 Owner 视觉 Gate 不再阻塞实现。AI 浏览器 smoke 只能判断空白、重叠、裁切、交互和 Console/Network 等技术问题，不能替 Owner 判断审美。Gate 12A 真实联调完成后，集成窗口启动可访问整站并提供 URL；只有 Owner 本人可以给出：
+
+```text
+OWNER_FINAL_VISUAL_ACCEPTED=YES
+```
+
+本轮只有在六条线合并、Gate 12A 清理完成、真实前后端启动、所有公开路由读取和主要跨页面路径可用、阻塞 Console/Network 问题修复、写链路如实分类且 Owner 最终视觉接受后停止。最终状态为：
+
+```text
+FRONTEND_IMPLEMENTATION=COMPLETE
+REAL_READONLY_INTEGRATION=PASS
+OWNER_FINAL_VISUAL_ACCEPTED=YES
+FULL_VALIDATION=DEFERRED
+FRONTEND_MIGRATION=PENDING_FULL_VALIDATION
+FRONTEND_RELEASE_READY=NOT_ASSESSED
+```
+
+若真实 Provider 或必要后端事实不可用，受影响项必须为 `NOT RUN` 或 `BACKEND_GAP`，不得伪造上述 `PASS`。六个窗口的版本化执行提示词和集成交接规范位于 `docs/evidence/frontend-redesign/implementation/parallel-gate-04-11/`。
 
 ## 1. 目标、范围与非目标
 
@@ -423,7 +533,7 @@ docs/evidence/frontend-redesign/implementation/gate-XX-<slug>/
 npm audit --audit-level=high --registry=https://registry.npmjs.org
 ```
 
-只有在整个前端重构完成后的 Gate 12 才运行完整检查：
+只有在整个前端重构完成并获得后续单独授权的 Gate 12B 才运行完整检查：
 
 ```bash
 cd frontend
@@ -1032,7 +1142,9 @@ OWNER_VISUAL_GATE_SETTINGS=PASS
 
 `SETTINGS_WRITE_E2E` 必须单独记录为 `PASS` 或 `NOT RUN`；若为 `FAIL`，不得退出本 Gate。
 
-### Gate 12：清除旧体系、全量验证与文档收敛
+### Gate 12：历史合并定义（当前按 0.5 拆分为 Gate 12A 与 Gate 12B）
+
+本节保留完整清理和验证清单。当前执行时，实施动作与依赖清理归 Gate 12A，完整静态、自动化、浏览器、性能、真实集成和发布判断归 Gate 12B；进入、验证和退出状态以第 0.5 节为准。
 
 **进入条件**
 
@@ -1213,21 +1325,24 @@ Owner 未审查为 `NOT RUN`；明确拒绝为 `FAIL`。自动截图 diff、Ligh
 ```text
 PLAN_STATUS=APPROVED_AND_IN_LOCAL_IMPLEMENTATION
 PLAN_GENERATED=YES
-PHASE_VALIDATION=FOCUSED_RELEVANT_CHECKS_ONLY
-FULL_FRONTEND_VALIDATION=DEFERRED_TO_GATE_12
+PHASE_VALIDATION=MINIMUM_LANE_CHECKS_ONLY
+FULL_FRONTEND_VALIDATION=DEFERRED_TO_GATE_12B
 DESIGN_DECISION_MAPPING=PASS
 SOURCE_DESIGN_DECISIONS=52
 UNMAPPED_DESIGN_DECISIONS=0
 FRONTEND_REFACTOR_PLAN_APPROVED=YES
+FRONTEND_PARALLEL_IMPLEMENTATION_AUTHORIZED=YES
 VERSIONED_AUTHORITY_ALIGNMENT=PASS
 IMMUTABLE_PREWORK_BASELINE=PASS
 GATE_00=PASS
 GATE_01=PASS
+GATE_02=PASS
+GATE_03=PASS
 NUXT_UI_PRODUCTION_TOOLCHAIN=PASS
 CANONICAL_TOKEN_PIPELINE=PASS
 BUNDLE_BUDGET_CI=PASS
 NO_NEW_WARNING_GATE=PASS
-CURRENT_GATE=GATE_02
+CURRENT_GATE=GATE_04_TO_11_PARALLEL_BASELINE_READY
 PRODUCTION_MIGRATION=IN_PROGRESS
 DETAILED_DESIGN_IMPLEMENTATION=IN_PROGRESS
 WRITE_PATH_E2E=NOT RUN
