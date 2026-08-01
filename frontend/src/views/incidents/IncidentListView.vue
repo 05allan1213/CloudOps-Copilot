@@ -5,6 +5,7 @@ import { useRoute, useRouter } from "vue-router";
 import ContextToolbar from "../../components/workspace/ContextToolbar.vue";
 import WorkspaceHeader from "../../components/workspace/WorkspaceHeader.vue";
 import WorkspaceInspector from "../../components/workspace/WorkspaceInspector.vue";
+import WorkspacePageFrame from "../../components/workspace/WorkspacePageFrame.vue";
 import IncidentFilterBar from "../../components/incidents/IncidentFilterBar.vue";
 import IncidentInspector from "../../components/incidents/IncidentInspector.vue";
 import IncidentTable from "../../components/incidents/IncidentTable.vue";
@@ -58,6 +59,15 @@ const resultAnnouncement = computed(() => {
 const refreshLabel = computed(() => lastUpdatedAt.value ? formatIncidentTime(lastUpdatedAt.value) : "尚未刷新");
 const sortKey = computed<IncidentListSort>(() => filters.sort ?? "updated");
 const sortDirection = computed<IncidentListDirection>(() => filters.direction ?? "desc");
+const criticalCount = computed(() => items.value.filter((item) => item.severity === "critical" && item.status !== "closed").length);
+const attentionCount = computed(() => items.value.filter((item) => item.attention.required).length);
+const activeCount = computed(() => items.value.filter((item) => !["resolved", "closed"].includes(item.status)).length);
+const recoveredCount = computed(() => items.value.filter((item) => item.recovery.state === "recovered").length);
+const sortItems: { label: string; value: IncidentListSort }[] = [
+  { label: "最近更新", value: "updated" },
+  { label: "严重度", value: "severity" },
+  { label: "生命周期状态", value: "status" },
+];
 
 function recoverEmptyState() {
   return hasActiveFilters.value ? reset() : load(false);
@@ -85,7 +95,8 @@ onMounted(() => {
 </script>
 
 <template>
-  <section
+  <WorkspacePageFrame
+    as="section"
     class="incident-list-view"
     aria-labelledby="incident-list-title"
   >
@@ -116,6 +127,16 @@ onMounted(() => {
       </template>
     </WorkspaceHeader>
 
+    <dl
+      class="incident-queue-summary"
+      aria-label="Incident 工作队列摘要"
+    >
+      <div><dt>处理中</dt><dd>{{ activeCount }}</dd><small>尚未恢复或关闭</small></div>
+      <div><dt>严重</dt><dd class="is-critical">{{ criticalCount }}</dd><small>当前页严重事件</small></div>
+      <div><dt>需要关注</dt><dd class="is-warning">{{ attentionCount }}</dd><small>等待 Owner 判断</small></div>
+      <div><dt>恢复已证明</dt><dd class="is-success">{{ recoveredCount }}</dd><small>可进入 Resolution</small></div>
+    </dl>
+
     <IncidentFilterBar
       v-model:status="filters.status"
       v-model:severity="filters.severity"
@@ -134,10 +155,8 @@ onMounted(() => {
       <template #filters>
         <div class="results-heading">
           <div>
-            <h2 id="incident-results-title">
-              Incident 列表
-            </h2>
-            <p>固定关键列，次要列偏好保存在本地；排序状态写入 URL。</p>
+            <h2 id="incident-results-title">处置队列</h2>
+            <p>选择一项查看当前结论、生命周期阻塞和下一步。</p>
           </div>
           <span
             class="result-count"
@@ -147,35 +166,24 @@ onMounted(() => {
         </div>
       </template>
       <template #secondary>
-        <span class="sort-contract">排序：{{ sortKey }} / {{ sortDirection === "asc" ? "升序" : "降序" }}</span>
-        <UButton
-          color="neutral"
-          variant="ghost"
-          icon="i-lucide-arrow-up-a-z"
-          label="级别"
-          @click="setSort('severity')"
-        />
-        <UButton
-          color="neutral"
-          variant="ghost"
+        <USelect
+          :model-value="sortKey"
+          :items="sortItems"
+          value-key="value"
           icon="i-lucide-arrow-down-up"
-          label="状态"
-          @click="setSort('status')"
+          aria-label="Incident 排序字段"
+          @update:model-value="setSort"
         />
-        <UButton
-          color="neutral"
-          variant="ghost"
-          icon="i-lucide-clock-3"
-          label="更新时间"
-          @click="setSort('updated')"
-        />
-        <UButton
-          color="neutral"
-          variant="ghost"
-          icon="i-lucide-arrow-up-down"
-          label="切换方向"
-          @click="setDirection(sortDirection === 'asc' ? 'desc' : 'asc')"
-        />
+        <UTooltip :text="sortDirection === 'asc' ? '当前升序，点击切换为降序' : '当前降序，点击切换为升序'">
+          <UButton
+            color="neutral"
+            variant="ghost"
+            :icon="sortDirection === 'asc' ? 'i-lucide-arrow-up' : 'i-lucide-arrow-down'"
+            square
+            aria-label="切换排序方向"
+            @click="setDirection(sortDirection === 'asc' ? 'desc' : 'asc')"
+          />
+        </UTooltip>
       </template>
     </ContextToolbar>
 
@@ -277,21 +285,33 @@ onMounted(() => {
         />
       </template>
     </WorkspaceInspector>
-  </section>
+  </WorkspacePageFrame>
 </template>
 
 <style scoped>
-.incident-list-view { display: grid; width: min(100%, var(--co-content-max-width)); min-width: 0; margin: 0 auto; gap: var(--co-space-4); }
+.incident-list-view :global(.workspace-inspector-surface) { z-index: 20; }
+.incident-list-view { display: grid; min-width: 0; gap: var(--co-space-4); }
 .header-context-facts { display: flex; flex-wrap: wrap; gap: var(--co-space-3); color: var(--co-text-secondary); font-size: 11px; }
 .header-context-facts strong { color: var(--co-text-primary); font-family: var(--co-font-mono); font-size: 16px; }
+.incident-queue-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; border-block: 1px solid var(--co-border-default); background: var(--co-bg-surface); }
+.incident-queue-summary div { display: grid; min-width: 0; gap: 1px; padding: var(--co-space-3) var(--co-space-4); border-right: 1px solid var(--co-border-default); }
+.incident-queue-summary div:last-child { border-right: 0; }
+.incident-queue-summary dt, .incident-queue-summary small { color: var(--co-text-muted); font-size: 10px; }
+.incident-queue-summary dd { margin: 0; font-family: var(--co-font-mono); font-size: 18px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.incident-queue-summary .is-critical { color: var(--co-status-critical-fg); }
+.incident-queue-summary .is-warning { color: var(--co-status-warning-fg); }
+.incident-queue-summary .is-success { color: var(--co-status-success-fg); }
 .results-heading { display: flex; min-width: 0; width: 100%; align-items: center; justify-content: space-between; gap: var(--co-space-4); }
 .results-heading h2, .results-heading p { margin: 0; }
 .results-heading h2 { font-size: 16px; }
 .results-heading p { margin-top: 2px; color: var(--co-text-muted); font-size: 11px; }
-.result-count, .sort-contract { color: var(--co-text-muted); font-size: 11px; white-space: nowrap; }
+.result-count { color: var(--co-text-muted); font-size: 11px; white-space: nowrap; }
 .incident-skeleton { display: grid; gap: 1px; padding: var(--co-space-3); border-block: 1px solid var(--co-border-default); background: var(--co-bg-surface); }
 .skeleton-row { height: var(--co-table-row-height); }
-@media (max-width: 767px) {
+@media (max-width: 1024px) {
+  .incident-queue-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .incident-queue-summary div:nth-child(2) { border-right: 0; }
+  .incident-queue-summary div:nth-child(-n + 2) { border-bottom: 1px solid var(--co-border-default); }
   .results-heading { align-items: flex-start; flex-direction: column; }
   .header-context-facts { display: grid; }
 }
