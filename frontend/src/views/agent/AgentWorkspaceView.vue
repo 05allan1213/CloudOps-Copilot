@@ -6,6 +6,7 @@ import type { AgentContextInput } from "../../api/agent";
 import AgentConversation from "../../components/agent/AgentConversation.vue";
 import AgentHistory from "../../components/agent/AgentHistory.vue";
 import AgentInspector from "../../components/agent/AgentInspector.vue";
+import WorkspacePageFrame from "../../components/workspace/WorkspacePageFrame.vue";
 import { useAgentWorkspaceStore } from "../../stores/agentWorkspace";
 import { freeQueryContext, readAgentRouteSelection } from "../../utils/agentContext";
 
@@ -186,7 +187,9 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section
+  <WorkspacePageFrame
+    as="section"
+    width="full"
     class="agent-workspace-page"
     aria-labelledby="agent-workspace-heading"
     data-testid="agent-workspace"
@@ -399,7 +402,7 @@ onBeforeUnmount(() => {
         </div>
       </template>
     </UModal>
-  </section>
+  </WorkspacePageFrame>
 </template>
 
 <style scoped>

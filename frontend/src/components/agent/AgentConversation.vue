@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { useVirtualizer } from "@tanstack/vue-virtual";
 import type { ComponentPublicInstance } from "vue";
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 
 import type { AgentStep, ConsultationMessage } from "../../api/agent";
+import { COPY_FEEDBACK_DURATION_MS } from "../../composables/useCopyFeedback";
+import CopyFeedbackButton from "../workspace/CopyFeedbackButton.vue";
 import { useAgentWorkspaceStore } from "../../stores/agentWorkspace";
 
 type ConversationRow =
@@ -17,6 +19,7 @@ const knowledgeMessageID = ref("");
 const knowledgeTitle = ref("");
 const messageList = ref<HTMLDivElement | null>(null);
 const copiedRowID = ref("");
+let copyStatusTimer: ReturnType<typeof setTimeout> | undefined;
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", { dateStyle: "short", timeStyle: "medium" });
 
 const run = computed(() => store.selectedRun);
@@ -163,22 +166,17 @@ function updateKnowledgeOpen(value: boolean) {
   if (!value && !store.mutating) knowledgeMessageID.value = "";
 }
 
-async function copyText(value: string, key: string) {
-  try {
-    await navigator.clipboard.writeText(value);
-  } catch {
-    const textarea = document.createElement("textarea");
-    textarea.value = value;
-    textarea.style.position = "fixed";
-    textarea.style.opacity = "0";
-    document.body.append(textarea);
-    textarea.select();
-    document.execCommand("copy");
-    textarea.remove();
-  }
+function reportCopied(key: string) {
   copiedRowID.value = key;
-  window.setTimeout(() => { if (copiedRowID.value === key) copiedRowID.value = ""; }, 1200);
+  if (copyStatusTimer !== undefined) clearTimeout(copyStatusTimer);
+  copyStatusTimer = setTimeout(() => {
+    if (copiedRowID.value === key) copiedRowID.value = "";
+  }, COPY_FEEDBACK_DURATION_MS);
 }
+
+onBeforeUnmount(() => {
+  if (copyStatusTimer !== undefined) clearTimeout(copyStatusTimer);
+});
 
 watch(
   () => [messages.value.length, Boolean(store.liveAnswer)],
@@ -360,17 +358,12 @@ watch(
                   name="i-lucide-database"
                   aria-hidden="true"
                 />{{ item.row.footer }}</span>
-                <UTooltip text="复制完整内容">
-                  <UButton
-                    color="neutral"
-                    variant="ghost"
-                    :icon="copiedRowID === item.row.key ? 'i-lucide-copy-check' : 'i-lucide-copy'"
-                    square
-                    size="xs"
-                    :aria-label="`复制 ${item.row.title} 完整内容`"
-                    @click="copyText(item.row.content, item.row.key)"
-                  />
-                </UTooltip>
+                <CopyFeedbackButton
+                  :value="item.row.content"
+                  :label="`复制 ${item.row.title} 完整内容`"
+                  success-label="完整内容已复制"
+                  @copied="reportCopied(item.row.key)"
+                />
                 <UTooltip
                   v-if="item.row.message?.role === 'assistant'"
                   text="确认为 Owner Knowledge"
@@ -411,17 +404,12 @@ watch(
               >Evidence {{ item.row.step.evidence_id }}</code>
             </div>
             <span class="tool-duration">{{ item.row.step.duration_ms.toLocaleString("zh-CN") }} ms</span>
-            <UTooltip text="复制完整 Tool 状态">
-              <UButton
-                color="neutral"
-                variant="ghost"
-                :icon="copiedRowID === item.row.key ? 'i-lucide-copy-check' : 'i-lucide-copy'"
-                square
-                size="xs"
-                :aria-label="`复制 ${item.row.step.tool} 完整状态`"
-                @click="copyText(JSON.stringify(item.row.step, null, 2), item.row.key)"
-              />
-            </UTooltip>
+            <CopyFeedbackButton
+              :value="JSON.stringify(item.row.step, null, 2)"
+              :label="`复制 ${item.row.step.tool} 完整状态`"
+              success-label="完整 Tool 状态已复制"
+              @copied="reportCopied(item.row.key)"
+            />
           </article>
         </div>
       </div>

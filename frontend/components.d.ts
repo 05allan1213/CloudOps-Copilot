@@ -24,6 +24,7 @@ declare module 'vue' {
     CodeDiff: typeof import('./src/components/incidents/CodeDiff.vue')['default']
     CommandFeedback: typeof import('./src/components/incidents/CommandFeedback.vue')['default']
     ContextToolbar: typeof import('./src/components/workspace/ContextToolbar.vue')['default']
+    CopyFeedbackButton: typeof import('./src/components/workspace/CopyFeedbackButton.vue')['default']
     DeliveryRail: typeof import('./src/components/incidents/DeliveryRail.vue')['default']
     DenseDataTable: typeof import('./src/components/workspace/DenseDataTable.vue')['default']
     GlobalAgentPanel: typeof import('./src/components/agent/GlobalAgentPanel.vue')['default']
@@ -87,10 +88,14 @@ declare module 'vue' {
     UTooltip: typeof import('./node_modules/@nuxt/ui/dist/runtime/components/Tooltip.vue')['default']
     VerificationMatrix: typeof import('./src/components/incidents/VerificationMatrix.vue')['default']
     VirtualLogList: typeof import('./src/components/logs/VirtualLogList.vue')['default']
+    WorkspaceDenseList: typeof import('./src/components/workspace/WorkspaceDenseList.vue')['default']
     WorkspaceHeader: typeof import('./src/components/workspace/WorkspaceHeader.vue')['default']
     WorkspaceInspector: typeof import('./src/components/workspace/WorkspaceInspector.vue')['default']
     WorkspaceOperationProgress: typeof import('./src/components/workspace/WorkspaceOperationProgress.vue')['default']
+    WorkspacePageFrame: typeof import('./src/components/workspace/WorkspacePageFrame.vue')['default']
     WorkspaceState: typeof import('./src/components/workspace/WorkspaceState.vue')['default']
+    WorkspaceStatusRow: typeof import('./src/components/workspace/WorkspaceStatusRow.vue')['default']
+    WorkspaceTechnicalDetails: typeof import('./src/components/workspace/WorkspaceTechnicalDetails.vue')['default']
     ZoneNav: typeof import('./src/components/incidents/ZoneNav.vue')['default']
   }
 }

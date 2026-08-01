@@ -1,6 +1,9 @@
 <script setup lang="ts" generic="T extends Record<string, unknown>">
 import type { DropdownMenuItem, TableColumn, TableRow } from "@nuxt/ui";
-import { computed, h, onMounted, ref, resolveComponent, watch } from "vue";
+import { computed, h, onBeforeUnmount, onMounted, ref, watch } from "vue";
+
+import { COPY_FEEDBACK_DURATION_MS } from "../../composables/useCopyFeedback";
+import CopyFeedbackButton from "./CopyFeedbackButton.vue";
 
 export type DenseRowSeverity = "critical" | "warning" | "info" | "neutral";
 
@@ -36,11 +39,11 @@ const emit = defineEmits<{
   select: [row: T, trigger: HTMLElement | null];
 }>();
 
-const UButton = resolveComponent("UButton");
 const tableRoot = ref<{ $el: HTMLElement } | null>(null);
 const columnVisibility = ref<Record<string, boolean>>({});
 const copiedRowID = ref("");
 const preferenceLoaded = ref(false);
+let copyStatusTimer: ReturnType<typeof setTimeout> | undefined;
 const preferenceStorageKey = computed(() => `cloudops.table.columns.${props.storageKey}`);
 const optionalColumns = computed(() => props.columns.filter((column) => column.optional));
 const shouldVirtualize = computed(() => props.virtualized ?? props.rows.length > 250);
@@ -113,14 +116,12 @@ const tableColumns = computed<DenseTableColumn<T>[]>(() => {
       label: "完整值",
       header: "完整值",
       size: 56,
-      cell: ({ row }) => h(UButton, {
-        color: "neutral",
-        variant: "ghost",
-        square: true,
-        icon: copiedRowID.value === props.rowKey(row.original) ? "i-lucide-copy-check" : "i-lucide-copy",
-        "aria-label": `复制 ${props.rowKey(row.original)} 完整值`,
+      cell: ({ row }) => h(CopyFeedbackButton, {
+        value: props.copyValue?.(row.original) ?? "",
+        label: `复制 ${props.rowKey(row.original)} 完整值`,
+        successLabel: `${props.rowKey(row.original)} 完整值已复制`,
         "data-copy-row": props.rowKey(row.original),
-        onClick: () => copyFullValue(row.original),
+        onCopied: () => reportCopied(props.rowKey(row.original)),
       }),
       meta: { class: { th: "dense-data-table-copy-cell", td: "dense-data-table-copy-cell" } },
     } as DenseTableColumn<T>,
@@ -194,29 +195,12 @@ function activateFocusedRow(event: KeyboardEvent) {
   row.click();
 }
 
-async function copyText(value: string) {
-  try {
-    await navigator.clipboard.writeText(value);
-  } catch {
-    const textarea = document.createElement("textarea");
-    textarea.value = value;
-    textarea.style.position = "fixed";
-    textarea.style.opacity = "0";
-    document.body.append(textarea);
-    textarea.select();
-    document.execCommand("copy");
-    textarea.remove();
-  }
-}
-
-async function copyFullValue(row: T) {
-  if (!props.copyValue) return;
-  const id = props.rowKey(row);
-  await copyText(props.copyValue(row));
+function reportCopied(id: string) {
   copiedRowID.value = id;
-  window.setTimeout(() => {
+  if (copyStatusTimer !== undefined) clearTimeout(copyStatusTimer);
+  copyStatusTimer = setTimeout(() => {
     if (copiedRowID.value === id) copiedRowID.value = "";
-  }, 1_200);
+  }, COPY_FEEDBACK_DURATION_MS);
 }
 
 function getScrollElement() {
@@ -230,6 +214,9 @@ function getRowElement(rowID: string) {
 watch(columnVisibility, persistColumnPreference, { deep: true });
 watch(preferenceStorageKey, readColumnPreference);
 onMounted(readColumnPreference);
+onBeforeUnmount(() => {
+  if (copyStatusTimer !== undefined) clearTimeout(copyStatusTimer);
+});
 
 defineExpose({ getRowElement, getScrollElement });
 </script>

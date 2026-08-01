@@ -471,9 +471,9 @@ onBeforeUnmount(() => {
   min-width: 0;
   min-height: 0;
   flex: 1 1 auto;
-  padding: clamp(18px, 2.2vw, 34px) max(clamp(18px, 2.2vw, 34px), env(safe-area-inset-right))
-    max(clamp(36px, 5vw, 72px), env(safe-area-inset-bottom))
-    max(clamp(18px, 2.2vw, 34px), env(safe-area-inset-left));
+  padding: var(--co-page-gutter) max(var(--co-page-gutter), env(safe-area-inset-right))
+    max(var(--co-page-end-space), env(safe-area-inset-bottom))
+    max(var(--co-page-gutter), env(safe-area-inset-left));
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;

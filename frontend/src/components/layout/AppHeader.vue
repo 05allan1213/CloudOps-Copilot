@@ -209,7 +209,7 @@ function openNotifications(event: MouseEvent) {
   align-items: center;
   border: 1px solid color-mix(in srgb, var(--co-border-default) 46%, transparent);
   background: color-mix(in srgb, var(--co-bg-canvas) 84%, transparent);
-  box-shadow: 0 7px 22px rgb(52 46 39 / 5%);
+  box-shadow: var(--co-shadow-chrome);
   backdrop-filter: blur(12px);
   pointer-events: auto;
 }

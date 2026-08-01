@@ -59,7 +59,7 @@ withDefaults(defineProps<{
 .context-toolbar-row {
   display: flex;
   min-width: 0;
-  min-height: 56px;
+  min-height: var(--co-toolbar-min-height);
   flex-wrap: wrap;
   align-items: center;
   gap: var(--co-space-3);

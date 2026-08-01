@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { useVirtualizer } from "@tanstack/vue-virtual";
 import type { ComponentPublicInstance } from "vue";
-import { computed, ref } from "vue";
+import { computed, onBeforeUnmount, ref } from "vue";
 
 import type { ActionCard, AgentEvidenceCitation, OperationPlan } from "../../api/agent";
+import { COPY_FEEDBACK_DURATION_MS } from "../../composables/useCopyFeedback";
 import { useAgentWorkspaceStore } from "../../stores/agentWorkspace";
+import CopyFeedbackButton from "../workspace/CopyFeedbackButton.vue";
 
 type AuthoritySelection = { kind: "card"; value: ActionCard } | { kind: "plan"; value: OperationPlan };
 
@@ -15,6 +17,7 @@ const authoritySelection = ref<AuthoritySelection | null>(null);
 const authorityReason = ref("");
 const evidenceScroll = ref<HTMLDivElement | null>(null);
 const copiedEvidenceID = ref("");
+let copyStatusTimer: ReturnType<typeof setTimeout> | undefined;
 
 const run = computed(() => store.selectedRun);
 const evidence = computed(() => run.value?.evidence_citations ?? []);
@@ -95,23 +98,17 @@ function evidenceStyle(start: number) {
   return evidenceVirtualized.value ? { transform: `translateY(${start}px)` } : undefined;
 }
 
-async function copyEvidence(item: AgentEvidenceCitation) {
-  const value = prettyJSON(item);
-  try {
-    await navigator.clipboard.writeText(value);
-  } catch {
-    const textarea = document.createElement("textarea");
-    textarea.value = value;
-    textarea.style.position = "fixed";
-    textarea.style.opacity = "0";
-    document.body.append(textarea);
-    textarea.select();
-    document.execCommand("copy");
-    textarea.remove();
-  }
+function reportEvidenceCopied(item: AgentEvidenceCitation) {
   copiedEvidenceID.value = item.id;
-  window.setTimeout(() => { if (copiedEvidenceID.value === item.id) copiedEvidenceID.value = ""; }, 1200);
+  if (copyStatusTimer !== undefined) clearTimeout(copyStatusTimer);
+  copyStatusTimer = setTimeout(() => {
+    if (copiedEvidenceID.value === item.id) copiedEvidenceID.value = "";
+  }, COPY_FEEDBACK_DURATION_MS);
 }
+
+onBeforeUnmount(() => {
+  if (copyStatusTimer !== undefined) clearTimeout(copyStatusTimer);
+});
 </script>
 
 <template>
@@ -319,17 +316,12 @@ async function copyEvidence(item: AgentEvidenceCitation) {
                 size="sm"
                 :label="row.item.use"
               />
-              <UTooltip text="复制完整 Evidence">
-                <UButton
-                  color="neutral"
-                  variant="ghost"
-                  :icon="copiedEvidenceID === row.item.id ? 'i-lucide-copy-check' : 'i-lucide-copy'"
-                  square
-                  size="xs"
-                  :aria-label="`复制 Evidence ${row.item.evidence_id} 完整内容`"
-                  @click="copyEvidence(row.item)"
-                />
-              </UTooltip>
+              <CopyFeedbackButton
+                :value="prettyJSON(row.item)"
+                :label="`复制 Evidence ${row.item.evidence_id} 完整内容`"
+                success-label="完整 Evidence 已复制"
+                @copied="reportEvidenceCopied(row.item)"
+              />
             </header>
             <p>{{ row.item.summary }}</p>
             <dl>

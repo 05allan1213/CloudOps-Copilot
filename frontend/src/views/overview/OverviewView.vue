@@ -20,6 +20,7 @@ import {
   recentlyResolvedIncidents,
   unlinkedFiringAlerts,
 } from "../../components/overview/overviewModel";
+import WorkspacePageFrame from "../../components/workspace/WorkspacePageFrame.vue";
 import WorkspaceState from "../../components/workspace/WorkspaceState.vue";
 import { useLatestAsync } from "../../composables/useLatestAsync";
 import { incidentStatusLabel, severityLabel } from "../../models/incidents";
@@ -286,7 +287,9 @@ onBeforeUnmount(() => window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT
 </script>
 
 <template>
-  <article
+  <WorkspacePageFrame
+    as="article"
+    width="content"
     class="overview-view"
     :data-tone="heroVerdict.tone"
     data-testid="overview-command-center"
@@ -692,16 +695,13 @@ onBeforeUnmount(() => window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT
         <RouterLink to="/settings"><UIcon name="i-lucide-sliders-horizontal" /><span><strong>控制</strong><small>Provider 与配置</small></span><UIcon name="i-lucide-arrow-up-right" /></RouterLink>
       </nav>
     </template>
-  </article>
+  </WorkspacePageFrame>
 </template>
 
 <style scoped>
 .overview-view {
   position: relative;
   display: flex;
-  width: min(100%, var(--co-content-max-width));
-  min-width: 0;
-  margin: 0 auto;
   flex-direction: column;
   gap: 0;
 }
@@ -794,7 +794,7 @@ onBeforeUnmount(() => window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT
   border: 1px solid var(--co-status-warning-border);
   border-radius: 12px;
   background: color-mix(in srgb, var(--co-status-warning-bg) 38%, var(--co-bg-floating));
-  box-shadow: 0 8px 24px rgb(52 46 39 / 5%);
+  box-shadow: var(--co-shadow-subtle);
 }
 .source-status.is-blocked { border-color: color-mix(in srgb, var(--co-status-critical-border) 72%, var(--co-border-default)); background: color-mix(in srgb, var(--co-status-critical-bg) 28%, var(--co-bg-floating)); }
 .source-status-icon { display: grid; width: 32px; height: 32px; place-items: center; border: 1px solid var(--co-border-default); border-radius: 9px; color: var(--co-status-warning-fg); background: var(--co-bg-floating); }
@@ -970,7 +970,7 @@ onBeforeUnmount(() => window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT
   border: 1px solid color-mix(in srgb, var(--co-border-default) 86%, transparent);
   border-radius: 13px;
   background: color-mix(in srgb, var(--co-bg-surface) 70%, transparent);
-  box-shadow: 0 10px 28px rgb(52 46 39 / 4%);
+  box-shadow: var(--co-shadow-row);
 }
 .overview-stats article::before { position: absolute; top: 0; right: 18px; left: 18px; height: 2px; border-radius: 0 0 999px 999px; background: var(--co-border-strong); content: ""; }
 .overview-stats article::after { position: absolute; top: 9px; right: 11px; color: color-mix(in srgb, var(--co-text-muted) 42%, transparent); font-family: var(--co-font-mono); font-size: 7px; font-weight: 800; content: "0" counter(overview-stat); }
@@ -990,7 +990,7 @@ onBeforeUnmount(() => window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT
 
 .narrative-section,
 .atlas-section,
-.delivery-section { display: flex; min-width: 0; flex-direction: column; gap: 24px; margin-top: 60px; }
+.delivery-section { display: flex; min-width: 0; flex-direction: column; gap: 24px; margin-top: var(--co-section-separation); }
 .section-heading { display: flex; min-width: 0; align-items: flex-end; justify-content: space-between; gap: 24px; }
 .section-heading > div:first-child { display: grid; min-width: 0; gap: 6px; }
 .section-eyebrow::before { content: "▍"; color: var(--co-viz-live); }
@@ -1013,10 +1013,10 @@ onBeforeUnmount(() => window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT
   border: 1px solid color-mix(in srgb, var(--co-border-default) 86%, transparent);
   border-radius: 16px;
   background: color-mix(in srgb, var(--co-bg-surface) 44%, transparent);
-  box-shadow: 0 12px 30px rgb(52 46 39 / 4%);
+  box-shadow: var(--co-shadow-section);
 }
-.incident-focus { box-shadow: inset 2px 0 0 color-mix(in srgb, var(--co-viz-live) 58%, transparent), 0 12px 30px rgb(52 46 39 / 4%); }
-.agent-focus { background: linear-gradient(90deg, color-mix(in srgb, var(--co-viz-live) 3%, transparent), transparent 72%), color-mix(in srgb, var(--co-bg-surface) 44%, transparent); box-shadow: inset 1px 0 0 color-mix(in srgb, var(--co-viz-live) 34%, var(--co-border-default)), 0 12px 30px rgb(52 46 39 / 4%); }
+.incident-focus { box-shadow: inset 2px 0 0 color-mix(in srgb, var(--co-viz-live) 58%, transparent), var(--co-shadow-section); }
+.agent-focus { background: linear-gradient(90deg, color-mix(in srgb, var(--co-viz-live) 3%, transparent), transparent 72%), color-mix(in srgb, var(--co-bg-surface) 44%, transparent); box-shadow: inset 1px 0 0 color-mix(in srgb, var(--co-viz-live) 34%, var(--co-border-default)), var(--co-shadow-section); }
 .focus-label { display: flex; min-height: 24px; align-items: center; justify-content: space-between; gap: 12px; color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 9px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; }
 .response-band h3 { margin: 16px 0 8px; color: var(--co-text-primary); font-size: 20px; font-weight: 680; line-height: 1.35; }
 .incident-focus > p { margin: 0; color: var(--co-text-secondary); font-size: 12px; }
@@ -1122,7 +1122,7 @@ onBeforeUnmount(() => window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT
 .delivery-entry time { color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 9px; }
 .delivery-empty { min-height: 112px; align-items: center; justify-content: flex-start; border: 1px solid color-mix(in srgb, var(--co-border-default) 86%, transparent); border-radius: 14px; background: color-mix(in srgb, var(--co-bg-surface) 62%, transparent); }
 
-.workspace-links { display: grid; grid-template-columns: 1.08fr 1.18fr .9fr 1fr; gap: 24px; margin-top: 60px; padding-bottom: 16px; }
+.workspace-links { display: grid; grid-template-columns: 1.08fr 1.18fr .9fr 1fr; gap: 24px; margin-top: var(--co-section-separation); padding-bottom: 16px; }
 .workspace-links a {
   display: grid;
   min-width: 0;
