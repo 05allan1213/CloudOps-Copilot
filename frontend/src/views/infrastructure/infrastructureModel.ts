@@ -1,6 +1,11 @@
 import type { LocationQuery, LocationQueryRaw, RouteLocationRaw } from "vue-router";
 
-import type { InfrastructureContextLink, ResourceLayer } from "../../api/infrastructure";
+import type {
+  InfrastructureContextLink,
+  KubernetesResource,
+  ResourceHealthState,
+  ResourceLayer,
+} from "../../api/infrastructure";
 
 export type InfrastructureResourceType = "all" | ResourceLayer;
 
@@ -41,6 +46,61 @@ export function resourceTypeForKinds(kinds: readonly string[]): InfrastructureRe
     if (normalized.length === 1 && expected.includes(normalized[0])) return type;
   }
   return "all";
+}
+
+const healthPriority: Record<ResourceHealthState, number> = {
+  critical: 0,
+  warning: 1,
+  unknown: 2,
+  healthy: 3,
+};
+
+export interface InfrastructureHealthSummary {
+  total: number;
+  healthy: number;
+  warning: number;
+  critical: number;
+  unknown: number;
+  attention: number;
+}
+
+export function summarizeInfrastructureHealth(resources: readonly KubernetesResource[]): InfrastructureHealthSummary {
+  const summary: InfrastructureHealthSummary = {
+    total: resources.length,
+    healthy: 0,
+    warning: 0,
+    critical: 0,
+    unknown: 0,
+    attention: 0,
+  };
+  for (const resource of resources) summary[resource.health.state] += 1;
+  summary.attention = summary.critical + summary.warning + summary.unknown;
+  return summary;
+}
+
+export function sortResourcesByAttention(resources: readonly KubernetesResource[]): KubernetesResource[] {
+  return [...resources].sort((left, right) => (
+    healthPriority[left.health.state] - healthPriority[right.health.state]
+    || left.kind.localeCompare(right.kind)
+    || (left.namespace ?? "").localeCompare(right.namespace ?? "")
+    || left.name.localeCompare(right.name)
+  ));
+}
+
+export function canonicalResourceRef(resource: KubernetesResource): string {
+  return [resource.kind, resource.namespace, resource.name].filter(Boolean).join("/");
+}
+
+export function resolveResourceSelection(
+  resources: readonly KubernetesResource[],
+  selection: string,
+): KubernetesResource | undefined {
+  const normalized = decodeURIComponent(selection).toLocaleLowerCase();
+  return resources.find((resource) => (
+    resource.id.toLocaleLowerCase() === normalized
+    || canonicalResourceRef(resource).toLocaleLowerCase() === normalized
+    || `${resource.kind}/${resource.name}`.toLocaleLowerCase() === normalized
+  ));
 }
 
 const allowedContextPaths = new Set(["/monitoring", "/logs", "/traces", "/agent"]);

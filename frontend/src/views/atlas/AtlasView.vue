@@ -2,8 +2,14 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
-import type { KubernetesResource, ResourceLayer, TopologyEdge } from "../../api/infrastructure";
-import { getOverview, type OverviewSnapshot } from "../../api/platform";
+import {
+  getTopology,
+  type InfrastructureQuery,
+  type KubernetesResource,
+  type ResourceLayer,
+  type TopologyEdge,
+  type TopologySnapshot,
+} from "../../api/infrastructure";
 import OperationsAtlas from "../../components/infrastructure/OperationsAtlas.vue";
 import StructuredResourceView from "../../components/infrastructure/StructuredResourceView.vue";
 import ApiErrorNotice from "../../components/workspace/ApiErrorNotice.vue";
@@ -11,10 +17,11 @@ import WorkspaceState from "../../components/workspace/WorkspaceState.vue";
 import { useLatestAsync } from "../../composables/useLatestAsync";
 import { useWorkspaceInspector } from "../../composables/useWorkspaceInspector";
 import { OPERATIONAL_SCOPE_CHANGED_EVENT } from "../../utils/operationalScope";
+import { resolveResourceSelection } from "../infrastructure/infrastructureModel";
 
 const route = useRoute();
 const router = useRouter();
-const request = useLatestAsync<OverviewSnapshot>();
+const request = useLatestAsync<TopologySnapshot>();
 const webglFailure = ref("");
 const inspectorHeading = ref<HTMLElement | null>(null);
 const modeControl = ref<HTMLElement | null>(null);
@@ -25,9 +32,13 @@ const utcFormatter = new Intl.DateTimeFormat("zh-CN", {
   timeZone: "UTC",
 });
 
-const atlas = computed(() => request.data.value?.atlas ?? null);
+const atlas = computed(() => request.data.value);
 const selectedID = inspector.selectedID;
-const selectedResource = computed(() => atlas.value?.nodes.find((item) => item.id === selectedID.value) ?? null);
+const selectedResource = computed(() => (
+  atlas.value && selectedID.value
+    ? resolveResourceSelection(atlas.value.nodes, selectedID.value) ?? null
+    : null
+));
 const selectedTargetInvalid = computed(() => Boolean(selectedID.value && atlas.value && !selectedResource.value));
 const providerReady = computed(() => atlas.value?.provider_state === "available" || atlas.value?.provider_state === "partial");
 const canvasAvailable = computed(() => providerReady.value && Boolean(atlas.value?.nodes.length) && !webglFailure.value);
@@ -121,7 +132,13 @@ function relationLabel(relation: TopologyEdge["relation"]): string {
 }
 
 async function loadAtlas(background = false) {
-  await request.run(({ signal }) => getOverview(signal), { background });
+  const query: InfrastructureQuery = {
+    cluster: queryValue(route.query.cluster) || undefined,
+    namespace: queryValue(route.query.namespace) || undefined,
+    from: queryValue(route.query.from) || undefined,
+    to: queryValue(route.query.to) || undefined,
+  };
+  await request.run(({ signal }) => getTopology(query, signal), { background });
 }
 
 function setView(mode: "canvas" | "structured") {
@@ -165,6 +182,10 @@ watch(selectedID, async (value) => {
 onMounted(() => {
   window.addEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT, handleOperationalScopeChanged);
   void loadAtlas();
+});
+watch(() => route.fullPath, (current, previous) => {
+  if (current === previous) return;
+  void loadAtlas(Boolean(request.data.value));
 });
 onBeforeUnmount(() => window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT, handleOperationalScopeChanged));
 </script>
