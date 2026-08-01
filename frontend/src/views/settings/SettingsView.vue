@@ -13,6 +13,7 @@ import USelect from "@nuxt/ui/components/Select.vue";
 import USwitch from "@nuxt/ui/components/Switch.vue";
 import UTable from "@nuxt/ui/components/Table.vue";
 import UTextarea from "@nuxt/ui/components/Textarea.vue";
+import UTabs from "@nuxt/ui/components/Tabs.vue";
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
 
@@ -37,6 +38,7 @@ import {
   type StorageStatus,
 } from "../../api/platform";
 import RiskConfirmation from "../../components/workspace/RiskConfirmation.vue";
+import WorkspaceTechnicalDetails from "../../components/workspace/WorkspaceTechnicalDetails.vue";
 import type { RiskConfirmationFacts } from "../../components/workspace/workspacePresentation";
 import { OPERATIONAL_SCOPE_CHANGED_EVENT } from "../../utils/operationalScope";
 import SettingsSectionPanel from "./SettingsSectionPanel.vue";
@@ -57,6 +59,13 @@ import {
   type SettingsSectionDrafts,
   type SettingsSectionKey,
 } from "./settingsDraft";
+import {
+  filterSettingsSearchEntries,
+  resolveSettingsViewSection,
+  shouldBlockSettingsLeave,
+  type SettingsSearchEntry,
+  type SettingsViewSection,
+} from "./settingsWorkspace";
 
 interface SectionRuntime {
   validation: ConfigurationValidation | null;
@@ -76,6 +85,17 @@ interface RevisionRow {
   worker: string;
   createdAt: string;
 }
+
+type SettingsMode = "simple" | "full";
+interface SettingsSectionLink {
+  key: SettingsViewSection;
+  label: string;
+  hash: string;
+  icon: string;
+  description: string;
+}
+
+type SettingsSearchResult = SettingsSearchEntry;
 
 const route = useRoute();
 const router = useRouter();
@@ -98,6 +118,9 @@ const applyConfirmationOpen = ref(false);
 const pendingApplySection = ref<SettingsSectionKey | null>(null);
 const leaveModalOpen = ref(false);
 const pendingRoute = ref("");
+const settingsMode = ref<SettingsMode>("simple");
+const settingsSearch = ref("");
+const selectedProvider = ref<ProviderIdentity | null>(null);
 let mounted = true;
 
 function emptyRuntime(): SectionRuntime {
@@ -131,13 +154,18 @@ const providerOptions = (Object.keys(providerLabels) as Array<ProviderIdentity |
   .filter((provider): provider is ProviderIdentity => provider !== "mysql")
   .map((provider) => ({ label: providerLabels[provider], value: provider }));
 const severityOptions: EscalationPolicy["severities"] = ["critical", "warning", "info", "unknown"];
-const sectionLinks = [
-  { label: "系统", hash: "#system", icon: "i-lucide-gauge" },
-  { label: "Scope", hash: "#operational-scope", icon: "i-lucide-scan-search" },
-  { label: "Policy", hash: "#escalation-policies", icon: "i-lucide-bell-ring" },
-  { label: "Provider", hash: "#providers", icon: "i-lucide-plug-zap" },
-  { label: "Secret reference", hash: "#secret-references", icon: "i-lucide-key-round" },
-  { label: "Revision", hash: "#revision-history", icon: "i-lucide-history" },
+const sectionLinks: SettingsSectionLink[] = [
+  { key: "system", label: "系统", hash: "#system", icon: "i-lucide-gauge", description: "查询边界与通知" },
+  { key: "scopes", label: "运行范围", hash: "#operational-scope", icon: "i-lucide-scan-search", description: "Cluster Scope" },
+  { key: "policies", label: "升级策略", hash: "#escalation-policies", icon: "i-lucide-bell-ring", description: "Alert escalation" },
+  { key: "providers", label: "Provider", hash: "#providers", icon: "i-lucide-plug-zap", description: "连接摘要与详情" },
+  { key: "secret-references", label: "Secret 引用", hash: "#secret-references", icon: "i-lucide-key-round", description: "Write-only references" },
+  { key: "revisions", label: "Revision 历史", hash: "#revision-history", icon: "i-lucide-history", description: "只读版本与存储" },
+];
+
+const modeTabs = [
+  { label: "简洁", value: "simple", icon: "i-lucide-layout-list" },
+  { label: "完整", value: "full", icon: "i-lucide-panels-top-left" },
 ];
 
 const activeRevision = computed(() => settings.value?.active_revision ?? null);
@@ -152,6 +180,43 @@ const hasUnsavedChanges = computed(() => Boolean(
 const dirtySectionCount = computed(() => (
   drafts.value ? settingsSectionKeys.filter((key) => isSettingsSectionDirty(drafts.value![key])).length : 0
 ));
+const activeSectionKey = computed<SettingsViewSection>(() => (
+  resolveSettingsViewSection(route.hash)
+));
+const providerHealthByID = computed(() => new Map(
+  (settings.value?.provider_health ?? []).map((item) => [item.provider, item]),
+));
+const selectedProviderConfiguration = computed(() => (
+  providersValue.value?.find((item) => item.provider === selectedProvider.value) ?? providersValue.value?.[0]
+));
+const sectionErrorCounts = computed<Record<SettingsViewSection, number>>(() => {
+  const counts = Object.fromEntries(sectionLinks.map((item) => [item.key, 0])) as Record<SettingsViewSection, number>;
+  if (!drafts.value) return counts;
+  for (const key of settingsSectionKeys) {
+    counts[key] = isSettingsSectionDirty(drafts.value[key])
+      ? sectionFormErrors(key).length + (runtimes[key].validation?.errors.length ?? 0)
+      : (runtimes[key].validation?.errors.length ?? 0);
+  }
+  return counts;
+});
+const searchResults = computed<SettingsSearchResult[]>(() => {
+  const query = settingsSearch.value.trim().toLowerCase();
+  if (!query) return [];
+  const results: SettingsSearchResult[] = [];
+  for (const item of sectionLinks) {
+    const haystack = `${item.label} ${item.description}`.toLowerCase();
+    if (haystack.includes(query)) results.push({ key: item.key, label: item.label, text: item.description });
+  }
+  const fields: SettingsSearchResult[] = [
+    { key: "system", label: "最大回看时间", field: "system.query_max_lookback_seconds", text: "查询边界与时间窗口" },
+    { key: "system", label: "Telemetry 保留", field: "system.telemetry_retention_days", text: "数据保留天数" },
+    { key: "scopes", label: "Cluster identity", field: "scopes.0.cluster_id", text: "运行范围与集群" },
+    { key: "policies", label: "Severity", field: "policies.0.severities", text: "告警升级级别" },
+    { key: "providers", label: "Endpoint", field: "providers.llm.endpoint", text: "Provider 连接地址" },
+    { key: "secret-references", label: "Secret reference", field: "secret-references", text: "只读 Secret 元数据" },
+  ];
+  return results.concat(filterSettingsSearchEntries(query, fields));
+});
 const providerTestConfiguration = computed(() => (
   providersValue.value?.find((item) => item.provider === providerTestTarget.value) ?? null
 ));
@@ -230,6 +295,44 @@ function formatBytes(value: number): string {
   return `${new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 1 }).format(amount)} ${units[index]}`;
 }
 
+function selectSection(key: SettingsViewSection) {
+  const link = sectionLinks.find((item) => item.key === key);
+  if (link) void router.push({ path: "/settings", hash: link.hash });
+}
+
+function jumpToSearchResult(result: SettingsSearchResult) {
+  settingsSearch.value = "";
+  selectSection(result.key);
+  void nextTick(() => {
+    if (result.field) focusField(result.field);
+    else void focusRouteAnchor(sectionLinks.find((item) => item.key === result.key)?.hash);
+  });
+}
+
+function providerState(provider: ProviderIdentity): ProviderState {
+  return providerHealthByID.value.get(provider)?.state ?? "not_configured";
+}
+
+function providerStateDetail(provider: ProviderIdentity): string {
+  return providerHealthByID.value.get(provider)?.detail ?? "尚未收到服务端健康投影";
+}
+
+function secondsToHours(value: number): number {
+  return Math.max(1, Math.round(value / 3600));
+}
+
+function hoursToSeconds(value: unknown): number {
+  return Math.max(60, Number(value || 1) * 3600);
+}
+
+function millisecondsToSeconds(value: number): number {
+  return Math.max(1, Math.round(value / 1000));
+}
+
+function secondsToMilliseconds(value: unknown): number {
+  return Math.max(1000, Number(value || 1) * 1000);
+}
+
 function describeError(reason: unknown, fallback: string): string {
   if (!isApiError(reason)) return fallback;
   const next = reason.nextSteps.length ? `；下一步：${reason.nextSteps.join("；")}` : "";
@@ -244,6 +347,7 @@ function clearSectionRuntime(key: SettingsSectionKey, keepOutcome = false) {
 
 function initializeDrafts(revision: ConfigurationRevision) {
   drafts.value = createSettingsSectionDrafts(revision);
+  selectedProvider.value = revision.providers[0]?.provider ?? null;
   for (const key of settingsSectionKeys) clearSectionRuntime(key);
   providerResults.value = {};
 }
@@ -253,6 +357,7 @@ function reconcileCleanDrafts(revision: ConfigurationRevision) {
     initializeDrafts(revision);
     return;
   }
+  if (!selectedProvider.value) selectedProvider.value = revision.providers[0]?.provider ?? null;
   for (const key of settingsSectionKeys) {
     if (isSettingsSectionDirty(drafts.value[key])) continue;
     drafts.value[key] = createSettingsSectionDraft(revision, key);
@@ -682,7 +787,7 @@ async function focusRouteAnchor(hash = route.hash) {
 }
 
 function handleBeforeUnload(event: BeforeUnloadEvent) {
-  if (!hasUnsavedChanges.value) return;
+  if (!shouldBlockSettingsLeave(hasUnsavedChanges.value)) return;
   event.preventDefault();
   event.returnValue = "";
 }
@@ -713,7 +818,7 @@ function handleOperationalScopeChanged() {
 }
 
 onBeforeRouteLeave((to) => {
-  if (!hasUnsavedChanges.value) return true;
+  if (!shouldBlockSettingsLeave(hasUnsavedChanges.value)) return true;
   pendingRoute.value = to.fullPath;
   leaveModalOpen.value = true;
   return false;
@@ -745,14 +850,14 @@ onBeforeUnmount(() => {
     aria-labelledby="settings-title"
   >
     <header class="settings-page-heading">
-      <div>
+      <div class="settings-heading-copy">
         <p class="settings-eyebrow">
           Configuration control
         </p>
         <h1 id="settings-title">
-          设置与 Revision
+          设置中心
         </h1>
-        <p>分区本地草稿、显式校验、并发 Revision 和逐项应用观测。</p>
+        <p>一次查看一个配置分区；本地草稿、校验和 Revision 结果始终保留。</p>
       </div>
       <div class="settings-page-actions">
         <UBadge
@@ -772,19 +877,78 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
+    <div class="settings-command-row">
+      <div class="settings-search-wrap">
+        <UInput
+          v-model="settingsSearch"
+          icon="i-lucide-search"
+          size="lg"
+          placeholder="搜索设置并跳转..."
+          aria-label="搜索设置"
+          class="settings-search"
+        />
+        <div
+          v-if="settingsSearch && searchResults.length"
+          class="settings-search-results"
+          role="listbox"
+          aria-label="设置搜索结果"
+        >
+          <button
+            v-for="result in searchResults"
+            :key="`${result.key}-${result.field ?? result.label}`"
+            type="button"
+            role="option"
+            @click="jumpToSearchResult(result)"
+          >
+            <span><strong>{{ result.label }}</strong><small>{{ result.text }}</small></span>
+            <UIcon
+              name="i-lucide-arrow-up-right"
+              aria-hidden="true"
+            />
+          </button>
+        </div>
+        <p
+          v-else-if="settingsSearch"
+          class="settings-search-empty"
+        >
+          没有匹配的设置项
+        </p>
+      </div>
+      <UTabs
+        v-model="settingsMode"
+        :items="modeTabs"
+        :content="false"
+        color="neutral"
+        variant="pill"
+        size="sm"
+        aria-label="设置显示模式"
+      />
+    </div>
+
     <nav
       class="settings-section-nav"
       aria-label="Settings 分区"
     >
-      <UButton
+      <button
         v-for="item in sectionLinks"
-        :key="item.hash"
-        :to="{ path: '/settings', hash: item.hash }"
-        color="neutral"
-        variant="ghost"
-        :icon="item.icon"
-        :label="item.label"
-      />
+        :key="item.key"
+        type="button"
+        :class="['settings-section-link', { 'is-active': activeSectionKey === item.key }]"
+        :aria-current="activeSectionKey === item.key ? 'page' : undefined"
+        @click="selectSection(item.key)"
+      >
+        <UIcon
+          :name="item.icon"
+          aria-hidden="true"
+        />
+        <span><strong>{{ item.label }}</strong><small>{{ item.description }}</small></span>
+        <UBadge
+          v-if="sectionErrorCounts[item.key]"
+          color="error"
+          variant="soft"
+          :label="String(sectionErrorCounts[item.key])"
+        />
+      </button>
     </nav>
 
     <UAlert
@@ -838,16 +1002,36 @@ onBeforeUnmount(() => {
           </h2>
           <p>{{ activeRevision.summary }}</p>
         </div>
-        <dl>
-          <div><dt>Revision ID</dt><dd>{{ activeRevision.id }}</dd></div>
-          <div><dt>Exact hash</dt><dd>{{ activeRevision.hash }}</dd></div>
-          <div><dt>Created at (UTC)</dt><dd>{{ formatISO(activeRevision.created_at) }}</dd></div>
-          <div><dt>Worker boundary</dt><dd>{{ activationLabel(activeRevision.worker_boundary?.status) }}</dd></div>
-        </dl>
+        <div class="active-revision-summary">
+          <UBadge
+            color="success"
+            variant="soft"
+            icon="i-lucide-check-circle-2"
+            label="当前生效"
+          />
+          <span>{{ formatISO(activeRevision.created_at) }}</span>
+          <span>{{ activationLabel(activeRevision.worker_boundary?.status) }}</span>
+          <UButton
+            color="neutral"
+            variant="ghost"
+            icon="i-lucide-braces"
+            label="技术详情"
+            @click="settingsMode = 'full'"
+          />
+        </div>
+        <WorkspaceTechnicalDetails
+          v-if="settingsMode === 'full'"
+          :fields="[
+            { label: 'Revision ID', value: activeRevision.id, code: true, copyValue: activeRevision.id },
+            { label: 'Exact hash', value: activeRevision.hash, code: true, copyValue: activeRevision.hash },
+            { label: 'Created at (UTC)', value: formatISO(activeRevision.created_at), code: true },
+            { label: 'Worker boundary', value: activationLabel(activeRevision.worker_boundary?.status) },
+          ]"
+        />
       </section>
 
       <UForm
-        v-if="systemValue"
+        v-if="activeSectionKey === 'system' && systemValue"
         id="settings-form-system"
         :state="drafts.system"
         :validate="() => sectionFormErrors('system')"
@@ -877,16 +1061,17 @@ onBeforeUnmount(() => {
         >
           <div class="settings-form-grid settings-form-grid--three">
             <UFormField
-              label="最大回看时间（秒）"
+              label="最大回看时间（小时）"
               name="system.query_max_lookback_seconds"
               :data-field="'system.query_max_lookback_seconds'"
             >
               <UInputNumber
-                v-model="systemValue.query_max_lookback_seconds"
-                :min="60"
-                :max="2592000"
-                :step="60"
+                :model-value="secondsToHours(systemValue.query_max_lookback_seconds)"
+                :min="1"
+                :max="720"
+                :step="1"
                 class="settings-control"
+                @update:model-value="systemValue.query_max_lookback_seconds = hoursToSeconds($event)"
               />
             </UFormField>
             <UFormField
@@ -932,7 +1117,7 @@ onBeforeUnmount(() => {
       </UForm>
 
       <UForm
-        v-if="scopesValue"
+        v-if="activeSectionKey === 'scopes' && scopesValue"
         id="settings-form-scopes"
         :state="drafts.scopes"
         :validate="() => sectionFormErrors('scopes')"
@@ -973,7 +1158,7 @@ onBeforeUnmount(() => {
           </div>
           <div class="settings-repeated-list">
             <article
-              v-for="(scope, index) in scopesValue.scopes"
+              v-for="(scope, index) in scopesValue.scopes.slice(0, settingsMode === 'simple' ? 1 : undefined)"
               :key="scope.id || `scope-${index}`"
               class="settings-item"
             >
@@ -1055,7 +1240,7 @@ onBeforeUnmount(() => {
       </UForm>
 
       <UForm
-        v-if="policiesValue"
+        v-if="activeSectionKey === 'policies' && policiesValue"
         id="settings-form-policies"
         :state="drafts.policies"
         :validate="() => sectionFormErrors('policies')"
@@ -1107,7 +1292,7 @@ onBeforeUnmount(() => {
             class="settings-repeated-list"
           >
             <article
-              v-for="(policy, index) in policiesValue"
+              v-for="(policy, index) in policiesValue.slice(0, settingsMode === 'simple' ? 3 : undefined)"
               :key="policy.id || `policy-${index}`"
               class="settings-item"
             >
@@ -1220,7 +1405,7 @@ onBeforeUnmount(() => {
       </UForm>
 
       <UForm
-        v-if="providersValue"
+        v-if="activeSectionKey === 'providers' && providersValue"
         id="settings-form-providers"
         :state="drafts.providers"
         :validate="() => sectionFormErrors('providers')"
@@ -1258,29 +1443,65 @@ onBeforeUnmount(() => {
           />
           <div
             v-else
-            class="settings-repeated-list settings-provider-list"
+            class="settings-provider-workbench"
           >
-            <article
-              v-for="provider in providersValue"
-              :key="provider.provider"
-              class="settings-item provider-item"
+            <div
+              class="provider-summary-list"
+              role="list"
+              aria-label="Provider 连接摘要"
             >
-              <header>
-                <div><strong>{{ providerLabels[provider.provider] }}</strong><code>{{ provider.provider }}</code></div>
+              <article
+                v-for="provider in providersValue"
+                :key="provider.provider"
+                :class="['provider-summary-row', { 'is-selected': selectedProviderConfiguration?.provider === provider.provider }]"
+                role="listitem"
+                tabindex="0"
+                @click="selectedProvider = provider.provider"
+                @keydown.enter.prevent="selectedProvider = provider.provider"
+              >
+                <header>
+                  <div class="provider-summary-name">
+                    <span
+                      class="provider-state-dot"
+                      :data-state="providerState(provider.provider)"
+                    /><strong>{{ providerLabels[provider.provider] }}</strong><code>{{ provider.provider }}</code>
+                  </div>
+                  <UBadge
+                    :color="stateColor(providerState(provider.provider))"
+                    variant="soft"
+                    :label="stateLabel(providerState(provider.provider))"
+                  />
+                </header>
+                <p>{{ providerStateDetail(provider.provider) }}</p>
+                <small>{{ provider.enabled ? '配置已启用' : '配置已停用' }} · {{ provider.endpoint || '服务端默认 Endpoint' }}</small>
+              </article>
+            </div>
+            <article
+              v-if="selectedProviderConfiguration"
+              class="provider-detail-panel"
+            >
+              <header class="provider-detail-header">
+                <div>
+                  <p class="settings-eyebrow">
+                    Provider detail
+                  </p>
+                  <h3>{{ providerLabels[selectedProviderConfiguration.provider] }}</h3>
+                  <p>{{ providerStateDetail(selectedProviderConfiguration.provider) }}</p>
+                </div>
                 <USwitch
-                  v-model="provider.enabled"
-                  :label="provider.enabled ? '已启用' : '已停用'"
+                  v-model="selectedProviderConfiguration.enabled"
+                  :label="selectedProviderConfiguration.enabled ? '已启用' : '已停用'"
                 />
               </header>
               <div class="settings-form-grid">
                 <UFormField
                   class="settings-span-two"
                   label="Endpoint"
-                  :name="`providers.${provider.provider}.endpoint`"
-                  :data-field="`providers.${provider.provider}.endpoint`"
+                  :name="`providers.${selectedProviderConfiguration.provider}.endpoint`"
+                  :data-field="`providers.${selectedProviderConfiguration.provider}.endpoint`"
                 >
                   <UInput
-                    v-model="provider.endpoint"
+                    v-model="selectedProviderConfiguration.endpoint"
                     type="url"
                     class="settings-control"
                     autocomplete="off"
@@ -1288,39 +1509,40 @@ onBeforeUnmount(() => {
                   />
                 </UFormField>
                 <UFormField
-                  v-if="provider.provider === 'llm'"
+                  v-if="selectedProviderConfiguration.provider === 'llm'"
                   class="settings-span-two"
                   label="Model"
                   name="providers.llm.model"
                   data-field="providers.llm.model"
                 >
                   <UInput
-                    v-model="provider.model"
+                    v-model="selectedProviderConfiguration.model"
                     class="settings-control"
                     autocomplete="off"
                     spellcheck="false"
                   />
                 </UFormField>
                 <UFormField
-                  label="Timeout（ms）"
-                  :name="`providers.${provider.provider}.timeout_ms`"
-                  :data-field="`providers.${provider.provider}.timeout_ms`"
+                  label="Timeout（秒）"
+                  :name="`providers.${selectedProviderConfiguration.provider}.timeout_ms`"
+                  :data-field="`providers.${selectedProviderConfiguration.provider}.timeout_ms`"
                 >
                   <UInputNumber
-                    v-model="provider.timeout_ms"
-                    :min="1000"
-                    :max="60000"
-                    :step="1000"
+                    :model-value="millisecondsToSeconds(selectedProviderConfiguration.timeout_ms)"
+                    :min="1"
+                    :max="60"
+                    :step="1"
                     class="settings-control"
+                    @update:model-value="selectedProviderConfiguration.timeout_ms = secondsToMilliseconds($event)"
                   />
                 </UFormField>
                 <UFormField
                   label="结果上限"
-                  :name="`providers.${provider.provider}.max_results`"
-                  :data-field="`providers.${provider.provider}.max_results`"
+                  :name="`providers.${selectedProviderConfiguration.provider}.max_results`"
+                  :data-field="`providers.${selectedProviderConfiguration.provider}.max_results`"
                 >
                   <UInputNumber
-                    v-model="provider.max_results"
+                    v-model="selectedProviderConfiguration.max_results"
                     :min="1"
                     :max="10000"
                     :step="10"
@@ -1330,11 +1552,11 @@ onBeforeUnmount(() => {
                 <UFormField
                   class="settings-span-two"
                   label="Context Link base"
-                  :name="`providers.${provider.provider}.context_link_base`"
-                  :data-field="`providers.${provider.provider}.context_link_base`"
+                  :name="`providers.${selectedProviderConfiguration.provider}.context_link_base`"
+                  :data-field="`providers.${selectedProviderConfiguration.provider}.context_link_base`"
                 >
                   <UInput
-                    v-model="provider.context_link_base"
+                    v-model="selectedProviderConfiguration.context_link_base"
                     type="url"
                     class="settings-control"
                     autocomplete="off"
@@ -1344,15 +1566,15 @@ onBeforeUnmount(() => {
               </div>
               <footer class="provider-item-footer">
                 <div
-                  v-if="providerResults[provider.provider]"
+                  v-if="providerResults[selectedProviderConfiguration.provider]"
                   class="provider-result"
                 >
                   <UBadge
-                    :color="stateColor(providerResults[provider.provider]!.state)"
+                    :color="stateColor(providerResults[selectedProviderConfiguration.provider]!.state)"
                     variant="soft"
-                    :label="stateLabel(providerResults[provider.provider]!.state)"
+                    :label="stateLabel(providerResults[selectedProviderConfiguration.provider]!.state)"
                   />
-                  <span>{{ providerResults[provider.provider]!.detail }}</span>
+                  <span>{{ providerResults[selectedProviderConfiguration.provider]!.detail }}</span>
                 </div>
                 <span
                   v-else
@@ -1363,7 +1585,7 @@ onBeforeUnmount(() => {
                   variant="outline"
                   icon="i-lucide-flask-conical"
                   label="审阅 Provider test"
-                  @click="openProviderTest(provider.provider)"
+                  @click="openProviderTest(selectedProviderConfiguration.provider)"
                 />
               </footer>
             </article>
@@ -1372,7 +1594,7 @@ onBeforeUnmount(() => {
       </UForm>
 
       <UForm
-        v-if="secretReferencesValue"
+        v-if="activeSectionKey === 'secret-references' && secretReferencesValue"
         id="settings-form-secret-references"
         :state="drafts['secret-references']"
         :validate="() => sectionFormErrors('secret-references')"
@@ -1443,6 +1665,7 @@ onBeforeUnmount(() => {
       </UForm>
 
       <section
+        v-if="activeSectionKey === 'revisions'"
         id="revision-history"
         class="settings-readonly-section"
         aria-labelledby="revision-history-heading"
@@ -1473,6 +1696,7 @@ onBeforeUnmount(() => {
       </section>
 
       <section
+        v-if="activeSectionKey === 'revisions'"
         class="settings-readonly-section"
         aria-labelledby="storage-heading"
       >
@@ -1501,6 +1725,7 @@ onBeforeUnmount(() => {
       </section>
 
       <section
+        v-if="activeSectionKey === 'revisions'"
         class="settings-readonly-section"
         aria-labelledby="bootstrap-heading"
       >
@@ -1709,17 +1934,33 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.settings-view { display: grid; width: min(100%, 960px); min-width: 0; gap: var(--co-space-5); margin-right: auto; padding-bottom: var(--co-space-8); }
+.settings-view { display: grid; width: min(100%, 1240px); min-width: 0; gap: var(--co-space-5); margin-inline: auto; padding-bottom: var(--co-page-end-space); }
 .settings-page-heading { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: var(--co-space-5); }
-.settings-page-heading h1 { margin: 0; font-size: 28px; letter-spacing: 0; }
+.settings-heading-copy { min-width: 0; }
+.settings-page-heading h1 { margin: 0; font-size: clamp(24px, 2.2vw, 32px); letter-spacing: 0; }
 .settings-page-heading p:not(.settings-eyebrow) { max-width: 64ch; margin: var(--co-space-1) 0 0; color: var(--co-text-secondary); font-size: 13px; }
 .settings-eyebrow { margin: 0 0 var(--co-space-1); color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 10px; font-weight: 750; text-transform: uppercase; }
 .settings-page-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--co-space-2); }
-.settings-section-nav { position: sticky; top: var(--co-header-height); z-index: var(--co-z-sticky); display: flex; min-width: 0; gap: var(--co-space-1); padding: var(--co-space-1); border-block: 1px solid var(--co-border-default); background: color-mix(in srgb, var(--co-bg-canvas) 96%, transparent); overflow-x: auto; backdrop-filter: blur(8px); }
-.settings-section-nav :deep(a) { flex: 0 0 auto; }
-.active-revision-band { display: grid; min-width: 0; grid-template-columns: minmax(180px, 0.75fr) minmax(0, 1.25fr); gap: var(--co-space-5); padding-block: var(--co-space-4); border-block: 1px solid var(--co-border-default); }
+.settings-command-row { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: var(--co-space-4); padding-block: var(--co-space-2); }
+.settings-search-wrap { position: relative; min-width: min(100%, 420px); flex: 1 1 420px; }
+.settings-search { width: 100%; }
+.settings-search-results { position: absolute; top: calc(100% + 6px); right: 0; left: 0; z-index: calc(var(--co-z-sticky) + 2); display: grid; max-height: 320px; overflow: auto; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); background: var(--co-bg-floating); box-shadow: var(--co-shadow-floating); }
+.settings-search-results button { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: var(--co-space-3); padding: var(--co-space-3); border: 0; border-bottom: 1px solid var(--co-border-subtle); background: transparent; color: var(--co-text-primary); text-align: left; cursor: pointer; }
+.settings-search-results button:hover, .settings-search-results button:focus-visible { background: var(--co-bg-hover); outline: none; }
+.settings-search-results button > span { display: grid; min-width: 0; gap: 2px; }
+.settings-search-results small, .settings-search-empty { color: var(--co-text-muted); font-size: 11px; }
+.settings-search-empty { margin: var(--co-space-2) 0 0; }
+.settings-section-nav { position: sticky; top: var(--co-header-height); z-index: var(--co-z-sticky); display: grid; min-width: 0; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 1px; padding: 1px; border-block: 1px solid var(--co-border-default); background: var(--co-border-default); box-shadow: var(--co-shadow-chrome); }
+.settings-section-link { display: grid; min-width: 0; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--co-space-2); min-height: 58px; padding: var(--co-space-2) var(--co-space-3); border: 0; background: var(--co-bg-canvas); color: var(--co-text-secondary); text-align: left; cursor: pointer; transition: background var(--co-motion-fast) ease, color var(--co-motion-fast) ease; }
+.settings-section-link:hover, .settings-section-link:focus-visible { background: var(--co-bg-hover); color: var(--co-text-primary); outline: none; }
+.settings-section-link.is-active { background: var(--co-bg-floating); color: var(--co-text-primary); box-shadow: inset 0 -2px 0 var(--co-focus-ring); }
+.settings-section-link > span { display: grid; min-width: 0; gap: 2px; }
+.settings-section-link strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-section-link small { overflow: hidden; color: var(--co-text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.active-revision-band { display: grid; min-width: 0; grid-template-columns: minmax(220px, .8fr) minmax(0, 1.2fr); align-items: center; gap: var(--co-space-5); padding: var(--co-space-4); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-panel); background: var(--co-bg-surface); box-shadow: var(--co-shadow-row); }
 .active-revision-band h2, .settings-readonly-section h2 { margin: 0; font-size: 18px; letter-spacing: 0; }
 .active-revision-band > div > p:not(.settings-eyebrow) { margin: var(--co-space-1) 0 0; color: var(--co-text-secondary); font-size: 12px; }
+.active-revision-summary { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--co-space-2); color: var(--co-text-muted); font-size: 11px; }
 .active-revision-band dl, .settings-modal-body dl { display: grid; min-width: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; }
 .active-revision-band dl div, .settings-modal-body dl div { min-width: 0; padding: var(--co-space-2) var(--co-space-3); border-bottom: 1px solid var(--co-border-default); }
 .active-revision-band dt, .settings-modal-body dt, .settings-facts-grid dt { color: var(--co-text-muted); font-size: 10px; }
@@ -1739,6 +1980,26 @@ onBeforeUnmount(() => {
 .settings-item > header code { color: var(--co-text-muted); font-size: 10px; }
 .settings-checkbox-row { display: flex; min-width: 0; flex-wrap: wrap; gap: var(--co-space-3); }
 .provider-item-footer { display: flex; min-width: 0; align-items: flex-end; justify-content: space-between; gap: var(--co-space-3); margin-top: auto; padding-top: var(--co-space-2); border-top: 1px solid var(--co-border-default); }
+.settings-provider-workbench { display: grid; min-width: 0; grid-template-columns: minmax(240px, .44fr) minmax(0, 1fr); gap: var(--co-space-3); }
+.provider-summary-list { display: grid; min-width: 0; align-content: start; gap: 1px; border: 1px solid var(--co-border-default); background: var(--co-border-default); }
+.provider-summary-row { display: grid; min-width: 0; gap: 4px; padding: var(--co-space-3); border: 0; background: var(--co-bg-canvas); color: var(--co-text-secondary); text-align: left; cursor: pointer; }
+.provider-summary-row:hover, .provider-summary-row:focus-visible, .provider-summary-row.is-selected { background: var(--co-bg-floating); color: var(--co-text-primary); outline: none; }
+.provider-summary-row.is-selected { box-shadow: inset 3px 0 0 var(--co-focus-ring); }
+.provider-summary-row header, .provider-summary-name { display: flex; min-width: 0; align-items: center; gap: var(--co-space-2); }
+.provider-summary-row header { justify-content: space-between; }
+.provider-summary-name { overflow: hidden; }
+.provider-summary-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.provider-summary-name code { color: var(--co-text-muted); font-size: 10px; }
+.provider-state-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--co-text-muted); }
+.provider-state-dot[data-state="available"] { background: var(--co-status-success-fg); }
+.provider-state-dot[data-state="partial"] { background: var(--co-status-warning-fg); }
+.provider-state-dot[data-state="unavailable"] { background: var(--co-status-critical-fg); }
+.provider-summary-row p { margin: 0; overflow: hidden; color: inherit; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.provider-summary-row small { overflow: hidden; color: var(--co-text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.provider-detail-panel { display: grid; min-width: 0; align-content: start; gap: var(--co-space-4); padding: var(--co-space-4); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-panel); background: var(--co-bg-surface); }
+.provider-detail-header { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: var(--co-space-3); padding-bottom: var(--co-space-3); border-bottom: 1px solid var(--co-border-default); }
+.provider-detail-header h3 { margin: 0; font-size: 18px; }
+.provider-detail-header p:not(.settings-eyebrow) { margin: 2px 0 0; color: var(--co-text-secondary); font-size: 11px; }
 .provider-result { display: flex; min-width: 0; align-items: center; gap: var(--co-space-2); }
 .provider-result span, .provider-result-empty { color: var(--co-text-muted); overflow-wrap: anywhere; font-size: 10px; }
 .secret-reference-list { display: grid; min-width: 0; gap: 0; margin: 0; padding: 0; border-top: 1px solid var(--co-border-default); list-style: none; }
@@ -1757,12 +2018,18 @@ onBeforeUnmount(() => {
 .settings-modal-body { display: grid; min-width: 0; gap: var(--co-space-4); }
 .settings-modal-actions { display: flex; width: 100%; justify-content: flex-end; gap: var(--co-space-2); }
 @media (max-width: 1100px) {
+  .settings-section-nav { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .settings-repeated-list { grid-template-columns: 1fr; }
+  .settings-provider-workbench { grid-template-columns: 1fr; }
 }
 @media (max-width: 820px) {
   .settings-page-heading, .provider-item-footer { align-items: stretch; flex-direction: column; }
   .settings-page-actions { justify-content: flex-start; }
+  .settings-command-row { align-items: stretch; flex-direction: column; }
+  .settings-search-wrap { min-width: 0; }
+  .settings-section-nav { position: static; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .active-revision-band { grid-template-columns: 1fr; }
+  .active-revision-summary { justify-content: flex-start; }
   .settings-form-grid, .settings-form-grid--three, .settings-toggle-grid { grid-template-columns: 1fr; }
   .settings-span-two { grid-column: auto; }
   .settings-facts-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
