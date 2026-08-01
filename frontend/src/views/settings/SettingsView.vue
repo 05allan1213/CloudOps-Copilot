@@ -1439,7 +1439,7 @@ onBeforeUnmount(() => {
             variant="soft"
             icon="i-lucide-plug"
             title="当前 Revision 没有 Provider 配置"
-            description="页面不会用装饰性连接或 fixture 代替服务端 Provider truth。"
+            description="页面只展示服务端返回的 Provider 连接事实。"
           />
           <div
             v-else
