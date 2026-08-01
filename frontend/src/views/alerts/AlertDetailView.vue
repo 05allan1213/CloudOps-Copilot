@@ -26,6 +26,8 @@ import AlertBadges from "../../components/alerts/AlertBadges.vue";
 import ApiErrorNotice from "../../components/workspace/ApiErrorNotice.vue";
 import WorkspaceHeader from "../../components/workspace/WorkspaceHeader.vue";
 import WorkspaceState from "../../components/workspace/WorkspaceState.vue";
+import WorkspacePageFrame from "../../components/workspace/WorkspacePageFrame.vue";
+import WorkspaceTechnicalDetails from "../../components/workspace/WorkspaceTechnicalDetails.vue";
 
 type DetailCommand =
   | "acknowledge"
@@ -316,7 +318,8 @@ onBeforeUnmount(() => controller?.abort());
 </script>
 
 <template>
-  <article
+  <WorkspacePageFrame
+    as="article"
     class="alert-detail-view"
     data-testid="alert-detail-route"
   >
@@ -537,40 +540,33 @@ onBeforeUnmount(() => controller?.abort());
             </h2>
           </div>
         </header>
-        <dl class="alert-facts-grid">
+        <dl class="alert-facts-grid alert-human-facts">
           <div>
-            <dt>Alert ID</dt>
-            <dd>{{ alert.id }}</dd>
+            <dt>当前状态</dt>
+            <dd>{{ alert.status === "firing" ? "触发中" : "已恢复" }} · {{ alert.severity === "critical" ? "严重" : alert.severity === "warning" ? "警告" : "信息" }}</dd>
           </div>
           <div>
-            <dt>Source</dt>
-            <dd>{{ alert.source }}</dd>
+            <dt>影响对象</dt>
+            <dd>{{ alert.namespace }}/{{ alert.target_name }}</dd>
           </div>
           <div>
-            <dt>Fingerprint</dt>
-            <dd>{{ alert.fingerprint }}</dd>
-          </div>
-          <div>
-            <dt>Correlation key</dt>
-            <dd>{{ alert.correlation_key }}</dd>
-          </div>
-          <div>
-            <dt>首次出现</dt>
-            <dd>{{ formatTime(alert.first_seen_at) }}</dd>
-          </div>
-          <div>
-            <dt>最近出现</dt>
+            <dt>最近 Signal</dt>
             <dd>{{ formatTime(alert.last_seen_at) }}</dd>
           </div>
           <div>
-            <dt>Resolved</dt>
-            <dd>{{ formatTime(alert.resolved_at) }}</dd>
-          </div>
-          <div>
-            <dt>Provenance</dt>
-            <dd>{{ alert.migrated_legacy ? "legacy_automatic_ingress" : "native Alert" }}</dd>
+            <dt>来源 Provider</dt>
+            <dd>{{ alert.source }}</dd>
           </div>
         </dl>
+        <WorkspaceTechnicalDetails
+          :fields="[
+            { label: 'Alert ID', value: alert.id, code: true, copyValue: alert.id },
+            { label: 'Fingerprint', value: alert.fingerprint, code: true, copyValue: alert.fingerprint },
+            { label: 'Correlation key', value: alert.correlation_key, code: true, copyValue: alert.correlation_key },
+            { label: '首次出现 UTC', value: alert.first_seen_at, code: true, copyValue: alert.first_seen_at },
+            { label: 'Resolved UTC', value: alert.resolved_at || '未恢复', code: true, copyValue: alert.resolved_at },
+          ]"
+        />
       </section>
 
       <section
@@ -639,45 +635,22 @@ onBeforeUnmount(() => controller?.abort());
         >
           <div
             v-if="alert.incident_links.length"
-            class="alert-relation-table"
-            role="region"
+            class="alert-relation-list"
             aria-label="Alert Incident relationships"
-            tabindex="0"
           >
-            <table>
-              <thead>
-                <tr>
-                  <th>Incident</th>
-                  <th>状态</th>
-                  <th>Cycle</th>
-                  <th>Provenance</th>
-                  <th>Configuration Revision / Policy</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="link in alert.incident_links"
-                  :key="link.id"
-                >
-                  <td>
-                    <UButton
-                      color="neutral"
-                      variant="link"
-                      trailing-icon="i-lucide-arrow-up-right"
-                      :label="shortID(link.incident_id)"
-                      :to="{ name: 'incident-detail', params: { incidentId: link.incident_id } }"
-                    />
-                  </td>
-                  <td>{{ link.incident_status }}</td>
-                  <td>{{ link.incident_cycle }}</td>
-                  <td>{{ provenanceLabel(link.provenance) }}</td>
-                  <td>
-                    <code>{{ link.configuration_revision_id || "Owner command" }}</code>
-                    <code v-if="link.escalation_policy_id">{{ link.escalation_policy_id }}</code>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+            <article v-for="link in alert.incident_links" :key="link.id" class="alert-relation-item">
+              <div>
+                <UButton
+                  color="neutral"
+                  variant="link"
+                  trailing-icon="i-lucide-arrow-up-right"
+                  :label="`Incident ${shortID(link.incident_id)}`"
+                  :to="{ name: 'incident-detail', params: { incidentId: link.incident_id } }"
+                />
+                <p>{{ link.incident_status }} · Cycle {{ link.incident_cycle }} · {{ provenanceLabel(link.provenance) }}</p>
+              </div>
+              <small>{{ link.configuration_revision_id ? `Revision ${shortID(link.configuration_revision_id)}` : "Owner command" }}</small>
+            </article>
           </div>
           <div
             v-if="alert.investigations.length"
@@ -958,7 +931,7 @@ onBeforeUnmount(() => controller?.abort());
         </div>
       </template>
     </UModal>
-  </article>
+  </WorkspacePageFrame>
 </template>
 
 <style scoped>
@@ -1084,23 +1057,10 @@ onBeforeUnmount(() => controller?.abort());
 }
 
 .alert-relations { display: grid; min-width: 0; gap: var(--co-space-3); }
-.alert-relation-table { min-width: 0; overflow-x: auto; }
-.alert-relation-table table {
-  width: 100%;
-  min-width: 900px;
-  border-collapse: collapse;
-  background: var(--co-bg-surface);
-  font-size: 11px;
-}
-.alert-relation-table th,
-.alert-relation-table td {
-  padding: var(--co-space-2) var(--co-space-3);
-  border-bottom: 1px solid var(--co-border-default);
-  text-align: left;
-  vertical-align: middle;
-}
-.alert-relation-table th { color: var(--co-text-muted); font-size: 10px; }
-.alert-relation-table code { display: block; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.alert-relation-list { display: grid; min-width: 0; gap: var(--co-space-2); }
+.alert-relation-item { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: var(--co-space-3); padding: var(--co-space-2) var(--co-space-3); border-block: 1px solid var(--co-border-default); background: var(--co-bg-surface); }
+.alert-relation-item p { margin: 0; color: var(--co-text-muted); font-size: 11px; }
+.alert-relation-item small { color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 10px; overflow-wrap: anywhere; }
 
 .alert-signal-list,
 .alert-timeline {

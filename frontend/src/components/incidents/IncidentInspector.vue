@@ -12,6 +12,7 @@ import {
 } from "../../api/incidents";
 import { apiErrorDetails } from "../../api/client";
 import WorkspaceState from "../workspace/WorkspaceState.vue";
+import WorkspaceTechnicalDetails from "../workspace/WorkspaceTechnicalDetails.vue";
 import type { WorkspaceStateKind } from "../workspace/workspacePresentation";
 import {
   incidentInspectorFailureKind,
@@ -27,6 +28,7 @@ import type {
   VerificationRunView,
 } from "../../types/incidents";
 import { formatIncidentTime } from "../../utils/incidentTime";
+import IncidentLifecycle, { type IncidentLifecycleStep } from "./IncidentLifecycle.vue";
 
 const props = defineProps<{ incidentID: string }>();
 
@@ -73,6 +75,33 @@ const approvalLabel = computed(() => {
   return plan.value.status === "awaiting_approval" ? "等待 Approval" : plan.value.status;
 });
 const verificationLabel = computed(() => verification.value?.status || "NOT RUN");
+const statusConclusion = computed(() => {
+  if (!incident.value) return "Incident 当前状态不可用。";
+  if (incident.value.status === "closed") return "恢复证明与 ResolutionReport 已完成，Incident 已关闭。";
+  if (incident.value.recovery.state === "recovered") return "恢复已经证明，等待完成 Resolution 与关闭。";
+  if (incident.value.recovery.state === "investigate") return "最近一次验证未证明恢复，流程已返回调查。";
+  if (incident.value.attention.required) return `当前需要 Owner 关注：${incident.value.attention.reason_code || "存在阻塞项"}。`;
+  return `${incidentStatusLabel(incident.value.status)}，当前没有额外 Attention 标记。`;
+});
+const lifecycleSteps = computed<IncidentLifecycleStep[]>(() => {
+  const current = incident.value;
+  if (!current) return [];
+  const statusRank = ({ detected: 0, investigating: 1, awaiting_approval: 3, delivering: 4, verifying: 5, resolved: 6, closed: 7 })[current.status];
+  const investigationComplete = Boolean(latestInvestigation.value && ["completed", "failed", "cancelled"].includes(latestInvestigation.value.status));
+  const evidenceComplete = evidenceCount.value > 0;
+  const approvalComplete = Boolean(plan.value?.decision) || statusRank > 3;
+  const deliveryComplete = Boolean(delivery.value) && statusRank > 4;
+  const verificationComplete = current.recovery.state === "recovered" || statusRank > 5;
+  return [
+    { id: "trigger", label: "触发", description: `${current.related_alert_count} Alerts`, icon: "i-lucide-bell-ring", state: "complete" },
+    { id: "investigation", label: "调查", description: investigationComplete ? "已有终态结论" : "等待 Agent 结论", icon: "i-lucide-bot", state: investigationComplete ? "complete" : statusRank === 1 ? "current" : "pending" },
+    { id: "evidence", label: "Evidence", description: evidenceComplete ? `${evidenceCount.value} 条证据` : "尚无证据", icon: "i-lucide-file-check-2", state: evidenceComplete ? "complete" : investigationComplete ? "blocked" : "pending" },
+    { id: "approval", label: "方案审批", description: approvalLabel.value, icon: "i-lucide-shield-check", state: approvalComplete ? "complete" : statusRank === 3 ? "current" : "pending" },
+    { id: "delivery", label: "交付", description: delivery.value?.status || "尚未执行", icon: "i-lucide-git-pull-request", state: deliveryComplete ? "complete" : statusRank === 4 ? "current" : "pending" },
+    { id: "verification", label: "验证", description: verificationLabel.value, icon: "i-lucide-badge-check", state: verificationComplete ? "complete" : current.recovery.state === "investigate" ? "blocked" : statusRank === 5 ? "current" : "pending" },
+    { id: "resolution", label: "Resolution", description: current.status === "closed" ? "已关闭" : current.recovery.resolution_report_id ? "报告已生成" : "等待恢复证明", icon: "i-lucide-circle-check-big", state: current.status === "closed" ? "complete" : statusRank === 6 ? "current" : "pending" },
+  ];
+});
 
 async function load() {
   controller?.abort();
@@ -179,11 +208,13 @@ onBeforeUnmount(() => controller?.abort());
         aria-labelledby="incident-inspector-summary"
       >
         <h3 id="incident-inspector-summary">
-          {{ incident.summary || "Incident Cycle 进行中" }}
+          {{ statusConclusion }}
         </h3>
-        <p>{{ incident.operational_context.cluster }} · {{ incident.operational_context.namespace }}/{{ incident.operational_context.service }}</p>
-        <code translate="no">{{ incident.id }}</code>
+        <p>{{ incident.summary || "Incident Cycle 进行中" }}</p>
+        <span>{{ incident.operational_context.cluster }} · {{ incident.operational_context.namespace }}/{{ incident.operational_context.service }}</span>
       </section>
+
+      <IncidentLifecycle :steps="lifecycleSteps" />
 
       <dl class="inspector-facts">
         <div>
@@ -236,6 +267,14 @@ onBeforeUnmount(() => controller?.abort());
         title="只读摘要"
         description="Approval、Delivery、Verification 的事故操作只在 Incident 详情页进行；此 Inspector 不发起写入。"
       />
+      <WorkspaceTechnicalDetails
+        :fields="[
+          { label: 'Incident ID', value: incident.id, code: true, copyValue: incident.id },
+          { label: 'Cycle / Version', value: `${incident.cycle} / ${incident.version}`, code: true },
+          { label: 'Operational Scope', value: incident.operational_context.operational_scope_id || '未投影', code: true, copyValue: incident.operational_context.operational_scope_id },
+          { label: '最近更新 UTC', value: incident.updated_at || '未提供', code: true, copyValue: incident.updated_at },
+        ]"
+      />
     </template>
     <UAlert
       v-else
@@ -255,7 +294,7 @@ onBeforeUnmount(() => controller?.abort());
 .inspector-summary h3, .inspector-summary p { margin: 0; overflow-wrap: anywhere; }
 .inspector-summary h3 { color: var(--co-text-primary); font-size: 17px; line-height: 1.4; }
 .inspector-summary p { color: var(--co-text-secondary); font-size: 12px; }
-.inspector-summary code { color: var(--co-text-muted); overflow-wrap: anywhere; }
+.inspector-summary > span { color: var(--co-text-muted); font-size: 11px; overflow-wrap: anywhere; }
 .inspector-facts { display: grid; gap: var(--co-space-3); margin: 0; }
 .inspector-facts div { display: grid; gap: 3px; padding-bottom: var(--co-space-2); border-bottom: 1px solid var(--co-border-subtle); }
 .inspector-facts dt { color: var(--co-text-muted); font-size: 10px; font-weight: 750; text-transform: uppercase; }

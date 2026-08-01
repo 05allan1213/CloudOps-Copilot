@@ -46,6 +46,14 @@ const attentionItems = [
   { label: "需要 Attention", value: "true" },
   { label: "无需 Attention", value: "false" },
 ];
+const activeAdvancedCount = computed(() => [
+  props.severity,
+  props.attention === undefined ? undefined : String(props.attention),
+  props.resource,
+  props.alert,
+  props.from,
+  props.to,
+].filter(Boolean).length);
 
 const statusModel = computed({
   get: () => props.status ?? allValue,
@@ -102,74 +110,93 @@ function toLocalDateTime(value?: string): string {
         data-testid="incident-filter-form"
         @submit.prevent="emit('apply')"
       >
-        <UFormField label="状态">
-          <USelect
-            v-model="statusModel"
-            :items="statusItems"
-            value-key="value"
-            aria-label="状态"
-          />
-        </UFormField>
-        <UFormField label="级别">
-          <USelect
-            v-model="severityModel"
-            :items="severityItems"
-            value-key="value"
-            aria-label="级别"
-          />
-        </UFormField>
-        <UFormField label="Attention">
-          <USelect
-            v-model="attentionModel"
-            :items="attentionItems"
-            value-key="value"
-            aria-label="Attention"
-          />
-        </UFormField>
-        <UFormField label="服务">
+        <UTabs
+          v-model="statusModel"
+          class="incident-status-tabs"
+          :items="statusItems"
+          :content="false"
+          color="primary"
+          variant="pill"
+          size="sm"
+          aria-label="Incident 状态"
+        />
+        <UFormField
+          label="搜索服务"
+          class="incident-primary-search"
+        >
           <UInput
             v-model="serviceModel"
             name="service"
-            placeholder="checkout-api"
+            icon="i-lucide-search"
+            placeholder="服务名称，例如 checkout-api"
             aria-label="服务"
           />
         </UFormField>
-        <UFormField label="资源">
-          <UInput
-            v-model="resourceModel"
-            name="resource"
-            placeholder="deployment/api"
-            aria-label="资源"
-          />
-        </UFormField>
-        <UFormField label="Alert UUID">
-          <UInput
-            v-model="alertModel"
-            name="alert"
-            placeholder="public Alert ID"
-            aria-label="Alert UUID"
-          />
-        </UFormField>
-        <UFormField label="从">
-          <UInput
-            v-model="fromModel"
-            type="datetime-local"
-            name="from"
-            aria-label="从"
-          />
-        </UFormField>
-        <UFormField label="到">
-          <UInput
-            v-model="toModel"
-            type="datetime-local"
-            name="to"
-            aria-label="到"
-          />
-        </UFormField>
+        <UCollapsible class="incident-advanced-filters">
+          <template #default="{ open }">
+            <UButton
+              color="neutral"
+              variant="ghost"
+              icon="i-lucide-sliders-horizontal"
+              :trailing-icon="open ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
+              :label="activeAdvancedCount ? `高级筛选 · ${activeAdvancedCount}` : '高级筛选'"
+              :aria-label="`${open ? '收起' : '展开'} Incident 高级筛选`"
+            />
+          </template>
+          <template #content>
+            <div class="incident-advanced-grid">
+              <UFormField label="级别">
+                <USelect
+                  v-model="severityModel"
+                  :items="severityItems"
+                  value-key="value"
+                  aria-label="级别"
+                />
+              </UFormField>
+              <UFormField label="Attention">
+                <USelect
+                  v-model="attentionModel"
+                  :items="attentionItems"
+                  value-key="value"
+                  aria-label="Attention"
+                />
+              </UFormField>
+              <UFormField label="资源">
+                <UInput
+                  v-model="resourceModel"
+                  name="resource"
+                  placeholder="deployment/api"
+                  aria-label="资源"
+                />
+              </UFormField>
+              <UFormField label="Alert UUID">
+                <UInput
+                  v-model="alertModel"
+                  name="alert"
+                  placeholder="public Alert ID"
+                  aria-label="Alert UUID"
+                />
+              </UFormField>
+              <UFormField label="从">
+                <UInput
+                  v-model="fromModel"
+                  type="datetime-local"
+                  name="from"
+                  aria-label="从"
+                />
+              </UFormField>
+              <UFormField label="到">
+                <UInput
+                  v-model="toModel"
+                  type="datetime-local"
+                  name="to"
+                  aria-label="到"
+                />
+              </UFormField>
+            </div>
+          </template>
+        </UCollapsible>
       </form>
-    </template>
-    <template #secondary>
-      <span class="filter-contract">URL 已同步</span>
     </template>
     <template #primary>
       <UButton
@@ -194,12 +221,21 @@ function toLocalDateTime(value?: string): string {
 </template>
 
 <style scoped>
-.filter-form { display: flex; min-width: 0; flex: 1 1 760px; flex-wrap: wrap; align-items: flex-end; gap: var(--co-space-2); }
-.filter-form :deep(.u-form-field) { min-width: 112px; }
-.filter-form :deep(.u-input), .filter-form :deep(.u-select) { min-width: 112px; }
-.filter-contract { color: var(--co-text-muted); font-size: 11px; white-space: nowrap; }
-@media (max-width: 767px) {
-  .filter-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
-  .filter-form :deep(.u-form-field), .filter-form :deep(.u-input), .filter-form :deep(.u-select) { min-width: 0; width: 100%; }
+.filter-form { display: grid; min-width: 0; flex: 1 1 760px; grid-template-columns: auto minmax(240px, 1fr) auto; align-items: end; gap: var(--co-space-3); }
+.incident-status-tabs { min-width: 430px; align-self: end; }
+.incident-primary-search { min-width: 0; }
+.incident-primary-search :deep(.u-input) { width: 100%; }
+.incident-advanced-filters { position: relative; align-self: end; }
+.incident-advanced-grid { position: absolute; z-index: var(--co-z-popover); top: calc(100% + var(--co-space-2)); right: 0; display: grid; width: min(660px, calc(100vw - 64px)); grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--co-space-3); padding: var(--co-space-4); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-panel); background: var(--co-bg-overlay); box-shadow: var(--co-shadow-overlay); }
+.incident-advanced-grid :deep(.u-input), .incident-advanced-grid :deep(.u-select) { width: 100%; }
+
+@media (max-width: 1180px) {
+  .filter-form { grid-template-columns: minmax(0, 1fr) auto; }
+  .incident-status-tabs { min-width: 0; grid-column: 1 / -1; }
+}
+
+@media (max-width: 1024px) {
+  .incident-advanced-grid { position: static; width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: var(--co-space-2); box-shadow: none; }
+  .incident-advanced-filters { grid-column: 1 / -1; }
 }
 </style>

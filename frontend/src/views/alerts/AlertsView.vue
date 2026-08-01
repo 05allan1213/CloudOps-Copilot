@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import type { TableColumn } from "@nuxt/ui";
-import { computed, h, onBeforeUnmount, reactive, ref, watch } from "vue";
+import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
 import type { LocationQueryRaw, RouteLocationRaw } from "vue-router";
 import { useRoute, useRouter } from "vue-router";
 
@@ -28,18 +27,18 @@ import {
 } from "../../api/alerts";
 import { isApiError } from "../../api/client";
 import AlertBadges from "../../components/alerts/AlertBadges.vue";
+import AlertQueue from "../../components/alerts/AlertQueue.vue";
 import ApiErrorNotice from "../../components/workspace/ApiErrorNotice.vue";
 import ContextToolbar from "../../components/workspace/ContextToolbar.vue";
-import DenseDataTable, { type DenseTableColumn } from "../../components/workspace/DenseDataTable.vue";
 import WorkspaceHeader from "../../components/workspace/WorkspaceHeader.vue";
 import WorkspaceInspector, { type InspectorTargetState } from "../../components/workspace/WorkspaceInspector.vue";
+import WorkspacePageFrame from "../../components/workspace/WorkspacePageFrame.vue";
 import WorkspaceState from "../../components/workspace/WorkspaceState.vue";
 import { useWorkspaceInspector } from "../../composables/useWorkspaceInspector";
 
-type AlertRow = AlertView & Record<string, unknown>;
 type InspectorCommand = "acknowledge" | "silence" | "expire-silence";
 
-interface DenseDataTableHandle {
+interface AlertQueueHandle {
   getRowElement: (rowID: string) => HTMLElement | null;
   getScrollElement: () => HTMLElement | null;
 }
@@ -61,7 +60,7 @@ const loading = ref(true);
 const refreshing = ref(false);
 const probing = ref(false);
 const listError = ref<unknown>(null);
-const denseTable = ref<DenseDataTableHandle | null>(null);
+const alertQueue = ref<AlertQueueHandle | null>(null);
 const inspectorDetail = ref<AlertDetail | null>(null);
 const inspectorLoading = ref(false);
 const inspectorError = ref<unknown>(null);
@@ -81,8 +80,8 @@ let activeDataKey = "";
 
 const inspector = useWorkspaceInspector({
   selectedKey: "selected",
-  scrollElement: () => denseTable.value?.getScrollElement() ?? null,
-  resolveTrigger: (rowID) => denseTable.value?.getRowElement(rowID) ?? null,
+  scrollElement: () => alertQueue.value?.getScrollElement() ?? null,
+  resolveTrigger: (rowID) => alertQueue.value?.getRowElement(rowID) ?? null,
 });
 
 const statusItems: { label: string; value: AlertStatus | "all" }[] = [
@@ -111,7 +110,6 @@ const silenceDurationItems = [
   { label: "24 小时", value: 86400 },
 ];
 
-const rows = computed(() => items.value as AlertRow[]);
 const statusSelection = computed<AlertStatus | "all">({
   get: () => filters.status || "all",
   set: (value) => { filters.status = value === "all" ? "" : value; },
@@ -183,105 +181,10 @@ const inspectorCommandReady = computed(() => Boolean(
   && (!inspectorCommandDefinition.value.needsReason || inspectorCommandReason.value.trim()),
 ));
 
-const columns = [
-  {
-    id: "state",
-    accessorKey: "status",
-    label: "状态与级别",
-    header: "状态与级别",
-    size: 178,
-    cell: ({ row }) => h(AlertBadges, {
-      status: row.original.status,
-      severity: row.original.severity,
-    }),
-  },
-  {
-    id: "alert",
-    accessorKey: "summary",
-    label: "Alert",
-    header: "Alert",
-    size: 340,
-    cell: ({ row }) => h("div", { class: "alert-primary-cell", title: row.original.summary }, [
-      h("strong", row.original.summary),
-      h("span", `${row.original.category} · ${row.original.signal_count} Signals · recurrence ${row.original.recurrence_count}`),
-    ]),
-  },
-  {
-    id: "target",
-    accessorKey: "target_name",
-    label: "Scope 与目标",
-    header: "Scope 与目标",
-    size: 292,
-    cell: ({ row }) => h("div", { class: "alert-target-cell" }, [
-      h("strong", `${row.original.namespace}/${row.original.target_name}`),
-      h("span", `${row.original.cluster} · ${row.original.target_kind} · ${row.original.service_name}`),
-    ]),
-  },
-  {
-    id: "facets",
-    accessorKey: "version",
-    label: "处置事实",
-    header: "处置事实",
-    size: 248,
-    optional: true,
-    cell: ({ row }) => h("span", { class: "alert-facet-cell" }, dispositionLabel(row.original)),
-  },
-  {
-    id: "lastSeen",
-    accessorKey: "last_seen_at",
-    label: "最近 Signal",
-    header: "最近 Signal",
-    size: 176,
-    optional: true,
-    cell: ({ row }) => h("div", { class: "alert-time-cell" }, [
-      h("time", {
-        datetime: row.original.last_seen_at,
-        title: formatUTC(row.original.last_seen_at),
-        "aria-label": `${formatRelative(row.original.last_seen_at)}，${formatUTC(row.original.last_seen_at)}`,
-      }, formatRelative(row.original.last_seen_at)),
-      h("span", { class: "mono-text" }, `v${row.original.version}`),
-    ]),
-  },
-  {
-    id: "source",
-    accessorKey: "source",
-    label: "Provider",
-    header: "Provider",
-    size: 170,
-    optional: true,
-    cell: ({ row }) => h("div", { class: "alert-source-cell" }, [
-      h("strong", row.original.source),
-      h("span", row.original.migrated_legacy ? "Legacy ingress" : "Native Alert"),
-    ]),
-  },
-] as (TableColumn<AlertRow> & DenseTableColumn<AlertRow>)[];
-
-function dispositionLabel(item: AlertView): string {
-  const facets = [];
-  if (item.acknowledgement) facets.push("已 Acknowledge");
-  if (item.silence?.status === "active") facets.push("Silence 生效中");
-  if (item.incident_links.length) facets.push(`${item.incident_links.length} 个 Incident`);
-  if (item.investigations.length) facets.push(`${item.investigations.length} 个 Investigation`);
-  return facets.length ? facets.join(" · ") : "尚未处置";
-}
-
 function formatUTC(value?: string): string {
   if (!value) return "无";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toISOString();
-}
-
-function formatRelative(value: string): string {
-  const timestamp = new Date(value).getTime();
-  if (Number.isNaN(timestamp)) return value;
-  const seconds = Math.round((timestamp - Date.now()) / 1000);
-  const formatter = new Intl.RelativeTimeFormat("zh-CN", { numeric: "auto" });
-  if (Math.abs(seconds) < 60) return formatter.format(seconds, "second");
-  const minutes = Math.round(seconds / 60);
-  if (Math.abs(minutes) < 60) return formatter.format(minutes, "minute");
-  const hours = Math.round(minutes / 60);
-  if (Math.abs(hours) < 24) return formatter.format(hours, "hour");
-  return formatter.format(Math.round(hours / 24), "day");
 }
 
 function currentListQuery(state = parseAlertListRouteQuery(route.query as unknown as AlertRouteQuery)): AlertListQuery {
@@ -419,7 +322,7 @@ async function returnToFirstPage() {
   });
 }
 
-function openRow(row: AlertRow, trigger: HTMLElement | null) {
+function openRow(row: AlertView, trigger: HTMLElement | null) {
   void inspector.open(row.id, trigger);
 }
 
@@ -526,22 +429,6 @@ async function runInspectorCommand() {
   }
 }
 
-function copyRow(item: AlertRow): string {
-  return JSON.stringify({
-    id: item.id,
-    summary: item.summary,
-    status: item.status,
-    severity: item.severity,
-    cluster: item.cluster,
-    namespace: item.namespace,
-    target: `${item.target_kind}/${item.target_name}`,
-    fingerprint: item.fingerprint,
-    correlation_key: item.correlation_key,
-    version: item.version,
-    last_seen_at: item.last_seen_at,
-  }, null, 2);
-}
-
 watch(() => route.fullPath, () => void synchronizeRoute(), { immediate: true });
 watch(() => inspector.selectedID.value, (selectedID) => void loadInspector(selectedID), { immediate: true });
 onBeforeUnmount(() => {
@@ -553,7 +440,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <article
+  <WorkspacePageFrame
+    as="article"
     class="alerts-workspace"
     data-testid="alerts-list-route"
   >
@@ -608,14 +496,14 @@ onBeforeUnmount(() => {
       class="alert-summary-strip"
       aria-label="当前 Alert 摘要"
     >
-      <div><dt>当前页</dt><dd>{{ items.length }}</dd></div>
       <div>
         <dt>触发中</dt><dd class="is-critical">
           {{ firingCount }}
         </dd>
       </div>
-      <div><dt>已 Acknowledge</dt><dd>{{ acknowledgedCount }}</dd></div>
-      <div><dt>Silence 生效中</dt><dd>{{ silencedCount }}</dd></div>
+      <div><dt>严重</dt><dd class="is-critical">{{ items.filter((item) => item.severity === 'critical').length }}</dd><small>当前列表</small></div>
+      <div><dt>需关注</dt><dd class="is-warning">{{ acknowledgedCount }}</dd><small>已知悉但仍触发</small></div>
+      <div><dt>静默中</dt><dd>{{ silencedCount }}</dd><small>{{ items.length }} 条当前投影</small></div>
     </dl>
 
     <ContextToolbar label="Alert 筛选与列表操作">
@@ -625,42 +513,18 @@ onBeforeUnmount(() => {
           :state="filters"
           @submit="applyFilters"
         >
+          <UTabs
+            v-model="statusSelection"
+            class="alert-status-tabs"
+            :items="statusItems"
+            :content="false"
+            color="primary"
+            variant="pill"
+            size="sm"
+            aria-label="Alert 状态"
+          />
           <UFormField
-            label="状态"
-            name="status"
-          >
-            <USelect
-              v-model="statusSelection"
-              :items="statusItems"
-              value-key="value"
-              aria-label="Alert 状态"
-            />
-          </UFormField>
-          <UFormField
-            label="级别"
-            name="severity"
-          >
-            <USelect
-              v-model="severitySelection"
-              :items="severityItems"
-              value-key="value"
-              aria-label="Alert 级别"
-            />
-          </UFormField>
-          <UFormField
-            label="Namespace"
-            name="namespace"
-          >
-            <UInput
-              v-model="filters.namespace"
-              icon="i-lucide-box"
-              maxlength="255"
-              autocomplete="off"
-              placeholder="例如 demo"
-            />
-          </UFormField>
-          <UFormField
-            label="搜索"
+            label="搜索告警或目标"
             name="search"
             class="alert-search-field"
           >
@@ -672,17 +536,31 @@ onBeforeUnmount(() => {
               placeholder="摘要、目标或服务"
             />
           </UFormField>
-          <UFormField
-            label="每页"
-            name="limit"
-          >
-            <USelect
-              v-model="filters.limit"
-              :items="limitItems"
-              value-key="value"
-              aria-label="每页 Alert 数量"
-            />
-          </UFormField>
+          <UCollapsible class="alert-advanced-filters">
+            <template #default="{ open }">
+              <UButton
+                color="neutral"
+                variant="ghost"
+                icon="i-lucide-sliders-horizontal"
+                :trailing-icon="open ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
+                label="高级筛选"
+                :aria-label="`${open ? '收起' : '展开'} Alert 高级筛选`"
+              />
+            </template>
+            <template #content>
+              <div class="alert-advanced-grid">
+                <UFormField label="级别" name="severity">
+                  <USelect v-model="severitySelection" :items="severityItems" value-key="value" aria-label="Alert 级别" />
+                </UFormField>
+                <UFormField label="Namespace" name="namespace">
+                  <UInput v-model="filters.namespace" icon="i-lucide-box" maxlength="255" autocomplete="off" placeholder="例如 demo" />
+                </UFormField>
+                <UFormField label="每页" name="limit">
+                  <USelect v-model="filters.limit" :items="limitItems" value-key="value" aria-label="每页 Alert 数量" />
+                </UFormField>
+              </div>
+            </template>
+          </UCollapsible>
         </UForm>
       </template>
       <template #secondary>
@@ -766,18 +644,11 @@ onBeforeUnmount(() => {
           />
         </template>
       </WorkspaceState>
-      <DenseDataTable
+      <AlertQueue
         v-else
-        ref="denseTable"
-        :rows="rows"
-        :columns="columns"
-        :row-key="(row: AlertRow) => row.id"
-        storage-key="alerts-triage"
-        caption="Alert triage 列表；选择行打开 Inspector"
-        :critical-column-ids="['state', 'alert', 'target']"
+        ref="alertQueue"
+        :items="items"
         :selected-id="inspector.selectedID.value"
-        :severity="(row: AlertRow) => row.severity === 'critical' ? 'critical' : row.severity === 'warning' ? 'warning' : row.severity === 'info' ? 'info' : 'neutral'"
-        :copy-value="copyRow"
         @select="openRow"
       />
       <nav
@@ -1111,13 +982,13 @@ onBeforeUnmount(() => {
         </div>
       </template>
     </UModal>
-  </article>
+  </WorkspacePageFrame>
 </template>
 
 <style scoped>
+.alerts-workspace :global(.workspace-inspector-surface) { z-index: 20; }
 .alerts-workspace {
   display: grid;
-  width: 100%;
   min-width: 0;
   gap: var(--co-space-4);
 }
@@ -1138,6 +1009,7 @@ onBeforeUnmount(() => {
 
 .alert-summary-strip div:last-child { border-right: 0; }
 .alert-summary-strip dt { color: var(--co-text-muted); font-size: 11px; }
+.alert-summary-strip small { color: var(--co-text-muted); font-size: 10px; }
 .alert-summary-strip dd {
   margin: var(--co-space-1) 0 0;
   font-family: var(--co-font-mono);
@@ -1146,15 +1018,19 @@ onBeforeUnmount(() => {
   font-weight: 800;
 }
 .alert-summary-strip .is-critical { color: var(--co-status-critical-fg); }
+.alert-summary-strip .is-warning { color: var(--co-status-warning-fg); }
 
 .alert-filter-form {
   display: grid;
   width: 100%;
   min-width: 0;
-  grid-template-columns: 138px 138px minmax(150px, 0.7fr) minmax(220px, 1fr) 132px;
+  grid-template-columns: minmax(420px, auto) minmax(240px, 1fr) auto;
   align-items: end;
   gap: var(--co-space-2);
 }
+.alert-status-tabs { min-width: 0; }
+.alert-advanced-filters { position: relative; }
+.alert-advanced-grid { position: absolute; z-index: var(--co-z-popover); top: calc(100% + var(--co-space-2)); right: 0; display: grid; width: min(520px, calc(100vw - 64px)); grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--co-space-3); padding: var(--co-space-4); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-panel); background: var(--co-bg-overlay); box-shadow: var(--co-shadow-overlay); }
 
 .alert-primary-cell,
 .alert-target-cell,
@@ -1254,15 +1130,16 @@ onBeforeUnmount(() => {
 .alert-command-actions { display: flex; width: 100%; justify-content: flex-end; gap: var(--co-space-2); }
 
 @media (max-width: 1180px) {
-  .alert-filter-form { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .alert-search-field { grid-column: span 2; }
+  .alert-filter-form { grid-template-columns: minmax(0, 1fr) auto; }
+  .alert-status-tabs { grid-column: 1 / -1; }
 }
 
 @media (max-width: 1024px) {
   .alert-summary-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .alert-summary-strip div:nth-child(2) { border-right: 0; }
   .alert-summary-strip div:nth-child(-n+2) { border-bottom: 1px solid var(--co-border-default); }
-  .alert-filter-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .alert-search-field { grid-column: 1 / -1; }
+  .alert-filter-form { grid-template-columns: minmax(0, 1fr); }
+  .alert-advanced-filters { grid-column: 1 / -1; }
+  .alert-advanced-grid { position: static; width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: var(--co-space-2); box-shadow: none; }
 }
 </style>
