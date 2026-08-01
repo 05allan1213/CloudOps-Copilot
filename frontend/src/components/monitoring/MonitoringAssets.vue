@@ -144,7 +144,7 @@ function authorizationState(item: QueryAuthorization): string {
 .monitoring-assets > header span { color: var(--co-text-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .monitoring-assets__tabs,
 .monitoring-assets__actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--co-space-1); }
-.monitoring-assets__list { border-top: 1px solid var(--co-border-subtle); }
+.monitoring-assets__list { overflow: hidden; border: 1px solid var(--co-border-subtle); border-radius: var(--co-radius-frame); }
 .monitoring-assets__row { display: grid; grid-template-columns: minmax(0, 1fr) auto; min-width: 0; align-items: center; gap: var(--co-space-4); padding: var(--co-space-3); border-bottom: 1px solid var(--co-border-subtle); }
 .monitoring-assets__row > div:first-child { display: grid; min-width: 0; gap: 3px; }
 .monitoring-assets__row strong { font-size: 12px; }

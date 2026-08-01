@@ -144,6 +144,8 @@ function restoreTrigger() {
   height: auto;
   max-width: var(--co-inspector-max-width);
   max-height: calc(100dvh - var(--co-header-height));
+  overflow: hidden;
+  border-radius: var(--co-radius-overlay) 0 0 var(--co-radius-overlay);
   background: var(--co-bg-overlay);
   box-shadow: var(--co-shadow-overlay);
 }

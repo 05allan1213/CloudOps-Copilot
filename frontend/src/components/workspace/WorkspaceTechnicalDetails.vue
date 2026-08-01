@@ -71,7 +71,7 @@ withDefaults(defineProps<{
 </template>
 
 <style scoped>
-.workspace-technical-details { min-width: 0; border-block: 1px solid var(--co-border-default); }
+.workspace-technical-details { min-width: 0; overflow: hidden; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); }
 .workspace-technical-details-trigger { min-height: var(--co-control-height); justify-content: flex-start; border-radius: 0; text-align: left; }
 .workspace-technical-details-trigger > span { display: grid; min-width: 0; flex: 1 1 auto; gap: 1px; }
 .workspace-technical-details-trigger strong { font-size: 12px; }

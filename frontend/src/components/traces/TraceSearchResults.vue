@@ -113,7 +113,7 @@ defineExpose({ restoreScroll });
 </template>
 
 <style scoped>
-.trace-search-results { max-height: 560px; overflow-y: auto; border-top: 1px solid var(--co-border-default); }
+.trace-search-results { max-height: 560px; overflow-y: auto; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); }
 .trace-summary-row { display: grid; grid-template-columns: minmax(0, 1fr) 34px; align-items: center; border-bottom: 1px solid var(--co-border-subtle); }
 .trace-summary-row:hover,
 .trace-summary-row.is-active { background: var(--co-bg-hover); }

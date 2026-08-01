@@ -996,7 +996,9 @@ onBeforeUnmount(() => controller?.abort());
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   margin: 0;
-  border-block: 1px solid var(--co-border-default);
+  overflow: hidden;
+  border: 1px solid var(--co-border-default);
+  border-radius: var(--co-radius-frame);
   background: var(--co-bg-surface);
 }
 
@@ -1023,7 +1025,7 @@ onBeforeUnmount(() => controller?.abort());
   margin: 0;
 }
 
-.alert-facts-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.alert-facts-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); }
 .alert-facts-grid > div {
   min-width: 0;
   padding: var(--co-space-3);
@@ -1058,7 +1060,7 @@ onBeforeUnmount(() => controller?.abort());
 
 .alert-relations { display: grid; min-width: 0; gap: var(--co-space-3); }
 .alert-relation-list { display: grid; min-width: 0; gap: var(--co-space-2); }
-.alert-relation-item { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: var(--co-space-3); padding: var(--co-space-2) var(--co-space-3); border-block: 1px solid var(--co-border-default); background: var(--co-bg-surface); }
+.alert-relation-item { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: var(--co-space-3); padding: var(--co-space-2) var(--co-space-3); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); background: var(--co-bg-surface); }
 .alert-relation-item p { margin: 0; color: var(--co-text-muted); font-size: 11px; }
 .alert-relation-item small { color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 10px; overflow-wrap: anywhere; }
 
@@ -1101,6 +1103,7 @@ onBeforeUnmount(() => controller?.abort());
   min-width: 0;
   padding: var(--co-space-3) var(--co-space-4);
   border-left: 1px solid var(--co-border-default);
+  border-radius: var(--co-radius-panel);
   background: var(--co-bg-surface);
 }
 .alert-timeline-mark {
@@ -1120,6 +1123,7 @@ pre {
   padding: var(--co-space-3);
   overflow: auto;
   border: 1px solid var(--co-border-default);
+  border-radius: var(--co-radius-frame);
   color: var(--co-text-secondary);
   background: var(--co-bg-subtle);
   font-size: 10px;

@@ -71,7 +71,7 @@ function statusLabel(status: QueryExecution["status"]): string {
 .monitoring-history { min-width: 0; align-self: start; border-top: 1px solid var(--co-border-default); }
 .monitoring-history > header { display: flex; min-height: 52px; align-items: center; justify-content: space-between; gap: var(--co-space-2); }
 .monitoring-history h2 { margin: 0; font-size: 14px; }
-.monitoring-history__list { max-height: 720px; overflow-y: auto; border-top: 1px solid var(--co-border-subtle); }
+.monitoring-history__list { max-height: 720px; overflow-y: auto; border: 1px solid var(--co-border-subtle); border-radius: var(--co-radius-frame); }
 .monitoring-history__item { width: 100%; min-height: 68px; justify-content: stretch; border-radius: 0; border-bottom: 1px solid var(--co-border-subtle); }
 .monitoring-history__item.is-active { box-shadow: inset 3px 0 0 var(--co-action-primary); background: var(--co-bg-active); }
 .monitoring-history__copy { display: grid; width: 100%; min-width: 0; gap: 3px; text-align: left; }

@@ -970,11 +970,11 @@ onBeforeUnmount(() => {
 .logs-histogram > div { display: flex; height: 80px; align-items: end; gap: 2px; overflow: hidden; border-bottom: 1px solid var(--co-border-strong); }
 .logs-histogram__bucket { position: relative; width: 100%; min-width: 7px; height: 100%; padding: 0; }
 .logs-histogram__bucket span { position: absolute; right: 1px; bottom: 0; left: 1px; min-height: 4px; background: var(--co-action-primary); }
-.logs-snapshot { display: flex; min-height: 66px; align-items: center; justify-content: space-between; gap: var(--co-space-4); padding: var(--co-space-3) 0; border-block: 1px solid var(--co-border-default); }
+.logs-snapshot { display: flex; min-height: 66px; align-items: center; justify-content: space-between; gap: var(--co-space-4); padding: var(--co-space-3); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); }
 .logs-snapshot > div { display: flex; min-width: 0; align-items: center; gap: var(--co-space-2); }
 .logs-snapshot h2 { margin: 0; font-size: 14px; }
 .logs-snapshot span { color: var(--co-text-muted); font-size: 11px; }
-.logs-snapshot__proof { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; border-bottom: 1px solid var(--co-border-default); }
+.logs-snapshot__proof { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; overflow: hidden; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); }
 .logs-snapshot__proof div { min-width: 0; padding: var(--co-space-2); border-right: 1px solid var(--co-border-default); }
 .logs-snapshot__proof div:last-child { border-right: 0; }
 .logs-snapshot__proof dt { color: var(--co-text-muted); font-size: 10px; }

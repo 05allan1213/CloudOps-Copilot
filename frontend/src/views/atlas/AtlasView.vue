@@ -614,7 +614,7 @@ onBeforeUnmount(() => window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT
   border-radius: var(--co-radius-control);
   background: var(--co-bg-canvas);
 }
-.atlas-partial { border-radius: 0; }
+.atlas-partial { margin: var(--co-space-2) var(--co-space-4) 0; border-radius: var(--co-radius-frame); }
 .atlas-stage {
   display: grid;
   min-width: 0;
@@ -652,6 +652,7 @@ onBeforeUnmount(() => window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT
   gap: var(--co-space-3);
   padding: var(--co-space-2) var(--co-space-3);
   border: 1px solid var(--co-border-default);
+  border-radius: var(--co-radius-frame);
   color: var(--co-text-secondary);
   background: color-mix(in srgb, var(--co-bg-surface) 88%, transparent);
   font-size: 10px;
@@ -664,7 +665,9 @@ onBeforeUnmount(() => window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT
   padding: var(--co-space-4);
   overflow-y: auto;
   overscroll-behavior: contain;
-  border-left: 1px solid var(--co-border-default);
+  border: 1px solid var(--co-border-default);
+  border-right: 0;
+  border-radius: var(--co-radius-overlay) 0 0 var(--co-radius-overlay);
   background: var(--co-bg-surface);
 }
 .atlas-inspector > header {
@@ -685,8 +688,9 @@ onBeforeUnmount(() => window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   margin: var(--co-space-3) 0;
+  overflow: hidden;
   border: 1px solid var(--co-border-default);
-  border-radius: var(--co-radius-control);
+  border-radius: var(--co-radius-frame);
 }
 .resource-facts div,
 .projection-section dl div { min-width: 0; padding: var(--co-space-3); border-bottom: 1px solid var(--co-border-default); }
@@ -712,6 +716,7 @@ onBeforeUnmount(() => window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT
   gap: var(--co-space-2);
   padding: var(--co-space-2);
   border-left: var(--co-severity-marker-width) solid var(--co-action-primary);
+  border-radius: var(--co-radius-panel);
   background: var(--co-bg-subtle);
   font-size: 11px;
 }

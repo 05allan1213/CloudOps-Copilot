@@ -205,7 +205,10 @@ const projectionUpdatedAt = computed(() => props.lastUpdatedAt || props.incident
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   margin: 0;
-  border-block: 1px solid var(--co-border-default);
+  overflow: hidden;
+  border: 1px solid var(--co-border-default);
+  border-radius: var(--co-radius-frame);
+  background: var(--co-bg-surface);
 }
 
 .header-facts div {

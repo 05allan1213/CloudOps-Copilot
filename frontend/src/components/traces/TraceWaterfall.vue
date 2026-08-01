@@ -172,7 +172,7 @@ async function copySpan(span: TraceSpan) {
 .trace-waterfall > header { display: flex; min-height: 38px; align-items: center; justify-content: space-between; gap: var(--co-space-3); border-top: 1px solid var(--co-border-default); }
 .trace-waterfall h3 { margin: 0; font-size: 13px; }
 .trace-waterfall header span { color: var(--co-text-muted); font-size: 10px; }
-.trace-waterfall__viewport { height: min(58vh, 590px); min-height: 360px; overflow: auto; overscroll-behavior: contain; border-block: 1px solid var(--co-border-default); contain: layout paint; }
+.trace-waterfall__viewport { height: min(58vh, 590px); min-height: 360px; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); contain: layout paint; }
 .trace-waterfall__spacer { position: relative; min-width: 640px; }
 .trace-span-row {
   position: absolute;

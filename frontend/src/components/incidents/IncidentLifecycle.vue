@@ -47,7 +47,9 @@ defineProps<{
   min-width: 0;
   margin: 0;
   padding: var(--co-space-3) 0;
-  border-block: 1px solid var(--co-border-default);
+  overflow: hidden;
+  border: 1px solid var(--co-border-default);
+  border-radius: var(--co-radius-frame);
   background: var(--co-bg-surface);
   list-style: none;
 }

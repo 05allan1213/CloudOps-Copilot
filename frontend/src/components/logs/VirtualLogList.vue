@@ -176,7 +176,8 @@ watch(() => props.wrap, () => void nextTick(() => virtualizer.value.measure()));
   min-height: 340px;
   overflow: auto;
   overscroll-behavior: contain;
-  border-block: 1px solid var(--co-border-default);
+  border: 1px solid var(--co-border-default);
+  border-radius: var(--co-radius-frame);
   background: var(--co-bg-canvas);
   contain: layout paint;
 }

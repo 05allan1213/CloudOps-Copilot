@@ -72,7 +72,8 @@ withDefaults(defineProps<{
   align-items: center;
   gap: var(--co-space-3);
   padding: var(--co-space-2) var(--co-space-3);
-  border-block: 1px solid var(--co-border-default);
+  border: 1px solid var(--co-border-default);
+  border-radius: var(--co-radius-frame);
   background: var(--co-bg-surface);
 }
 

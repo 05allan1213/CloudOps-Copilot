@@ -253,6 +253,7 @@ const traceID = computed(() => typeof props.error === "string" ? "" : props.erro
 .stale-message {
   padding: var(--co-space-3);
   border-left: 3px solid var(--co-status-warning-fg);
+  border-radius: var(--co-radius-panel);
   color: var(--co-status-warning-fg);
   background: var(--co-status-warning-bg);
 }
@@ -273,7 +274,10 @@ const traceID = computed(() => typeof props.error === "string" ? "" : props.erro
 .section-message {
   display: grid;
   gap: var(--co-space-1);
-  padding: var(--co-space-4) 0;
+  padding: var(--co-space-4);
+  border: 1px solid var(--co-border-default);
+  border-radius: var(--co-radius-frame);
+  background: var(--co-bg-surface);
   color: var(--co-text-secondary);
 }
 

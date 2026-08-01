@@ -492,7 +492,9 @@ onBeforeUnmount(() => {
 :global(.notification-slideover) {
   width: min(440px, calc(100vw - var(--co-sidebar-rail-width)));
   max-width: none;
+  overflow: hidden;
   border-left: 1px solid var(--co-border-default);
+  border-radius: var(--co-radius-overlay) 0 0 var(--co-radius-overlay);
   background: var(--co-bg-overlay);
   box-shadow: var(--co-shadow-overlay);
   z-index: calc(var(--co-z-overlay) + 1);

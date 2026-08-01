@@ -73,7 +73,7 @@ function formatTime(value: string): string {
 .logs-history { min-width: 0; align-self: start; border-top: 1px solid var(--co-border-default); }
 .logs-history > header { display: flex; min-height: 52px; align-items: center; justify-content: space-between; gap: var(--co-space-2); }
 .logs-history h2 { margin: 0; font-size: 14px; }
-.logs-history__list { max-height: 620px; overflow-y: auto; border-top: 1px solid var(--co-border-subtle); }
+.logs-history__list { max-height: 620px; overflow-y: auto; border: 1px solid var(--co-border-subtle); border-radius: var(--co-radius-frame); }
 .logs-history__item { width: 100%; min-height: 66px; justify-content: stretch; border-radius: 0; border-bottom: 1px solid var(--co-border-subtle); }
 .logs-history__item.is-active { box-shadow: inset var(--co-severity-marker-width) 0 0 var(--co-action-primary); background: var(--co-bg-active); }
 .logs-history__copy { display: grid; width: 100%; min-width: 0; gap: 3px; text-align: left; }

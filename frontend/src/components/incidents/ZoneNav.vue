@@ -138,7 +138,9 @@ onBeforeUnmount(() => observer?.disconnect());
   top: 0;
   z-index: var(--co-z-sticky);
   min-width: 0;
-  border-block: 1px solid var(--co-border-default);
+  overflow: hidden;
+  border: 1px solid var(--co-border-default);
+  border-radius: var(--co-radius-frame);
   background: color-mix(in srgb, var(--co-bg-canvas) 94%, transparent);
   backdrop-filter: blur(10px);
 }

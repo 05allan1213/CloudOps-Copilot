@@ -102,7 +102,7 @@ function selectItem(item: T, event: MouseEvent) {
 </template>
 
 <style scoped>
-.workspace-dense-list { min-width: 0; border-block: 1px solid var(--co-border-default); }
+.workspace-dense-list { min-width: 0; overflow: hidden; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); background: var(--co-bg-surface); }
 .workspace-dense-list ul { display: grid; margin: 0; padding: 0; list-style: none; }
 .workspace-dense-list li { min-width: 0; border-bottom: 1px solid var(--co-border-subtle); }
 .workspace-dense-list li:last-child { border-bottom: 0; }

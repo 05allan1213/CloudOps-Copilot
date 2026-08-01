@@ -295,7 +295,9 @@ defineExpose({ getRowElement, getScrollElement });
 <style>
 .dense-data-table-composition {
   min-width: 0;
-  border-bottom: 1px solid var(--co-border-default);
+  overflow: hidden;
+  border: 1px solid var(--co-border-default);
+  border-radius: var(--co-radius-frame);
   background: var(--co-bg-surface);
 }
 

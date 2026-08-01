@@ -45,7 +45,8 @@ withDefaults(defineProps<{
 <style scoped>
 .context-toolbar-composition {
   min-width: 0;
-  border-block: 1px solid var(--co-border-default);
+  border: 1px solid var(--co-border-default);
+  border-radius: var(--co-radius-frame);
   background: var(--co-bg-surface);
 }
 

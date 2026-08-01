@@ -108,6 +108,7 @@
   --co-space-10: var(--co-p-space-10);
   --co-radius-control: 9px;
   --co-radius-panel: 12px;
+  --co-radius-frame: 14px;
   --co-radius-overlay: 16px;
   --co-radius-pill: var(--co-p-radius-full);
   --co-motion-fast: var(--co-p-duration-fast);

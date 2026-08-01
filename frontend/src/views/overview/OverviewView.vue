@@ -1130,11 +1130,10 @@ onBeforeUnmount(() => window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  padding: 14px 2px;
-  border: 0;
-  border-top: 1px solid var(--co-border-default);
-  border-radius: 0;
-  background: transparent;
+  padding: 14px 12px;
+  border: 1px solid var(--co-border-default);
+  border-radius: var(--co-radius-frame);
+  background: color-mix(in srgb, var(--co-bg-surface) 54%, transparent);
   transition: transform 180ms var(--co-ease-out), border-color 180ms var(--co-ease-out), box-shadow 180ms var(--co-ease-out);
 }
 .workspace-links a:hover { border-color: var(--co-viz-live); box-shadow: none; transform: translateY(-2px); }

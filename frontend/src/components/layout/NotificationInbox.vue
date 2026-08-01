@@ -236,7 +236,8 @@ function streamColor(state: "connected" | "reconnecting" | "stopped"): "success"
   justify-items: center;
   gap: var(--co-space-2);
   padding: var(--co-space-6);
-  border-block: 1px solid var(--co-border-default);
+  border: 1px solid var(--co-border-default);
+  border-radius: var(--co-radius-frame);
   color: var(--co-text-muted);
   text-align: center;
 }

@@ -774,7 +774,7 @@ async function refreshIncidentAfterConflict() {
 .zone-heading h2, .zone-heading p { margin: 0; }
 .zone-heading h2 { color: var(--co-text-primary); font-size: 20px; }
 .zone-heading p { margin-top: 3px; color: var(--co-text-secondary); font-size: 13px; }
-.scope-grid, .recovery-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); min-width: 0; margin: var(--co-space-3) 0 var(--co-space-4); border-block: 1px solid var(--co-border-default); background: var(--co-bg-surface); }
+.scope-grid, .recovery-strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); min-width: 0; margin: var(--co-space-3) 0 var(--co-space-4); overflow: hidden; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); background: var(--co-bg-surface); }
 .scope-grid div, .recovery-strip div { min-width: 0; padding: var(--co-space-3); border-right: 1px solid var(--co-border-default); }
 .scope-grid div:last-child, .recovery-strip div:last-child { border-right: 0; }
 .scope-grid dt, .recovery-strip dt, .record-list dt, .decision-record dt { color: var(--co-text-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }

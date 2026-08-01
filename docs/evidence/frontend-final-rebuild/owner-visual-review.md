@@ -41,8 +41,38 @@ all public routes, Chromium 1440x900 Light smoke       PASS
 
 The production build reported Rollup annotation cleanup notices from
 `@vueuse/core` and the existing `>500 kB` chunk-size advisory. Neither was a
-compile failure. Full lint, full unit/E2E, multi-browser, performance,
-accessibility, Dark, and multi-viewport matrices remain `NOT RUN` at this Gate.
+compile failure. Full unit/E2E, multi-browser, performance, accessibility,
+Dark, and multi-viewport matrices remain `NOT RUN` at this Gate.
+
+## Owner rounded-frame correction
+
+On 2026-08-01 the Owner requested that the remaining visibly framed rectangular
+surfaces use rounded frames. The correction parent was
+`78cc1d00fea7da695efc952f823de03d358f45b2`. The implementation is CSS-only:
+`--co-radius-frame: 14px` now owns shared workspace frames, and page-specific
+Alert, Incident, Infrastructure, Observability, DevOps, Settings, Atlas and
+Agent surfaces use that token or the existing panel/overlay radius. Shell
+section dividers, table row separators and full-width structural bands remain
+structural lines rather than framed containers.
+
+```text
+npm run lint -- --quiet                               PASS
+npm run typecheck                                     PASS
+npm run build                                         PASS
+git diff --check                                      PASS
+15 public entries, Chromium 1440x900 Light smoke      PASS
+Console warnings/errors                               PASS (0)
+page errors                                           PASS (0)
+HTTP 4xx/5xx and non-abort network failures           PASS (0)
+horizontal overflow                                   PASS (0)
+visible full-frame zero-radius runtime scan            PASS (0)
+write requests                                        NOT RUN
+```
+
+The smoke waited for route-specific business roots, including completed
+Infrastructure, Logs and Traces workspaces and the real Alert detail surface;
+it did not accept Shell-only or loading frames. Updated visual evidence is
+untracked under `output/playwright/owner-rounded/`.
 
 The first automated route sweep overlapped Nuxt UI's development-only icon
 scan HMR and captured several Shell-only frames. After the HMR cycle settled,

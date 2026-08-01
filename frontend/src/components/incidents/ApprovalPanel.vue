@@ -473,7 +473,7 @@ function submitDecision() {
   gap: var(--co-space-5);
   padding: var(--co-space-5);
   border: 1px solid var(--co-border-default);
-  border-radius: var(--co-radius-panel);
+  border-radius: var(--co-radius-frame);
   background: var(--co-bg-surface);
 }
 
@@ -518,6 +518,7 @@ function submitDecision() {
   gap: 2px;
   padding: var(--co-space-3) var(--co-space-4);
   border-left: 3px solid var(--co-status-warning-fg);
+  border-radius: var(--co-radius-panel);
   color: var(--co-status-warning-fg);
   background: var(--co-status-warning-bg);
 }
@@ -531,18 +532,18 @@ function submitDecision() {
 .hash-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 var(--co-space-5); }
 
 .plan-notes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--co-space-4); }
-.plan-notes section { min-width: 0; padding: var(--co-space-4); border-left: 3px solid var(--co-action-primary); background: var(--co-bg-subtle); }
+.plan-notes section { min-width: 0; padding: var(--co-space-4); border-left: 3px solid var(--co-action-primary); border-radius: var(--co-radius-panel); background: var(--co-bg-subtle); }
 .plan-notes h4,
 .plan-notes p { margin: 0; }
 .plan-notes h4 { font-size: 13px; }
 .plan-notes p { margin-top: var(--co-space-2); color: var(--co-text-secondary); white-space: pre-wrap; overflow-wrap: anywhere; }
 
-.contract-snapshots { border-block: 1px solid var(--co-border-default); }
+.contract-snapshots { overflow: hidden; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); }
 .decision-bindings { border-top: 1px solid color-mix(in srgb, currentcolor 28%, transparent); }
 .contract-snapshots > summary,
-.decision-bindings > summary { width: fit-content; min-height: 44px; padding: var(--co-space-3) 0; color: var(--co-action-primary); font-weight: 700; cursor: pointer; }
+.decision-bindings > summary { width: fit-content; min-height: 44px; padding: var(--co-space-3); color: var(--co-action-primary); font-weight: 700; cursor: pointer; }
 .decision-bindings > summary { color: inherit; }
-.contract-snapshots > div { padding-bottom: var(--co-space-4); }
+.contract-snapshots > div { padding: 0 var(--co-space-3) var(--co-space-4); }
 
 .evidence-bindings ul { display: grid; margin: 0; padding: 0; list-style: none; }
 .evidence-bindings li { display: grid; grid-template-columns: minmax(180px, .5fr) minmax(0, 1fr); min-width: 0; align-items: center; gap: var(--co-space-3); border-bottom: 1px solid var(--co-border-default); }
@@ -551,7 +552,7 @@ function submitDecision() {
 .evidence-bindings code { min-width: 0; overflow-wrap: anywhere; font-size: 11px; }
 .evidence-bindings :deep(.hash-value) { border-bottom: 0; }
 
-.persisted-decision { padding: var(--co-space-4); border-left: 3px solid var(--co-status-success-fg); background: var(--co-status-success-bg); }
+.persisted-decision { padding: var(--co-space-4); border-left: 3px solid var(--co-status-success-fg); border-radius: var(--co-radius-panel); background: var(--co-status-success-bg); }
 .persisted-decision > p { margin: 0; overflow-wrap: anywhere; }
 
 .decision-actions { align-items: center; padding-top: var(--co-space-4); border-top: 1px solid var(--co-border-default); }

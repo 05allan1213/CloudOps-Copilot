@@ -280,6 +280,7 @@ onBeforeUnmount(() => {
   grid-template-rows: auto auto auto minmax(0, 1fr);
   overflow: hidden;
   border-left: 1px solid color-mix(in srgb, var(--co-border-strong) 72%, transparent);
+  border-radius: var(--co-radius-overlay) 0 0 var(--co-radius-overlay);
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--co-bg-floating) 96%, transparent), var(--co-bg-canvas));
   box-shadow: -18px 0 52px rgb(45 39 33 / 13%);

@@ -303,7 +303,8 @@ function numberValue(value: unknown): number {
   position: sticky;
   z-index: var(--co-z-sticky);
   top: 0;
-  border-block: 1px solid var(--co-border-default);
+  border: 1px solid var(--co-border-default);
+  border-radius: var(--co-radius-frame);
   background: var(--co-bg-surface);
 }
 .logs-query__context,

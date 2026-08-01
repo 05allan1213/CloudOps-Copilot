@@ -95,6 +95,7 @@ const role = computed(() => {
   gap: var(--co-space-2);
   padding: var(--co-space-3) var(--co-space-4);
   border-left: 3px solid var(--co-status-neutral-border);
+  border-radius: var(--co-radius-panel);
   color: var(--co-text-secondary);
   background: var(--co-bg-subtle);
   font-size: 12px;

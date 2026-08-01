@@ -267,6 +267,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--co-border-default);
+  border-radius: var(--co-radius-frame);
   background: var(--co-bg-canvas);
   outline: none;
 }

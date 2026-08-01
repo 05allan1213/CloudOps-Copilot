@@ -332,7 +332,7 @@ function statusValue(value: unknown): string {
 </template>
 
 <style scoped>
-.traces-query { border-block: 1px solid var(--co-border-default); background: var(--co-bg-surface); }
+.traces-query { border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); background: var(--co-bg-surface); }
 .traces-query__context,
 .traces-query__filters,
 .traces-query__execution {
