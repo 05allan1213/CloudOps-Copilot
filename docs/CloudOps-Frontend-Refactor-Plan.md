@@ -1,5 +1,11 @@
 # CloudOps-Copilot 前端重构实施计划
 
+> [!CAUTION]
+> **历史计划，已停止作为实施权威。** 自 2026-08-01 起，后续前端代码实施只遵循
+> [CloudOps-Copilot CPA 前端最终重建实施方案](CloudOps-CPA-Frontend-Rebuild-Implementation-Plan.md)。
+> 本文及其 Gate、报告、提交和 handoff 仅保留为历史 provenance，不得用于覆盖新方案、
+> 当前已认可的视觉样例或 Owner 最新决定。
+
 > 文档状态：`APPROVED_FOR_LOCAL_IMPLEMENTATION`
 >
 > 生成日期：2026-07-30（Asia/Shanghai）
