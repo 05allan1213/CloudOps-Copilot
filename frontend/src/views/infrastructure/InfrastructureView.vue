@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { LocationQueryRaw, RouteLocationRaw } from "vue-router";
-import { computed, h, onBeforeUnmount, onMounted, ref, resolveComponent, shallowRef, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import { apiErrorDetails } from "../../api/client";
@@ -19,15 +19,14 @@ import {
   type TopologySnapshot,
 } from "../../api/infrastructure";
 import { getBootstrap, type BootstrapSnapshot } from "../../api/platform";
-import DenseDataTable, {
-  type DenseRowSeverity,
-  type DenseTableColumn,
-} from "../../components/workspace/DenseDataTable.vue";
 import ApiErrorNotice from "../../components/workspace/ApiErrorNotice.vue";
+import WorkspaceDenseList, { type DenseListSeverity } from "../../components/workspace/WorkspaceDenseList.vue";
 import WorkspaceInspector, {
   type InspectorTargetState,
 } from "../../components/workspace/WorkspaceInspector.vue";
 import WorkspaceState from "../../components/workspace/WorkspaceState.vue";
+import WorkspaceStatusRow from "../../components/workspace/WorkspaceStatusRow.vue";
+import WorkspaceTechnicalDetails, { type TechnicalDetailField } from "../../components/workspace/WorkspaceTechnicalDetails.vue";
 import { useWorkspaceInspector } from "../../composables/useWorkspaceInspector";
 import { OPERATIONAL_SCOPE_CHANGED_EVENT } from "../../utils/operationalScope";
 import {
@@ -36,6 +35,8 @@ import {
   kindsForResourceType,
   queryValues,
   resourceTypeForKinds,
+  sortResourcesByAttention,
+  summarizeInfrastructureHealth,
   type InfrastructureResourceType,
 } from "./infrastructureModel";
 
@@ -50,16 +51,11 @@ interface ContextLinkRow {
 
 const route = useRoute();
 const router = useRouter();
-const resourceTable = ref<{
-  getRowElement: (rowID: string) => HTMLElement | null;
-  getScrollElement: () => HTMLElement | null;
-} | null>(null);
+const resourceList = ref<HTMLElement | null>(null);
 const inspector = useWorkspaceInspector({
   selectedKey: "resource",
-  scrollElement: () => resourceTable.value?.getScrollElement() ?? null,
-  resolveTrigger: (resourceID) => resourceTable.value?.getRowElement(resourceID) ?? null,
+  scrollElement: () => resourceList.value,
 });
-const UBadge = resolveComponent("UBadge");
 const bootstrap = ref<BootstrapSnapshot | null>(null);
 const topology = ref<TopologySnapshot | null>(null);
 const resourcePage = ref<ResourcePage | null>(null);
@@ -75,6 +71,9 @@ const eventError = shallowRef<unknown>(null);
 const namespaceValue = ref(queryValue(route.query.namespace));
 const searchValue = ref(queryValue(route.query.search));
 const resourceType = ref<InfrastructureResourceType>(resourceTypeForKinds(queryValues(route.query.kind)));
+type HealthFilter = "all" | "attention" | "healthy" | "unknown";
+const healthFilterValues = new Set<HealthFilter>(["all", "attention", "healthy", "unknown"]);
+const healthFilter = ref<HealthFilter>(healthFilterValue(route.query.health));
 let controller: AbortController | undefined;
 let requestToken = 0;
 let previousWorkspaceSignature = "";
@@ -125,6 +124,33 @@ const namespaceSelectValue = computed(() => namespaceValue.value || ALL_NAMESPAC
 const resources = computed<ResourceRow[]>(() => (
   (resourcePage.value?.items ?? topology.value?.nodes ?? []) as ResourceRow[]
 ));
+const healthSummary = computed(() => summarizeInfrastructureHealth(resources.value));
+const visibleResources = computed<ResourceRow[]>(() => sortResourcesByAttention(resources.value)
+  .filter((resource) => {
+    if (healthFilter.value === "attention") return resource.health.state !== "healthy";
+    if (healthFilter.value === "healthy") return resource.health.state === "healthy";
+    if (healthFilter.value === "unknown") return resource.health.state === "unknown";
+    return true;
+  }) as ResourceRow[]);
+const kindOptions = computed(() => [
+  { label: "全部 Kubernetes Kind", value: "" },
+  ...[...new Set((topology.value?.nodes ?? resources.value).map((resource) => resource.kind))]
+    .sort()
+    .map((kind) => ({ label: kind, value: kind })),
+]);
+const selectedKind = computed(() => queryValues(route.query.kind).length === 1 ? queryValues(route.query.kind)[0] : "");
+const timeWindowItems = [
+  { label: "最近 1 小时", value: "1h" },
+  { label: "最近 6 小时", value: "6h" },
+  { label: "最近 24 小时", value: "24h" },
+];
+const selectedTimeWindow = computed(() => {
+  const from = new Date(queryValue(route.query.from)).getTime();
+  const to = new Date(queryValue(route.query.to)).getTime();
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return "1h";
+  const hours = Math.round((to - from) / 3_600_000);
+  return hours === 6 ? "6h" : hours === 24 ? "24h" : "1h";
+});
 const providerState = computed(() => topology.value?.provider_state ?? resourcePage.value?.provider_state);
 const providerReady = computed(() => providerState.value === "available" || providerState.value === "partial");
 const providerIdentity = computed(() => topology.value?.source.identity ?? resourcePage.value?.source.identity ?? "未读取");
@@ -146,6 +172,14 @@ const staleProjection = computed(() => (
   topology.value?.freshness.state === "stale" || resourcePage.value?.freshness.state === "stale"
 ));
 const selectedResource = computed(() => detail.value?.resource ?? null);
+const atlasTarget = computed<RouteLocationRaw>(() => ({
+  name: "atlas",
+  query: {
+    cluster: queryValue(route.query.cluster) || undefined,
+    namespace: queryValue(route.query.namespace) || undefined,
+    resource: selectedResourceID.value || undefined,
+  },
+}));
 const relatedResources = computed(() => [...(detail.value?.related ?? [])].sort((left, right) => {
   const layerOrder = ["namespace", "gateway", "service", "workload", "pod", "node"];
   return layerOrder.indexOf(left.layer) - layerOrder.indexOf(right.layer)
@@ -184,53 +218,23 @@ const contextLinks = computed<ContextLinkRow[]>(() => (
     .map((link) => ({ link, location: infrastructureContextLocation(link) }))
 ));
 const projectionIssues = computed(() => topology.value?.issues ?? []);
-
-const columns: DenseTableColumn<ResourceRow>[] = [
-  { id: "kind", accessorKey: "kind", header: "Kind", label: "Kind", size: 126 },
-  { id: "name", accessorKey: "name", header: "资源", label: "资源", size: 252 },
-  { id: "namespace", accessorKey: "namespace", header: "Namespace", label: "Namespace", size: 176 },
-  {
-    id: "health",
-    accessorKey: "health",
-    header: "健康",
-    label: "健康",
-    size: 104,
-    cell: ({ row }) => h(UBadge, {
-      color: healthColors[row.original.health.state],
-      variant: "subtle",
-      label: healthLabels[row.original.health.state],
-    }),
-  },
-  { id: "status", accessorKey: "status", header: "状态", label: "状态", size: 148 },
-  {
-    id: "node",
-    accessorKey: "node_name",
-    header: "Node",
-    label: "Node",
-    size: 180,
-    optional: true,
-  },
-  {
-    id: "created",
-    accessorFn: (row) => formatTime(row.created_at),
-    header: "创建时间",
-    label: "创建时间",
-    size: 190,
-    optional: true,
-  },
-  {
-    id: "summary",
-    accessorFn: (row) => row.health.summary,
-    header: "状态摘要",
-    label: "状态摘要",
-    size: 320,
-    optional: true,
-  },
-];
+const resourceTechnicalFields = computed<TechnicalDetailField[]>(() => selectedResource.value ? [
+  { label: "Resource ID", value: selectedResource.value.id, code: true, copyValue: selectedResource.value.id },
+  { label: "Source UID", value: selectedResource.value.source_uid, code: true, copyValue: selectedResource.value.source_uid },
+  { label: "Resource version", value: selectedResource.value.resource_version, code: true, copyValue: selectedResource.value.resource_version },
+  { label: "Generation", value: selectedResource.value.generation, code: true },
+  { label: "Snapshot", value: detail.value?.snapshot_id, code: true, copyValue: detail.value?.snapshot_id },
+  { label: "Provider", value: detail.value?.source.identity || providerIdentity.value, code: true },
+] : []);
 
 function queryValue(value: unknown): string {
   if (Array.isArray(value)) return typeof value[0] === "string" ? value[0] : "";
   return typeof value === "string" ? value : "";
+}
+
+function healthFilterValue(value: unknown): HealthFilter {
+  const candidate = queryValue(value) as HealthFilter;
+  return healthFilterValues.has(candidate) ? candidate : "all";
 }
 
 function currentQuery(): InfrastructureQuery {
@@ -240,6 +244,7 @@ function currentQuery(): InfrastructureQuery {
     namespace: queryValue(route.query.namespace) || undefined,
     kind: kinds.length ? kinds : undefined,
     search: queryValue(route.query.search) || undefined,
+    cursor: queryValue(route.query.cursor) || undefined,
     from: queryValue(route.query.from) || undefined,
     to: queryValue(route.query.to) || undefined,
     limit: 500,
@@ -360,6 +365,25 @@ function changeResourceType(value: string | number) {
   updateQuery({ kind: kindsForResourceType(next), resource: undefined });
 }
 
+function changeKind(value: string | number) {
+  const kind = String(value);
+  resourceType.value = resourceTypeForKinds(kind ? [kind] : []);
+  updateQuery({ kind: kind || undefined, resource: undefined });
+}
+
+function changeHealthFilter(value: HealthFilter) {
+  healthFilter.value = value;
+  updateQuery({ health: value === "all" ? undefined : value, resource: undefined });
+}
+
+function changeTimeWindow(value: string | number) {
+  const hours = Number.parseInt(String(value), 10);
+  if (![1, 6, 24].includes(hours)) return;
+  const to = new Date();
+  const from = new Date(to.getTime() - hours * 3_600_000);
+  updateQuery({ from: from.toISOString(), to: to.toISOString(), resource: undefined });
+}
+
 function applySearch() {
   updateQuery({ search: searchValue.value.trim() || undefined, resource: undefined });
 }
@@ -368,7 +392,13 @@ function resetFilters() {
   namespaceValue.value = "";
   searchValue.value = "";
   resourceType.value = "all";
-  updateQuery({ namespace: undefined, kind: undefined, search: undefined, resource: undefined });
+  healthFilter.value = "all";
+  updateQuery({ namespace: undefined, kind: undefined, search: undefined, health: undefined, resource: undefined });
+}
+
+function openNextPage() {
+  if (!resourcePage.value?.next_cursor) return;
+  void router.push({ name: "infrastructure", query: { ...route.query, cursor: resourcePage.value.next_cursor, resource: undefined } });
 }
 
 function selectResource(resource: ResourceRow, trigger: HTMLElement | null) {
@@ -404,7 +434,7 @@ function relationLabel(relation: TopologyEdge["relation"]): string {
   } satisfies Record<TopologyEdge["relation"], string>)[relation];
 }
 
-function severity(resource: ResourceRow): DenseRowSeverity {
+function severity(resource: ResourceRow): DenseListSeverity {
   if (resource.health.state === "critical") return "critical";
   if (resource.health.state === "warning") return "warning";
   return resource.health.state === "unknown" ? "info" : "neutral";
@@ -432,15 +462,12 @@ function formatTime(value?: string): string {
   return Number.isNaN(parsed.getTime()) ? value : dateFormatter.format(parsed);
 }
 
-function copyResource(resource: ResourceRow): string {
-  return `${resource.kind}/${resource.namespace || "cluster"}/${resource.name} (${resource.id})`;
-}
-
 watch(() => route.fullPath, () => {
   namespaceValue.value = queryValue(route.query.namespace);
   searchValue.value = queryValue(route.query.search);
   resourceType.value = resourceTypeForKinds(queryValues(route.query.kind));
-  const workspaceSignature = JSON.stringify(currentQuery());
+  healthFilter.value = healthFilterValue(route.query.health);
+  const workspaceSignature = JSON.stringify({ query: currentQuery(), health: healthFilter.value });
   const selection = selectedResourceID.value;
   const selectionOnly = previousWorkspaceSignature === workspaceSignature
     && previousSelection !== selection;
@@ -506,18 +533,80 @@ onBeforeUnmount(() => {
           :title="providerIdentity"
         >{{ providerIdentity }}</span>
       </div>
-      <UTooltip text="刷新当前资源投影">
+      <div class="infrastructure-actions">
         <UButton
           color="neutral"
           variant="outline"
-          icon="i-lucide-refresh-cw"
-          square
-          aria-label="刷新基础设施资源"
-          :loading="loading"
-          @click="loadWorkspace(true)"
+          icon="i-lucide-orbit"
+          label="打开 Atlas"
+          :to="atlasTarget"
         />
-      </UTooltip>
+        <UTooltip text="刷新当前资源投影">
+          <UButton
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-refresh-cw"
+            square
+            aria-label="刷新基础设施资源"
+            :loading="loading"
+            @click="loadWorkspace(true)"
+          />
+        </UTooltip>
+      </div>
     </header>
+
+    <section
+      class="resource-posture"
+      aria-label="基础设施健康摘要"
+    >
+      <div class="posture-copy">
+        <span class="infrastructure-eyebrow">Current posture</span>
+        <strong>{{ healthSummary.attention ? `${healthSummary.attention} 个资源需要关注` : "当前资源未报告异常" }}</strong>
+        <small>{{ resources.length }} 个筛选后资源 · {{ topology?.edges.length ?? 0 }} 条真实关系</small>
+      </div>
+      <div class="posture-metrics">
+        <UButton
+          color="neutral"
+          variant="ghost"
+          class="posture-metric"
+          :class="{ 'is-active': healthFilter === 'all' }"
+          :aria-pressed="healthFilter === 'all'"
+          @click="changeHealthFilter('all')"
+        >
+          <span>全部</span><strong>{{ healthSummary.total }}</strong>
+        </UButton>
+        <UButton
+          color="error"
+          variant="ghost"
+          class="posture-metric is-critical"
+          :class="{ 'is-active': healthFilter === 'attention' }"
+          :aria-pressed="healthFilter === 'attention'"
+          @click="changeHealthFilter('attention')"
+        >
+          <span>需关注</span><strong>{{ healthSummary.attention }}</strong>
+        </UButton>
+        <UButton
+          color="success"
+          variant="ghost"
+          class="posture-metric is-healthy"
+          :class="{ 'is-active': healthFilter === 'healthy' }"
+          :aria-pressed="healthFilter === 'healthy'"
+          @click="changeHealthFilter('healthy')"
+        >
+          <span>健康</span><strong>{{ healthSummary.healthy }}</strong>
+        </UButton>
+        <UButton
+          color="neutral"
+          variant="ghost"
+          class="posture-metric"
+          :class="{ 'is-active': healthFilter === 'unknown' }"
+          :aria-pressed="healthFilter === 'unknown'"
+          @click="changeHealthFilter('unknown')"
+        >
+          <span>未知</span><strong>{{ healthSummary.unknown }}</strong>
+        </UButton>
+      </div>
+    </section>
 
     <section
       class="resource-controls"
@@ -565,16 +654,51 @@ onBeforeUnmount(() => {
             label="筛选"
           />
         </form>
-        <UTooltip text="清除 Namespace、资源类型与搜索条件">
-          <UButton
-            color="neutral"
-            variant="ghost"
-            icon="i-lucide-filter-x"
-            square
-            aria-label="清除资源筛选"
-            @click="resetFilters"
-          />
-        </UTooltip>
+        <div class="filter-actions">
+          <UPopover>
+            <UButton
+              color="neutral"
+              variant="outline"
+              icon="i-lucide-sliders-horizontal"
+              label="高级筛选"
+            />
+            <template #content>
+              <div class="advanced-filters">
+                <UFormField label="精确 Kind">
+                  <USelect
+                    :model-value="selectedKind"
+                    :items="kindOptions"
+                    value-key="value"
+                    label-key="label"
+                    aria-label="按精确 Kubernetes Kind 筛选"
+                    @update:model-value="changeKind"
+                  />
+                </UFormField>
+                <UFormField label="事件时间范围">
+                  <USelect
+                    :model-value="selectedTimeWindow"
+                    :items="timeWindowItems"
+                    value-key="value"
+                    label-key="label"
+                    aria-label="选择资源事件时间范围"
+                    @update:model-value="changeTimeWindow"
+                  />
+                </UFormField>
+                <p>时间范围同时作用于资源详情的 Kubernetes Events，并保持在 URL 中。</p>
+              </div>
+            </template>
+          </UPopover>
+          <UTooltip text="清除 Namespace、资源类型、健康与搜索条件">
+            <UButton
+              color="neutral"
+              variant="ghost"
+              icon="i-lucide-filter-x"
+              square
+              aria-label="清除资源筛选"
+              @click="resetFilters"
+            />
+          </UTooltip>
+        </div>
       </div>
     </section>
 
@@ -639,16 +763,17 @@ onBeforeUnmount(() => {
 
     <section
       v-else
-      class="resource-table-shell"
+      ref="resourceList"
+      class="resource-list-shell"
       :aria-busy="loading"
     >
-      <header class="resource-table-heading">
+      <header class="resource-list-heading">
         <div>
-          <span class="infrastructure-eyebrow">Typed Kubernetes resources</span>
-          <h2>资源清单</h2>
+          <span class="infrastructure-eyebrow">Attention first</span>
+          <h2>资源工作队列</h2>
         </div>
-        <div class="resource-table-facts">
-          <span>{{ topology?.nodes.length ?? resources.length }} nodes</span>
+        <div class="resource-list-facts">
+          <span>{{ visibleResources.length }} / {{ resources.length }} resources</span>
           <span>{{ topology?.edges.length ?? 0 }} edges</span>
           <time
             v-if="collectedAt"
@@ -656,21 +781,63 @@ onBeforeUnmount(() => {
           >{{ formatTime(collectedAt) }}</time>
         </div>
       </header>
-      <DenseDataTable
-        ref="resourceTable"
-        :rows="resources"
-        :columns="columns"
-        :row-key="(resource: ResourceRow) => resource.id"
-        storage-key="infrastructure-resources"
-        caption="基础设施资源清单"
-        :critical-column-ids="['kind', 'name', 'health']"
-        :selected-id="selectedResourceID"
+      <WorkspaceStatusRow
+        v-if="loading && resources.length"
+        title="正在刷新资源投影"
+        description="保留当前列表，完成后按健康状态重新排序。"
+        tone="info"
+        busy
+      />
+      <WorkspaceDenseList
+        :items="visibleResources"
+        :item-key="(resource: ResourceRow) => resource.id"
+        label="基础设施资源工作队列"
+        :selected-key="selectedResourceID"
         empty="当前 Scope 与筛选条件下没有真实资源"
         :severity="severity"
-        :copy-value="copyResource"
-        :virtualized="resources.length > 250"
         @select="selectResource"
-      />
+      >
+        <template #leading="{ item }">
+          <UBadge
+            color="neutral"
+            variant="outline"
+            :label="item.kind"
+          />
+        </template>
+        <template #title="{ item }">
+          {{ item.name }}
+        </template>
+        <template #description="{ item }">
+          {{ item.namespace || "cluster-scoped" }} · {{ item.health.summary }}
+        </template>
+        <template #meta="{ item }">
+          {{ item.status || item.node_name || "状态未报告" }}
+        </template>
+        <template #trailing="{ item }">
+          <UBadge
+            :color="healthColors[item.health.state]"
+            variant="subtle"
+            :label="healthLabels[item.health.state]"
+          />
+          <UIcon
+            name="i-lucide-chevron-right"
+            aria-hidden="true"
+          />
+        </template>
+      </WorkspaceDenseList>
+      <div
+        v-if="resourcePage?.next_cursor"
+        class="resource-pagination"
+      >
+        <span>当前页结束，下一 Cursor 可用</span>
+        <UButton
+          color="neutral"
+          variant="outline"
+          trailing-icon="i-lucide-arrow-right"
+          label="加载下一页"
+          @click="openNextPage"
+        />
+      </div>
       <details
         v-if="projectionIssues.length"
         class="projection-issues"
@@ -748,11 +915,6 @@ onBeforeUnmount(() => {
 
         <dl class="resource-facts">
           <div>
-            <dt>资源 ID</dt><dd class="mono-text">
-              {{ selectedResource.id }}
-            </dd>
-          </div>
-          <div>
             <dt>Namespace</dt><dd class="mono-text">
               {{ selectedResource.namespace || "cluster-scoped" }}
             </dd>
@@ -770,11 +932,6 @@ onBeforeUnmount(() => {
             </dd>
           </div>
           <div><dt>创建时间</dt><dd>{{ formatTime(selectedResource.created_at) }}</dd></div>
-          <div>
-            <dt>Provider</dt><dd class="mono-text">
-              {{ detail?.source.identity || providerIdentity }}
-            </dd>
-          </div>
         </dl>
 
         <section
@@ -925,6 +1082,39 @@ onBeforeUnmount(() => {
             当前时间范围没有 Event。
           </p>
         </section>
+
+        <WorkspaceTechnicalDetails
+          :fields="resourceTechnicalFields"
+          description="完整资源身份、版本、标签、端点与端口"
+        >
+          <dl class="technical-resource-groups">
+            <div>
+              <dt>Labels</dt><dd class="mono-text">
+                {{ JSON.stringify(selectedResource.labels) }}
+              </dd>
+            </div>
+            <div>
+              <dt>Selector</dt><dd class="mono-text">
+                {{ JSON.stringify(selectedResource.selector) }}
+              </dd>
+            </div>
+            <div>
+              <dt>Endpoints</dt><dd class="mono-text">
+                {{ JSON.stringify(selectedResource.endpoints) }}
+              </dd>
+            </div>
+            <div>
+              <dt>Ports</dt><dd class="mono-text">
+                {{ JSON.stringify(selectedResource.ports) }}
+              </dd>
+            </div>
+            <div>
+              <dt>Addresses</dt><dd class="mono-text">
+                {{ selectedResource.addresses.join(", ") || "未提供" }}
+              </dd>
+            </div>
+          </dl>
+        </WorkspaceTechnicalDetails>
       </template>
 
       <template #footer>
@@ -962,7 +1152,7 @@ onBeforeUnmount(() => {
 
 .infrastructure-heading { min-width: 0; }
 .infrastructure-heading h1,
-.resource-table-heading h2 { margin: 0; }
+.resource-list-heading h2 { margin: 0; }
 .infrastructure-heading h1 { font-size: 24px; line-height: 1.3; }
 .infrastructure-heading p {
   display: flex;
@@ -1000,6 +1190,51 @@ onBeforeUnmount(() => {
   white-space: nowrap;
   font-size: 10px;
 }
+.infrastructure-actions,
+.filter-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--co-space-2);
+}
+
+.resource-posture {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(260px, 1fr) minmax(460px, 1.25fr);
+  align-items: stretch;
+  border-block: 1px solid var(--co-border-default);
+  background: var(--co-bg-surface);
+}
+.posture-copy {
+  display: grid;
+  min-width: 0;
+  align-content: center;
+  gap: 2px;
+  padding: var(--co-space-3) var(--co-space-4);
+}
+.posture-copy strong { font-size: 15px; line-height: 1.35; }
+.posture-copy small { color: var(--co-text-muted); font-size: 11px; }
+.posture-metrics {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(4, minmax(92px, 1fr));
+  border-left: 1px solid var(--co-border-default);
+}
+.posture-metric {
+  min-width: 0;
+  min-height: 66px;
+  border-radius: 0;
+  border-left: 1px solid var(--co-border-subtle);
+}
+.posture-metric:first-child { border-left: 0; }
+.posture-metric :deep(span) { display: grid; min-width: 0; justify-items: start; gap: 2px; }
+.posture-metric span { color: var(--co-text-muted); font-size: 10px; }
+.posture-metric strong { color: var(--co-text-primary); font-size: 20px; font-variant-numeric: tabular-nums; }
+.posture-metric.is-active { background: var(--co-bg-active); box-shadow: inset 0 -2px var(--co-action-primary); }
+.posture-metric.is-critical.is-active { box-shadow: inset 0 -2px var(--co-status-critical-fg); }
+.posture-metric.is-healthy.is-active { box-shadow: inset 0 -2px var(--co-status-success-fg); }
 
 .resource-controls {
   display: grid;
@@ -1023,16 +1258,23 @@ onBeforeUnmount(() => {
   grid-template-columns: minmax(180px, 1fr) auto;
   gap: var(--co-space-2);
 }
+.advanced-filters {
+  display: grid;
+  width: min(360px, calc(100vw - 32px));
+  gap: var(--co-space-3);
+  padding: var(--co-space-3);
+}
+.advanced-filters p { margin: 0; color: var(--co-text-muted); font-size: 10px; line-height: 1.45; }
 
 .projection-states { display: grid; min-width: 0; gap: var(--co-space-2); }
-.resource-table-shell {
+.resource-list-shell {
   min-width: 0;
   overflow: hidden;
   border: 1px solid var(--co-border-default);
   border-radius: var(--co-radius-panel);
   background: var(--co-bg-surface);
 }
-.resource-table-heading {
+.resource-list-heading {
   display: flex;
   min-width: 0;
   min-height: 58px;
@@ -1042,8 +1284,8 @@ onBeforeUnmount(() => {
   padding: var(--co-space-2) var(--co-space-3);
   border-bottom: 1px solid var(--co-border-default);
 }
-.resource-table-heading h2 { font-size: 16px; line-height: 1.35; }
-.resource-table-facts {
+.resource-list-heading h2 { font-size: 16px; line-height: 1.35; }
+.resource-list-facts {
   display: flex;
   min-width: 0;
   flex-wrap: wrap;
@@ -1053,6 +1295,17 @@ onBeforeUnmount(() => {
   font-family: var(--co-font-mono);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
+}
+.resource-pagination {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--co-space-3);
+  padding: var(--co-space-2) var(--co-space-3);
+  border-top: 1px solid var(--co-border-default);
+  color: var(--co-text-muted);
+  font-size: 10px;
 }
 .projection-issues { border-top: 1px solid var(--co-border-default); }
 .projection-issues summary {
@@ -1121,22 +1374,37 @@ onBeforeUnmount(() => {
 .event-list li > div { display: flex; min-width: 0; justify-content: space-between; gap: var(--co-space-2); }
 .inspector-empty { margin: 0; color: var(--co-text-muted); font-size: 12px; }
 .inspector-time { margin-right: auto; color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 10px; }
+.technical-resource-groups { display: grid; min-width: 0; margin: 0; gap: var(--co-space-2); }
+.technical-resource-groups div { display: grid; min-width: 0; gap: 2px; }
+.technical-resource-groups dt { color: var(--co-text-muted); font-size: 10px; }
+.technical-resource-groups dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 10px; }
 
 @media (max-width: 1100px) {
   .infrastructure-header { grid-template-columns: minmax(240px, 1fr) auto; }
   .projection-identity { grid-row: 2; justify-content: flex-start; }
-  .infrastructure-header > :last-child { grid-column: 2; grid-row: 1 / 3; }
+  .infrastructure-actions { grid-column: 2; grid-row: 1 / 3; }
+  .resource-posture { grid-template-columns: minmax(240px, .8fr) minmax(420px, 1.2fr); }
   .resource-filter-row { grid-template-columns: minmax(190px, 260px) minmax(260px, 1fr) auto; }
 }
 
 @media (max-width: 760px) {
   .infrastructure-header { grid-template-columns: minmax(0, 1fr) auto; }
   .projection-identity { grid-column: 1 / -1; }
+  .infrastructure-actions { grid-column: 2; grid-row: 1; }
+  .infrastructure-actions > :deep(a) { display: none; }
+  .resource-posture { grid-template-columns: minmax(0, 1fr); }
+  .posture-metrics { border-top: 1px solid var(--co-border-default); border-left: 0; }
   .resource-filter-row { grid-template-columns: minmax(0, 1fr) auto; }
   .namespace-select { grid-column: 1 / -1; }
   .resource-search { grid-template-columns: minmax(0, 1fr) auto; }
   .resource-facts { grid-template-columns: minmax(0, 1fr); }
   .workload-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .projection-issues li { grid-template-columns: minmax(0, 1fr); }
+  .resource-list-heading { align-items: flex-start; flex-direction: column; }
+  .resource-list-facts { justify-content: flex-start; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .posture-metric { transition: none; }
 }
 </style>
