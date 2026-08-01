@@ -47,6 +47,11 @@ const spanProviderLink = computed(() => externalLink(
     item.target === "external" && item.availability === "available"
   )),
 ));
+const detailStats = computed(() => ({
+  services: new Set(props.detail.spans.map((span) => span.service).filter(Boolean)).size,
+  errors: props.detail.spans.filter((span) => span.status === "error").length,
+  critical: props.detail.spans.filter((span) => span.critical_path).length,
+}));
 const logsLocation = computed<RouteLocationRaw>(() => {
   const span = props.inspectedSpan;
   return {
@@ -191,30 +196,41 @@ function copySpan() {
       </div>
     </header>
 
-    <div class="trace-detail__meta">
-      <span><b>{{ detail.spans.length }}</b> spans</span>
-      <span><b>{{ formatDuration(detail.duration_ms) }}</b></span>
-      <span><b>{{ formatBytes(detail.response_bytes) }}</b></span>
-      <span>开始 {{ exactUTC(detail.start_time) }}</span>
-      <UBadge
-        v-if="detail.partial"
-        color="warning"
-        variant="soft"
-        label="部分结果"
-      />
-      <UBadge
-        v-if="detail.truncated"
-        color="warning"
-        variant="soft"
-        label="已截断"
-      />
-      <UBadge
-        v-if="searchStale"
-        color="neutral"
-        variant="soft"
-        label="搜索已陈旧"
-      />
-    </div>
+    <section class="trace-detail__overview" aria-label="Trace 摘要">
+      <div class="trace-detail__latency">
+        <span aria-hidden="true">
+          <UIcon name="i-lucide-gauge" />
+        </span>
+        <div>
+          <small>端到端总耗时</small>
+          <strong>{{ formatDuration(detail.duration_ms) }}</strong>
+          <p>{{ detail.root_service }} → {{ detail.root_operation }}</p>
+        </div>
+      </div>
+      <dl class="trace-detail__meta">
+        <div>
+          <dt><UIcon name="i-lucide-route" aria-hidden="true" />关键路径</dt>
+          <dd>{{ detailStats.critical }}</dd>
+          <small>{{ detail.spans.length }} 个 Span</small>
+        </div>
+        <div>
+          <dt><UIcon name="i-lucide-circle-alert" aria-hidden="true" />错误 Span</dt>
+          <dd :class="{ 'is-error': detailStats.errors > 0 }">{{ detailStats.errors }}</dd>
+          <small>真实 Span status</small>
+        </div>
+        <div>
+          <dt><UIcon name="i-lucide-boxes" aria-hidden="true" />参与服务</dt>
+          <dd>{{ detailStats.services }}</dd>
+          <small>{{ formatBytes(detail.response_bytes) }} response</small>
+        </div>
+      </dl>
+      <div class="trace-detail__flags">
+        <span>开始 {{ exactUTC(detail.start_time) }}</span>
+        <UBadge v-if="detail.partial" color="warning" variant="soft" label="部分结果" />
+        <UBadge v-if="detail.truncated" color="warning" variant="soft" label="已截断" />
+        <UBadge v-if="searchStale" color="neutral" variant="soft" label="搜索已陈旧" />
+      </div>
+    </section>
 
     <WorkspaceState
       v-if="detail.partial"
@@ -263,6 +279,15 @@ function copySpan() {
           description="从瀑布中选择一个 Span 查看完整属性、Events 与上下文。"
         />
         <template v-else>
+          <section class="span-inspector__summary">
+            <span>{{ inspectedSpan.service }}</span>
+            <strong>{{ inspectedSpan.name }}</strong>
+            <dl>
+              <div><dt>状态</dt><dd :class="{ 'is-error': inspectedSpan.status === 'error' }">{{ inspectedSpan.status }}</dd></div>
+              <div><dt>耗时</dt><dd>{{ formatDuration(inspectedSpan.duration_ms) }}</dd></div>
+              <div><dt>Events</dt><dd>{{ inspectedSpan.events.length }}</dd></div>
+            </dl>
+          </section>
           <div class="span-inspector__actions">
             <UButton
               color="neutral"
@@ -298,6 +323,19 @@ function copySpan() {
             />
           </div>
 
+          <UCollapsible class="span-inspector__technical">
+            <template #default="{ open }">
+              <UButton
+                color="neutral"
+                variant="ghost"
+                block
+                icon="i-lucide-braces"
+                label="完整 Span 属性"
+                :trailing-icon="open ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
+              />
+            </template>
+            <template #content>
+              <div class="span-inspector__technical-content">
           <section aria-labelledby="span-identity-heading">
             <h4 id="span-identity-heading">
               Identity
@@ -371,6 +409,9 @@ function copySpan() {
               </li>
             </ol>
           </section>
+              </div>
+            </template>
+          </UCollapsible>
         </template>
       </aside>
     </div>
@@ -422,15 +463,39 @@ function copySpan() {
 .trace-detail__identity code { min-width: 0; overflow-wrap: anywhere; color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 10px; }
 .trace-detail__actions,
 .span-inspector__actions { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--co-space-2); }
-.trace-detail__meta { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: var(--co-space-2) var(--co-space-4); padding: var(--co-space-2) var(--co-space-3); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); color: var(--co-text-secondary); font-size: 11px; }
-.trace-detail__grid { display: grid; min-width: 0; grid-template-columns: minmax(0, 1.85fr) minmax(300px, 1fr); gap: var(--co-space-5); margin-top: var(--co-space-3); }
-.span-inspector { min-width: 0; max-height: min(62vh, 640px); overflow-y: auto; padding-inline: var(--co-space-3); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); }
+.trace-detail__overview { display: grid; overflow: hidden; grid-template-columns: minmax(280px, 0.85fr) minmax(0, 1.15fr); gap: var(--co-space-3); padding: var(--co-space-4); border: 1px solid var(--co-border-subtle); border-radius: var(--co-radius-frame); background: color-mix(in srgb, var(--co-bg-surface) 72%, var(--co-bg-canvas)); box-shadow: var(--co-shadow-row); }
+.trace-detail__latency { display: flex; min-width: 0; align-items: center; gap: var(--co-space-3); padding: var(--co-space-4); border-radius: var(--co-radius-panel); background: var(--co-bg-floating); }
+.trace-detail__latency > span { display: grid; width: 52px; height: 52px; flex: 0 0 auto; place-items: center; border: 1px solid var(--co-status-success-border); border-radius: var(--co-radius-panel); color: var(--co-status-success-fg); background: var(--co-status-success-bg); font-size: 20px; }
+.trace-detail__latency > div { display: grid; min-width: 0; gap: 2px; }
+.trace-detail__latency small { color: var(--co-text-muted); font-size: 9px; font-weight: 750; }
+.trace-detail__latency strong { font-family: var(--co-font-mono); font-size: 26px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.trace-detail__latency p { margin: 0; overflow: hidden; color: var(--co-text-secondary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.trace-detail__meta { display: grid; min-width: 0; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; align-items: stretch; gap: var(--co-space-2); }
+.trace-detail__meta > div { display: grid; min-width: 0; align-content: center; padding: var(--co-space-3); border-radius: var(--co-radius-panel); background: var(--co-bg-floating); }
+.trace-detail__meta dt { display: flex; align-items: center; gap: var(--co-space-1); color: var(--co-text-muted); font-size: 9px; font-weight: 750; }
+.trace-detail__meta dd { margin: 3px 0 0; color: var(--co-text-primary); font-family: var(--co-font-mono); font-size: 20px; font-weight: 750; font-variant-numeric: tabular-nums; }
+.trace-detail__meta dd.is-error { color: var(--co-status-critical-fg); }
+.trace-detail__meta small { display: block; margin-top: 2px; overflow: hidden; color: var(--co-text-muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.trace-detail__flags { display: flex; min-width: 0; grid-column: 1 / -1; flex-wrap: wrap; align-items: center; gap: var(--co-space-2); padding: var(--co-space-2) var(--co-space-3); border-radius: var(--co-radius-control); color: var(--co-text-muted); background: color-mix(in srgb, var(--co-bg-canvas) 68%, transparent); font-family: var(--co-font-mono); font-size: 9px; }
+.trace-detail__grid { display: grid; min-width: 0; grid-template-columns: minmax(0, 1.85fr) minmax(300px, 1fr); align-items: start; gap: var(--co-space-5); margin-top: var(--co-space-3); }
+.span-inspector { min-width: 0; max-height: min(62vh, 640px); overflow-y: auto; padding: var(--co-space-2) var(--co-space-3) var(--co-space-3); border: 1px solid var(--co-border-subtle); border-radius: var(--co-radius-frame); background: color-mix(in srgb, var(--co-bg-surface) 84%, var(--co-bg-canvas)); box-shadow: var(--co-shadow-row); }
 .span-inspector > header { display: flex; min-height: 46px; align-items: center; justify-content: space-between; gap: var(--co-space-2); }
 .span-inspector header span { color: var(--co-text-muted); font-size: 10px; font-weight: 750; text-transform: uppercase; }
 .span-inspector h3,
 .span-inspector h4 { margin: 0; font-size: 13px; }
 .span-inspector h4 { padding: var(--co-space-3) 0 var(--co-space-2); border-bottom: 1px solid var(--co-border-default); }
+.span-inspector__summary { display: grid; gap: 2px; padding: var(--co-space-3); border-radius: var(--co-radius-panel); background: var(--co-bg-floating); }
+.span-inspector__summary > span { color: var(--co-text-muted); font-size: 10px; }
+.span-inspector__summary > strong { overflow-wrap: anywhere; font-size: 14px; }
+.span-inspector__summary dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: var(--co-space-2) 0 0; gap: var(--co-space-2); }
+.span-inspector__summary dl div { min-width: 0; }
+.span-inspector__summary dt { color: var(--co-text-muted); font-size: 9px; }
+.span-inspector__summary dd { margin: 2px 0 0; font-family: var(--co-font-mono); font-size: 11px; }
+.span-inspector__summary dd.is-error { color: var(--co-status-critical-fg); }
 .span-inspector__actions { justify-content: flex-start; padding: var(--co-space-2) 0; }
+.span-inspector__technical { overflow: hidden; border-radius: var(--co-radius-panel); background: color-mix(in srgb, var(--co-bg-canvas) 64%, transparent); }
+.span-inspector__technical > :deep(button) { justify-content: flex-start; border-radius: var(--co-radius-panel); }
+.span-inspector__technical-content { padding: 0 var(--co-space-3) var(--co-space-3); }
 .span-inspector__fields { margin: 0; }
 .span-inspector__fields div { display: grid; min-width: 0; grid-template-columns: minmax(110px, 0.7fr) minmax(0, 1fr); gap: var(--co-space-2); padding: var(--co-space-2) 0; border-bottom: 1px solid var(--co-border-subtle); }
 .span-inspector__fields dt,
@@ -443,11 +508,11 @@ function copySpan() {
 .span-inspector__events strong { display: block; min-width: 0; overflow-wrap: anywhere; }
 .span-inspector__events time { color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 10px; }
 .span-inspector__events strong { margin-top: var(--co-space-1); font-size: 11px; }
-.trace-snapshot { display: flex; min-height: 66px; align-items: center; justify-content: space-between; gap: var(--co-space-4); margin-top: var(--co-space-4); padding: var(--co-space-3); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); }
+.trace-snapshot { display: flex; min-height: 72px; align-items: center; justify-content: space-between; gap: var(--co-space-4); margin-top: var(--co-space-4); padding: var(--co-space-3) var(--co-space-4); border: 1px solid var(--co-border-subtle); border-radius: var(--co-radius-frame); background: color-mix(in srgb, var(--co-bg-surface) 78%, var(--co-bg-canvas)); }
 .trace-snapshot > div { display: flex; min-width: 0; align-items: center; gap: var(--co-space-2); }
 .trace-snapshot h3 { margin: 0; font-size: 14px; }
 .trace-snapshot span { color: var(--co-text-muted); font-size: 11px; }
-.trace-snapshot__proof { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; overflow: hidden; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); }
+.trace-snapshot__proof { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: var(--co-space-2) 0 0; overflow: hidden; border: 1px solid var(--co-border-subtle); border-radius: var(--co-radius-frame); background: var(--co-bg-surface); }
 .trace-snapshot__proof div { min-width: 0; padding: var(--co-space-2); border-right: 1px solid var(--co-border-default); }
 .trace-snapshot__proof div:last-child { border-right: 0; }
 .trace-snapshot__proof dt { color: var(--co-text-muted); font-size: 10px; }
@@ -462,5 +527,7 @@ function copySpan() {
   .trace-detail__actions { justify-content: flex-start; }
   .trace-detail__grid { grid-template-columns: minmax(0, 1fr); }
   .span-inspector { max-height: none; }
+  .trace-detail__overview { grid-template-columns: minmax(0, 1fr); }
+  .trace-detail__meta { grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 0 var(--co-space-4) var(--co-space-3); }
 }
 </style>

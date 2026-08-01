@@ -146,14 +146,14 @@ defineExpose({ getRowElement, getScrollElement });
 </template>
 
 <style scoped>
-.incident-results { min-width: 0; overflow: auto; background: var(--co-bg-surface); }
+.incident-results { min-width: 0; overflow: visible; }
 .incident-row-badges { display: grid; width: 98px; justify-items: start; gap: 3px; }
 .incident-row-stage { display: inline-flex; min-width: 0; align-items: center; gap: var(--co-space-1); }
 .incident-row-meta { display: grid; min-width: 118px; justify-items: end; gap: 2px; }
 .incident-row-meta strong { color: var(--co-text-secondary); font-size: 10px; }
 .incident-row-meta time { color: var(--co-text-muted); font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .incident-results :deep(.workspace-dense-list-copy small) { display: grid; gap: 2px; }
-.results-footer { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: var(--co-space-4); padding: var(--co-space-3); border-top: 1px solid var(--co-border-default); }
+.results-footer { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: var(--co-space-4); margin-top: var(--co-space-2); padding: var(--co-space-3) var(--co-space-4); border-radius: var(--co-radius-overlay); background: var(--co-bg-surface); }
 .results-footer p { margin: 0; color: var(--co-text-muted); font-size: 11px; }
 
 @media (max-width: 1024px) {

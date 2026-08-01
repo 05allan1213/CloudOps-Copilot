@@ -102,25 +102,52 @@ function selectItem(item: T, event: MouseEvent) {
 </template>
 
 <style scoped>
-.workspace-dense-list { min-width: 0; overflow: hidden; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); background: var(--co-bg-surface); }
-.workspace-dense-list ul { display: grid; margin: 0; padding: 0; list-style: none; }
-.workspace-dense-list li { min-width: 0; border-bottom: 1px solid var(--co-border-subtle); }
-.workspace-dense-list li:last-child { border-bottom: 0; }
+.workspace-dense-list {
+  min-width: 0;
+  overflow: visible;
+}
+.workspace-dense-list ul { display: grid; margin: 0; padding: 0; gap: var(--co-space-2); list-style: none; }
+.workspace-dense-list li {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--co-border-subtle);
+  border-radius: var(--co-radius-panel);
+  background: color-mix(in srgb, var(--co-bg-surface) 88%, var(--co-bg-canvas));
+  box-shadow: var(--co-shadow-row);
+  transition: border-color var(--co-motion-fast) var(--co-ease-out), background var(--co-motion-fast) var(--co-ease-out), transform var(--co-motion-fast) var(--co-ease-out);
+}
+.workspace-dense-list li:hover {
+  z-index: 1;
+  border-color: var(--co-border-strong);
+  background: var(--co-bg-hover);
+  transform: translateY(-1px);
+}
 .workspace-dense-list-control {
   position: relative;
   min-height: var(--co-dense-list-row-min-height);
   justify-content: stretch;
   gap: var(--co-space-3);
-  padding: var(--co-space-2) var(--co-space-3);
-  border-radius: 0;
+  padding: var(--co-space-3) var(--co-space-4);
+  border-radius: inherit;
   text-align: left;
 }
-.workspace-dense-list-control::before { position: absolute; inset: 0 auto 0 0; width: var(--co-severity-marker-width); background: transparent; content: ""; }
+.workspace-dense-list-control::before {
+  position: absolute;
+  top: 50%;
+  left: 8px;
+  width: var(--co-severity-marker-width);
+  height: 28px;
+  border-radius: var(--co-radius-pill);
+  background: transparent;
+  content: "";
+  transform: translateY(-50%);
+}
 .workspace-dense-list-item--critical .workspace-dense-list-control::before { background: var(--co-status-critical-fg); }
 .workspace-dense-list-item--warning .workspace-dense-list-control::before { background: var(--co-status-warning-fg); }
 .workspace-dense-list-item--info .workspace-dense-list-control::before { background: var(--co-status-info-fg); }
 .workspace-dense-list-item--success .workspace-dense-list-control::before { background: var(--co-status-success-fg); }
-.workspace-dense-list-control.is-selected { background: var(--co-bg-active); }
+.workspace-dense-list-control.is-selected { border-radius: var(--co-radius-panel); background: var(--co-bg-active); box-shadow: inset 0 0 0 1px var(--co-action-primary); }
 .workspace-dense-list-leading,
 .workspace-dense-list-trailing { display: flex; min-width: 0; flex: 0 0 auto; align-items: center; }
 .workspace-dense-list-copy { display: grid; min-width: 0; flex: 1 1 auto; gap: 2px; }
@@ -134,5 +161,10 @@ function selectItem(item: T, event: MouseEvent) {
 @media (max-width: 1024px) {
   .workspace-dense-list-control { flex-wrap: wrap; }
   .workspace-dense-list-meta { width: 100%; padding-left: calc(var(--co-status-icon-size) + var(--co-space-3)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-dense-list li { transition: none; }
+  .workspace-dense-list li:hover { transform: none; }
 }
 </style>

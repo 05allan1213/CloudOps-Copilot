@@ -56,6 +56,11 @@ const statusItems = [
   { label: "OK", value: "ok" },
 ];
 const limitItems = [1, 50, 100, 200].map((value) => ({ label: String(value), value }));
+const presets = [
+  { label: "15m", value: 15 },
+  { label: "1h", value: 60 },
+  { label: "6h", value: 360 },
+];
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
@@ -79,24 +84,26 @@ function statusValue(value: unknown): string {
 
 <template>
   <section
-    class="traces-query"
-    aria-label="Trace 搜索"
+    class="trace-discovery-command"
+    aria-label="Trace 发现"
   >
-    <div class="traces-query__context traces-query__primary">
-      <div class="traces-query__identity">
-        <span
-          class="traces-query__icon"
-          aria-hidden="true"
-        >
-          <UIcon name="i-lucide-git-branch" />
+    <header class="trace-discovery-command__heading">
+      <div>
+        <span aria-hidden="true">
+          <UIcon name="i-lucide-waypoints" />
         </span>
         <div>
-          <strong>Trace 搜索</strong>
-          <small>{{ catalog?.provider_detail || "等待 Tempo 查询目录" }}</small>
+          <small>TRACE DISCOVERY</small>
+          <strong>{{ mode === "guided" ? "服务与操作发现" : "TraceQL 检索" }}</strong>
         </div>
       </div>
-      <label>
-        <span>Namespace</span>
+      <span class="trace-discovery-command__provider">
+        <span :class="{ 'is-ready': catalog?.provider_state === 'available' || catalog?.provider_state === 'partial' }" />
+        Tempo {{ catalog?.provider_state === "available" ? "可用" : catalog?.provider_state === "partial" ? "部分可用" : "检查中" }}
+      </span>
+    </header>
+    <div class="trace-discovery-command__topline">
+      <div class="trace-discovery-command__scope">
         <USelect
           :model-value="namespace"
           :items="namespaceItems"
@@ -107,9 +114,6 @@ function statusValue(value: unknown): string {
           @update:model-value="emit('update:namespace', stringValue($event))"
           @change="emit('namespaceChange')"
         />
-      </label>
-      <label class="traces-query__resource">
-        <span>Workload</span>
         <USelect
           :model-value="resourceID"
           :items="resourceItems"
@@ -120,16 +124,16 @@ function statusValue(value: unknown): string {
           @update:model-value="emit('update:resourceID', stringValue($event))"
           @change="emit('resourceChange')"
         />
-      </label>
+      </div>
       <div
-        class="traces-query__mode"
+        class="trace-discovery-command__mode"
         role="group"
         aria-label="Trace 查询模式"
       >
         <UButton
           :color="mode === 'guided' ? 'primary' : 'neutral'"
           :variant="mode === 'guided' ? 'soft' : 'ghost'"
-          label="字段筛选"
+          label="服务发现"
           :aria-pressed="mode === 'guided'"
           :disabled="searching"
           @click="emit('update:mode', 'guided')"
@@ -143,244 +147,233 @@ function statusValue(value: unknown): string {
           @click="emit('update:mode', 'expert')"
         />
       </div>
-    </div>
-
-    <div
-      v-if="mode === 'guided'"
-      class="traces-query__filters"
-    >
-      <label>
-        <span>Service</span>
-        <UInput
-          :model-value="service"
-          icon="i-lucide-box"
-          placeholder="例如：cloudops-api"
-          aria-label="Service"
-          :disabled="searching"
-          @update:model-value="emit('update:service', stringValue($event))"
-        />
-      </label>
-      <label>
-        <span>Operation</span>
-        <UInput
-          :model-value="operation"
-          icon="i-lucide-route"
-          placeholder="例如：GET /readyz"
-          aria-label="Operation"
-          :disabled="searching"
-          @update:model-value="emit('update:operation', stringValue($event))"
-        />
-      </label>
-      <label>
-        <span>Status</span>
-        <USelect
-          :model-value="status || 'all'"
-          :items="statusItems"
-          value-key="value"
-          label-key="label"
-          aria-label="Trace Status"
-          :disabled="searching"
-          @update:model-value="emit('update:status', statusValue($event))"
-        />
-      </label>
-      <label>
-        <span>最短耗时（ms）</span>
-        <UInput
-          :model-value="minDurationMS"
-          type="number"
-          min="0"
-          aria-label="最短耗时"
-          :disabled="searching"
-          @update:model-value="emit('update:minDurationMS', optionalNumber($event))"
-        />
-      </label>
-      <label>
-        <span>最长耗时（ms）</span>
-        <UInput
-          :model-value="maxDurationMS"
-          type="number"
-          min="0"
-          aria-label="最长耗时"
-          :disabled="searching"
-          @update:model-value="emit('update:maxDurationMS', optionalNumber($event))"
-        />
-      </label>
-    </div>
-    <label
-      v-else
-      class="traces-query__expert"
-    >
-      <span>TraceQL span selector</span>
-      <UTextarea
-        :model-value="expertQuery"
-        :rows="3"
-        autoresize
-        spellcheck="false"
-        aria-label="TraceQL span selector"
-        :disabled="searching"
-        @update:model-value="emit('update:expertQuery', stringValue($event))"
-      />
-    </label>
-
-    <div class="traces-query__execution">
       <div
-        class="traces-query__presets"
+        class="trace-discovery-command__presets"
         role="group"
         aria-label="Trace 时间范围"
       >
         <UButton
+          v-for="preset in presets"
+          :key="preset.value"
           color="neutral"
           variant="ghost"
           size="sm"
-          label="15m"
+          :label="preset.label"
           :disabled="searching"
-          @click="emit('preset', 15)"
-        />
-        <UButton
-          color="neutral"
-          variant="ghost"
-          size="sm"
-          label="1h"
-          :disabled="searching"
-          @click="emit('preset', 60)"
-        />
-        <UButton
-          color="neutral"
-          variant="ghost"
-          size="sm"
-          label="6h"
-          :disabled="searching"
-          @click="emit('preset', 360)"
-        />
-      </div>
-      <label>
-        <span>开始</span>
-        <UInput
-          :model-value="from"
-          type="datetime-local"
-          aria-label="Trace 开始时间"
-          :disabled="searching"
-          @update:model-value="emit('update:from', stringValue($event))"
-        />
-      </label>
-      <label>
-        <span>结束</span>
-        <UInput
-          :model-value="to"
-          type="datetime-local"
-          aria-label="Trace 结束时间"
-          :disabled="searching"
-          @update:model-value="emit('update:to', stringValue($event))"
-        />
-      </label>
-      <label class="traces-query__limit">
-        <span>上限</span>
-        <USelect
-          :model-value="limit"
-          :items="limitItems"
-          value-key="value"
-          label-key="label"
-          aria-label="Trace 结果上限"
-          :disabled="searching"
-          @update:model-value="emit('update:limit', numberValue($event, 100))"
-        />
-      </label>
-      <div class="traces-query__actions">
-        <UButton
-          v-if="searching"
-          color="error"
-          variant="soft"
-          icon="i-lucide-square"
-          label="停止等待"
-          @click="emit('cancel')"
-        />
-        <UButton
-          color="primary"
-          icon="i-lucide-play"
-          label="搜索 Trace"
-          :loading="searching"
-          :disabled="!canSearch || !validTimeRange"
-          @click="emit('search')"
+          @click="emit('preset', preset.value)"
         />
       </div>
     </div>
 
-    <div class="traces-query__bounds">
-      <span>Lookback ≤ {{ Math.round((catalog?.bounds.max_lookback_seconds ?? 0) / 3600) }}h</span>
-      <span>Traces ≤ {{ catalog?.bounds.max_results ?? 0 }}</span>
-      <span>Response ≤ {{ Math.round((catalog?.bounds.max_response_bytes ?? 0) / 1024) }} KiB</span>
-      <span>Timeout {{ catalog?.bounds.timeout_ms ?? 0 }}ms</span>
-    </div>
-    <UCollapsible class="traces-query__advanced">
-      <template #default="{ open }">
+    <div class="trace-discovery-command__searchline">
+      <template v-if="mode === 'guided'">
+        <UInput
+          :model-value="service"
+          class="trace-discovery-command__service"
+          icon="i-lucide-box"
+          size="xl"
+          placeholder="Service，例如 cloudops-api"
+          aria-label="Service"
+          :disabled="searching"
+          @update:model-value="emit('update:service', stringValue($event))"
+        />
+        <UInput
+          :model-value="operation"
+          class="trace-discovery-command__operation"
+          icon="i-lucide-route"
+          size="xl"
+          placeholder="Operation，例如 GET /readyz"
+          aria-label="Operation"
+          :disabled="searching"
+          @update:model-value="emit('update:operation', stringValue($event))"
+        />
+      </template>
+      <UInput
+        v-else
+        :model-value="expertQuery"
+        class="trace-discovery-command__traceql"
+        icon="i-lucide-braces"
+        size="xl"
+        placeholder="TraceQL span selector"
+        aria-label="TraceQL span selector"
+        :disabled="searching"
+        @update:model-value="emit('update:expertQuery', stringValue($event))"
+      />
+      <UPopover class="trace-discovery-command__advanced">
         <UButton
           color="neutral"
           variant="ghost"
-          block
           icon="i-lucide-sliders-horizontal"
-          label="高级耗时与结果参数"
-          :trailing-icon="open ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
+          label="高级"
         />
-      </template>
-      <template #content>
-        <div class="traces-query__advanced-content">
-          时间范围、耗时边界与结果上限受 Tempo 服务端约束。
-        </div>
-      </template>
-    </UCollapsible>
+        <template #content>
+          <div class="trace-discovery-command__advanced-content">
+            <label>
+              <span>Status</span>
+              <USelect
+                :model-value="status || 'all'"
+                :items="statusItems"
+                value-key="value"
+                label-key="label"
+                aria-label="Trace Status"
+                :disabled="searching"
+                @update:model-value="emit('update:status', statusValue($event))"
+              />
+            </label>
+            <label>
+              <span>最短耗时（ms）</span>
+              <UInput
+                :model-value="minDurationMS"
+                type="number"
+                min="0"
+                aria-label="最短耗时"
+                :disabled="searching"
+                @update:model-value="emit('update:minDurationMS', optionalNumber($event))"
+              />
+            </label>
+            <label>
+              <span>最长耗时（ms）</span>
+              <UInput
+                :model-value="maxDurationMS"
+                type="number"
+                min="0"
+                aria-label="最长耗时"
+                :disabled="searching"
+                @update:model-value="emit('update:maxDurationMS', optionalNumber($event))"
+              />
+            </label>
+            <label>
+              <span>开始</span>
+              <UInput
+                :model-value="from"
+                type="datetime-local"
+                aria-label="Trace 开始时间"
+                :disabled="searching"
+                @update:model-value="emit('update:from', stringValue($event))"
+              />
+            </label>
+            <label>
+              <span>结束</span>
+              <UInput
+                :model-value="to"
+                type="datetime-local"
+                aria-label="Trace 结束时间"
+                :disabled="searching"
+                @update:model-value="emit('update:to', stringValue($event))"
+              />
+            </label>
+            <label>
+              <span>结果上限</span>
+              <USelect
+                :model-value="limit"
+                :items="limitItems"
+                value-key="value"
+                label-key="label"
+                aria-label="Trace 结果上限"
+                :disabled="searching"
+                @update:model-value="emit('update:limit', numberValue($event, 100))"
+              />
+            </label>
+            <div class="trace-discovery-command__bounds">
+              <span>Lookback ≤ {{ Math.round((catalog?.bounds.max_lookback_seconds ?? 0) / 3600) }}h</span>
+              <span>Traces ≤ {{ catalog?.bounds.max_results ?? 0 }}</span>
+              <span>Response ≤ {{ Math.round((catalog?.bounds.max_response_bytes ?? 0) / 1024) }} KiB</span>
+              <span>Timeout {{ catalog?.bounds.timeout_ms ?? 0 }}ms</span>
+            </div>
+          </div>
+        </template>
+      </UPopover>
+      <UButton
+        v-if="searching"
+        color="error"
+        variant="soft"
+        icon="i-lucide-square"
+        label="停止等待"
+        @click="emit('cancel')"
+      />
+      <UButton
+        color="primary"
+        icon="i-lucide-scan-search"
+        label="发现 Trace"
+        :loading="searching"
+        :disabled="!canSearch || !validTimeRange"
+        @click="emit('search')"
+      />
+    </div>
   </section>
 </template>
 
 <style scoped>
-.traces-query { border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); background: var(--co-bg-surface); }
-.traces-query__context,
-.traces-query__filters,
-.traces-query__execution {
-  display: grid;
-  align-items: end;
-  gap: var(--co-space-3);
-  padding: var(--co-space-3) 0;
-  border-bottom: 1px solid var(--co-border-subtle);
-}
-.traces-query__context { grid-template-columns: minmax(150px, 0.65fr) minmax(220px, 1.25fr) auto; }
-.traces-query__primary { grid-template-columns: minmax(180px, 1fr) minmax(150px, 0.7fr) minmax(220px, 1.1fr) auto auto; }
-.traces-query__identity { display: flex; min-width: 0; align-items: center; gap: var(--co-space-2); }
-.traces-query__identity > div { display: grid; min-width: 0; gap: 1px; }
-.traces-query__identity strong { font-size: 12px; }
-.traces-query__identity small { overflow: hidden; color: var(--co-text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.traces-query__icon { display: grid; width: var(--co-status-icon-size); height: var(--co-status-icon-size); flex: 0 0 auto; place-items: center; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); color: var(--co-status-info-fg); background: var(--co-bg-floating); }
-.traces-query__filters { grid-template-columns: 1.1fr 1.1fr 0.65fr 0.7fr 0.7fr; }
-.traces-query__execution { grid-template-columns: auto repeat(2, minmax(170px, 0.9fr)) 100px auto; }
-.traces-query label,
-.traces-query__expert { display: grid; min-width: 0; gap: var(--co-space-1); }
-.traces-query label > span,
-.traces-query__expert > span { color: var(--co-text-muted); font-size: 11px; font-weight: 700; }
-.traces-query__mode,
-.traces-query__presets,
-.traces-query__actions { display: flex; align-items: center; gap: var(--co-space-1); }
-.traces-query__expert { padding: var(--co-space-3) 0; border-bottom: 1px solid var(--co-border-subtle); }
-.traces-query__actions { justify-content: flex-end; }
-.traces-query__bounds { display: flex; flex-wrap: wrap; gap: var(--co-space-1) var(--co-space-4); padding: var(--co-space-2) 0; color: var(--co-text-muted); font-size: 11px; }
-.traces-query__advanced { border-top: 1px solid var(--co-border-subtle); }
-.traces-query__advanced > :deep(button) { min-height: var(--co-control-height); justify-content: flex-start; border-radius: 0; }
-.traces-query__advanced-content { padding: 0 0 var(--co-space-2); color: var(--co-text-muted); font-size: 10px; }
+.trace-discovery-command { display: grid; min-width: 0; grid-template-columns: minmax(150px, .28fr) minmax(0, 1.72fr); grid-template-areas: "identity scope" "search search"; align-items: center; gap: var(--co-space-3) var(--co-space-4); padding: var(--co-space-3) var(--co-space-4); border: 1px solid var(--co-border-subtle); border-radius: var(--co-radius-frame); background: color-mix(in srgb, var(--co-bg-surface) 78%, var(--co-bg-canvas)); box-shadow: var(--co-shadow-row); }
+.trace-discovery-command__heading { display: grid; min-width: 0; grid-area: identity; gap: var(--co-space-2); }
+.trace-discovery-command__heading > div { display: flex; min-width: 0; align-items: center; gap: var(--co-space-3); }
+.trace-discovery-command__heading > div > span { display: grid; width: 38px; height: 38px; flex: 0 0 auto; place-items: center; border: 1px solid var(--co-status-success-border); border-radius: var(--co-radius-control); color: var(--co-status-success-fg); background: var(--co-status-success-bg); }
+.trace-discovery-command__heading > div > div { display: grid; min-width: 0; gap: 2px; }
+.trace-discovery-command__heading small { color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 8px; font-weight: 800; }
+.trace-discovery-command__heading strong { color: var(--co-text-primary); font-size: 14px; }
+.trace-discovery-command__topline { display: grid; min-width: 0; grid-area: scope; grid-template-columns: minmax(430px, 1fr) minmax(180px, auto) minmax(168px, auto); align-items: center; gap: var(--co-space-2); }
+.trace-discovery-command__scope { display: grid; min-width: 0; grid-template-columns: minmax(180px, .78fr) minmax(240px, 1.22fr); gap: var(--co-space-2); }
+.trace-discovery-command__provider { display: flex; min-width: 0; align-items: center; justify-content: flex-start; gap: var(--co-space-2); color: var(--co-text-muted); font-size: 10px; white-space: nowrap; }
+.trace-discovery-command__provider > span { width: 7px; height: 7px; border-radius: var(--co-radius-pill); background: var(--co-text-muted); }
+.trace-discovery-command__provider > span.is-ready { background: var(--co-status-success-fg); box-shadow: 0 0 0 4px var(--co-status-success-bg); }
+.trace-discovery-command__searchline { display: grid; min-width: 0; grid-area: search; grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) auto auto auto; align-items: center; gap: var(--co-space-2); padding: var(--co-space-2); border-radius: var(--co-radius-panel); background: color-mix(in srgb, var(--co-bg-canvas) 68%, transparent); }
+.trace-discovery-command__service,
+.trace-discovery-command__operation { min-width: 0; }
+.trace-discovery-command__traceql { min-width: 0; grid-column: 1 / 3; }
+.trace-discovery-command__traceql :deep(input) { font-family: var(--co-font-mono); font-size: 11px; }
+.trace-discovery-command__mode,
+.trace-discovery-command__presets { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 2px; padding: 3px; border-radius: var(--co-radius-control); background: var(--co-bg-canvas); }
+.trace-discovery-command__mode :deep(button),
+.trace-discovery-command__presets :deep(button) { min-width: 0; flex: 1; }
+.trace-discovery-command__mode :deep(button),
+.trace-discovery-command__presets :deep(button) { padding-inline: 8px; }
+.trace-discovery-command__advanced-content { display: grid; width: min(920px, calc(100vw - 48px)); min-width: 0; grid-template-columns: repeat(3, minmax(130px, 0.6fr)) repeat(2, minmax(180px, 1fr)) minmax(110px, 0.45fr); align-items: end; gap: var(--co-space-3); padding: var(--co-space-4); border-radius: var(--co-radius-overlay); background: var(--co-bg-overlay); box-shadow: var(--co-shadow-overlay); }
+.trace-discovery-command__advanced-content label { display: grid; min-width: 0; gap: var(--co-space-1); }
+.trace-discovery-command__advanced-content label > span { color: var(--co-text-muted); font-size: 10px; font-weight: 800; }
+.trace-discovery-command__bounds { display: flex; min-width: 0; grid-column: 1 / -1; flex-wrap: wrap; gap: var(--co-space-1) var(--co-space-4); color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 9px; }
+.trace-discovery-command :deep(input),
+.trace-discovery-command :deep(button),
+.trace-discovery-command :deep([role="combobox"]) { border-radius: var(--co-radius-control); }
 
 @media (max-width: 1180px) {
-  .traces-query__primary,
-  .traces-query__filters { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .traces-query__execution { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  .traces-query__presets,
-  .traces-query__actions { grid-column: span 2; }
+  .trace-discovery-command { grid-template-columns: minmax(0, 1fr); grid-template-areas: "identity" "scope" "search"; }
+  .trace-discovery-command__heading { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+  .trace-discovery-command__topline { grid-template-columns: minmax(360px, 1fr) minmax(180px, auto) minmax(160px, auto); }
+  .trace-discovery-command__searchline { grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) auto auto; }
+  .trace-discovery-command__advanced-content { width: min(680px, calc(100vw - 48px)); grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 @media (max-width: 1024px) {
-  .traces-query__context,
-  .traces-query__filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .traces-query__mode { grid-column: 1 / -1; }
-  .traces-query__identity { grid-column: 1 / -1; }
+  .trace-discovery-command { padding: var(--co-space-3); }
+  .trace-discovery-command__heading { grid-template-columns: minmax(0, 1fr); align-items: flex-start; }
+  .trace-discovery-command__topline { grid-template-columns: minmax(0, 1fr); }
+  .trace-discovery-command__scope { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); }
+  .trace-discovery-command__searchline { grid-template-columns: minmax(0, 1fr) auto; }
+  .trace-discovery-command__service,
+  .trace-discovery-command__operation,
+  .trace-discovery-command__traceql { grid-column: 1 / -1; }
+}
+
+@container traces-workspace (max-width: 900px) {
+  .trace-discovery-command { grid-template-columns: minmax(0, 1fr); grid-template-areas: "identity" "scope" "search"; padding: var(--co-space-3); }
+  .trace-discovery-command__heading { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+  .trace-discovery-command__topline { grid-template-columns: minmax(0, 1fr) minmax(180px, auto); }
+  .trace-discovery-command__scope { grid-column: 1 / -1; grid-template-columns: minmax(150px, .8fr) minmax(0, 1.2fr); }
+  .trace-discovery-command__presets { min-width: 168px; }
+  .trace-discovery-command__searchline { grid-template-columns: repeat(2, minmax(0, 1fr)) auto auto; }
+}
+
+@container traces-workspace (max-width: 620px) {
+  .trace-discovery-command__heading { grid-template-columns: minmax(0, 1fr); }
+  .trace-discovery-command__topline { grid-template-columns: minmax(0, 1fr); }
+  .trace-discovery-command__scope { grid-template-columns: minmax(0, 1fr); }
+  .trace-discovery-command__searchline { grid-template-columns: minmax(0, 1fr) auto; }
+  .trace-discovery-command__service,
+  .trace-discovery-command__operation,
+  .trace-discovery-command__traceql { grid-column: 1 / -1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .traces-query * { scroll-behavior: auto; }
+  .trace-discovery-command * { scroll-behavior: auto; }
 }
 </style>

@@ -50,12 +50,14 @@ import {
   isSettingsSectionDirty,
   rebaseSettingsSection,
   resetSettingsSection,
+  settingsSectionChanges,
   settingsSectionFingerprint,
   settingsSectionKeys,
   settingsSectionLabel,
   validateSettingsSectionLocally,
   type ScopeSectionValue,
   type SettingsApplyOutcome,
+  type SettingsSectionDraft,
   type SettingsSectionDrafts,
   type SettingsSectionKey,
 } from "./settingsDraft";
@@ -182,6 +184,47 @@ const dirtySectionCount = computed(() => (
 ));
 const activeSectionKey = computed<SettingsViewSection>(() => (
   resolveSettingsViewSection(route.hash)
+));
+const activeEditableSectionKey = computed<SettingsSectionKey | null>(() => (
+  activeSectionKey.value === "revisions" ? null : activeSectionKey.value
+));
+const activeSectionDraft = computed<SettingsSectionDraft | null>(() => {
+  const key = activeEditableSectionKey.value;
+  return key && drafts.value ? drafts.value[key] : null;
+});
+const activeSectionRuntime = computed<SectionRuntime | null>(() => {
+  const key = activeEditableSectionKey.value;
+  return key ? runtimes[key] : null;
+});
+const activeSectionChanges = computed(() => (
+  activeSectionDraft.value ? settingsSectionChanges(activeSectionDraft.value) : []
+));
+const activeSectionRevisionDrift = computed(() => Boolean(
+  activeSectionDraft.value
+  && activeRevision.value
+  && (activeSectionDraft.value.baseRevisionID !== activeRevision.value.id
+    || activeSectionDraft.value.baseRevisionHash !== activeRevision.value.hash),
+));
+const activeSectionValidationStale = computed(() => {
+  const section = activeSectionDraft.value;
+  const runtime = activeSectionRuntime.value;
+  if (!section || !runtime?.validation) return true;
+  const expiresAt = Date.parse(runtime.validation.expires_at);
+  return runtime.validatedFingerprint !== settingsSectionFingerprint(section)
+    || activeSectionRevisionDrift.value
+    || (Number.isFinite(expiresAt) && expiresAt <= Date.now());
+});
+const activeSectionCanValidate = computed(() => Boolean(
+  activeSectionDraft.value
+  && activeSectionChanges.value.length
+  && !activeSectionRevisionDrift.value
+  && !activeSectionRuntime.value?.validating
+  && !activeSectionRuntime.value?.applying,
+));
+const activeSectionCanApply = computed(() => Boolean(
+  activeSectionCanValidate.value
+  && activeSectionRuntime.value?.validation?.valid
+  && !activeSectionValidationStale.value,
 ));
 const providerHealthByID = computed(() => new Map(
   (settings.value?.provider_health ?? []).map((item) => [item.provider, item]),
@@ -925,31 +968,48 @@ onBeforeUnmount(() => {
       />
     </div>
 
-    <nav
-      class="settings-section-nav"
-      aria-label="Settings 分区"
-    >
-      <button
-        v-for="item in sectionLinks"
-        :key="item.key"
-        type="button"
-        :class="['settings-section-link', { 'is-active': activeSectionKey === item.key }]"
-        :aria-current="activeSectionKey === item.key ? 'page' : undefined"
-        @click="selectSection(item.key)"
-      >
-        <UIcon
-          :name="item.icon"
-          aria-hidden="true"
-        />
-        <span><strong>{{ item.label }}</strong><small>{{ item.description }}</small></span>
-        <UBadge
-          v-if="sectionErrorCounts[item.key]"
-          color="error"
-          variant="soft"
-          :label="String(sectionErrorCounts[item.key])"
-        />
-      </button>
-    </nav>
+    <div class="settings-workbench">
+      <aside class="settings-navigation">
+        <div class="settings-navigation__heading">
+          <span>配置分区</span>
+          <strong>Settings</strong>
+        </div>
+        <nav
+          class="settings-section-nav"
+          aria-label="Settings 分区"
+        >
+          <button
+            v-for="item in sectionLinks"
+            :key="item.key"
+            type="button"
+            :class="['settings-section-link', { 'is-active': activeSectionKey === item.key }]"
+            :aria-current="activeSectionKey === item.key ? 'page' : undefined"
+            @click="selectSection(item.key)"
+          >
+            <UIcon
+              :name="item.icon"
+              aria-hidden="true"
+            />
+            <span><strong>{{ item.label }}</strong><small>{{ item.description }}</small></span>
+            <UBadge
+              v-if="sectionErrorCounts[item.key]"
+              color="error"
+              variant="soft"
+              :label="String(sectionErrorCounts[item.key])"
+            />
+          </button>
+        </nav>
+        <div
+          v-if="activeRevision"
+          class="settings-navigation__baseline"
+        >
+          <span>活动基线</span>
+          <strong>Revision #{{ activeRevision.number }}</strong>
+          <small>{{ activationLabel(activeRevision.worker_boundary?.status) }}</small>
+        </div>
+      </aside>
+
+      <main class="settings-current">
 
     <UAlert
       v-if="loadError"
@@ -1040,6 +1100,7 @@ onBeforeUnmount(() => {
         @error="focusFirstError($event.errors)"
       >
         <SettingsSectionPanel
+          external-actions
           anchor="system"
           title="查询、保留与通知"
           eyebrow="System boundaries"
@@ -1126,6 +1187,7 @@ onBeforeUnmount(() => {
         @error="focusFirstError($event.errors)"
       >
         <SettingsSectionPanel
+          external-actions
           anchor="operational-scope"
           title="Operational Scope"
           eyebrow="Cluster boundaries"
@@ -1249,6 +1311,7 @@ onBeforeUnmount(() => {
         @error="focusFirstError($event.errors)"
       >
         <SettingsSectionPanel
+          external-actions
           anchor="escalation-policies"
           title="Escalation Policies"
           eyebrow="Alert escalation"
@@ -1414,6 +1477,7 @@ onBeforeUnmount(() => {
         @error="focusFirstError($event.errors)"
       >
         <SettingsSectionPanel
+          external-actions
           anchor="providers"
           title="Provider 配置"
           eyebrow="External connections"
@@ -1603,6 +1667,7 @@ onBeforeUnmount(() => {
         @error="focusFirstError($event.errors)"
       >
         <SettingsSectionPanel
+          external-actions
           anchor="secret-references"
           title="Secret references"
           eyebrow="Write-only values"
@@ -1747,6 +1812,108 @@ onBeforeUnmount(() => {
         </dl>
       </section>
     </template>
+      </main>
+
+      <aside
+        v-if="settings && drafts && activeRevision"
+        class="settings-pending"
+        aria-labelledby="settings-pending-heading"
+      >
+        <header>
+          <span>Revision draft</span>
+          <h2 id="settings-pending-heading">
+            待提交变更
+          </h2>
+          <p v-if="activeSectionDraft">
+            {{ settingsSectionLabel(activeSectionDraft.key) }} · base #{{ activeSectionDraft.baseRevisionNumber }}
+          </p>
+          <p v-else>
+            Revision 历史为只读视图
+          </p>
+        </header>
+
+        <template v-if="activeSectionDraft && activeSectionRuntime">
+          <div class="settings-pending__count">
+            <strong>{{ activeSectionChanges.length }}</strong>
+            <span>项本地变更</span>
+          </div>
+          <ul
+            v-if="activeSectionChanges.length"
+            class="settings-pending__changes"
+          >
+            <li
+              v-for="change in activeSectionChanges"
+              :key="change"
+            >
+              {{ change }}
+            </li>
+          </ul>
+          <p
+            v-else
+            class="settings-pending__empty"
+          >
+            当前分区与 Revision #{{ activeSectionDraft.baseRevisionNumber }} 一致。
+          </p>
+
+          <dl class="settings-pending__facts">
+            <div>
+              <dt>草稿状态</dt>
+              <dd>{{ isSettingsSectionDirty(activeSectionDraft) ? "已修改" : "未修改" }}</dd>
+            </div>
+            <div>
+              <dt>Validation</dt>
+              <dd>{{ activeSectionValidationStale ? "等待验证" : activeSectionRuntime.validation?.valid ? "已通过" : "未通过" }}</dd>
+            </div>
+            <div>
+              <dt>活动 Revision</dt>
+              <dd>#{{ activeRevision.number }}</dd>
+            </div>
+          </dl>
+
+          <div class="settings-pending__actions">
+            <UButton
+              color="neutral"
+              variant="ghost"
+              icon="i-lucide-rotate-ccw"
+              label="放弃本区修改"
+              :disabled="!isSettingsSectionDirty(activeSectionDraft) || activeSectionRuntime.validating || activeSectionRuntime.applying"
+              @click="resetSection(activeSectionDraft.key)"
+            />
+            <UButton
+              type="submit"
+              :form="`settings-form-${activeSectionDraft.key}`"
+              color="neutral"
+              variant="outline"
+              icon="i-lucide-shield-check"
+              label="验证草稿"
+              :loading="activeSectionRuntime.validating"
+              :disabled="!activeSectionCanValidate"
+            />
+            <UButton
+              color="warning"
+              icon="i-lucide-upload-cloud"
+              label="审阅并应用"
+              :loading="activeSectionRuntime.applying"
+              :disabled="!activeSectionCanApply"
+              @click="requestApply(activeSectionDraft.key)"
+            />
+          </div>
+          <p class="settings-pending__truth">
+            Apply 创建完整 Configuration Revision；Provider 与 Worker 结果逐项观测，不冒充原子成功。
+          </p>
+        </template>
+
+        <template v-else>
+          <div class="settings-pending__count">
+            <strong>{{ revisionRows.length }}</strong>
+            <span>个历史 Revision</span>
+          </div>
+          <p class="settings-pending__empty">
+            历史记录、存储状态和 Bootstrap diagnostics 不产生本地草稿。
+          </p>
+        </template>
+      </aside>
+    </div>
 
     <RiskConfirmation
       :open="applyConfirmationOpen"
@@ -1934,7 +2101,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.settings-view { display: grid; width: min(100%, 1240px); min-width: 0; gap: var(--co-space-5); margin-inline: auto; padding-bottom: var(--co-page-end-space); }
+.settings-view { display: grid; width: min(100%, 1380px); min-width: 0; gap: var(--co-space-5); margin-inline: auto; padding-bottom: var(--co-page-end-space); }
 .settings-page-heading { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: var(--co-space-5); }
 .settings-heading-copy { min-width: 0; }
 .settings-page-heading h1 { margin: 0; font-size: clamp(24px, 2.2vw, 32px); letter-spacing: 0; }
@@ -1950,13 +2117,38 @@ onBeforeUnmount(() => {
 .settings-search-results button > span { display: grid; min-width: 0; gap: 2px; }
 .settings-search-results small, .settings-search-empty { color: var(--co-text-muted); font-size: 11px; }
 .settings-search-empty { margin: var(--co-space-2) 0 0; }
-.settings-section-nav { position: sticky; top: var(--co-header-height); z-index: var(--co-z-sticky); display: grid; min-width: 0; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 1px; padding: 1px; overflow: hidden; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); background: var(--co-border-default); box-shadow: var(--co-shadow-chrome); }
-.settings-section-link { display: grid; min-width: 0; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--co-space-2); min-height: 58px; padding: var(--co-space-2) var(--co-space-3); border: 0; background: var(--co-bg-canvas); color: var(--co-text-secondary); text-align: left; cursor: pointer; transition: background var(--co-motion-fast) ease, color var(--co-motion-fast) ease; }
+.settings-workbench { display: grid; min-width: 0; grid-template-columns: minmax(170px, 196px) minmax(0, 1fr) minmax(220px, 252px); align-items: start; gap: var(--co-space-4); }
+.settings-navigation { position: sticky; top: calc(var(--co-header-height) + var(--co-space-3)); display: grid; min-width: 0; gap: var(--co-space-3); }
+.settings-navigation__heading { display: grid; gap: 2px; padding: 0 var(--co-space-2); }
+.settings-navigation__heading span { color: var(--co-text-muted); font-size: 10px; }
+.settings-navigation__heading strong { font-size: 13px; }
+.settings-section-nav { display: grid; min-width: 0; gap: 4px; }
+.settings-section-link { display: grid; min-width: 0; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--co-space-2); min-height: 54px; padding: var(--co-space-2) var(--co-space-3); border: 1px solid transparent; border-radius: var(--co-radius-control); background: transparent; color: var(--co-text-secondary); text-align: left; cursor: pointer; transition: border-color var(--co-motion-fast) ease, background var(--co-motion-fast) ease, color var(--co-motion-fast) ease; }
 .settings-section-link:hover, .settings-section-link:focus-visible { background: var(--co-bg-hover); color: var(--co-text-primary); outline: none; }
-.settings-section-link.is-active { background: var(--co-bg-floating); color: var(--co-text-primary); box-shadow: inset 0 -2px 0 var(--co-focus-ring); }
+.settings-section-link.is-active { border-color: var(--co-border-subtle); background: var(--co-bg-floating); color: var(--co-text-primary); box-shadow: inset 3px 0 0 var(--co-focus-ring); }
 .settings-section-link > span { display: grid; min-width: 0; gap: 2px; }
 .settings-section-link strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .settings-section-link small { overflow: hidden; color: var(--co-text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.settings-navigation__baseline { display: grid; gap: 3px; padding: var(--co-space-3); border-radius: var(--co-radius-control); background: var(--co-bg-subtle); }
+.settings-navigation__baseline span, .settings-navigation__baseline small { color: var(--co-text-muted); font-size: 10px; }
+.settings-navigation__baseline strong { font-size: 12px; }
+.settings-current { display: grid; min-width: 0; gap: var(--co-space-3); }
+.settings-pending { position: sticky; top: calc(var(--co-header-height) + var(--co-space-3)); display: grid; min-width: 0; gap: var(--co-space-3); padding: var(--co-space-4); border: 1px solid var(--co-border-subtle); border-radius: var(--co-radius-panel); background: color-mix(in srgb, var(--co-bg-surface) 90%, var(--co-bg-canvas)); box-shadow: var(--co-shadow-row); }
+.settings-pending > header { display: grid; gap: 2px; padding-bottom: var(--co-space-3); border-bottom: 1px solid var(--co-border-subtle); }
+.settings-pending > header > span { color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 9px; font-weight: 800; text-transform: uppercase; }
+.settings-pending h2 { margin: 0; font-size: 16px; }
+.settings-pending header p, .settings-pending__empty, .settings-pending__truth { margin: 0; color: var(--co-text-muted); font-size: 10px; line-height: 1.5; }
+.settings-pending__count { display: flex; align-items: baseline; gap: var(--co-space-2); }
+.settings-pending__count strong { font-family: var(--co-font-mono); font-size: 28px; line-height: 1; font-variant-numeric: tabular-nums; }
+.settings-pending__count span { color: var(--co-text-muted); font-size: 10px; }
+.settings-pending__changes { display: grid; gap: var(--co-space-2); max-height: 220px; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
+.settings-pending__changes li { padding: var(--co-space-2); border-radius: var(--co-radius-control); background: var(--co-bg-canvas); color: var(--co-text-secondary); font-size: 10px; overflow-wrap: anywhere; }
+.settings-pending__facts { display: grid; margin: 0; }
+.settings-pending__facts div { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: var(--co-space-2); padding: var(--co-space-2) 0; border-bottom: 1px solid var(--co-border-subtle); }
+.settings-pending__facts dt { color: var(--co-text-muted); font-size: 10px; }
+.settings-pending__facts dd { margin: 0; color: var(--co-text-primary); font-size: 10px; font-weight: 700; text-align: right; }
+.settings-pending__actions { display: grid; gap: var(--co-space-2); }
+.settings-pending__actions :deep(button) { width: 100%; justify-content: center; }
 .active-revision-band { display: grid; min-width: 0; grid-template-columns: minmax(220px, .8fr) minmax(0, 1.2fr); align-items: center; gap: var(--co-space-5); padding: var(--co-space-4); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); background: var(--co-bg-surface); box-shadow: var(--co-shadow-row); }
 .active-revision-band h2, .settings-readonly-section h2 { margin: 0; font-size: 18px; letter-spacing: 0; }
 .active-revision-band > div > p:not(.settings-eyebrow) { margin: var(--co-space-1) 0 0; color: var(--co-text-secondary); font-size: 12px; }
@@ -2017,8 +2209,9 @@ onBeforeUnmount(() => {
 .settings-facts-grid div { min-width: 0; padding: var(--co-space-3); border-right: 1px solid var(--co-border-default); border-bottom: 1px solid var(--co-border-default); }
 .settings-modal-body { display: grid; min-width: 0; gap: var(--co-space-4); }
 .settings-modal-actions { display: flex; width: 100%; justify-content: flex-end; gap: var(--co-space-2); }
-@media (max-width: 1100px) {
-  .settings-section-nav { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 1240px) {
+  .settings-workbench { grid-template-columns: minmax(164px, 184px) minmax(0, 1fr); }
+  .settings-pending { position: static; grid-column: 2; }
   .settings-repeated-list { grid-template-columns: 1fr; }
   .settings-provider-workbench { grid-template-columns: 1fr; }
 }
@@ -2027,7 +2220,11 @@ onBeforeUnmount(() => {
   .settings-page-actions { justify-content: flex-start; }
   .settings-command-row { align-items: stretch; flex-direction: column; }
   .settings-search-wrap { min-width: 0; }
-  .settings-section-nav { position: static; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .settings-workbench { grid-template-columns: minmax(0, 1fr); }
+  .settings-navigation { position: static; }
+  .settings-section-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .settings-section-link.is-active { box-shadow: inset 0 3px 0 var(--co-focus-ring); }
+  .settings-pending { grid-column: 1; }
   .active-revision-band { grid-template-columns: 1fr; }
   .active-revision-summary { justify-content: flex-start; }
   .settings-form-grid, .settings-form-grid--three, .settings-toggle-grid { grid-template-columns: 1fr; }

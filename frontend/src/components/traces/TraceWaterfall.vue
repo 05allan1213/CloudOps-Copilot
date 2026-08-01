@@ -29,6 +29,7 @@ const virtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>(computed(() =
 })));
 const virtualRows = computed(() => virtualizer.value.getVirtualItems());
 const totalSize = computed(() => virtualizer.value.getTotalSize());
+const viewportHeight = computed(() => Math.min(590, Math.max(144, props.detail.spans.length * 48)));
 
 function formatDuration(value: number): string {
   if (!Number.isFinite(value)) return "无";
@@ -102,6 +103,7 @@ async function copySpan(span: TraceSpan) {
       :aria-label="`${detail.spans.length} 个 Span`"
       :aria-setsize="detail.spans.length"
       :data-rendered-count="virtualRows.length"
+      :style="{ height: `${viewportHeight}px` }"
     >
       <div
         class="trace-waterfall__spacer"
@@ -168,11 +170,12 @@ async function copySpan(span: TraceSpan) {
 </template>
 
 <style scoped>
-.trace-waterfall { min-width: 0; }
-.trace-waterfall > header { display: flex; min-height: 38px; align-items: center; justify-content: space-between; gap: var(--co-space-3); border-top: 1px solid var(--co-border-default); }
+.trace-waterfall { min-width: 0; overflow: hidden; border: 1px solid color-mix(in srgb, var(--co-code-text) 14%, transparent); border-radius: var(--co-radius-frame); background: var(--co-code-bg); color: var(--co-code-text); box-shadow: var(--co-shadow-row); }
+.trace-waterfall > header { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: var(--co-space-3); padding: 0 var(--co-space-4); border-bottom: 1px solid color-mix(in srgb, var(--co-code-text) 10%, transparent); }
 .trace-waterfall h3 { margin: 0; font-size: 13px; }
-.trace-waterfall header span { color: var(--co-text-muted); font-size: 10px; }
-.trace-waterfall__viewport { height: min(58vh, 590px); min-height: 360px; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); contain: layout paint; }
+.trace-waterfall header span { color: color-mix(in srgb, var(--co-code-text) 56%, transparent); font-size: 10px; }
+.trace-waterfall :deep(button) { color: var(--co-code-text); }
+.trace-waterfall__viewport { max-height: min(58vh, 590px); min-height: 144px; overflow: auto; overscroll-behavior: contain; contain: layout paint; }
 .trace-waterfall__spacer { position: relative; min-width: 640px; }
 .trace-span-row {
   position: absolute;
@@ -185,11 +188,11 @@ async function copySpan(span: TraceSpan) {
   align-items: center;
   gap: var(--co-space-2);
   padding: 0 var(--co-space-2);
-  border-bottom: 1px solid var(--co-border-subtle);
-  background: var(--co-bg-canvas);
+  border-bottom: 1px solid color-mix(in srgb, var(--co-code-text) 9%, transparent);
+  background: transparent;
 }
 .trace-span-row:hover,
-.trace-span-row.is-active { background: var(--co-bg-hover); }
+.trace-span-row.is-active { background: color-mix(in srgb, var(--co-code-text) 7%, transparent); }
 .trace-span-row.is-active { box-shadow: inset var(--co-severity-marker-width) 0 0 var(--span-service-color); }
 .trace-span-row__identity {
   display: grid;
@@ -201,12 +204,12 @@ async function copySpan(span: TraceSpan) {
 .trace-span-row__identity > span { width: 7px; height: 7px; align-self: center; border-radius: 50%; background: var(--span-service-color); }
 .trace-span-row__identity strong,
 .trace-span-row__identity small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.trace-span-row__identity strong { font-size: 11px; }
-.trace-span-row__identity small { grid-column: 2; color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 9px; }
+.trace-span-row__identity strong { color: var(--co-code-text); font-size: 11px; }
+.trace-span-row__identity small { grid-column: 2; color: color-mix(in srgb, var(--co-code-text) 52%, transparent); font-family: var(--co-font-mono); font-size: 9px; }
 .trace-span-row__inspect { display: grid; min-width: 0; grid-template-columns: minmax(240px, 1fr) 64px; justify-content: stretch; gap: var(--co-space-2); padding: 0; }
-.trace-span-row__track { position: relative; height: 20px; border-inline: 1px solid var(--co-border-default); background: var(--co-bg-subtle); }
+.trace-span-row__track { position: relative; height: 20px; border-inline: 1px solid color-mix(in srgb, var(--co-code-text) 12%, transparent); border-radius: var(--co-radius-control); background: color-mix(in srgb, var(--co-code-text) 6%, transparent); }
 .trace-span-row__bar { position: absolute; top: 4px; height: 12px; min-width: 2px; border-radius: 2px; background: var(--span-service-color); }
 .trace-span-row__bar.is-error { background: var(--co-status-critical-fg); }
 .trace-span-row__bar.is-critical { box-shadow: inset 0 -3px 0 var(--co-status-warning-fg); }
-.trace-span-row__duration { color: var(--co-text-secondary); font-size: 10px; text-align: right; font-variant-numeric: tabular-nums; }
+.trace-span-row__duration { color: var(--co-code-text); font-size: 10px; text-align: right; font-variant-numeric: tabular-nums; }
 </style>

@@ -9,6 +9,7 @@ import WorkspaceInspector from "../workspace/WorkspaceInspector.vue";
 const props = defineProps<{
   open: boolean;
   entry: LogEntry | null;
+  contextEntries: LogEntry[];
   targetID: string;
   trigger: HTMLElement | null;
   selected: boolean;
@@ -105,6 +106,22 @@ async function copyRaw() {
           </div>
         </dl>
       </section>
+
+      <section aria-labelledby="log-context-heading">
+        <h3 id="log-context-heading">
+          查询内上下文
+        </h3>
+        <ol class="log-inspector__context">
+          <li
+            v-for="contextEntry in contextEntries"
+            :key="contextEntry.id"
+            :class="{ 'is-current': contextEntry.id === entry.id }"
+          >
+            <time :datetime="contextEntry.timestamp">{{ exactUTC(contextEntry.timestamp) }}</time>
+            <code>{{ contextEntry.message }}</code>
+          </li>
+        </ol>
+      </section>
     </template>
 
     <template #recovery>
@@ -166,10 +183,16 @@ section > h3 { margin: 0 0 var(--co-space-2); font-size: 14px; }
   color: var(--co-code-text);
 }
 .log-inspector__raw code { font-family: var(--co-font-mono); font-size: 11px; white-space: pre; }
-.log-inspector__fields { margin: 0; }
+.log-inspector__fields { margin: 0; padding: var(--co-space-1) var(--co-space-3); border-radius: var(--co-radius-panel); background: var(--co-bg-subtle); }
 .log-inspector__fields div { display: grid; grid-template-columns: minmax(100px, 0.7fr) minmax(0, 1fr); gap: var(--co-space-2); padding: var(--co-space-2) 0; border-bottom: 1px solid var(--co-border-subtle); }
+.log-inspector__fields div:last-child { border-bottom: 0; }
 .log-inspector__fields dt,
 .log-inspector__fields dd { min-width: 0; overflow-wrap: anywhere; font-family: var(--co-font-mono); font-size: 10px; }
 .log-inspector__fields dt { color: var(--co-text-muted); }
 .log-inspector__fields dd { margin: 0; }
+.log-inspector__context { display: grid; margin: 0; padding: 0; gap: var(--co-space-1); list-style: none; }
+.log-inspector__context li { display: grid; min-width: 0; gap: 2px; padding: var(--co-space-2); border-left: 2px solid transparent; border-radius: var(--co-radius-control); background: var(--co-bg-subtle); }
+.log-inspector__context li.is-current { border-left-color: var(--co-status-success-fg); background: var(--co-bg-active); }
+.log-inspector__context time { color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 9px; }
+.log-inspector__context code { overflow: hidden; color: var(--co-text-secondary); font-family: var(--co-font-mono); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 </style>

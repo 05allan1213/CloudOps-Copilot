@@ -33,6 +33,7 @@ const props = defineProps<{
   applying: boolean;
   error: string;
   outcome: SettingsApplyOutcome | null;
+  externalActions?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -166,6 +167,7 @@ function outcomeColor(state: SettingsApplyOutcome["state"]): "success" | "warnin
     </UFormField>
 
     <div
+      v-if="!externalActions"
       class="settings-change-summary"
       aria-live="polite"
     >
@@ -262,7 +264,10 @@ function outcomeColor(state: SettingsApplyOutcome["state"]): "success" | "warnin
       </p>
     </div>
 
-    <footer class="settings-section-actions">
+    <footer
+      v-if="!externalActions"
+      class="settings-section-actions"
+    >
       <span>{{ validationStale ? "Validation stale" : validation?.valid ? "Validation current" : "等待显式验证" }}</span>
       <UButton
         color="neutral"
@@ -295,7 +300,7 @@ function outcomeColor(state: SettingsApplyOutcome["state"]): "success" | "warnin
 </template>
 
 <style scoped>
-.settings-section { display: grid; min-width: 0; gap: var(--co-space-4); scroll-margin-top: 76px; padding-block: var(--co-space-5); border-top: 1px solid var(--co-border-default); outline: none; }
+.settings-section { display: grid; min-width: 0; gap: var(--co-space-4); scroll-margin-top: 76px; padding: var(--co-space-4); border: 1px solid var(--co-border-subtle); border-radius: var(--co-radius-panel); background: color-mix(in srgb, var(--co-bg-surface) 86%, var(--co-bg-canvas)); outline: none; }
 .settings-section:focus-visible { box-shadow: inset 3px 0 0 var(--co-focus-ring); }
 .settings-section-heading { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: var(--co-space-4); }
 .settings-section-heading h2 { margin: 0; font-size: 18px; letter-spacing: 0; }

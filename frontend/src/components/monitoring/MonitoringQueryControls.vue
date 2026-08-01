@@ -56,6 +56,7 @@ const stepItems = [
   { label: "5m", value: 300 },
 ];
 const selectedCatalogEntry = computed(() => props.catalog?.queries.find((item) => item.key === props.guidedKey));
+const selectedResource = computed(() => props.resources.find((item) => item.id === props.resourceID));
 const queryByteLength = computed(() => new TextEncoder().encode(props.expertQuery).length);
 
 function stringValue(value: unknown): string {
@@ -80,23 +81,10 @@ function numberValue(value: unknown): number {
           aria-hidden="true"
         ><UIcon name="i-lucide-chart-no-axes-combined" /></span>
         <div>
-          <strong>指标查询</strong>
-          <small>{{ catalog?.provider_detail || "等待 Prometheus 查询目录" }}</small>
+          <strong>{{ mode === "guided" ? selectedCatalogEntry?.title || "指标画布" : "PromQL 分析" }}</strong>
+          <small>{{ selectedResource ? `${selectedResource.kind} ${selectedResource.name}` : "当前 Scope" }} · {{ catalog?.provider_state === "available" ? "Prometheus 可用" : catalog?.provider_state === "partial" ? "Prometheus 部分可用" : "正在确认 Provider" }}</small>
         </div>
       </div>
-      <label>
-        <span>Namespace</span>
-        <USelect
-          :model-value="namespace"
-          :items="namespaceItems"
-          value-key="value"
-          label-key="label"
-          aria-label="Namespace"
-          :disabled="queryInFlight"
-          @update:model-value="emit('update:namespace', stringValue($event))"
-          @change="emit('namespaceChange')"
-        />
-      </label>
       <label class="monitoring-query__resource">
         <span>Workload</span>
         <USelect
@@ -180,6 +168,7 @@ function numberValue(value: unknown): number {
       </div>
       <UButton
         v-if="queryInFlight"
+        class="monitoring-query__cancel"
         color="error"
         variant="outline"
         icon="i-lucide-square"
@@ -187,6 +176,7 @@ function numberValue(value: unknown): number {
         @click="emit('cancel')"
       />
       <UButton
+        class="monitoring-query__run"
         color="primary"
         icon="i-lucide-play"
         label="执行查询"
@@ -227,6 +217,19 @@ function numberValue(value: unknown): number {
       </template>
       <template #content>
         <div class="monitoring-query__time">
+          <label>
+            <span>Namespace</span>
+            <USelect
+              :model-value="namespace"
+              :items="namespaceItems"
+              value-key="value"
+              label-key="label"
+              aria-label="Namespace"
+              :disabled="queryInFlight"
+              @update:model-value="emit('update:namespace', stringValue($event))"
+              @change="emit('namespaceChange')"
+            />
+          </label>
           <label>
             <span>开始</span>
             <UInput
@@ -285,20 +288,18 @@ function numberValue(value: unknown): number {
 <style scoped>
 .monitoring-query {
   min-width: 0;
-  border: 1px solid var(--co-border-default);
-  border-radius: var(--co-radius-frame);
-  background: var(--co-bg-surface);
+  display: grid;
+  gap: var(--co-space-2);
 }
 .monitoring-query__primary,
 .monitoring-query__time {
-  display: flex;
   min-width: 0;
   align-items: end;
   gap: var(--co-space-2);
-  padding: var(--co-space-2) var(--co-space-3);
+  padding: var(--co-space-3) var(--co-space-4);
 }
-.monitoring-query__primary { position: sticky; top: var(--co-header-height); z-index: calc(var(--co-z-header) - 1); background: var(--co-bg-surface); }
-.monitoring-query__identity { display: flex; min-width: 180px; flex: 0 1 220px; align-items: center; gap: var(--co-space-2); }
+.monitoring-query__primary { display: grid; grid-template-columns: minmax(150px, 0.65fr) minmax(150px, 0.65fr) minmax(180px, 0.9fr) auto auto auto; border-radius: var(--co-radius-frame); background: color-mix(in srgb, var(--co-bg-surface) 82%, var(--co-bg-canvas)); box-shadow: var(--co-shadow-row); }
+.monitoring-query__identity { display: flex; min-width: 0; grid-column: 1 / 4; grid-row: 1; align-items: center; gap: var(--co-space-2); }
 .monitoring-query__identity > div { display: grid; min-width: 0; gap: 1px; }
 .monitoring-query__identity strong { font-size: 12px; }
 .monitoring-query__identity small { overflow: hidden; color: var(--co-text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
@@ -306,28 +307,45 @@ function numberValue(value: unknown): number {
 .monitoring-query label { display: grid; min-width: 0; gap: 3px; }
 .monitoring-query label > span { color: var(--co-text-muted); font-size: 10px; font-weight: 700; }
 .monitoring-query label > span b { float: right; margin-left: var(--co-space-2); font-weight: 500; font-variant-numeric: tabular-nums; }
-.monitoring-query__primary > label { flex: 0 1 150px; }
-.monitoring-query__primary > .monitoring-query__resource { flex-basis: 220px; }
-.monitoring-query__primary > .monitoring-query__definition { flex: 1 1 240px; }
+.monitoring-query__primary > .monitoring-query__resource { grid-column: 1 / 3; grid-row: 2; }
+.monitoring-query__primary > .monitoring-query__definition { grid-column: 3; grid-row: 2; }
 .monitoring-query__mode,
-.monitoring-query__presets { display: inline-flex; flex: 0 0 auto; gap: 1px; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); }
-.monitoring-query__promql { padding: var(--co-space-2) var(--co-space-3); border-top: 1px solid var(--co-border-subtle); }
+.monitoring-query__presets { display: inline-flex; flex: 0 0 auto; gap: 1px; padding: 2px; border-radius: var(--co-radius-control); background: var(--co-bg-canvas); }
+.monitoring-query__mode { grid-column: 4 / 7; grid-row: 1; justify-self: end; }
+.monitoring-query__presets { grid-column: 4; grid-row: 2; }
+.monitoring-query__cancel { grid-column: 5; grid-row: 2; }
+.monitoring-query__run { grid-column: 6; grid-row: 2; }
+.monitoring-query__promql { padding: var(--co-space-3) var(--co-space-4); border-radius: var(--co-radius-frame); background: color-mix(in srgb, var(--co-bg-surface) 82%, var(--co-bg-canvas)); box-shadow: var(--co-shadow-row); }
 .monitoring-query__promql :deep(textarea) { font-family: var(--co-font-mono); font-size: 12px; }
-.monitoring-query__advanced { border-top: 1px solid var(--co-border-subtle); }
-.monitoring-query__advanced > :deep(button) { min-height: var(--co-control-height); justify-content: flex-start; border-radius: 0; }
-.monitoring-query__time > label { flex: 0 1 178px; }
-.monitoring-query__time > .monitoring-query__step { flex-basis: 92px; }
+.monitoring-query__advanced { overflow: hidden; border-radius: var(--co-radius-panel); background: color-mix(in srgb, var(--co-bg-surface) 62%, transparent); }
+.monitoring-query__advanced > :deep(button) { min-height: var(--co-control-height); justify-content: flex-start; border-radius: var(--co-radius-panel); }
+.monitoring-query__time { display: grid; grid-template-columns: minmax(140px, 0.7fr) repeat(2, minmax(170px, 0.9fr)) minmax(92px, 0.45fr) minmax(200px, 1fr); }
 .monitoring-query__bounds { display: grid; min-width: 160px; flex: 1 1 260px; gap: 2px; color: var(--co-text-secondary); font-size: 11px; }
 .monitoring-query__bounds span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .monitoring-query__bounds small { color: var(--co-text-muted); font-variant-numeric: tabular-nums; }
 
 @media (max-width: 1180px) {
-  .monitoring-query__primary,
-  .monitoring-query__time { flex-wrap: wrap; }
-  .monitoring-query__primary { position: static; }
-  .monitoring-query__identity { flex-basis: 100%; }
-  .monitoring-query__primary > .monitoring-query__definition { flex-basis: 220px; }
-  .monitoring-query__bounds { order: 3; flex-basis: 100%; }
+  .monitoring-query__primary { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto; }
+  .monitoring-query__identity { grid-column: 1 / 3; }
+  .monitoring-query__mode { grid-column: 3 / 5; }
+  .monitoring-query__primary > .monitoring-query__resource { grid-column: 1 / 3; }
+  .monitoring-query__primary > .monitoring-query__definition { grid-column: 3; }
+  .monitoring-query__presets { grid-column: 1 / 3; grid-row: 3; justify-self: start; }
+  .monitoring-query__cancel { grid-column: 3; grid-row: 3; }
+  .monitoring-query__run { grid-column: 4; grid-row: 3; }
+  .monitoring-query__time { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .monitoring-query__bounds { grid-column: 1 / -1; }
+}
+
+@media (max-width: 1024px) {
+  .monitoring-query__primary { grid-template-columns: minmax(0, 1fr) auto; }
+  .monitoring-query__identity { grid-column: 1; }
+  .monitoring-query__mode { grid-column: 2; }
+  .monitoring-query__primary > .monitoring-query__resource,
+  .monitoring-query__primary > .monitoring-query__definition { grid-column: 1 / -1; grid-row: auto; }
+  .monitoring-query__presets { grid-column: 1; grid-row: auto; }
+  .monitoring-query__cancel,
+  .monitoring-query__run { grid-column: auto; grid-row: auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {

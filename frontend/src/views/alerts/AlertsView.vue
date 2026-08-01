@@ -29,7 +29,6 @@ import { isApiError } from "../../api/client";
 import AlertBadges from "../../components/alerts/AlertBadges.vue";
 import AlertQueue from "../../components/alerts/AlertQueue.vue";
 import ApiErrorNotice from "../../components/workspace/ApiErrorNotice.vue";
-import ContextToolbar from "../../components/workspace/ContextToolbar.vue";
 import WorkspaceHeader from "../../components/workspace/WorkspaceHeader.vue";
 import WorkspaceInspector, { type InspectorTargetState } from "../../components/workspace/WorkspaceInspector.vue";
 import WorkspacePageFrame from "../../components/workspace/WorkspacePageFrame.vue";
@@ -119,8 +118,26 @@ const severitySelection = computed<AlertSeverity | "all">({
   set: (value) => { filters.severity = value === "all" ? "" : value; },
 });
 const firingCount = computed(() => items.value.filter((item) => item.status === "firing").length);
-const acknowledgedCount = computed(() => items.value.filter((item) => item.acknowledgement).length);
+const criticalCount = computed(() => items.value.filter((item) => item.severity === "critical").length);
+const needsAttentionCount = computed(() => items.value.filter((item) => (
+  item.status === "firing" && !item.acknowledgement && item.silence?.status !== "active"
+)).length);
 const silencedCount = computed(() => items.value.filter((item) => item.silence?.status === "active").length);
+const queueItems = computed(() => [...items.value].sort((left, right) => {
+  if (left.status !== right.status) return left.status === "firing" ? -1 : 1;
+  const severityOrder: Record<AlertSeverity, number> = { critical: 0, warning: 1, info: 2, unknown: 3 };
+  const severityDelta = severityOrder[left.severity] - severityOrder[right.severity];
+  if (severityDelta) return severityDelta;
+  return Date.parse(right.last_seen_at) - Date.parse(left.last_seen_at);
+}));
+const activeFilterLabel = computed(() => {
+  const labels: string[] = [];
+  if (filters.status) labels.push(filters.status === "firing" ? "触发中" : "已恢复");
+  if (filters.severity) labels.push(({ critical: "严重", warning: "警告", info: "信息" } as Record<string, string>)[filters.severity] ?? filters.severity);
+  if (filters.namespace) labels.push(filters.namespace);
+  if (filters.search) labels.push(`“${filters.search}”`);
+  return labels.length ? labels.join(" · ") : "全部当前告警";
+});
 const selectedListItem = computed(() => items.value.find((item) => item.id === inspector.selectedID.value) ?? null);
 const selectedAlert = computed(() => inspectorDetail.value?.alert ?? selectedListItem.value);
 const inspectorHistory = computed(() => alertInspectorHistory(inspectorDetail.value?.events ?? []));
@@ -297,6 +314,12 @@ async function clearFilters() {
   filters.severity = "";
   filters.namespace = "";
   filters.search = "";
+  await applyFilters();
+}
+
+async function applyQuickFilter(kind: "firing" | "critical") {
+  filters.status = kind === "firing" ? "firing" : "";
+  filters.severity = kind === "critical" ? "critical" : "";
   await applyFilters();
 }
 
@@ -492,98 +515,141 @@ onBeforeUnmount(() => {
       </template>
     </UAlert>
 
-    <dl
-      class="alert-summary-strip"
-      aria-label="当前 Alert 摘要"
-    >
-      <div>
-        <dt>触发中</dt><dd class="is-critical">
-          {{ firingCount }}
-        </dd>
+    <section class="alerts-signal-deck" aria-labelledby="alert-attention-heading">
+      <div class="alerts-signal-deck__main">
+        <div class="alert-attention__lead">
+          <span class="alert-attention__signal" aria-hidden="true">
+            <UIcon name="i-lucide-siren" />
+          </span>
+          <div>
+            <span class="alert-attention__eyebrow">Live signal / Alert lifecycle</span>
+            <h2 id="alert-attention-heading">
+              {{ firingCount ? `${firingCount} 条告警正在触发` : "当前没有触发中的告警" }}
+            </h2>
+            <p>
+              <template v-if="needsAttentionCount">
+                {{ needsAttentionCount }} 条尚未处置，{{ silencedCount }} 条静默中；先处理严重且未关联 Incident 的对象。
+              </template>
+              <template v-else>
+                当前投影没有未确认且未静默的 firing Alert，{{ silencedCount }} 条处于静默。
+              </template>
+            </p>
+          </div>
+        </div>
+        <div class="alert-signal-track" aria-hidden="true">
+          <span class="is-critical" :style="{ flexGrow: Math.max(criticalCount, 1) }" />
+          <span class="is-warning" :style="{ flexGrow: Math.max(needsAttentionCount - criticalCount, 1) }" />
+          <span class="is-quiet" :style="{ flexGrow: Math.max(items.length - firingCount, 1) }" />
+        </div>
       </div>
-      <div><dt>严重</dt><dd class="is-critical">{{ items.filter((item) => item.severity === 'critical').length }}</dd><small>当前列表</small></div>
-      <div><dt>需关注</dt><dd class="is-warning">{{ acknowledgedCount }}</dd><small>已知悉但仍触发</small></div>
-      <div><dt>静默中</dt><dd>{{ silencedCount }}</dd><small>{{ items.length }} 条当前投影</small></div>
-    </dl>
+      <div class="alert-attention__facets" aria-label="告警摘要与快速筛选">
+        <UButton class="alert-attention__facet" color="neutral" variant="ghost" @click="applyQuickFilter('firing')">
+          <span><small>触发中</small><b>{{ firingCount }}</b></span>
+        </UButton>
+        <UButton class="alert-attention__facet" color="neutral" variant="ghost" @click="applyQuickFilter('critical')">
+          <span><small>严重</small><b class="is-critical">{{ criticalCount }}</b></span>
+        </UButton>
+        <div class="alert-attention__facet is-static">
+          <span><small>待处置</small><b class="is-warning">{{ needsAttentionCount }}</b></span>
+        </div>
+        <div class="alert-attention__facet is-static">
+          <span><small>已静默</small><b>{{ silencedCount }}</b></span>
+        </div>
+      </div>
+    </section>
 
-    <ContextToolbar label="Alert 筛选与列表操作">
-      <template #filters>
-        <UForm
-          class="alert-filter-form"
-          :state="filters"
-          @submit="applyFilters"
-        >
-          <UTabs
-            v-model="statusSelection"
-            class="alert-status-tabs"
-            :items="statusItems"
-            :content="false"
-            color="primary"
-            variant="pill"
-            size="sm"
-            aria-label="Alert 状态"
-          />
-          <UFormField
-            label="搜索告警或目标"
-            name="search"
-            class="alert-search-field"
-          >
-            <UInput
-              v-model="filters.search"
-              icon="i-lucide-search"
-              maxlength="255"
-              autocomplete="off"
-              placeholder="摘要、目标或服务"
-            />
-          </UFormField>
-          <UCollapsible class="alert-advanced-filters">
-            <template #default="{ open }">
-              <UButton
-                color="neutral"
-                variant="ghost"
-                icon="i-lucide-sliders-horizontal"
-                :trailing-icon="open ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
-                label="高级筛选"
-                :aria-label="`${open ? '收起' : '展开'} Alert 高级筛选`"
-              />
-            </template>
-            <template #content>
-              <div class="alert-advanced-grid">
-                <UFormField label="级别" name="severity">
-                  <USelect v-model="severitySelection" :items="severityItems" value-key="value" aria-label="Alert 级别" />
-                </UFormField>
-                <UFormField label="Namespace" name="namespace">
-                  <UInput v-model="filters.namespace" icon="i-lucide-box" maxlength="255" autocomplete="off" placeholder="例如 demo" />
-                </UFormField>
-                <UFormField label="每页" name="limit">
-                  <USelect v-model="filters.limit" :items="limitItems" value-key="value" aria-label="每页 Alert 数量" />
-                </UFormField>
-              </div>
-            </template>
-          </UCollapsible>
-        </UForm>
-      </template>
-      <template #secondary>
-        <UTooltip text="清除状态、级别、Namespace 和搜索">
+    <UForm
+      class="alert-commandbar"
+      :state="filters"
+      aria-label="Alert 筛选与列表操作"
+      @submit="applyFilters"
+    >
+      <UTabs
+        v-model="statusSelection"
+        class="alert-status-tabs"
+        :items="statusItems"
+        :content="false"
+        color="primary"
+        variant="pill"
+        size="sm"
+        aria-label="Alert 状态"
+      />
+      <UInput
+        v-model="filters.search"
+        class="alert-search-field"
+        icon="i-lucide-search"
+        maxlength="255"
+        autocomplete="off"
+        aria-label="搜索告警或目标"
+        placeholder="搜索告警、服务或对象"
+      />
+      <UCollapsible class="alert-advanced-filters">
+        <template #default="{ open }">
           <UButton
             color="neutral"
             variant="ghost"
-            icon="i-lucide-filter-x"
-            square
-            aria-label="清除筛选"
-            @click="clearFilters"
+            icon="i-lucide-sliders-horizontal"
+            :trailing-icon="open ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
+            label="高级筛选"
+            :aria-label="`${open ? '收起' : '展开'} Alert 高级筛选`"
           />
-        </UTooltip>
-      </template>
-      <template #primary>
+        </template>
+        <template #content>
+          <div class="alert-advanced-grid">
+            <UFormField
+              label="级别"
+              name="severity"
+            >
+              <USelect
+                v-model="severitySelection"
+                :items="severityItems"
+                value-key="value"
+                aria-label="Alert 级别"
+              />
+            </UFormField>
+            <UFormField
+              label="Namespace"
+              name="namespace"
+            >
+              <UInput
+                v-model="filters.namespace"
+                icon="i-lucide-box"
+                maxlength="255"
+                autocomplete="off"
+                placeholder="例如 demo"
+              />
+            </UFormField>
+            <UFormField
+              label="每页"
+              name="limit"
+            >
+              <USelect
+                v-model="filters.limit"
+                :items="limitItems"
+                value-key="value"
+                aria-label="每页 Alert 数量"
+              />
+            </UFormField>
+          </div>
+        </template>
+      </UCollapsible>
+      <UTooltip text="清除状态、级别、Namespace 和搜索">
         <UButton
-          color="primary"
-          icon="i-lucide-search"
-          label="查询"
-          @click="applyFilters"
+          color="neutral"
+          variant="ghost"
+          icon="i-lucide-filter-x"
+          square
+          aria-label="清除筛选"
+          @click="clearFilters"
         />
-      </template>
-    </ContextToolbar>
+      </UTooltip>
+      <UButton
+        color="primary"
+        icon="i-lucide-search"
+        label="应用"
+        type="submit"
+      />
+    </UForm>
 
     <UAlert
       v-if="pendingItems.length"
@@ -644,13 +710,27 @@ onBeforeUnmount(() => {
           />
         </template>
       </WorkspaceState>
-      <AlertQueue
+      <section
         v-else
-        ref="alertQueue"
-        :items="items"
-        :selected-id="inspector.selectedID.value"
-        @select="openRow"
-      />
+        class="alert-queue-workspace"
+        aria-labelledby="alert-queue-heading"
+      >
+        <header>
+          <div>
+            <span>处置队列</span>
+            <h2 id="alert-queue-heading">
+              告警处置队列
+            </h2>
+          </div>
+          <p>{{ items.length }} 条 · {{ activeFilterLabel }} · firing 与高严重度优先</p>
+        </header>
+        <AlertQueue
+          ref="alertQueue"
+          :items="queueItems"
+          :selected-id="inspector.selectedID.value"
+          @select="openRow"
+        />
+      </section>
       <nav
         v-if="items.length"
         class="alert-pagination"
@@ -729,14 +809,21 @@ onBeforeUnmount(() => {
           :status="selectedAlert.status"
           :severity="selectedAlert.severity"
         />
-        <dl class="alert-inspector-facts">
-          <div><dt>Alert ID</dt><dd><code translate="no">{{ selectedAlert.id }}</code></dd></div>
-          <div><dt>Provider</dt><dd>{{ selectedAlert.source }}</dd></div>
-          <div><dt>当前版本</dt><dd><code translate="no">v{{ selectedAlert.version }}</code></dd></div>
-          <div><dt>最近 Signal UTC</dt><dd><time :datetime="selectedAlert.last_seen_at">{{ formatUTC(selectedAlert.last_seen_at) }}</time></dd></div>
-          <div><dt>Operational Scope</dt><dd><code translate="no">{{ selectedAlert.context_link.operational_scope_id || "未投影" }}</code></dd></div>
-          <div><dt>来源</dt><dd>{{ selectedAlert.migrated_legacy ? "Legacy automatic ingress" : "Native Alert" }}</dd></div>
-        </dl>
+        <section class="alert-inspector-current" aria-labelledby="alert-current-state">
+          <span aria-hidden="true">
+            <UIcon :name="selectedAlert.status === 'firing' ? 'i-lucide-siren' : 'i-lucide-circle-check'" />
+          </span>
+          <div>
+            <h3 id="alert-current-state">
+              {{ selectedAlert.status === "firing" ? "此告警仍在触发" : "此告警已经恢复" }}
+            </h3>
+            <p>
+              {{ selectedAlert.acknowledgement ? "Owner 已知悉" : "尚未确认" }} ·
+              {{ selectedAlert.silence?.status === "active" ? "通知静默中" : "通知未静默" }} ·
+              {{ selectedAlert.incident_links.length ? `${selectedAlert.incident_links.length} 个关联 Incident` : "尚未关联 Incident" }}
+            </p>
+          </div>
+        </section>
 
         <UAlert
           v-if="inspectorFeedback"
@@ -877,6 +964,29 @@ onBeforeUnmount(() => {
             />
           </div>
         </section>
+
+        <UCollapsible class="alert-technical-details">
+          <template #default="{ open }">
+            <UButton
+              color="neutral"
+              variant="ghost"
+              block
+              icon="i-lucide-braces"
+              label="技术身份与完整时间"
+              :trailing-icon="open ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
+            />
+          </template>
+          <template #content>
+            <dl class="alert-inspector-facts">
+              <div><dt>Alert ID</dt><dd><code translate="no">{{ selectedAlert.id }}</code></dd></div>
+              <div><dt>Provider</dt><dd>{{ selectedAlert.source }}</dd></div>
+              <div><dt>当前版本</dt><dd><code translate="no">v{{ selectedAlert.version }}</code></dd></div>
+              <div><dt>最近 Signal UTC</dt><dd><time :datetime="selectedAlert.last_seen_at">{{ formatUTC(selectedAlert.last_seen_at) }}</time></dd></div>
+              <div><dt>Operational Scope</dt><dd><code translate="no">{{ selectedAlert.context_link.operational_scope_id || "未投影" }}</code></dd></div>
+              <div><dt>来源</dt><dd>{{ selectedAlert.migrated_legacy ? "Legacy automatic ingress" : "Native Alert" }}</dd></div>
+            </dl>
+          </template>
+        </UCollapsible>
       </template>
       <template #footer>
         <UButton
@@ -990,48 +1100,69 @@ onBeforeUnmount(() => {
   display: grid;
   min-width: 0;
   gap: var(--co-space-4);
+  container-name: alerts-workspace;
+  container-type: inline-size;
 }
 
-.alert-summary-strip {
+.alerts-signal-deck {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  margin: 0;
-  overflow: hidden;
-  border: 1px solid var(--co-border-default);
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, auto);
+  align-items: center;
+  gap: var(--co-space-6);
+  padding: var(--co-space-6);
   border-radius: var(--co-radius-frame);
-  background: var(--co-bg-surface);
+  background: color-mix(in srgb, var(--co-bg-surface) 82%, var(--co-bg-canvas));
+  box-shadow: var(--co-shadow-row);
 }
+.alerts-signal-deck__main { display: grid; min-width: 0; gap: var(--co-space-4); }
+.alert-attention__lead { display: flex; min-width: 0; align-items: center; gap: var(--co-space-4); }
+.alert-attention__signal { display: grid; width: 58px; height: 58px; flex: 0 0 auto; place-items: center; border: 1px solid color-mix(in srgb, var(--co-status-critical-border) 56%, transparent); border-radius: var(--co-radius-panel); color: var(--co-status-critical-fg); background: var(--co-status-critical-bg); font-size: 23px; }
+.alert-attention__lead > div { min-width: 0; }
+.alert-attention__eyebrow,
+.alert-queue-workspace > header span { color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 9px; font-weight: 800; text-transform: uppercase; }
+.alerts-signal-deck h2 { margin: 4px 0 0; font-size: clamp(22px, 2vw, 30px); line-height: 1.15; letter-spacing: 0; }
+.alerts-signal-deck p { max-width: 66ch; margin: var(--co-space-2) 0 0; color: var(--co-text-secondary); font-size: 11px; line-height: 1.6; }
+.alert-signal-track { display: flex; min-width: 0; height: 6px; gap: 3px; overflow: hidden; border-radius: var(--co-radius-pill); background: var(--co-bg-canvas); }
+.alert-signal-track span { min-width: 8px; border-radius: inherit; }
+.alert-signal-track .is-critical { background: var(--co-status-critical-fg); }
+.alert-signal-track .is-warning { background: var(--co-status-warning-fg); }
+.alert-signal-track .is-quiet { background: var(--co-border-strong); }
+.alert-attention__facets { display: grid; min-width: 0; grid-template-columns: repeat(4, minmax(84px, 1fr)); align-items: stretch; gap: 1px; overflow: hidden; border-radius: var(--co-radius-panel); background: var(--co-border-subtle); }
+.alert-attention__facets :deep(.alert-attention__facet) { display: flex; min-width: 84px; min-height: 72px; align-items: center; padding: var(--co-space-3); border: 0; border-radius: 0; background: var(--co-bg-canvas); }
+.alert-attention__facets :deep(.alert-attention__facet:first-child) { border-radius: var(--co-radius-panel) 0 0 var(--co-radius-panel); }
+.alert-attention__facets :deep(.alert-attention__facet:last-child) { border-radius: 0 var(--co-radius-panel) var(--co-radius-panel) 0; }
+.alert-attention__facets :deep(.alert-attention__facet.is-static) { cursor: default; }
+.alert-attention__facets :deep(button:hover) { background: var(--co-bg-hover); transform: none; }
+.alert-attention__facets span { display: grid; justify-items: start; gap: var(--co-space-2); text-align: left; }
+.alert-attention__facets b { font-family: var(--co-font-mono); font-size: 20px; font-variant-numeric: tabular-nums; }
+.alert-attention__facets small { color: var(--co-text-muted); font-size: 10px; }
+.alert-attention__facets .is-critical { color: var(--co-status-critical-fg); }
+.alert-attention__facets .is-warning { color: var(--co-status-warning-fg); }
 
-.alert-summary-strip div {
-  min-width: 0;
-  padding: var(--co-space-3) var(--co-space-4);
-  border-right: 1px solid var(--co-border-default);
-}
-
-.alert-summary-strip div:last-child { border-right: 0; }
-.alert-summary-strip dt { color: var(--co-text-muted); font-size: 11px; }
-.alert-summary-strip small { color: var(--co-text-muted); font-size: 10px; }
-.alert-summary-strip dd {
-  margin: var(--co-space-1) 0 0;
-  font-family: var(--co-font-mono);
-  font-size: 18px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 800;
-}
-.alert-summary-strip .is-critical { color: var(--co-status-critical-fg); }
-.alert-summary-strip .is-warning { color: var(--co-status-warning-fg); }
-
-.alert-filter-form {
+.alert-commandbar {
   display: grid;
-  width: 100%;
   min-width: 0;
-  grid-template-columns: minmax(420px, auto) minmax(240px, 1fr) auto;
-  align-items: end;
+  grid-template-columns: minmax(350px, auto) minmax(260px, 1fr) auto auto auto;
+  align-items: center;
   gap: var(--co-space-2);
+  padding: 6px 8px;
+  border: 1px solid var(--co-border-subtle);
+  border-radius: var(--co-radius-frame);
+  background: color-mix(in srgb, var(--co-bg-surface) 88%, var(--co-bg-canvas));
+  box-shadow: var(--co-shadow-row);
 }
+.alert-commandbar :deep(input),
+.alert-commandbar :deep(button),
+.alert-commandbar :deep([role="tablist"]) { border-radius: var(--co-radius-control); }
 .alert-status-tabs { min-width: 0; }
 .alert-advanced-filters { position: relative; }
 .alert-advanced-grid { position: absolute; z-index: var(--co-z-popover); top: calc(100% + var(--co-space-2)); right: 0; display: grid; width: min(520px, calc(100vw - 64px)); grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--co-space-3); padding: var(--co-space-4); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-panel); background: var(--co-bg-overlay); box-shadow: var(--co-shadow-overlay); }
+
+.alert-queue-workspace { display: grid; min-width: 0; gap: var(--co-space-3); }
+.alert-queue-workspace > header { display: flex; min-width: 0; align-items: end; justify-content: space-between; gap: var(--co-space-4); }
+.alert-queue-workspace h2 { margin: 2px 0 0; font-size: 17px; }
+.alert-queue-workspace p { margin: 0; color: var(--co-text-muted); font-size: 11px; text-align: right; }
 
 .alert-primary-cell,
 .alert-target-cell,
@@ -1106,6 +1237,12 @@ onBeforeUnmount(() => {
 .alert-command-dialog dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
 .alert-command-identity dd { font-family: var(--co-font-mono); font-size: 10px; }
 
+.alert-inspector-current { display: flex; min-width: 0; align-items: center; gap: var(--co-space-3); padding: var(--co-space-3); border-radius: var(--co-radius-overlay); background: var(--co-bg-subtle); }
+.alert-inspector-current > span { display: grid; width: 42px; height: 42px; flex: 0 0 auto; place-items: center; border-radius: var(--co-radius-overlay); color: var(--co-status-critical-fg); background: var(--co-status-critical-bg); }
+.alert-inspector-current > div { min-width: 0; }
+.alert-inspector-current h3 { margin: 0; font-size: 14px; }
+.alert-inspector-current p { margin: 3px 0 0; color: var(--co-text-muted); font-size: 11px; overflow-wrap: anywhere; }
+
 .alert-inspector-section {
   display: grid;
   min-width: 0;
@@ -1114,9 +1251,8 @@ onBeforeUnmount(() => {
   border-top: 1px solid var(--co-border-default);
 }
 .alert-inspector-section h3 { margin: 0; font-size: 14px; }
-.alert-inspector-actions,
-.alert-link-stack { display: flex; min-width: 0; flex-wrap: wrap; gap: var(--co-space-2); }
-.alert-link-stack { display: grid; }
+.alert-inspector-actions { display: flex; min-width: 0; flex-wrap: wrap; gap: var(--co-space-2); }
+.alert-link-stack { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr); gap: var(--co-space-2); }
 .alert-inspector-history { display: grid; margin: 0; padding: 0; list-style: none; }
 .alert-inspector-history li { display: grid; min-width: 0; gap: 2px; padding: var(--co-space-2) 0; border-bottom: 1px solid var(--co-border-subtle); }
 .alert-inspector-history strong,
@@ -1126,21 +1262,54 @@ onBeforeUnmount(() => {
 .alert-empty-line { color: var(--co-text-muted); font-size: 11px; }
 .alert-inspector-history time { font-family: var(--co-font-mono); }
 .alert-empty-line { margin: 0; }
+.alert-technical-details { overflow: hidden; border-radius: var(--co-radius-overlay); background: var(--co-bg-subtle); }
+.alert-technical-details > :deep(button) { justify-content: flex-start; border-radius: var(--co-radius-overlay); }
+.alert-technical-details .alert-inspector-facts { padding: 0 var(--co-space-3) var(--co-space-3); }
 
 .alert-command-dialog { display: grid; min-width: 0; gap: var(--co-space-4); }
 .alert-command-actions { display: flex; width: 100%; justify-content: flex-end; gap: var(--co-space-2); }
 
 @media (max-width: 1180px) {
-  .alert-filter-form { grid-template-columns: minmax(0, 1fr) auto; }
-  .alert-status-tabs { grid-column: 1 / -1; }
+  .alerts-signal-deck { grid-template-columns: minmax(0, 1fr); }
+  .alert-attention__facets { justify-content: flex-start; }
+  .alert-commandbar { grid-template-columns: minmax(0, 1fr) minmax(240px, 1fr) auto auto; }
+  .alert-commandbar > :last-child { grid-column: auto; }
 }
 
 @media (max-width: 1024px) {
-  .alert-summary-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .alert-summary-strip div:nth-child(2) { border-right: 0; }
-  .alert-summary-strip div:nth-child(-n+2) { border-bottom: 1px solid var(--co-border-default); }
-  .alert-filter-form { grid-template-columns: minmax(0, 1fr); }
+  .alerts-signal-deck { grid-template-columns: minmax(0, 1fr); padding: var(--co-space-5); }
+  .alert-attention__facets { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .alert-commandbar { grid-template-columns: minmax(0, 1fr) auto auto; }
+  .alert-status-tabs,
+  .alert-search-field { grid-column: 1 / -1; }
   .alert-advanced-filters { grid-column: 1 / -1; }
   .alert-advanced-grid { position: static; width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: var(--co-space-2); box-shadow: none; }
+  .alert-queue-workspace > header { align-items: flex-start; flex-direction: column; }
+  .alert-queue-workspace p { text-align: left; }
+}
+
+@container alerts-workspace (max-width: 900px) {
+  .alerts-signal-deck { grid-template-columns: minmax(0, 1fr); padding: var(--co-space-4); }
+  .alert-attention__facets { grid-column: 1; }
+  .alert-commandbar { grid-template-columns: minmax(0, 1fr) auto auto auto; }
+  .alert-status-tabs,
+  .alert-search-field { grid-column: 1 / -1; }
+  .alert-queue-workspace > header { align-items: flex-start; flex-direction: column; }
+  .alert-queue-workspace p { text-align: left; }
+}
+
+@container alerts-workspace (max-width: 680px) {
+  .alert-attention__facets :deep(.alert-attention__facet) { min-width: calc(50% - var(--co-space-1)); }
+  .alert-commandbar { grid-template-columns: minmax(0, 1fr) auto auto; }
+  .alerts-signal-deck h2 { font-size: 22px; }
+}
+
+@container alerts-workspace (max-width: 520px) {
+  .alert-advanced-filters { grid-column: 1 / -1; }
+  .alert-advanced-grid { position: static; width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: var(--co-space-2); box-shadow: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .alert-attention__facets :deep(button:hover) { transform: none; }
 }
 </style>

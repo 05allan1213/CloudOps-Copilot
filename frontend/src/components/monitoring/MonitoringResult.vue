@@ -12,6 +12,8 @@ import WorkspaceTechnicalDetails, { type TechnicalDetailField } from "../workspa
 const props = defineProps<{
   execution: QueryExecution | null;
   cursorTimestamp: number | null;
+  metricTitle: string;
+  resourceLabel: string;
 }>();
 
 const emit = defineEmits<{
@@ -127,10 +129,11 @@ function seriesIdentity(series: QuerySeries): string {
   >
     <header class="monitoring-result__header">
       <div>
-        <span>Query Execution</span>
+        <span>指标画布</span>
         <h2 id="monitoring-result-title">
-          查询结果
+          {{ metricTitle }}
         </h2>
+        <small>{{ resourceLabel }}</small>
       </div>
       <div
         v-if="execution"
@@ -146,12 +149,27 @@ function seriesIdentity(series: QuerySeries): string {
       </div>
     </header>
 
-    <WorkspaceState
+    <div
       v-if="!execution"
-      kind="empty"
-      title="尚无查询结果"
-      description="选择真实 Workload 与时间范围后执行查询。"
-    />
+      class="monitoring-result__empty"
+      aria-live="polite"
+    >
+      <div class="monitoring-result__empty-copy">
+        <span><UIcon
+          name="i-lucide-chart-no-axes-combined"
+          aria-hidden="true"
+        /></span>
+        <div>
+          <small>推荐指标视图</small>
+          <h3>{{ metricTitle }}</h3>
+          <p>运行当前真实 Prometheus 查询后，这里会直接显示稳定坐标、异常时间窗口与同步游标值。</p>
+        </div>
+      </div>
+      <dl class="monitoring-result__empty-context">
+        <div><dt>观测对象</dt><dd>{{ resourceLabel }}</dd></div>
+        <div><dt>数据状态</dt><dd>等待真实执行</dd></div>
+      </dl>
+    </div>
 
     <template v-else>
       <div class="monitoring-result__meta">
@@ -162,48 +180,8 @@ function seriesIdentity(series: QuerySeries): string {
         <span>采集 {{ formatTime(execution.source.collected_at) }}</span>
       </div>
 
-      <dl
-        class="monitoring-result__summary"
-        aria-label="指标摘要"
-      >
-        <div>
-          <dt>当前值</dt>
-          <dd>{{ formatMetric(latestValue) }}</dd>
-          <small>{{ chartSeries[0] ? monitoringSeriesLabel(chartSeries[0], 0) : "暂无主序列" }}</small>
-        </div>
-        <div>
-          <dt>区间峰值</dt>
-          <dd>{{ formatMetric(peakValue) }}</dd>
-          <small>全部返回序列</small>
-        </div>
-        <div>
-          <dt>区间变化</dt>
-          <dd :class="{ 'is-rising': (changeRate ?? 0) > 0 }">
-            {{ formatChange(changeRate) }}
-          </dd>
-          <small>主序列首尾对比</small>
-        </div>
-        <div>
-          <dt>覆盖</dt>
-          <dd>{{ execution.series_count }} / {{ execution.sample_count }}</dd>
-          <small>序列 / 采样点</small>
-        </div>
-      </dl>
-
-      <WorkspaceState
-        v-if="execution.status === 'failed'"
-        kind="error"
-        :title="execution.error_code || 'QUERY_FAILED'"
-        :description="execution.error_detail || 'Prometheus 查询失败。'"
-      />
-      <WorkspaceState
-        v-else-if="execution.result_expired"
-        kind="expired"
-        title="遥测结果已过期"
-        description="完整结果未长期保留，查询身份与执行审计仍可用。"
-      />
       <UAlert
-        v-else-if="execution.partial || execution.truncated"
+        v-if="execution.partial || execution.truncated"
         color="warning"
         variant="soft"
         icon="i-lucide-triangle-alert"
@@ -211,18 +189,67 @@ function seriesIdentity(series: QuerySeries): string {
         :description="[execution.partial ? 'Provider 返回部分结果' : '', execution.truncated ? '结果触及服务端边界并被截断' : ''].filter(Boolean).join('；')"
       />
 
-      <MonitoringChart
-        v-if="chartSeries.length && !execution.result_expired"
-        :series="chartSeries"
-        @cursor="emit('cursor', $event)"
-      />
+      <div class="monitoring-result__visual">
+        <div class="monitoring-result__chart-stage">
+          <MonitoringChart
+            v-if="chartSeries.length && !execution.result_expired"
+            :series="chartSeries"
+            @cursor="emit('cursor', $event)"
+          />
+          <WorkspaceState
+            v-else-if="execution.status === 'failed'"
+            kind="error"
+            :title="execution.error_code || 'QUERY_FAILED'"
+            :description="execution.error_detail || 'Prometheus 查询失败。'"
+          />
+          <WorkspaceState
+            v-else-if="execution.result_expired"
+            kind="expired"
+            title="遥测结果已过期"
+            description="完整结果未长期保留，查询身份与执行审计仍可用。"
+          />
+          <WorkspaceState
+            v-else-if="execution.status === 'succeeded'"
+            kind="empty"
+            title="查询没有返回时序"
+            description="查询已完成，当前范围内没有可显示的数据点。"
+          />
+          <WorkspaceState
+            v-else
+            kind="loading"
+            :title="statusLabel(execution.status)"
+            description="Prometheus 正在生成真实指标时序。"
+          />
+        </div>
 
-      <WorkspaceState
-        v-else-if="execution.status === 'succeeded' && !execution.result_expired"
-        kind="empty"
-        title="查询没有返回时序"
-        description="查询已完成，当前范围内没有可显示的数据点。"
-      />
+        <dl
+          class="monitoring-result__summary"
+          aria-label="指标摘要"
+        >
+          <div class="is-primary">
+            <dt>当前值</dt>
+            <dd>{{ formatMetric(latestValue) }}</dd>
+            <small>{{ chartSeries[0] ? monitoringSeriesLabel(chartSeries[0], 0) : "暂无主序列" }}</small>
+          </div>
+          <div>
+            <dt>区间峰值</dt>
+            <dd>{{ formatMetric(peakValue) }}</dd>
+            <small>全部返回序列</small>
+          </div>
+          <div>
+            <dt>区间变化</dt>
+            <dd :class="{ 'is-rising': (changeRate ?? 0) > 0 }">
+              {{ formatChange(changeRate) }}
+            </dd>
+            <small>主序列首尾对比</small>
+          </div>
+          <div>
+            <dt>覆盖</dt>
+            <dd>{{ execution.series_count }} / {{ execution.sample_count }}</dd>
+            <small>序列 / 采样点</small>
+          </div>
+        </dl>
+      </div>
 
       <section
         v-if="tableRows.length && !execution.result_expired"
@@ -290,6 +317,7 @@ function seriesIdentity(series: QuerySeries): string {
           <li
             v-for="event in execution.events"
             :key="event.id"
+            :data-type="event.type"
           >
             <strong>{{ event.type }}</strong>
             <span>{{ event.actor }} · {{ formatTime(event.created_at) }}</span>
@@ -310,7 +338,7 @@ function seriesIdentity(series: QuerySeries): string {
 </template>
 
 <style scoped>
-.monitoring-result { min-width: 0; }
+.monitoring-result { display: grid; min-width: 0; gap: var(--co-space-3); }
 .monitoring-result__header,
 .monitoring-result__actions,
 .monitoring-result__meta,
@@ -320,15 +348,30 @@ function seriesIdentity(series: QuerySeries): string {
   min-width: 0;
   align-items: center;
 }
-.monitoring-result__header { min-height: 52px; justify-content: space-between; gap: var(--co-space-3); border-top: 1px solid var(--co-border-default); }
+.monitoring-result__header { min-height: 58px; justify-content: space-between; gap: var(--co-space-3); padding-bottom: var(--co-space-2); border-bottom: 1px solid var(--co-border-subtle); }
 .monitoring-result__header > div:first-child { display: grid; gap: 1px; }
 .monitoring-result__header h2 { margin: 0; font-size: 16px; }
 .monitoring-result__header > div:first-child > span { color: var(--co-text-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.monitoring-result__header > div:first-child > small { color: var(--co-text-muted); font-size: 10px; }
 .monitoring-result__actions { flex-wrap: wrap; justify-content: flex-end; gap: var(--co-space-1); }
+.monitoring-result__empty { display: grid; min-height: 224px; grid-template-columns: minmax(0, 1fr) minmax(220px, .38fr); align-items: center; gap: var(--co-space-5); overflow: hidden; padding: var(--co-space-5); border-radius: var(--co-radius-frame); background: color-mix(in srgb, var(--co-bg-surface) 78%, var(--co-bg-canvas)); box-shadow: var(--co-shadow-row); }
+.monitoring-result__empty-copy { display: flex; min-width: 0; align-items: center; gap: var(--co-space-4); }
+.monitoring-result__empty-copy > span { display: grid; width: 50px; height: 50px; flex: 0 0 auto; place-items: center; border-radius: var(--co-radius-panel); background: var(--co-status-info-bg); color: var(--co-status-info-fg); font-size: 21px; }
+.monitoring-result__empty-copy > div { min-width: 0; }
+.monitoring-result__empty-copy small { color: var(--co-text-muted); font-size: 10px; }
+.monitoring-result__empty-copy h3 { margin: 3px 0 0; font-size: 17px; }
+.monitoring-result__empty-copy p { max-width: 54ch; margin: var(--co-space-2) 0 0; color: var(--co-text-muted); font-size: 11px; line-height: 1.6; }
+.monitoring-result__empty-context { display: grid; min-width: 0; gap: var(--co-space-2); margin: 0; }
+.monitoring-result__empty-context div { min-width: 0; padding: var(--co-space-3); border-radius: var(--co-radius-control); background: var(--co-bg-canvas); }
+.monitoring-result__empty-context dt { color: var(--co-text-muted); font-size: 9px; }
+.monitoring-result__empty-context dd { margin: 3px 0 0; overflow: hidden; color: var(--co-text-primary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .monitoring-result__meta { flex-wrap: wrap; gap: var(--co-space-2) var(--co-space-5); padding: var(--co-space-2) 0; color: var(--co-text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
-.monitoring-result__summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; overflow: hidden; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); background: var(--co-bg-subtle); }
-.monitoring-result__summary > div { display: grid; min-width: 0; gap: 2px; padding: var(--co-space-3); border-right: 1px solid var(--co-border-subtle); }
-.monitoring-result__summary > div:last-child { border-right: 0; }
+.monitoring-result__visual { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) minmax(190px, 224px); align-items: stretch; gap: var(--co-space-3); }
+.monitoring-result__chart-stage { min-width: 0; }
+.monitoring-result__chart-stage :deep(.monitoring-chart) { border-bottom: 0; }
+.monitoring-result__summary { display: grid; min-width: 0; align-content: stretch; gap: var(--co-space-2); margin: 0; }
+.monitoring-result__summary > div { display: grid; min-width: 0; align-content: center; gap: 3px; padding: var(--co-space-3); border-radius: var(--co-radius-control); background: var(--co-bg-surface); box-shadow: var(--co-shadow-row); }
+.monitoring-result__summary > div.is-primary { background: color-mix(in srgb, var(--co-status-info-bg) 58%, var(--co-bg-surface)); }
 .monitoring-result__summary dt { color: var(--co-text-muted); font-size: 10px; }
 .monitoring-result__summary dd { min-width: 0; margin: 0; color: var(--co-text-primary); font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .monitoring-result__summary dd.is-rising { color: var(--co-status-warning-fg); }
@@ -348,8 +391,11 @@ function seriesIdentity(series: QuerySeries): string {
 .monitoring-result__series { max-width: var(--co-table-cell-max-width); overflow: hidden; font-family: var(--co-font-mono); text-overflow: ellipsis; white-space: nowrap; }
 .monitoring-result__table td.monitoring-result__number { text-align: right; font-variant-numeric: tabular-nums; }
 .monitoring-result__audit { padding-bottom: var(--co-space-4); }
-.monitoring-result__audit ol { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--co-space-2); margin: 0; padding: 0; list-style: none; }
-.monitoring-result__audit li { min-width: 0; padding: var(--co-space-2) var(--co-space-3); border: 1px solid var(--co-border-default); border-left: 2px solid var(--co-border-strong); border-radius: var(--co-radius-panel); background: var(--co-bg-subtle); }
+.monitoring-result__audit ol { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0; margin: var(--co-space-2) 0 0; padding: 0; border-top: 1px solid var(--co-border-default); list-style: none; }
+.monitoring-result__audit li { position: relative; min-width: 0; padding: var(--co-space-3) var(--co-space-3) 0; }
+.monitoring-result__audit li::before { position: absolute; top: -5px; left: var(--co-space-3); width: 9px; height: 9px; border: 2px solid var(--co-bg-canvas); border-radius: var(--co-radius-pill); background: var(--co-border-strong); box-shadow: 0 0 0 1px var(--co-border-default); content: ""; }
+.monitoring-result__audit li[data-type="succeeded"]::before { background: var(--co-status-success-fg); }
+.monitoring-result__audit li[data-type="failed"]::before { background: var(--co-status-critical-fg); }
 .monitoring-result__audit li strong,
 .monitoring-result__audit li span { display: block; }
 .monitoring-result__audit li strong { font-size: 11px; }
@@ -358,8 +404,8 @@ function seriesIdentity(series: QuerySeries): string {
 .monitoring-result__audit li p { margin: var(--co-space-1) 0 0; overflow-wrap: anywhere; }
 
 @media (max-width: 1024px) {
+  .monitoring-result__empty { grid-template-columns: minmax(0, 1fr); }
+  .monitoring-result__visual { grid-template-columns: minmax(0, 1fr); }
   .monitoring-result__summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .monitoring-result__summary > div:nth-child(2) { border-right: 0; }
-  .monitoring-result__summary > div:nth-child(-n + 2) { border-bottom: 1px solid var(--co-border-subtle); }
 }
 </style>

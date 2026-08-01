@@ -58,7 +58,7 @@ function statusLabel(status: QueryExecution["status"]): string {
         @click="emit('select', item.id)"
       >
         <span class="monitoring-history__copy">
-          <span><b>{{ item.mode === "guided" ? "引导" : "Expert" }}</b><i :data-status="item.status">{{ statusLabel(item.status) }}</i></span>
+          <span><b>{{ item.mode === "guided" ? "可视化" : "PromQL" }}</b><i :data-status="item.status">{{ statusLabel(item.status) }}</i></span>
           <code>{{ item.catalog_key || item.query }}</code>
           <small>{{ formatTime(item.created_at) }} · {{ item.actor }}</small>
         </span>
@@ -68,12 +68,12 @@ function statusLabel(status: QueryExecution["status"]): string {
 </template>
 
 <style scoped>
-.monitoring-history { min-width: 0; align-self: start; border-top: 1px solid var(--co-border-default); }
+.monitoring-history { min-width: 0; align-self: start; }
 .monitoring-history > header { display: flex; min-height: 52px; align-items: center; justify-content: space-between; gap: var(--co-space-2); }
 .monitoring-history h2 { margin: 0; font-size: 14px; }
-.monitoring-history__list { max-height: 720px; overflow-y: auto; border: 1px solid var(--co-border-subtle); border-radius: var(--co-radius-frame); }
-.monitoring-history__item { width: 100%; min-height: 68px; justify-content: stretch; border-radius: 0; border-bottom: 1px solid var(--co-border-subtle); }
-.monitoring-history__item.is-active { box-shadow: inset 3px 0 0 var(--co-action-primary); background: var(--co-bg-active); }
+.monitoring-history__list { display: grid; max-height: 720px; overflow-y: auto; gap: 7px; }
+.monitoring-history__item { width: 100%; min-height: 68px; justify-content: stretch; border: 1px solid transparent; border-radius: var(--co-radius-overlay); background: var(--co-bg-surface); box-shadow: var(--co-shadow-row); }
+.monitoring-history__item.is-active { border-color: var(--co-action-primary); box-shadow: var(--co-shadow-subtle); background: var(--co-bg-active); }
 .monitoring-history__copy { display: grid; width: 100%; min-width: 0; gap: 3px; text-align: left; }
 .monitoring-history__copy > span { display: flex; align-items: center; justify-content: space-between; gap: var(--co-space-2); }
 .monitoring-history__copy b { font-size: 11px; }

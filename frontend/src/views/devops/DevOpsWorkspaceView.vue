@@ -14,7 +14,6 @@ import HashValue from "../../components/incidents/HashValue.vue";
 import IncidentCommandConfirmation from "../../components/incidents/IncidentCommandConfirmation.vue";
 import JSONSnapshot from "../../components/incidents/JSONSnapshot.vue";
 import ResultBadge from "../../components/incidents/ResultBadge.vue";
-import ContextToolbar from "../../components/workspace/ContextToolbar.vue";
 import CopyFeedbackButton from "../../components/workspace/CopyFeedbackButton.vue";
 import WorkspaceDenseList, { type DenseListSeverity } from "../../components/workspace/WorkspaceDenseList.vue";
 import WorkspaceHeader from "../../components/workspace/WorkspaceHeader.vue";
@@ -689,39 +688,31 @@ onBeforeUnmount(() => {
       :description="store.notice"
     />
 
-    <ContextToolbar
-      label="DevOps Workspace 视图"
-      tabbed
+    <section
+      class="devops-view-switcher"
+      aria-label="DevOps Workspace 视图"
     >
-      <template #tabs>
-        <UTabs
-          :model-value="activeView"
-          :items="tabs"
-          :content="false"
-          color="primary"
-          variant="link"
-          @update:model-value="setView"
-        />
-      </template>
-      <template #filters>
-        <div class="toolbar-summary">
-          <strong>{{ activeView === "operations" ? "操作与 Authority" : "交付身份与 Baseline" }}</strong>
-          <span>{{ activeView === "operations" ? "高风险与待行动状态优先" : "当前 Active Baseline 优先" }}</span>
-        </div>
-      </template>
-      <template
+      <UTabs
+        :model-value="activeView"
+        :items="tabs"
+        :content="false"
+        color="primary"
+        variant="pill"
+        @update:model-value="setView"
+      />
+      <div class="toolbar-summary">
+        <strong>{{ activeView === "operations" ? "操作与 Authority" : "交付身份与 Baseline" }}</strong>
+        <span>{{ activeView === "operations" ? "高风险与待行动状态优先" : "当前 Active Baseline 优先" }}</span>
+      </div>
+      <UButton
         v-if="fullDetailRequested"
-        #secondary
-      >
-        <UButton
-          color="neutral"
-          variant="ghost"
-          icon="i-lucide-list"
-          label="返回全局队列"
-          @click="returnToQueue"
-        />
-      </template>
-    </ContextToolbar>
+        color="neutral"
+        variant="ghost"
+        icon="i-lucide-list"
+        label="返回全局队列"
+        @click="returnToQueue"
+      />
+    </section>
 
     <div
       v-if="!workspace && store.loading"
@@ -1514,7 +1505,7 @@ onBeforeUnmount(() => {
 .header-facts { display: flex; min-width: 0; flex-wrap: wrap; gap: var(--co-space-4); color: var(--co-text-secondary); font-size: 11px; }
 .header-facts span { display: inline-flex; align-items: baseline; gap: var(--co-space-1); }
 .header-facts strong { color: var(--co-text-primary); font-family: var(--co-font-mono); font-size: 16px; font-variant-numeric: tabular-nums; }
-.provider-strip, .queue-section, .freeze-section, .scenario-strip, .detail-section, .identity-section, .causal-section, .baseline-hero, .attention-strip { min-width: 0; overflow: hidden; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); background: var(--co-bg-surface); }
+.provider-strip, .freeze-section, .scenario-strip, .detail-section, .identity-section, .baseline-hero { min-width: 0; overflow: hidden; border: 1px solid transparent; border-radius: var(--co-radius-frame); background: var(--co-bg-surface); box-shadow: var(--co-shadow-row); }
 .provider-strip { padding: var(--co-space-3); }
 .provider-strip > header, .queue-section > header, .freeze-section > header, .identity-section > header, .detail-heading, .detail-section > header, .devops-inspector > header { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: var(--co-space-3); }
 .provider-strip h2, .provider-strip p, .queue-section h2, .queue-section p, .freeze-section h2, .freeze-section p, .identity-section h2, .detail-heading h2, .detail-section h3, .devops-inspector h3 { margin: 0; }
@@ -1541,23 +1532,26 @@ onBeforeUnmount(() => {
 .error-identities { display: flex; flex-wrap: wrap; gap: var(--co-space-2); }
 .toolbar-summary { display: grid; min-width: 0; gap: 2px; }
 .toolbar-summary span { color: var(--co-text-muted); font-size: 10px; }
+.devops-view-switcher { display: flex; min-width: 0; min-height: 52px; align-items: center; gap: var(--co-space-4); padding: var(--co-space-2) 0 var(--co-space-3); border-bottom: 1px solid var(--co-border-subtle); }
+.devops-view-switcher .toolbar-summary { flex: 1 1 auto; }
+.devops-view-switcher > :deep(button:last-child) { margin-left: auto; }
 .workspace-loading { display: grid; gap: 1px; padding: var(--co-space-3); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); }
 .loading-row { height: var(--co-table-row-height); }
 .operations-index, .operation-detail, .identity-view, .devops-inspector { display: grid; min-width: 0; gap: var(--co-space-4); }
-.attention-strip { display: grid; grid-template-columns: minmax(180px, .7fr) minmax(0, 1.3fr); gap: var(--co-space-4); padding: var(--co-space-3) var(--co-space-4); }
+.attention-strip { display: grid; min-width: 0; grid-template-columns: minmax(180px, .7fr) minmax(0, 1.3fr); gap: var(--co-space-4); padding: var(--co-space-2) 0 var(--co-space-4); border-bottom: 1px solid var(--co-border-subtle); }
 .attention-strip header { display: grid; align-content: center; min-width: 0; gap: 3px; }
 .attention-strip header span, .section-heading > div > span, .baseline-summary small, .identity-list small, .baseline-diff span { color: var(--co-text-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .attention-strip h2, .section-heading h2, .baseline-hero h2 { margin: 0; font-size: 16px; }
 .attention-strip header p, .section-heading p, .baseline-hero header p { margin: 3px 0 0; color: var(--co-text-muted); font-size: 11px; overflow-wrap: anywhere; }
 .attention-strip dl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; }
-.attention-strip dl div { display: grid; min-width: 0; gap: 2px; padding-inline: var(--co-space-3); border-left: 1px solid var(--co-border-default); }
+.attention-strip dl div { display: grid; min-width: 0; gap: 2px; padding: var(--co-space-2) var(--co-space-3); border-left: 1px solid var(--co-border-subtle); }
 .attention-strip dt { color: var(--co-text-muted); font-size: 10px; }
 .attention-strip dd { margin: 0; color: var(--co-text-primary); font-family: var(--co-font-mono); font-size: 20px; font-variant-numeric: tabular-nums; }
 .attention-strip small { color: var(--co-text-muted); font-size: 10px; overflow-wrap: anywhere; }
 .attention-strip .has-attention dd, .attention-strip .has-attention dt { color: var(--co-status-warning-fg); }
 .attention-strip .has-critical dd, .attention-strip .has-critical dt { color: var(--co-status-critical-fg); }
 .attention-strip .is-running dd, .attention-strip .is-running dt { color: var(--co-status-info-fg); }
-.causal-section { padding: var(--co-space-3) var(--co-space-4); }
+.causal-section { min-width: 0; padding: var(--co-space-2) 0 var(--co-space-4); border-bottom: 1px solid var(--co-border-subtle); }
 .section-heading { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: var(--co-space-3); }
 .section-heading > div { min-width: 0; }
 .section-heading > p { max-width: 420px; text-align: right; }
@@ -1576,12 +1570,15 @@ onBeforeUnmount(() => {
 .scenario-strip > div > span, .detail-heading > div > span, .detail-section > header span, .identity-section > header span, .devops-inspector header span { color: var(--co-text-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .scenario-strip h2 { margin: 2px 0 0; font-size: 15px; }
 .scenario-strip p { margin: 2px 0 0; color: var(--co-text-secondary); font-size: 11px; }
-.scenario-strip dl { display: grid; min-width: 0; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; }
-.scenario-strip dl div { min-width: 0; padding-inline: var(--co-space-3); border-left: 1px solid var(--co-border-default); }
+.scenario-strip dl { display: grid; min-width: 0; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; gap: 0; }
+.scenario-strip dl div { min-width: 0; padding: var(--co-space-2); }
+.scenario-strip dl div + div { border-left: 1px solid var(--co-border-subtle); }
 .scenario-strip dt, .fact-grid dt, .inspector-facts dt, .verification-matrix dt { color: var(--co-text-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .scenario-strip dd, .fact-grid dd, .inspector-facts dd, .verification-matrix dd { min-width: 0; margin: 2px 0 0; color: var(--co-text-secondary); overflow-wrap: anywhere; }
-.queue-section > header, .freeze-section > header, .identity-section > header { padding: var(--co-space-3); }
-.queue-section :deep(.workspace-dense-list), .identity-section :deep(.workspace-dense-list) { border: 0; border-radius: 0; }
+.queue-section { min-width: 0; overflow: visible; }
+.queue-section > header { padding: 0 0 var(--co-space-3); }
+.freeze-section > header, .identity-section > header { padding: var(--co-space-3); }
+.identity-section :deep(.workspace-dense-list) { padding: 0 var(--co-space-3) var(--co-space-3); }
 .devops-table-stack { display: grid; min-width: 0; justify-items: start; gap: 3px; }
 .devops-table-stack strong { color: var(--co-text-primary); font-size: 12px; overflow-wrap: anywhere; }
 .devops-table-stack span, .muted-copy { color: var(--co-text-muted); font-size: 11px; }
@@ -1671,9 +1668,11 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 900px) {
+  .devops-view-switcher { align-items: flex-start; flex-direction: column; }
+  .devops-view-switcher > :deep(button:last-child) { margin-left: 0; }
   .attention-strip { grid-template-columns: minmax(0, 1fr); }
   .attention-strip dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .attention-strip dl div { border-left: 0; border-top: 1px solid var(--co-border-default); padding-block: var(--co-space-2); }
+  .attention-strip dl div { padding-block: var(--co-space-2); }
   .section-heading { flex-direction: column; }
   .section-heading > p { max-width: none; text-align: left; }
   .causal-chain { grid-template-columns: repeat(2, minmax(0, 1fr)); }

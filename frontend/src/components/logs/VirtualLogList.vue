@@ -11,6 +11,7 @@ const props = defineProps<{
   wrap: boolean;
   selectedIDs: Set<string>;
   inspectedID: string;
+  highlight?: string;
 }>();
 
 const emit = defineEmits<{
@@ -27,7 +28,7 @@ let copyTimer: number | undefined;
 const virtualizer = useVirtualizer<HTMLDivElement, HTMLElement>(computed(() => ({
   count: props.entries.length,
   getScrollElement: () => viewport.value,
-  estimateSize: () => props.wrap ? 96 : 54,
+  estimateSize: () => props.wrap ? 96 : 64,
   overscan: 8,
   getItemKey: (index: number) => props.entries[index]?.id ?? index,
 })));
@@ -46,6 +47,26 @@ function formatTime(value: string): string {
 
 function levelLabel(level?: string): string {
   return level?.toUpperCase() || "INFO";
+}
+
+function messageParts(message: string): { value: string; highlighted: boolean }[] {
+  const needle = props.highlight?.trim();
+  if (!needle) return [{ value: message, highlighted: false }];
+  const lowerMessage = message.toLocaleLowerCase();
+  const lowerNeedle = needle.toLocaleLowerCase();
+  const parts: { value: string; highlighted: boolean }[] = [];
+  let cursor = 0;
+  while (cursor < message.length) {
+    const match = lowerMessage.indexOf(lowerNeedle, cursor);
+    if (match < 0) {
+      parts.push({ value: message.slice(cursor), highlighted: false });
+      break;
+    }
+    if (match > cursor) parts.push({ value: message.slice(cursor, match), highlighted: false });
+    parts.push({ value: message.slice(match, match + needle.length), highlighted: true });
+    cursor = match + needle.length;
+  }
+  return parts.length ? parts : [{ value: message, highlighted: false }];
 }
 
 function measureRow(element: Element | ComponentPublicInstance | null) {
@@ -115,6 +136,7 @@ watch(() => props.wrap, () => void nextTick(() => virtualizer.value.measure()));
         :aria-posinset="virtualRow.index + 1"
         :aria-setsize="entries.length"
         :data-index="virtualRow.index"
+        :data-level="entries[virtualRow.index].level || 'info'"
         :style="{ transform: `translateY(${virtualRow.start}px)` }"
       >
         <UCheckbox
@@ -130,12 +152,15 @@ watch(() => props.wrap, () => void nextTick(() => virtualizer.value.measure()));
           :aria-label="`检查 ${formatTime(entries[virtualRow.index].timestamp)} 的日志`"
           @click="inspectEntry($event, entries[virtualRow.index])"
         >
-          <time :datetime="entries[virtualRow.index].timestamp">{{ formatTime(entries[virtualRow.index].timestamp) }}</time>
-          <span
-            class="virtual-log-row__level"
-            :data-level="entries[virtualRow.index].level || 'info'"
-          >{{ levelLabel(entries[virtualRow.index].level) }}</span>
-          <code>{{ entries[virtualRow.index].message }}</code>
+          <span class="virtual-log-row__meta">
+            <time :datetime="entries[virtualRow.index].timestamp">{{ formatTime(entries[virtualRow.index].timestamp) }}</time>
+            <span
+              class="virtual-log-row__level"
+              :data-level="entries[virtualRow.index].level || 'info'"
+            >{{ levelLabel(entries[virtualRow.index].level) }}</span>
+            <span class="virtual-log-row__source">{{ entries[virtualRow.index].service || entries[virtualRow.index].resource.name }}</span>
+          </span>
+          <code><template v-for="(part, partIndex) in messageParts(entries[virtualRow.index].message)" :key="partIndex"><mark v-if="part.highlighted">{{ part.value }}</mark><template v-else>{{ part.value }}</template></template></code>
         </UButton>
         <UTooltip text="复制完整原文">
           <UButton
@@ -172,65 +197,103 @@ watch(() => props.wrap, () => void nextTick(() => virtualizer.value.measure()));
 <style scoped>
 .virtual-log-list {
   width: 100%;
-  height: min(56vh, 560px);
-  min-height: 340px;
+  height: min(60vh, 620px);
+  min-height: 400px;
   overflow: auto;
   overscroll-behavior: contain;
-  border: 1px solid var(--co-border-default);
+  border: 1px solid color-mix(in srgb, var(--co-border-strong) 34%, transparent);
   border-radius: var(--co-radius-frame);
-  background: var(--co-bg-canvas);
+  background: var(--co-code-bg);
+  color: var(--co-code-text);
   contain: layout paint;
 }
-.virtual-log-list__spacer { position: relative; min-width: 100%; }
+.virtual-log-list__spacer { position: relative; min-width: 920px; }
 .virtual-log-row {
   position: absolute;
   inset: 0 0 auto;
   display: grid;
-  width: max-content;
+  width: 100%;
   min-width: 100%;
+  min-height: 64px;
   grid-template-columns: 30px minmax(780px, 1fr) 34px 34px;
   align-items: center;
   gap: var(--co-space-1);
-  min-height: 54px;
-  padding: var(--co-space-1) var(--co-space-2);
-  border-bottom: 1px solid var(--co-border-subtle);
-  background: var(--co-bg-canvas);
+  padding: 0 var(--co-space-2);
+  border-bottom: 1px solid color-mix(in srgb, var(--co-code-text) 9%, transparent);
+  background: transparent;
+  transition: background var(--co-motion-fast) var(--co-ease-out);
 }
 .virtual-log-row:hover,
-.virtual-log-row.is-inspected { background: var(--co-bg-hover); }
-.virtual-log-row.is-inspected { box-shadow: inset var(--co-severity-marker-width) 0 0 var(--co-action-primary); }
+.virtual-log-row.is-inspected { background: color-mix(in srgb, var(--co-code-text) 7%, transparent); }
+.virtual-log-row::after {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: 3px;
+  width: 3px;
+  height: 30px;
+  border-radius: var(--co-radius-pill);
+  background: color-mix(in srgb, var(--co-code-text) 24%, transparent);
+  content: "";
+  transform: translateY(-50%);
+}
+.virtual-log-row[data-level="error"]::after,
+.virtual-log-row[data-level="fatal"]::after { background: var(--co-status-critical-fg); }
+.virtual-log-row[data-level="warn"]::after,
+.virtual-log-row[data-level="warning"]::after { background: var(--co-status-warning-fg); }
+.virtual-log-row[data-level="info"]::after { background: var(--co-status-success-fg); }
+.virtual-log-row.is-inspected::after { box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 18%, transparent); }
+.virtual-log-row > * { position: relative; z-index: 1; }
 .virtual-log-row__inspect {
   display: grid;
   min-width: 780px;
-  grid-template-columns: 190px 64px minmax(520px, max-content);
+  grid-template-rows: auto auto;
   justify-content: stretch;
-  gap: var(--co-space-2);
-  padding-inline: var(--co-space-2);
+  gap: 5px;
+  padding: var(--co-space-2) var(--co-space-3);
   text-align: left;
 }
+.virtual-log-row :deep(button) { color: var(--co-code-text); }
+.virtual-log-row__inspect:hover { background: transparent; }
+.virtual-log-row__meta { display: flex; min-width: 0; align-items: center; gap: var(--co-space-2); }
 .virtual-log-row__inspect time {
-  color: var(--co-text-muted);
-  font-size: 11px;
+  color: color-mix(in srgb, var(--co-code-text) 66%, transparent);
+  font-family: var(--co-font-mono);
+  font-size: 10px;
   font-variant-numeric: tabular-nums;
 }
 .virtual-log-row__inspect code {
   min-width: 0;
-  color: var(--co-text-primary);
+  overflow: hidden;
+  color: var(--co-code-text);
   font-family: var(--co-font-mono);
   font-size: 11px;
+  text-overflow: ellipsis;
   white-space: pre;
 }
-.virtual-log-row__level { font-family: var(--co-font-mono); font-size: 10px; font-weight: 800; }
+.virtual-log-row__source { min-width: 0; overflow: hidden; color: var(--co-status-success-fg); font-family: var(--co-font-mono); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.virtual-log-row__inspect mark { border-radius: 3px; background: var(--co-status-warning-bg); color: var(--co-status-warning-fg); }
+.virtual-log-row__level { width: fit-content; padding: 2px 6px; border-radius: var(--co-radius-pill); background: color-mix(in srgb, var(--co-code-text) 9%, transparent); font-family: var(--co-font-mono); font-size: 10px; font-weight: 800; }
 .virtual-log-row__level[data-level="error"],
 .virtual-log-row__level[data-level="fatal"] { color: var(--co-status-critical-fg); }
 .virtual-log-row__level[data-level="warn"],
 .virtual-log-row__level[data-level="warning"] { color: var(--co-status-warning-fg); }
 .virtual-log-row__level[data-level="info"] { color: var(--co-status-info-fg); }
+.is-wrapped .virtual-log-list__spacer { min-width: 100%; }
 .is-wrapped .virtual-log-row { width: 100%; grid-template-columns: 30px minmax(0, 1fr) 34px 34px; }
-.is-wrapped .virtual-log-row__inspect { min-width: 0; grid-template-columns: 190px 64px minmax(260px, 1fr); }
-.is-wrapped .virtual-log-row__inspect code { overflow-wrap: anywhere; white-space: pre-wrap; }
+.is-wrapped .virtual-log-row__inspect { min-width: 0; }
+.is-wrapped .virtual-log-row__inspect code { overflow: visible; overflow-wrap: anywhere; text-overflow: clip; white-space: pre-wrap; }
 
 @media (max-width: 1024px) {
   .virtual-log-list { height: 480px; }
+  .virtual-log-list__spacer { min-width: 760px; }
+  .virtual-log-row { grid-template-columns: 30px minmax(620px, 1fr) 34px 34px; }
+  .virtual-log-row__inspect { min-width: 620px; }
+  .is-wrapped .virtual-log-list__spacer { min-width: 100%; }
+  .is-wrapped .virtual-log-row__inspect { min-width: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .virtual-log-row { transition: none; }
 }
 </style>

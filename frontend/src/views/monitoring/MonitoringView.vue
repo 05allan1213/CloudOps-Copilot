@@ -32,7 +32,6 @@ import MonitoringHistory from "../../components/monitoring/MonitoringHistory.vue
 import MonitoringQueryControls from "../../components/monitoring/MonitoringQueryControls.vue";
 import MonitoringResult from "../../components/monitoring/MonitoringResult.vue";
 import WorkspacePageFrame from "../../components/workspace/WorkspacePageFrame.vue";
-import WorkspaceStatusRow from "../../components/workspace/WorkspaceStatusRow.vue";
 import {
   buildMonitoringRouteQuery,
   parseMonitoringRoute,
@@ -260,7 +259,7 @@ async function loadCatalog(signal?: AbortSignal) {
     ]);
     if (signal?.aborted) return;
     catalog.value = nextCatalog;
-    historyItems.value = nextHistory;
+    historyItems.value = nextHistory.filter((item) => item.provider === "prometheus");
     if (!nextCatalog.queries.some((item) => item.key === guidedKey.value)) guidedKey.value = nextCatalog.queries[0]?.key ?? "";
     if (!expertQuery.value) expertQuery.value = nextCatalog.queries.find((item) => item.key === guidedKey.value)?.query ?? "";
   } catch (reason) {
@@ -347,6 +346,14 @@ async function loadWorkspace() {
     } else if (parsedRoute.definition) {
       const definition = definitions.value.find((item) => item.id === parsedRoute.definition);
       if (definition) await useDefinition(definition, false);
+    } else {
+      const recentExecution = historyItems.value.find((item) => item.status === "succeeded" && !item.result_expired);
+      if (recentExecution) {
+        queryController = new AbortController();
+        const querySignal = queryController.signal;
+        const queryRequestGeneration = ++queryGeneration;
+        await loadExecution(recentExecution.id, false, querySignal, queryRequestGeneration);
+      }
     }
     if (!signal.aborted) await syncRoute();
   } catch (reason) {
@@ -432,12 +439,13 @@ async function waitForPoll(signal: AbortSignal) {
 async function reloadHistory(signal?: AbortSignal) {
   const context = monitoringContext();
   if (!context) return;
-  historyItems.value = await getMonitoringQueries({
+  const items = await getMonitoringQueries({
     cluster_id: context.cluster_id,
     namespace: context.namespace,
     resource_id: context.resource.id,
     limit: 30,
   }, signal);
+  historyItems.value = items.filter((item) => item.provider === "prometheus");
 }
 
 async function pollExecution(id: string, generation: number, signal: AbortSignal) {
@@ -663,39 +671,26 @@ onBeforeUnmount(() => {
     width="full"
     aria-labelledby="monitoring-heading"
   >
-    <header class="monitoring-workspace__heading">
-      <div>
-        <span>可观测性</span>
-        <h1 id="monitoring-heading">
-          监控
-        </h1>
-        <p>{{ selectedResource ? `${selectedResource.kind} ${selectedResource.name}` : "当前运行范围" }} · 指标、趋势与异常时间窗口</p>
-      </div>
-      <UTooltip text="刷新监控工作区">
-        <UButton
-          color="neutral"
-          variant="ghost"
-          icon="i-lucide-refresh-cw"
-          square
-          aria-label="刷新监控工作区"
-          :loading="loading || catalogLoading"
-          @click="refreshAll"
-        />
-      </UTooltip>
-    </header>
-
-    <WorkspaceStatusRow
-      :tone="providerReady ? 'success' : catalog ? 'error' : 'neutral'"
-      :icon="providerReady ? 'i-lucide-activity' : 'i-lucide-circle-alert'"
-      :title="`Prometheus ${providerStateLabel(catalog?.provider_state)}`"
-      :description="catalog?.provider_detail || '正在确认当前 Configuration Revision 的采集端点'"
-      :badge="catalog?.partial ? '部分结果' : ''"
-      :busy="loading || catalogLoading"
+    <WorkspaceHeader
+      title="监控"
+      eyebrow="Observability / Metrics"
+      heading-id="monitoring-heading"
+      :description="`${selectedResource ? `${selectedResource.kind} ${selectedResource.name}` : '当前运行范围'} · 以真实指标值、趋势与异常时间窗口为中心`"
     >
-      <template #meta>
-        {{ bootstrap?.active_scope.cluster_id || "活动集群" }} / {{ selectedNamespace || "Namespace" }}
+      <template #actions>
+        <UTooltip text="刷新监控工作区">
+          <UButton
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-refresh-cw"
+            square
+            aria-label="刷新监控工作区"
+            :loading="loading || catalogLoading"
+            @click="refreshAll"
+          />
+        </UTooltip>
       </template>
-    </WorkspaceStatusRow>
+    </WorkspaceHeader>
 
     <WorkspaceState
       v-if="pageError"
@@ -743,39 +738,6 @@ onBeforeUnmount(() => {
     />
 
     <template v-else>
-      <MonitoringQueryControls
-        :namespaces="namespaces"
-        :resources="namespaceWorkloads"
-        :catalog="catalog"
-        :namespace="selectedNamespace"
-        :resource-i-d="selectedResourceID"
-        :mode="mode"
-        :guided-key="guidedKey"
-        :expert-query="expertQuery"
-        :from="fromValue"
-        :to="toValue"
-        :step-seconds="stepSeconds"
-        :valid-time-range="validTimeRange"
-        :can-run="canRun"
-        :running="queryRunning"
-        :query-in-flight="queryInFlight"
-        @update:namespace="selectedNamespace = $event"
-        @update:resource-i-d="selectedResourceID = $event"
-        @update:mode="changeMode"
-        @update:guided-key="guidedKey = $event"
-        @update:expert-query="expertQuery = $event"
-        @update:from="fromValue = $event"
-        @update:to="toValue = $event"
-        @update:step-seconds="stepSeconds = $event"
-        @namespace-change="changeNamespace"
-        @resource-change="changeResource"
-        @guided-change="selectGuidedQuery"
-        @query-change="markQueryChanged"
-        @preset="selectPreset"
-        @run="runQuery"
-        @cancel="stopQuery"
-      />
-
       <UAlert
         v-if="catalog && !providerReady"
         color="error"
@@ -785,10 +747,50 @@ onBeforeUnmount(() => {
         :description="`${catalog.provider_detail} · ${catalog.source.identity || '当前 Configuration Revision 没有可用采集端点'}`"
       />
 
+      <section
+        class="monitoring-workspace__query"
+        aria-label="指标查询工具栏"
+      >
+        <MonitoringQueryControls
+          :namespaces="namespaces"
+          :resources="namespaceWorkloads"
+          :catalog="catalog"
+          :namespace="selectedNamespace"
+          :resource-i-d="selectedResourceID"
+          :mode="mode"
+          :guided-key="guidedKey"
+          :expert-query="expertQuery"
+          :from="fromValue"
+          :to="toValue"
+          :step-seconds="stepSeconds"
+          :valid-time-range="validTimeRange"
+          :can-run="canRun"
+          :running="queryRunning"
+          :query-in-flight="queryInFlight"
+          @update:namespace="selectedNamespace = $event"
+          @update:resource-i-d="selectedResourceID = $event"
+          @update:mode="changeMode"
+          @update:guided-key="guidedKey = $event"
+          @update:expert-query="expertQuery = $event"
+          @update:from="fromValue = $event"
+          @update:to="toValue = $event"
+          @update:step-seconds="stepSeconds = $event"
+          @namespace-change="changeNamespace"
+          @resource-change="changeResource"
+          @guided-change="selectGuidedQuery"
+          @query-change="markQueryChanged"
+          @preset="selectPreset"
+          @run="runQuery"
+          @cancel="stopQuery"
+        />
+      </section>
+
       <div class="monitoring-workspace__grid">
         <MonitoringResult
           :execution="currentExecution"
           :cursor-timestamp="cursorTimestamp"
+          :metric-title="selectedCatalogEntry?.title || (mode === 'expert' ? 'PromQL 分析' : '指标趋势')"
+          :resource-label="selectedResource ? `${selectedResource.kind} ${selectedResource.name}` : '当前 Scope'"
           @cursor="cursorTimestamp = $event"
         >
           <template #actions>
@@ -838,14 +840,25 @@ onBeforeUnmount(() => {
               rel="noopener noreferrer"
               external
             />
+            <UPopover>
+              <UButton
+                color="neutral"
+                variant="soft"
+                icon="i-lucide-history"
+                :label="`查询历史 ${historyItems.length}`"
+              />
+              <template #content>
+                <div class="monitoring-history-popover">
+                  <MonitoringHistory
+                    :items="historyItems"
+                    :active-i-d="currentExecution?.id ?? ''"
+                    @select="openExecution"
+                  />
+                </div>
+              </template>
+            </UPopover>
           </template>
         </MonitoringResult>
-
-        <MonitoringHistory
-          :items="historyItems"
-          :active-i-d="currentExecution?.id ?? ''"
-          @select="openExecution"
-        />
       </div>
 
       <MonitoringAssets
@@ -880,12 +893,9 @@ onBeforeUnmount(() => {
   padding: var(--co-space-5) clamp(var(--co-space-4), 2.5vw, var(--co-space-8)) var(--co-space-10);
 }
 .monitoring-workspace code { min-width: 0; overflow-wrap: anywhere; color: var(--co-text-secondary); font-family: var(--co-font-mono); font-size: 11px; }
-.monitoring-workspace__heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--co-space-4); padding-bottom: var(--co-space-4); }
-.monitoring-workspace__heading > div { min-width: 0; }
-.monitoring-workspace__heading span { color: var(--co-text-muted); font-size: 11px; }
-.monitoring-workspace__heading h1 { margin: 3px 0 0; font-size: 24px; line-height: 1.2; letter-spacing: 0; }
-.monitoring-workspace__heading p { margin: var(--co-space-1) 0 0; color: var(--co-text-secondary); font-size: 12px; overflow-wrap: anywhere; }
-.monitoring-workspace__grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(250px, 300px); gap: var(--co-space-6); margin-top: var(--co-space-5); }
+.monitoring-workspace__grid { display: grid; grid-template-columns: minmax(0, 1fr); }
+.monitoring-workspace__query { min-width: 0; margin-bottom: var(--co-space-3); }
+.monitoring-history-popover { width: min(420px, calc(100vw - 48px)); padding: var(--co-space-3); }
 
 @media (max-width: 1024px) {
   .monitoring-workspace { padding-inline: var(--co-space-4); }

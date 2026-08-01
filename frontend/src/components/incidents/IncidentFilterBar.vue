@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import ContextToolbar from "../workspace/ContextToolbar.vue";
 import { incidentStatusLabel, incidentStatuses, severityLabel } from "../../models/incidents";
 import type { IncidentSeverity, IncidentStatus } from "../../types/incidents";
 
@@ -46,6 +45,12 @@ const attentionItems = [
   { label: "需要 Attention", value: "true" },
   { label: "无需 Attention", value: "false" },
 ];
+const quickItems = [
+  { label: "全部", value: "all", icon: "i-lucide-list-filter" },
+  { label: "调查中", value: "investigating", icon: "i-lucide-search-check" },
+  { label: "需关注", value: "attention", icon: "i-lucide-triangle-alert" },
+  { label: "已关闭", value: "closed", icon: "i-lucide-circle-check" },
+];
 const activeAdvancedCount = computed(() => [
   props.severity,
   props.attention === undefined ? undefined : String(props.attention),
@@ -66,6 +71,19 @@ const severityModel = computed({
 const attentionModel = computed({
   get: () => props.attention === undefined ? allValue : String(props.attention),
   set: (value: string) => emit("update:attention", value === allValue ? undefined : value === "true"),
+});
+const quickModel = computed({
+  get: () => {
+    if (props.attention === true && !props.status) return "attention";
+    if (props.status === "investigating" && props.attention === undefined) return "investigating";
+    if (props.status === "closed" && props.attention === undefined) return "closed";
+    if (!props.status && props.attention === undefined) return "all";
+    return "custom";
+  },
+  set: (value: string) => {
+    emit("update:attention", value === "attention" ? true : undefined);
+    emit("update:status", value === "investigating" || value === "closed" ? value : undefined);
+  },
 });
 const serviceModel = textModel(() => props.service, (value) => emit("update:service", value));
 const resourceModel = textModel(() => props.resource, (value) => emit("update:resource", value));
@@ -102,103 +120,106 @@ function toLocalDateTime(value?: string): string {
 </script>
 
 <template>
-  <ContextToolbar label="Incident 筛选与查询">
-    <template #filters>
-      <form
-        id="incident-filter-form"
-        class="filter-form"
-        data-testid="incident-filter-form"
-        @submit.prevent="emit('apply')"
-      >
-        <UTabs
-          v-model="statusModel"
-          class="incident-status-tabs"
-          :items="statusItems"
-          :content="false"
-          color="primary"
-          variant="pill"
-          size="sm"
-          aria-label="Incident 状态"
-        />
-        <UFormField
-          label="搜索服务"
-          class="incident-primary-search"
-        >
-          <UInput
-            v-model="serviceModel"
-            name="service"
-            icon="i-lucide-search"
-            placeholder="服务名称，例如 checkout-api"
-            aria-label="服务"
+  <section
+    class="incident-commandbar"
+    aria-label="Incident 筛选与查询"
+  >
+    <form
+      id="incident-filter-form"
+      class="filter-form"
+      data-testid="incident-filter-form"
+      @submit.prevent="emit('apply')"
+    >
+      <UTabs
+        v-model="quickModel"
+        class="incident-status-tabs"
+        :items="quickItems"
+        :content="false"
+        color="primary"
+        variant="pill"
+        size="sm"
+        aria-label="Incident 高频筛选"
+      />
+      <UInput
+        v-model="serviceModel"
+        class="incident-primary-search"
+        name="service"
+        icon="i-lucide-search"
+        placeholder="搜索服务或响应对象"
+        aria-label="搜索服务"
+      />
+      <UCollapsible class="incident-advanced-filters">
+        <template #default="{ open }">
+          <UButton
+            color="neutral"
+            variant="ghost"
+            icon="i-lucide-sliders-horizontal"
+            :trailing-icon="open ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
+            :label="activeAdvancedCount ? `高级 · ${activeAdvancedCount}` : '高级'"
+            :aria-label="`${open ? '收起' : '展开'} Incident 高级筛选`"
           />
-        </UFormField>
-        <UCollapsible class="incident-advanced-filters">
-          <template #default="{ open }">
-            <UButton
-              color="neutral"
-              variant="ghost"
-              icon="i-lucide-sliders-horizontal"
-              :trailing-icon="open ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
-              :label="activeAdvancedCount ? `高级筛选 · ${activeAdvancedCount}` : '高级筛选'"
-              :aria-label="`${open ? '收起' : '展开'} Incident 高级筛选`"
-            />
-          </template>
-          <template #content>
-            <div class="incident-advanced-grid">
-              <UFormField label="级别">
-                <USelect
-                  v-model="severityModel"
-                  :items="severityItems"
-                  value-key="value"
-                  aria-label="级别"
-                />
-              </UFormField>
-              <UFormField label="Attention">
-                <USelect
-                  v-model="attentionModel"
-                  :items="attentionItems"
-                  value-key="value"
-                  aria-label="Attention"
-                />
-              </UFormField>
-              <UFormField label="资源">
-                <UInput
-                  v-model="resourceModel"
-                  name="resource"
-                  placeholder="deployment/api"
-                  aria-label="资源"
-                />
-              </UFormField>
-              <UFormField label="Alert UUID">
-                <UInput
-                  v-model="alertModel"
-                  name="alert"
-                  placeholder="public Alert ID"
-                  aria-label="Alert UUID"
-                />
-              </UFormField>
-              <UFormField label="从">
-                <UInput
-                  v-model="fromModel"
-                  type="datetime-local"
-                  name="from"
-                  aria-label="从"
-                />
-              </UFormField>
-              <UFormField label="到">
-                <UInput
-                  v-model="toModel"
-                  type="datetime-local"
-                  name="to"
-                  aria-label="到"
-                />
-              </UFormField>
-            </div>
-          </template>
-        </UCollapsible>
-      </form>
-    </template>
-    <template #primary>
+        </template>
+        <template #content>
+          <div class="incident-advanced-grid">
+            <UFormField label="生命周期状态">
+              <USelect
+                v-model="statusModel"
+                :items="statusItems"
+                value-key="value"
+                aria-label="Incident 生命周期状态"
+              />
+            </UFormField>
+            <UFormField label="级别">
+              <USelect
+                v-model="severityModel"
+                :items="severityItems"
+                value-key="value"
+                aria-label="级别"
+              />
+            </UFormField>
+            <UFormField label="Attention">
+              <USelect
+                v-model="attentionModel"
+                :items="attentionItems"
+                value-key="value"
+                aria-label="Attention"
+              />
+            </UFormField>
+            <UFormField label="资源">
+              <UInput
+                v-model="resourceModel"
+                name="resource"
+                placeholder="deployment/api"
+                aria-label="资源"
+              />
+            </UFormField>
+            <UFormField label="Alert UUID">
+              <UInput
+                v-model="alertModel"
+                name="alert"
+                placeholder="public Alert ID"
+                aria-label="Alert UUID"
+              />
+            </UFormField>
+            <UFormField label="从">
+              <UInput
+                v-model="fromModel"
+                type="datetime-local"
+                name="from"
+                aria-label="从"
+              />
+            </UFormField>
+            <UFormField label="到">
+              <UInput
+                v-model="toModel"
+                type="datetime-local"
+                name="to"
+                aria-label="到"
+              />
+            </UFormField>
+          </div>
+        </template>
+      </UCollapsible>
       <UButton
         type="submit"
         form="incident-filter-form"
@@ -206,36 +227,40 @@ function toLocalDateTime(value?: string): string {
         color="primary"
         icon="i-lucide-search"
         :loading="loading"
-        label="应用筛选"
+        label="应用"
       />
       <UButton
         type="button"
         color="neutral"
         variant="ghost"
         icon="i-lucide-filter-x"
-        label="清除"
+        square
+        aria-label="清除 Incident 筛选"
         @click="emit('reset')"
       />
-    </template>
-  </ContextToolbar>
+    </form>
+  </section>
 </template>
 
 <style scoped>
-.filter-form { display: grid; min-width: 0; flex: 1 1 760px; grid-template-columns: auto minmax(240px, 1fr) auto; align-items: end; gap: var(--co-space-3); }
-.incident-status-tabs { min-width: 430px; align-self: end; }
+.incident-commandbar { min-width: 0; padding: var(--co-space-2); border: 1px solid var(--co-border-subtle); border-radius: var(--co-radius-frame); background: color-mix(in srgb, var(--co-bg-surface) 88%, var(--co-bg-canvas)); }
+.filter-form { display: grid; min-width: 0; grid-template-columns: minmax(300px, auto) minmax(220px, 1fr) auto auto auto; align-items: center; gap: var(--co-space-2); }
+.incident-status-tabs,
 .incident-primary-search { min-width: 0; }
-.incident-primary-search :deep(.u-input) { width: 100%; }
-.incident-advanced-filters { position: relative; align-self: end; }
+.incident-primary-search { width: 100%; }
+.incident-advanced-filters { position: relative; }
 .incident-advanced-grid { position: absolute; z-index: var(--co-z-popover); top: calc(100% + var(--co-space-2)); right: 0; display: grid; width: min(660px, calc(100vw - 64px)); grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--co-space-3); padding: var(--co-space-4); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-panel); background: var(--co-bg-overlay); box-shadow: var(--co-shadow-overlay); }
 .incident-advanced-grid :deep(.u-input), .incident-advanced-grid :deep(.u-select) { width: 100%; }
 
 @media (max-width: 1180px) {
-  .filter-form { grid-template-columns: minmax(0, 1fr) auto; }
-  .incident-status-tabs { min-width: 0; grid-column: 1 / -1; }
+  .filter-form { grid-template-columns: minmax(280px, 1fr) minmax(220px, 1fr) auto auto auto; }
+  .incident-status-tabs { grid-column: 1 / -1; }
 }
 
 @media (max-width: 1024px) {
+  .filter-form { grid-template-columns: minmax(0, 1fr) auto auto auto; }
+  .incident-status-tabs { grid-column: 1 / -1; }
   .incident-advanced-grid { position: static; width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: var(--co-space-2); box-shadow: none; }
-  .incident-advanced-filters { grid-column: 1 / -1; }
+  .incident-advanced-filters { position: static; }
 }
 </style>

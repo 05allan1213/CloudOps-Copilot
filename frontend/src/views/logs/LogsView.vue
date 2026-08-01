@@ -24,8 +24,8 @@ import LogsHistory from "../../components/logs/LogsHistory.vue";
 import LogsQueryControls from "../../components/logs/LogsQueryControls.vue";
 import { buildLogsRouteQuery, parseLogsRoute } from "../../components/logs/logsRoute";
 import VirtualLogList from "../../components/logs/VirtualLogList.vue";
+import WorkspaceHeader from "../../components/workspace/WorkspaceHeader.vue";
 import WorkspacePageFrame from "../../components/workspace/WorkspacePageFrame.vue";
-import WorkspaceStatusRow from "../../components/workspace/WorkspaceStatusRow.vue";
 import { useWorkspaceInspector } from "../../composables/useWorkspaceInspector";
 import { resolveTelemetryResourceID } from "../../models/telemetry";
 import { safeExternalURL } from "../../models/workbench";
@@ -118,6 +118,11 @@ const entries = computed(() => currentQuery.value?.entries ?? []);
 const inspectedEntry = computed(() => (
   entries.value.find((entry) => entry.id === inspectedEntryID.value) ?? null
 ));
+const inspectedEntryContext = computed(() => {
+  const index = entries.value.findIndex((entry) => entry.id === inspectedEntryID.value);
+  if (index < 0) return [];
+  return entries.value.slice(Math.max(0, index - 2), Math.min(entries.value.length, index + 3));
+});
 const maxHistogramCount = computed(() => Math.max(
   1,
   ...(currentQuery.value?.histogram ?? []).map((bucket) => bucket.count),
@@ -615,39 +620,25 @@ onBeforeUnmount(() => {
     width="full"
     aria-labelledby="logs-heading"
   >
-    <header class="logs-workspace__heading">
-      <div>
-        <span>可观测性</span>
-        <h1 id="logs-heading">
-          日志
-        </h1>
-        <p>{{ selectedResource ? `${selectedResource.kind} ${selectedResource.name}` : "当前运行范围" }} · 搜索日志、追踪上下文并保留 Evidence</p>
-      </div>
-      <UTooltip text="刷新日志工作区">
-        <UButton
-          color="neutral"
-          variant="ghost"
-          icon="i-lucide-refresh-cw"
-          square
-          aria-label="刷新日志工作区"
-          :loading="loading"
-          @click="refreshAll"
-        />
-      </UTooltip>
-    </header>
-
-    <WorkspaceStatusRow
-      :tone="providerReady ? 'success' : catalog ? 'error' : 'neutral'"
-      :icon="providerReady ? 'i-lucide-scroll-text' : 'i-lucide-circle-alert'"
-      :title="`Elasticsearch ${providerStateLabel(catalog?.provider_state)}`"
-      :description="catalog?.provider_detail || '正在确认当前 Configuration Revision 的日志端点'"
-      :badge="currentQuery?.tail ? '实时模式' : ''"
-      :busy="loading"
+    <WorkspaceHeader
+      title="日志分析"
+      eyebrow="Observability / Logs"
+      :description="`${selectedResource ? `${selectedResource.kind} ${selectedResource.name}` : '当前运行范围'} · 在时间流中定位异常并保留 Evidence`"
     >
-      <template #meta>
-        {{ bootstrap?.active_scope.cluster_id || "活动集群" }} / {{ selectedNamespace || "Namespace" }}
+      <template #actions>
+        <UTooltip text="刷新日志工作区">
+          <UButton
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-refresh-cw"
+            square
+            aria-label="刷新日志工作区"
+            :loading="loading"
+            @click="refreshAll"
+          />
+        </UTooltip>
       </template>
-    </WorkspaceStatusRow>
+    </WorkspaceHeader>
 
     <WorkspaceState
       v-if="pageError"
@@ -695,145 +686,206 @@ onBeforeUnmount(() => {
     />
 
     <template v-else>
-      <LogsQueryControls
-        :namespaces="namespaces"
-        :resources="namespaceWorkloads"
-        :catalog="catalog"
-        :namespace="selectedNamespace"
-        :resource-i-d="selectedResourceID"
-        :mode="mode"
-        :text="textFilter"
-        :trace-i-d="traceFilter"
-        :levels="levels"
-        :expert-query="expertQuery"
-        :from="fromValue"
-        :to="toValue"
-        :limit="limit"
-        :tail="tail"
-        :valid-time-range="validTimeRange"
-        :can-run="canRun"
-        :querying="querying"
-        @update:namespace="selectedNamespace = $event"
-        @update:resource-i-d="selectedResourceID = $event"
-        @update:mode="changeMode"
-        @update:text="textFilter = $event"
-        @update:trace-i-d="traceFilter = $event"
-        @update:expert-query="expertQuery = $event"
-        @update:from="fromValue = $event"
-        @update:to="toValue = $event"
-        @update:limit="limit = $event"
-        @update:tail="updateTail"
-        @level-toggle="toggleLevel"
-        @namespace-change="changeNamespace"
-        @resource-change="changeResource"
-        @preset="selectPreset"
-        @run="runQuery"
-        @cancel="cancelQueryRequest"
-      />
-
-      <UAlert
-        v-if="catalog && !providerReady"
-        color="error"
-        variant="soft"
-        icon="i-lucide-ban"
-        :title="`Elasticsearch ${providerStateLabel(catalog.provider_state)}`"
-        :description="`${catalog.provider_detail} · ${catalog.source.identity || '当前 Configuration Revision 没有可用采集端点'}`"
-      />
-
-      <section
-        v-if="currentQuery?.histogram.length"
-        class="logs-histogram"
-        aria-labelledby="logs-histogram-heading"
-      >
-        <header>
-          <h2 id="logs-histogram-heading">
-            日志分布
-          </h2>
-          <span>{{ currentQuery.histogram.length }} 个时间桶</span>
-        </header>
-        <div :aria-label="`${currentQuery.histogram.length} 个日志时间桶`">
-          <UTooltip
-            v-for="bucket in currentQuery.histogram"
-            :key="bucket.from"
-            :text="`${formatTime(bucket.from)} · ${bucket.count} 条`"
-          >
-            <UButton
-              class="logs-histogram__bucket"
-              color="primary"
-              variant="ghost"
-              :aria-label="`${formatTime(bucket.from)}，${bucket.count} 条日志`"
-              @click="selectBucket(bucket.from, bucket.to)"
-            >
-              <span :style="{ height: `${Math.max(4, (bucket.count / maxHistogramCount) * 100)}%` }" />
-            </UButton>
-          </UTooltip>
-        </div>
-      </section>
-
       <div class="logs-workspace__grid">
-        <main class="logs-results">
-          <header class="logs-results__header">
-            <div>
-              <span>Query Execution</span>
-              <h2>日志结果</h2>
+        <main class="logs-analysis">
+          <aside class="logs-query-rail" aria-label="日志检索轨道">
+            <LogsQueryControls
+              :namespaces="namespaces"
+              :resources="namespaceWorkloads"
+              :catalog="catalog"
+              :namespace="selectedNamespace"
+              :resource-i-d="selectedResourceID"
+              :mode="mode"
+              :text="textFilter"
+              :trace-i-d="traceFilter"
+              :levels="levels"
+              :expert-query="expertQuery"
+              :from="fromValue"
+              :to="toValue"
+              :limit="limit"
+              :tail="tail"
+              :valid-time-range="validTimeRange"
+              :can-run="canRun"
+              :querying="querying"
+              @update:namespace="selectedNamespace = $event"
+              @update:resource-i-d="selectedResourceID = $event"
+              @update:mode="changeMode"
+              @update:text="textFilter = $event"
+              @update:trace-i-d="traceFilter = $event"
+              @update:expert-query="expertQuery = $event"
+              @update:from="fromValue = $event"
+              @update:to="toValue = $event"
+              @update:limit="limit = $event"
+              @update:tail="updateTail"
+              @level-toggle="toggleLevel"
+              @namespace-change="changeNamespace"
+              @resource-change="changeResource"
+              @preset="selectPreset"
+              @run="runQuery"
+              @cancel="cancelQueryRequest"
+            />
+
+            <UAlert
+              v-if="catalog && !providerReady"
+              color="error"
+              variant="soft"
+              icon="i-lucide-ban"
+              :title="`Elasticsearch ${providerStateLabel(catalog.provider_state)}`"
+              :description="`${catalog.provider_detail} · ${catalog.source.identity || '当前 Configuration Revision 没有可用采集端点'}`"
+            />
+          </aside>
+
+          <section class="logs-stream-stage" aria-labelledby="logs-stream-heading">
+          <header class="logs-analysis__header">
+            <div class="logs-analysis__identity">
+              <span class="logs-analysis__icon" aria-hidden="true">
+                <UIcon :name="currentQuery?.tail ? 'i-lucide-radio-tower' : 'i-lucide-logs'" />
+              </span>
+              <div>
+                <span>{{ currentQuery?.tail ? "实时流" : "查询结果" }}</span>
+                <h2 id="logs-stream-heading">{{ currentQuery?.tail ? "实时日志流" : "日志时间流" }}</h2>
+                <p v-if="currentQuery">
+                  {{ currentQuery.result_count }} 条 · {{ formatBytes(currentQuery.response_bytes) }} · 采集于 {{ formatTime(currentQuery.source.collected_at) }}
+                </p>
+                <p v-else>
+                  以资源与时间为边界，直接扫描日志原文、Trace 线索和结构化字段。
+                </p>
+              </div>
             </div>
-            <div>
-              <USwitch
-                :model-value="wrapRows"
-                label="换行"
-                @update:model-value="updateWrap(Boolean($event))"
-              />
+            <div
+              v-if="currentQuery"
+              class="logs-analysis__count"
+              aria-label="查询结果数量"
+            >
+              <strong>{{ currentQuery.result_count }}</strong>
+              <span>日志事件</span>
+              <small>{{ formatBytes(currentQuery.response_bytes) }}</small>
+            </div>
+            <div class="logs-analysis__actions">
               <UButton
                 color="neutral"
-                variant="outline"
+                variant="soft"
                 icon="i-lucide-save"
-                label="保存 Evidence"
+                :label="selectedEntryIDs.size ? `保留 ${selectedEntryIDs.size} 条` : '保留 Evidence'"
                 :disabled="selectedEntryIDs.size === 0 || savingEvidence || currentQuery?.result_expired"
                 :loading="savingEvidence"
                 @click="retainSelectedEvidence"
               />
               <UButton
                 color="neutral"
-                variant="outline"
+                variant="soft"
                 icon="i-lucide-bot"
-                label="关联 Agent"
+                label="交给 Agent"
                 :disabled="!canFreeze"
                 @click="openCurrentInAgent"
               />
-              <UButton
-                color="neutral"
-                variant="outline"
-                icon="i-lucide-box"
-                label="Workload"
-                :to="workloadLocation"
-              />
-              <UButton
+              <UPopover>
+                <UButton
+                  color="neutral"
+                  variant="ghost"
+                  icon="i-lucide-settings-2"
+                  label="显示"
+                />
+                <template #content>
+                  <div class="logs-display-menu">
+                    <USwitch
+                      :model-value="wrapRows"
+                      label="日志正文换行"
+                      @update:model-value="updateWrap(Boolean($event))"
+                    />
+                    <span>关闭换行时，日志原文保留有界横向滚动。</span>
+                  </div>
+                </template>
+              </UPopover>
+              <UPopover>
+                <UButton
+                  color="neutral"
+                  variant="soft"
+                  icon="i-lucide-history"
+                  :label="`查询历史 ${historyItems.length}`"
+                />
+                <template #content>
+                  <div class="logs-history-popover">
+                    <LogsHistory
+                      :items="historyItems"
+                      :active-i-d="currentQuery?.id ?? ''"
+                      @select="openHistory"
+                    />
+                  </div>
+                </template>
+              </UPopover>
+              <UTooltip text="打开关联 Workload">
+                <UButton
+                  color="neutral"
+                  variant="ghost"
+                  icon="i-lucide-box"
+                  square
+                  aria-label="打开关联 Workload"
+                  :to="workloadLocation"
+                />
+              </UTooltip>
+              <UTooltip
                 v-if="kibanaURL"
-                color="neutral"
-                variant="outline"
-                icon="i-lucide-external-link"
-                label="Kibana"
-                :to="kibanaURL"
-                target="_blank"
-                rel="noopener noreferrer"
-                external
-              />
+                text="在 Kibana 中打开"
+              >
+                <UButton
+                  color="neutral"
+                  variant="ghost"
+                  icon="i-lucide-external-link"
+                  square
+                  aria-label="在 Kibana 中打开"
+                  :to="kibanaURL"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  external
+                />
+              </UTooltip>
             </div>
           </header>
 
+          <section
+            v-if="currentQuery?.histogram.length"
+            class="logs-distribution"
+            aria-labelledby="logs-histogram-heading"
+          >
+            <header>
+              <div>
+                <span>时间密度</span>
+                <h3 id="logs-histogram-heading">
+                  时间分布
+                </h3>
+              </div>
+              <span v-if="currentQuery?.histogram.length">{{ currentQuery.histogram.length }} 个时间桶 · 点击收窄范围</span>
+              <span v-else>等待真实查询结果</span>
+            </header>
+            <div
+              class="logs-distribution__buckets"
+              :aria-label="`${currentQuery.histogram.length} 个日志时间桶`"
+            >
+              <UTooltip
+                v-for="bucket in currentQuery.histogram"
+                :key="bucket.from"
+                :text="`${formatTime(bucket.from)} · ${bucket.count} 条`"
+              >
+                <UButton
+                  class="logs-distribution__bucket"
+                  color="primary"
+                  variant="ghost"
+                  :aria-label="`${formatTime(bucket.from)}，${bucket.count} 条日志`"
+                  @click="selectBucket(bucket.from, bucket.to)"
+                >
+                  <span :style="{ height: bucket.count ? `${Math.max(4, (bucket.count / maxHistogramCount) * 100)}%` : '0' }" />
+                </UButton>
+              </UTooltip>
+            </div>
+          </section>
+
           <div
             v-if="currentQuery"
-            class="logs-results__meta"
+            class="logs-analysis__meta"
           >
-            <span><b>{{ currentQuery.result_count }}</b> rows</span>
-            <span><b>{{ formatBytes(currentQuery.response_bytes) }}</b></span>
-            <span>采集 {{ formatTime(currentQuery.source.collected_at) }}</span>
-            <UBadge
-              v-if="currentQuery.tail"
-              color="info"
-              variant="soft"
-              label="Tail"
-            />
+            <span><b>{{ currentQuery.tail ? "LIVE" : "SEARCH" }}</b></span>
+            <span>{{ currentQuery.time_range.from }} → {{ currentQuery.time_range.to }}</span>
             <UBadge
               v-if="currentQuery.truncated"
               color="warning"
@@ -860,36 +912,84 @@ onBeforeUnmount(() => {
             description="仅保留 Query Execution 审计元数据；请重新执行后再保存 Evidence。"
           />
           <WorkspaceState
-            v-if="!currentQuery"
-            kind="empty"
-            title="尚无日志查询"
-            description="选择真实 Workload 与时间范围后执行。"
-          />
-          <WorkspaceState
-            v-else-if="currentQuery.status === 'succeeded' && !currentQuery.result_expired && !entries.length"
-            kind="empty"
-            title="此范围没有日志"
-            description="资源、过滤条件与时间上下文保持不变。"
-          />
-          <WorkspaceState
-            v-else-if="currentQuery.status === 'failed'"
+            v-if="currentQuery?.status === 'failed'"
             kind="error"
             :title="currentQuery.error_code || '日志查询失败'"
             :description="currentQuery.error_detail || '服务端保留了失败的执行身份。'"
           />
           <VirtualLogList
-            v-else-if="entries.length"
+            v-if="entries.length"
             :entries="entries"
             :wrap="wrapRows"
             :selected-i-ds="selectedEntryIDs"
             :inspected-i-d="inspectedEntryID"
+            :highlight="mode === 'guided' ? textFilter : ''"
             @toggle="toggleEntry"
             @inspect="inspectEntry"
             @open-trace="openTrace"
             @copied="statusMessage = '完整日志原文已复制。'"
           />
+          <section
+            v-else
+            class="logs-stream-empty"
+            :class="{ 'has-query': currentQuery }"
+            aria-live="polite"
+          >
+            <div class="logs-stream-empty__copy">
+              <span><UIcon
+                :name="currentQuery ? 'i-lucide-search-x' : 'i-lucide-text-search'"
+                aria-hidden="true"
+              /></span>
+              <div>
+                <h3>{{ currentQuery ? "此范围没有日志" : selectedResource?.name || "当前运行范围" }}</h3>
+                <p>{{ currentQuery ? "资源、过滤条件与时间上下文保持不变，可调整关键词或扩大时间范围。" : `${selectedResource ? `${selectedResource.kind} · ${selectedResource.namespace}` : "等待可观测资源"} · Elasticsearch ${providerStateLabel(catalog?.provider_state)} · ${historyItems.length} 个历史执行` }}</p>
+              </div>
+            </div>
+            <div
+              v-if="!currentQuery"
+              class="logs-stream-empty__path"
+              aria-label="日志数据路径"
+            >
+              <span>
+                <UIcon name="i-lucide-box" aria-hidden="true" />
+                <small>Workload</small>
+                <b>{{ selectedResource?.name || "未选择" }}</b>
+              </span>
+              <UIcon name="i-lucide-arrow-right" aria-hidden="true" />
+              <span>
+                <UIcon name="i-lucide-database" aria-hidden="true" />
+                <small>Elasticsearch</small>
+                <b>{{ providerStateLabel(catalog?.provider_state) }}</b>
+              </span>
+              <UIcon name="i-lucide-arrow-right" aria-hidden="true" />
+              <span>
+                <UIcon name="i-lucide-history" aria-hidden="true" />
+                <small>最近执行</small>
+                <b>{{ historyItems.length ? `${historyItems.length} 个可恢复` : "尚无历史" }}</b>
+              </span>
+            </div>
+            <div
+              v-if="!currentQuery"
+              class="logs-stream-empty__aside"
+            >
+              <dl class="logs-stream-empty__facts">
+                <div><dt>模式</dt><dd>{{ tail ? "LIVE" : "SEARCH" }}</dd></div>
+                <div><dt>返回上限</dt><dd>{{ limit }}</dd></div>
+                <div><dt>历史执行</dt><dd>{{ historyItems.length }}</dd></div>
+              </dl>
+              <UButton
+                color="primary"
+                :icon="tail ? 'i-lucide-radio-tower' : 'i-lucide-search'"
+                :label="tail ? '开始实时追踪' : '运行日志搜索'"
+                :loading="querying"
+                :disabled="!canRun"
+                @click="runQuery"
+              />
+            </div>
+          </section>
 
           <section
+            v-if="currentQuery || retainedEvidence.length || consultation"
             class="logs-snapshot"
             aria-labelledby="logs-context-heading"
           >
@@ -923,13 +1023,9 @@ onBeforeUnmount(() => {
             <div><dt>Snapshot</dt><dd>{{ consultation.context_snapshot.id }}</dd></div>
             <div><dt>Content hash</dt><dd>{{ consultation.context_snapshot.content_hash }}</dd></div>
           </dl>
+          </section>
         </main>
 
-        <LogsHistory
-          :items="historyItems"
-          :active-i-d="currentQuery?.id ?? ''"
-          @select="openHistory"
-        />
       </div>
     </template>
   </WorkspacePageFrame>
@@ -937,6 +1033,7 @@ onBeforeUnmount(() => {
   <LogInspector
     :open="Boolean(inspectedEntryID)"
     :entry="inspectedEntry"
+    :context-entries="inspectedEntryContext"
     :target-i-d="inspectedEntryID"
     :trigger="inspectorTrigger"
     :selected="Boolean(inspectedEntry && selectedEntryIDs.has(inspectedEntry.id))"
@@ -949,28 +1046,60 @@ onBeforeUnmount(() => {
 <style scoped>
 .logs-workspace {
   padding: var(--co-space-5) clamp(var(--co-space-4), 2.5vw, var(--co-space-8)) var(--co-space-10);
+  container-name: logs-workspace;
+  container-type: inline-size;
 }
 .logs-workspace code { min-width: 0; overflow-wrap: anywhere; color: var(--co-text-secondary); font-family: var(--co-font-mono); font-size: 11px; }
-.logs-workspace__heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--co-space-4); padding-bottom: var(--co-space-4); }
-.logs-workspace__heading > div { min-width: 0; }
-.logs-workspace__heading span { color: var(--co-text-muted); font-size: 11px; }
-.logs-workspace__heading h1 { margin: 3px 0 0; font-size: 24px; line-height: 1.2; }
-.logs-workspace__heading p { margin: var(--co-space-1) 0 0; color: var(--co-text-secondary); font-size: 12px; overflow-wrap: anywhere; }
-.logs-workspace__grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 290px); gap: var(--co-space-6); margin-top: var(--co-space-4); }
-.logs-results { min-width: 0; }
-.logs-results__header { display: flex; min-height: 54px; align-items: center; justify-content: space-between; gap: var(--co-space-3); }
-.logs-results__header > div:first-child span { color: var(--co-text-muted); font-size: 10px; font-weight: 750; text-transform: uppercase; }
-.logs-results__header h2 { margin: 2px 0 0; font-size: 17px; }
-.logs-results__header > div:last-child { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--co-space-2); }
-.logs-results__meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--co-space-2) var(--co-space-4); padding: var(--co-space-2) 0 var(--co-space-3); border-bottom: 1px solid var(--co-border-default); color: var(--co-text-secondary); font-size: 11px; }
-.logs-histogram { padding: var(--co-space-3) 0; border-bottom: 1px solid var(--co-border-default); }
-.logs-histogram > header { display: flex; align-items: center; justify-content: space-between; gap: var(--co-space-3); }
-.logs-histogram h2 { margin: 0; font-size: 14px; }
-.logs-histogram header span { color: var(--co-text-muted); font-size: 11px; }
-.logs-histogram > div { display: flex; height: 80px; align-items: end; gap: 2px; overflow: hidden; border-bottom: 1px solid var(--co-border-strong); }
-.logs-histogram__bucket { position: relative; width: 100%; min-width: 7px; height: 100%; padding: 0; }
-.logs-histogram__bucket span { position: absolute; right: 1px; bottom: 0; left: 1px; min-height: 4px; background: var(--co-action-primary); }
-.logs-snapshot { display: flex; min-height: 66px; align-items: center; justify-content: space-between; gap: var(--co-space-4); padding: var(--co-space-3); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); }
+.logs-workspace__grid { min-width: 0; }
+.logs-analysis { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr); align-items: start; gap: var(--co-space-4); }
+.logs-query-rail { position: static; display: grid; min-width: 0; gap: var(--co-space-3); }
+.logs-stream-stage { display: grid; min-width: 0; align-content: start; gap: var(--co-space-3); padding: 0 var(--co-space-3) var(--co-space-3); border-radius: var(--co-radius-frame); background: color-mix(in srgb, var(--co-bg-surface) 76%, var(--co-bg-canvas)); box-shadow: var(--co-shadow-row); }
+.logs-analysis__header { display: grid; min-width: 0; min-height: 72px; grid-template-columns: minmax(0, 1fr) auto minmax(0, auto); align-items: center; gap: var(--co-space-5); padding: var(--co-space-3) 0; border-bottom: 1px solid var(--co-border-subtle); }
+.logs-analysis__identity { display: flex; min-width: 0; align-items: center; gap: var(--co-space-3); }
+.logs-analysis__identity > div { min-width: 0; }
+.logs-analysis__icon { display: grid; width: 42px; height: 42px; flex: 0 0 auto; place-items: center; border: 1px solid var(--co-status-success-border); border-radius: var(--co-radius-panel); color: var(--co-status-success-fg); background: var(--co-status-success-bg); }
+.logs-analysis__identity > div > span,
+.logs-distribution header > div > span { color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 9px; font-weight: 800; text-transform: uppercase; }
+.logs-analysis__header h2 { margin: 2px 0 0; font-size: 18px; }
+.logs-analysis__header p { margin: 2px 0 0; color: var(--co-text-muted); font-size: 10px; }
+.logs-analysis__count { display: grid; min-width: 120px; grid-template-columns: auto auto; align-items: baseline; column-gap: var(--co-space-2); padding-inline: var(--co-space-4); border-left: 1px solid var(--co-border-subtle); border-right: 1px solid var(--co-border-subtle); }
+.logs-analysis__count strong { font-family: var(--co-font-mono); font-size: 25px; font-variant-numeric: tabular-nums; line-height: 1; }
+.logs-analysis__count span { color: var(--co-text-secondary); font-size: 10px; }
+.logs-analysis__count small { grid-column: 1 / -1; margin-top: 4px; color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 9px; }
+.logs-analysis__actions { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--co-space-2); }
+.logs-display-menu { display: grid; min-width: 260px; gap: var(--co-space-2); padding: var(--co-space-3); }
+.logs-display-menu span { max-width: 34ch; color: var(--co-text-muted); font-size: 10px; }
+.logs-distribution { display: grid; min-height: 76px; grid-template-columns: minmax(170px, auto) minmax(0, 1fr); overflow: hidden; border-radius: var(--co-radius-panel); background: var(--co-bg-canvas); }
+.logs-distribution > header { display: flex; min-width: 0; align-items: flex-start; justify-content: center; flex-direction: column; gap: 2px; padding: var(--co-space-2) var(--co-space-3); border-right: 1px solid var(--co-border-subtle); }
+.logs-distribution h3 { margin: 1px 0 0; font-size: 12px; }
+.logs-distribution header > span { max-width: 24ch; color: var(--co-text-muted); font-size: 9px; }
+.logs-distribution__buckets { display: flex; height: 72px; align-items: end; gap: 3px; overflow: hidden; padding: var(--co-space-2) var(--co-space-3); }
+.logs-distribution__bucket { position: relative; width: 100%; min-width: 7px; height: 100%; padding: 0; }
+.logs-distribution__bucket span { position: absolute; right: 1px; bottom: 0; left: 1px; min-height: 4px; border-radius: var(--co-radius-control) var(--co-radius-control) 0 0; background: var(--co-status-success-fg); }
+.logs-analysis__meta { display: flex; width: fit-content; max-width: 100%; min-width: 0; flex-wrap: wrap; align-items: center; gap: var(--co-space-2) var(--co-space-4); margin-bottom: var(--co-space-2); padding: 0 0 var(--co-space-2); border-bottom: 1px solid var(--co-border-subtle); color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 9px; }
+.logs-stream-empty { display: grid; min-height: 278px; grid-template-columns: minmax(0, 1fr) minmax(210px, .42fr); align-content: center; align-items: center; gap: var(--co-space-5); overflow: hidden; padding: var(--co-space-6) var(--co-space-4); border-top: 1px solid var(--co-border-subtle); background: transparent; }
+.logs-stream-empty.has-query { min-height: 150px; grid-template-columns: minmax(0, 1fr); padding-block: var(--co-space-5); }
+.logs-stream-empty__copy { display: flex; min-width: 0; align-items: center; gap: var(--co-space-3); }
+.logs-stream-empty__copy > span { display: grid; width: 48px; height: 48px; flex: 0 0 auto; place-items: center; border: 1px solid var(--co-border-subtle); border-radius: var(--co-radius-panel); color: var(--co-status-success-fg); background: var(--co-status-success-bg); }
+.logs-stream-empty h3 { margin: 0; font-size: 16px; }
+.logs-stream-empty p { max-width: 46ch; margin: var(--co-space-2) 0 0; color: var(--co-text-secondary); font-size: 10px; line-height: 1.65; }
+.logs-stream-empty__path { display: grid; min-width: 0; grid-column: 1 / -1; grid-template-columns: minmax(92px, 1fr) auto minmax(108px, 1fr) auto minmax(102px, 1fr); align-items: center; gap: var(--co-space-2); padding: 4px; border-radius: var(--co-radius-panel); background: color-mix(in srgb, var(--co-bg-surface) 76%, var(--co-bg-canvas)); }
+.logs-stream-empty__path > span { display: grid; min-width: 0; grid-template-columns: auto minmax(0, 1fr); gap: 2px var(--co-space-2); padding: var(--co-space-3); border-radius: var(--co-radius-control); background: transparent; }
+.logs-stream-empty__path > span > svg { grid-row: 1 / 3; align-self: center; color: var(--co-status-success-fg); }
+.logs-stream-empty__path > svg { color: var(--co-text-muted); }
+.logs-stream-empty__path small,
+.logs-stream-empty__path b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.logs-stream-empty__path small { color: var(--co-text-muted); font-size: 8px; }
+.logs-stream-empty__path b { font-size: 10px; }
+.logs-stream-empty__aside { display: grid; min-width: 0; justify-items: start; gap: var(--co-space-3); padding-left: var(--co-space-4); border-left: 1px solid var(--co-border-subtle); }
+.logs-stream-empty__aside :deep(button) { width: fit-content; }
+.logs-stream-empty__facts { display: grid; min-width: 0; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; gap: var(--co-space-2); }
+.logs-stream-empty__facts div { min-width: 0; padding: var(--co-space-2); border-left: 1px solid var(--co-border-subtle); }
+.logs-stream-empty__facts div:first-child { border-left: 0; }
+.logs-stream-empty__facts dt { color: var(--co-text-muted); font-size: 8px; }
+.logs-stream-empty__facts dd { margin: 3px 0 0; color: var(--co-text-primary); font-family: var(--co-font-mono); font-size: 11px; font-weight: 700; }
+.logs-history-popover { width: min(400px, calc(100vw - 48px)); padding: var(--co-space-3); }
+.logs-snapshot { display: flex; min-height: 66px; align-items: center; justify-content: space-between; gap: var(--co-space-4); margin-top: var(--co-space-3); padding: var(--co-space-3) var(--co-space-4); border: 1px solid var(--co-border-subtle); border-radius: var(--co-radius-panel); background: var(--co-bg-surface); }
 .logs-snapshot > div { display: flex; min-width: 0; align-items: center; gap: var(--co-space-2); }
 .logs-snapshot h2 { margin: 0; font-size: 14px; }
 .logs-snapshot span { color: var(--co-text-muted); font-size: 11px; }
@@ -982,9 +1111,26 @@ onBeforeUnmount(() => {
 
 @media (max-width: 1024px) {
   .logs-workspace { padding-inline: var(--co-space-4); }
-  .logs-workspace__grid { grid-template-columns: minmax(0, 1fr); }
-  .logs-results__header { align-items: flex-start; flex-direction: column; }
-  .logs-results__header > div:last-child { justify-content: flex-start; }
+  .logs-analysis__header { grid-template-columns: minmax(0, 1fr); align-items: flex-start; padding-block: var(--co-space-3); }
+  .logs-analysis__count { padding: 0; border: 0; }
+  .logs-analysis__actions { justify-content: flex-start; }
+  .logs-distribution { grid-template-columns: minmax(0, 1fr); }
+  .logs-distribution > header { border-right: 0; border-bottom: 1px solid var(--co-border-subtle); }
+  .logs-stream-empty { grid-template-columns: minmax(0, 1fr); }
+  .logs-stream-empty__path { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .logs-stream-empty__path > svg { display: none; }
+  .logs-stream-empty__aside { padding-top: var(--co-space-3); padding-left: 0; border-top: 1px solid var(--co-border-subtle); border-left: 0; }
+  .logs-stream-empty__facts { min-width: 0; }
+}
+
+@container logs-workspace (max-width: 900px) {
+  .logs-analysis__header { grid-template-columns: minmax(0, 1fr); align-items: flex-start; }
+  .logs-analysis__count { padding: 0; border: 0; }
+  .logs-analysis__actions { justify-content: flex-start; }
+  .logs-distribution { grid-template-columns: minmax(0, 1fr); }
+  .logs-distribution > header { border-right: 0; border-bottom: 1px solid var(--co-border-subtle); }
+  .logs-stream-empty { grid-template-columns: minmax(0, 1fr); }
+  .logs-stream-empty__aside { padding-top: var(--co-space-3); padding-left: 0; border-top: 1px solid var(--co-border-subtle); border-left: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {

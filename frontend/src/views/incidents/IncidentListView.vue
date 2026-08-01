@@ -2,7 +2,6 @@
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
-import ContextToolbar from "../../components/workspace/ContextToolbar.vue";
 import WorkspaceHeader from "../../components/workspace/WorkspaceHeader.vue";
 import WorkspaceInspector from "../../components/workspace/WorkspaceInspector.vue";
 import WorkspacePageFrame from "../../components/workspace/WorkspacePageFrame.vue";
@@ -127,15 +126,31 @@ onMounted(() => {
       </template>
     </WorkspaceHeader>
 
-    <dl
-      class="incident-queue-summary"
-      aria-label="Incident 工作队列摘要"
+    <section
+      class="incident-attention"
+      aria-labelledby="incident-attention-heading"
     >
-      <div><dt>处理中</dt><dd>{{ activeCount }}</dd><small>尚未恢复或关闭</small></div>
-      <div><dt>严重</dt><dd class="is-critical">{{ criticalCount }}</dd><small>当前页严重事件</small></div>
-      <div><dt>需要关注</dt><dd class="is-warning">{{ attentionCount }}</dd><small>等待 Owner 判断</small></div>
-      <div><dt>恢复已证明</dt><dd class="is-success">{{ recoveredCount }}</dd><small>可进入 Resolution</small></div>
-    </dl>
+      <div class="incident-attention__lead">
+        <span aria-hidden="true">
+          <UIcon :name="criticalCount ? 'i-lucide-triangle-alert' : 'i-lucide-shield-check'" />
+        </span>
+        <div>
+          <small>当前响应态势</small>
+          <h2 id="incident-attention-heading">
+            <template v-if="criticalCount">{{ criticalCount }} 条严重 Incident 需要优先判断</template>
+            <template v-else-if="attentionCount">{{ attentionCount }} 条 Incident 等待 Owner 关注</template>
+            <template v-else>当前响应队列没有高风险阻塞</template>
+          </h2>
+          <p>{{ activeCount }} 条仍在生命周期中，{{ recoveredCount }} 条已有恢复证明。</p>
+        </div>
+      </div>
+      <dl aria-label="Incident 工作队列摘要">
+        <div><dt>严重</dt><dd class="is-critical">{{ criticalCount }}</dd><small>当前页</small></div>
+        <div><dt>处理中</dt><dd>{{ activeCount }}</dd><small>未恢复</small></div>
+        <div><dt>需要关注</dt><dd class="is-warning">{{ attentionCount }}</dd><small>待判断</small></div>
+        <div><dt>恢复已证明</dt><dd class="is-success">{{ recoveredCount }}</dd><small>可收敛</small></div>
+      </dl>
+    </section>
 
     <IncidentFilterBar
       v-model:status="filters.status"
@@ -151,21 +166,24 @@ onMounted(() => {
       @reset="reset"
     />
 
-    <ContextToolbar label="Incident 列表排序与状态">
-      <template #filters>
-        <div class="results-heading">
-          <div>
-            <h2 id="incident-results-title">处置队列</h2>
-            <p>选择一项查看当前结论、生命周期阻塞和下一步。</p>
-          </div>
-          <span
-            class="result-count"
-            role="status"
-            aria-live="polite"
-          >{{ resultAnnouncement }}</span>
+    <section
+      class="incident-queue-heading"
+      aria-labelledby="incident-results-title"
+    >
+      <div class="results-heading">
+        <span class="incident-queue-icon" aria-hidden="true"><UIcon name="i-lucide-list-checks" /></span>
+        <div>
+          <small>Response queue</small>
+          <h2 id="incident-results-title">处置队列</h2>
+          <p>选择一项查看当前结论、生命周期阻塞和下一步。</p>
         </div>
-      </template>
-      <template #secondary>
+      </div>
+      <div class="incident-queue-tools">
+        <span
+          class="result-count"
+          role="status"
+          aria-live="polite"
+        >{{ resultAnnouncement }}</span>
         <USelect
           :model-value="sortKey"
           :items="sortItems"
@@ -184,8 +202,8 @@ onMounted(() => {
             @click="setDirection(sortDirection === 'asc' ? 'desc' : 'asc')"
           />
         </UTooltip>
-      </template>
-    </ContextToolbar>
+      </div>
+    </section>
 
     <div
       v-if="state === 'loading' && items.length === 0"
@@ -259,8 +277,8 @@ onMounted(() => {
 
     <WorkspaceInspector
       :open="Boolean(selectedID)"
-      title="Incident Inspector"
-      description="当前 Cycle 的只读摘要与生命周期状态。"
+      title="Incident 生命周期"
+      description="当前结论、生命周期阻塞与下一步。"
       :trigger="inspectorTrigger"
       @update:open="handleInspectorOpenChange"
     >
@@ -292,26 +310,36 @@ onMounted(() => {
 .incident-list-view { display: grid; min-width: 0; gap: var(--co-space-4); }
 .header-context-facts { display: flex; flex-wrap: wrap; gap: var(--co-space-3); color: var(--co-text-secondary); font-size: 11px; }
 .header-context-facts strong { color: var(--co-text-primary); font-family: var(--co-font-mono); font-size: 16px; }
-.incident-queue-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; overflow: hidden; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); background: var(--co-bg-surface); }
-.incident-queue-summary div { display: grid; min-width: 0; gap: 1px; padding: var(--co-space-3) var(--co-space-4); border-right: 1px solid var(--co-border-default); }
-.incident-queue-summary div:last-child { border-right: 0; }
-.incident-queue-summary dt, .incident-queue-summary small { color: var(--co-text-muted); font-size: 10px; }
-.incident-queue-summary dd { margin: 0; font-family: var(--co-font-mono); font-size: 18px; font-weight: 800; font-variant-numeric: tabular-nums; }
-.incident-queue-summary .is-critical { color: var(--co-status-critical-fg); }
-.incident-queue-summary .is-warning { color: var(--co-status-warning-fg); }
-.incident-queue-summary .is-success { color: var(--co-status-success-fg); }
-.results-heading { display: flex; min-width: 0; width: 100%; align-items: center; justify-content: space-between; gap: var(--co-space-4); }
+.incident-attention { display: grid; min-width: 0; grid-template-columns: minmax(0, 1.15fr) minmax(420px, .85fr); align-items: center; gap: var(--co-space-5); padding-bottom: var(--co-space-3); border-bottom: 1px solid color-mix(in srgb, var(--co-status-critical-border) 28%, var(--co-border-subtle)); }
+.incident-attention__lead { display: flex; min-width: 0; align-items: center; gap: var(--co-space-3); }
+.incident-attention__lead > span { display: grid; width: 46px; height: 46px; flex: 0 0 auto; place-items: center; border-radius: var(--co-radius-panel); color: var(--co-status-critical-fg); background: var(--co-status-critical-bg); font-size: 19px; }
+.incident-attention__lead > div { min-width: 0; }
+.incident-attention__lead small { color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 9px; font-weight: 800; text-transform: uppercase; }
+.incident-attention__lead h2 { margin: 3px 0 0; font-size: 19px; line-height: 1.3; }
+.incident-attention__lead p { margin: var(--co-space-1) 0 0; color: var(--co-text-secondary); font-size: 11px; }
+.incident-attention dl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; gap: var(--co-space-2); }
+.incident-attention dl div { display: grid; min-width: 0; gap: 1px; padding: var(--co-space-2) var(--co-space-3); border-radius: var(--co-radius-panel); background: var(--co-bg-subtle); }
+.incident-attention dt, .incident-attention small { color: var(--co-text-muted); font-size: 9px; }
+.incident-attention dd { margin: 0; font-family: var(--co-font-mono); font-size: 18px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.incident-attention .is-critical { color: var(--co-status-critical-fg); }
+.incident-attention .is-warning { color: var(--co-status-warning-fg); }
+.incident-attention .is-success { color: var(--co-status-success-fg); }
+.incident-queue-heading { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: var(--co-space-4); padding: var(--co-space-2) 0; border-bottom: 1px solid var(--co-border-subtle); }
+.results-heading { display: flex; min-width: 0; align-items: center; gap: var(--co-space-3); }
+.incident-queue-icon { display: grid; width: 38px; height: 38px; flex: 0 0 auto; place-items: center; border-radius: var(--co-radius-panel); color: var(--co-status-info-fg); background: var(--co-status-info-bg); }
+.results-heading small { color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 9px; font-weight: 800; text-transform: uppercase; }
 .results-heading h2, .results-heading p { margin: 0; }
-.results-heading h2 { font-size: 16px; }
+.results-heading h2 { margin-top: 2px; font-size: 17px; }
 .results-heading p { margin-top: 2px; color: var(--co-text-muted); font-size: 11px; }
 .result-count { color: var(--co-text-muted); font-size: 11px; white-space: nowrap; }
+.incident-queue-tools { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--co-space-2); }
 .incident-skeleton { display: grid; gap: 1px; padding: var(--co-space-3); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); background: var(--co-bg-surface); }
 .skeleton-row { height: var(--co-table-row-height); }
 @media (max-width: 1024px) {
-  .incident-queue-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .incident-queue-summary div:nth-child(2) { border-right: 0; }
-  .incident-queue-summary div:nth-child(-n + 2) { border-bottom: 1px solid var(--co-border-default); }
-  .results-heading { align-items: flex-start; flex-direction: column; }
+  .incident-attention { grid-template-columns: minmax(0, 1fr); }
+  .incident-attention dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .incident-queue-heading { align-items: flex-start; flex-direction: column; }
+  .incident-queue-tools { justify-content: flex-start; }
   .header-context-facts { display: grid; }
 }
 </style>
