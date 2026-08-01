@@ -1,44 +1,16 @@
 <script setup lang="ts">
-import { computed } from "vue";
-import { useRoute } from "vue-router";
-
-import type { OperationalScope } from "../../api/platform";
 import SidebarMenu from "./SidebarMenu.vue";
 
 const props = defineProps<{
   collapsed: boolean;
   collapseLocked: boolean;
-  activeScope?: OperationalScope;
-  scopes: OperationalScope[];
-  selectedScopeId: string;
-  scopeSwitching: boolean;
 }>();
 
-const emit = defineEmits<{
-  toggle: [];
-  changeScope: [scopeID: string];
-  openAgent: [];
-}>();
+const emit = defineEmits<{ toggle: [] }>();
 
-const route = useRoute();
-const selectableScopes = computed(() => props.scopes
-  .filter((scope): scope is OperationalScope & { id: string } => Boolean(scope.id))
-  .map((scope) => ({
-    label: scope.cluster_id,
-    description: `${scope.environment} · ${scope.namespaces.join(", ")}`,
-    value: scope.id,
-  })));
-const currentScopeLabel = computed(() => props.activeScope
-  ? `${props.activeScope.cluster_id} · ${props.activeScope.environment}`
-  : "运行范围暂不可用");
-const selectedScope = computed(() => props.selectedScopeId || props.activeScope?.id || "");
-const collapseLabel = computed(() => props.collapseLocked
+const collapseLabel = () => props.collapseLocked
   ? "当前宽度使用紧凑侧栏"
-  : props.collapsed ? "展开侧栏" : "收起侧栏");
-
-function changeScope(value: unknown) {
-  if (typeof value === "string" && value && value !== props.activeScope?.id) emit("changeScope", value);
-}
+  : props.collapsed ? "展开侧栏" : "收起侧栏";
 </script>
 
 <template>
@@ -52,135 +24,76 @@ function changeScope(value: unknown) {
       color="neutral"
       variant="ghost"
       to="/overview"
-      icon="i-lucide-activity"
-      aria-label="CloudOps 本地运维控制台"
+      aria-label="CloudOps Operations Copilot"
     >
+      <span class="brand-mark" aria-hidden="true">
+        <UIcon name="i-lucide-orbit" />
+        <i />
+      </span>
       <span
         v-if="!collapsed"
         class="sidebar-brand-copy"
       >
         <strong>CloudOps</strong>
-        <small>本地运维控制台</small>
+        <small>Operations Copilot</small>
       </span>
     </UButton>
-
-    <section
-      class="scope-row"
-      aria-labelledby="scope-row-label"
-    >
-      <div
-        v-if="!collapsed"
-        class="scope-heading"
-      >
-        <span id="scope-row-label">运行范围</span>
-        <span
-          v-if="scopeSwitching"
-          role="status"
-        >正在切换</span>
-      </div>
-      <USelect
-        class="scope-select"
-        :class="{ 'scope-select--rail': collapsed }"
-        :model-value="selectedScope"
-        :items="selectableScopes"
-        value-key="value"
-        label-key="label"
-        icon="i-lucide-network"
-        :loading="scopeSwitching"
-        :disabled="scopeSwitching || selectableScopes.length < 2"
-        :placeholder="activeScope?.cluster_id || '运行范围'"
-        :aria-label="`活动运行范围：${currentScopeLabel}`"
-        :title="currentScopeLabel"
-        :ui="collapsed ? { base: 'w-10 justify-center px-0', value: 'sr-only', trailing: 'hidden' } : { base: 'w-full' }"
-        @update:model-value="changeScope"
-      />
-      <p
-        v-if="!collapsed"
-        class="scope-detail"
-        :title="activeScope?.namespaces.join(', ')"
-      >
-        {{ activeScope ? `${activeScope.environment} · ${activeScope.namespaces.join(", ")}` : "等待 Bootstrap 上下文" }}
-      </p>
-    </section>
 
     <SidebarMenu
       class="sidebar-navigation"
       :collapsed="collapsed"
     />
 
-    <div
-      class="agent-pin"
-      :class="{ 'is-current': route.path === '/agent' }"
+    <footer
+      v-if="!collapsed"
+      class="sidebar-footer"
     >
-      <UTooltip
-        :text="collapsed ? '打开全局 Agent 面板' : undefined"
-        :disabled="!collapsed"
-        :content="{ side: 'right' }"
-      >
-        <UButton
-          class="agent-pin-button"
-          color="primary"
-          :variant="route.path === '/agent' ? 'soft' : 'ghost'"
-          icon="i-lucide-bot"
-          :label="collapsed ? undefined : 'Agent'"
-          :square="collapsed"
-          :block="!collapsed"
-          aria-label="打开全局 Agent 面板"
-          @click="emit('openAgent')"
-        />
-      </UTooltip>
-    </div>
-
-    <footer class="sidebar-footer">
-      <UTooltip
-        :text="collapsed ? '本地 Owner' : undefined"
-        :disabled="!collapsed"
-        :content="{ side: 'right' }"
-      >
-        <UBadge
-          class="owner-boundary"
-          color="neutral"
-          variant="soft"
-          icon="i-lucide-user-round"
-          :label="collapsed ? undefined : '本地 Owner'"
-          :square="collapsed"
-        />
-      </UTooltip>
-      <UTooltip
-        :text="collapseLabel"
-        :content="{ side: 'right' }"
-      >
-        <UButton
-          class="sidebar-toggle"
-          color="neutral"
-          variant="ghost"
-          :icon="collapsed ? 'i-lucide-panel-left-open' : 'i-lucide-panel-left-close'"
-          square
-          :disabled="collapseLocked"
-          :aria-label="collapseLabel"
-          @click="emit('toggle')"
-        />
-      </UTooltip>
+      <span class="runtime-state" aria-label="本地运行时已连接">
+        <i aria-hidden="true" />
+        <span>
+          <strong>Local runtime</strong>
+          <small>Owner boundary</small>
+        </span>
+      </span>
     </footer>
+
+    <UTooltip
+      v-if="!collapseLocked"
+      :text="collapseLabel()"
+      :content="{ side: 'right' }"
+    >
+      <UButton
+        class="sidebar-toggle"
+        color="neutral"
+        variant="ghost"
+        :icon="collapsed ? 'i-lucide-chevron-right' : 'i-lucide-chevron-left'"
+        square
+        :disabled="collapseLocked"
+        :aria-label="collapseLabel()"
+        @click="emit('toggle')"
+      />
+    </UTooltip>
   </aside>
 </template>
 
 <style scoped>
 .app-sidebar {
-  position: sticky;
-  top: 0;
-  z-index: var(--co-z-header);
+  position: relative;
+  z-index: calc(var(--co-z-header) + 1);
   display: flex;
   width: var(--co-sidebar-width);
   height: 100dvh;
   min-height: 0;
   flex: 0 0 var(--co-sidebar-width);
-  overflow: hidden;
+  overflow: visible;
   flex-direction: column;
-  border-right: 1px solid var(--co-border-default);
-  background: var(--co-bg-surface);
-  transition: width var(--co-motion-standard) var(--co-ease-out),
-    flex-basis var(--co-motion-standard) var(--co-ease-out);
+  border-right: 1px solid color-mix(in srgb, var(--co-border-strong) 62%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--co-bg-floating) 48%, var(--co-bg-surface)) 0, var(--co-bg-surface) 38%, color-mix(in srgb, var(--co-bg-surface) 90%, var(--co-bg-canvas)) 100%);
+  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--co-bg-floating) 46%, transparent);
+  transition:
+    width 300ms var(--co-ease-out),
+    flex-basis 300ms var(--co-ease-out);
 }
 
 .app-sidebar.is-collapsed {
@@ -189,93 +102,113 @@ function changeScope(value: unknown) {
 }
 
 .sidebar-brand {
-  min-height: var(--co-header-height);
-  flex: 0 0 var(--co-header-height);
+  min-height: 62px;
+  flex: 0 0 62px;
   justify-content: flex-start;
-  gap: var(--co-space-3);
-  padding-inline: var(--co-space-4);
-  border-bottom: 1px solid var(--co-border-default);
-  border-radius: 0;
+  gap: 10px;
+  margin: 10px 10px 4px;
+  padding: 8px 6px;
+  border-radius: 10px;
+  transition: background var(--co-motion-fast) var(--co-ease-out);
 }
+.sidebar-brand:hover { background: color-mix(in srgb, var(--co-bg-floating) 48%, transparent); }
 
 .is-collapsed .sidebar-brand {
   justify-content: center;
+  margin-inline: 6px;
   padding-inline: 0;
+}
+
+.brand-mark {
+  position: relative;
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--co-border-strong) 70%, transparent);
+  border-radius: 9px;
+  color: var(--co-text-primary);
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--co-bg-overlay) 78%, transparent), var(--co-bg-subtle));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 45%);
+}
+.brand-mark :deep(svg) { width: 18px; height: 18px; }
+.brand-mark i {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 5px;
+  height: 5px;
+  border: 1px solid var(--co-bg-surface);
+  border-radius: 50%;
+  background: var(--co-viz-live);
 }
 
 .sidebar-brand-copy {
   display: grid;
   min-width: 0;
   text-align: left;
-  line-height: 1.2;
+  line-height: 1.15;
   white-space: nowrap;
 }
+.sidebar-brand-copy strong { color: var(--co-text-primary); font-size: 15px; font-weight: 800; }
+.sidebar-brand-copy small { margin-top: 2px; color: var(--co-text-muted); font-size: 9px; font-weight: 600; }
 
-.sidebar-brand-copy strong { font-size: 14px; }
-.sidebar-brand-copy small { color: var(--co-text-muted); font-size: 10px; }
-
-.scope-row {
-  display: grid;
-  gap: var(--co-space-2);
-  padding: var(--co-space-3);
-  border-bottom: 1px solid var(--co-border-default);
+.sidebar-navigation {
+  min-height: 0;
+  flex: 1 1 auto;
 }
-
-.is-collapsed .scope-row {
-  justify-items: center;
-  padding-inline: var(--co-space-3);
-}
-
-.scope-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  color: var(--co-text-muted);
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.scope-heading [role="status"] { color: var(--co-status-info-fg); font-size: 10px; }
-.scope-select { min-width: 0; }
-.scope-select--rail { width: 40px; }
-.scope-detail {
-  margin: 0;
-  overflow: hidden;
-  color: var(--co-text-muted);
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sidebar-navigation { flex: 1 1 auto; }
-
-.agent-pin {
-  padding: var(--co-space-2);
-  border-top: 1px solid var(--co-border-default);
-}
-
-.agent-pin-button { justify-content: flex-start; }
-.is-collapsed .agent-pin-button { margin-inline: auto; }
 
 .sidebar-footer {
+  min-height: 64px;
+  flex: 0 0 64px;
+  margin-top: auto;
+  padding: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--co-border-default) 78%, transparent);
+  background: color-mix(in srgb, var(--co-bg-surface) 82%, transparent);
+}
+.runtime-state {
   display: flex;
-  min-height: 52px;
-  flex: 0 0 52px;
+  min-height: 42px;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--co-space-2);
-  padding-inline: var(--co-space-3);
-  border-top: 1px solid var(--co-border-default);
+  gap: 10px;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: var(--co-text-secondary);
 }
-
-.is-collapsed .sidebar-footer {
-  min-height: 88px;
-  flex-basis: 88px;
-  flex-direction: column;
-  justify-content: center;
-  gap: var(--co-space-1);
-  padding: var(--co-space-2);
+.runtime-state > i {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: var(--co-viz-live);
+  box-shadow: 0 0 0 4px var(--co-viz-live-soft);
 }
-
-.owner-boundary { white-space: nowrap; }
+.runtime-state > span { display: grid; min-width: 0; line-height: 1.2; }
+.runtime-state strong { font-size: 11px; }
+.runtime-state small { color: var(--co-text-muted); font-size: 9px; }
+.sidebar-toggle {
+  position: absolute;
+  top: 50%;
+  right: -12px;
+  z-index: 4;
+  width: 24px;
+  min-width: 24px;
+  height: 52px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--co-border-default) 82%, transparent);
+  border-radius: 14px;
+  color: var(--co-text-secondary);
+  background: var(--co-bg-surface);
+  box-shadow: 4px 0 14px rgb(45 40 34 / 16%);
+  transform: translateY(-50%);
+  transition:
+    color var(--co-motion-fast) var(--co-ease-out),
+    background var(--co-motion-fast) var(--co-ease-out),
+    transform var(--co-motion-fast) var(--co-ease-out);
+}
+.sidebar-toggle:hover { color: var(--co-text-primary); background: var(--co-bg-overlay); transform: translate(2px, -50%); }
+.sidebar-toggle:disabled { opacity: .38; }
 </style>

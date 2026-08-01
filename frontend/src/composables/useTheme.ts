@@ -6,7 +6,8 @@ const STORAGE_KEY = "cloudops-theme";
 
 export function resolveThemePreference(stored: string | null, prefersLight: boolean): ThemeMode {
   if (stored === "dark" || stored === "light") return stored;
-  return prefersLight ? "light" : "dark";
+  if (stored !== null) return prefersLight ? "light" : "dark";
+  return "light";
 }
 
 export function oppositeTheme(mode: ThemeMode): ThemeMode {
@@ -14,12 +15,12 @@ export function oppositeTheme(mode: ThemeMode): ThemeMode {
 }
 
 function resolveInitialTheme(): ThemeMode {
-  if (typeof window === "undefined") return "dark";
+  if (typeof window === "undefined") return "light";
   let stored: string | null = null;
   try {
     stored = window.localStorage.getItem(STORAGE_KEY);
   } catch {
-    // System preference remains a deterministic fallback when storage is blocked.
+    // Warm-gray light is the deterministic default when storage is blocked.
   }
   return resolveThemePreference(stored, window.matchMedia("(prefers-color-scheme: light)").matches);
 }

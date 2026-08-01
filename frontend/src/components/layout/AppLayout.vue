@@ -18,7 +18,6 @@ import {
   type OperationalScope,
 } from "../../api/platform";
 import { dispatchOperationalScopeChange, queryForScopeChange } from "../../utils/operationalScope";
-import { openAgentPanel } from "../../utils/agentContext";
 import GlobalAgentPanel from "../agent/GlobalAgentPanel.vue";
 import AppHeader from "./AppHeader.vue";
 import AppSidebar from "./AppSidebar.vue";
@@ -46,7 +45,6 @@ let streamStartedAt = 0;
 let headingObserver: MutationObserver | undefined;
 let headingObserverTimeout: number | undefined;
 
-const pageTitle = computed(() => (typeof route.meta.title === "string" ? route.meta.title : ""));
 const isFullBleed = computed(() => route.meta.fullBleed === true);
 const sidebarRail = computed(() => sidebarCollapsed.value || compactDesktop.value);
 const notificationSlideoverUI = {
@@ -318,21 +316,23 @@ onBeforeUnmount(() => {
     <AppSidebar
       :collapsed="sidebarRail"
       :collapse-locked="compactDesktop"
-      :active-scope="bootstrap?.active_scope"
-      :scopes="scopes"
-      :selected-scope-id="selectedScopeID"
-      :scope-switching="scopeSwitching"
       @toggle="toggleSidebar"
-      @change-scope="changeActiveScope"
-      @open-agent="openAgentPanel()"
     />
     <div class="app-frame">
+      <div
+        class="shell-top-wash"
+        aria-hidden="true"
+      />
       <AppHeader
-        :page-title="pageTitle"
         :unread-count="unreadCount"
         :provider-health="bootstrap?.provider_health"
         :scenario-state="bootstrap?.scenario_state ?? 'inactive'"
+        :active-scope="bootstrap?.active_scope"
+        :scopes="scopes"
+        :selected-scope-id="selectedScopeID"
+        :scope-switching="scopeSwitching"
         @open-notifications="openNotifications"
+        @change-scope="changeActiveScope"
       />
       <UAlert
         v-if="scopeSwitchError"
@@ -369,9 +369,8 @@ onBeforeUnmount(() => {
         </RouterView>
       </main>
     </div>
+    <GlobalAgentPanel />
   </div>
-
-  <GlobalAgentPanel />
 
   <USlideover
     v-model:open="notificationsOpen"
@@ -426,26 +425,63 @@ onBeforeUnmount(() => {
 }
 
 .app-shell {
+  position: relative;
   display: flex;
+  width: 100%;
+  height: 100dvh;
   min-width: 0;
-  min-height: 100dvh;
+  min-height: 0;
   align-items: flex-start;
+  overflow: hidden;
   background: var(--co-bg-canvas);
 }
 
-.app-frame { min-width: 0; min-height: 100dvh; flex: 1; }
+.app-frame {
+  position: relative;
+  display: flex;
+  height: 100dvh;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  flex-direction: column;
+}
+
+.shell-top-wash {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 0;
+  height: 170px;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--co-bg-canvas) 78%, var(--co-ink-action) 8%) 0%,
+    color-mix(in srgb, var(--co-bg-canvas) 62%, transparent) 42%,
+    transparent 100%
+  );
+  backdrop-filter: blur(18px);
+  mask-image: linear-gradient(to bottom, #000 0%, rgb(0 0 0 / 70%) 48%, transparent 100%);
+}
 
 .app-main {
+  position: relative;
+  z-index: 1;
   min-width: 0;
-  min-height: calc(100dvh - var(--co-header-height));
-  padding: clamp(16px, 2vw, 32px) max(clamp(16px, 2vw, 32px), env(safe-area-inset-right))
-    max(clamp(24px, 3vw, 48px), env(safe-area-inset-bottom))
-    max(clamp(16px, 2vw, 32px), env(safe-area-inset-left));
-  background: var(--co-bg-canvas);
+  min-height: 0;
+  flex: 1 1 auto;
+  padding: clamp(18px, 2.2vw, 34px) max(clamp(18px, 2.2vw, 34px), env(safe-area-inset-right))
+    max(clamp(36px, 5vw, 72px), env(safe-area-inset-bottom))
+    max(clamp(18px, 2.2vw, 34px), env(safe-area-inset-left));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: transparent;
 }
 
 .app-main--full-bleed {
-  height: calc(100dvh - var(--co-header-height));
+  height: auto;
   padding: 0;
   overflow: hidden;
 }

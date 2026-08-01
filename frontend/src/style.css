@@ -61,6 +61,12 @@ h3 {
   text-wrap: balance;
 }
 
+h1[tabindex="-1"]:focus,
+h2[tabindex="-1"]:focus,
+h3[tabindex="-1"]:focus {
+  outline: none;
+}
+
 code,
 pre,
 .mono-text {
