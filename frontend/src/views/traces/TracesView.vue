@@ -31,6 +31,8 @@ import {
   parseTracesRoute,
   type TracesRouteState,
 } from "../../components/traces/tracesRoute";
+import WorkspacePageFrame from "../../components/workspace/WorkspacePageFrame.vue";
+import WorkspaceStatusRow from "../../components/workspace/WorkspaceStatusRow.vue";
 import { resolveTelemetryResourceID } from "../../models/telemetry";
 import { safeExternalURL } from "../../models/workbench";
 import { openAgentPanel, publishAgentContext, type AgentPageContext } from "../../utils/agentContext";
@@ -708,39 +710,44 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section
+  <WorkspacePageFrame
     class="traces-workspace"
+    width="full"
     aria-labelledby="traces-heading"
   >
-    <WorkspaceHeader
-      heading-id="traces-heading"
-      eyebrow="Telemetry / Tempo"
-      title="链路"
-      description="真实 Scope 的有界 Trace 搜索、语义瀑布与 Span Evidence 上下文。"
-    >
-      <template #context>
-        <UBadge
+    <header class="traces-workspace__heading">
+      <div>
+        <span>可观测性</span>
+        <h1 id="traces-heading">
+          链路
+        </h1>
+        <p>{{ selectedResource ? `${selectedResource.kind} ${selectedResource.name}` : "当前运行范围" }} · 关键路径、耗时和 Span 关系</p>
+      </div>
+      <UTooltip text="刷新链路工作区">
+        <UButton
           color="neutral"
-          variant="soft"
-          :icon="providerReady ? 'i-lucide-circle-check' : 'i-lucide-circle-alert'"
-          :label="`Tempo ${providerStateLabel(catalog?.provider_state)}`"
+          variant="ghost"
+          icon="i-lucide-refresh-cw"
+          square
+          aria-label="刷新链路工作区"
+          :loading="loading"
+          @click="refreshAll"
         />
-        <code>{{ bootstrap?.active_scope.cluster_id || "活动集群" }} / {{ selectedNamespace || "Namespace" }}</code>
+      </UTooltip>
+    </header>
+
+    <WorkspaceStatusRow
+      :tone="providerReady ? 'success' : catalog ? 'error' : 'neutral'"
+      :icon="providerReady ? 'i-lucide-git-branch' : 'i-lucide-circle-alert'"
+      :title="`Tempo ${providerStateLabel(catalog?.provider_state)}`"
+      :description="catalog?.provider_detail || '正在确认当前 Configuration Revision 的 Trace 端点'"
+      :badge="currentSearch?.stale ? '结果陈旧' : ''"
+      :busy="loading"
+    >
+      <template #meta>
+        {{ bootstrap?.active_scope.cluster_id || "活动集群" }} / {{ selectedNamespace || "Namespace" }}
       </template>
-      <template #actions>
-        <UTooltip text="刷新 Traces 工作区">
-          <UButton
-            color="neutral"
-            variant="ghost"
-            icon="i-lucide-refresh-cw"
-            square
-            aria-label="刷新 Traces 工作区"
-            :loading="loading"
-            @click="refreshAll"
-          />
-        </UTooltip>
-      </template>
-    </WorkspaceHeader>
+    </WorkspaceStatusRow>
 
     <WorkspaceState
       v-if="pageError"
@@ -998,16 +1005,19 @@ onBeforeUnmount(() => {
         />
       </div>
     </template>
-  </section>
+  </WorkspacePageFrame>
 </template>
 
 <style scoped>
 .traces-workspace {
-  width: min(100%, 1680px);
-  margin: 0 auto;
   padding: var(--co-space-5) clamp(var(--co-space-4), 2.5vw, var(--co-space-8)) var(--co-space-10);
 }
 .traces-workspace code { min-width: 0; overflow-wrap: anywhere; color: var(--co-text-secondary); font-family: var(--co-font-mono); font-size: 11px; }
+.traces-workspace__heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--co-space-4); padding-bottom: var(--co-space-4); }
+.traces-workspace__heading > div { min-width: 0; }
+.traces-workspace__heading span { color: var(--co-text-muted); font-size: 11px; }
+.traces-workspace__heading h1 { margin: 3px 0 0; font-size: 24px; line-height: 1.2; }
+.traces-workspace__heading p { margin: var(--co-space-1) 0 0; color: var(--co-text-secondary); font-size: 12px; overflow-wrap: anywhere; }
 .traces-workspace__grid { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) minmax(240px, 290px); gap: var(--co-space-6); margin-top: var(--co-space-4); }
 .traces-results { min-width: 0; }
 .traces-results__header { display: flex; min-height: 54px; align-items: center; justify-content: space-between; gap: var(--co-space-3); }
@@ -1017,8 +1027,13 @@ onBeforeUnmount(() => {
 .traces-results__meta { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: var(--co-space-2) var(--co-space-4); padding: var(--co-space-2) 0 var(--co-space-3); border-bottom: 1px solid var(--co-border-default); color: var(--co-text-secondary); font-size: 11px; }
 
 @media (max-width: 1024px) {
+  .traces-workspace { padding-inline: var(--co-space-4); }
   .traces-workspace__grid { grid-template-columns: minmax(0, 1fr); }
   .traces-results__header { align-items: flex-start; flex-direction: column; }
   .traces-results__header > div:last-child { justify-content: flex-start; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .traces-workspace * { scroll-behavior: auto; }
 }
 </style>

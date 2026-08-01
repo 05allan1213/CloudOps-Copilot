@@ -82,7 +82,19 @@ function statusValue(value: unknown): string {
     class="traces-query"
     aria-label="Trace 搜索"
   >
-    <div class="traces-query__context">
+    <div class="traces-query__context traces-query__primary">
+      <div class="traces-query__identity">
+        <span
+          class="traces-query__icon"
+          aria-hidden="true"
+        >
+          <UIcon name="i-lucide-git-branch" />
+        </span>
+        <div>
+          <strong>Trace 搜索</strong>
+          <small>{{ catalog?.provider_detail || "等待 Tempo 查询目录" }}</small>
+        </div>
+      </div>
       <label>
         <span>Namespace</span>
         <USelect
@@ -117,7 +129,7 @@ function statusValue(value: unknown): string {
         <UButton
           :color="mode === 'guided' ? 'primary' : 'neutral'"
           :variant="mode === 'guided' ? 'soft' : 'ghost'"
-          label="引导"
+          label="字段筛选"
           :aria-pressed="mode === 'guided'"
           :disabled="searching"
           @click="emit('update:mode', 'guided')"
@@ -125,7 +137,7 @@ function statusValue(value: unknown): string {
         <UButton
           :color="mode === 'expert' ? 'primary' : 'neutral'"
           :variant="mode === 'expert' ? 'soft' : 'ghost'"
-          label="Expert"
+          label="TraceQL"
           :aria-pressed="mode === 'expert'"
           :disabled="searching"
           @click="emit('update:mode', 'expert')"
@@ -299,6 +311,23 @@ function statusValue(value: unknown): string {
       <span>Response ≤ {{ Math.round((catalog?.bounds.max_response_bytes ?? 0) / 1024) }} KiB</span>
       <span>Timeout {{ catalog?.bounds.timeout_ms ?? 0 }}ms</span>
     </div>
+    <UCollapsible class="traces-query__advanced">
+      <template #default="{ open }">
+        <UButton
+          color="neutral"
+          variant="ghost"
+          block
+          icon="i-lucide-sliders-horizontal"
+          label="高级耗时与结果参数"
+          :trailing-icon="open ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
+        />
+      </template>
+      <template #content>
+        <div class="traces-query__advanced-content">
+          时间范围、耗时边界与结果上限受 Tempo 服务端约束。
+        </div>
+      </template>
+    </UCollapsible>
   </section>
 </template>
 
@@ -314,6 +343,12 @@ function statusValue(value: unknown): string {
   border-bottom: 1px solid var(--co-border-subtle);
 }
 .traces-query__context { grid-template-columns: minmax(150px, 0.65fr) minmax(220px, 1.25fr) auto; }
+.traces-query__primary { grid-template-columns: minmax(180px, 1fr) minmax(150px, 0.7fr) minmax(220px, 1.1fr) auto auto; }
+.traces-query__identity { display: flex; min-width: 0; align-items: center; gap: var(--co-space-2); }
+.traces-query__identity > div { display: grid; min-width: 0; gap: 1px; }
+.traces-query__identity strong { font-size: 12px; }
+.traces-query__identity small { overflow: hidden; color: var(--co-text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.traces-query__icon { display: grid; width: var(--co-status-icon-size); height: var(--co-status-icon-size); flex: 0 0 auto; place-items: center; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); color: var(--co-status-info-fg); background: var(--co-bg-floating); }
 .traces-query__filters { grid-template-columns: 1.1fr 1.1fr 0.65fr 0.7fr 0.7fr; }
 .traces-query__execution { grid-template-columns: auto repeat(2, minmax(170px, 0.9fr)) 100px auto; }
 .traces-query label,
@@ -326,8 +361,12 @@ function statusValue(value: unknown): string {
 .traces-query__expert { padding: var(--co-space-3) 0; border-bottom: 1px solid var(--co-border-subtle); }
 .traces-query__actions { justify-content: flex-end; }
 .traces-query__bounds { display: flex; flex-wrap: wrap; gap: var(--co-space-1) var(--co-space-4); padding: var(--co-space-2) 0; color: var(--co-text-muted); font-size: 11px; }
+.traces-query__advanced { border-top: 1px solid var(--co-border-subtle); }
+.traces-query__advanced > :deep(button) { min-height: var(--co-control-height); justify-content: flex-start; border-radius: 0; }
+.traces-query__advanced-content { padding: 0 0 var(--co-space-2); color: var(--co-text-muted); font-size: 10px; }
 
 @media (max-width: 1180px) {
+  .traces-query__primary,
   .traces-query__filters { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .traces-query__execution { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .traces-query__presets,
@@ -338,5 +377,10 @@ function statusValue(value: unknown): string {
   .traces-query__context,
   .traces-query__filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .traces-query__mode { grid-column: 1 / -1; }
+  .traces-query__identity { grid-column: 1 / -1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .traces-query * { scroll-behavior: auto; }
 }
 </style>

@@ -31,6 +31,8 @@ import MonitoringDialogs, {
 import MonitoringHistory from "../../components/monitoring/MonitoringHistory.vue";
 import MonitoringQueryControls from "../../components/monitoring/MonitoringQueryControls.vue";
 import MonitoringResult from "../../components/monitoring/MonitoringResult.vue";
+import WorkspacePageFrame from "../../components/workspace/WorkspacePageFrame.vue";
+import WorkspaceStatusRow from "../../components/workspace/WorkspaceStatusRow.vue";
 import {
   buildMonitoringRouteQuery,
   parseMonitoringRoute,
@@ -656,39 +658,44 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section
+  <WorkspacePageFrame
     class="monitoring-workspace"
+    width="full"
     aria-labelledby="monitoring-heading"
   >
-    <WorkspaceHeader
-      heading-id="monitoring-heading"
-      eyebrow="Telemetry / Prometheus"
-      title="监控"
-      description="真实 Scope 的有界查询、时序分析与 Query Definition 管理。"
-    >
-      <template #context>
-        <UBadge
+    <header class="monitoring-workspace__heading">
+      <div>
+        <span>可观测性</span>
+        <h1 id="monitoring-heading">
+          监控
+        </h1>
+        <p>{{ selectedResource ? `${selectedResource.kind} ${selectedResource.name}` : "当前运行范围" }} · 指标、趋势与异常时间窗口</p>
+      </div>
+      <UTooltip text="刷新监控工作区">
+        <UButton
           color="neutral"
-          variant="soft"
-          :icon="providerReady ? 'i-lucide-circle-check' : 'i-lucide-circle-alert'"
-          :label="`Prometheus ${providerStateLabel(catalog?.provider_state)}`"
+          variant="ghost"
+          icon="i-lucide-refresh-cw"
+          square
+          aria-label="刷新监控工作区"
+          :loading="loading || catalogLoading"
+          @click="refreshAll"
         />
-        <code>{{ bootstrap?.active_scope.cluster_id || "活动集群" }} / {{ selectedNamespace || "Namespace" }}</code>
+      </UTooltip>
+    </header>
+
+    <WorkspaceStatusRow
+      :tone="providerReady ? 'success' : catalog ? 'error' : 'neutral'"
+      :icon="providerReady ? 'i-lucide-activity' : 'i-lucide-circle-alert'"
+      :title="`Prometheus ${providerStateLabel(catalog?.provider_state)}`"
+      :description="catalog?.provider_detail || '正在确认当前 Configuration Revision 的采集端点'"
+      :badge="catalog?.partial ? '部分结果' : ''"
+      :busy="loading || catalogLoading"
+    >
+      <template #meta>
+        {{ bootstrap?.active_scope.cluster_id || "活动集群" }} / {{ selectedNamespace || "Namespace" }}
       </template>
-      <template #actions>
-        <UTooltip text="刷新 Monitoring 工作区">
-          <UButton
-            color="neutral"
-            variant="ghost"
-            icon="i-lucide-refresh-cw"
-            square
-            aria-label="刷新 Monitoring 工作区"
-            :loading="loading || catalogLoading"
-            @click="refreshAll"
-          />
-        </UTooltip>
-      </template>
-    </WorkspaceHeader>
+    </WorkspaceStatusRow>
 
     <WorkspaceState
       v-if="pageError"
@@ -850,7 +857,7 @@ onBeforeUnmount(() => {
         @revoke-authorization="requestConfirmation('revoke', $event)"
       />
     </template>
-  </section>
+  </WorkspacePageFrame>
 
   <MonitoringDialogs
     :save-open="saveDialogOpen"
@@ -870,14 +877,22 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .monitoring-workspace {
-  width: min(100%, 1680px);
-  margin: 0 auto;
   padding: var(--co-space-5) clamp(var(--co-space-4), 2.5vw, var(--co-space-8)) var(--co-space-10);
 }
 .monitoring-workspace code { min-width: 0; overflow-wrap: anywhere; color: var(--co-text-secondary); font-family: var(--co-font-mono); font-size: 11px; }
+.monitoring-workspace__heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--co-space-4); padding-bottom: var(--co-space-4); }
+.monitoring-workspace__heading > div { min-width: 0; }
+.monitoring-workspace__heading span { color: var(--co-text-muted); font-size: 11px; }
+.monitoring-workspace__heading h1 { margin: 3px 0 0; font-size: 24px; line-height: 1.2; letter-spacing: 0; }
+.monitoring-workspace__heading p { margin: var(--co-space-1) 0 0; color: var(--co-text-secondary); font-size: 12px; overflow-wrap: anywhere; }
 .monitoring-workspace__grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(250px, 300px); gap: var(--co-space-6); margin-top: var(--co-space-5); }
 
 @media (max-width: 1024px) {
+  .monitoring-workspace { padding-inline: var(--co-space-4); }
   .monitoring-workspace__grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .monitoring-workspace * { scroll-behavior: auto; }
 }
 </style>
