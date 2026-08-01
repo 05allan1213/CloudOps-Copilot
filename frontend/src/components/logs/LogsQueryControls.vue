@@ -65,7 +65,19 @@ function numberValue(value: unknown): number {
     class="logs-query"
     aria-label="日志查询"
   >
-    <div class="logs-query__context">
+    <div class="logs-query__context logs-query__primary">
+      <div class="logs-query__identity">
+        <span
+          class="logs-query__icon"
+          aria-hidden="true"
+        >
+          <UIcon name="i-lucide-scroll-text" />
+        </span>
+        <div>
+          <strong>日志流</strong>
+          <small>{{ catalog?.provider_detail || "等待 Elasticsearch 查询目录" }}</small>
+        </div>
+      </div>
       <label>
         <span>Namespace</span>
         <USelect
@@ -100,7 +112,7 @@ function numberValue(value: unknown): number {
         <UButton
           :color="mode === 'guided' ? 'primary' : 'neutral'"
           :variant="mode === 'guided' ? 'soft' : 'ghost'"
-          label="引导"
+          label="字段筛选"
           :aria-pressed="mode === 'guided'"
           :disabled="querying"
           @click="emit('update:mode', 'guided')"
@@ -108,7 +120,7 @@ function numberValue(value: unknown): number {
         <UButton
           :color="mode === 'expert' ? 'primary' : 'neutral'"
           :variant="mode === 'expert' ? 'soft' : 'ghost'"
-          label="Expert"
+          label="查询语句"
           :aria-pressed="mode === 'expert'"
           :disabled="querying"
           @click="emit('update:mode', 'expert')"
@@ -235,7 +247,7 @@ function numberValue(value: unknown): number {
       </label>
       <USwitch
         :model-value="tail"
-        label="Tail（有界）"
+        label="实时日志"
         :disabled="querying"
         @update:model-value="emit('update:tail', Boolean($event))"
       />
@@ -258,6 +270,24 @@ function numberValue(value: unknown): number {
         />
       </div>
     </div>
+
+    <UCollapsible class="logs-query__advanced">
+      <template #default="{ open }">
+        <UButton
+          color="neutral"
+          variant="ghost"
+          block
+          icon="i-lucide-sliders-horizontal"
+          label="高级时间与结果参数"
+          :trailing-icon="open ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
+        />
+      </template>
+      <template #content>
+        <div class="logs-query__advanced-content">
+          <span>时间范围、结果上限与实时模式仍受服务端边界约束。</span>
+        </div>
+      </template>
+    </UCollapsible>
 
     <div class="logs-query__bounds">
       <span>Lookback ≤ {{ Math.round((catalog?.bounds.max_lookback_seconds ?? 0) / 3600) }}h</span>
@@ -286,6 +316,12 @@ function numberValue(value: unknown): number {
   border-bottom: 1px solid var(--co-border-subtle);
 }
 .logs-query__context { grid-template-columns: minmax(150px, 0.65fr) minmax(220px, 1.25fr) auto; }
+.logs-query__primary { grid-template-columns: minmax(180px, 1fr) minmax(150px, 0.7fr) minmax(220px, 1.1fr) auto auto; }
+.logs-query__identity { display: flex; min-width: 0; align-items: center; gap: var(--co-space-2); }
+.logs-query__identity > div { display: grid; min-width: 0; gap: 1px; }
+.logs-query__identity strong { font-size: 12px; }
+.logs-query__identity small { overflow: hidden; color: var(--co-text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.logs-query__icon { display: grid; width: var(--co-status-icon-size); height: var(--co-status-icon-size); flex: 0 0 auto; place-items: center; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); color: var(--co-status-info-fg); background: var(--co-bg-floating); }
 .logs-query__filters { grid-template-columns: minmax(180px, 1fr) minmax(220px, 1.1fr) auto; }
 .logs-query__execution { grid-template-columns: auto repeat(2, minmax(170px, 0.9fr)) 100px auto auto; }
 .logs-query label,
@@ -301,9 +337,13 @@ function numberValue(value: unknown): number {
 .logs-query__expert { padding: var(--co-space-3) 0; border-bottom: 1px solid var(--co-border-subtle); }
 .logs-query__actions { justify-content: flex-end; }
 .logs-query__bounds { display: flex; flex-wrap: wrap; gap: var(--co-space-1) var(--co-space-4); padding: var(--co-space-2) 0; color: var(--co-text-muted); font-size: 11px; }
+.logs-query__advanced { border-top: 1px solid var(--co-border-subtle); }
+.logs-query__advanced > :deep(button) { min-height: var(--co-control-height); justify-content: flex-start; border-radius: 0; }
+.logs-query__advanced-content { padding: 0 0 var(--co-space-2); color: var(--co-text-muted); font-size: 10px; }
 
 @media (max-width: 1180px) {
   .logs-query { position: static; }
+  .logs-query__primary,
   .logs-query__execution { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .logs-query__presets,
   .logs-query__actions { grid-column: span 2; }
@@ -314,5 +354,10 @@ function numberValue(value: unknown): number {
   .logs-query__filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .logs-query__mode,
   .logs-query__filters fieldset { grid-column: 1 / -1; }
+  .logs-query__identity { grid-column: 1 / -1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .logs-query * { scroll-behavior: auto; }
 }
 </style>

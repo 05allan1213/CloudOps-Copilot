@@ -7,6 +7,7 @@ import {
   monitoringSeriesLabel,
   monitoringValueAt,
 } from "./monitoringChart";
+import WorkspaceTechnicalDetails, { type TechnicalDetailField } from "../workspace/WorkspaceTechnicalDetails.vue";
 
 const props = defineProps<{
   execution: QueryExecution | null;
@@ -31,6 +32,29 @@ const tableRows = computed(() => chartSeries.value.map((series, index) => {
   };
 }));
 const tableTimestampLabel = computed(() => props.cursorTimestamp === null ? "最新值" : "游标值");
+const allValues = computed(() => chartSeries.value.flatMap((series) => series.points.map((point) => point.value)).filter(Number.isFinite));
+const primaryPoints = computed(() => chartSeries.value[0]?.points ?? []);
+const latestValue = computed(() => primaryPoints.value.at(-1)?.value);
+const peakValue = computed(() => allValues.value.length ? Math.max(...allValues.value) : undefined);
+const changeRate = computed(() => {
+  const first = primaryPoints.value[0]?.value;
+  const latest = latestValue.value;
+  if (first === undefined || latest === undefined || first === 0) return undefined;
+  return ((latest - first) / Math.abs(first)) * 100;
+});
+const technicalFields = computed<TechnicalDetailField[]>(() => {
+  const execution = props.execution;
+  if (!execution) return [];
+  return [
+    { label: "Execution", value: execution.id, code: true, copyValue: execution.id },
+    { label: "Query hash", value: execution.query_hash, code: true, copyValue: execution.query_hash },
+    { label: "Configuration Revision", value: execution.configuration_revision_id, code: true, copyValue: execution.configuration_revision_id },
+    { label: "Provider identity", value: execution.source.identity, code: true, copyValue: execution.source.identity },
+    { label: "Scope", value: `${execution.scope.cluster_id} / ${execution.resource.namespace}`, code: true },
+    { label: "Resource", value: `${execution.resource.kind} / ${execution.resource.name}`, code: true, copyValue: execution.resource.id },
+    { label: "UTC range", value: `${execution.time_range.from} -> ${execution.time_range.to}`, code: true },
+  ];
+});
 
 function statusLabel(status: QueryExecution["status"]): string {
   return ({ pending: "等待执行", running: "查询中", succeeded: "已完成", failed: "失败", cancelled: "已取消" })[status];
@@ -63,6 +87,16 @@ function formatBytes(value: number): string {
 
 function shortHash(value: string): string {
   return value.length > 18 ? `${value.slice(0, 14)}…` : value;
+}
+
+function formatMetric(value?: number): string {
+  return value === undefined ? "--" : numberFormatter.format(value);
+}
+
+function formatChange(value?: number): string {
+  if (value === undefined) return "无法计算";
+  const prefix = value > 0 ? "+" : "";
+  return `${prefix}${new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 1 }).format(value)}%`;
 }
 
 function logsLocationAt(value: string) {
@@ -120,19 +154,6 @@ function seriesIdentity(series: QuerySeries): string {
     />
 
     <template v-else>
-      <dl class="monitoring-result__provenance">
-        <div><dt>Scope</dt><dd>{{ execution.scope.cluster_id }} / {{ execution.resource.namespace }}</dd></div>
-        <div><dt>Resource</dt><dd>{{ execution.resource.kind }} / {{ execution.resource.name }}</dd></div>
-        <div><dt>Provider</dt><dd>{{ execution.provider }} · {{ execution.source.identity }}</dd></div>
-        <div>
-          <dt>Query hash</dt><dd :title="execution.query_hash">
-            {{ shortHash(execution.query_hash) }}
-          </dd>
-        </div>
-        <div><dt>Time</dt><dd>{{ formatTime(execution.time_range.from) }} → {{ formatTime(execution.time_range.to) }}</dd></div>
-        <div><dt>Execution</dt><dd>{{ execution.id }}</dd></div>
-      </dl>
-
       <div class="monitoring-result__meta">
         <span><b>{{ execution.series_count }}</b> series</span>
         <span><b>{{ execution.sample_count }}</b> samples</span>
@@ -140,6 +161,34 @@ function seriesIdentity(series: QuerySeries): string {
         <span>Revision <b>{{ shortHash(execution.configuration_revision_id) }}</b></span>
         <span>采集 {{ formatTime(execution.source.collected_at) }}</span>
       </div>
+
+      <dl
+        class="monitoring-result__summary"
+        aria-label="指标摘要"
+      >
+        <div>
+          <dt>当前值</dt>
+          <dd>{{ formatMetric(latestValue) }}</dd>
+          <small>{{ chartSeries[0] ? monitoringSeriesLabel(chartSeries[0], 0) : "暂无主序列" }}</small>
+        </div>
+        <div>
+          <dt>区间峰值</dt>
+          <dd>{{ formatMetric(peakValue) }}</dd>
+          <small>全部返回序列</small>
+        </div>
+        <div>
+          <dt>区间变化</dt>
+          <dd :class="{ 'is-rising': (changeRate ?? 0) > 0 }">
+            {{ formatChange(changeRate) }}
+          </dd>
+          <small>主序列首尾对比</small>
+        </div>
+        <div>
+          <dt>覆盖</dt>
+          <dd>{{ execution.series_count }} / {{ execution.sample_count }}</dd>
+          <small>序列 / 采样点</small>
+        </div>
+      </dl>
 
       <WorkspaceState
         v-if="execution.status === 'failed'"
@@ -250,6 +299,12 @@ function seriesIdentity(series: QuerySeries): string {
           </li>
         </ol>
       </section>
+
+      <WorkspaceTechnicalDetails
+        :fields="technicalFields"
+        title="查询技术详情"
+        description="Execution、精确 Hash、Revision、Provider 与 UTC 范围"
+      />
     </template>
   </section>
 </template>
@@ -270,11 +325,14 @@ function seriesIdentity(series: QuerySeries): string {
 .monitoring-result__header h2 { margin: 0; font-size: 16px; }
 .monitoring-result__header > div:first-child > span { color: var(--co-text-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .monitoring-result__actions { flex-wrap: wrap; justify-content: flex-end; gap: var(--co-space-1); }
-.monitoring-result__provenance { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; border-block: 1px solid var(--co-border-default); }
-.monitoring-result__provenance div { display: grid; min-width: 0; grid-template-columns: 86px minmax(0, 1fr); gap: var(--co-space-2); padding: var(--co-space-2) var(--co-space-3); border-right: 1px solid var(--co-border-subtle); }
-.monitoring-result__provenance dt { color: var(--co-text-muted); font-size: 10px; font-weight: 700; }
-.monitoring-result__provenance dd { min-width: 0; margin: 0; overflow: hidden; font-family: var(--co-font-mono); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .monitoring-result__meta { flex-wrap: wrap; gap: var(--co-space-2) var(--co-space-5); padding: var(--co-space-2) 0; color: var(--co-text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
+.monitoring-result__summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; border-block: 1px solid var(--co-border-default); background: var(--co-bg-subtle); }
+.monitoring-result__summary > div { display: grid; min-width: 0; gap: 2px; padding: var(--co-space-3); border-right: 1px solid var(--co-border-subtle); }
+.monitoring-result__summary > div:last-child { border-right: 0; }
+.monitoring-result__summary dt { color: var(--co-text-muted); font-size: 10px; }
+.monitoring-result__summary dd { min-width: 0; margin: 0; color: var(--co-text-primary); font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.monitoring-result__summary dd.is-rising { color: var(--co-status-warning-fg); }
+.monitoring-result__summary small { min-width: 0; overflow: hidden; color: var(--co-text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .monitoring-result__table { min-width: 0; min-height: 230px; border-bottom: 1px solid var(--co-border-default); }
 .monitoring-result__table header,
 .monitoring-result__audit header { min-height: 44px; justify-content: space-between; }
@@ -300,6 +358,8 @@ function seriesIdentity(series: QuerySeries): string {
 .monitoring-result__audit li p { margin: var(--co-space-1) 0 0; overflow-wrap: anywhere; }
 
 @media (max-width: 1024px) {
-  .monitoring-result__provenance { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .monitoring-result__summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .monitoring-result__summary > div:nth-child(2) { border-right: 0; }
+  .monitoring-result__summary > div:nth-child(-n + 2) { border-bottom: 1px solid var(--co-border-subtle); }
 }
 </style>

@@ -24,6 +24,8 @@ import LogsHistory from "../../components/logs/LogsHistory.vue";
 import LogsQueryControls from "../../components/logs/LogsQueryControls.vue";
 import { buildLogsRouteQuery, parseLogsRoute } from "../../components/logs/logsRoute";
 import VirtualLogList from "../../components/logs/VirtualLogList.vue";
+import WorkspacePageFrame from "../../components/workspace/WorkspacePageFrame.vue";
+import WorkspaceStatusRow from "../../components/workspace/WorkspaceStatusRow.vue";
 import { useWorkspaceInspector } from "../../composables/useWorkspaceInspector";
 import { resolveTelemetryResourceID } from "../../models/telemetry";
 import { safeExternalURL } from "../../models/workbench";
@@ -608,39 +610,44 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section
+  <WorkspacePageFrame
     class="logs-workspace"
+    width="full"
     aria-labelledby="logs-heading"
   >
-    <WorkspaceHeader
-      heading-id="logs-heading"
-      eyebrow="Telemetry / Elasticsearch"
-      title="日志"
-      description="真实 Scope 的有界查询、完整原文检查与 Evidence 上下文。"
-    >
-      <template #context>
-        <UBadge
+    <header class="logs-workspace__heading">
+      <div>
+        <span>可观测性</span>
+        <h1 id="logs-heading">
+          日志
+        </h1>
+        <p>{{ selectedResource ? `${selectedResource.kind} ${selectedResource.name}` : "当前运行范围" }} · 搜索日志、追踪上下文并保留 Evidence</p>
+      </div>
+      <UTooltip text="刷新日志工作区">
+        <UButton
           color="neutral"
-          variant="soft"
-          :icon="providerReady ? 'i-lucide-circle-check' : 'i-lucide-circle-alert'"
-          :label="`Elasticsearch ${providerStateLabel(catalog?.provider_state)}`"
+          variant="ghost"
+          icon="i-lucide-refresh-cw"
+          square
+          aria-label="刷新日志工作区"
+          :loading="loading"
+          @click="refreshAll"
         />
-        <code>{{ bootstrap?.active_scope.cluster_id || "活动集群" }} / {{ selectedNamespace || "Namespace" }}</code>
+      </UTooltip>
+    </header>
+
+    <WorkspaceStatusRow
+      :tone="providerReady ? 'success' : catalog ? 'error' : 'neutral'"
+      :icon="providerReady ? 'i-lucide-scroll-text' : 'i-lucide-circle-alert'"
+      :title="`Elasticsearch ${providerStateLabel(catalog?.provider_state)}`"
+      :description="catalog?.provider_detail || '正在确认当前 Configuration Revision 的日志端点'"
+      :badge="currentQuery?.tail ? '实时模式' : ''"
+      :busy="loading"
+    >
+      <template #meta>
+        {{ bootstrap?.active_scope.cluster_id || "活动集群" }} / {{ selectedNamespace || "Namespace" }}
       </template>
-      <template #actions>
-        <UTooltip text="刷新 Logs 工作区">
-          <UButton
-            color="neutral"
-            variant="ghost"
-            icon="i-lucide-refresh-cw"
-            square
-            aria-label="刷新 Logs 工作区"
-            :loading="loading"
-            @click="refreshAll"
-          />
-        </UTooltip>
-      </template>
-    </WorkspaceHeader>
+    </WorkspaceStatusRow>
 
     <WorkspaceState
       v-if="pageError"
@@ -925,7 +932,7 @@ onBeforeUnmount(() => {
         />
       </div>
     </template>
-  </section>
+  </WorkspacePageFrame>
 
   <LogInspector
     :open="Boolean(inspectedEntryID)"
@@ -941,11 +948,14 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .logs-workspace {
-  width: min(100%, 1680px);
-  margin: 0 auto;
   padding: var(--co-space-5) clamp(var(--co-space-4), 2.5vw, var(--co-space-8)) var(--co-space-10);
 }
 .logs-workspace code { min-width: 0; overflow-wrap: anywhere; color: var(--co-text-secondary); font-family: var(--co-font-mono); font-size: 11px; }
+.logs-workspace__heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--co-space-4); padding-bottom: var(--co-space-4); }
+.logs-workspace__heading > div { min-width: 0; }
+.logs-workspace__heading span { color: var(--co-text-muted); font-size: 11px; }
+.logs-workspace__heading h1 { margin: 3px 0 0; font-size: 24px; line-height: 1.2; }
+.logs-workspace__heading p { margin: var(--co-space-1) 0 0; color: var(--co-text-secondary); font-size: 12px; overflow-wrap: anywhere; }
 .logs-workspace__grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 290px); gap: var(--co-space-6); margin-top: var(--co-space-4); }
 .logs-results { min-width: 0; }
 .logs-results__header { display: flex; min-height: 54px; align-items: center; justify-content: space-between; gap: var(--co-space-3); }
@@ -971,9 +981,14 @@ onBeforeUnmount(() => {
 .logs-snapshot__proof dd { margin: var(--co-space-1) 0 0; overflow-wrap: anywhere; font-family: var(--co-font-mono); font-size: 10px; }
 
 @media (max-width: 1024px) {
+  .logs-workspace { padding-inline: var(--co-space-4); }
   .logs-workspace__grid { grid-template-columns: minmax(0, 1fr); }
   .logs-results__header { align-items: flex-start; flex-direction: column; }
   .logs-results__header > div:last-child { justify-content: flex-start; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .logs-workspace * { scroll-behavior: auto; }
 }
 
 </style>
