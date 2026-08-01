@@ -137,6 +137,7 @@ function restoreTrigger() {
 }
 
 .workspace-inspector-surface {
+  z-index: var(--co-z-overlay);
   top: var(--co-header-height);
   bottom: 0;
   width: min(var(--co-inspector-max-width), calc(100vw - var(--co-sidebar-rail-width)));

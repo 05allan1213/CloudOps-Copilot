@@ -986,7 +986,6 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.alerts-workspace :global(.workspace-inspector-surface) { z-index: 20; }
 .alerts-workspace {
   display: grid;
   min-width: 0;

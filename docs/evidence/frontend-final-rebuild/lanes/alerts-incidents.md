@@ -4,7 +4,7 @@
 LANE=Alerts/Incidents
 BRANCH=frontend/final-alert-incidents
 BASE_SHA=3559a8db55f6985f30de86cf16479a369708ca26
-FINAL_SHA=recorded by git rev-parse HEAD after the local lane commit
+FINAL_SHA=13432aa5e63b7e403352fe81616155db4cb4169d
 IMPLEMENTATION=COMPLETE
 FOCUSED_VALIDATION=PASS
 FULL_VALIDATION=NOT RUN

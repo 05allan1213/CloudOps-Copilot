@@ -289,7 +289,6 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.incident-list-view :global(.workspace-inspector-surface) { z-index: 20; }
 .incident-list-view { display: grid; min-width: 0; gap: var(--co-space-4); }
 .header-context-facts { display: flex; flex-wrap: wrap; gap: var(--co-space-3); color: var(--co-text-secondary); font-size: 11px; }
 .header-context-facts strong { color: var(--co-text-primary); font-family: var(--co-font-mono); font-size: 16px; }
