@@ -189,6 +189,7 @@ max_step_retries, failure_code, uncertainty, migrated_legacy_context, created_at
 	resourcesJSON, _ := json.Marshal(resources)
 	filters := map[string]any{
 		"incident_id": incidentPublicID, "cycle_no": cycleNo, "operational_scope_id": scopePublicID,
+		"subject_summary": summary,
 	}
 	if scenarioID != "" {
 		filters["scenario_id"] = scenarioID
@@ -315,7 +316,11 @@ max_step_retries, failure_code, uncertainty, created_at, updated_at
 	namespacesJSON, _ := json.Marshal([]string{namespace})
 	resourcesJSON, _ := json.Marshal(resources)
 	scenarioID := workspaceScenarioID(labelsJSON)
-	filters := map[string]string{"alert_id": alertPublicID}
+	filters := map[string]string{
+		"alert_id":        alertPublicID,
+		"alert_name":      workspaceAlertLabel(labelsJSON, "alertname"),
+		"subject_summary": summary,
+	}
 	if scenarioID != "" {
 		filters["scenario_id"] = scenarioID
 	}
@@ -357,15 +362,19 @@ created_by, created_at
 }
 
 func workspaceScenarioID(labelsJSON json.RawMessage) string {
-	var labels map[string]string
-	if json.Unmarshal(labelsJSON, &labels) != nil {
-		return ""
-	}
-	value := strings.TrimSpace(labels["scenario_id"])
+	value := workspaceAlertLabel(labelsJSON, "scenario_id")
 	if value == "" || !workspaceScenarioIdentity(value) {
 		return ""
 	}
 	return value
+}
+
+func workspaceAlertLabel(labelsJSON json.RawMessage, key string) string {
+	var labels map[string]string
+	if json.Unmarshal(labelsJSON, &labels) != nil {
+		return ""
+	}
+	return strings.TrimSpace(labels[key])
 }
 
 func workspaceScenarioIdentity(value string) bool {

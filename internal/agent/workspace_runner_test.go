@@ -2,10 +2,15 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/05allan1213/CloudOps-Copilot/internal/settings"
+	"github.com/05allan1213/CloudOps-Copilot/internal/telemetry"
 )
 
 type transientCancellationPollStore struct {
@@ -97,5 +102,45 @@ func TestWorkspaceModelOutcomeRequiresTwoCitedEvidenceSources(t *testing.T) {
 				t.Fatalf("insufficient uncertainty=%q want high", uncertainty)
 			}
 		})
+	}
+}
+
+func TestWorkspaceModelPromptIncludesImmutableSubjectAndEvidenceFacts(t *testing.T) {
+	execution := WorkspaceExecutionContext{
+		Run: WorkspaceRun{Objective: "调查当前 firing condition"},
+		Snapshot: WorkspaceContextSnapshot{
+			ID: "snapshot-1", SubjectType: WorkspaceSubjectAlert, ConfigurationRevisionID: "revision-1",
+			Scope:     settings.OperationalScope{ClusterID: "cloudops-local", Environment: "local", Namespaces: []string{"demo"}},
+			Resources: []telemetry.ResourceReference{{ID: "resource-1", Kind: "Deployment", Namespace: "demo", Name: "cloudops-scenario-fault"}},
+			Filters:   json.RawMessage(`{"alert_id":"alert-1","alert_name":"CloudOpsScenarioRequiredEnvMissing","subject_summary":"Scenario workload is failing because REQUIRED_ENV is missing"}`),
+			TimeRange: telemetry.TimeRange{From: time.Date(2026, 8, 2, 20, 0, 0, 0, time.UTC), To: time.Date(2026, 8, 2, 21, 0, 0, 0, time.UTC)},
+		},
+		AlertName: "CloudOpsScenarioRequiredEnvMissing",
+	}
+	run := WorkspaceRun{Evidence: []EvidenceCitation{{
+		EvidenceID: "evidence-kubernetes", Source: "kubernetes", Summary: "Kubernetes returned bounded resources.",
+		CollectedAt: time.Date(2026, 8, 2, 20, 30, 0, 0, time.UTC),
+		Facts:       json.RawMessage(`{"facts":[{"kind":"Deployment","name":"cloudops-scenario-fault","status":"0/1 ready","health":"critical"}]}`),
+	}}}
+
+	prompt := workspaceModelPrompt(execution, run, workspaceGuidanceInput{})
+	for _, expected := range []string{
+		"CloudOpsScenarioRequiredEnvMissing", "REQUIRED_ENV", "cloudops-scenario-fault", "0/1 ready",
+		"evidence-kubernetes", "absolute_time_window", "Subject Context",
+	} {
+		if !strings.Contains(prompt, expected) {
+			t.Fatalf("Workspace prompt does not contain %q:\n%s", expected, prompt)
+		}
+	}
+}
+
+func TestWorkspacePromptFactsKeepsValidBoundedJSON(t *testing.T) {
+	raw := json.RawMessage(`{"facts":[{"name":"first"},{"name":"second"}]}`)
+	result := workspacePromptFacts(raw, 45)
+	if !json.Valid([]byte(result)) {
+		t.Fatalf("bounded facts are not valid JSON: %s", result)
+	}
+	if !strings.Contains(result, `"name":"first"`) || !strings.Contains(result, `"truncated":true`) {
+		t.Fatalf("bounded facts did not preserve the first fact and truncation marker: %s", result)
 	}
 }

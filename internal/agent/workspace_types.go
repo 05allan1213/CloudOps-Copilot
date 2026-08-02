@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	WorkspacePromptVersion = "agent-workspace/v1"
+	WorkspacePromptVersion = "agent-workspace/v2"
 	WorkspaceToolVersion   = "cloudops-bounded-tools/v1"
 )
 
