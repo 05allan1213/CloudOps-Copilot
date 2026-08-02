@@ -22,6 +22,8 @@ const (
 	workspaceModelUnavailableCode = "MODEL_PROVIDER_UNAVAILABLE"
 )
 
+var errWorkspaceRuntimeExceeded = errors.New("agent workspace runtime deadline exceeded")
+
 type workspaceRunnerStore interface {
 	WorkspaceTaskReady(context.Context) error
 	ClaimWorkspaceTask(context.Context, string, time.Duration) (WorkspaceLease, bool, error)
@@ -207,7 +209,7 @@ func (r *WorkspaceRunner) executeLease(base context.Context, lease WorkspaceLeas
 			maxRuntime = 2 * time.Minute
 		}
 		var deadlineCancel context.CancelFunc
-		ctx, deadlineCancel = context.WithTimeout(ctx, maxRuntime)
+		ctx, deadlineCancel = context.WithTimeoutCause(ctx, maxRuntime, errWorkspaceRuntimeExceeded)
 		defer deadlineCancel()
 		err = r.executeWorkspace(ctx, lease, execution)
 	}
@@ -227,7 +229,7 @@ func (r *WorkspaceRunner) executeLease(base context.Context, lease WorkspaceLeas
 		})
 		return
 	}
-	if errors.Is(cause, context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
+	if workspaceRuntimeExceeded(cause, err) {
 		_ = r.config.Store.CompleteWorkspaceTask(auditCtx, lease, WorkspaceCompletion{
 			Outcome: WorkspaceOutcomeFailed, Uncertainty: "high", Answer: "Agent 工作超过了本次运行时限。",
 			FailureCode: "WORKSPACE_RUNTIME_EXCEEDED", FailureSummary: "Agent Workspace runtime deadline exceeded",
@@ -247,6 +249,10 @@ func (r *WorkspaceRunner) executeLease(base context.Context, lease WorkspaceLeas
 	})
 }
 
+func workspaceRuntimeExceeded(cause, err error) bool {
+	return errors.Is(cause, errWorkspaceRuntimeExceeded) || errors.Is(err, errWorkspaceRuntimeExceeded)
+}
+
 func (r *WorkspaceRunner) maintainLease(ctx context.Context, cancel context.CancelCauseFunc, lease WorkspaceLease, done chan<- struct{}) {
 	defer close(done)
 	ticker := time.NewTicker(r.config.CancellationPoll)
@@ -258,11 +264,14 @@ func (r *WorkspaceRunner) maintainLease(ctx context.Context, cancel context.Canc
 			return
 		case <-ticker.C:
 		}
-		checkCtx, checkCancel := context.WithTimeout(context.Background(), min(r.config.CancellationPoll, 2*time.Second))
+		checkCtx, checkCancel := context.WithTimeout(context.Background(), min(r.config.HeartbeatInterval, 5*time.Second))
 		requested, err := r.config.Store.WorkspaceCancellationRequested(checkCtx, lease)
 		checkCancel()
 		if err != nil {
-			cancel(err)
+			if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+				continue
+			}
+			cancel(fmt.Errorf("poll workspace cancellation: %w", err))
 			return
 		}
 		if requested {
@@ -276,7 +285,7 @@ func (r *WorkspaceRunner) maintainLease(ctx context.Context, cancel context.Canc
 		err = r.config.Store.HeartbeatWorkspaceTask(heartbeatCtx, lease, r.config.LeaseDuration)
 		heartbeatCancel()
 		if err != nil {
-			cancel(err)
+			cancel(fmt.Errorf("heartbeat workspace lease: %w", err))
 			return
 		}
 		nextHeartbeat = time.Now().Add(r.config.HeartbeatInterval)
