@@ -4,6 +4,7 @@ import {
   agentContextHasEvidence,
   freeQueryContext,
   readAgentRouteSelection,
+  shouldClearAgentContextOnUnmount,
   shouldStopGlobalAgent,
   type AgentPageContext,
 } from "./agentContext";
@@ -17,6 +18,11 @@ describe("global Agent lifecycle", () => {
   it("keeps the shared stream owner alive for an open overlay or the full Workspace", () => {
     expect(shouldStopGlobalAgent(true, "/incidents")).toBe(false);
     expect(shouldStopGlobalAgent(false, "/agent")).toBe(false);
+  });
+
+  it("retains a telemetry Context while entering the full Agent Workspace", () => {
+    expect(shouldClearAgentContextOnUnmount("/agent")).toBe(false);
+    expect(shouldClearAgentContextOnUnmount("/overview")).toBe(true);
   });
 
   it("restores canonical Consultation and legacy run route identities", () => {

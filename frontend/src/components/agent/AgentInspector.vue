@@ -54,6 +54,18 @@ const contextTechnicalFields = computed<TechnicalDetailField[]>(() => {
       { label: "Alert ID", value: run.value?.alert_id || "无关联事件", code: Boolean(run.value?.alert_id), copyValue: run.value?.alert_id || undefined },
       { label: "From UTC", value: formatUTC(snapshot.time_range.from), code: true, copyValue: snapshot.time_range.from },
       { label: "To UTC", value: formatUTC(snapshot.time_range.to), code: true, copyValue: snapshot.time_range.to },
+      {
+        label: "Query Execution IDs",
+        value: snapshot.query_execution_refs.join(", ") || "未提供",
+        code: snapshot.query_execution_refs.length > 0,
+        copyValue: snapshot.query_execution_refs.length ? snapshot.query_execution_refs.join("\n") : undefined,
+      },
+      {
+        label: "Evidence IDs",
+        value: snapshot.evidence_refs.join(", ") || "未提供",
+        code: snapshot.evidence_refs.length > 0,
+        copyValue: snapshot.evidence_refs.length ? snapshot.evidence_refs.join("\n") : undefined,
+      },
       { label: "Content hash", value: snapshot.content_hash, code: true, copyValue: snapshot.content_hash },
     ];
   }

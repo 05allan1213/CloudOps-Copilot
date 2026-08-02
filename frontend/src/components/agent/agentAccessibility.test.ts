@@ -31,8 +31,8 @@ function agentFixture(): ConsultationDetail {
     filters: {},
     time_range: { from: observedAt, to: observedAt },
     query_definition_refs: [],
-    query_execution_refs: [],
-    evidence_refs: [],
+    query_execution_refs: ["query-execution-1"],
+    evidence_refs: ["evidence-1"],
     content_hash: "snapshot-hash",
     created_at: observedAt,
   };
@@ -155,6 +155,7 @@ describe("Agent Workspace accessibility IDs", () => {
     for (const reference of references) expect(idSet.has(reference), `${reference} must resolve to an element`).toBe(true);
     expect(html).toContain("<h2>Bounded result</h2>");
     expect(html).toContain("<ul>");
+    expect(html).toContain("1 Evidence · 1 Query");
   });
 
   it("honors an exact Investigation Context Link selection", async () => {

@@ -31,7 +31,12 @@ import { invalidateQueryDomain } from "../../composables/queryCache";
 import { useWorkspaceInspector } from "../../composables/useWorkspaceInspector";
 import { resolveTelemetryResourceID } from "../../models/telemetry";
 import { safeExternalURL } from "../../models/workbench";
-import { openAgentPanel, publishAgentContext, type AgentPageContext } from "../../utils/agentContext";
+import {
+  openAgentPanel,
+  publishAgentContext,
+  shouldClearAgentContextOnUnmount,
+  type AgentPageContext,
+} from "../../utils/agentContext";
 import { OPERATIONAL_SCOPE_CHANGED_EVENT } from "../../utils/operationalScope";
 
 interface RequestFailure {
@@ -651,7 +656,7 @@ onBeforeUnmount(() => {
   workspaceController?.abort();
   queryController?.abort();
   window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT, receiveScopeChange);
-  publishAgentContext(null);
+  if (shouldClearAgentContextOnUnmount(route.path)) publishAgentContext(null);
 });
 </script>
 

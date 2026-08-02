@@ -56,3 +56,7 @@ export function openAgentPanel(request: AgentOpenRequest = {}) {
 export function shouldStopGlobalAgent(open: boolean, routePath: string): boolean {
   return !open && routePath !== "/agent";
 }
+
+export function shouldClearAgentContextOnUnmount(routePath: string): boolean {
+  return routePath !== "/agent";
+}
