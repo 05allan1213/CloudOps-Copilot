@@ -275,6 +275,27 @@ export interface SaveKnowledgeInput {
   expires_at?: string;
 }
 
+export interface ActionCardProposalInput {
+  run_id: string;
+  action_type: "local.change_freeze.set";
+  target: {
+    cluster_id: string;
+    environment: string;
+    namespace: string;
+    workload_kind: "Deployment";
+    workload_name: string;
+    scenario_id: string;
+  };
+  parameters: { enabled: boolean; reason: string };
+  preconditions: Array<{
+    type: "local.change_freeze";
+    expected_enabled: boolean;
+    expected_version: number;
+  }>;
+  risk: string;
+  expires_at: string;
+}
+
 export interface OperationPlanProposalInput {
   run_id: string;
   action_type: "kubernetes.deployment.scale";
@@ -363,6 +384,10 @@ export async function getRunbookGuidance(signal?: AbortSignal): Promise<RunbookG
 
 export async function getOperationPlans(signal?: AbortSignal): Promise<OperationPlan[]> {
   return (await getJSON<{ items: OperationPlan[] }>("/api/v1/operation-plans?limit=100", { signal })).items;
+}
+
+export function proposeActionCard(input: ActionCardProposalInput): Promise<ActionCard> {
+  return postJSON("/api/v1/agent/action-cards", input);
 }
 
 export function proposeOperationPlan(input: OperationPlanProposalInput): Promise<OperationPlan> {

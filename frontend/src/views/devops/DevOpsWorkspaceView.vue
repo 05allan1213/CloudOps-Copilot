@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
-import type { ActionCard, OperationPlan, OperationPlanProposalInput } from "../../api/agent";
+import type { ActionCard, ActionCardProposalInput, OperationPlan, OperationPlanProposalInput } from "../../api/agent";
 import type {
   ChangeCandidate,
   DeploymentBaseline,
@@ -34,7 +34,7 @@ import {
 
 type WorkspaceView = "operations" | "identity";
 type AuthoritySubject = ActionCard | OperationPlan;
-type ConfirmationMode = "authorize" | "execute" | "scenario" | "";
+type ConfirmationMode = "authorize" | "execute" | "scenario" | "freeze" | "";
 
 interface DevOpsQueueRow extends Record<string, unknown> {
   id: string;
@@ -184,6 +184,12 @@ const scenarioProposalBlocker = computed(() => {
   if (scenarioPlan.value) return `该 Scenario 已有状态为“${devopsStatusLabel(scenarioPlan.value.status)}”的 Operation Plan。`;
   return "";
 });
+const canProposeScenarioFreezeCard = computed(() => Boolean(
+  scenarioDeployment.value
+  && scenarioID.value
+  && scenarioInvestigation.value
+  && !store.scenarioPlanningError,
+));
 
 const selectedDelivery = computed(() => deliveryFor(detailOwnership.value.incidentID));
 const selectedPullRequestURL = computed(() => safeExternalURL(selectedDelivery.value?.pull_request_url));
@@ -228,24 +234,28 @@ const confirmationSubject = computed(() => detailSubject.value);
 const confirmationTitle = computed(() => {
   if (confirmationMode.value === "authorize") return "负责人审查 · 精确授权";
   if (confirmationMode.value === "execute") return isOperationPlan(confirmationSubject.value) ? "执行高影响 Operation Plan" : "执行本地可逆动作";
+  if (confirmationMode.value === "freeze") return scenarioFreeze.value?.enabled ? "创建解除 Change Freeze Action Card" : "创建 Change Freeze Action Card";
   return "创建不可变 Scenario 恢复计划";
 });
 const confirmationDescription = computed(() => {
   if (confirmationMode.value === "authorize") return "Authorization 只绑定当前内容 Hash；材料变化后必须重新审查。";
   if (confirmationMode.value === "execute") return "Worker 会再次检查授权、有效期、精确 Hash 与前置条件。";
+  if (confirmationMode.value === "freeze") return "只创建绑定当前本地状态与 row version 的可逆 Action Card，不授权也不执行。";
   return "仅创建持久化 Plan，不授权也不执行 Kubernetes mutation。";
 });
 const confirmationTarget = computed(() => {
-  if (confirmationMode.value === "scenario") return "demo/Deployment/cloudops-scenario-fault";
+  if (confirmationMode.value === "scenario" || confirmationMode.value === "freeze") return "demo/Deployment/cloudops-scenario-fault";
   return subjectTarget(confirmationSubject.value);
 });
 const confirmationEffect = computed(() => {
   if (confirmationMode.value === "authorize") return "绑定本地负责人审查与当前精确 Subject。";
   if (confirmationMode.value === "execute") return "按已授权材料排队执行；排队不代表 Provider 已观测或已验证。";
+  if (confirmationMode.value === "freeze") return scenarioFreeze.value?.enabled ? "创建 enabled=false 的解冻 Action Card；本步骤不修改本地状态。" : "创建 enabled=true 的冻结 Action Card；本步骤不修改本地状态。";
   return "创建 replicas=0 的恢复计划；不产生 Provider 外部副作用。";
 });
 const confirmationAuthority = computed(() => {
   if (confirmationMode.value === "scenario") return "仅创建计划 · 未授权";
+  if (confirmationMode.value === "freeze") return "reversible local Action Card · 未授权";
   if (confirmationMode.value === "authorize") return confirmationSubject.value?.authority ?? "未记录";
   return detailAuthorization.value
     ? `${detailAuthorization.value.authorized_by} · ${detailAuthorization.value.id}`
@@ -253,14 +263,16 @@ const confirmationAuthority = computed(() => {
 });
 const confirmationVersion = computed(() => {
   if (confirmationMode.value === "scenario") return scenarioDeployment.value?.resource_version ?? "未记录";
+  if (confirmationMode.value === "freeze") return `Change Freeze row v${scenarioFreeze.value?.row_version ?? 0}`;
   if (isOperationPlan(confirmationSubject.value)) return confirmationSubject.value.configuration_revision_id;
   return confirmationSubject.value?.run_id ?? "未记录";
 });
-const confirmationHash = computed(() => confirmationMode.value === "scenario" ? "" : confirmationSubject.value?.content_hash ?? "");
-const confirmationRecovery = computed(() => confirmationMode.value === "scenario"
-  ? "删除或拒绝计划不会回滚任何 Provider 状态；执行仍需独立授权。"
-  : confirmationSubject.value?.risk || "恢复能力由当前 subject 与 Provider adapter 决定。",
-);
+const confirmationHash = computed(() => confirmationMode.value === "scenario" || confirmationMode.value === "freeze" ? "" : confirmationSubject.value?.content_hash ?? "");
+const confirmationRecovery = computed(() => {
+  if (confirmationMode.value === "scenario") return "删除或拒绝计划不会回滚任何 Provider 状态；执行仍需独立授权。";
+  if (confirmationMode.value === "freeze") return "可通过另一个绑定新 row version 的 Action Card 恢复相反状态。";
+  return confirmationSubject.value?.risk || "恢复能力由当前 subject 与 Provider adapter 决定。";
+});
 const confirmationPending = computed(() => Boolean(store.mutatingSubjectID));
 
 function queryValue(value: unknown): string {
@@ -580,6 +592,8 @@ async function confirmCommand(reason: string) {
     }
   } else if (mode === "scenario") {
     await proposeScenarioRecovery();
+  } else if (mode === "freeze") {
+    await proposeScenarioFreeze(reason);
   }
   if (!store.error) confirmationMode.value = "";
 }
@@ -616,6 +630,41 @@ async function proposeScenarioRecovery() {
     await router.replace({
       path: route.path,
       query: { ...route.query, view: "operations", selected: undefined, subject: plan.id, operation: undefined },
+      hash: "",
+    });
+  }
+}
+
+async function proposeScenarioFreeze(reason: string) {
+  const deployment = scenarioDeployment.value;
+  const run = scenarioInvestigation.value;
+  if (!canProposeScenarioFreezeCard.value || !deployment || !run || !scenarioID.value || !store.scenarioResources) return;
+  const currentEnabled = scenarioFreeze.value?.enabled ?? false;
+  const input: ActionCardProposalInput = {
+    run_id: run.id,
+    action_type: "local.change_freeze.set",
+    target: {
+      cluster_id: store.scenarioResources.scope.cluster_id,
+      environment: store.scenarioResources.scope.environment,
+      namespace: "demo",
+      workload_kind: "Deployment",
+      workload_name: "cloudops-scenario-fault",
+      scenario_id: scenarioID.value,
+    },
+    parameters: { enabled: !currentEnabled, reason: reason.trim() },
+    preconditions: [{
+      type: "local.change_freeze",
+      expected_enabled: currentEnabled,
+      expected_version: scenarioFreeze.value?.row_version ?? 0,
+    }],
+    risk: "Changes only the bounded local Scenario change-freeze record; no Kubernetes or external Provider effect.",
+    expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+  };
+  const card = await store.proposeScenarioActionCard(input);
+  if (card) {
+    await router.replace({
+      path: route.path,
+      query: { ...route.query, view: "operations", selected: undefined, subject: card.id, operation: undefined },
       hash: "",
     });
   }
@@ -942,7 +991,17 @@ onBeforeUnmount(() => {
       <section class="freeze-section" aria-labelledby="freeze-heading">
         <header class="section-heading compact-heading">
           <div><span>本地安全边界</span><h2 id="freeze-heading">Change Freeze</h2></div>
-          <UBadge color="neutral" variant="soft" :label="workspace.change_freezes.length ? `${workspace.change_freezes.length} 条` : '无记录'" />
+          <div class="freeze-heading-actions">
+            <UBadge color="neutral" variant="soft" :label="workspace.change_freezes.length ? `${workspace.change_freezes.length} 条` : '无记录'" />
+            <UButton
+              color="neutral"
+              variant="outline"
+              :icon="scenarioFreeze?.enabled ? 'i-lucide-lock-keyhole-open' : 'i-lucide-lock-keyhole'"
+              :label="scenarioFreeze?.enabled ? '创建解冻 Action Card' : '创建 Freeze Action Card'"
+              :disabled="!canProposeScenarioFreezeCard || Boolean(store.mutatingSubjectID)"
+              @click="openConfirmation('freeze')"
+            />
+          </div>
         </header>
         <ul v-if="workspace.change_freezes.length">
           <li v-for="freeze in workspace.change_freezes" :key="`${freeze.target.cluster_id}/${freeze.target.namespace}/${freeze.target.workload_name}`">
@@ -1592,8 +1651,8 @@ onBeforeUnmount(() => {
       :version="confirmationVersion"
       :exact-hash="confirmationHash"
       :recovery="confirmationRecovery"
-      :confirm-label="confirmationMode === 'authorize' ? '授权精确 Hash' : confirmationMode === 'execute' ? '排队执行' : '创建精确 Plan'"
-      :reason-required="confirmationMode === 'authorize'"
+      :confirm-label="confirmationMode === 'authorize' ? '授权精确 Hash' : confirmationMode === 'execute' ? '排队执行' : confirmationMode === 'freeze' ? '创建 exact Action Card' : '创建精确 Plan'"
+      :reason-required="confirmationMode === 'authorize' || confirmationMode === 'freeze'"
       :pending="confirmationPending"
       :severity="confirmationMode === 'execute' ? 'error' : 'warning'"
       @update:open="(open) => { if (!open) confirmationMode = '' }"
@@ -1610,6 +1669,7 @@ onBeforeUnmount(() => {
 .header-facts .header-facts__healthy { align-items: center; color: var(--co-status-success-fg); }
 .header-facts__healthy svg { width: 14px; height: 14px; }
 .provider-strip, .freeze-section, .scenario-strip, .detail-section, .identity-section, .baseline-hero { min-width: 0; overflow: hidden; border: 1px solid transparent; border-radius: var(--co-radius-frame); background: var(--co-bg-surface); box-shadow: var(--co-shadow-row); }
+.freeze-heading-actions { display: flex; align-items: center; gap: var(--co-space-2); }
 .provider-strip { padding: var(--co-space-3); }
 .provider-strip > header, .queue-section > header, .freeze-section > header, .identity-section > header, .detail-heading, .detail-section > header, .devops-inspector > header { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: var(--co-space-3); }
 .provider-strip h2, .provider-strip p, .queue-section h2, .queue-section p, .freeze-section h2, .freeze-section p, .identity-section h2, .detail-heading h2, .detail-section h3, .devops-inspector h3 { margin: 0; }

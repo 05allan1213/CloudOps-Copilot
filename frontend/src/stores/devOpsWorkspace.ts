@@ -4,7 +4,9 @@ import {
   authorizeActionCard,
   authorizeOperationPlan,
   getAgentInvestigations,
+  proposeActionCard,
   proposeOperationPlan,
+  type ActionCardProposalInput,
   type ActionCard,
   type AgentRun,
   type OperationPlan,
@@ -203,6 +205,20 @@ export const useDevOpsWorkspaceStore = defineStore("devops-workspace", {
         this.notice = "已基于 Scenario 调查与当前 Kubernetes resourceVersion 创建不可变 Operation Plan；尚未授权。";
       });
       return plan;
+    },
+
+    async proposeScenarioActionCard(input: ActionCardProposalInput): Promise<ActionCard | null> {
+      const ownership = classifyDevOpsRun(input.run_id, this.investigations);
+      if (ownership.kind !== "non_incident") {
+        this.blockOwnership(ownership);
+        return null;
+      }
+      let card: ActionCard | null = null;
+      await this.runMutation(input.run_id, async () => {
+        card = await proposeActionCard(input);
+        this.notice = "已基于 Scenario 调查创建可逆 Change Freeze Action Card；尚未授权。";
+      });
+      return card;
     },
 
     async runMutation(subjectID: string, command: () => Promise<void>) {

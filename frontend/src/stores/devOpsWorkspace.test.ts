@@ -4,7 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   authorizeOperationPlan,
   getAgentInvestigations,
+  proposeActionCard,
   proposeOperationPlan,
+  type ActionCard,
+  type ActionCardProposalInput,
   type AgentRun,
   type OperationPlan,
   type OperationPlanProposalInput,
@@ -32,6 +35,7 @@ vi.mock("../api/agent", () => ({
   authorizeActionCard: vi.fn(),
   authorizeOperationPlan: vi.fn(),
   getAgentInvestigations: vi.fn(),
+  proposeActionCard: vi.fn(),
   proposeOperationPlan: vi.fn(),
 }));
 vi.mock("../api/infrastructure", () => ({
@@ -41,6 +45,7 @@ vi.mock("../api/infrastructure", () => ({
 const getWorkspaceMock = vi.mocked(getDevOpsWorkspace);
 const getResourcesMock = vi.mocked(getResources);
 const getInvestigationsMock = vi.mocked(getAgentInvestigations);
+const proposeActionCardMock = vi.mocked(proposeActionCard);
 const proposeOperationPlanMock = vi.mocked(proposeOperationPlan);
 const authorizeOperationPlanMock = vi.mocked(authorizeOperationPlan);
 const executeOperationPlanMock = vi.mocked(executeOperationPlan);
@@ -231,5 +236,35 @@ describe("DevOps Workspace store", () => {
     expect(proposeOperationPlanMock).toHaveBeenCalledWith(input);
     expect(getWorkspaceMock).toHaveBeenCalledOnce();
     expect(store.notice).toContain("不可变 Operation Plan");
+  });
+
+  it("proposes one exact local Change Freeze Action Card from a proven Scenario run", async () => {
+    const input = {
+      run_id: "11111111-1111-4111-8111-111111111111",
+      action_type: "local.change_freeze.set",
+      target: {
+        cluster_id: "cloudops-local",
+        environment: "local",
+        namespace: "demo",
+        workload_kind: "Deployment",
+        workload_name: "cloudops-scenario-fault",
+        scenario_id: "scenario-20260728000000-deadbeef",
+      },
+      parameters: { enabled: true, reason: "ui-int-run bounded freeze" },
+      preconditions: [{ type: "local.change_freeze", expected_enabled: false, expected_version: 0 }],
+      risk: "Changes only the bounded local Scenario freeze record.",
+      expires_at: "2026-07-28T01:00:00Z",
+    } satisfies ActionCardProposalInput;
+    const card = { id: "22222222-2222-4222-8222-222222222222", status: "proposed" } as ActionCard;
+    proposeActionCardMock.mockResolvedValueOnce(card);
+    const store = useDevOpsWorkspaceStore();
+    store.investigations = [investigation(input.run_id, "alert")];
+
+    const result = await store.proposeScenarioActionCard(input);
+
+    expect(result).toStrictEqual(card);
+    expect(proposeActionCardMock).toHaveBeenCalledWith(input);
+    expect(getWorkspaceMock).toHaveBeenCalledOnce();
+    expect(store.notice).toContain("Change Freeze Action Card");
   });
 });
