@@ -8,6 +8,7 @@ import { getBootstrap, type BootstrapSnapshot } from "../../api/platform";
 import {
   createTelemetryConsultation,
   getTraceDetail,
+  getTraceEvidence,
   getTraceSearch,
   getTraceSearches,
   getTracesCatalog,
@@ -74,6 +75,7 @@ const limit = ref(initialRoute.limit);
 const selectedSpanIDs = ref(new Set<string>());
 const inspectedSpan = ref<TraceSpan | null>(null);
 const retainedEvidence = ref<TelemetryEvidence[]>([]);
+const evidenceQueryID = ref(initialRoute.evidenceQueryID);
 const consultation = ref<Consultation | null>(null);
 const resultsList = ref<ResultsHandle | null>(null);
 const loading = ref(true);
@@ -280,6 +282,7 @@ function routeState(searchID = currentSearch.value?.id ?? "", traceID = detail.v
     limit: limit.value,
     searchID,
     traceID,
+    evidenceQueryID: evidenceQueryID.value,
     from: validTimeRange.value ? new Date(fromValue.value).toISOString() : "",
     to: validTimeRange.value ? new Date(toValue.value).toISOString() : "",
   };
@@ -343,6 +346,7 @@ function resetDetail() {
   inspectedSpan.value = null;
   selectedSpanIDs.value = new Set();
   retainedEvidence.value = [];
+  evidenceQueryID.value = "";
   consultation.value = null;
 }
 
@@ -359,7 +363,6 @@ function applyDetail(result: TraceDetail) {
   detail.value = result;
   selectedSpanIDs.value = new Set();
   inspectedSpan.value = result.spans[0] ?? null;
-  retainedEvidence.value = [];
   consultation.value = null;
 }
 
@@ -393,6 +396,7 @@ async function loadWorkspace() {
   selectedSpanIDs.value = new Set();
   inspectedSpan.value = null;
   retainedEvidence.value = [];
+  evidenceQueryID.value = "";
   consultation.value = null;
   try {
     const snapshot = await getBootstrap(signal);
@@ -436,9 +440,14 @@ async function loadWorkspace() {
       if (options) {
         detailLoading.value = true;
         try {
-          const result = await getTraceDetail(parsed.traceID, options, signal);
+          const [result, evidence] = await Promise.all([
+            getTraceDetail(parsed.traceID, options, signal),
+            parsed.evidenceQueryID ? getTraceEvidence(parsed.evidenceQueryID, signal) : Promise.resolve([]),
+          ]);
           if (!mounted || signal.aborted || generation !== workspaceGeneration) return;
           applyDetail(result);
+          evidenceQueryID.value = parsed.evidenceQueryID;
+          retainedEvidence.value = evidence;
         } catch (reason) {
           if (!signal.aborted) queryError.value = normalizeFailure(reason, "Trace detail 读取失败。");
         } finally {
@@ -595,7 +604,7 @@ async function openTrace(trace: TraceSummary, scrollTop: number) {
   await openTraceID(trace.trace_id, currentSearch.value?.id, true);
 }
 
-async function openTraceID(traceID: string, searchID?: string, updateRoute = false) {
+async function openTraceID(traceID: string, searchID?: string, updateRoute = false, retainedQueryID = "") {
   const options = traceDetailOptions(searchID);
   if (!options) return;
   detailController?.abort();
@@ -608,12 +617,17 @@ async function openTraceID(traceID: string, searchID?: string, updateRoute = fal
   inspectedSpan.value = null;
   selectedSpanIDs.value = new Set();
   retainedEvidence.value = [];
+  evidenceQueryID.value = retainedQueryID;
   consultation.value = null;
   if (updateRoute) await syncRoute(searchID ?? "", traceID, "push");
   try {
-    const result = await getTraceDetail(traceID, options, signal);
+    const [result, evidence] = await Promise.all([
+      getTraceDetail(traceID, options, signal),
+      retainedQueryID ? getTraceEvidence(retainedQueryID, signal) : Promise.resolve([]),
+    ]);
     if (!mounted || signal.aborted || generation !== detailGeneration) return;
     applyDetail(result);
+    retainedEvidence.value = evidence;
   } catch (reason) {
     if (!signal.aborted && mounted && generation === detailGeneration) {
       queryError.value = normalizeFailure(reason, "Trace detail 读取失败。");
@@ -657,6 +671,8 @@ async function retainSelectedEvidence() {
   try {
     const evidence = await saveTraceEvidence(current.query_id, current.trace_id, [...selectedSpanIDs.value]);
     retainedEvidence.value = [evidence, ...retainedEvidence.value];
+    evidenceQueryID.value = current.query_id;
+    await syncRoute(currentSearch.value?.id ?? "", current.trace_id);
     statusMessage.value = `已保留 ${evidence.item_count} 个 Span Evidence。`;
   } catch (reason) {
     queryError.value = normalizeFailure(reason, "Trace Evidence 保存失败。");
@@ -733,7 +749,10 @@ async function applyRouteNavigation() {
   }
   if (parsed.traceID) {
     if (parsed.traceID !== detail.value?.trace_id) {
-      await openTraceID(parsed.traceID, parsed.searchID || currentSearch.value?.id, false);
+      await openTraceID(parsed.traceID, parsed.searchID || currentSearch.value?.id, false, parsed.evidenceQueryID);
+    } else if (parsed.evidenceQueryID !== evidenceQueryID.value) {
+      evidenceQueryID.value = parsed.evidenceQueryID;
+      retainedEvidence.value = parsed.evidenceQueryID ? await getTraceEvidence(parsed.evidenceQueryID) : [];
     }
   } else {
     resetDetail();
@@ -852,7 +871,7 @@ onBeforeUnmount(() => {
         :detail="detail"
         :selected-i-ds="selectedSpanIDs"
         :inspected-span="inspectedSpan"
-        :retained-evidence-count="retainedEvidence.length"
+        :retained-evidence="retainedEvidence"
         :consultation="consultation"
         :saving-evidence="savingEvidence"
         :freezing="freezing"

@@ -292,6 +292,14 @@ export async function getLogQueries(filter: HistoryFilter, signal?: AbortSignal)
   return page.items;
 }
 
+export async function getLogEvidence(queryID: string, signal?: AbortSignal): Promise<TelemetryEvidence[]> {
+  const page = await getJSON<{ items: TelemetryEvidence[] }>(
+    `/api/v1/logs/queries/${encodeURIComponent(queryID)}/evidence`,
+    { signal },
+  );
+  return page.items;
+}
+
 export function saveLogEvidence(queryID: string, itemIDs: string[]): Promise<TelemetryEvidence> {
   return postJSON(`/api/v1/logs/queries/${encodeURIComponent(queryID)}/evidence`, { item_ids: itemIDs });
 }
@@ -310,6 +318,14 @@ export function getTraceSearch(id: string, signal?: AbortSignal): Promise<TraceS
 
 export async function getTraceSearches(filter: HistoryFilter, signal?: AbortSignal): Promise<TraceSearch[]> {
   const page = await getJSON<{ items: TraceSearch[] }>(`/api/v1/traces/searches${historyQuery(filter)}`, { signal });
+  return page.items;
+}
+
+export async function getTraceEvidence(queryID: string, signal?: AbortSignal): Promise<TelemetryEvidence[]> {
+  const page = await getJSON<{ items: TelemetryEvidence[] }>(
+    `/api/v1/traces/searches/${encodeURIComponent(queryID)}/evidence`,
+    { signal },
+  );
   return page.items;
 }
 

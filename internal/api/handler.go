@@ -155,11 +155,13 @@ var routes = []RouteSpec{
 	{Method: http.MethodGet, Path: "/api/v1/logs/queries"},
 	{Method: http.MethodPost, Path: "/api/v1/logs/queries"},
 	{Method: http.MethodGet, Path: "/api/v1/logs/queries/:id"},
+	{Method: http.MethodGet, Path: "/api/v1/logs/queries/:id/evidence"},
 	{Method: http.MethodPost, Path: "/api/v1/logs/queries/:id/evidence"},
 	{Method: http.MethodGet, Path: "/api/v1/traces/catalog"},
 	{Method: http.MethodGet, Path: "/api/v1/traces/searches"},
 	{Method: http.MethodPost, Path: "/api/v1/traces/searches"},
 	{Method: http.MethodGet, Path: "/api/v1/traces/searches/:id"},
+	{Method: http.MethodGet, Path: "/api/v1/traces/searches/:id/evidence"},
 	{Method: http.MethodGet, Path: "/api/v1/traces/:trace_id"},
 	{Method: http.MethodPost, Path: "/api/v1/traces/searches/:id/traces/:trace_id/evidence"},
 	{Method: http.MethodPost, Path: "/api/v1/agent/consultations"},
@@ -242,9 +244,11 @@ func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	queries.GET("/logs/catalog", handler.getLogCatalog)
 	queries.GET("/logs/queries", handler.listLogQueries)
 	queries.GET("/logs/queries/:id", handler.getLogQuery)
+	queries.GET("/logs/queries/:id/evidence", handler.listLogEvidence)
 	queries.GET("/traces/catalog", handler.getTraceCatalog)
 	queries.GET("/traces/searches", handler.listTraceSearches)
 	queries.GET("/traces/searches/:id", handler.getTraceSearch)
+	queries.GET("/traces/searches/:id/evidence", handler.listTraceEvidence)
 	queries.GET("/traces/:trace_id", handler.getTraceDetail)
 	queries.GET("/agent/investigations", handler.listAgentInvestigations)
 	queries.GET("/agent/investigations/:id", handler.getAgentInvestigation)

@@ -16,6 +16,7 @@ type telemetryPortStub struct {
 	catalog      telemetry.Catalog
 	logQuery     telemetry.LogQuery
 	trace        telemetry.TraceDetail
+	evidence     []telemetry.Evidence
 	lastLog      telemetry.StartLogQueryRequest
 	lastSnapshot telemetry.AttachContextSnapshotRequest
 	snapshot     telemetry.ContextSnapshot
@@ -46,8 +47,14 @@ func (s *telemetryPortStub) TraceSearches(context.Context, string, string, strin
 func (s *telemetryPortStub) Trace(context.Context, telemetry.TraceDetailRequest) (telemetry.TraceDetail, error) {
 	return s.trace, s.err
 }
+func (s *telemetryPortStub) LogEvidence(context.Context, string) ([]telemetry.Evidence, error) {
+	return s.evidence, s.err
+}
 func (s *telemetryPortStub) SaveLogEvidence(context.Context, string, telemetry.SaveEvidenceRequest) (telemetry.Evidence, error) {
 	return telemetry.Evidence{}, s.err
+}
+func (s *telemetryPortStub) TraceEvidence(context.Context, string) ([]telemetry.Evidence, error) {
+	return s.evidence, s.err
 }
 func (s *telemetryPortStub) SaveTraceEvidence(context.Context, string, string, telemetry.SaveEvidenceRequest) (telemetry.Evidence, error) {
 	return telemetry.Evidence{}, s.err
@@ -80,6 +87,24 @@ func TestTelemetryHTTPContractProjectsUnavailableEmptyAndTruncatedStates(t *test
 	engine.ServeHTTP(query, request)
 	if query.Code != http.StatusAccepted || !strings.Contains(query.Body.String(), `"entries":[]`) || !strings.Contains(query.Body.String(), `"truncated":true`) || !stub.lastLog.Tail {
 		t.Fatalf("query status=%d request=%#v body=%s", query.Code, stub.lastLog, query.Body.String())
+	}
+}
+
+func TestTelemetryHTTPContractListsDurableEvidenceByOwningExecution(t *testing.T) {
+	evidenceID := "8be63d14-aa13-4a41-9711-1e48cb9e79f3"
+	queryID := "74e7d032-cd87-4931-8704-1f8b974273f2"
+	stub := &telemetryPortStub{evidence: []telemetry.Evidence{{ID: evidenceID, QueryID: queryID}}}
+	engine := newContractEngine(NewHandler(Config{Telemetry: stub}))
+
+	for _, path := range []string{
+		"/api/v1/logs/queries/" + queryID + "/evidence",
+		"/api/v1/traces/searches/" + queryID + "/evidence",
+	} {
+		response := httptest.NewRecorder()
+		engine.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), evidenceID) || !strings.Contains(response.Body.String(), `"items"`) {
+			t.Fatalf("evidence path=%s status=%d body=%s", path, response.Code, response.Body.String())
+		}
 	}
 }
 

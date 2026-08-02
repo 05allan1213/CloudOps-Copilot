@@ -321,6 +321,14 @@ func (s *Service) SaveLogEvidence(ctx context.Context, queryID string, request S
 	return s.retainEvidence(ctx, execution, "log_selection", fmt.Sprintf("保留 %d 条 Elasticsearch 日志片段", len(selected)), facts, len(selected), result.Source, truncated || result.Truncated, selected[0].Timestamp)
 }
 
+func (s *Service) LogEvidence(ctx context.Context, queryID string) ([]Evidence, error) {
+	execution, err := s.repository.Execution(ctx, strings.TrimSpace(queryID), "elasticsearch")
+	if err != nil {
+		return nil, err
+	}
+	return s.repository.EvidenceForExecution(ctx, execution.ID)
+}
+
 func (s *Service) SaveTraceEvidence(ctx context.Context, queryID, traceID string, request SaveEvidenceRequest) (Evidence, error) {
 	execution, err := s.repository.Execution(ctx, strings.TrimSpace(queryID), "tempo")
 	if err != nil {
@@ -341,6 +349,14 @@ func (s *Service) SaveTraceEvidence(ctx context.Context, queryID, traceID string
 	}
 	observedAt := result.Detail.StartTime
 	return s.retainEvidence(ctx, execution, "trace_selection", fmt.Sprintf("保留 Trace %s 的 %d 个 span", traceID, len(selected)), facts, len(selected), result.Source, truncated || result.Truncated, observedAt)
+}
+
+func (s *Service) TraceEvidence(ctx context.Context, queryID string) ([]Evidence, error) {
+	execution, err := s.repository.Execution(ctx, strings.TrimSpace(queryID), "tempo")
+	if err != nil {
+		return nil, err
+	}
+	return s.repository.EvidenceForExecution(ctx, execution.ID)
 }
 
 func (s *Service) CreateConsultation(ctx context.Context, request CreateConsultationRequest) (Consultation, error) {

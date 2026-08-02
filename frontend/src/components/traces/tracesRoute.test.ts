@@ -11,6 +11,7 @@ describe("Traces route codec", () => {
       min_duration_ms: "12.5",
       search: "trace-search-1",
       trace_id: "trace-1",
+      evidence_query: "trace-detail-execution-1",
     });
     expect(parsed.legacyWorkload).toBe("checkout-api");
     expect(parsed.minDurationMS).toBe(12.5);
@@ -20,6 +21,7 @@ describe("Traces route codec", () => {
       resource: "deployment/checkout/checkout-api",
       search: "trace-search-1",
       trace_id: "trace-1",
+      evidence_query: "trace-detail-execution-1",
     });
     expect(query).not.toHaveProperty("workload");
   });

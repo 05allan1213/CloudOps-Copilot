@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { postJSON } from "./client";
+import { getJSON, postJSON } from "./client";
 import {
+  getLogEvidence,
+  getTraceEvidence,
   startLogQuery,
   startTraceSearch,
   type StartLogQueryInput,
@@ -15,6 +17,7 @@ vi.mock("./client", () => ({
 
 describe("telemetry request cancellation", () => {
   beforeEach(() => {
+    vi.mocked(getJSON).mockReset();
     vi.mocked(postJSON).mockReset();
   });
 
@@ -28,5 +31,16 @@ describe("telemetry request cancellation", () => {
 
     expect(postJSON).toHaveBeenNthCalledWith(1, "/api/v1/logs/queries", logInput, { signal: controller.signal });
     expect(postJSON).toHaveBeenNthCalledWith(2, "/api/v1/traces/searches", traceInput, { signal: controller.signal });
+  });
+
+  it("reads durable Evidence through the owning log and trace executions", async () => {
+    const controller = new AbortController();
+    vi.mocked(getJSON).mockResolvedValue({ items: [{ id: "evidence-1" }] });
+
+    await expect(getLogEvidence("query/1", controller.signal)).resolves.toEqual([{ id: "evidence-1" }]);
+    await expect(getTraceEvidence("query/1", controller.signal)).resolves.toEqual([{ id: "evidence-1" }]);
+
+    expect(getJSON).toHaveBeenNthCalledWith(1, "/api/v1/logs/queries/query%2F1/evidence", { signal: controller.signal });
+    expect(getJSON).toHaveBeenNthCalledWith(2, "/api/v1/traces/searches/query%2F1/evidence", { signal: controller.signal });
   });
 });

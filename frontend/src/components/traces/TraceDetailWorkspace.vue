@@ -4,6 +4,7 @@ import type { RouteLocationRaw } from "vue-router";
 
 import type {
   Consultation,
+  TelemetryEvidence,
   TraceDetail,
   TraceSpan,
 } from "../../api/telemetry";
@@ -15,7 +16,7 @@ const props = defineProps<{
   detail: TraceDetail;
   selectedIDs: Set<string>;
   inspectedSpan: TraceSpan | null;
-  retainedEvidenceCount: number;
+  retainedEvidence: TelemetryEvidence[];
   consultation: Consultation | null;
   savingEvidence: boolean;
   freezing: boolean;
@@ -429,7 +430,19 @@ function copySpan() {
           <h3 id="trace-context-heading">
             冻结上下文
           </h3>
-          <span>{{ retainedEvidenceCount }} 条 Evidence · Trace execution {{ detail.query_id }}</span>
+          <span>{{ retainedEvidence.length }} 条 Evidence · Trace execution {{ detail.query_id }}</span>
+          <ul
+            v-if="retainedEvidence.length"
+            class="trace-evidence-list"
+            aria-label="Trace Evidence identities"
+          >
+            <li
+              v-for="evidence in retainedEvidence"
+              :key="evidence.id"
+            >
+              <code>{{ evidence.id }}</code>
+            </li>
+          </ul>
         </div>
       </div>
       <UButton
@@ -512,6 +525,8 @@ function copySpan() {
 .trace-snapshot > div { display: flex; min-width: 0; align-items: center; gap: var(--co-space-2); }
 .trace-snapshot h3 { margin: 0; font-size: 14px; }
 .trace-snapshot span { color: var(--co-text-muted); font-size: 11px; }
+.trace-evidence-list { display: grid; min-width: 0; margin: var(--co-space-1) 0 0; padding: 0; gap: 2px; list-style: none; }
+.trace-evidence-list code { overflow-wrap: anywhere; color: var(--co-text-secondary); font-family: var(--co-font-mono); font-size: 10px; }
 .trace-snapshot__proof { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: var(--co-space-2) 0 0; overflow: hidden; border: 1px solid var(--co-border-subtle); border-radius: var(--co-radius-frame); background: var(--co-bg-surface); }
 .trace-snapshot__proof div { min-width: 0; padding: var(--co-space-2); border-right: 1px solid var(--co-border-default); }
 .trace-snapshot__proof div:last-child { border-right: 0; }

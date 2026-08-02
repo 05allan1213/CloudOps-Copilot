@@ -7,6 +7,7 @@ import { getResources, type KubernetesResource } from "../../api/infrastructure"
 import { getBootstrap, type BootstrapSnapshot } from "../../api/platform";
 import {
   createTelemetryConsultation,
+  getLogEvidence,
   getLogQueries,
   getLogQuery,
   getLogsCatalog,
@@ -317,6 +318,7 @@ function applyQuery(result: LogQuery) {
   fromValue.value = toLocalInput(new Date(result.time_range.from));
   toValue.value = toLocalInput(new Date(result.time_range.to));
   selectedEntryIDs.value = new Set();
+  retainedEvidence.value = [];
   consultation.value = null;
 }
 
@@ -371,9 +373,13 @@ async function loadWorkspace() {
     await loadCatalogAndHistory(signal);
     if (!mounted || signal.aborted || generation !== workspaceGeneration) return;
     if (parsedRoute.queryID) {
-      const result = await getLogQuery(parsedRoute.queryID, signal);
+      const [result, evidence] = await Promise.all([
+        getLogQuery(parsedRoute.queryID, signal),
+        getLogEvidence(parsedRoute.queryID, signal),
+      ]);
       if (!mounted || signal.aborted || generation !== workspaceGeneration) return;
       applyQuery(result);
+      retainedEvidence.value = evidence;
     }
     if (parsedRoute.legacyWorkload || parsedRoute.resource !== selectedResourceID.value) {
       await syncRoute(parsedRoute.queryID, parsedRoute.selectedEntryID);
@@ -513,9 +519,13 @@ async function openHistory(id: string) {
   querying.value = true;
   queryError.value = null;
   try {
-    const result = await getLogQuery(id, signal);
+    const [result, evidence] = await Promise.all([
+      getLogQuery(id, signal),
+      getLogEvidence(id, signal),
+    ]);
     if (!mounted || signal.aborted || generation !== queryGeneration) return;
     applyQuery(result);
+    retainedEvidence.value = evidence;
     await syncRoute(result.id, "");
   } catch (reason) {
     if (!signal.aborted && generation === queryGeneration) {
@@ -1072,7 +1082,21 @@ onBeforeUnmount(() => {
                 name="i-lucide-archive"
                 aria-hidden="true"
               />
-              <span>{{ retainedEvidence.length }} 条 Evidence · {{ consultation ? "Snapshot 已创建" : "可从更多操作创建 Snapshot" }}</span>
+              <div>
+                <span>{{ retainedEvidence.length }} 条 Evidence · {{ consultation ? "Snapshot 已创建" : "可从更多操作创建 Snapshot" }}</span>
+                <ul
+                  v-if="retainedEvidence.length"
+                  class="logs-evidence-list"
+                  aria-label="日志 Evidence identities"
+                >
+                  <li
+                    v-for="evidence in retainedEvidence"
+                    :key="evidence.id"
+                  >
+                    <code>{{ evidence.id }}</code>
+                  </li>
+                </ul>
+              </div>
             </div>
             <dl
               v-if="consultation"
@@ -1121,6 +1145,8 @@ onBeforeUnmount(() => {
 .logs-analysis__header h2 { margin: 0; font-size: 18px; }
 .logs-analysis__header p { margin: 0; color: var(--co-text-secondary); font-size: 12px; }
 .logs-analysis__actions { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--co-space-2); }
+.logs-context-status > div { display: grid; min-width: 0; gap: var(--co-space-1); }
+.logs-evidence-list { display: grid; min-width: 0; margin: 0; padding: 0; gap: 2px; list-style: none; }
 .logs-display-menu { display: grid; min-width: 260px; gap: var(--co-space-2); padding: var(--co-space-3); }
 .logs-display-menu span { max-width: 34ch; color: var(--co-text-muted); font-size: 12px; }
 .logs-more-menu { display: grid; min-width: 250px; gap: 2px; padding: var(--co-space-2); }

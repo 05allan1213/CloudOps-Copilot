@@ -17,6 +17,7 @@ export interface TracesRouteState {
   limit: number;
   searchID: string;
   traceID: string;
+  evidenceQueryID: string;
   from: string;
   to: string;
 }
@@ -50,6 +51,7 @@ export function parseTracesRoute(query: Record<string, unknown>): TracesRouteSta
     limit: allowedLimits.has(requestedLimit) ? requestedLimit : 100,
     searchID: routeString(query.search),
     traceID: routeString(query.trace_id),
+    evidenceQueryID: routeString(query.evidence_query),
     from: routeString(query.from),
     to: routeString(query.to),
   };
@@ -69,6 +71,7 @@ export function buildTracesRouteQuery(state: Omit<TracesRouteState, "legacyWorkl
     limit: String(allowedLimits.has(state.limit) ? state.limit : 100),
     search: state.searchID,
     trace_id: state.traceID,
+    evidence_query: state.evidenceQueryID,
     from: state.from,
     to: state.to,
   };
