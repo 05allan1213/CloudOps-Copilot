@@ -1,7 +1,7 @@
 import { createPinia, setActivePinia } from "pinia";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { AgentContextInput, AgentRun, AgentStreamEvent, ConsultationDetail } from "../api/agent";
+import type { AgentContextInput, AgentRun, AgentStreamEvent, ConsultationDetail, KnowledgeItem } from "../api/agent";
 
 const mocks = vi.hoisted(() => ({
   attachAgentSnapshot: vi.fn(),
@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   cancelAgentInvestigation: vi.fn(),
   createAgentConsultation: vi.fn(),
   createKnowledgeItem: vi.fn(),
+  deleteKnowledgeItem: vi.fn(),
   getAgentConsultation: vi.fn(),
   getAgentConsultations: vi.fn(),
   getAgentInvestigation: vi.fn(),
@@ -36,6 +37,7 @@ vi.mock("../api/agent", async (importOriginal) => ({
   cancelAgentInvestigation: mocks.cancelAgentInvestigation,
   createAgentConsultation: mocks.createAgentConsultation,
   createKnowledgeItem: mocks.createKnowledgeItem,
+  deleteKnowledgeItem: mocks.deleteKnowledgeItem,
   getAgentConsultation: mocks.getAgentConsultation,
   getAgentConsultations: mocks.getAgentConsultations,
   getAgentInvestigation: mocks.getAgentInvestigation,
@@ -120,6 +122,29 @@ function contextFixture(): AgentContextInput {
   };
 }
 
+function knowledgeFixture(id: string): KnowledgeItem {
+  return {
+    id,
+    title: `Knowledge ${id}`,
+    status: "active",
+    current_revision: {
+      id: `${id}-revision-1`,
+      revision: 1,
+      content: `Content for ${id}`,
+      content_hash: `${id}-hash`,
+      source_type: "consultation",
+      source_consultation_id: "consultation-1",
+      source_message_id: "message-1",
+      scope: { name: "CloudOps", cluster_id: "cloudops-local", environment: "local", namespaces: ["cloudops-system"], active: true },
+      resource_refs: [{ id: "resource-1", kind: "Deployment", namespace: "cloudops-system", name: "cloudops-api" }],
+      confirmed_by: "owner",
+      created_at: observedAt,
+    },
+    created_at: observedAt,
+    updated_at: observedAt,
+  };
+}
+
 function streamEvent(id: string, delta: string): AgentStreamEvent {
   return {
     id,
@@ -146,6 +171,7 @@ beforeEach(() => {
   mocks.getKnowledgeItems.mockResolvedValue([]);
   mocks.getRunbookGuidance.mockResolvedValue([]);
   mocks.getOperationPlans.mockResolvedValue([]);
+  mocks.deleteKnowledgeItem.mockResolvedValue(undefined);
   mocks.getAgentConsultation.mockResolvedValue(consultationFixture());
   mocks.openAgentEventStream.mockImplementation((_id, onEvent, onError, onOpen) => {
     mocks.streamEvent = onEvent;
@@ -244,5 +270,30 @@ describe("Agent Workspace store", () => {
     expect(mocks.createAgentConsultation).not.toHaveBeenCalled();
     expect(store.failure?.code).toBe("CONTEXT_NOT_READY");
     expect(store.error).toContain("query execution");
+  });
+
+  it("deletes only the exact selected Knowledge item", async () => {
+    const store = useAgentWorkspaceStore();
+    const selected = knowledgeFixture("knowledge-1");
+    const retained = knowledgeFixture("knowledge-2");
+    store.knowledge = [selected, retained];
+
+    await expect(store.deleteKnowledge(selected)).resolves.toBe(true);
+
+    expect(mocks.deleteKnowledgeItem).toHaveBeenCalledWith("knowledge-1", expect.any(AbortSignal));
+    expect(store.knowledge).toEqual([retained]);
+    expect(store.notice).toContain("其他 Knowledge 未修改");
+  });
+
+  it("keeps Knowledge state when delete fails", async () => {
+    const store = useAgentWorkspaceStore();
+    const selected = knowledgeFixture("knowledge-1");
+    store.knowledge = [selected];
+    mocks.deleteKnowledgeItem.mockRejectedValueOnce(new Error("delete failed"));
+
+    await expect(store.deleteKnowledge(selected)).resolves.toBe(false);
+
+    expect(store.knowledge).toEqual([selected]);
+    expect(store.error).toContain("delete failed");
   });
 });

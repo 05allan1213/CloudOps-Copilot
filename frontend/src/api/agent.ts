@@ -353,8 +353,8 @@ export function updateKnowledgeItem(id: string, input: Partial<SaveKnowledgeInpu
   return patchJSON(`/api/v1/knowledge-items/${encodeURIComponent(id)}`, input, { signal });
 }
 
-export function deleteKnowledgeItem(id: string): Promise<void> {
-  return deleteJSON(`/api/v1/knowledge-items/${encodeURIComponent(id)}`);
+export function deleteKnowledgeItem(id: string, signal?: AbortSignal): Promise<void> {
+  return deleteJSON(`/api/v1/knowledge-items/${encodeURIComponent(id)}`, { signal });
 }
 
 export async function getRunbookGuidance(signal?: AbortSignal): Promise<RunbookGuidance[]> {

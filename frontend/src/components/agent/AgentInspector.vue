@@ -3,7 +3,7 @@ import { useVirtualizer } from "@tanstack/vue-virtual";
 import type { ComponentPublicInstance } from "vue";
 import { computed, onBeforeUnmount, ref } from "vue";
 
-import type { ActionCard, AgentEvidenceCitation, OperationPlan } from "../../api/agent";
+import type { ActionCard, AgentEvidenceCitation, KnowledgeItem, OperationPlan } from "../../api/agent";
 import { COPY_FEEDBACK_DURATION_MS } from "../../composables/useCopyFeedback";
 import { useAgentWorkspaceStore } from "../../stores/agentWorkspace";
 import CopyFeedbackButton from "../workspace/CopyFeedbackButton.vue";
@@ -16,6 +16,7 @@ const emit = defineEmits<{ "toggle-collapse": [] }>();
 const store = useAgentWorkspaceStore();
 const authoritySelection = ref<AuthoritySelection | null>(null);
 const authorityReason = ref("");
+const knowledgeDeletion = ref<KnowledgeItem | null>(null);
 const inspectorTab = ref<"context" | "evidence" | "authority">("context");
 const evidenceScroll = ref<HTMLDivElement | null>(null);
 const copiedEvidenceID = ref("");
@@ -146,6 +147,20 @@ async function confirmAuthority() {
 
 function updateAuthorityOpen(value: boolean) {
   if (!value && !store.mutating) authoritySelection.value = null;
+}
+
+function openKnowledgeDeletion(item: KnowledgeItem) {
+  if (!store.mutating) knowledgeDeletion.value = item;
+}
+
+async function confirmKnowledgeDeletion() {
+  const item = knowledgeDeletion.value;
+  if (!item) return;
+  if (await store.deleteKnowledge(item)) knowledgeDeletion.value = null;
+}
+
+function updateKnowledgeDeletionOpen(value: boolean) {
+  if (!value && !store.mutating) knowledgeDeletion.value = null;
 }
 
 function measureEvidence(element: Element | ComponentPublicInstance | null) {
@@ -642,15 +657,29 @@ onBeforeUnmount(() => {
         <p>{{ item.current_revision.content }}</p>
         <code translate="no">revision {{ item.current_revision.revision }} · {{ item.current_revision.id }}</code>
         <time :datetime="item.current_revision.created_at">{{ formatUTC(item.current_revision.created_at) }}</time>
-        <UButton
-          color="neutral"
-          variant="outline"
-          :icon="item.status === 'active' ? 'i-lucide-ban' : 'i-lucide-circle-check'"
-          :label="item.status === 'active' ? '禁用检索' : '启用新 revision'"
-          size="xs"
-          :loading="store.mutating"
-          @click="store.setKnowledgeStatus(item, item.status === 'active' ? 'disabled' : 'active')"
-        />
+        <div class="knowledge-actions">
+          <UButton
+            color="neutral"
+            variant="outline"
+            :icon="item.status === 'active' ? 'i-lucide-ban' : 'i-lucide-circle-check'"
+            :label="item.status === 'active' ? '禁用检索' : '启用新 revision'"
+            size="xs"
+            :loading="store.mutating"
+            @click="store.setKnowledgeStatus(item, item.status === 'active' ? 'disabled' : 'active')"
+          />
+          <UTooltip text="永久删除当前 Knowledge">
+            <UButton
+              color="error"
+              variant="ghost"
+              icon="i-lucide-trash-2"
+              square
+              size="xs"
+              :aria-label="`删除 Knowledge ${item.title}`"
+              :disabled="store.mutating"
+              @click="openKnowledgeDeletion(item)"
+            />
+          </UTooltip>
+        </div>
       </article>
     </section>
 
@@ -770,6 +799,67 @@ onBeforeUnmount(() => {
       </template>
     </UModal>
 
+    <UModal
+      :open="Boolean(knowledgeDeletion)"
+      title="删除 Knowledge"
+      description="此操作只删除当前选中的 Knowledge，且无法从界面撤销。"
+      :close="false"
+      :dismissible="!store.mutating"
+      :ui="{ content: 'agent-knowledge-delete-modal' }"
+      @update:open="updateKnowledgeDeletionOpen"
+    >
+      <template #body>
+        <div
+          v-if="knowledgeDeletion"
+          class="knowledge-delete-modal-content"
+        >
+          <UAlert
+            color="error"
+            variant="soft"
+            icon="i-lucide-trash-2"
+            title="确认永久删除当前 Knowledge"
+            description="其他 Knowledge、Consultation 和来源消息不会被修改。"
+          />
+          <dl class="authority-modal-facts">
+            <div>
+              <dt>Knowledge</dt><dd>
+                {{ knowledgeDeletion.title }}
+              </dd>
+            </div>
+            <div>
+              <dt>Exact ID</dt><dd translate="no">
+                {{ knowledgeDeletion.id }}
+              </dd>
+            </div>
+            <div>
+              <dt>Revision</dt><dd translate="no">
+                {{ knowledgeDeletion.current_revision.revision }}
+              </dd>
+            </div>
+          </dl>
+        </div>
+      </template>
+      <template #footer>
+        <div class="modal-actions">
+          <UButton
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-x"
+            label="取消"
+            :disabled="store.mutating"
+            @click="knowledgeDeletion = null"
+          />
+          <UButton
+            color="error"
+            icon="i-lucide-trash-2"
+            label="确认删除此 Knowledge"
+            :loading="store.mutating"
+            @click="confirmKnowledgeDeletion"
+          />
+        </div>
+      </template>
+    </UModal>
+
     <p
       class="copy-status"
       aria-live="polite"
@@ -858,6 +948,7 @@ onBeforeUnmount(() => {
 .guidance-row > header, .knowledge-row > header, .runbook-row > header { justify-content: space-between; }
 .guidance-row strong, .knowledge-row strong, .runbook-row strong, .authority-record strong { min-width: 0; overflow: hidden; color: var(--co-text-primary); font-size: 10px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .guidance-row code, .guidance-row time, .knowledge-row code, .knowledge-row time, .runbook-row code, .runbook-row small, .runbook-row time { display: block; max-width: 100%; margin-top: 3px; overflow: hidden; color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.knowledge-actions { display: flex; align-items: center; justify-content: space-between; gap: var(--co-space-2); }
 
 .authority-levels { display: grid; gap: 5px; margin: 0 0 12px; padding: 0; list-style: none; }
 .authority-levels li { display: grid; min-height: 42px; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 5px 0; border-bottom: 1px solid color-mix(in srgb, var(--co-border-default) 62%, transparent); }
@@ -884,6 +975,7 @@ onBeforeUnmount(() => {
 .copy-status { position: sticky; bottom: var(--co-space-2); margin: 0 var(--co-space-2); pointer-events: none; color: var(--co-status-success-fg); font-size: 9px; text-align: right; }
 
 .authority-modal-content { display: grid; min-width: 0; gap: var(--co-space-4); }
+.knowledge-delete-modal-content { display: grid; min-width: 0; gap: var(--co-space-4); }
 .authority-modal-facts { display: grid; gap: var(--co-space-1); margin: 0; }
 .authority-modal-facts > div { display: grid; min-width: 0; grid-template-columns: 116px minmax(0, 1fr); gap: var(--co-space-3); padding: var(--co-space-1) 0; border-bottom: 1px solid var(--co-border-default); }
 .authority-modal-facts dt { color: var(--co-text-muted); font-size: 10px; }
@@ -891,5 +983,6 @@ onBeforeUnmount(() => {
 .authority-modal-facts pre { margin: 0; }
 .modal-actions { display: flex; width: 100%; justify-content: flex-end; gap: var(--co-space-2); }
 :global(.agent-authority-modal) { width: min(720px, calc(100vw - 32px)); }
+:global(.agent-knowledge-delete-modal) { width: min(560px, calc(100vw - 32px)); }
 :global(.agent-authority-modal-body) { min-height: 0; overflow-y: auto; }
 </style>

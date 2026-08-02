@@ -8,6 +8,7 @@ import {
   cancelAgentInvestigation,
   createAgentConsultation,
   createKnowledgeItem,
+  deleteKnowledgeItem,
   getAgentConsultation,
   getAgentConsultations,
   getAgentInvestigation,
@@ -693,6 +694,30 @@ export const useAgentWorkspaceStore = defineStore("agent-workspace", {
         this.notice = status === "active" ? "Knowledge 已启用新 revision。" : "Knowledge 已禁用，不会进入后续自动检索。";
       } catch (error) {
         if (!controller.signal.aborted) this.setFailure(error, "Knowledge 状态更新失败。 ");
+      } finally {
+        if (mutationController === controller) {
+          mutationController = undefined;
+          this.mutating = false;
+        }
+      }
+    },
+
+    async deleteKnowledge(item: KnowledgeItem): Promise<boolean> {
+      if (this.mutating) return false;
+      mutationController?.abort();
+      const controller = new AbortController();
+      mutationController = controller;
+      this.mutating = true;
+      this.clearFailure();
+      try {
+        await deleteKnowledgeItem(item.id, controller.signal);
+        if (controller.signal.aborted || mutationController !== controller) return false;
+        this.knowledge = this.knowledge.filter((candidate) => candidate.id !== item.id);
+        this.notice = `Knowledge ${item.title} 已删除；其他 Knowledge 未修改。`;
+        return true;
+      } catch (error) {
+        if (!controller.signal.aborted) this.setFailure(error, "Knowledge 删除失败。 ");
+        return false;
       } finally {
         if (mutationController === controller) {
           mutationController = undefined;
