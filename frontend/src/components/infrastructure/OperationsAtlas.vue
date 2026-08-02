@@ -19,6 +19,9 @@ const emit = defineEmits<{
 let host: HTMLDivElement | null = null;
 let disposeScene: (() => void) | undefined;
 let updateSelection: ((animate?: boolean) => void) | undefined;
+let setSceneVisible: ((visible: boolean) => void) | undefined;
+let viewportObserver: IntersectionObserver | undefined;
+let nearViewport = false;
 let buildToken = 0;
 
 function setHost(value: unknown) {
@@ -30,7 +33,8 @@ async function buildScene() {
   disposeScene?.();
   disposeScene = undefined;
   updateSelection = undefined;
-  if (!host || !props.snapshot.nodes.length) return;
+  setSceneVisible = undefined;
+  if (!host || !props.snapshot.nodes.length || !nearViewport) return;
 
   let cleanupPartialScene: (() => void) | undefined;
   try {
@@ -144,6 +148,10 @@ async function buildScene() {
       renderer.domElement.dataset.renderState = "ready";
     });
     controls.addEventListener("change", frames.request);
+    setSceneVisible = (visible) => {
+      frames.setVisible(visible && !document.hidden);
+      renderer.domElement.dataset.renderState = visible && !document.hidden ? "ready" : "paused";
+    };
 
     let selectionFrame = 0;
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -242,7 +250,7 @@ async function buildScene() {
     renderer.domElement.addEventListener("pointerup", pointerUpHandler);
 
     const visibilityHandler = () => {
-      frames.setVisible(!document.hidden);
+      frames.setVisible(nearViewport && !document.hidden);
       renderer.domElement.dataset.renderState = document.hidden ? "paused" : "resuming";
       if (!document.hidden) updateSelection?.(false);
     };
@@ -278,6 +286,7 @@ async function buildScene() {
       renderer.dispose();
       renderer.domElement.remove();
       sceneHost.dataset.atlasDisposed = "true";
+      setSceneVisible = undefined;
     };
     disposeScene = cleanupPartialScene;
   } catch (error) {
@@ -286,11 +295,30 @@ async function buildScene() {
   }
 }
 
-onMounted(buildScene);
-watch(() => [props.snapshot.content_hash, props.snapshot.nodes, props.snapshot.edges], buildScene, { deep: false });
+onMounted(() => {
+  if (!host || typeof IntersectionObserver === "undefined") {
+    nearViewport = true;
+    void buildScene();
+    return;
+  }
+  viewportObserver = new IntersectionObserver((entries) => {
+    const next = entries.some((entry) => entry.isIntersecting);
+    if (next === nearViewport) return;
+    nearViewport = next;
+    host?.setAttribute("data-atlas-viewport", next ? "active" : "deferred");
+    if (next && !disposeScene) void buildScene();
+    else setSceneVisible?.(next);
+  }, { rootMargin: "240px 0px", threshold: 0.01 });
+  viewportObserver.observe(host);
+});
+watch(() => [props.snapshot.content_hash, props.snapshot.nodes, props.snapshot.edges], () => {
+  if (nearViewport) void buildScene();
+}, { deep: false });
 watch(() => props.selectedId, () => updateSelection?.());
 onBeforeUnmount(() => {
   buildToken += 1;
+  viewportObserver?.disconnect();
+  viewportObserver = undefined;
   disposeScene?.();
   disposeScene = undefined;
   updateSelection = undefined;

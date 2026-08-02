@@ -3,6 +3,7 @@ import { computed } from "vue";
 import { useRoute } from "vue-router";
 
 import { navigationGroups } from "../../navigation";
+import { prefetchRouteOnIntent } from "../../router/routePrefetch";
 
 defineProps<{ collapsed: boolean }>();
 
@@ -36,6 +37,13 @@ const menuUI = {
   linkLeadingIcon: "size-[17px] shrink-0",
   linkLabel: "truncate",
 };
+
+function prefetchTarget(event: Event) {
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+  const link = target.closest<HTMLAnchorElement>("a[href]");
+  if (link?.pathname) void prefetchRouteOnIntent(link.pathname);
+}
 </script>
 
 <template>
@@ -49,6 +57,8 @@ const menuUI = {
     :items="menuItems"
     :ui="menuUI"
     aria-label="工作区"
+    @pointerover="prefetchTarget"
+    @focusin="prefetchTarget"
   />
 </template>
 

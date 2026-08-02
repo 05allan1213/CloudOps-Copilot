@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { InfrastructureContextLink } from "../../api/infrastructure";
 import {
+  canReuseResolvedInfrastructureScope,
   canonicalResourceRef,
   infrastructureContextLocation,
   kindsForResourceType,
@@ -59,6 +60,20 @@ describe("Infrastructure Query model", () => {
     expect(resourceTypeForKinds(["StatefulSet", "Deployment", "DaemonSet"])).toBe("workload");
     expect(resourceTypeForKinds(["Pod"])).toBe("pod");
     expect(resourceTypeForKinds(["CustomResource"])).toBe("all");
+  });
+
+  it("reuses a resolved default scope only when every response agrees on the cluster", () => {
+    expect(canReuseResolvedInfrastructureScope("cloudops-local", [
+      "cloudops-local",
+      "cloudops-local",
+      undefined,
+    ])).toBe(true);
+    expect(canReuseResolvedInfrastructureScope("cloudops-local", [
+      "cloudops-local",
+      "other-cluster",
+    ])).toBe(false);
+    expect(canReuseResolvedInfrastructureScope("cloudops-local", [])).toBe(false);
+    expect(canReuseResolvedInfrastructureScope("", ["cloudops-local"])).toBe(false);
   });
 
   it("summarizes and orders real resources by operational attention", () => {

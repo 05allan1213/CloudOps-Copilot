@@ -132,6 +132,12 @@ function streamEvent(id: string, delta: string): AgentStreamEvent {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => { resolve = next; });
+  return { promise, resolve };
+}
+
 beforeEach(() => {
   setActivePinia(createPinia());
   vi.clearAllMocks();
@@ -140,6 +146,7 @@ beforeEach(() => {
   mocks.getKnowledgeItems.mockResolvedValue([]);
   mocks.getRunbookGuidance.mockResolvedValue([]);
   mocks.getOperationPlans.mockResolvedValue([]);
+  mocks.getAgentConsultation.mockResolvedValue(consultationFixture());
   mocks.openAgentEventStream.mockImplementation((_id, onEvent, onError, onOpen) => {
     mocks.streamEvent = onEvent;
     mocks.streamError = onError;
@@ -154,6 +161,25 @@ afterEach(() => {
 });
 
 describe("Agent Workspace store", () => {
+  it("reuses the cold-route detail request when URL synchronization repeats the same selection", async () => {
+    const detail = consultationFixture();
+    const pending = deferred<ConsultationDetail>();
+    mocks.getAgentConsultations.mockResolvedValue([detail]);
+    mocks.getAgentConsultation.mockReturnValue(pending.promise);
+    const store = useAgentWorkspaceStore();
+
+    const indexLoad = store.loadIndex();
+    await vi.waitFor(() => expect(store.selectedID).toBe(detail.id));
+    const routeLoad = store.selectConsultationFromRoute(detail.id);
+
+    expect(mocks.getAgentConsultation).toHaveBeenCalledOnce();
+    pending.resolve(detail);
+    await expect(Promise.all([indexLoad, routeLoad])).resolves.toEqual([undefined, true]);
+    expect(store.consultation?.id).toBe(detail.id);
+    expect(mocks.openAgentEventStream).toHaveBeenCalledOnce();
+    expect(store.streamState).toBe("connecting");
+  });
+
   it("deduplicates a bounded stream, reports reconnect state, and tears down ownership", () => {
     vi.useFakeTimers();
     const store = useAgentWorkspaceStore();
@@ -170,9 +196,11 @@ describe("Agent Workspace store", () => {
     const event = streamEvent("event-1", "bounded ");
     mocks.streamEvent?.(event);
     mocks.streamEvent?.(event);
+    vi.advanceTimersByTime(16);
     expect(store.liveAnswer).toBe("bounded ");
     expect(store.streamCursor).toBe("event-1");
     expect(store.duplicateEvents).toBe(1);
+    expect(store.streamBatchCount).toBe(1);
 
     mocks.streamError?.();
     mocks.streamError?.();

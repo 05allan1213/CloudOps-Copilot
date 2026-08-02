@@ -1814,6 +1814,6 @@ onBeforeUnmount(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .devops-workspace :deep(*) { scroll-behavior: auto !important; transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+  .devops-workspace :deep(*) { scroll-behavior: auto !important; transition-duration: var(--co-motion-reduced) !important; animation-duration: var(--co-motion-reduced) !important; }
 }
 </style>

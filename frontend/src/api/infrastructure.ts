@@ -1,3 +1,4 @@
+import { queryCache, queryIdentityFor } from "../composables/queryCache";
 import { getJSON } from "./client";
 import type { OperationalScope } from "./platform";
 
@@ -199,6 +200,27 @@ function queryString(query: InfrastructureQuery = {}): string {
   if (query.to) values.set("to", query.to);
   const encoded = values.toString();
   return encoded ? `?${encoded}` : "";
+}
+
+function infrastructureReadIdentity(url: string) {
+  return queryIdentityFor("infrastructure", { url });
+}
+
+export function projectResolvedInfrastructureScope(
+  query: InfrastructureQuery,
+  resolvedCluster: string,
+): number {
+  if (!resolvedCluster || query.cluster) return 0;
+  const canonicalQuery = { ...query, cluster: resolvedCluster };
+  const paths = ["/api/v1/topology", "/api/v1/resources"];
+  return paths.reduce((count, path) => {
+    const sourceURL = `${path}${queryString(query)}`;
+    const canonicalURL = `${path}${queryString(canonicalQuery)}`;
+    return count + (queryCache.project(
+      infrastructureReadIdentity(sourceURL),
+      infrastructureReadIdentity(canonicalURL),
+    ) ? 1 : 0);
+  }, 0);
 }
 
 export function getTopology(query: InfrastructureQuery = {}, signal?: AbortSignal): Promise<TopologySnapshot> {

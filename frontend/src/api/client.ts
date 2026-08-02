@@ -1,5 +1,13 @@
 import axios, { AxiosError, type AxiosRequestConfig } from "axios";
 
+import {
+  invalidateQueryDomain,
+  queryCache,
+  queryIdentityFor,
+  stableQueryIdentity,
+  type QueryCacheLoadResult,
+  type QueryCachePolicyName,
+} from "../composables/queryCache";
 import type { ProblemDetails } from "../types";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
@@ -52,6 +60,19 @@ export interface ApiErrorDetails {
   nextSteps: readonly string[];
 }
 
+export interface ApiReadCacheOptions {
+  domain?: string;
+  policy?: QueryCachePolicyName;
+  force?: boolean;
+  staleWhileRevalidate?: boolean;
+  pinned?: boolean;
+}
+
+export interface ApiReadConfig extends AxiosRequestConfig {
+  signal?: AbortSignal;
+  cache?: false | ApiReadCacheOptions;
+}
+
 export function apiErrorDetails(error: unknown, fallback: string): ApiErrorDetails {
   if (isApiError(error)) {
     return {
@@ -77,15 +98,63 @@ export function apiErrorDetails(error: unknown, fallback: string): ApiErrorDetai
 
 export async function getApiData<T>(
   url: string,
-  config: AxiosRequestConfig = {},
+  config: ApiReadConfig = {},
 ): Promise<T> {
   return getJSON<T>(url, config);
 }
 
 export async function getJSON<T>(
   url: string,
-  config: AxiosRequestConfig = {},
+  config: ApiReadConfig = {},
 ): Promise<T> {
+  return (await getJSONWithCache<T>(url, config)).data;
+}
+
+export async function getJSONWithCache<T>(
+  url: string,
+  config: ApiReadConfig = {},
+): Promise<QueryCacheLoadResult<T>> {
+  const { cache = {}, signal, ...requestConfig } = config;
+  if (cache === false || requestConfig.adapter || !url.startsWith("/api/v1/")) {
+    const data = await rawGetJSON<T>(url, { ...requestConfig, signal });
+    const identity = queryIdentityFor(apiDomain(url), { url, params: requestConfig.params });
+    const now = Date.now();
+    return {
+      data,
+      source: "network",
+      revalidating: false,
+      entry: {
+        key: stableQueryIdentity(identity),
+        identity,
+        policy: "realtime",
+        data,
+        updatedAt: now,
+        freshUntil: now,
+        staleUntil: now,
+        staleReason: "",
+        requestIdentity: "uncached-read",
+        pinned: false,
+        lastAccessedAt: now,
+      },
+    };
+  }
+  const options = cache satisfies ApiReadCacheOptions;
+  const domain = options.domain || apiDomain(url);
+  const policy = options.policy || apiPolicy(url);
+  return queryCache.load<T>(
+    queryIdentityFor(domain, { url, params: requestConfig.params }),
+    policy,
+    (requestSignal) => rawGetJSON<T>(url, { ...requestConfig, signal: requestSignal }),
+    {
+      signal: signal ?? undefined,
+      force: options.force,
+      staleWhileRevalidate: options.staleWhileRevalidate,
+      pinned: options.pinned,
+    },
+  );
+}
+
+async function rawGetJSON<T>(url: string, config: AxiosRequestConfig): Promise<T> {
   try {
     return (await httpClient.get<T>(url, config)).data;
   } catch (err) {
@@ -100,7 +169,10 @@ export async function postJSON<T, TBody = unknown>(
   config: AxiosRequestConfig = {},
 ): Promise<T> {
   try {
-    return (await httpClient.post<T>(url, body, config)).data;
+    assertOnlineWriteAllowed();
+    const data = (await httpClient.post<T>(url, body, config)).data;
+    invalidateAfterMutation(url);
+    return data;
   } catch (err) {
     if (axios.isAxiosError(err)) throw normalizeAxiosError(err);
     throw err;
@@ -113,7 +185,10 @@ export async function patchJSON<T, TBody = unknown>(
   config: AxiosRequestConfig = {},
 ): Promise<T> {
   try {
-    return (await httpClient.patch<T>(url, body, config)).data;
+    assertOnlineWriteAllowed();
+    const data = (await httpClient.patch<T>(url, body, config)).data;
+    invalidateAfterMutation(url);
+    return data;
   } catch (err) {
     if (axios.isAxiosError(err)) throw normalizeAxiosError(err);
     throw err;
@@ -125,7 +200,10 @@ export async function deleteJSON<T = void>(
   config: AxiosRequestConfig = {},
 ): Promise<T> {
   try {
-    return (await httpClient.delete<T>(url, config)).data;
+    assertOnlineWriteAllowed();
+    const data = (await httpClient.delete<T>(url, config)).data;
+    invalidateAfterMutation(url);
+    return data;
   } catch (err) {
     if (axios.isAxiosError(err)) throw normalizeAxiosError(err);
     throw err;
@@ -146,7 +224,9 @@ export async function postJSONWithMeta<T, TBody = unknown>(
   config: AxiosRequestConfig = {},
 ): Promise<JSONResponse<T>> {
   try {
+    assertOnlineWriteAllowed();
     const response = await httpClient.post<T>(url, body, config);
+    invalidateAfterMutation(url);
     return {
       data: response.data,
       status: response.status,
@@ -188,9 +268,55 @@ function normalizeAxiosError(err: AxiosError<ProblemDetails>): ApiError {
   return new ApiError(err.message || "Request failed");
 }
 
+function assertOnlineWriteAllowed() {
+  if (typeof navigator === "undefined" || navigator.onLine !== false) return;
+  throw new ApiError(
+    "浏览器当前离线；写操作保持阻止，恢复网络后请重新确认服务端状态。",
+    null,
+    "OFFLINE_WRITE_BLOCKED",
+    "",
+    "",
+    false,
+    ["恢复网络连接", "重新读取当前 Scope 与服务端状态", "再次确认目标后手动提交"],
+  );
+}
+
 export function apiURL(path: string): string {
   const base = apiBaseUrl.replace(/\/$/, "");
   return `${base}${path}`;
+}
+
+function apiDomain(url: string): string {
+  const path = url.split("?", 1)[0] ?? url;
+  if (/\/api\/v1\/(bootstrap|overview|settings|storage-status|scopes|configuration-revisions|providers|secrets)/.test(path)) return "platform";
+  if (/\/api\/v1\/(topology|resources)/.test(path)) return "infrastructure";
+  if (/\/api\/v1\/monitoring/.test(path)) return "monitoring";
+  if (/\/api\/v1\/logs/.test(path)) return "logs";
+  if (/\/api\/v1\/traces/.test(path)) return "traces";
+  if (/\/api\/v1\/alerts/.test(path)) return "alerts";
+  if (/\/api\/v1\/incidents/.test(path)) return "incidents";
+  if (/\/api\/v1\/(agent|knowledge-items)/.test(path)) return "agent";
+  if (/\/api\/v1\/(devops|operation-plans)/.test(path)) return "devops";
+  if (/\/api\/v1\/notifications/.test(path)) return "notifications";
+  return "api";
+}
+
+function apiPolicy(url: string): QueryCachePolicyName {
+  const domain = apiDomain(url);
+  if (/[?&](from|to)=/.test(url) || /\/(?:history|queries)(?:\?|$)/.test(url)) return "history";
+  if (domain === "notifications") return "realtime";
+  if (["monitoring", "logs", "traces", "alerts"].includes(domain)) return "telemetry";
+  if (domain === "platform") return "metadata";
+  return "operational";
+}
+
+function invalidateAfterMutation(url: string) {
+  const domain = apiDomain(url);
+  if (domain === "platform") {
+    queryCache.invalidate(() => true, "mutation");
+    return;
+  }
+  invalidateQueryDomain([domain, `${domain}-workspace`, "platform", "notifications"], "mutation");
 }
 
 function responseHeader(headers: unknown, name: string): string {

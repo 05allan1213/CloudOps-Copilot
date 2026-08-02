@@ -1,16 +1,23 @@
 <script setup lang="ts">
 import { useVirtualizer } from "@tanstack/vue-virtual";
 import type { ComponentPublicInstance } from "vue";
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 import type { LogEntry } from "../../api/telemetry";
 import { logRawValue } from "../../models/telemetry";
+import {
+  appendedLogCount,
+  readLogReadingPosition,
+  rememberLogReadingPosition,
+} from "./logsReadingPosition";
 
 const props = defineProps<{
   entries: LogEntry[];
   wrap: boolean;
   selectedIDs: Set<string>;
   inspectedID: string;
+  queryIdentity: string;
+  follow: boolean;
   highlight?: string;
 }>();
 
@@ -23,6 +30,7 @@ const emit = defineEmits<{
 
 const viewport = ref<HTMLDivElement | null>(null);
 const copiedID = ref("");
+const pendingNewEntries = ref(0);
 let copyTimer: number | undefined;
 
 const virtualizer = useVirtualizer<HTMLDivElement, HTMLElement>(computed(() => ({
@@ -103,12 +111,51 @@ function inspectEntry(event: MouseEvent, entry: LogEntry) {
   if (trigger instanceof HTMLElement) emit("inspect", entry, trigger);
 }
 
-watch(() => props.entries, async () => {
+function isAtBottom(): boolean {
+  const element = viewport.value;
+  return Boolean(element && element.scrollHeight - element.scrollTop - element.clientHeight <= 48);
+}
+
+function updateReadingPosition() {
+  const element = viewport.value;
+  if (!element) return;
+  rememberLogReadingPosition(props.queryIdentity, element.scrollTop);
+  if (isAtBottom()) pendingNewEntries.value = 0;
+}
+
+async function scrollToLatest() {
   await nextTick();
-  virtualizer.value.scrollToOffset(0);
+  if (props.entries.length) virtualizer.value.scrollToIndex(props.entries.length - 1, { align: "end" });
+  pendingNewEntries.value = 0;
+  updateReadingPosition();
+}
+
+watch(() => props.entries, async (entries, previousEntries) => {
+  const appended = appendedLogCount(previousEntries ?? [], entries);
+  const followLatest = appended > 0 && props.follow && isAtBottom();
+  const currentOffset = viewport.value?.scrollTop ?? 0;
+  await nextTick();
   virtualizer.value.measure();
+  if (followLatest) await scrollToLatest();
+  else {
+    virtualizer.value.scrollToOffset(currentOffset);
+    pendingNewEntries.value += appended;
+  }
+});
+watch(() => props.queryIdentity, async (identity, previousIdentity) => {
+  if (previousIdentity && viewport.value) rememberLogReadingPosition(previousIdentity, viewport.value.scrollTop);
+  pendingNewEntries.value = 0;
+  await nextTick();
+  virtualizer.value.measure();
+  virtualizer.value.scrollToOffset(readLogReadingPosition(identity));
 });
 watch(() => props.wrap, () => void nextTick(() => virtualizer.value.measure()));
+
+onMounted(() => void nextTick(() => virtualizer.value.scrollToOffset(readLogReadingPosition(props.queryIdentity))));
+onBeforeUnmount(() => {
+  if (copyTimer !== undefined) window.clearTimeout(copyTimer);
+  if (viewport.value) rememberLogReadingPosition(props.queryIdentity, viewport.value.scrollTop);
+});
 </script>
 
 <template>
@@ -121,6 +168,7 @@ watch(() => props.wrap, () => void nextTick(() => virtualizer.value.measure()));
     :aria-setsize="entries.length"
     data-testid="virtual-log-list"
     :data-rendered-count="virtualRows.length"
+    @scroll.passive="updateReadingPosition"
   >
     <div
       class="virtual-log-list__spacer"
@@ -191,11 +239,20 @@ watch(() => props.wrap, () => void nextTick(() => virtualizer.value.measure()));
         />
       </article>
     </div>
+    <UButton
+      v-if="pendingNewEntries"
+      class="virtual-log-list__new-content"
+      color="primary"
+      icon="i-lucide-arrow-down"
+      :label="`${pendingNewEntries} 条新日志`"
+      @click="scrollToLatest"
+    />
   </div>
 </template>
 
 <style scoped>
 .virtual-log-list {
+  position: relative;
   width: 100%;
   height: min(60vh, 620px);
   min-height: 400px;
@@ -207,6 +264,7 @@ watch(() => props.wrap, () => void nextTick(() => virtualizer.value.measure()));
   color: var(--co-code-text);
   contain: layout paint;
 }
+.virtual-log-list__new-content { position: sticky; z-index: 4; bottom: var(--co-space-3); display: flex; width: fit-content; margin: 0 auto; box-shadow: var(--co-shadow-overlay); }
 .virtual-log-list__spacer { position: relative; min-width: 920px; }
 .virtual-log-row {
   position: absolute;

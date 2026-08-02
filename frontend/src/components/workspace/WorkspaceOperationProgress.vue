@@ -94,7 +94,7 @@ const emit = defineEmits<{
 
 .workspace-operation-icon {
   color: var(--co-status-info-fg);
-  animation: workspace-operation-spin 0.8s linear infinite;
+  animation: workspace-operation-spin var(--co-spinner-duration) linear infinite;
 }
 
 .workspace-operation-meta {

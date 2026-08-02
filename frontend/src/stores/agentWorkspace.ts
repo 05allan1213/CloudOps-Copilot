@@ -31,6 +31,8 @@ import {
   type RunbookGuidance,
 } from "../api/agent";
 import { apiErrorDetails } from "../api/client";
+import { invalidateQueryDomain } from "../composables/queryCache";
+import { createRealtimeBatch, type RealtimeBatch } from "../composables/realtimeBatch";
 import type { AgentPageContext } from "../utils/agentContext";
 
 export type AgentSelection = "consultation" | "investigation";
@@ -47,6 +49,19 @@ export interface AgentFailure {
   cause: string;
 }
 
+interface AgentStreamProjection {
+  delta: string;
+  eventCount: number;
+  refreshDelayMs: number;
+}
+
+interface AgentDetailRequest {
+  selection: AgentSelection;
+  id: string;
+  controller: AbortController;
+  promise: Promise<void>;
+}
+
 let indexController: AbortController | undefined;
 let detailController: AbortController | undefined;
 let refreshController: AbortController | undefined;
@@ -55,6 +70,8 @@ let streamClose: (() => void) | undefined;
 let streamGeneration = 0;
 let refreshTimer: number | undefined;
 let streamErrorCount = 0;
+let streamBatch: RealtimeBatch<AgentStreamProjection> | undefined;
+let detailRequest: AgentDetailRequest | undefined;
 const seenEventIDs = new Set<string>();
 
 function randomID(prefix: string): string {
@@ -162,6 +179,8 @@ export const useAgentWorkspaceStore = defineStore("agent-workspace", {
     streamReconnects: 0,
     duplicateEvents: 0,
     lastEventAt: "",
+    streamBatchCount: 0,
+    streamBufferedEvents: 0,
     pendingMessageContent: "",
     pendingMessageIdempotencyKey: "",
   }),
@@ -207,6 +226,7 @@ export const useAgentWorkspaceStore = defineStore("agent-workspace", {
         else if (preferredInvestigationID) await this.selectInvestigationFromRoute(preferredInvestigationID);
         return;
       }
+      if (force) invalidateQueryDomain("agent");
       indexController?.abort();
       const controller = new AbortController();
       indexController = controller;
@@ -283,6 +303,11 @@ export const useAgentWorkspaceStore = defineStore("agent-workspace", {
 
     async selectConsultation(id: string) {
       if (!id) return;
+      const activeRequest = detailRequest;
+      if (activeRequest?.selection === "consultation" && activeRequest.id === id && !activeRequest.controller.signal.aborted) {
+        await activeRequest.promise;
+        return;
+      }
       this.stopStream();
       detailController?.abort();
       const controller = new AbortController();
@@ -293,23 +318,33 @@ export const useAgentWorkspaceStore = defineStore("agent-workspace", {
       this.liveAnswer = "";
       this.loading = true;
       this.clearFailure();
-      try {
-        const consultation = await getAgentConsultation(id, controller.signal);
-        if (controller.signal.aborted || detailController !== controller || this.selectedID !== id) return;
-        this.consultation = consultation;
-        this.startStream(id);
-      } catch (error) {
-        if (!controller.signal.aborted) this.setFailure(error, "Consultation 读取失败。 ");
-      } finally {
-        if (detailController === controller) {
-          detailController = undefined;
-          this.loading = false;
+      const promise = (async () => {
+        try {
+          const consultation = await getAgentConsultation(id, controller.signal);
+          if (controller.signal.aborted || detailController !== controller || this.selectedID !== id) return;
+          this.consultation = consultation;
+          this.startStream(id);
+        } catch (error) {
+          if (!controller.signal.aborted) this.setFailure(error, "Consultation 读取失败。 ");
+        } finally {
+          if (detailController === controller) {
+            detailController = undefined;
+            this.loading = false;
+          }
+          if (detailRequest?.controller === controller) detailRequest = undefined;
         }
-      }
+      })();
+      detailRequest = { selection: "consultation", id, controller, promise };
+      await promise;
     },
 
     async selectInvestigation(id: string) {
       if (!id) return;
+      const activeRequest = detailRequest;
+      if (activeRequest?.selection === "investigation" && activeRequest.id === id && !activeRequest.controller.signal.aborted) {
+        await activeRequest.promise;
+        return;
+      }
       this.stopStream();
       detailController?.abort();
       const controller = new AbortController();
@@ -320,32 +355,50 @@ export const useAgentWorkspaceStore = defineStore("agent-workspace", {
       this.liveAnswer = "";
       this.loading = true;
       this.clearFailure();
-      try {
-        const investigation = await getAgentInvestigation(id, controller.signal);
-        if (controller.signal.aborted || detailController !== controller || this.selectedID !== id) return;
-        this.investigation = investigation;
-      } catch (error) {
-        if (!controller.signal.aborted) this.setFailure(error, "Investigation 读取失败。 ");
-      } finally {
-        if (detailController === controller) {
-          detailController = undefined;
-          this.loading = false;
+      const promise = (async () => {
+        try {
+          const investigation = await getAgentInvestigation(id, controller.signal);
+          if (controller.signal.aborted || detailController !== controller || this.selectedID !== id) return;
+          this.investigation = investigation;
+        } catch (error) {
+          if (!controller.signal.aborted) this.setFailure(error, "Investigation 读取失败。 ");
+        } finally {
+          if (detailController === controller) {
+            detailController = undefined;
+            this.loading = false;
+          }
+          if (detailRequest?.controller === controller) detailRequest = undefined;
         }
-      }
+      })();
+      detailRequest = { selection: "investigation", id, controller, promise };
+      await promise;
     },
 
     startStream(id: string) {
+      streamBatch?.dispose();
       streamClose?.();
       streamGeneration += 1;
       const generation = streamGeneration;
       seenEventIDs.clear();
       streamErrorCount = 0;
       this.streamCursor = "";
+      this.streamBatchCount = 0;
+      this.streamBufferedEvents = 0;
       this.streamState = "connecting";
+      streamBatch = createRealtimeBatch<AgentStreamProjection>({
+        maximumItems: 128,
+        compact: (items) => ({
+          delta: items.map((item) => item.delta).join(""),
+          eventCount: items.reduce((count, item) => count + item.eventCount, 0),
+          refreshDelayMs: Math.min(...items.map((item) => item.refreshDelayMs)),
+        }),
+        flush: (items) => this.applyStreamBatch(items, generation),
+      });
       streamClose = openAgentEventStream(id, (event) => {
         if (generation === streamGeneration) this.receiveStreamEvent(event, generation);
       }, () => {
         if (generation !== streamGeneration) return;
+        streamBatch?.flush();
         streamErrorCount += 1;
         this.streamReconnects += 1;
         this.streamState = streamErrorCount >= 3 ? "disconnected" : "reconnecting";
@@ -357,6 +410,8 @@ export const useAgentWorkspaceStore = defineStore("agent-workspace", {
     },
 
     stopStream() {
+      streamBatch?.dispose(true);
+      streamBatch = undefined;
       streamGeneration += 1;
       streamClose?.();
       streamClose = undefined;
@@ -371,10 +426,12 @@ export const useAgentWorkspaceStore = defineStore("agent-workspace", {
       mutationController?.abort();
       indexController = undefined;
       detailController = undefined;
+      detailRequest = undefined;
       mutationController = undefined;
       seenEventIDs.clear();
       this.streamState = "stopped";
       this.streamCursor = "";
+      this.streamBufferedEvents = 0;
       this.loading = false;
       this.creating = false;
       this.sending = false;
@@ -405,9 +462,28 @@ export const useAgentWorkspaceStore = defineStore("agent-workspace", {
       }
       this.streamCursor = event.id;
       this.lastEventAt = event.created_at;
-      if (event.type === "answer.delta" && typeof event.payload.delta === "string") this.liveAnswer += event.payload.delta;
+      const projection: AgentStreamProjection = {
+        delta: event.type === "answer.delta" && typeof event.payload.delta === "string" ? event.payload.delta : "",
+        eventCount: 1,
+        refreshDelayMs: event.type === "answer.delta" ? 250 : 80,
+      };
+      if (!streamBatch) {
+        this.applyStreamBatch([projection], generation);
+        return;
+      }
+      streamBatch.enqueue(projection);
+      this.streamBufferedEvents += 1;
+    },
+
+    applyStreamBatch(items: readonly AgentStreamProjection[], generation = streamGeneration) {
+      if (generation !== streamGeneration || !items.length) return;
+      const delta = items.map((item) => item.delta).join("");
+      if (delta) this.liveAnswer += delta;
+      this.streamBatchCount += 1;
+      this.streamBufferedEvents = Math.max(0, this.streamBufferedEvents
+        - items.reduce((count, item) => count + item.eventCount, 0));
       if (refreshTimer !== undefined) globalThis.clearTimeout(refreshTimer);
-      const delay = event.type === "answer.delta" ? 250 : 80;
+      const delay = Math.min(...items.map((item) => item.refreshDelayMs));
       refreshTimer = globalThis.setTimeout(() => {
         refreshTimer = undefined;
         void this.refreshSelection();
@@ -416,6 +492,7 @@ export const useAgentWorkspaceStore = defineStore("agent-workspace", {
 
     async refreshSelection() {
       if (!this.selectedID) return;
+      invalidateQueryDomain("agent");
       refreshController?.abort();
       const controller = new AbortController();
       refreshController = controller;

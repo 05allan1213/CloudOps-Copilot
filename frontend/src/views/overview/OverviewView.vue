@@ -22,7 +22,9 @@ import {
 } from "../../components/overview/overviewModel";
 import WorkspacePageFrame from "../../components/workspace/WorkspacePageFrame.vue";
 import WorkspaceState from "../../components/workspace/WorkspaceState.vue";
+import { invalidateQueryDomain } from "../../composables/queryCache";
 import { useLatestAsync } from "../../composables/useLatestAsync";
+import { usePageVisibility } from "../../composables/usePageVisibility";
 import { incidentStatusLabel, severityLabel } from "../../models/incidents";
 import { verificationStateLabel } from "../../models/recovery";
 import type { IncidentView } from "../../types/incidents";
@@ -48,6 +50,7 @@ type HeroTone = "critical" | "warning" | "working" | "healthy" | "unknown";
 const route = useRoute();
 const router = useRouter();
 const request = useLatestAsync<CommandCenterSnapshot>();
+const { visible } = usePageVisibility();
 const previewWebGLFailure = ref("");
 const utcFormatter = new Intl.DateTimeFormat("zh-CN", {
   dateStyle: "medium",
@@ -150,6 +153,12 @@ const workflowStages = computed(() => [
   { key: "authorize", label: "Authorize", value: incidentSourceReady.value ? awaitingApproval.value : "—", active: incidentSourceReady.value && awaitingApproval.value > 0 },
   { key: "verify", label: "Verify", value: deliverySourceReady.value && incidentSourceReady.value ? verifiedDeliveries.value : "—", active: deliverySourceReady.value && deliveries.value.length > 0 },
 ]);
+const signalMoving = computed(() => (
+  visible.value
+  && attentionKnown.value
+  && !request.staleReason.value
+  && workflowStages.value.some((stage) => stage.active)
+));
 const partialFailureText = computed(() => {
   const failures = source.value?.failures ?? [];
   if (!failures.length) return "";
@@ -208,7 +217,8 @@ function deliveryTargetHash(item: DevOpsWorkspace["deliveries"][number]): string
   return latestVerificationStatusForDelivery(item, incidents.value) ? "#verifications" : "#delivery";
 }
 
-async function loadCommandCenter(background = false) {
+async function loadCommandCenter(background = false, force = false) {
+  if (force) invalidateQueryDomain(["platform", "incidents", "alerts", "agent", "devops"]);
   previewWebGLFailure.value = "";
   await request.run(async ({ signal }) => {
     const [overviewResult, incidentResult, alertResult, investigationResult, devopsResult] = await Promise.allSettled([
@@ -320,7 +330,7 @@ onBeforeUnmount(() => window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT
             aria-label="刷新运维态势"
             :loading="request.refreshing.value"
             :disabled="request.loading.value"
-            @click="loadCommandCenter(true)"
+            @click="loadCommandCenter(true, true)"
           />
         </UTooltip>
       </div>
@@ -358,7 +368,7 @@ onBeforeUnmount(() => window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT
             aria-label="重试全部只读来源"
             :loading="request.refreshing.value"
             :disabled="request.loading.value"
-            @click="loadCommandCenter(true)"
+            @click="loadCommandCenter(true, true)"
           />
         </UTooltip>
       </section>
@@ -430,7 +440,7 @@ onBeforeUnmount(() => window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT
 
         <div
           class="hero-signal"
-          :class="{ 'is-partial': !attentionKnown }"
+          :class="{ 'is-partial': !attentionKnown, 'is-moving': signalMoving }"
           aria-label="运维闭环当前阶段"
         >
           <div class="signal-line" aria-hidden="true" />
@@ -931,14 +941,17 @@ onBeforeUnmount(() => window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT
   border-radius: 999px;
   background: var(--co-viz-live);
   box-shadow: 0 0 16px color-mix(in srgb, var(--co-viz-live) 55%, transparent);
-  animation: signal-travel 5s cubic-bezier(.23, 1, .32, 1) infinite;
+  opacity: 0;
+}
+.hero-signal.is-moving .signal-line::after {
+  animation: signal-travel var(--co-motion-signal-cycle) var(--co-ease-signal) infinite;
 }
 .hero-signal.is-partial .signal-line::after {
   width: 12%;
   background: color-mix(in srgb, var(--co-viz-live) 44%, var(--co-border-strong));
   box-shadow: 0 0 14px color-mix(in srgb, var(--co-viz-live) 20%, transparent);
-  animation: signal-probe 4.6s ease-in-out infinite;
-  opacity: .72;
+  animation: none;
+  opacity: 0;
 }
 .signal-stage { position: relative; z-index: 1; display: grid; justify-items: center; gap: 4px; color: var(--co-text-muted); }
 .signal-stage i { width: 11px; height: 11px; border: 3px solid var(--co-bg-canvas); border-radius: 50%; background: var(--co-border-strong); box-shadow: 0 0 0 1px var(--co-border-default); }
@@ -1135,7 +1148,7 @@ onBeforeUnmount(() => window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT
   border: 1px solid var(--co-border-default);
   border-radius: var(--co-radius-frame);
   background: color-mix(in srgb, var(--co-bg-surface) 54%, transparent);
-  transition: transform 180ms var(--co-ease-out), border-color 180ms var(--co-ease-out), box-shadow 180ms var(--co-ease-out);
+  transition: transform var(--co-motion-standard) var(--co-ease-out), border-color var(--co-motion-standard) var(--co-ease-out), box-shadow var(--co-motion-standard) var(--co-ease-out);
 }
 .workspace-links a:hover { border-color: var(--co-viz-live); box-shadow: none; transform: translateY(-2px); }
 .workspace-links a > :deep(svg:first-child) { width: 19px; height: 19px; color: var(--co-text-secondary); }
@@ -1149,14 +1162,6 @@ onBeforeUnmount(() => window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT
   12% { opacity: 1; }
   82% { opacity: 1; }
   100% { left: 82%; opacity: 0; }
-}
-
-@keyframes signal-probe {
-  0% { left: 0; opacity: 0; }
-  15% { opacity: .72; }
-  50% { opacity: .48; }
-  85% { opacity: .72; }
-  100% { left: 88%; opacity: 0; }
 }
 
 @media (max-width: 1180px) {
@@ -1181,7 +1186,7 @@ onBeforeUnmount(() => window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .signal-line::after { animation: none; left: 41%; opacity: 1; }
+  .hero-signal.is-moving .signal-line::after { animation: none; left: 41%; opacity: 1; }
   .hero-primary-action:hover,
   .workspace-links a:hover { transform: none; }
 }

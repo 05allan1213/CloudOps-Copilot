@@ -268,7 +268,7 @@ const traceID = computed(() => typeof props.error === "string" ? "" : props.erro
   height: 42px;
   border-radius: var(--co-radius-control);
   background: linear-gradient(90deg, var(--co-bg-subtle), var(--co-bg-hover), var(--co-bg-subtle));
-  animation: section-pulse 1.4s ease-in-out infinite;
+  animation: section-pulse var(--co-motion-pulse-cycle) var(--co-ease-signal) infinite;
 }
 
 .section-message {

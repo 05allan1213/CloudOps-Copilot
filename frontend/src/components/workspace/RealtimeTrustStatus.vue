@@ -107,7 +107,7 @@ const newItemsLabel = computed(() => `${props.newItems.toLocaleString("zh-CN")} 
   font-size: 10px;
 }
 
-.is-animated .realtime-trust-icon { animation: realtime-trust-spin 0.8s linear infinite; }
+.is-animated .realtime-trust-icon { animation: realtime-trust-spin var(--co-spinner-duration) linear infinite; }
 @keyframes realtime-trust-spin { to { transform: rotate(360deg); } }
 
 @media (prefers-reduced-motion: reduce) {

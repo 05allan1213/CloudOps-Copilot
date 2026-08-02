@@ -496,7 +496,7 @@ onBeforeUnmount(() => {
 .execution-status { color: var(--co-status-success-fg); }
 .execution-status i { width: 6px; height: 6px; border-radius: 50%; background: var(--co-viz-live); box-shadow: 0 0 0 3px var(--co-viz-live-soft); }
 .execution-status.is-working { color: var(--co-status-warning-fg); }
-.execution-status.is-working i { background: var(--co-viz-amber); box-shadow: 0 0 0 3px color-mix(in srgb, var(--co-viz-amber) 14%, transparent); animation: workspace-pulse 1.8s ease-in-out infinite; }
+.execution-status.is-working i { background: var(--co-viz-amber); box-shadow: 0 0 0 3px color-mix(in srgb, var(--co-viz-amber) 14%, transparent); animation: workspace-pulse var(--co-motion-pulse-cycle) var(--co-ease-signal) infinite; }
 .outcome-status { color: var(--co-text-secondary); }
 .workspace-counts { grid-column: 1 / -1; color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 8px; white-space: nowrap; }
 .entry-actions { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: var(--co-space-2); }

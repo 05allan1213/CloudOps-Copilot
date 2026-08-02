@@ -4,9 +4,13 @@ import type { ConfigurationRevision, ProviderHealth } from "../../api/platform";
 import {
   buildSectionConfigurationDraft,
   classifySettingsApplyOutcome,
+  createPersistedSettingsDrafts,
   createSettingsSectionDrafts,
   isSettingsSectionDirty,
+  parsePersistedSettingsDrafts,
+  persistedSettingsDraftConflicts,
   rebaseSettingsSection,
+  restorePersistedSettingsDrafts,
   sanitizeSecretReferences,
   sectionChangedInRevision,
   settingsSectionChanges,
@@ -152,6 +156,52 @@ describe("Settings section drafts", () => {
     expect(isSettingsSectionDirty(section)).toBe(true);
     expect(settingsSectionChanges(section)).toEqual([]);
     expect(settingsSectionFingerprint(section)).not.toBe(initialFingerprint);
+  });
+
+  it("persists only allowlisted non-sensitive draft fields for 24 hours", () => {
+    const sections = createSettingsSectionDrafts(revision());
+    const provider = (sections.providers.value as ConfigurationRevision["providers"])[0] as ConfigurationRevision["providers"][number] & { secret_value?: string; access_token?: string };
+    provider.timeout_ms = 15000;
+    provider.secret_value = "must-not-persist";
+    provider.access_token = "must-not-persist-either";
+    sections.providers.summary = "Increase provider timeout";
+    const payload = createPersistedSettingsDrafts(sections, 1_000);
+    const encoded = JSON.stringify(payload);
+
+    expect(Object.keys(payload.sections)).toEqual(["providers"]);
+    expect(encoded).not.toContain("must-not-persist");
+    expect(parsePersistedSettingsDrafts(encoded, 1_000 + 23 * 60 * 60 * 1000)?.status).toBe("fresh");
+    expect(parsePersistedSettingsDrafts(encoded, 1_000 + 25 * 60 * 60 * 1000)?.status).toBe("expired");
+  });
+
+  it("rejects damaged persisted shapes and strips unknown fields when parsing", () => {
+    const sections = createSettingsSectionDrafts(revision());
+    (sections.providers.value as ConfigurationRevision["providers"])[0].timeout_ms = 15000;
+    sections.providers.summary = "Increase provider timeout";
+    const raw = createPersistedSettingsDrafts(sections, 1_000) as unknown as {
+      sections: { providers: { value: Array<Record<string, unknown>>; baseDraft: { providers: Array<Record<string, unknown>> } } };
+    };
+    raw.sections.providers.value[0].access_token = "must-not-survive-parse";
+    raw.sections.providers.baseDraft.providers[0].secret_value = "must-not-survive-parse";
+
+    const parsed = parsePersistedSettingsDrafts(JSON.stringify(raw), 1_000);
+    expect(JSON.stringify(parsed)).not.toContain("must-not-survive-parse");
+
+    raw.sections.providers.value[0].provider = "unknown-provider";
+    expect(parsePersistedSettingsDrafts(JSON.stringify(raw), 1_000)).toBeNull();
+  });
+
+  it("restores the exact saved base and reports a newer active Revision as a conflict", () => {
+    const sections = createSettingsSectionDrafts(revision());
+    (sections.system.value as ConfigurationRevision["general"]).query_max_results = 2500;
+    sections.system.summary = "Raise query result bound";
+    const payload = createPersistedSettingsDrafts(sections, 1_000);
+    const newer = revision({ id: "44444444-4444-4444-8444-444444444444", number: 13, hash: "b".repeat(64) });
+    const restored = restorePersistedSettingsDrafts(newer, payload);
+
+    expect(restored.system.baseRevisionID).toBe(revision().id);
+    expect((restored.system.value as ConfigurationRevision["general"]).query_max_results).toBe(2500);
+    expect(persistedSettingsDraftConflicts(payload, newer)).toBe(true);
   });
 });
 

@@ -3,6 +3,9 @@ import { computed, ref, watch } from "vue";
 export type ThemeMode = "dark" | "light";
 
 const STORAGE_KEY = "cloudops-theme";
+export const THEME_CHANGE_EVENT = "cloudops:theme-change";
+export const THEME_TRANSITION_MS = 240;
+let transitionTimer: ReturnType<typeof setTimeout> | undefined;
 
 export function resolveThemePreference(stored: string | null, prefersLight: boolean): ThemeMode {
   if (stored === "dark" || stored === "light") return stored;
@@ -27,7 +30,7 @@ function resolveInitialTheme(): ThemeMode {
 
 const theme = ref<ThemeMode>(resolveInitialTheme());
 
-function applyTheme(mode: ThemeMode) {
+function applyTheme(mode: ThemeMode, notify = true) {
   if (typeof document === "undefined") return;
   const html = document.documentElement;
   html.classList.remove("dark", "light");
@@ -38,21 +41,38 @@ function applyTheme(mode: ThemeMode) {
   document
     .querySelector('meta[name="theme-color"]')
     ?.setAttribute("content", canvasColor || (mode === "dark" ? "black" : "white"));
+  if (notify && typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent<ThemeMode>(THEME_CHANGE_EVENT, { detail: mode }));
+  }
 }
 
 export function initializeTheme() {
-  applyTheme(theme.value);
+  applyTheme(theme.value, false);
 }
 
 watch(theme, (mode) => {
   applyTheme(mode);
-  if (typeof window !== "undefined") window.localStorage.setItem(STORAGE_KEY, mode);
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.setItem(STORAGE_KEY, mode);
+    } catch {
+      // The active theme remains valid for this browser lifecycle.
+    }
+  }
 });
 
 export function useTheme() {
   const isDark = computed(() => theme.value === "dark");
 
   function toggleTheme() {
+    if (typeof document !== "undefined" && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      document.documentElement.classList.add("co-theme-transitioning");
+      if (transitionTimer !== undefined) clearTimeout(transitionTimer);
+      transitionTimer = setTimeout(() => {
+        document.documentElement.classList.remove("co-theme-transitioning");
+        transitionTimer = undefined;
+      }, THEME_TRANSITION_MS);
+    }
     theme.value = oppositeTheme(theme.value);
   }
 

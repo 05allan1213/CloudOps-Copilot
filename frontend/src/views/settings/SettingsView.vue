@@ -14,7 +14,7 @@ import USlideover from "@nuxt/ui/components/Slideover.vue";
 import USwitch from "@nuxt/ui/components/Switch.vue";
 import UTable from "@nuxt/ui/components/Table.vue";
 import UTextarea from "@nuxt/ui/components/Textarea.vue";
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, type Component } from "vue";
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, type Component } from "vue";
 import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
 
 import { isApiError } from "../../api/client";
@@ -38,24 +38,22 @@ import {
   type StorageStatus,
 } from "../../api/platform";
 import WorkspaceTechnicalDetails from "../../components/workspace/WorkspaceTechnicalDetails.vue";
-import AlertmanagerProviderSettings from "../../components/settings/AlertmanagerProviderSettings.vue";
-import ArgoCDProviderSettings from "../../components/settings/ArgoCDProviderSettings.vue";
-import ElasticsearchProviderSettings from "../../components/settings/ElasticsearchProviderSettings.vue";
-import GitHubProviderSettings from "../../components/settings/GitHubProviderSettings.vue";
-import KubernetesProviderSettings from "../../components/settings/KubernetesProviderSettings.vue";
-import LLMProviderSettings from "../../components/settings/LLMProviderSettings.vue";
-import PrometheusProviderSettings from "../../components/settings/PrometheusProviderSettings.vue";
-import TempoProviderSettings from "../../components/settings/TempoProviderSettings.vue";
+import { invalidateQueryDomain } from "../../composables/queryCache";
 import { OPERATIONAL_SCOPE_CHANGED_EVENT } from "../../utils/operationalScope";
 import SettingsSectionPanel from "./SettingsSectionPanel.vue";
 import {
+  SETTINGS_DRAFT_STORAGE_KEY,
   buildSectionConfigurationDraft,
   classifySettingsApplyOutcome,
+  createPersistedSettingsDrafts,
   createSettingsSectionDraft,
   createSettingsSectionDrafts,
   isSettingsSectionDirty,
+  parsePersistedSettingsDrafts,
+  persistedSettingsDraftConflicts,
   rebaseSettingsSection,
   resetSettingsSection,
+  restorePersistedSettingsDrafts,
   settingsSectionChanges,
   settingsSectionFingerprint,
   settingsSectionKeys,
@@ -63,6 +61,7 @@ import {
   validateSettingsSectionLocally,
   type ScopeSectionValue,
   type SettingsApplyOutcome,
+  type SettingsDraftRecovery,
   type SettingsSectionDraft,
   type SettingsSectionDrafts,
   type SettingsSectionKey,
@@ -107,6 +106,14 @@ interface SettingsSectionGroup {
   items: SettingsSectionLink[];
 }
 
+interface SettingsRecoveryDiff {
+  key: SettingsSectionKey;
+  label: string;
+  baseRevisionNumber: number;
+  summary: string;
+  changes: string[];
+}
+
 type SettingsSearchResult = SettingsSearchEntry;
 
 const route = useRoute();
@@ -136,6 +143,10 @@ const selectedProvider = ref<ProviderIdentity | null>(null);
 const providerEditorOpen = ref(false);
 const selectedScopeIndex = ref(0);
 const selectedPolicyIndex = ref(0);
+const draftRecovery = ref<SettingsDraftRecovery | null>(null);
+const draftRecoveryOpen = ref(false);
+const draftRecoveryDiffVisible = ref(false);
+const draftPersistenceError = ref("");
 const settingsNavElement = ref<HTMLElement | null>(null);
 const settingsNavIndicatorStyle = ref<Record<string, string>>({ opacity: "0" });
 const providerSlideoverUI = {
@@ -146,6 +157,10 @@ const providerSlideoverUI = {
   footer: "settings-provider-slideover__footer",
 };
 let mounted = true;
+let draftRecoveryChecked = false;
+let draftPersistenceReady = false;
+let allowNextSettingsLeave = false;
+let draftPersistenceTimer: ReturnType<typeof setTimeout> | undefined;
 
 function emptyRuntime(): SectionRuntime {
   return {
@@ -195,14 +210,14 @@ const providerDescriptions: Record<ProviderIdentity, string> = {
   argocd: "Project、Application 与 Sync 权限",
 };
 const providerEditorComponents: Record<ProviderIdentity, Component> = {
-  llm: LLMProviderSettings,
-  kubernetes: KubernetesProviderSettings,
-  prometheus: PrometheusProviderSettings,
-  alertmanager: AlertmanagerProviderSettings,
-  elasticsearch: ElasticsearchProviderSettings,
-  tempo: TempoProviderSettings,
-  github: GitHubProviderSettings,
-  argocd: ArgoCDProviderSettings,
+  llm: defineAsyncComponent(() => import("../../components/settings/LLMProviderSettings.vue")),
+  kubernetes: defineAsyncComponent(() => import("../../components/settings/KubernetesProviderSettings.vue")),
+  prometheus: defineAsyncComponent(() => import("../../components/settings/PrometheusProviderSettings.vue")),
+  alertmanager: defineAsyncComponent(() => import("../../components/settings/AlertmanagerProviderSettings.vue")),
+  elasticsearch: defineAsyncComponent(() => import("../../components/settings/ElasticsearchProviderSettings.vue")),
+  tempo: defineAsyncComponent(() => import("../../components/settings/TempoProviderSettings.vue")),
+  github: defineAsyncComponent(() => import("../../components/settings/GitHubProviderSettings.vue")),
+  argocd: defineAsyncComponent(() => import("../../components/settings/ArgoCDProviderSettings.vue")),
 };
 const providerOptions = (Object.keys(providerLabels) as Array<ProviderIdentity | "mysql">)
   .filter((provider): provider is ProviderIdentity => provider !== "mysql")
@@ -291,6 +306,28 @@ const activeSectionCanApply = computed(() => Boolean(
 const activeSectionIsDirty = computed(() => Boolean(
   activeSectionDraft.value && isSettingsSectionDirty(activeSectionDraft.value),
 ));
+const draftRecoveryConflicts = computed(() => Boolean(
+  draftRecovery.value
+  && activeRevision.value
+  && persistedSettingsDraftConflicts(draftRecovery.value.payload, activeRevision.value),
+));
+const draftRecoveryDiffs = computed<SettingsRecoveryDiff[]>(() => {
+  const sections = draftRecovery.value?.payload.sections;
+  if (!sections) return [];
+  return settingsSectionKeys.flatMap((key) => {
+    const section = sections[key];
+    if (!section) return [];
+    const changes = settingsSectionChanges(section);
+    if (!changes.length && section.summary.trim()) changes.push(`发布摘要：${section.summary.trim()}`);
+    return [{
+      key,
+      label: settingsSectionLabel(key),
+      baseRevisionNumber: section.baseRevisionNumber,
+      summary: section.summary,
+      changes,
+    }];
+  });
+});
 const activeSectionStatus = computed(() => {
   if (!activeSectionDraft.value || !activeSectionRuntime.value) return "";
   if (activeSectionRuntime.value.applying) return "正在应用配置";
@@ -537,6 +574,93 @@ function initializeDrafts(revision: ConfigurationRevision) {
   providerResults.value = {};
 }
 
+function readPersistedDraftRecovery(revision: ConfigurationRevision) {
+  if (draftRecoveryChecked) return;
+  draftRecoveryChecked = true;
+  try {
+    const raw = window.localStorage.getItem(SETTINGS_DRAFT_STORAGE_KEY);
+    const recovery = parsePersistedSettingsDrafts(raw);
+    if (!recovery) {
+      if (raw) window.localStorage.removeItem(SETTINGS_DRAFT_STORAGE_KEY);
+      draftPersistenceReady = true;
+      return;
+    }
+    draftRecovery.value = recovery;
+    draftRecoveryOpen.value = true;
+    draftRecoveryDiffVisible.value = false;
+    if (persistedSettingsDraftConflicts(recovery.payload, revision)) {
+      refreshMessage.value = "检测到活动 Revision 已变化；恢复后必须逐 section 处理冲突，页面不会自动 rebase 或 apply。";
+    }
+  } catch {
+    draftPersistenceReady = true;
+    draftPersistenceError.value = "DRAFT_STORAGE_UNAVAILABLE：浏览器未开放本地草稿存储；当前修改仍只保留在页面会话中。";
+  }
+}
+
+function persistSettingsDraftsNow(): boolean {
+  if (!draftPersistenceReady || !drafts.value) return false;
+  if (draftPersistenceTimer !== undefined) {
+    clearTimeout(draftPersistenceTimer);
+    draftPersistenceTimer = undefined;
+  }
+  try {
+    const payload = createPersistedSettingsDrafts(drafts.value);
+    if (Object.keys(payload.sections).length) {
+      window.localStorage.setItem(SETTINGS_DRAFT_STORAGE_KEY, JSON.stringify(payload));
+    } else {
+      window.localStorage.removeItem(SETTINGS_DRAFT_STORAGE_KEY);
+    }
+    draftPersistenceError.value = "";
+    return true;
+  } catch {
+    draftPersistenceError.value = "DRAFT_STORAGE_UNAVAILABLE：24 小时草稿保存失败；请继续留在本页或放弃修改。";
+    return false;
+  }
+}
+
+function scheduleSettingsDraftPersistence() {
+  if (!draftPersistenceReady || !drafts.value) return;
+  if (draftPersistenceTimer !== undefined) clearTimeout(draftPersistenceTimer);
+  draftPersistenceTimer = setTimeout(() => {
+    draftPersistenceTimer = undefined;
+    persistSettingsDraftsNow();
+  }, 250);
+}
+
+function discardPersistedDraftRecovery() {
+  try {
+    window.localStorage.removeItem(SETTINGS_DRAFT_STORAGE_KEY);
+    draftPersistenceError.value = "";
+  } catch {
+    draftPersistenceError.value = "DRAFT_STORAGE_UNAVAILABLE：无法清理浏览器中的草稿记录。";
+    return;
+  }
+  draftRecovery.value = null;
+  draftRecoveryOpen.value = false;
+  draftRecoveryDiffVisible.value = false;
+  draftPersistenceReady = true;
+}
+
+function restorePersistedDraftRecovery() {
+  const recovery = draftRecovery.value;
+  if (!recovery || recovery.status !== "fresh" || !activeRevision.value) return;
+  const conflicts = persistedSettingsDraftConflicts(recovery.payload, activeRevision.value);
+  drafts.value = restorePersistedSettingsDrafts(activeRevision.value, recovery.payload);
+  selectedProvider.value = (drafts.value.providers.value as ProviderConfiguration[])[0]?.provider ?? null;
+  selectedScopeIndex.value = 0;
+  selectedPolicyIndex.value = 0;
+  for (const key of settingsSectionKeys) clearSectionRuntime(key);
+  providerResults.value = {};
+  draftRecovery.value = null;
+  draftRecoveryOpen.value = false;
+  draftRecoveryDiffVisible.value = false;
+  draftPersistenceReady = true;
+  persistSettingsDraftsNow();
+  refreshMessage.value = conflicts
+    ? "草稿已按原始 base Revision 恢复；冲突 section 必须明确放弃或 rebase 后重新验证。"
+    : "非敏感 Settings 草稿已恢复；Secret value、Token 与 apply 状态未被持久化。";
+}
+
 function reconcileCleanDrafts(revision: ConfigurationRevision) {
   if (!drafts.value) {
     initializeDrafts(revision);
@@ -550,7 +674,8 @@ function reconcileCleanDrafts(revision: ConfigurationRevision) {
   }
 }
 
-async function loadSettings(initial = false) {
+async function loadSettings(initial = false, force = false) {
+  if (force) invalidateQueryDomain("platform");
   loading.value = true;
   loadError.value = "";
   try {
@@ -560,6 +685,7 @@ async function loadSettings(initial = false) {
     storage.value = storageStatus;
     if (initial || !drafts.value) initializeDrafts(snapshot.active_revision);
     else reconcileCleanDrafts(snapshot.active_revision);
+    readPersistedDraftRecovery(snapshot.active_revision);
     await focusRouteAnchor();
   } catch (reason) {
     loadError.value = describeError(reason, "Settings 读取失败，请检查本地 API 与持久化状态。");
@@ -679,6 +805,7 @@ async function applySection(key: SettingsSectionKey) {
   try {
     let preflight: SettingsSnapshot;
     try {
+      invalidateQueryDomain("platform");
       preflight = await getSettings();
     } catch (reason) {
       runtimes[key].error = describeError(reason, "CONCURRENT_REVISION_PREFLIGHT_FAILED：无法读取当前 Revision，apply 保持阻止。 ");
@@ -743,6 +870,7 @@ async function refreshApplyOutcome(key: SettingsSectionKey) {
   if (!revisionID) return;
   runtimes[key].error = "";
   try {
+    invalidateQueryDomain("platform");
     const snapshot = await getSettings();
     settings.value = snapshot;
     reconcileCleanDrafts(snapshot.active_revision);
@@ -977,6 +1105,7 @@ async function focusRouteAnchor(hash = route.hash) {
 
 function handleBeforeUnload(event: BeforeUnloadEvent) {
   if (!shouldBlockSettingsLeave(hasUnsavedChanges.value)) return;
+  persistSettingsDraftsNow();
   event.preventDefault();
   event.returnValue = "";
 }
@@ -986,6 +1115,11 @@ function discardAllDrafts() {
   for (const key of settingsSectionKeys) {
     drafts.value[key] = resetSettingsSection(drafts.value[key]);
     clearSectionRuntime(key, true);
+  }
+  try {
+    window.localStorage.removeItem(SETTINGS_DRAFT_STORAGE_KEY);
+  } catch {
+    draftPersistenceError.value = "DRAFT_STORAGE_UNAVAILABLE：无法清理浏览器中的草稿记录。";
   }
 }
 
@@ -1002,11 +1136,28 @@ async function discardAndLeave() {
   if (target) await router.push(target);
 }
 
+async function preserveAndLeave() {
+  const target = pendingRoute.value;
+  if (!target || !persistSettingsDraftsNow()) return;
+  allowNextSettingsLeave = true;
+  leaveModalOpen.value = false;
+  pendingRoute.value = "";
+  try {
+    await router.push(target);
+  } finally {
+    allowNextSettingsLeave = false;
+  }
+}
+
 function handleOperationalScopeChanged() {
   void loadSettings(false);
 }
 
 onBeforeRouteLeave((to) => {
+  if (allowNextSettingsLeave) {
+    allowNextSettingsLeave = false;
+    return true;
+  }
   if (!shouldBlockSettingsLeave(hasUnsavedChanges.value)) return true;
   pendingRoute.value = to.fullPath;
   leaveModalOpen.value = true;
@@ -1018,6 +1169,7 @@ watch(() => route.hash, (hash) => {
   void updateSettingsNavIndicator();
 });
 watch([settings, drafts], () => void updateSettingsNavIndicator());
+watch(drafts, scheduleSettingsDraftPersistence, { deep: true });
 watch(() => secretState.provider, (provider) => {
   secretState.purpose = provider === "llm" ? "api_key" : provider === "kubernetes" ? "credential" : "token";
   secretState.value = "";
@@ -1033,6 +1185,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   mounted = false;
+  if (draftPersistenceReady && hasUnsavedChanges.value) persistSettingsDraftsNow();
+  if (draftPersistenceTimer !== undefined) clearTimeout(draftPersistenceTimer);
   secretState.value = "";
   window.removeEventListener("beforeunload", handleBeforeUnload);
   window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT, handleOperationalScopeChanged);
@@ -1068,7 +1222,7 @@ onBeforeUnmount(() => {
           icon="i-lucide-refresh-cw"
           label="刷新"
           :loading="loading"
-          @click="loadSettings(false)"
+          @click="loadSettings(false, true)"
         />
       </div>
     </header>
@@ -1183,7 +1337,7 @@ onBeforeUnmount(() => {
               variant="outline"
               icon="i-lucide-refresh-cw"
               label="重试读取"
-              @click="loadSettings(false)"
+              @click="loadSettings(false, true)"
             />
           </template>
         </UAlert>
@@ -1204,6 +1358,14 @@ onBeforeUnmount(() => {
           :description="refreshMessage"
           :close="true"
           @update:open="refreshMessage = ''"
+        />
+        <UAlert
+          v-if="draftPersistenceError"
+          color="warning"
+          variant="soft"
+          icon="i-lucide-hard-drive-download"
+          title="本地草稿存储不可用"
+          :description="draftPersistenceError"
         />
 
         <template v-if="settings && drafts && activeRevision">
@@ -2164,12 +2326,22 @@ onBeforeUnmount(() => {
             name="settings-panel"
             mode="out-in"
           >
-            <component
-              :is="selectedProviderEditor"
-              :key="selectedProviderConfiguration.provider"
-              :model-value="selectedProviderConfiguration"
-              @update:model-value="updateSelectedProviderConfiguration"
-            />
+            <Suspense :key="selectedProviderConfiguration.provider">
+              <component
+                :is="selectedProviderEditor"
+                :model-value="selectedProviderConfiguration"
+                @update:model-value="updateSelectedProviderConfiguration"
+              />
+              <template #fallback>
+                <UAlert
+                  color="neutral"
+                  variant="soft"
+                  icon="i-lucide-loader-circle"
+                  title="正在加载 Provider 编辑器"
+                  :description="`${providerLabels[selectedProviderConfiguration.provider]} 编辑区域正在按需加载。`"
+                />
+              </template>
+            </Suspense>
           </Transition>
           <UAlert
             v-if="providerResults[selectedProviderConfiguration.provider]"
@@ -2344,9 +2516,96 @@ onBeforeUnmount(() => {
     </UModal>
 
     <UModal
+      :open="draftRecoveryOpen"
+      :title="draftRecovery?.status === 'expired' ? 'Settings 草稿已超过 24 小时' : '发现未完成的 Settings 草稿'"
+      :description="draftRecovery ? `${draftRecoveryDiffs.length} 个 section · 保存于 ${formatISO(new Date(draftRecovery.payload.savedAt).toISOString())}` : '本地草稿恢复'"
+      :dismissible="false"
+      :close="false"
+    >
+      <template #body>
+        <div
+          v-if="draftRecovery"
+          class="settings-diff-review"
+        >
+          <UAlert
+            v-if="draftRecovery.status === 'expired'"
+            color="warning"
+            variant="soft"
+            icon="i-lucide-clock-alert"
+            title="草稿已过期"
+            description="超过 24 小时的草稿只能查看 Diff 或丢弃，不能恢复、验证或应用。"
+          />
+          <UAlert
+            v-else-if="draftRecoveryConflicts"
+            color="warning"
+            variant="soft"
+            icon="i-lucide-git-compare-arrows"
+            title="活动 Revision 已变化"
+            description="恢复会保留草稿的原始 base Revision/hash；页面不会自动合并、rebase、验证或 apply。恢复后需逐 section 明确处理冲突。"
+          />
+          <UAlert
+            v-else
+            color="info"
+            variant="soft"
+            icon="i-lucide-file-clock"
+            title="仅保存非敏感 allowlist 字段"
+            description="Secret value、Token、凭据、校验结果与自动 apply 状态均未进入持久草稿。"
+          />
+          <template v-if="draftRecoveryDiffVisible">
+            <section
+              v-for="section in draftRecoveryDiffs"
+              :key="section.key"
+              class="settings-diff-review"
+            >
+              <dl class="settings-diff-identity">
+                <div><dt>设置分区</dt><dd>{{ section.label }}</dd></div>
+                <div><dt>基线 Revision</dt><dd>#{{ section.baseRevisionNumber }}</dd></div>
+                <div><dt>变更说明</dt><dd>{{ section.summary || '未填写' }}</dd></div>
+              </dl>
+              <ol class="settings-diff-list">
+                <li
+                  v-for="(change, index) in section.changes"
+                  :key="`${section.key}-${index}`"
+                >
+                  <span>{{ String(index + 1).padStart(2, '0') }}</span>
+                  <p>{{ change }}</p>
+                </li>
+              </ol>
+            </section>
+          </template>
+        </div>
+      </template>
+      <template #footer>
+        <div class="settings-modal-actions">
+          <UButton
+            color="neutral"
+            variant="outline"
+            :icon="draftRecoveryDiffVisible ? 'i-lucide-eye-off' : 'i-lucide-file-diff'"
+            :label="draftRecoveryDiffVisible ? '收起 Diff' : '查看 Diff'"
+            @click="draftRecoveryDiffVisible = !draftRecoveryDiffVisible"
+          />
+          <UButton
+            color="error"
+            variant="outline"
+            icon="i-lucide-trash-2"
+            label="丢弃草稿"
+            @click="discardPersistedDraftRecovery"
+          />
+          <UButton
+            v-if="draftRecovery?.status === 'fresh'"
+            color="primary"
+            :icon="draftRecoveryConflicts ? 'i-lucide-git-compare-arrows' : 'i-lucide-history'"
+            :label="draftRecoveryConflicts ? '恢复并处理冲突' : '恢复草稿'"
+            @click="restorePersistedDraftRecovery"
+          />
+        </div>
+      </template>
+    </UModal>
+
+    <UModal
       :open="leaveModalOpen"
-      title="离开并放弃本地 Settings 草稿？"
-      description="这些 section 草稿只存在于当前前端页面，尚未产生后端副作用。"
+      title="如何处理本地 Settings 草稿？"
+      description="这些 section 草稿尚未产生后端副作用；可以保留非敏感字段 24 小时后离开。"
       :dismissible="false"
       :close="false"
     >
@@ -2356,7 +2615,7 @@ onBeforeUnmount(() => {
           variant="soft"
           icon="i-lucide-triangle-alert"
           title="存在未应用修改"
-          :description="`${dirtySectionCount} 个 section 的本地修改会被放弃；活动 Revision、Provider 和 Scope 不会被改写。`"
+          :description="`${dirtySectionCount} 个 section 存在本地修改；选择保留或放弃都不会改写活动 Revision、Provider 和 Scope。`"
         />
       </template>
       <template #footer>
@@ -2367,6 +2626,13 @@ onBeforeUnmount(() => {
             icon="i-lucide-pencil"
             label="继续编辑"
             @click="stayOnSettings"
+          />
+          <UButton
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-save"
+            label="保留 24 小时并离开"
+            @click="preserveAndLeave"
           />
           <UButton
             color="error"
@@ -2405,7 +2671,7 @@ onBeforeUnmount(() => {
 .settings-section-nav { display: grid; min-width: 0; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--co-space-4); }
 .settings-section-nav-group { display: grid; min-width: 0; gap: 4px; }
 .settings-section-nav-group__label { padding: 0 var(--co-space-2) var(--co-space-1); color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 9px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
-.settings-section-link { display: grid; min-width: 0; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--co-space-2); min-height: 60px; padding: var(--co-space-3); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); background: var(--co-bg-surface); color: var(--co-text-secondary); text-align: left; cursor: pointer; transition: border-color var(--co-motion-fast) ease, background var(--co-motion-fast) ease, color var(--co-motion-fast) ease; }
+.settings-section-link { display: grid; min-width: 0; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--co-space-2); min-height: 60px; padding: var(--co-space-3); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); background: var(--co-bg-surface); color: var(--co-text-secondary); text-align: left; cursor: pointer; transition: border-color var(--co-motion-fast) var(--co-ease-out), background var(--co-motion-fast) var(--co-ease-out), color var(--co-motion-fast) var(--co-ease-out); }
 .settings-section-link:hover, .settings-section-link:focus-visible { background: var(--co-bg-hover); color: var(--co-text-primary); outline: none; }
 .settings-section-link.is-active { border-color: var(--co-focus-ring); background: var(--co-bg-floating); color: var(--co-text-primary); box-shadow: inset 0 3px 0 var(--co-focus-ring); }
 .settings-section-link > span { display: grid; min-width: 0; gap: 2px; }
@@ -2625,9 +2891,9 @@ onBeforeUnmount(() => {
   box-shadow: var(--co-shadow-row);
   pointer-events: none;
   transition:
-    height 200ms cubic-bezier(0.22, 1, 0.36, 1),
-    opacity 160ms ease,
-    transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+    height var(--co-motion-standard) var(--co-ease-out),
+    opacity var(--co-motion-fast) var(--co-ease-out),
+    transform var(--co-motion-standard) var(--co-ease-out);
 }
 
 .settings-section-nav-group { position: relative; z-index: 1; gap: 2px; }
@@ -2641,7 +2907,7 @@ onBeforeUnmount(() => {
   border-color: transparent;
   border-radius: 9px;
   background: transparent;
-  transition: color 160ms ease;
+  transition: color var(--co-motion-fast) var(--co-ease-out);
 }
 
 .settings-section-link:hover,
@@ -2697,8 +2963,8 @@ onBeforeUnmount(() => {
 .settings-panel-enter-active,
 .settings-panel-leave-active {
   transition:
-    opacity 160ms ease,
-    transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+    opacity var(--co-motion-fast) var(--co-ease-out),
+    transform var(--co-motion-standard) var(--co-ease-out);
 }
 .settings-panel-enter-from { opacity: 0; transform: translateY(6px); }
 .settings-panel-leave-to { opacity: 0; transform: translateY(-2px); }
@@ -2742,7 +3008,7 @@ onBeforeUnmount(() => {
   color: var(--co-text-secondary);
   text-align: left;
   cursor: pointer;
-  transition: background 160ms ease, color 160ms ease;
+  transition: background var(--co-motion-fast) var(--co-ease-out), color var(--co-motion-fast) var(--co-ease-out);
 }
 .settings-object-button:hover,
 .settings-object-button:focus-visible { background: var(--co-bg-hover); color: var(--co-text-primary); outline: none; }
@@ -2829,7 +3095,7 @@ onBeforeUnmount(() => {
 .settings-action-status__dot.is-invalid { background: var(--co-status-critical-fg); box-shadow: 0 0 0 4px color-mix(in srgb, var(--co-status-critical-fg) 12%, transparent); }
 .settings-action-buttons { display: flex; flex: 0 0 auto; align-items: center; gap: var(--co-space-2); }
 .settings-actions-enter-active,
-.settings-actions-leave-active { transition: opacity 180ms ease, transform 180ms cubic-bezier(0.22, 1, 0.36, 1); }
+.settings-actions-leave-active { transition: opacity var(--co-motion-standard) var(--co-ease-out), transform var(--co-motion-standard) var(--co-ease-out); }
 .settings-actions-enter-from,
 .settings-actions-leave-to { opacity: 0; transform: translateY(8px); }
 

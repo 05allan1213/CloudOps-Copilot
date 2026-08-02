@@ -14,6 +14,7 @@ import OperationsAtlas from "../../components/infrastructure/OperationsAtlas.vue
 import StructuredResourceView from "../../components/infrastructure/StructuredResourceView.vue";
 import ApiErrorNotice from "../../components/workspace/ApiErrorNotice.vue";
 import WorkspaceState from "../../components/workspace/WorkspaceState.vue";
+import { invalidateQueryDomain } from "../../composables/queryCache";
 import { useLatestAsync } from "../../composables/useLatestAsync";
 import { useWorkspaceInspector } from "../../composables/useWorkspaceInspector";
 import { OPERATIONAL_SCOPE_CHANGED_EVENT } from "../../utils/operationalScope";
@@ -131,7 +132,8 @@ function relationLabel(relation: TopologyEdge["relation"]): string {
   } satisfies Record<TopologyEdge["relation"], string>)[relation];
 }
 
-async function loadAtlas(background = false) {
+async function loadAtlas(background = false, force = false) {
+  if (force) invalidateQueryDomain("infrastructure");
   const query: InfrastructureQuery = {
     cluster: queryValue(route.query.cluster) || undefined,
     namespace: queryValue(route.query.namespace) || undefined,
@@ -259,7 +261,7 @@ onBeforeUnmount(() => window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT
             aria-label="刷新当前拓扑投影"
             :loading="request.refreshing.value"
             :disabled="request.loading.value"
-            @click="loadAtlas(true)"
+            @click="loadAtlas(true, true)"
           />
         </UTooltip>
       </div>

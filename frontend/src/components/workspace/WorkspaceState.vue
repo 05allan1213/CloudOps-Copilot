@@ -127,7 +127,7 @@ const hasIdentity = computed(() => Boolean(
 .workspace-state-heading strong,
 .workspace-state-heading span { display: block; }
 .workspace-state-heading span { margin-top: var(--co-space-1); color: var(--co-text-muted); font-size: 12px; }
-.workspace-state-spinner { color: var(--co-action-primary); animation: workspace-state-spin 0.8s linear infinite; }
+.workspace-state-spinner { color: var(--co-action-primary); animation: workspace-state-spin var(--co-spinner-duration) linear infinite; }
 .workspace-state-skeleton { height: var(--co-table-row-height); border-radius: var(--co-radius-control); }
 .workspace-state-description { display: grid; min-width: 0; gap: var(--co-space-3); }
 .workspace-state-description p { margin: 0; overflow-wrap: anywhere; }

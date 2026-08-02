@@ -89,9 +89,17 @@
   --co-p-radius-2: 6px;
   --co-p-radius-3: 8px;
   --co-p-radius-full: 999px;
-  --co-p-duration-fast: 150ms;
-  --co-p-duration-standard: 200ms;
+  --co-p-duration-instant: 90ms;
+  --co-p-duration-fast: 120ms;
+  --co-p-duration-standard: 180ms;
+  --co-p-duration-theme: 240ms;
+  --co-p-duration-page: 360ms;
+  --co-p-duration-spinner: 800ms;
+  --co-p-duration-pulse: 1.8s;
+  --co-p-duration-signal: 5s;
+  --co-p-duration-reduced: 0.01ms;
   --co-p-ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --co-p-ease-signal: cubic-bezier(0.23, 1, 0.32, 1);
   --co-p-shadow-overlay-light: 0 8px 24px rgb(0 0 0 / 18%);
   --co-p-shadow-overlay-dark: 0 12px 32px rgb(0 0 0 / 42%);
 
@@ -113,8 +121,15 @@
   --co-radius-pill: var(--co-p-radius-full);
   --co-motion-fast: var(--co-p-duration-fast);
   --co-motion-standard: var(--co-p-duration-standard);
+  --co-motion-instant: var(--co-p-duration-instant);
+  --co-motion-theme: var(--co-p-duration-theme);
+  --co-motion-page: var(--co-p-duration-page);
+  --co-motion-reduced: var(--co-p-duration-reduced);
   --co-ease-out: var(--co-p-ease-out);
-  --co-spinner-duration: 800ms;
+  --co-ease-signal: var(--co-p-ease-signal);
+  --co-spinner-duration: var(--co-p-duration-spinner);
+  --co-motion-pulse-cycle: var(--co-p-duration-pulse);
+  --co-motion-signal-cycle: var(--co-p-duration-signal);
   --co-header-height: 80px;
   --co-sidebar-width: 216px;
   --co-sidebar-rail-width: 60px;

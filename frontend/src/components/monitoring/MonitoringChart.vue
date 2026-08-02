@@ -4,6 +4,8 @@ import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 
 import type { QuerySeries } from "../../api/monitoring";
+import { usePageVisibility } from "../../composables/usePageVisibility";
+import { THEME_CHANGE_EVENT } from "../../composables/useTheme";
 import {
   monitoringChartTheme,
   monitoringSeriesLabel,
@@ -24,6 +26,9 @@ const emit = defineEmits<{
 
 const root = ref<HTMLElement | null>(null);
 const host = ref<HTMLElement | null>(null);
+const nearViewport = ref(false);
+const renderState = ref<"deferred" | "ready" | "paused">("deferred");
+const { visible } = usePageVisibility();
 const hoverIndex = ref<number | null>(null);
 const tooltipLeft = ref(0);
 const tooltipTop = ref(0);
@@ -47,8 +52,11 @@ const keyboardSummary = computed(() => tooltipRows.value.length
 
 let chart: uPlot | null = null;
 let resizeObserver: ResizeObserver | null = null;
-let themeObserver: MutationObserver | null = null;
+let intersectionObserver: IntersectionObserver | null = null;
 let rebuilding = false;
+let pendingProjection = false;
+let pendingRebuild = false;
+let chartSeriesIdentity = "";
 
 function theme() {
   const styles = getComputedStyle(root.value ?? document.documentElement);
@@ -65,6 +73,7 @@ function updateCursor(self: uPlot) {
   if (index === null || index === undefined || !Number.isFinite(index)) {
     hoverIndex.value = null;
     emit("cursor", null);
+    if (pendingProjection) void synchronizeChart();
     return;
   }
   hoverIndex.value = index;
@@ -82,7 +91,7 @@ function updateRange(self: uPlot, scaleKey: string) {
 
 function createChart() {
   const target = host.value;
-  if (!target || !projection.value.timestamps.length) return;
+  if (!target || !projection.value.timestamps.length || !visible.value || !nearViewport.value) return;
   chart?.destroy();
   target.replaceChildren();
   const colors = theme();
@@ -130,14 +139,45 @@ function createChart() {
   };
   chart = new uPlot(options, projection.value.data, target);
   chart.over.style.cursor = "crosshair";
+  chartSeriesIdentity = seriesIdentity();
+  pendingProjection = false;
+  renderState.value = "ready";
 }
 
-async function rebuildChart() {
+function seriesIdentity(): string {
+  return props.series.map((item, index) => monitoringSeriesLabel(item, index)).join("\u0000");
+}
+
+async function synchronizeChart(forceRebuild = false) {
+  if (forceRebuild) pendingRebuild = true;
+  if (!visible.value || !nearViewport.value) {
+    pendingProjection = true;
+    renderState.value = "paused";
+    return;
+  }
   if (rebuilding) return;
   rebuilding = true;
   await nextTick();
-  createChart();
+  if (!projection.value.timestamps.length) {
+    chart?.destroy();
+    chart = null;
+    host.value?.replaceChildren();
+    renderState.value = "deferred";
+  } else if (!chart || pendingRebuild || chartSeriesIdentity !== seriesIdentity()) {
+    createChart();
+  } else if (hoverIndex.value !== null) {
+    pendingProjection = true;
+  } else {
+    chart.setData(projection.value.data);
+    pendingProjection = false;
+    renderState.value = "ready";
+  }
+  if (chart && renderState.value === "ready") pendingRebuild = false;
   rebuilding = false;
+}
+
+function handleThemeChange() {
+  void synchronizeChart(true);
 }
 
 function moveKeyboardCursor(event: KeyboardEvent) {
@@ -164,21 +204,40 @@ function resetRange() {
 }
 
 onMounted(() => {
-  void rebuildChart();
+  if (typeof IntersectionObserver === "undefined") {
+    nearViewport.value = true;
+    void synchronizeChart();
+  } else if (root.value) {
+    intersectionObserver = new IntersectionObserver((entries) => {
+      const next = entries.some((entry) => entry.isIntersecting);
+      if (next === nearViewport.value) return;
+      nearViewport.value = next;
+      if (next) void synchronizeChart();
+      else renderState.value = "paused";
+    }, { rootMargin: "240px 0px", threshold: 0.01 });
+    intersectionObserver.observe(root.value);
+  }
   resizeObserver = new ResizeObserver(() => {
-    if (!chart || !host.value) return;
+    if (!chart || !host.value || !visible.value || !nearViewport.value) return;
     chart.setSize({ width: Math.max(320, host.value.clientWidth), height: chartHeight() });
   });
   if (host.value) resizeObserver.observe(host.value);
-  themeObserver = new MutationObserver(() => void rebuildChart());
-  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-theme"] });
+  window.addEventListener(THEME_CHANGE_EVENT, handleThemeChange);
 });
 
-watch(() => props.series, () => void rebuildChart(), { deep: true });
+watch(() => props.series, () => void synchronizeChart(), { deep: true });
+watch(visible, (isVisible) => {
+  if (isVisible) void synchronizeChart();
+  else {
+    pendingProjection = true;
+    renderState.value = "paused";
+  }
+});
 
 onBeforeUnmount(() => {
   resizeObserver?.disconnect();
-  themeObserver?.disconnect();
+  intersectionObserver?.disconnect();
+  window.removeEventListener(THEME_CHANGE_EVENT, handleThemeChange);
   chart?.destroy();
   chart = null;
 });
@@ -188,6 +247,7 @@ onBeforeUnmount(() => {
   <section
     ref="root"
     class="monitoring-chart"
+    :data-render-state="renderState"
     aria-labelledby="monitoring-chart-title"
   >
     <header class="monitoring-chart__header">

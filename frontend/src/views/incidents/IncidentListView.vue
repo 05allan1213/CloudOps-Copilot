@@ -38,8 +38,11 @@ const {
   loading,
   loadingMore,
   lastUpdatedAt,
-  hydratedFromCache,
+  cacheSource,
+  staleReason,
+  cacheRequestIdentity,
   load,
+  refresh,
   loadMore,
   syncURLAndLoad,
   updatePresentation,
@@ -56,6 +59,11 @@ const resultAnnouncement = computed(() => {
   return `已加载 ${items.value.length} 条 Incident。`;
 });
 const refreshLabel = computed(() => lastUpdatedAt.value ? formatIncidentTime(lastUpdatedAt.value) : "尚未刷新");
+const cacheLabel = computed(() => ({
+  network: "实时读取",
+  "fresh-cache": "缓存恢复",
+  "stale-cache": "缓存内容 · 后台刷新",
+})[cacheSource.value]);
 const sortKey = computed<IncidentListSort>(() => filters.sort ?? "updated");
 const sortDirection = computed<IncidentListDirection>(() => filters.direction ?? "desc");
 const criticalCount = computed(() => items.value.filter((item) => item.severity === "critical" && item.status !== "closed").length);
@@ -88,9 +96,7 @@ function setDirection(value: IncidentListDirection) {
   void updatePresentation(sortKey.value, value);
 }
 
-onMounted(() => {
-  if (!hydratedFromCache) void load(false);
-});
+onMounted(() => void load(false));
 </script>
 
 <template>
@@ -112,6 +118,8 @@ onMounted(() => {
         >
           <span>当前页 {{ items.length }} 条</span>
           <span>最近刷新：{{ refreshLabel }}</span>
+          <span>{{ cacheLabel }}<template v-if="staleReason"> · {{ staleReason }}</template></span>
+          <span v-if="cacheRequestIdentity">{{ cacheRequestIdentity }}</span>
         </div>
       </template>
       <template #actions>
@@ -121,7 +129,7 @@ onMounted(() => {
           icon="i-lucide-refresh-cw"
           :loading="loading && !loadingMore"
           label="刷新"
-          @click="load(false)"
+          @click="refresh"
         />
       </template>
     </WorkspaceHeader>

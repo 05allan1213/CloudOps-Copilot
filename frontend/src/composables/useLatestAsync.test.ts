@@ -37,6 +37,22 @@ describe("latest async lifecycle", () => {
     expect(lifecycle.refreshing.value).toBe(false);
   });
 
+  it("sets pending immediately but delays visible loading feedback", async () => {
+    vi.useFakeTimers();
+    const lifecycle = useLatestAsync<string>();
+    const pending = deferred<string>();
+    const run = lifecycle.run(() => pending.promise);
+    expect(lifecycle.pending.value).toBe(true);
+    expect(lifecycle.loading.value).toBe(false);
+    await vi.advanceTimersByTimeAsync(120);
+    expect(lifecycle.loading.value).toBe(true);
+    pending.resolve("ready");
+    await run;
+    expect(lifecycle.pending.value).toBe(false);
+    expect(lifecycle.loading.value).toBe(false);
+    vi.useRealTimers();
+  });
+
   it("aborts an active request when the owning scope is disposed", () => {
     const scope = effectScope();
     const aborted = vi.fn();

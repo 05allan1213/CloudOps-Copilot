@@ -28,6 +28,7 @@ import WorkspaceHeader from "../../components/workspace/WorkspaceHeader.vue";
 import WorkspaceState from "../../components/workspace/WorkspaceState.vue";
 import WorkspacePageFrame from "../../components/workspace/WorkspacePageFrame.vue";
 import WorkspaceTechnicalDetails from "../../components/workspace/WorkspaceTechnicalDetails.vue";
+import { invalidateQueryDomain } from "../../composables/queryCache";
 
 type DetailCommand =
   | "acknowledge"
@@ -208,6 +209,7 @@ async function canonicalizeRouteQuery() {
 }
 
 async function load(preserve: boolean) {
+  if (preserve) invalidateQueryDomain("alerts");
   controller?.abort();
   const requestController = new AbortController();
   controller = requestController;

@@ -19,6 +19,7 @@ import {
   newCommandKey,
   startInvestigation,
 } from "../../api/incidents";
+import { invalidateQueryDomain } from "../queryCache";
 import { commandFeedbackForFailure, retainCommandAttempt, type CommandAttemptIdentity, type CommandFeedback } from "../../models/commands";
 import { isCurrentRequest, loadStateForStatus } from "../../models/incidents";
 import type {
@@ -103,6 +104,7 @@ export function useIncidentDetail(incidentID: string) {
 
   async function load(options: { preserve?: boolean } = {}) {
     const preserve = options.preserve ?? incident.value !== null;
+    if (preserve) invalidateQueryDomain("incidents");
     const identity = ++requestIdentity;
     controller?.abort();
     controller = new AbortController();
@@ -139,6 +141,7 @@ export function useIncidentDetail(incidentID: string) {
   }
 
   async function refreshResource(resource: IncidentRealtimeEvent["resource"]) {
+    invalidateQueryDomain("incidents");
     if (!incident.value) {
       await load();
       return;

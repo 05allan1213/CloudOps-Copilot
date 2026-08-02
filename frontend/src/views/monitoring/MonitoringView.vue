@@ -32,6 +32,7 @@ import MonitoringHistory from "../../components/monitoring/MonitoringHistory.vue
 import MonitoringQueryControls from "../../components/monitoring/MonitoringQueryControls.vue";
 import MonitoringResult from "../../components/monitoring/MonitoringResult.vue";
 import WorkspacePageFrame from "../../components/workspace/WorkspacePageFrame.vue";
+import { invalidateQueryDomain } from "../../composables/queryCache";
 import {
   buildMonitoringRouteQuery,
   parseMonitoringRoute,
@@ -375,6 +376,7 @@ async function loadWorkspace() {
 }
 
 async function refreshAll() {
+  invalidateQueryDomain("monitoring");
   statusMessage.value = "";
   queryError.value = null;
   const controller = new AbortController();
@@ -461,6 +463,7 @@ async function reloadHistory(signal?: AbortSignal) {
 
 async function pollExecution(id: string, generation: number, signal: AbortSignal) {
   for (let attempt = 0; attempt < 120 && mounted && !signal.aborted && generation === queryGeneration; attempt += 1) {
+    invalidateQueryDomain("monitoring");
     const execution = await getMonitoringQuery(id, signal);
     if (!mounted || signal.aborted || generation !== queryGeneration) return;
     currentExecution.value = execution;

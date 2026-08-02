@@ -48,6 +48,15 @@ export function resourceTypeForKinds(kinds: readonly string[]): InfrastructureRe
   return "all";
 }
 
+export function canReuseResolvedInfrastructureScope(
+  resolvedCluster: string,
+  responseClusters: readonly (string | undefined)[],
+): boolean {
+  if (!resolvedCluster) return false;
+  const reportedClusters = responseClusters.filter((cluster): cluster is string => Boolean(cluster));
+  return reportedClusters.length > 0 && reportedClusters.every((cluster) => cluster === resolvedCluster);
+}
+
 const healthPriority: Record<ResourceHealthState, number> = {
   critical: 0,
   warning: 1,

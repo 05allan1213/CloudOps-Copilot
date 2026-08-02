@@ -92,8 +92,8 @@ const collapseLabel = () => props.collapseLocked
     linear-gradient(180deg, color-mix(in srgb, var(--co-bg-floating) 48%, var(--co-bg-surface)) 0, var(--co-bg-surface) 38%, color-mix(in srgb, var(--co-bg-surface) 90%, var(--co-bg-canvas)) 100%);
   box-shadow: inset -1px 0 0 color-mix(in srgb, var(--co-bg-floating) 46%, transparent);
   transition:
-    width 300ms var(--co-ease-out),
-    flex-basis 300ms var(--co-ease-out);
+    width var(--co-motion-standard) var(--co-ease-out),
+    flex-basis var(--co-motion-standard) var(--co-ease-out);
 }
 
 .app-sidebar.is-collapsed {

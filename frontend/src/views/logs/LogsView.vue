@@ -26,6 +26,7 @@ import { buildLogsRouteQuery, parseLogsRoute } from "../../components/logs/logsR
 import VirtualLogList from "../../components/logs/VirtualLogList.vue";
 import WorkspaceHeader from "../../components/workspace/WorkspaceHeader.vue";
 import WorkspacePageFrame from "../../components/workspace/WorkspacePageFrame.vue";
+import { invalidateQueryDomain } from "../../composables/queryCache";
 import { useWorkspaceInspector } from "../../composables/useWorkspaceInspector";
 import { resolveTelemetryResourceID } from "../../models/telemetry";
 import { safeExternalURL } from "../../models/workbench";
@@ -387,6 +388,7 @@ async function loadWorkspace() {
 }
 
 async function refreshAll() {
+  invalidateQueryDomain(["platform", "infrastructure", "logs"]);
   statusMessage.value = "";
   await loadWorkspace();
 }
@@ -773,7 +775,7 @@ onBeforeUnmount(() => {
             <header class="logs-analysis__header">
               <div class="logs-analysis__identity">
                 <h2 id="logs-stream-heading">
-                  {{ currentQuery?.tail ? "实时日志流" : "日志结果" }}
+                  {{ currentQuery?.tail ? "Tail 查询结果" : "日志结果" }}
                 </h2>
                 <p v-if="currentQuery">
                   {{ currentQuery.result_count }} 条日志 · {{ formatElapsed(currentQuery.created_at, currentQuery.completed_at) }} · {{ formatBytes(currentQuery.response_bytes) }}
@@ -933,7 +935,7 @@ onBeforeUnmount(() => {
               v-if="currentQuery"
               class="logs-analysis__meta"
             >
-              <span><b>{{ currentQuery.tail ? "LIVE" : "SEARCH" }}</b></span>
+              <span><b>{{ currentQuery.tail ? "TAIL" : "SEARCH" }}</b></span>
               <span>{{ currentQuery.time_range.from }} → {{ currentQuery.time_range.to }}</span>
               <UBadge
                 v-if="currentQuery.truncated"
@@ -972,6 +974,8 @@ onBeforeUnmount(() => {
               :wrap="wrapRows"
               :selected-i-ds="selectedEntryIDs"
               :inspected-i-d="inspectedEntryID"
+              :query-identity="currentQuery?.id ?? ''"
+              :follow="Boolean(currentQuery?.tail)"
               :highlight="mode === 'guided' ? textFilter : ''"
               @toggle="toggleEntry"
               @inspect="inspectEntry"

@@ -266,7 +266,7 @@ onBeforeUnmount(() => {
   width: 0;
   height: 100dvh;
   flex: 0 0 auto;
-  transition: width 320ms cubic-bezier(.23, 1, .32, 1);
+  transition: width var(--co-motion-standard) var(--co-ease-out);
 }
 .agent-dock-slot.is-open { width: var(--agent-dock-current-width, var(--co-agent-dock-width)); }
 
@@ -375,7 +375,7 @@ onBeforeUnmount(() => {
 .launcher-state.is-running {
   background: var(--co-viz-amber);
   box-shadow: 0 0 0 4px color-mix(in srgb, var(--co-viz-amber) 14%, transparent);
-  animation: agent-status-breathe 1.8s ease-in-out infinite;
+  animation: agent-status-breathe var(--co-motion-pulse-cycle) var(--co-ease-signal) infinite;
 }
 .agent-dock-actions { display: flex; align-items: center; gap: 2px; }
 .agent-dock-actions :deep(button),
@@ -430,11 +430,11 @@ onBeforeUnmount(() => {
 .agent-launcher :deep(svg) { width: 20px; height: 20px; }
 
 .agent-dock-enter-active,
-.agent-dock-leave-active { transition: opacity 220ms ease, transform 320ms cubic-bezier(.23, 1, .32, 1); }
+.agent-dock-leave-active { transition: opacity var(--co-motion-standard) var(--co-ease-out), transform var(--co-motion-standard) var(--co-ease-out); }
 .agent-dock-enter-from,
 .agent-dock-leave-to { opacity: 0; transform: translateX(28px); }
 .agent-launcher-enter-active,
-.agent-launcher-leave-active { transition: opacity 180ms ease, transform 220ms cubic-bezier(.23, 1, .32, 1); }
+.agent-launcher-leave-active { transition: opacity var(--co-motion-standard) var(--co-ease-out), transform var(--co-motion-standard) var(--co-ease-out); }
 .agent-launcher-enter-from,
 .agent-launcher-leave-to { opacity: 0; transform: translateY(10px) scale(.96); }
 

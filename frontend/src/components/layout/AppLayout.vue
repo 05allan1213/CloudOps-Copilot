@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch, type Component as VueComponent } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import { isApiError } from "../../api/client";
@@ -17,8 +17,18 @@ import {
   type BootstrapSnapshot,
   type OperationalScope,
 } from "../../api/platform";
+import { invalidateQueryDomain, setQueryCacheContext } from "../../composables/queryCache";
+import {
+  activateWorkspaceSectionReveals,
+  consumeWorkspaceRouteEntrance,
+} from "../../composables/workspaceMotion";
+import {
+  AGENT_CONTEXT_EVENT,
+  AGENT_OPEN_EVENT,
+  type AgentOpenRequest,
+  type AgentPageContext,
+} from "../../utils/agentContext";
 import { dispatchOperationalScopeChange, queryForScopeChange } from "../../utils/operationalScope";
-import GlobalAgentPanel from "../agent/GlobalAgentPanel.vue";
 import AppHeader from "./AppHeader.vue";
 import AppSidebar from "./AppSidebar.vue";
 import NotificationInbox from "./NotificationInbox.vue";
@@ -39,11 +49,21 @@ const selectedScopeID = ref("");
 const scopeSwitching = ref(false);
 const scopeSwitchError = ref("");
 const streamState = ref<"connected" | "reconnecting" | "stopped">("stopped");
+const online = ref(typeof navigator === "undefined" || navigator.onLine);
+const routeBoundary = ref<HTMLElement | null>(null);
+const routeFirstVisit = ref(consumeWorkspaceRouteEntrance(route.path));
+const agentPanelRequested = ref(false);
+let agentPanelModule: Promise<{ default: VueComponent }> | undefined;
+const loadAgentPanel = () => (agentPanelModule ??= import("../agent/GlobalAgentPanel.vue"));
+const LazyGlobalAgentPanel = defineAsyncComponent(() => loadAgentPanel().then((module) => module.default));
+let pendingAgentOpen: AgentOpenRequest | null = null;
+let latestAgentContext: AgentPageContext | null = null;
 let compactDesktopQuery: MediaQueryList | undefined;
 let closeNotificationStream: (() => void) | undefined;
 let streamStartedAt = 0;
 let headingObserver: MutationObserver | undefined;
 let headingObserverTimeout: number | undefined;
+let disposeSectionReveals: (() => void) | undefined;
 
 const isFullBleed = computed(() => route.meta.fullBleed === true);
 const isFixedWorkspace = computed(() => route.meta.fixedWorkspace === true);
@@ -65,6 +85,12 @@ function readCollapsedPreference(): boolean {
 
 function readCompactDesktop(): boolean {
   return typeof window !== "undefined" && window.matchMedia("(max-width: 1199px)").matches;
+}
+
+function operationalScopeIdentity(scope: OperationalScope): string {
+  return [scope.id, scope.cluster_id, scope.environment, [...scope.namespaces].sort().join(",")]
+    .filter(Boolean)
+    .join(":");
 }
 
 function updateCompactDesktop(event: MediaQueryListEvent | MediaQueryList) {
@@ -101,6 +127,7 @@ function restoreNotificationFocus() {
 }
 
 async function refreshNotifications() {
+  invalidateQueryDomain("notifications");
   notificationLoading.value = true;
   notificationError.value = "";
   try {
@@ -128,6 +155,7 @@ async function readPlatformContext(): Promise<BootstrapSnapshot> {
   selectedScopeID.value = next.active_scope.id
     ?? registeredScopes.find((scope) => scope.cluster_id === next.active_scope.cluster_id)?.id
     ?? "";
+  setQueryCacheContext({ operationalScope: operationalScopeIdentity(next.active_scope) });
   return next;
 }
 
@@ -158,6 +186,7 @@ function applyLocalScope(scope: OperationalScope) {
   const activeScope = { ...scope, active: true };
   scopes.value = scopes.value.map((item) => ({ ...item, active: item.id === activeScope.id }));
   selectedScopeID.value = activeScope.id ?? "";
+  setQueryCacheContext({ operationalScope: operationalScopeIdentity(activeScope) });
   if (bootstrap.value) {
     bootstrap.value = {
       ...bootstrap.value,
@@ -282,12 +311,58 @@ function focusRouteHeading() {
   });
 }
 
-watch(() => route.path, () => focusRouteHeading(), { flush: "post" });
+function startRoutePresentation() {
+  focusRouteHeading();
+  disposeSectionReveals?.();
+  disposeSectionReveals = routeBoundary.value
+    ? activateWorkspaceSectionReveals(routeBoundary.value, route.path, routeFirstVisit.value)
+    : undefined;
+}
+
+function stopRoutePresentation() {
+  disposeSectionReveals?.();
+  disposeSectionReveals = undefined;
+}
+
+function captureAgentContext(event: Event) {
+  latestAgentContext = (event as CustomEvent<AgentPageContext | null>).detail ?? null;
+}
+
+function requestAgentPanel(event: Event) {
+  if (agentPanelRequested.value) return;
+  const request = (event as CustomEvent<AgentOpenRequest>).detail ?? {};
+  pendingAgentOpen = { ...request, context: request.context ?? latestAgentContext ?? undefined };
+  void loadAgentPanel().then(() => { agentPanelRequested.value = true; });
+}
+
+function replayPendingAgentEvent() {
+  if (latestAgentContext) {
+    window.dispatchEvent(new CustomEvent(AGENT_CONTEXT_EVENT, { detail: latestAgentContext }));
+  }
+  if (pendingAgentOpen) {
+    const request = pendingAgentOpen;
+    pendingAgentOpen = null;
+    window.dispatchEvent(new CustomEvent(AGENT_OPEN_EVENT, { detail: request }));
+  }
+}
+
+function updateConnectivity() {
+  online.value = navigator.onLine;
+}
+
+watch(() => route.path, (path) => {
+  stopRoutePresentation();
+  routeFirstVisit.value = consumeWorkspaceRouteEntrance(path);
+}, { flush: "sync" });
 
 onMounted(async () => {
   compactDesktopQuery = window.matchMedia("(max-width: 1199px)");
   updateCompactDesktop(compactDesktopQuery);
   compactDesktopQuery.addEventListener("change", updateCompactDesktop);
+  window.addEventListener("online", updateConnectivity);
+  window.addEventListener("offline", updateConnectivity);
+  window.addEventListener(AGENT_CONTEXT_EVENT, captureAgentContext);
+  window.addEventListener(AGENT_OPEN_EVENT, requestAgentPanel);
   await Promise.all([refreshNotifications(), refreshBootstrap()]);
   streamStartedAt = Date.now();
   streamState.value = "connected";
@@ -297,14 +372,21 @@ onMounted(async () => {
     streamState.value = "connected";
   });
   window.addEventListener("cloudops:configuration-applied", handleConfigurationApplied);
+  await nextTick();
+  startRoutePresentation();
 });
 
 onBeforeUnmount(() => {
   stopHeadingObserver();
+  stopRoutePresentation();
   compactDesktopQuery?.removeEventListener("change", updateCompactDesktop);
   closeNotificationStream?.();
   streamState.value = "stopped";
   window.removeEventListener("cloudops:configuration-applied", handleConfigurationApplied);
+  window.removeEventListener("online", updateConnectivity);
+  window.removeEventListener("offline", updateConnectivity);
+  window.removeEventListener(AGENT_CONTEXT_EVENT, captureAgentContext);
+  window.removeEventListener(AGENT_OPEN_EVENT, requestAgentPanel);
 });
 </script>
 
@@ -348,6 +430,16 @@ onBeforeUnmount(() => {
         aria-live="polite"
         @update:open="scopeSwitchError = ''"
       />
+      <UAlert
+        v-if="!online"
+        class="offline-alert"
+        color="warning"
+        variant="soft"
+        icon="i-lucide-wifi-off"
+        title="当前处于离线只读状态"
+        description="已加载内容保持可读；所有写请求由客户端阻止，恢复网络后需重新读取服务端状态。"
+        role="status"
+      />
       <main
         id="main-content"
         class="app-main"
@@ -360,12 +452,15 @@ onBeforeUnmount(() => {
       >
         <RouterView v-slot="{ Component }">
           <Transition
-            name="fade"
-            @after-enter="focusRouteHeading"
+            :css="false"
+            @before-leave="stopRoutePresentation"
+            @after-enter="startRoutePresentation"
           >
             <div
+              ref="routeBoundary"
               :key="route.path"
               class="route-ui-boundary"
+              :data-route-motion="routeFirstVisit ? 'first-visit' : 'cached-return'"
             >
               <component :is="Component" />
             </div>
@@ -373,7 +468,11 @@ onBeforeUnmount(() => {
         </RouterView>
       </main>
     </div>
-    <GlobalAgentPanel />
+    <component
+      :is="LazyGlobalAgentPanel"
+      v-if="agentPanelRequested"
+      @vue:mounted="replayPendingAgentEvent"
+    />
   </div>
 
   <USlideover
@@ -419,7 +518,8 @@ onBeforeUnmount(() => {
 
 .skip-link:focus-visible { transform: translateY(0); }
 
-.scope-switch-alert {
+.scope-switch-alert,
+.offline-alert {
   position: fixed;
   top: calc(var(--co-header-height) + var(--co-space-3));
   right: var(--co-space-4);
@@ -427,6 +527,8 @@ onBeforeUnmount(() => {
   width: min(440px, calc(100vw - 32px));
   box-shadow: var(--co-shadow-overlay);
 }
+
+.offline-alert { top: calc(var(--co-header-height) + 92px); }
 
 .app-shell {
   position: relative;

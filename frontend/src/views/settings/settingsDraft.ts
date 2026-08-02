@@ -38,6 +38,20 @@ export interface SettingsSectionDraft {
 
 export type SettingsSectionDrafts = Record<SettingsSectionKey, SettingsSectionDraft>;
 
+export const SETTINGS_DRAFT_STORAGE_KEY = "cloudops.settings.drafts.v1";
+export const SETTINGS_DRAFT_RETENTION_MS = 24 * 60 * 60 * 1000;
+
+export interface PersistedSettingsDrafts {
+  version: 1;
+  savedAt: number;
+  sections: Partial<Record<SettingsSectionKey, SettingsSectionDraft>>;
+}
+
+export interface SettingsDraftRecovery {
+  payload: PersistedSettingsDrafts;
+  status: "fresh" | "expired";
+}
+
 export interface SettingsApplyItemResult {
   id: string;
   label: string;
@@ -69,12 +83,85 @@ const generalLabels: Record<keyof GeneralConfiguration, string> = {
   automatic_escalation_enabled: "自动 escalation",
 };
 
+const providerIdentities = [
+  "llm",
+  "kubernetes",
+  "prometheus",
+  "alertmanager",
+  "elasticsearch",
+  "tempo",
+  "github",
+  "argocd",
+] as const satisfies readonly ProviderConfiguration["provider"][];
+const policySeverities = ["unknown", "info", "warning", "critical"] as const;
+
 export function settingsSectionLabel(key: SettingsSectionKey): string {
   return sectionLabels[key];
 }
 
 export function createSettingsSectionDrafts(revision: ConfigurationRevision): SettingsSectionDrafts {
   return Object.fromEntries(settingsSectionKeys.map((key) => [key, createSettingsSectionDraft(revision, key)])) as SettingsSectionDrafts;
+}
+
+export function createPersistedSettingsDrafts(
+  drafts: SettingsSectionDrafts,
+  savedAt = Date.now(),
+): PersistedSettingsDrafts {
+  const sections: PersistedSettingsDrafts["sections"] = {};
+  for (const key of settingsSectionKeys) {
+    if (!isSettingsSectionDirty(drafts[key])) continue;
+    sections[key] = sanitizeSectionDraft(drafts[key]);
+  }
+  return { version: 1, savedAt, sections };
+}
+
+export function parsePersistedSettingsDrafts(
+  raw: string | null,
+  now = Date.now(),
+): SettingsDraftRecovery | null {
+  if (!raw) return null;
+  try {
+    const candidate = JSON.parse(raw) as Partial<PersistedSettingsDrafts>;
+    if (candidate.version !== 1 || !Number.isFinite(candidate.savedAt)
+      || candidate.savedAt! > now + 5 * 60_000 || !candidate.sections
+      || typeof candidate.sections !== "object") return null;
+    const sections: PersistedSettingsDrafts["sections"] = {};
+    for (const key of settingsSectionKeys) {
+      const section = candidate.sections[key];
+      if (section === undefined) continue;
+      if (!isStoredSection(section, key)) return null;
+      sections[key] = sanitizeSectionDraft(section);
+    }
+    if (!Object.keys(sections).length) return null;
+    const payload = { version: 1 as const, savedAt: candidate.savedAt!, sections };
+    return {
+      payload,
+      status: now - payload.savedAt <= SETTINGS_DRAFT_RETENTION_MS ? "fresh" : "expired",
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function restorePersistedSettingsDrafts(
+  revision: ConfigurationRevision,
+  payload: PersistedSettingsDrafts,
+): SettingsSectionDrafts {
+  const restored = createSettingsSectionDrafts(revision);
+  for (const key of settingsSectionKeys) {
+    const section = payload.sections[key];
+    if (section) restored[key] = sanitizeSectionDraft(section);
+  }
+  return restored;
+}
+
+export function persistedSettingsDraftConflicts(
+  payload: PersistedSettingsDrafts,
+  revision: ConfigurationRevision,
+): boolean {
+  return Object.values(payload.sections).some((section) => (
+    section?.baseRevisionID !== revision.id || section.baseRevisionHash !== revision.hash
+  ));
 }
 
 export function createSettingsSectionDraft(
@@ -330,6 +417,194 @@ export function sanitizeSecretReferences(references: SecretReference[]): SecretR
     purpose: reference.purpose.trim(),
     secret_version_id: reference.secret_version_id.trim(),
   }));
+}
+
+function sanitizeSectionDraft(section: SettingsSectionDraft): SettingsSectionDraft {
+  return {
+    key: section.key,
+    baseRevisionID: String(section.baseRevisionID),
+    baseRevisionNumber: Number(section.baseRevisionNumber),
+    baseRevisionHash: String(section.baseRevisionHash),
+    baseDraft: sanitizeConfigurationDraft(section.baseDraft),
+    baseline: sanitizeSectionValue(section.key, section.baseline),
+    value: sanitizeSectionValue(section.key, section.value),
+    summary: String(section.summary).slice(0, 255),
+  };
+}
+
+function sanitizeConfigurationDraft(draft: ConfigurationDraft): ConfigurationDraft {
+  return {
+    summary: String(draft.summary ?? "").slice(0, 255),
+    general: sanitizeGeneral(draft.general),
+    scope: sanitizeScope(draft.scope),
+    scopes: draft.scopes.map(sanitizeScope),
+    providers: draft.providers.map(sanitizeProvider),
+    escalation_policies: draft.escalation_policies.map(sanitizePolicy),
+    secret_references: sanitizeSecretReferences(draft.secret_references),
+  };
+}
+
+function sanitizeSectionValue(key: SettingsSectionKey, value: SettingsSectionValue): SettingsSectionValue {
+  if (key === "system") return sanitizeGeneral(value as GeneralConfiguration);
+  if (key === "scopes") {
+    const scopes = value as ScopeSectionValue;
+    return { defaultIndex: Number(scopes.defaultIndex), scopes: scopes.scopes.map(sanitizeScope) };
+  }
+  if (key === "policies") return (value as EscalationPolicy[]).map(sanitizePolicy);
+  if (key === "providers") return (value as ProviderConfiguration[]).map(sanitizeProvider);
+  return sanitizeSecretReferences(value as SecretReference[]);
+}
+
+function sanitizeGeneral(value: GeneralConfiguration): GeneralConfiguration {
+  return {
+    query_max_lookback_seconds: Number(value.query_max_lookback_seconds),
+    query_max_results: Number(value.query_max_results),
+    telemetry_retention_days: Number(value.telemetry_retention_days),
+    browser_notifications_enabled: Boolean(value.browser_notifications_enabled),
+    automatic_escalation_enabled: Boolean(value.automatic_escalation_enabled),
+  };
+}
+
+function sanitizeScope(value: ConfigurationDraft["scope"]): ConfigurationDraft["scope"] {
+  return {
+    ...(value.id ? { id: String(value.id) } : {}),
+    name: String(value.name),
+    cluster_id: String(value.cluster_id),
+    environment: String(value.environment),
+    namespaces: value.namespaces.map(String),
+    active: Boolean(value.active),
+  };
+}
+
+function sanitizeProvider(value: ProviderConfiguration): ProviderConfiguration {
+  return {
+    provider: value.provider,
+    enabled: Boolean(value.enabled),
+    endpoint: String(value.endpoint),
+    model: String(value.model),
+    timeout_ms: Number(value.timeout_ms),
+    max_results: Number(value.max_results),
+    context_link_base: String(value.context_link_base),
+  };
+}
+
+function sanitizePolicy(value: EscalationPolicy): EscalationPolicy {
+  return {
+    ...(value.id ? { id: String(value.id) } : {}),
+    name: String(value.name),
+    enabled: Boolean(value.enabled),
+    severities: value.severities.filter((severity) => ["unknown", "info", "warning", "critical"].includes(severity)),
+    namespaces: value.namespaces.map(String),
+    label_matchers: Object.fromEntries(Object.entries(value.label_matchers).map(([key, item]) => [String(key), String(item)])),
+    minimum_firing_seconds: Number(value.minimum_firing_seconds),
+    minimum_recurrence_count: Number(value.minimum_recurrence_count),
+    create_incident: true,
+  };
+}
+
+function isStoredSection(value: unknown, key: SettingsSectionKey): value is SettingsSectionDraft {
+  if (!value || typeof value !== "object") return false;
+  const section = value as Partial<SettingsSectionDraft>;
+  return section.key === key
+    && typeof section.baseRevisionID === "string"
+    && Number.isInteger(section.baseRevisionNumber)
+    && section.baseRevisionNumber! >= 0
+    && typeof section.baseRevisionHash === "string"
+    && typeof section.summary === "string"
+    && isConfigurationDraft(section.baseDraft)
+    && isSettingsSectionValue(key, section.baseline)
+    && isSettingsSectionValue(key, section.value);
+}
+
+function isConfigurationDraft(value: unknown): value is ConfigurationDraft {
+  if (!isRecord(value)) return false;
+  return typeof value.summary === "string"
+    && isGeneralConfiguration(value.general)
+    && isOperationalScope(value.scope)
+    && Array.isArray(value.scopes)
+    && value.scopes.every(isOperationalScope)
+    && Array.isArray(value.providers)
+    && value.providers.every(isProviderConfiguration)
+    && Array.isArray(value.escalation_policies)
+    && value.escalation_policies.every(isEscalationPolicy)
+    && Array.isArray(value.secret_references)
+    && value.secret_references.every(isSecretReference);
+}
+
+function isSettingsSectionValue(key: SettingsSectionKey, value: unknown): value is SettingsSectionValue {
+  if (key === "system") return isGeneralConfiguration(value);
+  if (key === "scopes") {
+    return isRecord(value)
+      && Number.isInteger(value.defaultIndex)
+      && Array.isArray(value.scopes)
+      && value.scopes.every(isOperationalScope);
+  }
+  if (key === "policies") return Array.isArray(value) && value.every(isEscalationPolicy);
+  if (key === "providers") return Array.isArray(value) && value.every(isProviderConfiguration);
+  return Array.isArray(value) && value.every(isSecretReference);
+}
+
+function isGeneralConfiguration(value: unknown): value is GeneralConfiguration {
+  if (!isRecord(value)) return false;
+  return isFiniteNumber(value.query_max_lookback_seconds)
+    && isFiniteNumber(value.query_max_results)
+    && isFiniteNumber(value.telemetry_retention_days)
+    && typeof value.browser_notifications_enabled === "boolean"
+    && typeof value.automatic_escalation_enabled === "boolean";
+}
+
+function isOperationalScope(value: unknown): value is ConfigurationDraft["scope"] {
+  if (!isRecord(value)) return false;
+  return (value.id === undefined || typeof value.id === "string")
+    && typeof value.name === "string"
+    && typeof value.cluster_id === "string"
+    && typeof value.environment === "string"
+    && Array.isArray(value.namespaces)
+    && value.namespaces.every((item) => typeof item === "string")
+    && typeof value.active === "boolean";
+}
+
+function isProviderConfiguration(value: unknown): value is ProviderConfiguration {
+  if (!isRecord(value)) return false;
+  return providerIdentities.includes(value.provider as ProviderConfiguration["provider"])
+    && typeof value.enabled === "boolean"
+    && typeof value.endpoint === "string"
+    && typeof value.model === "string"
+    && isFiniteNumber(value.timeout_ms)
+    && isFiniteNumber(value.max_results)
+    && typeof value.context_link_base === "string";
+}
+
+function isEscalationPolicy(value: unknown): value is EscalationPolicy {
+  if (!isRecord(value) || !isRecord(value.label_matchers)) return false;
+  return (value.id === undefined || typeof value.id === "string")
+    && typeof value.name === "string"
+    && typeof value.enabled === "boolean"
+    && Array.isArray(value.severities)
+    && value.severities.every((severity) => policySeverities.includes(severity as EscalationPolicy["severities"][number]))
+    && Array.isArray(value.namespaces)
+    && value.namespaces.every((item) => typeof item === "string")
+    && Object.values(value.label_matchers).every((item) => typeof item === "string")
+    && isFiniteNumber(value.minimum_firing_seconds)
+    && isFiniteNumber(value.minimum_recurrence_count)
+    && value.create_incident === true;
+}
+
+function isSecretReference(value: unknown): value is SecretReference {
+  if (!isRecord(value)) return false;
+  return providerIdentities.includes(value.provider as ProviderConfiguration["provider"])
+    && typeof value.purpose === "string"
+    && typeof value.secret_version_id === "string"
+    && (value.state === undefined || value.state === "configured" || value.state === "invalid")
+    && (value.fingerprint === undefined || typeof value.fingerprint === "string");
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function readSectionValue(draft: ConfigurationDraft, key: SettingsSectionKey): SettingsSectionValue {

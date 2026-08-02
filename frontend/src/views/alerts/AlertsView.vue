@@ -33,7 +33,9 @@ import WorkspaceHeader from "../../components/workspace/WorkspaceHeader.vue";
 import WorkspaceInspector, { type InspectorTargetState } from "../../components/workspace/WorkspaceInspector.vue";
 import WorkspacePageFrame from "../../components/workspace/WorkspacePageFrame.vue";
 import WorkspaceState from "../../components/workspace/WorkspaceState.vue";
+import { invalidateQueryDomain } from "../../composables/queryCache";
 import { useWorkspaceInspector } from "../../composables/useWorkspaceInspector";
+import { usePageVisibility } from "../../composables/usePageVisibility";
 
 type InspectorCommand = "acknowledge" | "silence" | "expire-silence";
 
@@ -76,6 +78,7 @@ let inspectorController: AbortController | null = null;
 let probeController: AbortController | null = null;
 let probeTimer: number | undefined;
 let activeDataKey = "";
+const { visible } = usePageVisibility();
 
 const inspector = useWorkspaceInspector({
   selectedKey: "selected",
@@ -245,6 +248,7 @@ async function synchronizeRoute() {
 }
 
 async function loadList(preserve: boolean) {
+  if (preserve) invalidateQueryDomain("alerts");
   listController?.abort();
   probeController?.abort();
   const requestController = new AbortController();
@@ -277,12 +281,20 @@ function scheduleProbe() {
   if (probeTimer !== undefined) window.clearInterval(probeTimer);
   probeTimer = undefined;
   const state = parseAlertListRouteQuery(route.query as unknown as AlertRouteQuery);
-  if (state.cursor) return;
+  if (state.cursor || !visible.value) return;
   probeTimer = window.setInterval(() => void probeForNewRows(), 30_000);
 }
 
+function pauseProbe() {
+  if (probeTimer !== undefined) window.clearInterval(probeTimer);
+  probeTimer = undefined;
+  probeController?.abort();
+  probeController = null;
+  probing.value = false;
+}
+
 async function probeForNewRows() {
-  if (probing.value || loading.value || refreshing.value) return;
+  if (!visible.value || probing.value || loading.value || refreshing.value) return;
   const state = parseAlertListRouteQuery(route.query as unknown as AlertRouteQuery);
   if (state.cursor) return;
   probeController?.abort();
@@ -371,7 +383,8 @@ function openFullDetail() {
   if (selectedAlert.value) void inspector.openFull(fullDetailLocation(selectedAlert.value));
 }
 
-async function loadInspector(selectedID: string) {
+async function loadInspector(selectedID: string, force = false) {
+  if (force) invalidateQueryDomain("alerts");
   inspectorController?.abort();
   inspectorDetail.value = null;
   inspectorError.value = null;
@@ -454,11 +467,18 @@ async function runInspectorCommand() {
 
 watch(() => route.fullPath, () => void synchronizeRoute(), { immediate: true });
 watch(() => inspector.selectedID.value, (selectedID) => void loadInspector(selectedID), { immediate: true });
+watch(visible, (isVisible) => {
+  if (!isVisible) {
+    pauseProbe();
+    return;
+  }
+  scheduleProbe();
+  if (activeDataKey) void probeForNewRows();
+});
 onBeforeUnmount(() => {
   listController?.abort();
   inspectorController?.abort();
-  probeController?.abort();
-  if (probeTimer !== undefined) window.clearInterval(probeTimer);
+  pauseProbe();
 });
 </script>
 
@@ -778,7 +798,7 @@ onBeforeUnmount(() => {
             aria-label="刷新 Alert Inspector"
             :loading="inspectorLoading"
             :disabled="!isAlertPublicID(inspector.selectedID.value)"
-            @click="loadInspector(inspector.selectedID.value)"
+            @click="loadInspector(inspector.selectedID.value, true)"
           />
         </UTooltip>
       </template>
@@ -802,7 +822,7 @@ onBeforeUnmount(() => {
         :error="inspectorError"
         fallback="Alert Inspector 读取失败。"
         retryable
-        @retry="loadInspector(inspector.selectedID.value)"
+        @retry="loadInspector(inspector.selectedID.value, true)"
       />
       <template v-else-if="inspectorDetail && selectedAlert">
         <AlertBadges

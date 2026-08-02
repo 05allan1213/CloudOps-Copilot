@@ -9,6 +9,7 @@ import {
   getResourceEvents,
   getResources,
   getTopology,
+  projectResolvedInfrastructureScope,
   type EventPage,
   type InfrastructureContextLink,
   type InfrastructureQuery,
@@ -27,9 +28,11 @@ import WorkspaceInspector, {
 import WorkspaceState from "../../components/workspace/WorkspaceState.vue";
 import WorkspaceStatusRow from "../../components/workspace/WorkspaceStatusRow.vue";
 import WorkspaceTechnicalDetails, { type TechnicalDetailField } from "../../components/workspace/WorkspaceTechnicalDetails.vue";
+import { invalidateQueryDomain } from "../../composables/queryCache";
 import { useWorkspaceInspector } from "../../composables/useWorkspaceInspector";
 import { OPERATIONAL_SCOPE_CHANGED_EVENT } from "../../utils/operationalScope";
 import {
+  canReuseResolvedInfrastructureScope,
   infrastructureContextLocation,
   infrastructureResourceTypeItems,
   kindsForResourceType,
@@ -79,6 +82,7 @@ let controller: AbortController | undefined;
 let requestToken = 0;
 let previousWorkspaceSignature = "";
 let previousSelection = "";
+let reusableCanonicalRoute = "";
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
   dateStyle: "medium",
@@ -319,7 +323,16 @@ async function loadWorkspace(background = false) {
           ? nextPage.value.scope.cluster_id
           : "";
     if (!queryValue(route.query.cluster) && resolvedCluster) {
-      void router.replace({ query: { ...route.query, cluster: resolvedCluster } });
+      const normalizedLocation = { query: { ...route.query, cluster: resolvedCluster } };
+      if (canReuseResolvedInfrastructureScope(resolvedCluster, [
+        nextBootstrap.status === "fulfilled" ? nextBootstrap.value.active_scope.cluster_id : undefined,
+        nextTopology.status === "fulfilled" ? nextTopology.value.scope.cluster_id : undefined,
+        nextPage.status === "fulfilled" ? nextPage.value.scope.cluster_id : undefined,
+      ])) {
+        projectResolvedInfrastructureScope(query, resolvedCluster);
+        reusableCanonicalRoute = router.resolve(normalizedLocation).fullPath;
+      }
+      void router.replace(normalizedLocation);
       return;
     }
 
@@ -348,6 +361,11 @@ async function loadWorkspace(background = false) {
       detailLoading.value = false;
     }
   }
+}
+
+function refreshWorkspace() {
+  invalidateQueryDomain("infrastructure");
+  void loadWorkspace(true);
 }
 
 function updateQuery(changes: LocationQueryRaw) {
@@ -498,6 +516,11 @@ watch(() => route.fullPath, () => {
     && !selection;
   previousWorkspaceSignature = workspaceSignature;
   previousSelection = selection;
+  if (reusableCanonicalRoute === route.fullPath) {
+    reusableCanonicalRoute = "";
+    return;
+  }
+  reusableCanonicalRoute = "";
   if (closedOnly) {
     detail.value = null;
     events.value = null;
@@ -571,7 +594,7 @@ onBeforeUnmount(() => {
             square
             aria-label="刷新基础设施资源"
             :loading="loading"
-            @click="loadWorkspace(true)"
+            @click="refreshWorkspace"
           />
         </UTooltip>
       </div>
@@ -731,21 +754,21 @@ onBeforeUnmount(() => {
         :error="bootstrapError"
         title="Operational Scope 读取失败"
         retryable
-        @retry="loadWorkspace(true)"
+        @retry="refreshWorkspace"
       />
       <ApiErrorNotice
         v-if="topologyError"
         :error="topologyError"
         title="Topology 投影读取失败"
         retryable
-        @retry="loadWorkspace(true)"
+        @retry="refreshWorkspace"
       />
       <ApiErrorNotice
         v-if="resourceError"
         :error="resourceError"
         title="资源列表读取失败"
         retryable
-        @retry="loadWorkspace(true)"
+        @retry="refreshWorkspace"
       />
       <WorkspaceState
         v-if="partialProjection"
@@ -775,7 +798,10 @@ onBeforeUnmount(() => {
       </header>
       <div class="resource-loading-stage__body">
         <div class="resource-loading-stage__rows">
-          <div v-for="index in 4" :key="index">
+          <div
+            v-for="index in 4"
+            :key="index"
+          >
             <USkeleton class="resource-loading-stage__kind" />
             <span>
               <USkeleton class="resource-loading-stage__title" />
@@ -931,7 +957,7 @@ onBeforeUnmount(() => {
         :error="detailError"
         title="资源详情读取失败"
         retryable
-        @retry="loadWorkspace(true)"
+        @retry="refreshWorkspace"
       />
 
       <WorkspaceState
@@ -1104,7 +1130,7 @@ onBeforeUnmount(() => {
             :error="eventError"
             title="Event 读取失败"
             retryable
-            @retry="loadWorkspace(true)"
+            @retry="refreshWorkspace"
           />
           <WorkspaceState
             v-else-if="events?.partial || events?.truncated"
@@ -1334,7 +1360,7 @@ onBeforeUnmount(() => {
 .resource-loading-stage { display: grid; min-height: 260px; gap: var(--co-space-4); padding: var(--co-space-4); border: 1px solid var(--co-border-subtle); border-radius: var(--co-radius-frame); background: color-mix(in srgb, var(--co-bg-surface) 82%, var(--co-bg-canvas)); }
 .resource-loading-stage > header { display: flex; min-width: 0; align-items: center; gap: var(--co-space-3); }
 .resource-loading-stage > header > span { display: grid; width: 38px; height: 38px; flex: 0 0 auto; place-items: center; border-radius: var(--co-radius-control); color: var(--co-action-primary); background: var(--co-bg-surface); }
-.resource-loading-stage > header svg { animation: resource-loading-spin 1.2s linear infinite; }
+.resource-loading-stage > header svg { animation: resource-loading-spin var(--co-spinner-duration) linear infinite; }
 .resource-loading-stage h2 { margin: 0; font-size: 15px; }
 .resource-loading-stage p { margin: 2px 0 0; color: var(--co-text-muted); font-size: 11px; }
 .resource-loading-stage__body { display: grid; min-width: 0; grid-template-columns: minmax(0, 1.5fr) minmax(220px, .5fr); gap: var(--co-space-4); }

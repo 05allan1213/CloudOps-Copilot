@@ -20,6 +20,8 @@ const knowledgeMessageID = ref("");
 const knowledgeTitle = ref("");
 const messageList = ref<HTMLDivElement | null>(null);
 const copiedRowID = ref("");
+const atConversationBottom = ref(true);
+const newContentBatches = ref(0);
 let copyStatusTimer: ReturnType<typeof setTimeout> | undefined;
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", { dateStyle: "short", timeStyle: "medium" });
 
@@ -169,18 +171,47 @@ function reportCopied(key: string) {
   }, COPY_FEEDBACK_DURATION_MS);
 }
 
+function updateConversationFollow() {
+  const element = messageList.value;
+  if (!element) return;
+  atConversationBottom.value = element.scrollHeight - element.scrollTop - element.clientHeight <= 48;
+  if (atConversationBottom.value) newContentBatches.value = 0;
+}
+
+async function scrollToLatest() {
+  await nextTick();
+  if (!rows.value.length) return;
+  if (virtualized.value) virtualizer.value.scrollToIndex(rows.value.length - 1, { align: "end" });
+  else messageList.value?.scrollTo({ top: messageList.value.scrollHeight, behavior: "auto" });
+  atConversationBottom.value = true;
+  newContentBatches.value = 0;
+}
+
 onBeforeUnmount(() => {
   if (copyStatusTimer !== undefined) clearTimeout(copyStatusTimer);
 });
 
 watch(
-  () => [messages.value.length, Boolean(store.liveAnswer)],
-  () => void nextTick(() => {
-    if (!rows.value.length) return;
-    if (virtualized.value) virtualizer.value.scrollToIndex(rows.value.length - 1, { align: "end" });
-    else messageList.value?.scrollTo({ top: messageList.value.scrollHeight, behavior: "smooth" });
-  }),
+  () => store.liveAnswer.length,
+  (length, previousLength) => {
+    if (length <= previousLength) {
+      if (length === 0) newContentBatches.value = 0;
+      return;
+    }
+    if (atConversationBottom.value) void scrollToLatest();
+    else newContentBatches.value += 1;
+  },
 );
+watch(() => messages.value.length, (length, previousLength) => {
+  if (length <= previousLength) return;
+  if (atConversationBottom.value) void scrollToLatest();
+  else newContentBatches.value += length - previousLength;
+});
+watch(() => store.selectedID, () => {
+  atConversationBottom.value = true;
+  newContentBatches.value = 0;
+  void scrollToLatest();
+});
 </script>
 
 <template>
@@ -290,6 +321,7 @@ watch(
       :class="{ 'is-virtualized': virtualized, 'is-idle': !store.selectedID && !store.loading }"
       aria-live="polite"
       :aria-busy="store.loading"
+      @scroll.passive="updateConversationFollow"
     >
       <div
         v-if="store.loading && !run"
@@ -424,6 +456,15 @@ watch(
           </article>
         </div>
       </div>
+      <UButton
+        v-if="newContentBatches"
+        class="conversation-new-content"
+        color="primary"
+        variant="solid"
+        icon="i-lucide-arrow-down"
+        :label="`${newContentBatches} 批新内容`"
+        @click="scrollToLatest"
+      />
     </div>
 
     <form
@@ -576,7 +617,8 @@ watch(
 .conversation-alert :deep(*) { min-width: 0; }
 .conversation-alert :deep(p) { overflow-wrap: anywhere; white-space: normal; word-break: break-word; }
 
-.message-list { min-height: 0; flex: 1 1 auto; padding: 18px clamp(22px, 3.6vw, 56px) 16px; overflow-y: auto; overscroll-behavior: contain; scroll-behavior: smooth; }
+.message-list { position: relative; min-height: 0; flex: 1 1 auto; padding: 18px clamp(22px, 3.6vw, 56px) 16px; overflow-y: auto; overscroll-behavior: contain; }
+.conversation-new-content { position: sticky; z-index: 3; bottom: 0; display: flex; width: fit-content; margin: var(--co-space-2) auto 0; box-shadow: var(--co-shadow-overlay); }
 .message-list.is-idle {
   background-image:
     linear-gradient(to right, color-mix(in srgb, var(--co-border-default) 48%, transparent) 1px, transparent 1px),
@@ -676,7 +718,7 @@ watch(
 .is-compact .composer { margin: 0 10px 10px; padding: 8px 9px; border-radius: 11px; }
 .is-compact .run-identity { max-width: 220px; }
 
-.spinning { animation: agent-spin 900ms linear infinite; }
+.spinning { animation: agent-spin var(--co-spinner-duration) linear infinite; }
 @keyframes agent-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .spinning { animation-duration: 0.00001ms; } .message-list { scroll-behavior: auto; } }
+@media (prefers-reduced-motion: reduce) { .spinning { animation: none; } .message-list { scroll-behavior: auto; } }
 </style>

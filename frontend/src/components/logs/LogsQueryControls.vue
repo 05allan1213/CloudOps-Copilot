@@ -101,7 +101,7 @@ function updateLevels(value: unknown): void {
     <header class="logs-command__header">
       <div>
         <h2>查询条件</h2>
-        <p>{{ tail ? "持续接收当前工作负载的新日志" : "按范围和条件检索历史日志" }}</p>
+        <p>{{ tail ? "按 Tail 语义读取当前有界日志窗口" : "按范围和条件检索历史日志" }}</p>
       </div>
       <span class="logs-command__provider">
         <span :class="{ 'is-ready': catalog?.provider_state === 'available' || catalog?.provider_state === 'partial' }" />
@@ -129,7 +129,7 @@ function updateLevels(value: unknown): void {
             :color="tail ? 'primary' : 'neutral'"
             :variant="tail ? 'soft' : 'ghost'"
             icon="i-lucide-radio-tower"
-            label="实时日志"
+            label="Tail 快照"
             :aria-pressed="tail"
             :disabled="querying"
             @click="emit('update:tail', true)"
@@ -331,7 +331,7 @@ function updateLevels(value: unknown): void {
       <UButton
         color="primary"
         :icon="tail ? 'i-lucide-radio-tower' : 'i-lucide-play'"
-        :label="tail ? '开始追踪' : '搜索日志'"
+        :label="tail ? '执行 Tail 查询' : '搜索日志'"
         :loading="querying"
         :disabled="!canRun || !validTimeRange"
         @click="emit('run')"
@@ -346,7 +346,7 @@ function updateLevels(value: unknown): void {
         name="i-lucide-circle-dot-dashed"
         aria-hidden="true"
       />
-      实时结果会持续追加；停止后保留当前缓冲区与查询身份。
+      当前 API 返回一次有界 Tail 结果；持续 cursor/SSE 追加为 BACKEND_GAP。
     </span>
   </section>
 </template>

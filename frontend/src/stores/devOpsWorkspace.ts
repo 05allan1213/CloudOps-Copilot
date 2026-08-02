@@ -11,6 +11,7 @@ import {
   type OperationPlanProposalInput,
 } from "../api/agent";
 import { apiErrorDetails, isApiError, type ApiErrorDetails } from "../api/client";
+import { invalidateQueryDomain } from "../composables/queryCache";
 import {
   executeActionCard,
   executeOperationPlan,
@@ -122,6 +123,7 @@ export const useDevOpsWorkspaceStore = defineStore("devops-workspace", {
   actions: {
     async load(preserve = false, signal?: AbortSignal) {
       if (this.loading) return;
+      if (preserve) invalidateQueryDomain(["devops", "infrastructure", "agent"]);
       this.loading = true;
       this.error = "";
       this.failure = null;

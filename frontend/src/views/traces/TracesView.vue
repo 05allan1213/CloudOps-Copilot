@@ -33,6 +33,7 @@ import {
 } from "../../components/traces/tracesRoute";
 import WorkspaceHeader from "../../components/workspace/WorkspaceHeader.vue";
 import WorkspacePageFrame from "../../components/workspace/WorkspacePageFrame.vue";
+import { invalidateQueryDomain } from "../../composables/queryCache";
 import { resolveTelemetryResourceID } from "../../models/telemetry";
 import { safeExternalURL } from "../../models/workbench";
 import { openAgentPanel, publishAgentContext, type AgentPageContext } from "../../utils/agentContext";
@@ -458,6 +459,7 @@ async function loadWorkspace() {
 }
 
 async function refreshAll() {
+  invalidateQueryDomain(["platform", "infrastructure", "traces"]);
   statusMessage.value = "";
   await loadWorkspace();
 }

@@ -193,7 +193,7 @@ const projectionUpdatedAt = computed(() => props.lastUpdatedAt || props.incident
 .realtime-chip--warning { border-color: var(--co-status-warning-border); color: var(--co-status-warning-fg); background: var(--co-status-warning-bg); }
 
 .realtime-chip--warning .realtime-icon {
-  animation: realtime-rotation 1s linear infinite;
+  animation: realtime-rotation var(--co-spinner-duration) linear infinite;
 }
 
 .projection-refresh {
