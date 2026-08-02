@@ -9,6 +9,7 @@ import {
   getResourceEvents,
   getResources,
   getTopology,
+  openTopologyEventStream,
   projectResolvedInfrastructureScope,
   type EventPage,
   type InfrastructureContextLink,
@@ -83,6 +84,10 @@ let requestToken = 0;
 let previousWorkspaceSignature = "";
 let previousSelection = "";
 let reusableCanonicalRoute = "";
+let topologyStreamClose: (() => void) | undefined;
+let topologyStreamSignature = "";
+let lastTopologyCursor = "";
+let lastTopologyContentHash = "";
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
   dateStyle: "medium",
@@ -266,6 +271,44 @@ function currentQuery(): InfrastructureQuery {
   };
 }
 
+function topologyStreamQuery(): InfrastructureQuery {
+  const query = currentQuery();
+  return {
+    cluster: query.cluster,
+    namespace: query.namespace,
+    from: query.from,
+    to: query.to,
+  };
+}
+
+function stopTopologyStream() {
+  topologyStreamClose?.();
+  topologyStreamClose = undefined;
+  topologyStreamSignature = "";
+  lastTopologyCursor = "";
+  lastTopologyContentHash = "";
+}
+
+function ensureTopologyStream() {
+  const query = topologyStreamQuery();
+  const signature = JSON.stringify(query);
+  if (topologyStreamClose && topologyStreamSignature === signature) return;
+  stopTopologyStream();
+  topologyStreamSignature = signature;
+  lastTopologyContentHash = topology.value?.content_hash ?? "";
+  topologyStreamClose = openTopologyEventStream(query, (event) => {
+    const currentHash = topology.value?.content_hash ?? "";
+    const duplicateCursor = event.cursor === lastTopologyCursor;
+    const duplicateHash = Boolean(event.content_hash)
+      && (event.content_hash === currentHash || event.content_hash === lastTopologyContentHash);
+    lastTopologyCursor = event.cursor;
+    if (event.content_hash) lastTopologyContentHash = event.content_hash;
+    if (duplicateCursor || duplicateHash) return;
+    invalidateQueryDomain("infrastructure");
+    void loadWorkspace(true);
+  });
+}
+
 function ensureTimeRange(): boolean {
   if (queryValue(route.query.from) && queryValue(route.query.to)) return true;
   const to = new Date();
@@ -314,6 +357,7 @@ async function loadWorkspace(background = false) {
     else topologyError.value = nextTopology.reason;
     if (nextPage.status === "fulfilled") resourcePage.value = nextPage.value;
     else resourceError.value = nextPage.reason;
+    ensureTopologyStream();
 
     const resolvedCluster = nextBootstrap.status === "fulfilled"
       ? nextBootstrap.value.active_scope.cluster_id
@@ -533,6 +577,7 @@ watch(() => route.fullPath, () => {
 }, { immediate: true });
 
 function handleOperationalScopeChanged() {
+  stopTopologyStream();
   bootstrap.value = null;
   topology.value = null;
   resourcePage.value = null;
@@ -544,6 +589,7 @@ function handleOperationalScopeChanged() {
 onMounted(() => window.addEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT, handleOperationalScopeChanged));
 onBeforeUnmount(() => {
   window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT, handleOperationalScopeChanged);
+  stopTopologyStream();
   requestToken += 1;
   controller?.abort();
 });

@@ -4,6 +4,7 @@ import { useRoute, useRouter } from "vue-router";
 
 import {
   getTopology,
+  openTopologyEventStream,
   type InfrastructureQuery,
   type KubernetesResource,
   type ResourceLayer,
@@ -32,6 +33,10 @@ const utcFormatter = new Intl.DateTimeFormat("zh-CN", {
   timeStyle: "medium",
   timeZone: "UTC",
 });
+let topologyStreamClose: (() => void) | undefined;
+let topologyStreamSignature = "";
+let lastTopologyCursor = "";
+let lastTopologyContentHash = "";
 
 const atlas = computed(() => request.data.value);
 const selectedID = inspector.selectedID;
@@ -141,6 +146,33 @@ async function loadAtlas(background = false, force = false) {
     to: queryValue(route.query.to) || undefined,
   };
   await request.run(({ signal }) => getTopology(query, signal), { background });
+  ensureTopologyStream(query);
+}
+
+function stopTopologyStream() {
+  topologyStreamClose?.();
+  topologyStreamClose = undefined;
+  topologyStreamSignature = "";
+  lastTopologyCursor = "";
+  lastTopologyContentHash = "";
+}
+
+function ensureTopologyStream(query: InfrastructureQuery) {
+  const signature = JSON.stringify(query);
+  if (topologyStreamClose && topologyStreamSignature === signature) return;
+  stopTopologyStream();
+  topologyStreamSignature = signature;
+  lastTopologyContentHash = atlas.value?.content_hash ?? "";
+  topologyStreamClose = openTopologyEventStream(query, (event) => {
+    const currentHash = atlas.value?.content_hash ?? "";
+    const duplicateCursor = event.cursor === lastTopologyCursor;
+    const duplicateHash = Boolean(event.content_hash)
+      && (event.content_hash === currentHash || event.content_hash === lastTopologyContentHash);
+    lastTopologyCursor = event.cursor;
+    if (event.content_hash) lastTopologyContentHash = event.content_hash;
+    if (duplicateCursor || duplicateHash) return;
+    void loadAtlas(true, true);
+  });
 }
 
 function setView(mode: "canvas" | "structured") {
@@ -171,6 +203,7 @@ function handleWebGLUnavailable(reason: string) {
 }
 
 function handleOperationalScopeChanged() {
+  stopTopologyStream();
   webglFailure.value = "";
   void loadAtlas(true);
 }
@@ -189,7 +222,10 @@ watch(() => route.fullPath, (current, previous) => {
   if (current === previous) return;
   void loadAtlas(Boolean(request.data.value));
 });
-onBeforeUnmount(() => window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT, handleOperationalScopeChanged));
+onBeforeUnmount(() => {
+  window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT, handleOperationalScopeChanged);
+  stopTopologyStream();
+});
 </script>
 
 <template>
