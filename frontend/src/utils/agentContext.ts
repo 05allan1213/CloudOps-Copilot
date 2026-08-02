@@ -30,6 +30,12 @@ export function readAgentRouteSelection(query: Record<string, unknown>): AgentRo
   };
 }
 
+export function fullAgentWorkspacePath(selection: "consultation" | "investigation", id: string): string {
+  if (!id) return "/agent";
+  const key = selection === "investigation" ? "investigation" : "consultation";
+  return `/agent?${key}=${encodeURIComponent(id)}`;
+}
+
 export function agentContextHasEvidence(input: AgentContextInput | null | undefined): boolean {
   return Boolean(input && (input.query_execution_refs.length > 0 || input.evidence_refs.length > 0));
 }

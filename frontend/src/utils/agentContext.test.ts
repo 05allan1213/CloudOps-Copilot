@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   agentContextHasEvidence,
   freeQueryContext,
+  fullAgentWorkspacePath,
   readAgentRouteSelection,
   shouldClearAgentContextOnUnmount,
   shouldStopGlobalAgent,
@@ -34,6 +35,12 @@ describe("global Agent lifecycle", () => {
       consultationID: "",
       investigationID: "legacy-run",
     });
+  });
+
+  it("carries the exact selected record into the full Agent Workspace URL", () => {
+    expect(fullAgentWorkspacePath("consultation", "consultation 1")).toBe("/agent?consultation=consultation%201");
+    expect(fullAgentWorkspacePath("investigation", "run-1")).toBe("/agent?investigation=run-1");
+    expect(fullAgentWorkspacePath("consultation", "")).toBe("/agent");
   });
 
   it("marks free queries as unassociated without weakening the real Evidence boundary", () => {

@@ -6,6 +6,7 @@ import { useAgentWorkspaceStore } from "../../stores/agentWorkspace";
 import {
   AGENT_CONTEXT_EVENT,
   AGENT_OPEN_EVENT,
+  fullAgentWorkspacePath,
   shouldStopGlobalAgent,
   type AgentOpenRequest,
   type AgentPageContext,
@@ -43,6 +44,7 @@ const tabs = [
   { label: "证据", value: "inspector", icon: "i-lucide-fingerprint" },
 ];
 const dockStyle = computed(() => ({ "--agent-dock-current-width": `${dockWidth.value}px` }));
+const fullWorkspaceTarget = computed(() => fullAgentWorkspacePath(store.selection, store.selectedID));
 
 function readDockWidth(): number {
   try {
@@ -196,7 +198,7 @@ onBeforeUnmount(() => {
                 variant="ghost"
                 icon="i-lucide-maximize-2"
                 square
-                to="/agent"
+                :to="fullWorkspaceTarget"
                 aria-label="打开完整 Agent 工作台"
                 @click="enterFullWorkspace"
               />
