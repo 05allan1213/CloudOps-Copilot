@@ -37,7 +37,7 @@ export function classifyDevOpsRun(runID: string, investigations: AgentRun[]): De
     return {
       kind: "unknown",
       incidentID: "",
-      reason: "未加载到 subject 对应的 Agent run，DevOps 写入口保持关闭。",
+      reason: "未加载到 Subject 对应的 Agent Run，DevOps 写入口保持关闭。",
     };
   }
   if (run.incident_id || run.subject_type === "incident") {
@@ -45,14 +45,14 @@ export function classifyDevOpsRun(runID: string, investigations: AgentRun[]): De
       kind: "incident",
       incidentID: run.incident_id ?? "",
       reason: run.incident_id
-        ? "该 subject 由 Incident 生命周期拥有。"
-        : "Agent run 标记为 Incident，但缺少可恢复的 Incident ID。",
+        ? "该 Subject 由 Incident 生命周期拥有。"
+        : "Agent Run 标记为 Incident，但缺少可恢复的 Incident ID。",
     };
   }
   return {
     kind: "non_incident",
     incidentID: "",
-    reason: `Agent run subject 为 ${run.subject_type}，保留 DevOps 全局/非事故操作责任。`,
+    reason: `Agent Run 的 Subject 类型为 ${run.subject_type}，由 DevOps 全局非事故操作负责。`,
   };
 }
 
@@ -66,7 +66,7 @@ export function classifyDevOpsSubject(
     return {
       kind: "incident",
       incidentID: incidentExecution.incident_id,
-      reason: "当前 execution 已绑定 Incident，事故写操作只在 Incident 生命周期中进行。",
+      reason: "当前 Execution 已绑定 Incident，事故写操作只在 Incident 生命周期中进行。",
     };
   }
   const execution = executions.find((item) => item.subject_id === subject.id);
@@ -94,8 +94,8 @@ function ownershipFailure(ownership: DevOpsSubjectOwnership): ApiErrorDetails {
     traceID: "",
     idempotentReplay: null,
     nextSteps: ownership.incidentID
-      ? ["前往 Incident 的 Approval、Delivery 或 Verification 阶段继续。"]
-      : ["刷新 Agent run 与 DevOps projection 后重新核对 ownership。"],
+      ? ["前往 Incident 的审批、交付或验证阶段继续。"]
+      : ["刷新 Agent Run 与 DevOps 投影后重新核对所有权。"],
   };
 }
 
@@ -136,8 +136,8 @@ export const useDevOpsWorkspaceStore = defineStore("devops-workspace", {
         this.scenarioResources = resourceResult.status === "fulfilled" ? resourceResult.value : null;
         this.investigations = investigationResult.status === "fulfilled" ? investigationResult.value : [];
         const auxiliaryFailures = [
-          resourceResult.status === "rejected" ? "Kubernetes Deployment projection" : "",
-          investigationResult.status === "rejected" ? "Agent Investigation index" : "",
+          resourceResult.status === "rejected" ? "Kubernetes Deployment 投影" : "",
+          investigationResult.status === "rejected" ? "Agent 调查索引" : "",
         ].filter(Boolean);
         this.scenarioPlanningError = auxiliaryFailures.length
           ? `${auxiliaryFailures.join("、")} 读取失败；不会创建不完整的 Operation Plan。`
@@ -146,8 +146,8 @@ export const useDevOpsWorkspaceStore = defineStore("devops-workspace", {
       } catch (error) {
         if (signal?.aborted) return;
         if (!preserve) this.workspace = null;
-        this.error = failureMessage(error, "DevOps Workspace 读取失败，请检查 API 与 MySQL runtime。");
-        this.failure = apiErrorDetails(error, "DevOps Workspace 读取失败，请检查 API 与 MySQL runtime。");
+        this.error = failureMessage(error, "DevOps Workspace 读取失败，请检查 API 与 MySQL 运行环境。");
+        this.failure = apiErrorDetails(error, "DevOps Workspace 读取失败，请检查 API 与 MySQL 运行环境。");
       } finally {
         this.loading = false;
       }
@@ -157,7 +157,7 @@ export const useDevOpsWorkspaceStore = defineStore("devops-workspace", {
       if (!this.allowSubjectMutation(card)) return;
       await this.runMutation(card.id, async () => {
         await authorizeActionCard(card.id, card.content_hash, reason);
-        this.notice = "Action Authorization 已绑定当前 exact Action Card。";
+        this.notice = "Action Authorization 已绑定当前精确 Action Card。";
       });
     },
 
@@ -165,7 +165,7 @@ export const useDevOpsWorkspaceStore = defineStore("devops-workspace", {
       if (!this.allowSubjectMutation(plan)) return;
       await this.runMutation(plan.id, async () => {
         await authorizeOperationPlan(plan.id, plan.content_hash, reason);
-        this.notice = "Action Authorization 已绑定当前 immutable Operation Plan。";
+        this.notice = "Action Authorization 已绑定当前不可变 Operation Plan。";
       });
     },
 
@@ -174,7 +174,7 @@ export const useDevOpsWorkspaceStore = defineStore("devops-workspace", {
       let execution: OperationExecution | null = null;
       await this.runMutation(card.id, async () => {
         execution = await executeActionCard(card.id, card.content_hash);
-        this.notice = "本地可逆动作已按 exact hash 排队。";
+        this.notice = "本地可逆动作已按精确 Hash 排队。";
       });
       return execution;
     },
@@ -184,7 +184,7 @@ export const useDevOpsWorkspaceStore = defineStore("devops-workspace", {
       let execution: OperationExecution | null = null;
       await this.runMutation(plan.id, async () => {
         execution = await executeOperationPlan(plan.id, plan.content_hash);
-        this.notice = "Operation Plan 已按 exact hash 排队；Worker 将再次检查 authority、expiry 与 preconditions。";
+        this.notice = "Operation Plan 已按精确 Hash 排队；Worker 将再次检查授权、有效期与前置条件。";
       });
       return execution;
     },
@@ -198,7 +198,7 @@ export const useDevOpsWorkspaceStore = defineStore("devops-workspace", {
       let plan: OperationPlan | null = null;
       await this.runMutation(input.run_id, async () => {
         plan = await proposeOperationPlan(input);
-        this.notice = "已基于 Scenario Investigation 与当前 Kubernetes resourceVersion 创建 immutable Operation Plan；尚未授权。";
+        this.notice = "已基于 Scenario 调查与当前 Kubernetes resourceVersion 创建不可变 Operation Plan；尚未授权。";
       });
       return plan;
     },

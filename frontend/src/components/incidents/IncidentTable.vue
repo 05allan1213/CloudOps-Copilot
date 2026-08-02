@@ -5,8 +5,6 @@ import WorkspaceDenseList from "../workspace/WorkspaceDenseList.vue";
 import { humanizeCode, incidentStatusLabel } from "../../models/incidents";
 import type { IncidentListDirection, IncidentListSort, IncidentView } from "../../types/incidents";
 import { formatIncidentTime } from "../../utils/incidentTime";
-import AttentionFlag from "./AttentionFlag.vue";
-import IncidentStatusBadge from "./IncidentStatusBadge.vue";
 import SeverityBadge from "./SeverityBadge.vue";
 
 const props = withDefaults(defineProps<{
@@ -53,10 +51,7 @@ function dateValue(value?: string): number {
 }
 
 function severityTone(value: IncidentView): "critical" | "warning" | "info" | "neutral" {
-  if (value.severity === "critical") return "critical";
-  if (value.severity === "warning") return "warning";
-  if (value.severity === "info") return "info";
-  return "neutral";
+  return value.severity === "critical" || value.attention.required ? "critical" : "neutral";
 }
 
 function recoveryLabel(value: IncidentView["recovery"]["state"]): string {
@@ -65,7 +60,7 @@ function recoveryLabel(value: IncidentView["recovery"]["state"]): string {
     awaiting_verification: "等待验证",
     verifying: "验证中",
     investigate: "返回调查",
-    recovered: "恢复已证明",
+    recovered: "恢复已验证",
   })[value];
 }
 
@@ -99,8 +94,10 @@ defineExpose({ getRowElement, getScrollElement });
     >
       <template #leading="{ item }">
         <div class="incident-row-badges">
-          <SeverityBadge :severity="item.severity" />
-          <IncidentStatusBadge :status="item.status" />
+          <SeverityBadge
+            :severity="item.severity"
+            :show-icon="false"
+          />
         </div>
       </template>
       <template #title="{ item }">
@@ -111,10 +108,21 @@ defineExpose({ getRowElement, getScrollElement });
       </template>
       <template #description="{ item }">
         <span class="incident-row-stage">
-          <AttentionFlag :active="item.attention.required" />
-          {{ incidentStatusLabel(item.status) }}<template v-if="item.attention.required"> · {{ humanizeCode(item.attention.reason_code) }}</template>
+          <span
+            class="incident-row-conclusion"
+            :class="{ 'needs-attention': item.attention.required }"
+          >{{ item.attention.required ? "需要关注" : "无需关注" }}</span>
+          <span v-if="item.attention.required">{{ humanizeCode(item.attention.reason_code) }}</span>
+          <UBadge
+            color="neutral"
+            variant="soft"
+            :label="incidentStatusLabel(item.status)"
+          />
         </span>
-        <span>{{ item.operational_context.cluster }} · {{ item.operational_context.namespace }}/{{ item.operational_context.service }} · {{ item.related_alert_count }} Alerts</span>
+        <span>
+          {{ item.operational_context.cluster }} · {{ item.operational_context.environment || "环境未报告" }} ·
+          {{ item.operational_context.namespace }}/{{ item.operational_context.service }} · {{ item.related_alert_count }} 条 Alert
+        </span>
       </template>
       <template #meta="{ item }">
         <span class="incident-row-meta">
@@ -147,8 +155,10 @@ defineExpose({ getRowElement, getScrollElement });
 
 <style scoped>
 .incident-results { min-width: 0; overflow: visible; }
-.incident-row-badges { display: grid; width: 98px; justify-items: start; gap: 3px; }
-.incident-row-stage { display: inline-flex; min-width: 0; align-items: center; gap: var(--co-space-1); }
+.incident-row-badges { display: grid; width: 64px; justify-items: start; gap: 3px; }
+.incident-row-stage { display: inline-flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: var(--co-space-1); }
+.incident-row-conclusion { color: var(--co-text-secondary); font-weight: 650; }
+.incident-row-conclusion.needs-attention { color: var(--co-status-warning-fg); }
 .incident-row-meta { display: grid; min-width: 118px; justify-items: end; gap: 2px; }
 .incident-row-meta strong { color: var(--co-text-secondary); font-size: 10px; }
 .incident-row-meta time { color: var(--co-text-muted); font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -157,7 +167,12 @@ defineExpose({ getRowElement, getScrollElement });
 .results-footer p { margin: 0; color: var(--co-text-muted); font-size: 11px; }
 
 @media (max-width: 1024px) {
-  .incident-row-meta { min-width: 94px; }
+  .incident-row-meta { width: 100%; min-width: 0; grid-template-columns: auto auto; align-items: center; justify-content: space-between; }
+  .incident-row-badges { width: auto; }
+}
+
+@media (max-width: 640px) {
+  .results-footer { align-items: flex-start; flex-direction: column; }
 }
 
 @media (prefers-reduced-motion: reduce) {

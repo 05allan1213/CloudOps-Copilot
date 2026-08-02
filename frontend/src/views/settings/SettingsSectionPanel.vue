@@ -91,7 +91,7 @@ function outcomeColor(state: SettingsApplyOutcome["state"]): "success" | "warnin
 <template>
   <section
     :id="anchor"
-    class="settings-section"
+    :class="['settings-section', `settings-section--${section.key}`]"
     :aria-labelledby="`${anchor}-heading`"
     tabindex="-1"
   >
@@ -112,7 +112,7 @@ function outcomeColor(state: SettingsApplyOutcome["state"]): "success" | "warnin
           :icon="dirty ? 'i-lucide-pencil-line' : 'i-lucide-circle-check'"
           :label="dirty ? '本地草稿有变更' : '与基线一致'"
         />
-        <code>base #{{ section.baseRevisionNumber }}</code>
+        <span>base Revision #{{ section.baseRevisionNumber }}</span>
       </div>
     </header>
 
@@ -146,25 +146,39 @@ function outcomeColor(state: SettingsApplyOutcome["state"]): "success" | "warnin
       </template>
     </UAlert>
 
-    <slot />
+    <div class="settings-section-editor">
+      <slot />
+    </div>
 
-    <UFormField
-      label="Revision 摘要"
-      :name="`${section.key}.summary`"
-      required
-      help="只描述本区变更；发布后进入 Configuration Revision 历史。"
-      :data-field="`${section.key}.summary`"
+    <div
+      v-if="dirty"
+      class="settings-revision-summary"
     >
-      <UTextarea
-        :model-value="section.summary"
-        :rows="2"
-        :maxlength="255"
-        autoresize
-        class="settings-control"
-        placeholder="说明变更原因和预期影响"
-        @update:model-value="emit('updateSummary', String($event))"
-      />
-    </UFormField>
+      <header>
+        <div>
+          <strong>变更说明</strong>
+          <p>用于本次 Configuration Revision 历史。</p>
+        </div>
+        <span>{{ changes.length }} 项变更</span>
+      </header>
+      <UFormField
+        label="Revision 摘要"
+        :name="`${section.key}.summary`"
+        required
+        help="3–255 个字符；仅描述当前设置分区。"
+        :data-field="`${section.key}.summary`"
+      >
+        <UTextarea
+          :model-value="section.summary"
+          :rows="1"
+          :maxlength="255"
+          autoresize
+          class="settings-control"
+          placeholder="说明修改原因和预期影响"
+          @update:model-value="emit('updateSummary', String($event))"
+        />
+      </UFormField>
+    </div>
 
     <div
       v-if="!externalActions"
@@ -300,16 +314,22 @@ function outcomeColor(state: SettingsApplyOutcome["state"]): "success" | "warnin
 </template>
 
 <style scoped>
-.settings-section { display: grid; min-width: 0; gap: var(--co-space-4); scroll-margin-top: 76px; padding: var(--co-space-4); border: 1px solid var(--co-border-subtle); border-radius: var(--co-radius-panel); background: color-mix(in srgb, var(--co-bg-surface) 86%, var(--co-bg-canvas)); outline: none; }
+.settings-section { display: grid; min-width: 0; gap: var(--co-space-5); scroll-margin-top: 76px; outline: none; }
 .settings-section:focus-visible { box-shadow: inset 3px 0 0 var(--co-focus-ring); }
-.settings-section-heading { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: var(--co-space-4); }
-.settings-section-heading h2 { margin: 0; font-size: 18px; letter-spacing: 0; }
-.settings-section-heading p:not(.settings-eyebrow) { max-width: 72ch; margin: var(--co-space-1) 0 0; color: var(--co-text-secondary); font-size: 12px; }
+.settings-section-heading { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: var(--co-space-4); padding-bottom: var(--co-space-4); border-bottom: 1px solid var(--co-border-default); }
+.settings-section-heading h2 { margin: 0; font-size: 22px; letter-spacing: 0; }
+.settings-section-heading p:not(.settings-eyebrow) { max-width: 72ch; margin: var(--co-space-1) 0 0; color: var(--co-text-secondary); font-size: 13px; }
 .settings-eyebrow { margin: 0 0 var(--co-space-1); color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 10px; font-weight: 750; text-transform: uppercase; }
 .settings-section-identity { display: flex; flex: 0 0 auto; align-items: center; gap: var(--co-space-2); }
-.settings-section-identity code { color: var(--co-text-muted); font-size: 10px; }
+.settings-section-identity > span { color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 10px; }
 .settings-inline-actions { display: flex; flex-wrap: wrap; gap: var(--co-space-2); }
 .settings-control { width: 100%; }
+.settings-section-editor { display: grid; min-width: 0; gap: var(--co-space-4); }
+.settings-revision-summary { display: grid; min-width: 0; gap: var(--co-space-3); padding: var(--co-space-4); border: 1px solid var(--co-border-default); border-radius: 10px; background: color-mix(in srgb, var(--co-bg-canvas) 88%, transparent); }
+.settings-revision-summary > header { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: var(--co-space-3); }
+.settings-revision-summary strong { font-size: 13px; }
+.settings-revision-summary p { margin: 2px 0 0; color: var(--co-text-secondary); font-size: 11px; }
+.settings-revision-summary > header > span { color: var(--co-text-muted); font-size: 11px; }
 .settings-change-summary { display: grid; gap: var(--co-space-2); padding-block: var(--co-space-3); overflow: hidden; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); background: var(--co-bg-subtle); }
 .settings-change-summary > div { display: flex; justify-content: space-between; gap: var(--co-space-3); padding-inline: var(--co-space-3); }
 .settings-change-summary span, .settings-change-summary p, .settings-truth-note { color: var(--co-text-muted); font-size: 11px; }
@@ -327,6 +347,7 @@ function outcomeColor(state: SettingsApplyOutcome["state"]): "success" | "warnin
 .settings-section-actions > span { margin-right: auto; color: var(--co-text-muted); font-size: 10px; }
 @media (max-width: 720px) {
   .settings-section-heading { flex-direction: column; }
+  .settings-section-heading h2 { font-size: 20px; }
   .settings-section-identity { width: 100%; justify-content: space-between; }
   .settings-section-actions { align-items: stretch; flex-direction: column; }
   .settings-section-actions > span { margin-right: 0; }

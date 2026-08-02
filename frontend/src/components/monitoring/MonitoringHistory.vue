@@ -68,11 +68,11 @@ function statusLabel(status: QueryExecution["status"]): string {
 </template>
 
 <style scoped>
-.monitoring-history { min-width: 0; align-self: start; }
-.monitoring-history > header { display: flex; min-height: 52px; align-items: center; justify-content: space-between; gap: var(--co-space-2); }
+.monitoring-history { display: grid; min-width: 0; max-height: min(336px, calc(var(--reka-popover-content-available-height, 360px) - 24px), calc(100dvh - 56px)); grid-template-rows: auto minmax(0, 1fr); align-self: start; overflow: hidden; }
+.monitoring-history > header { display: flex; min-height: 44px; align-items: center; justify-content: space-between; gap: var(--co-space-2); }
 .monitoring-history h2 { margin: 0; font-size: 14px; }
-.monitoring-history__list { display: grid; max-height: 720px; overflow-y: auto; gap: 7px; }
-.monitoring-history__item { width: 100%; min-height: 68px; justify-content: stretch; border: 1px solid transparent; border-radius: var(--co-radius-overlay); background: var(--co-bg-surface); box-shadow: var(--co-shadow-row); }
+.monitoring-history__list { display: grid; min-height: 0; max-height: min(280px, calc(var(--reka-popover-content-available-height, 360px) - 76px), calc(100dvh - 108px)); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; gap: 6px; padding-right: 4px; scrollbar-gutter: stable; }
+.monitoring-history__item { width: 100%; min-height: 60px; justify-content: stretch; padding: 8px 10px; border: 1px solid transparent; border-radius: var(--co-radius-frame); background: var(--co-bg-surface); box-shadow: var(--co-shadow-row); }
 .monitoring-history__item.is-active { border-color: var(--co-action-primary); box-shadow: var(--co-shadow-subtle); background: var(--co-bg-active); }
 .monitoring-history__copy { display: grid; width: 100%; min-width: 0; gap: 3px; text-align: left; }
 .monitoring-history__copy > span { display: flex; align-items: center; justify-content: space-between; gap: var(--co-space-2); }

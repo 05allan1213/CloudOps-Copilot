@@ -142,6 +142,7 @@
   --co-z-sticky: 20;
   --co-z-header: 40;
   --co-z-overlay: 100;
+  --co-z-popover: 200;
   --co-z-skip-link: 1000;
   --co-glass-blur: 16px;
   --co-bg-floating: #fffdf9;

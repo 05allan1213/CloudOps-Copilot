@@ -92,7 +92,7 @@ function agentFixture(): ConsultationDetail {
       context_snapshot_id: snapshot.id,
       sequence: 1,
       role: "assistant",
-      content: "Bounded result",
+      content: "## Bounded result\n\n- Evidence retained\n- `Provider writes`: not run",
       status: "completed",
       created_at: observedAt,
       completed_at: observedAt,
@@ -153,6 +153,8 @@ describe("Agent Workspace accessibility IDs", () => {
       "global-agent-conversation-message",
     ]));
     for (const reference of references) expect(idSet.has(reference), `${reference} must resolve to an element`).toBe(true);
+    expect(html).toContain("<h2>Bounded result</h2>");
+    expect(html).toContain("<ul>");
   });
 
   it("honors an exact Investigation Context Link selection", async () => {

@@ -27,6 +27,12 @@ body {
   min-height: 100dvh;
 }
 
+/* Reka positions teleported poppers in a body-level wrapper but leaves its
+ * stacking order unset. Keep every select/popover/menu above workspace layers. */
+[data-reka-popper-content-wrapper] {
+  z-index: var(--co-z-popover) !important;
+}
+
 button,
 input,
 textarea,

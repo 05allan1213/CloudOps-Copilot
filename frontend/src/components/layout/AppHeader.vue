@@ -20,6 +20,9 @@ const emit = defineEmits<{
 }>();
 
 const { isDark, toggleTheme } = useTheme();
+const headerTooltipUI = { content: "header-tooltip-content" } as const;
+const headerTooltipBottom = { side: "bottom", sideOffset: 4 } as const;
+const headerTooltipBottomEnd = { ...headerTooltipBottom, align: "end" } as const;
 const selectableScopes = computed(() => props.scopes
   .filter((scope): scope is OperationalScope & { id: string } => Boolean(scope.id))
   .map((scope) => ({
@@ -103,7 +106,10 @@ function openNotifications(event: MouseEvent) {
     </div>
 
     <div class="header-actions">
-      <UTooltip :content="{ side: 'bottom', align: 'end' }">
+      <UTooltip
+        :content="headerTooltipBottomEnd"
+        :ui="headerTooltipUI"
+      >
         <UButton
           class="provider-health-trigger"
           color="neutral"
@@ -149,7 +155,11 @@ function openNotifications(event: MouseEvent) {
       <span class="action-divider" aria-hidden="true" />
 
       <div class="notification-control">
-        <UTooltip text="通知" :content="{ side: 'bottom' }">
+        <UTooltip
+          text="通知"
+          :content="headerTooltipBottom"
+          :ui="headerTooltipUI"
+        >
           <UButton
             color="neutral"
             variant="ghost"
@@ -166,7 +176,11 @@ function openNotifications(event: MouseEvent) {
         >{{ notificationCountLabel }}</span>
       </div>
 
-      <UTooltip :text="themeActionLabel" :content="{ side: 'bottom' }">
+      <UTooltip
+        :text="themeActionLabel"
+        :content="headerTooltipBottom"
+        :ui="headerTooltipUI"
+      >
         <UButton
           color="neutral"
           variant="ghost"
@@ -177,7 +191,11 @@ function openNotifications(event: MouseEvent) {
         />
       </UTooltip>
 
-      <UTooltip text="本地 Owner" :content="{ side: 'bottom', align: 'end' }">
+      <UTooltip
+        text="本地 Owner"
+        :content="headerTooltipBottomEnd"
+        :ui="headerTooltipUI"
+      >
         <UButton
           class="owner-action"
           color="neutral"
@@ -322,6 +340,10 @@ function openNotifications(event: MouseEvent) {
   pointer-events: none;
 }
 .owner-action { background: transparent; }
+:global(.header-tooltip-content) {
+  position: relative;
+  z-index: var(--co-z-popover) !important;
+}
 
 .provider-health-detail {
   display: grid;

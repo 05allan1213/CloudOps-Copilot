@@ -7,6 +7,7 @@ import type { ActionCard, AgentEvidenceCitation, OperationPlan } from "../../api
 import { COPY_FEEDBACK_DURATION_MS } from "../../composables/useCopyFeedback";
 import { useAgentWorkspaceStore } from "../../stores/agentWorkspace";
 import CopyFeedbackButton from "../workspace/CopyFeedbackButton.vue";
+import WorkspaceTechnicalDetails, { type TechnicalDetailField } from "../workspace/WorkspaceTechnicalDetails.vue";
 
 type AuthoritySelection = { kind: "card"; value: ActionCard } | { kind: "plan"; value: OperationPlan };
 
@@ -15,6 +16,7 @@ const emit = defineEmits<{ "toggle-collapse": [] }>();
 const store = useAgentWorkspaceStore();
 const authoritySelection = ref<AuthoritySelection | null>(null);
 const authorityReason = ref("");
+const inspectorTab = ref<"context" | "evidence" | "authority">("context");
 const evidenceScroll = ref<HTMLDivElement | null>(null);
 const copiedEvidenceID = ref("");
 let copyStatusTimer: ReturnType<typeof setTimeout> | undefined;
@@ -24,7 +26,44 @@ const evidence = computed(() => run.value?.evidence_citations ?? []);
 const guidance = computed(() => run.value?.guidance_citations ?? []);
 const cards = computed(() => run.value?.action_cards ?? []);
 const plans = computed(() => run.value?.operation_plans ?? []);
+const inspectorTabs = computed(() => [
+  { label: "上下文", value: "context", icon: "i-lucide-archive" },
+  { label: `Evidence ${evidence.value.length}`, value: "evidence", icon: "i-lucide-database" },
+  { label: `权限 ${cards.value.length + plans.value.length}`, value: "authority", icon: "i-lucide-shield-check" },
+]);
 const instanceID = computed(() => props.compact ? "global-agent-inspector" : "agent-inspector");
+const contextResource = computed(() => store.activeSnapshot?.resource_refs.map((item) => `${item.kind}/${item.name}`).join(", ") || "未提供资源");
+const contextScope = computed(() => store.activeSnapshot
+  ? `${store.activeSnapshot.scope.cluster_id} / ${store.activeSnapshot.scope.environment}`
+  : store.consultation ? `${store.consultation.scope.cluster_id} / ${store.consultation.scope.environment}` : "未提供");
+const contextTime = computed(() => store.activeSnapshot
+  ? `${formatCompactUTC(store.activeSnapshot.time_range.from)} — ${formatCompactUTC(store.activeSnapshot.time_range.to)} UTC`
+  : "未提供");
+const contextBoundary = computed(() => store.activeSnapshot
+  ? `${store.activeSnapshot.evidence_refs.length} Evidence · ${store.activeSnapshot.query_execution_refs.length} Query`
+  : `${evidence.value.length} Evidence`);
+const contextStatus = computed(() => store.contextMismatch ? "页面上下文已变化，旧 Snapshot 保持不可变" : "当前不可变 Snapshot");
+const contextTechnicalFields = computed<TechnicalDetailField[]>(() => {
+  const snapshot = store.activeSnapshot;
+  if (snapshot) {
+    return [
+      { label: "Snapshot ID", value: snapshot.id, code: true, copyValue: snapshot.id },
+      { label: "Configuration Revision", value: snapshot.configuration_revision_id, code: true, copyValue: snapshot.configuration_revision_id },
+      { label: "Incident ID", value: run.value?.incident_id || "无关联事件", code: Boolean(run.value?.incident_id), copyValue: run.value?.incident_id || undefined },
+      { label: "Alert ID", value: run.value?.alert_id || "无关联事件", code: Boolean(run.value?.alert_id), copyValue: run.value?.alert_id || undefined },
+      { label: "From UTC", value: formatUTC(snapshot.time_range.from), code: true, copyValue: snapshot.time_range.from },
+      { label: "To UTC", value: formatUTC(snapshot.time_range.to), code: true, copyValue: snapshot.time_range.to },
+      { label: "Content hash", value: snapshot.content_hash, code: true, copyValue: snapshot.content_hash },
+    ];
+  }
+  if (!run.value) return [];
+  return [
+    { label: "Snapshot ID", value: run.value.context_snapshot_id, code: true, copyValue: run.value.context_snapshot_id },
+    { label: "Configuration Revision", value: run.value.configuration_revision_id, code: true, copyValue: run.value.configuration_revision_id },
+    { label: "Incident ID", value: run.value.incident_id || "无关联事件", code: Boolean(run.value.incident_id), copyValue: run.value.incident_id || undefined },
+    { label: "Alert ID", value: run.value.alert_id || "无关联事件", code: Boolean(run.value.alert_id), copyValue: run.value.alert_id || undefined },
+  ];
+});
 const evidenceVirtualized = computed(() => evidence.value.length > 40);
 const evidenceVirtualizer = useVirtualizer<HTMLDivElement, HTMLElement>(computed(() => ({
   count: evidenceVirtualized.value ? evidence.value.length : 0,
@@ -44,6 +83,26 @@ function formatUTC(value?: string): string {
   if (!value) return "未提供";
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toISOString();
+}
+
+function formatCompactUTC(value?: string): string {
+  if (!value) return "未提供";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toISOString().slice(5, 16).replace("T", " ");
+}
+
+function evidenceTechnicalFields(item: AgentEvidenceCitation): TechnicalDetailField[] {
+  return [
+    { label: "Evidence ID", value: item.evidence_id, code: true, copyValue: item.evidence_id },
+    { label: "Query Execution", value: item.query_execution_id || "未提供", code: Boolean(item.query_execution_id), copyValue: item.query_execution_id || undefined },
+    { label: "Configuration Revision", value: item.configuration_revision_id, code: true, copyValue: item.configuration_revision_id },
+    { label: "Observed UTC", value: formatUTC(item.observed_at || item.collected_at), code: true, copyValue: item.observed_at || item.collected_at },
+    { label: "Content hash", value: item.content_hash, code: true, copyValue: item.content_hash },
+  ];
+}
+
+function selectInspectorTab(value: string | number) {
+  if (value === "context" || value === "evidence" || value === "authority") inspectorTab.value = value;
 }
 
 function compactJSON(value: unknown): string {
@@ -159,7 +218,23 @@ onBeforeUnmount(() => {
       </UTooltip>
     </header>
 
-    <section class="inspector-section context-section">
+    <UTabs
+      v-if="!compact"
+      class="inspector-tabs"
+      :model-value="inspectorTab"
+      :items="inspectorTabs"
+      :content="false"
+      color="primary"
+      variant="pill"
+      size="xs"
+      aria-label="Agent Inspector 视图"
+      @update:model-value="selectInspectorTab"
+    />
+
+    <section
+      v-if="compact || inspectorTab === 'context'"
+      class="inspector-section context-section"
+    >
       <header>
         <div>
           <UIcon
@@ -174,15 +249,6 @@ onBeforeUnmount(() => {
           :label="String(store.consultation?.snapshots.length || (run ? 1 : 0))"
         />
       </header>
-      <UAlert
-        v-if="store.consultation && store.contextMismatch"
-        class="context-drift"
-        color="warning"
-        variant="soft"
-        icon="i-lucide-triangle-alert"
-        title="页面上下文已变化"
-        description="当前页面上下文与会话 Snapshot 不同；旧 Snapshot 保持不可变。"
-      />
       <UButton
         v-if="store.consultation && store.contextMismatch"
         class="attach-context"
@@ -196,66 +262,20 @@ onBeforeUnmount(() => {
         @click="store.attachCurrentContext"
       />
       <dl
-        v-if="store.activeSnapshot"
-        class="inspector-facts"
+        v-if="store.activeSnapshot || run"
+        class="context-summary-facts"
       >
+        <div class="context-primary-fact">
+          <dt>当前对象</dt><dd>{{ contextResource }}</dd>
+        </div>
+        <div><dt>范围</dt><dd>{{ contextScope }}</dd></div>
+        <div><dt>时间</dt><dd>{{ contextTime }}</dd></div>
         <div>
-          <dt>Snapshot</dt><dd translate="no">
-            {{ store.activeSnapshot.id }}
+          <dt>状态</dt><dd :class="{ 'is-warning': store.contextMismatch }">
+            {{ contextStatus }}
           </dd>
         </div>
-        <div>
-          <dt>Configuration</dt><dd translate="no">
-            {{ store.activeSnapshot.configuration_revision_id }}
-          </dd>
-        </div>
-        <div><dt>Scope</dt><dd>{{ store.activeSnapshot.scope.cluster_id }} / {{ store.activeSnapshot.scope.environment }}</dd></div>
-        <div><dt>Namespace</dt><dd>{{ store.activeSnapshot.scope.namespaces.join(", ") }}</dd></div>
-        <div><dt>Resource</dt><dd>{{ store.activeSnapshot.resource_refs.map((item) => `${item.kind}/${item.name}`).join(", ") || "未提供" }}</dd></div>
-        <div>
-          <dt>Incident</dt><dd translate="no">
-            {{ run?.incident_id || "无关联事件" }}
-          </dd>
-        </div>
-        <div>
-          <dt>Alert</dt><dd translate="no">
-            {{ run?.alert_id || "无关联事件" }}
-          </dd>
-        </div>
-        <div><dt>From UTC</dt><dd>{{ formatUTC(store.activeSnapshot.time_range.from) }}</dd></div>
-        <div><dt>To UTC</dt><dd>{{ formatUTC(store.activeSnapshot.time_range.to) }}</dd></div>
-        <div><dt>Evidence</dt><dd>{{ store.activeSnapshot.evidence_refs.length }} retained / {{ store.activeSnapshot.query_execution_refs.length }} query</dd></div>
-        <div>
-          <dt>Content hash</dt><dd translate="no">
-            {{ store.activeSnapshot.content_hash }}
-          </dd>
-        </div>
-      </dl>
-      <dl
-        v-else-if="run"
-        class="inspector-facts"
-      >
-        <div>
-          <dt>Snapshot</dt><dd translate="no">
-            {{ run.context_snapshot_id }}
-          </dd>
-        </div>
-        <div>
-          <dt>Configuration</dt><dd translate="no">
-            {{ run.configuration_revision_id }}
-          </dd>
-        </div>
-        <div>
-          <dt>Incident</dt><dd translate="no">
-            {{ run.incident_id || "无关联事件" }}
-          </dd>
-        </div>
-        <div>
-          <dt>Alert</dt><dd translate="no">
-            {{ run.alert_id || "无关联事件" }}
-          </dd>
-        </div>
-        <div><dt>来源</dt><dd>{{ store.selection === "investigation" ? "自动/上下文 Investigation" : "Consultation" }}</dd></div>
+        <div><dt>Evidence 边界</dt><dd>{{ contextBoundary }}</dd></div>
       </dl>
       <div
         v-else
@@ -263,9 +283,19 @@ onBeforeUnmount(() => {
       >
         未选择 Agent 记录。
       </div>
+      <WorkspaceTechnicalDetails
+        v-if="contextTechnicalFields.length"
+        class="context-technical-details"
+        title="技术详情"
+        description="Snapshot ID、配置版本、完整 UTC 与 Content hash"
+        :fields="contextTechnicalFields"
+      />
     </section>
 
-    <section class="inspector-section evidence-section">
+    <section
+      v-if="compact || inspectorTab === 'evidence'"
+      class="inspector-section evidence-section"
+    >
       <header>
         <div>
           <UIcon
@@ -324,35 +354,20 @@ onBeforeUnmount(() => {
               />
             </header>
             <p>{{ row.item.summary }}</p>
-            <dl>
-              <div>
-                <dt>Evidence</dt><dd translate="no">
-                  {{ row.item.evidence_id }}
-                </dd>
-              </div>
-              <div><dt>Observed UTC</dt><dd>{{ formatUTC(row.item.observed_at || row.item.collected_at) }}</dd></div>
-              <div v-if="row.item.query_execution_id">
-                <dt>Query</dt><dd translate="no">
-                  {{ row.item.query_execution_id }}
-                </dd>
-              </div>
-              <div>
-                <dt>Configuration</dt><dd translate="no">
-                  {{ row.item.configuration_revision_id }}
-                </dd>
-              </div>
-              <div>
-                <dt>Content hash</dt><dd translate="no">
-                  {{ row.item.content_hash }}
-                </dd>
-              </div>
-            </dl>
+            <WorkspaceTechnicalDetails
+              title="Evidence 技术详情"
+              description="完整身份、采集时间与内容哈希"
+              :fields="evidenceTechnicalFields(row.item)"
+            />
           </article>
         </div>
       </div>
     </section>
 
-    <section class="inspector-section guidance-section">
+    <section
+      v-if="!compact && inspectorTab === 'evidence'"
+      class="inspector-section guidance-section"
+    >
       <header>
         <div>
           <UIcon
@@ -392,7 +407,10 @@ onBeforeUnmount(() => {
       </article>
     </section>
 
-    <section class="inspector-section authority-section">
+    <section
+      v-if="!compact && inspectorTab === 'authority'"
+      class="inspector-section authority-section"
+    >
       <header>
         <div>
           <UIcon
@@ -584,7 +602,10 @@ onBeforeUnmount(() => {
       </article>
     </section>
 
-    <section class="inspector-section knowledge-section">
+    <section
+      v-if="!compact && inspectorTab === 'evidence'"
+      class="inspector-section knowledge-section"
+    >
       <header>
         <div>
           <UIcon
@@ -633,7 +654,10 @@ onBeforeUnmount(() => {
       </article>
     </section>
 
-    <section class="inspector-section runbook-section">
+    <section
+      v-if="!compact && inspectorTab === 'evidence'"
+      class="inspector-section runbook-section"
+    >
       <header>
         <div>
           <UIcon
@@ -770,7 +794,7 @@ onBeforeUnmount(() => {
   z-index: 2;
   top: 0;
   display: flex;
-  min-height: 70px;
+  min-height: 62px;
   align-items: center;
   justify-content: space-between;
   gap: var(--co-space-2);
@@ -783,9 +807,9 @@ onBeforeUnmount(() => {
 .inspector-toolbar strong { font-size: 14px; font-weight: 720; }
 .inspector-toolbar :deep(button) { width: 30px; min-width: 30px; height: 30px; border-radius: 8px; }
 .section-kicker { color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 8px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
-.inspector-section { position: relative; padding: 16px 15px; border-bottom: 1px solid color-mix(in srgb, var(--co-border-default) 78%, transparent); }
-.inspector-section:nth-of-type(even) { background: color-mix(in srgb, var(--co-bg-floating) 26%, transparent); }
-.authority-section { background: color-mix(in srgb, var(--co-status-warning-bg) 22%, transparent) !important; box-shadow: inset 2px 0 0 color-mix(in srgb, var(--co-viz-amber) 56%, transparent); }
+.inspector-tabs { position: sticky; z-index: 2; top: 62px; margin: 8px 10px 0; padding: 3px; border: 1px solid var(--co-border-default); border-radius: 9px; background: color-mix(in srgb, var(--co-bg-floating) 88%, transparent); backdrop-filter: blur(var(--co-glass-blur)); }
+.inspector-section { position: relative; padding: 14px 15px; border-bottom: 1px solid color-mix(in srgb, var(--co-border-default) 68%, transparent); }
+.authority-section { background: color-mix(in srgb, var(--co-status-warning-bg) 12%, transparent); }
 .inspector-section > header,
 .inspector-section > header > div,
 .citation-row > header,
@@ -796,34 +820,47 @@ onBeforeUnmount(() => {
 .inspector-section > header { min-height: 28px; justify-content: space-between; margin-bottom: 10px; }
 .inspector-section > header > div :deep(svg), .authority-record > header :deep(svg) { width: 14px; height: 14px; color: var(--co-viz-live); }
 .inspector-section h2 { margin: 0; color: var(--co-text-primary); font-size: 11px; font-weight: 760; letter-spacing: 0; text-transform: uppercase; }
-.context-drift { margin-bottom: var(--co-space-2); border-radius: 8px; }
 .attach-context { margin-bottom: var(--co-space-3); }
 
 .inspector-facts, .citation-row dl, .authority-facts { display: grid; gap: 5px; margin: 0; }
-.inspector-facts { padding: 9px 10px; border: 1px solid var(--co-border-default); border-radius: 9px; background: color-mix(in srgb, var(--co-bg-floating) 64%, transparent); }
+.inspector-facts { padding: 9px 0; }
 .inspector-facts div, .citation-row dl div, .authority-facts div { display: grid; min-width: 0; grid-template-columns: 88px minmax(0, 1fr); gap: var(--co-space-2); }
 .inspector-facts dt, .citation-row dt, .authority-facts dt { color: var(--co-text-muted); font-size: 8px; }
 .inspector-facts dd, .citation-row dd, .authority-facts dd { min-width: 0; margin: 0; color: var(--co-text-secondary); font-family: var(--co-font-mono); font-size: 8px; line-height: 1.45; overflow-wrap: anywhere; }
 .inspector-empty { display: flex; min-height: 58px; align-items: center; gap: 9px; padding: 13px 8px; color: var(--co-text-muted); font-size: 9px; line-height: 1.5; text-align: left; }
 .inspector-empty::before { width: 5px; height: 5px; flex: 0 0 5px; border-radius: 50%; background: var(--co-border-strong); box-shadow: 0 0 0 4px color-mix(in srgb, var(--co-border-default) 44%, transparent); content: ""; }
+.context-summary-facts { display: grid; gap: 0; margin: 0 0 12px; }
+.context-summary-facts > div { display: grid; min-width: 0; grid-template-columns: 82px minmax(0, 1fr); gap: 10px; padding: 8px 0; border-bottom: 1px solid color-mix(in srgb, var(--co-border-default) 62%, transparent); }
+.context-summary-facts dt { color: var(--co-text-muted); font-size: 9px; }
+.context-summary-facts dd { min-width: 0; margin: 0; color: var(--co-text-secondary); font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
+.context-summary-facts .context-primary-fact { grid-template-columns: 1fr; gap: 3px; padding-top: 2px; }
+.context-primary-fact dd { color: var(--co-text-primary); font-size: 12px; font-weight: 700; }
+.context-summary-facts dd.is-warning { color: var(--co-status-warning-fg); }
+.context-technical-details { margin-top: 4px; }
+.context-technical-details :deep(.workspace-technical-details-trigger) { min-height: 42px; }
+.context-technical-details :deep(.workspace-technical-details-trigger strong) { font-size: 10px; }
+.context-technical-details :deep(.workspace-technical-details-trigger small) { font-size: 8px; }
+.context-technical-details :deep(.workspace-technical-details-content) { padding-inline: 9px; }
+.context-technical-details :deep(.workspace-technical-details-content dl > div) { grid-template-columns: 92px minmax(0, 1fr) auto; gap: 6px; }
+.context-technical-details :deep(dt), .context-technical-details :deep(dd) { font-size: 8px; }
 
 .evidence-viewport { min-width: 0; }
 .evidence-viewport.is-virtualized { height: min(42vh, 360px); overflow-y: auto; overscroll-behavior: contain; }
-.evidence-list { position: relative; display: grid; min-width: 0; gap: 7px; }
-.citation-row { min-width: 0; padding: 10px; border: 1px solid var(--co-border-default); border-radius: 9px; background: var(--co-bg-floating); box-shadow: 0 8px 20px rgb(52 46 39 / 4%); }
+.evidence-list { position: relative; display: grid; min-width: 0; gap: 0; }
+.citation-row { min-width: 0; padding: 10px 0 12px; border-bottom: 1px solid var(--co-border-default); }
 .evidence-viewport.is-virtualized .citation-row { position: absolute; top: 0; left: 0; width: 100%; }
 .citation-row > header { justify-content: flex-start; }
 .citation-row > header strong { min-width: 0; overflow: hidden; color: var(--co-text-primary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .citation-row > header > :last-child { margin-left: auto; }
 .citation-row p, .guidance-row p, .authority-record > p, .knowledge-row p { margin: 8px 0; color: var(--co-text-secondary); font-size: 10px; line-height: 1.55; overflow-wrap: anywhere; }
 
-.guidance-row, .authority-record, .knowledge-row, .runbook-row { min-width: 0; margin-top: 7px; padding: 10px; border: 1px solid var(--co-border-default); border-radius: 9px; background: color-mix(in srgb, var(--co-bg-floating) 68%, transparent); }
+.guidance-row, .authority-record, .knowledge-row, .runbook-row { min-width: 0; margin-top: 0; padding: 10px 0 12px; border-bottom: 1px solid var(--co-border-default); }
 .guidance-row > header, .knowledge-row > header, .runbook-row > header { justify-content: space-between; }
 .guidance-row strong, .knowledge-row strong, .runbook-row strong, .authority-record strong { min-width: 0; overflow: hidden; color: var(--co-text-primary); font-size: 10px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
 .guidance-row code, .guidance-row time, .knowledge-row code, .knowledge-row time, .runbook-row code, .runbook-row small, .runbook-row time { display: block; max-width: 100%; margin-top: 3px; overflow: hidden; color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 
 .authority-levels { display: grid; gap: 5px; margin: 0 0 12px; padding: 0; list-style: none; }
-.authority-levels li { display: grid; min-height: 42px; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 5px 7px; border-radius: 8px; background: color-mix(in srgb, var(--co-bg-floating) 54%, transparent); }
+.authority-levels li { display: grid; min-height: 42px; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 5px 0; border-bottom: 1px solid color-mix(in srgb, var(--co-border-default) 62%, transparent); }
 .authority-levels li > span { display: grid; width: 30px; height: 30px; place-items: center; border: 1px solid var(--co-border-default); border-radius: 8px; color: var(--co-text-secondary); background: var(--co-bg-floating); }
 .authority-levels li:first-child > span { color: var(--co-status-success-fg); background: var(--co-viz-live-soft); }
 .authority-levels li:last-child > span { color: var(--co-status-warning-fg); background: var(--co-status-warning-bg); }
@@ -833,7 +870,7 @@ onBeforeUnmount(() => {
 .authority-levels small { color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 7px; }
 .authority-record > header { justify-content: flex-start; }
 .authority-record > header > :last-child { margin-left: auto; }
-.authority-record.high-impact { border-color: var(--co-status-warning-border); box-shadow: inset 3px 0 0 var(--co-viz-amber); }
+.authority-record.high-impact { padding-left: 9px; border-left: 2px solid var(--co-viz-amber); }
 .authority-record details { margin: var(--co-space-2) 0; }
 .authority-record summary { color: var(--co-action-primary); cursor: pointer; font-family: var(--co-font-mono); font-size: 8px; }
 .authority-record pre, .authority-modal-facts pre { max-height: 180px; margin: var(--co-space-2) 0 0; padding: var(--co-space-2); overflow: auto; border: 1px solid var(--co-border-default); border-radius: 8px; color: var(--co-code-text); background: var(--co-code-bg); font-size: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -841,8 +878,9 @@ onBeforeUnmount(() => {
 
 .agent-inspector-rail { display: grid; min-width: 0; min-height: 0; grid-template-rows: 42px 1fr; justify-items: center; padding-top: 5px; border-left: 1px solid var(--co-border-default); background: color-mix(in srgb, var(--co-bg-surface) 82%, var(--co-bg-floating)); }
 .agent-inspector-rail > span { align-self: start; margin-top: var(--co-space-2); color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 8px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; writing-mode: vertical-rl; }
-.is-compact .guidance-section, .is-compact .authority-section, .is-compact .knowledge-section, .is-compact .runbook-section { display: none; }
 .is-compact .inspector-section { padding: 12px; }
+.is-compact .context-summary-facts { margin-bottom: 8px; }
+.is-compact .context-technical-details { display: none; }
 .copy-status { position: sticky; bottom: var(--co-space-2); margin: 0 var(--co-space-2); pointer-events: none; color: var(--co-status-success-fg); font-size: 9px; text-align: right; }
 
 .authority-modal-content { display: grid; min-width: 0; gap: var(--co-space-4); }

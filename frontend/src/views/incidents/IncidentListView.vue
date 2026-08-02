@@ -103,15 +103,15 @@ onMounted(() => {
       heading-id="incident-list-title"
       eyebrow="CloudOps 运维平台"
       title="Incident"
-      description="按生命周期、运行范围、Attention 与恢复证明协调响应。"
+      description="按生命周期、运行范围、关注结论与恢复验证协调响应。"
     >
       <template #context>
         <div
           class="header-context-facts"
           aria-label="Incident 列表摘要"
         >
-          <span><strong>{{ items.length }}</strong> 已加载</span>
-          <span>最近刷新 {{ refreshLabel }}</span>
+          <span>当前页 {{ items.length }} 条</span>
+          <span>最近刷新：{{ refreshLabel }}</span>
         </div>
       </template>
       <template #actions>
@@ -138,17 +138,17 @@ onMounted(() => {
           <small>当前响应态势</small>
           <h2 id="incident-attention-heading">
             <template v-if="criticalCount">{{ criticalCount }} 条严重 Incident 需要优先判断</template>
-            <template v-else-if="attentionCount">{{ attentionCount }} 条 Incident 等待 Owner 关注</template>
+            <template v-else-if="attentionCount">{{ attentionCount }} 条 Incident 需要负责人关注</template>
             <template v-else>当前响应队列没有高风险阻塞</template>
           </h2>
-          <p>{{ activeCount }} 条仍在生命周期中，{{ recoveredCount }} 条已有恢复证明。</p>
+          <p>{{ activeCount }} 条仍在生命周期中，{{ recoveredCount }} 条已完成恢复验证。</p>
         </div>
       </div>
       <dl aria-label="Incident 工作队列摘要">
         <div><dt>严重</dt><dd class="is-critical">{{ criticalCount }}</dd><small>当前页</small></div>
         <div><dt>处理中</dt><dd>{{ activeCount }}</dd><small>未恢复</small></div>
         <div><dt>需要关注</dt><dd class="is-warning">{{ attentionCount }}</dd><small>待判断</small></div>
-        <div><dt>恢复已证明</dt><dd class="is-success">{{ recoveredCount }}</dd><small>可收敛</small></div>
+        <div><dt>恢复已验证</dt><dd class="is-success">{{ recoveredCount }}</dd><small>可收敛</small></div>
       </dl>
     </section>
 
@@ -173,7 +173,7 @@ onMounted(() => {
       <div class="results-heading">
         <span class="incident-queue-icon" aria-hidden="true"><UIcon name="i-lucide-list-checks" /></span>
         <div>
-          <small>Response queue</small>
+          <small>当前处置队列</small>
           <h2 id="incident-results-title">处置队列</h2>
           <p>选择一项查看当前结论、生命周期阻塞和下一步。</p>
         </div>
@@ -308,8 +308,7 @@ onMounted(() => {
 
 <style scoped>
 .incident-list-view { display: grid; min-width: 0; gap: var(--co-space-4); }
-.header-context-facts { display: flex; flex-wrap: wrap; gap: var(--co-space-3); color: var(--co-text-secondary); font-size: 11px; }
-.header-context-facts strong { color: var(--co-text-primary); font-family: var(--co-font-mono); font-size: 16px; }
+.header-context-facts { display: flex; flex-wrap: wrap; gap: var(--co-space-3); color: var(--co-text-muted); font-size: 10px; }
 .incident-attention { display: grid; min-width: 0; grid-template-columns: minmax(0, 1.15fr) minmax(420px, .85fr); align-items: center; gap: var(--co-space-5); padding-bottom: var(--co-space-3); border-bottom: 1px solid color-mix(in srgb, var(--co-status-critical-border) 28%, var(--co-border-subtle)); }
 .incident-attention__lead { display: flex; min-width: 0; align-items: center; gap: var(--co-space-3); }
 .incident-attention__lead > span { display: grid; width: 46px; height: 46px; flex: 0 0 auto; place-items: center; border-radius: var(--co-radius-panel); color: var(--co-status-critical-fg); background: var(--co-status-critical-bg); font-size: 19px; }

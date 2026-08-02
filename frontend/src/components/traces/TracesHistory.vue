@@ -78,10 +78,10 @@ function statusLabel(status: TraceSearch["status"]): string {
 </template>
 
 <style scoped>
-.traces-history { min-width: 0; }
+.traces-history { display: grid; min-width: 0; max-height: min(416px, calc(100dvh - 56px)); grid-template-rows: auto minmax(0, 1fr); overflow: hidden; }
 .traces-history > header { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: var(--co-space-2); }
 .traces-history h2 { margin: 0; font-size: 14px; }
-.traces-history__list { display: grid; max-height: min(60vh, 480px); overflow: auto; gap: var(--co-space-2); }
+.traces-history__list { display: grid; min-height: 0; max-height: min(340px, calc(100dvh - 116px)); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; gap: var(--co-space-2); padding-right: 4px; scrollbar-gutter: stable; }
 .traces-history__item { width: 100%; min-height: 66px; justify-content: stretch; border: 1px solid transparent; border-radius: var(--co-radius-frame); background: var(--co-bg-surface); box-shadow: var(--co-shadow-row); }
 .traces-history__item.is-active { border-color: var(--co-action-primary); box-shadow: var(--co-shadow-subtle); background: var(--co-bg-active); }
 .traces-history__copy { display: grid; width: 100%; min-width: 0; gap: 3px; text-align: left; }

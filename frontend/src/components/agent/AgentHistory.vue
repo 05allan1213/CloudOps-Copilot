@@ -18,7 +18,20 @@ function formatTime(value: string): string {
   return Number.isNaN(date.getTime()) ? "时间未知" : dateFormatter.format(date);
 }
 
-function statusColor(status: string): "success" | "info" | "warning" | "error" | "neutral" {
+function statusLabel(status: string): string {
+  return ({
+    open: "可继续",
+    pending: "准备中",
+    running: "调查中",
+    completed: "已完成",
+    diagnosed: "已定位根因",
+    insufficient: "证据不足",
+    failed: "失败",
+    cancelled: "已停止",
+  } as Record<string, string>)[status] || status;
+}
+
+function statusTone(status: string): "success" | "info" | "warning" | "error" | "neutral" {
   if (status === "completed" || status === "diagnosed" || status === "open") return "success";
   if (status === "running" || status === "pending") return "info";
   if (status === "insufficient") return "warning";
@@ -73,7 +86,7 @@ async function selectType(value: string | number) {
   >
     <header>
       <div>
-        <span class="section-kicker">History</span>
+        <span class="section-kicker">持久化记录</span>
         <h2 :id="headingID">
           Agent 记录
         </h2>
@@ -144,12 +157,10 @@ async function selectType(value: string | number) {
           </span>
           <span class="history-meta">
             <small>{{ formatTime(item.updated_at) }}</small>
-            <UBadge
-              :color="statusColor(item.active_run?.status || item.status)"
-              variant="subtle"
-              size="sm"
-              :label="item.active_run?.status || item.status"
-            />
+            <span
+              class="history-state"
+              :data-tone="statusTone(item.active_run?.outcome || item.active_run?.status || item.status)"
+            ><i aria-hidden="true" />{{ statusLabel(item.active_run?.outcome || item.active_run?.status || item.status) }}</span>
           </span>
         </UButton>
         <div
@@ -185,12 +196,10 @@ async function selectType(value: string | number) {
           </span>
           <span class="history-meta">
             <small>{{ formatTime(item.updated_at) }}</small>
-            <UBadge
-              :color="statusColor(item.outcome || item.status)"
-              variant="subtle"
-              size="sm"
-              :label="item.outcome || item.status"
-            />
+            <span
+              class="history-state"
+              :data-tone="statusTone(item.outcome || item.status)"
+            ><i aria-hidden="true" />{{ statusLabel(item.outcome || item.status) }}</span>
           </span>
         </UButton>
         <div
@@ -222,7 +231,7 @@ async function selectType(value: string | number) {
   display: flex;
   width: 100%;
   min-width: 0;
-  min-height: 70px;
+  min-height: 62px;
   align-items: center;
   justify-content: space-between;
   gap: var(--co-space-2);
@@ -235,20 +244,20 @@ async function selectType(value: string | number) {
 .section-kicker { color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 8px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
 .history-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 2px; }
 .history-actions :deep(button) { width: 30px; min-width: 30px; height: 30px; border-radius: 8px; }
-.history-tabs { margin: 9px 10px 8px; padding: 3px; border: 1px solid var(--co-border-default); border-radius: 10px; background: color-mix(in srgb, var(--co-bg-floating) 66%, transparent); }
-.history-list { min-height: 0; padding: 2px 8px 12px; overflow-y: auto; overscroll-behavior: contain; }
+.history-tabs { margin: 7px 9px 6px; padding: 3px; border: 1px solid var(--co-border-default); border-radius: 9px; background: color-mix(in srgb, var(--co-bg-floating) 54%, transparent); }
+.history-list { min-height: 0; padding: 2px 7px 12px; overflow-y: auto; overscroll-behavior: contain; }
 
 .history-item {
   position: relative;
   display: grid;
   width: 100%;
   min-width: 0;
-  min-height: 66px;
-  grid-template-columns: 30px minmax(0, 1fr) auto;
+  min-height: 58px;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
   align-items: center;
   gap: 9px;
   margin-bottom: 4px;
-  padding: 8px 8px;
+  padding: 7px 6px;
   border: 1px solid transparent;
   border-radius: 9px;
   color: var(--co-text-secondary);
@@ -258,15 +267,25 @@ async function selectType(value: string | number) {
 
 .history-item::before { position: absolute; top: 10px; bottom: 10px; left: -1px; width: 2px; border-radius: 999px; background: transparent; content: ""; }
 .history-item:hover { border-color: color-mix(in srgb, var(--co-border-strong) 72%, transparent); background: color-mix(in srgb, var(--co-bg-floating) 58%, transparent); transform: translateX(1px); }
-.history-item.active { border-color: var(--co-border-strong); color: var(--co-text-primary); background: var(--co-bg-floating); box-shadow: 0 8px 22px rgb(52 46 39 / 7%); }
+.history-item.active { border-color: transparent; color: var(--co-text-primary); background: color-mix(in srgb, var(--co-bg-floating) 82%, transparent); }
 .history-item.active::before { background: var(--co-viz-live); }
-.history-icon { display: grid; width: 30px; height: 30px; place-items: center; border: 1px solid var(--co-border-default); border-radius: 9px; color: var(--co-text-secondary); background: color-mix(in srgb, var(--co-bg-floating) 80%, transparent); }
-.history-item.active .history-icon { border-color: color-mix(in srgb, var(--co-viz-live) 35%, var(--co-border-default)); color: var(--co-status-success-fg); background: var(--co-viz-live-soft); }
-.history-icon :deep(svg) { width: 14px; height: 14px; }
+.history-icon { display: grid; width: 26px; height: 26px; place-items: center; border-radius: 8px; color: var(--co-text-muted); background: color-mix(in srgb, var(--co-bg-floating) 62%, transparent); }
+.history-item.active .history-icon { color: var(--co-status-success-fg); background: var(--co-viz-live-soft); }
+.history-icon :deep(svg) { width: 13px; height: 13px; }
 .history-copy, .history-meta { display: grid; min-width: 0; gap: 3px; }
 .history-copy strong { overflow: hidden; font-size: 11px; font-weight: 680; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 .history-copy small, .history-meta small { overflow: hidden; color: var(--co-text-muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .history-meta { justify-items: end; }
+.history-state { display: inline-flex; max-width: 86px; align-items: center; gap: 4px; overflow: hidden; color: var(--co-text-muted); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.history-state i { width: 5px; height: 5px; flex: 0 0 5px; border-radius: 50%; background: var(--co-border-strong); }
+.history-state[data-tone="success"] { color: var(--co-status-success-fg); }
+.history-state[data-tone="success"] i { background: var(--co-viz-live); }
+.history-state[data-tone="info"] { color: var(--co-status-info-fg); }
+.history-state[data-tone="info"] i { background: var(--co-status-info-fg); }
+.history-state[data-tone="warning"] { color: var(--co-status-warning-fg); }
+.history-state[data-tone="warning"] i { background: var(--co-viz-amber); }
+.history-state[data-tone="error"] { color: var(--co-status-critical-fg); }
+.history-state[data-tone="error"] i { background: var(--co-status-critical-fg); }
 .history-empty { display: grid; min-height: 230px; place-items: center; align-content: center; gap: 9px; color: var(--co-text-muted); font-size: 10px; text-align: center; }
 .history-empty :deep(svg) { width: 34px; height: 34px; padding: 8px; border: 1px solid var(--co-border-default); border-radius: 11px; color: var(--co-text-secondary); background: var(--co-bg-floating); box-shadow: 0 10px 24px rgb(52 46 39 / 7%); }
 .is-compact > header { min-height: 58px; }

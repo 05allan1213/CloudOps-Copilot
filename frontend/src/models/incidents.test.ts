@@ -88,6 +88,9 @@ describe("Incident presentation contract", () => {
     expect(loadStateForStatus(404)).toBe("not_found");
     expect(loadStateForStatus(503)).toBe("unavailable");
     expect(statusTone("approved")).toBe("success");
+    expect(statusTone("succeeded")).toBe("success");
+    expect(statusTone("expired")).toBe("warning");
+    expect(statusTone("verification_failed")).toBe("danger");
     expect(statusTone("inconclusive")).toBe("inconclusive");
     expect(statusTone("unavailable")).toBe("warning");
     expect(statusTone("partial")).toBe("warning");

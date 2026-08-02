@@ -66,12 +66,12 @@ export type StatusTone = "success" | "warning" | "danger" | "info" | "primary" |
 
 export function statusTone(value: string): StatusTone {
   const normalized = value.toLowerCase();
-  if (["resolved", "passed", "completed", "approved", "delivered", "valid", "available"].includes(normalized)) return "success";
-  if (["detected", "failed", "invalid", "rejected", "policy_rejected"].includes(normalized)) return "danger";
-  if (["awaiting_approval", "pending", "timed_out", "partial", "unavailable"].includes(normalized)) return "warning";
+  if (["resolved", "pass", "passed", "completed", "approved", "delivered", "valid", "available", "succeeded", "success", "synced", "healthy", "active"].includes(normalized)) return "success";
+  if (["detected", "fail", "failed", "invalid", "rejected", "policy_rejected", "precondition_failed", "verification_failed"].includes(normalized)) return "danger";
+  if (["awaiting_approval", "pending", "timed_out", "partial", "unavailable", "expired", "proposed", "warning"].includes(normalized)) return "warning";
   if (["inconclusive", "no_data"].includes(normalized)) return "inconclusive";
-  if (["investigating", "running", "delivering", "verifying"].includes(normalized)) return "primary";
-  if (["unknown", "cancelled", "superseded", "closed", "not_run", "not run"].includes(normalized)) return "neutral";
+  if (["investigating", "running", "delivering", "verifying", "ready", "authorized", "open", "observed"].includes(normalized)) return "primary";
+  if (["unknown", "cancelled", "superseded", "closed", "not_run", "not run", "not_authorized", "disabled", "not_configured"].includes(normalized)) return "neutral";
   return "primary";
 }
 

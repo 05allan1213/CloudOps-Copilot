@@ -10,11 +10,11 @@ import UInput from "@nuxt/ui/components/Input.vue";
 import UInputNumber from "@nuxt/ui/components/InputNumber.vue";
 import UModal from "@nuxt/ui/components/Modal.vue";
 import USelect from "@nuxt/ui/components/Select.vue";
+import USlideover from "@nuxt/ui/components/Slideover.vue";
 import USwitch from "@nuxt/ui/components/Switch.vue";
 import UTable from "@nuxt/ui/components/Table.vue";
 import UTextarea from "@nuxt/ui/components/Textarea.vue";
-import UTabs from "@nuxt/ui/components/Tabs.vue";
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch, type Component } from "vue";
 import { onBeforeRouteLeave, useRoute, useRouter } from "vue-router";
 
 import { isApiError } from "../../api/client";
@@ -37,9 +37,15 @@ import {
   type SettingsSnapshot,
   type StorageStatus,
 } from "../../api/platform";
-import RiskConfirmation from "../../components/workspace/RiskConfirmation.vue";
 import WorkspaceTechnicalDetails from "../../components/workspace/WorkspaceTechnicalDetails.vue";
-import type { RiskConfirmationFacts } from "../../components/workspace/workspacePresentation";
+import AlertmanagerProviderSettings from "../../components/settings/AlertmanagerProviderSettings.vue";
+import ArgoCDProviderSettings from "../../components/settings/ArgoCDProviderSettings.vue";
+import ElasticsearchProviderSettings from "../../components/settings/ElasticsearchProviderSettings.vue";
+import GitHubProviderSettings from "../../components/settings/GitHubProviderSettings.vue";
+import KubernetesProviderSettings from "../../components/settings/KubernetesProviderSettings.vue";
+import LLMProviderSettings from "../../components/settings/LLMProviderSettings.vue";
+import PrometheusProviderSettings from "../../components/settings/PrometheusProviderSettings.vue";
+import TempoProviderSettings from "../../components/settings/TempoProviderSettings.vue";
 import { OPERATIONAL_SCOPE_CHANGED_EVENT } from "../../utils/operationalScope";
 import SettingsSectionPanel from "./SettingsSectionPanel.vue";
 import {
@@ -88,13 +94,17 @@ interface RevisionRow {
   createdAt: string;
 }
 
-type SettingsMode = "simple" | "full";
 interface SettingsSectionLink {
   key: SettingsViewSection;
   label: string;
   hash: string;
   icon: string;
   description: string;
+}
+
+interface SettingsSectionGroup {
+  label: string;
+  items: SettingsSectionLink[];
 }
 
 type SettingsSearchResult = SettingsSearchEntry;
@@ -120,9 +130,21 @@ const applyConfirmationOpen = ref(false);
 const pendingApplySection = ref<SettingsSectionKey | null>(null);
 const leaveModalOpen = ref(false);
 const pendingRoute = ref("");
-const settingsMode = ref<SettingsMode>("simple");
+const advancedSettingsOpen = ref(false);
 const settingsSearch = ref("");
 const selectedProvider = ref<ProviderIdentity | null>(null);
+const providerEditorOpen = ref(false);
+const selectedScopeIndex = ref(0);
+const selectedPolicyIndex = ref(0);
+const settingsNavElement = ref<HTMLElement | null>(null);
+const settingsNavIndicatorStyle = ref<Record<string, string>>({ opacity: "0" });
+const providerSlideoverUI = {
+  overlay: "settings-provider-overlay",
+  content: "settings-provider-slideover",
+  header: "settings-provider-slideover__header",
+  body: "settings-provider-slideover__body",
+  footer: "settings-provider-slideover__footer",
+};
 let mounted = true;
 
 function emptyRuntime(): SectionRuntime {
@@ -152,6 +174,36 @@ const providerLabels: Record<ProviderIdentity | "mysql", string> = {
   argocd: "Argo CD",
   mysql: "MySQL",
 };
+const providerIcons: Record<ProviderIdentity, string> = {
+  llm: "i-lucide-sparkles",
+  kubernetes: "i-lucide-box",
+  prometheus: "i-lucide-chart-no-axes-combined",
+  alertmanager: "i-lucide-bell-ring",
+  elasticsearch: "i-lucide-file-search",
+  tempo: "i-lucide-git-branch",
+  github: "i-lucide-github",
+  argocd: "i-lucide-git-pull-request-arrow",
+};
+const providerDescriptions: Record<ProviderIdentity, string> = {
+  llm: "模型、Tool Calling 与结构化输出连接",
+  kubernetes: "集群资源读取与受控操作边界",
+  prometheus: "指标查询、Label 过滤与 Explore 跳转",
+  alertmanager: "告警读取、Silence 与 Receiver 上下文",
+  elasticsearch: "日志检索、结果边界与 Discover 跳转",
+  tempo: "Trace 搜索、链路读取与详情跳转",
+  github: "仓库、分支策略与 GitHub App 访问",
+  argocd: "Project、Application 与 Sync 权限",
+};
+const providerEditorComponents: Record<ProviderIdentity, Component> = {
+  llm: LLMProviderSettings,
+  kubernetes: KubernetesProviderSettings,
+  prometheus: PrometheusProviderSettings,
+  alertmanager: AlertmanagerProviderSettings,
+  elasticsearch: ElasticsearchProviderSettings,
+  tempo: TempoProviderSettings,
+  github: GitHubProviderSettings,
+  argocd: ArgoCDProviderSettings,
+};
 const providerOptions = (Object.keys(providerLabels) as Array<ProviderIdentity | "mysql">)
   .filter((provider): provider is ProviderIdentity => provider !== "mysql")
   .map((provider) => ({ label: providerLabels[provider], value: provider }));
@@ -165,9 +217,10 @@ const sectionLinks: SettingsSectionLink[] = [
   { key: "revisions", label: "Revision 历史", hash: "#revision-history", icon: "i-lucide-history", description: "只读版本与存储" },
 ];
 
-const modeTabs = [
-  { label: "简洁", value: "simple", icon: "i-lucide-layout-list" },
-  { label: "完整", value: "full", icon: "i-lucide-panels-top-left" },
+const sectionGroups: SettingsSectionGroup[] = [
+  { label: "边界与行为", items: sectionLinks.slice(0, 3) },
+  { label: "连接与凭据", items: sectionLinks.slice(3, 5) },
+  { label: "审计", items: sectionLinks.slice(5) },
 ];
 
 const activeRevision = computed(() => settings.value?.active_revision ?? null);
@@ -176,6 +229,12 @@ const scopesValue = computed(() => drafts.value?.scopes.value as ScopeSectionVal
 const policiesValue = computed(() => drafts.value?.policies.value as EscalationPolicy[] | undefined);
 const providersValue = computed(() => drafts.value?.providers.value as ProviderConfiguration[] | undefined);
 const secretReferencesValue = computed(() => drafts.value?.["secret-references"].value as SecretReference[] | undefined);
+const selectedScope = computed(() => (
+  scopesValue.value?.scopes[Math.min(selectedScopeIndex.value, Math.max(0, scopesValue.value.scopes.length - 1))]
+));
+const selectedPolicy = computed(() => (
+  policiesValue.value?.[Math.min(selectedPolicyIndex.value, Math.max(0, policiesValue.value.length - 1))]
+));
 const hasUnsavedChanges = computed(() => Boolean(
   drafts.value && settingsSectionKeys.some((key) => isSettingsSectionDirty(drafts.value![key])),
 ));
@@ -184,6 +243,9 @@ const dirtySectionCount = computed(() => (
 ));
 const activeSectionKey = computed<SettingsViewSection>(() => (
   resolveSettingsViewSection(route.hash)
+));
+const activeSectionLink = computed(() => (
+  sectionLinks.find((item) => item.key === activeSectionKey.value) ?? sectionLinks[0]
 ));
 const activeEditableSectionKey = computed<SettingsSectionKey | null>(() => (
   activeSectionKey.value === "revisions" ? null : activeSectionKey.value
@@ -226,11 +288,30 @@ const activeSectionCanApply = computed(() => Boolean(
   && activeSectionRuntime.value?.validation?.valid
   && !activeSectionValidationStale.value,
 ));
+const activeSectionIsDirty = computed(() => Boolean(
+  activeSectionDraft.value && isSettingsSectionDirty(activeSectionDraft.value),
+));
+const activeSectionStatus = computed(() => {
+  if (!activeSectionDraft.value || !activeSectionRuntime.value) return "";
+  if (activeSectionRuntime.value.applying) return "正在应用配置";
+  if (activeSectionRuntime.value.validating) return "正在验证配置";
+  if (activeSectionCanApply.value) return `验证通过 · ${activeSectionChanges.value.length} 项变更`;
+  if (activeSectionRuntime.value.validation && !activeSectionRuntime.value.validation.valid) return "验证未通过";
+  return `已修改 ${activeSectionChanges.value.length} 项`;
+});
 const providerHealthByID = computed(() => new Map(
   (settings.value?.provider_health ?? []).map((item) => [item.provider, item]),
 ));
-const selectedProviderConfiguration = computed(() => (
-  providersValue.value?.find((item) => item.provider === selectedProvider.value) ?? providersValue.value?.[0]
+const selectedProviderConfiguration = computed<ProviderConfiguration | undefined>({
+  get: () => providersValue.value?.find((item) => item.provider === selectedProvider.value) ?? providersValue.value?.[0],
+  set: (configuration) => {
+    if (!configuration || !providersValue.value) return;
+    const index = providersValue.value.findIndex((item) => item.provider === configuration.provider);
+    if (index >= 0) providersValue.value.splice(index, 1, configuration);
+  },
+});
+const selectedProviderEditor = computed(() => (
+  selectedProviderConfiguration.value ? providerEditorComponents[selectedProviderConfiguration.value.provider] : null
 ));
 const sectionErrorCounts = computed<Record<SettingsViewSection, number>>(() => {
   const counts = Object.fromEntries(sectionLinks.map((item) => [item.key, 0])) as Record<SettingsViewSection, number>;
@@ -252,12 +333,36 @@ const searchResults = computed<SettingsSearchResult[]>(() => {
   }
   const fields: SettingsSearchResult[] = [
     { key: "system", label: "最大回看时间", field: "system.query_max_lookback_seconds", text: "查询边界与时间窗口" },
+    { key: "system", label: "查询结果上限", field: "system.query_max_results", text: "单次查询返回条数" },
     { key: "system", label: "Telemetry 保留", field: "system.telemetry_retention_days", text: "数据保留天数" },
-    { key: "scopes", label: "Cluster identity", field: "scopes.0.cluster_id", text: "运行范围与集群" },
-    { key: "policies", label: "Severity", field: "policies.0.severities", text: "告警升级级别" },
-    { key: "providers", label: "Endpoint", field: "providers.llm.endpoint", text: "Provider 连接地址" },
-    { key: "secret-references", label: "Secret reference", field: "secret-references", text: "只读 Secret 元数据" },
+    { key: "system", label: "浏览器提醒", field: "system.browser_notifications_enabled", text: "Owner 浏览器通知权限" },
+    { key: "system", label: "自动 escalation", field: "system.automatic_escalation_enabled", text: "服务端升级行为" },
   ];
+
+  scopesValue.value?.scopes.forEach((scope, index) => fields.push({
+    key: "scopes",
+    label: scope.name || `Scope ${index + 1}`,
+    field: `scopes.${index}.name`,
+    text: `${scope.cluster_id || "未设置 Cluster"} · ${scope.environment || "未设置环境"}`,
+  }));
+  policiesValue.value?.forEach((policy, index) => fields.push({
+    key: "policies",
+    label: policy.name || `Policy ${index + 1}`,
+    field: `policies.${index}.name`,
+    text: `${policy.severities.join(", ") || "未选择 Severity"} · ${policy.enabled ? "已启用" : "已停用"}`,
+  }));
+  providersValue.value?.forEach((provider) => fields.push({
+    key: "providers",
+    label: providerLabels[provider.provider],
+    field: `providers.${provider.provider}.endpoint`,
+    text: `${provider.endpoint || "服务端默认 Endpoint"} · ${provider.enabled ? "已启用" : "已停用"}`,
+  }));
+  secretReferencesValue.value?.forEach((reference) => fields.push({
+    key: "secret-references",
+    label: `${providerLabels[reference.provider]} / ${reference.purpose}`,
+    field: "secret-references",
+    text: "Write-only Secret version reference",
+  }));
   return results.concat(filterSettingsSearchEntries(query, fields));
 });
 const providerTestConfiguration = computed(() => (
@@ -266,17 +371,6 @@ const providerTestConfiguration = computed(() => (
 const pendingApplyDraft = computed(() => (
   pendingApplySection.value && drafts.value ? drafts.value[pendingApplySection.value] : null
 ));
-const applyFacts = computed<RiskConfirmationFacts>(() => {
-  const section = pendingApplyDraft.value;
-  if (!section) return { target: "", effect: "", recovery: "" };
-  return {
-    target: `${settingsSectionLabel(section.key)}，base Revision #${section.baseRevisionNumber}`,
-    effect: "后端将基于该精确基线创建完整 Configuration Revision；Worker 与 Provider 逐项观测不构成原子成功。",
-    exactHash: section.baseRevisionHash,
-    recovery: "通过后续 Configuration Revision 恢复；历史 Revision 不会被原位改写。",
-  };
-});
-
 const revisionColumns: TableColumn<RevisionRow>[] = [
   { accessorKey: "revision", header: "Revision" },
   { accessorKey: "state", header: "状态" },
@@ -339,8 +433,49 @@ function formatBytes(value: number): string {
 }
 
 function selectSection(key: SettingsViewSection) {
+  providerEditorOpen.value = false;
+  advancedSettingsOpen.value = false;
   const link = sectionLinks.find((item) => item.key === key);
   if (link) void router.push({ path: "/settings", hash: link.hash });
+}
+
+async function updateSettingsNavIndicator() {
+  await nextTick();
+  const navigation = settingsNavElement.value;
+  const active = navigation?.querySelector<HTMLElement>(`[data-settings-section="${activeSectionKey.value}"]`);
+  if (!navigation || !active) {
+    settingsNavIndicatorStyle.value = { opacity: "0" };
+    return;
+  }
+  const navigationRect = navigation.getBoundingClientRect();
+  const activeRect = active.getBoundingClientRect();
+  settingsNavIndicatorStyle.value = {
+    height: `${activeRect.height}px`,
+    opacity: "1",
+    transform: `translate3d(0, ${activeRect.top - navigationRect.top}px, 0)`,
+  };
+}
+
+function openProviderEditor(provider: ProviderIdentity) {
+  selectedProvider.value = provider;
+  providerEditorOpen.value = true;
+}
+
+function closeProviderEditor(value: boolean) {
+  providerEditorOpen.value = value;
+}
+
+function updateSelectedProviderConfiguration(configuration: ProviderConfiguration) {
+  selectedProviderConfiguration.value = configuration;
+}
+
+function sectionInventory(key: SettingsViewSection): string {
+  if (key === "system") return "5 项独立设置";
+  if (key === "scopes") return `${scopesValue.value?.scopes.length ?? 0} 个 Cluster Scope`;
+  if (key === "policies") return `${policiesValue.value?.length ?? 0} 条 escalation policy`;
+  if (key === "providers") return `${providersValue.value?.length ?? 0} 个 Provider`;
+  if (key === "secret-references") return `${secretReferencesValue.value?.length ?? 0} 个 write-only reference`;
+  return `${revisionRows.value.length} 个只读 Revision`;
 }
 
 function jumpToSearchResult(result: SettingsSearchResult) {
@@ -356,8 +491,13 @@ function providerState(provider: ProviderIdentity): ProviderState {
   return providerHealthByID.value.get(provider)?.state ?? "not_configured";
 }
 
-function providerStateDetail(provider: ProviderIdentity): string {
-  return providerHealthByID.value.get(provider)?.detail ?? "尚未收到服务端健康投影";
+function providerSecretCount(provider: ProviderIdentity): number {
+  return secretReferencesValue.value?.filter((item) => item.provider === provider).length ?? 0;
+}
+
+function providerCheckedAt(provider: ProviderIdentity): string {
+  const checkedAt = providerHealthByID.value.get(provider)?.checked_at;
+  return checkedAt ? formatISO(checkedAt) : "尚未检查";
 }
 
 function secondsToHours(value: number): number {
@@ -368,12 +508,12 @@ function hoursToSeconds(value: unknown): number {
   return Math.max(60, Number(value || 1) * 3600);
 }
 
-function millisecondsToSeconds(value: number): number {
-  return Math.max(1, Math.round(value / 1000));
+function secondsToMinutes(value: number): number {
+  return Math.max(0, Math.round(value / 60));
 }
 
-function secondsToMilliseconds(value: unknown): number {
-  return Math.max(1000, Number(value || 1) * 1000);
+function minutesToSeconds(value: unknown): number {
+  return Math.max(0, Number(value || 0) * 60);
 }
 
 function describeError(reason: unknown, fallback: string): string {
@@ -391,6 +531,8 @@ function clearSectionRuntime(key: SettingsSectionKey, keepOutcome = false) {
 function initializeDrafts(revision: ConfigurationRevision) {
   drafts.value = createSettingsSectionDrafts(revision);
   selectedProvider.value = revision.providers[0]?.provider ?? null;
+  selectedScopeIndex.value = Math.max(0, (revision.scopes?.length ? revision.scopes : [revision.scope]).findIndex((scope) => scope.active));
+  selectedPolicyIndex.value = 0;
   for (const key of settingsSectionKeys) clearSectionRuntime(key);
   providerResults.value = {};
 }
@@ -625,6 +767,7 @@ function addScope() {
     namespaces: [...(current?.namespaces ?? [])],
     active: false,
   });
+  selectedScopeIndex.value = scopesValue.value.scopes.length - 1;
   void nextTick(() => focusField(`scopes.${scopesValue.value!.scopes.length - 1}.name`));
 }
 
@@ -635,6 +778,7 @@ function removeScope(index: number) {
   else if (scopesValue.value.defaultIndex === index) {
     scopesValue.value.defaultIndex = Math.min(index, scopesValue.value.scopes.length - 1);
   }
+  selectedScopeIndex.value = Math.min(selectedScopeIndex.value, scopesValue.value.scopes.length - 1);
 }
 
 function setDefaultScope(index: number, selected: boolean) {
@@ -658,11 +802,13 @@ function addPolicy() {
     minimum_recurrence_count: 1,
     create_incident: true,
   });
+  selectedPolicyIndex.value = policiesValue.value.length - 1;
   void nextTick(() => focusField(`policies.${policiesValue.value!.length - 1}.name`));
 }
 
 function removePolicy(index: number) {
   policiesValue.value?.splice(index, 1);
+  selectedPolicyIndex.value = Math.min(selectedPolicyIndex.value, Math.max(0, (policiesValue.value?.length ?? 1) - 1));
 }
 
 function togglePolicySeverity(index: number, severity: EscalationPolicy["severities"][number], selected: boolean) {
@@ -867,7 +1013,11 @@ onBeforeRouteLeave((to) => {
   return false;
 });
 
-watch(() => route.hash, (hash) => void focusRouteAnchor(hash));
+watch(() => route.hash, (hash) => {
+  void focusRouteAnchor(hash);
+  void updateSettingsNavIndicator();
+});
+watch([settings, drafts], () => void updateSettingsNavIndicator());
 watch(() => secretState.provider, (provider) => {
   secretState.purpose = provider === "llm" ? "api_key" : provider === "kubernetes" ? "credential" : "token";
   secretState.value = "";
@@ -876,7 +1026,9 @@ watch(() => secretState.provider, (provider) => {
 onMounted(() => {
   window.addEventListener("beforeunload", handleBeforeUnload);
   window.addEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT, handleOperationalScopeChanged);
+  window.addEventListener("resize", updateSettingsNavIndicator);
   void loadSettings(true);
+  void updateSettingsNavIndicator();
 });
 
 onBeforeUnmount(() => {
@@ -884,1044 +1036,1172 @@ onBeforeUnmount(() => {
   secretState.value = "";
   window.removeEventListener("beforeunload", handleBeforeUnload);
   window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT, handleOperationalScopeChanged);
+  window.removeEventListener("resize", updateSettingsNavIndicator);
 });
 </script>
 
 <template>
   <article
-    class="settings-view"
+    :class="['settings-view', { 'is-provider-editor-open': providerEditorOpen }]"
     aria-labelledby="settings-title"
   >
     <header class="settings-page-heading">
       <div class="settings-heading-copy">
         <p class="settings-eyebrow">
-          Configuration control
+          CloudOps configuration
         </p>
         <h1 id="settings-title">
-          设置中心
+          设置
         </h1>
-        <p>一次查看一个配置分区；本地草稿、校验和 Revision 结果始终保留。</p>
+        <p>管理运行边界、外部连接与配置版本。每次只处理一个清晰的设置任务。</p>
       </div>
       <div class="settings-page-actions">
         <UBadge
           :color="hasUnsavedChanges ? 'warning' : 'success'"
           variant="soft"
           :icon="hasUnsavedChanges ? 'i-lucide-pencil-line' : 'i-lucide-circle-check'"
-          :label="hasUnsavedChanges ? `${dirtySectionCount} 个 section 有本地修改` : '所有 section 与各自基线一致'"
+          :label="hasUnsavedChanges ? `${dirtySectionCount} 个分区有未保存修改` : activeRevision ? `Revision #${activeRevision.number} · 已生效` : '正在读取配置'"
         />
         <UButton
           color="neutral"
-          variant="outline"
+          variant="ghost"
           icon="i-lucide-refresh-cw"
-          label="刷新只读状态"
+          label="刷新"
           :loading="loading"
           @click="loadSettings(false)"
         />
       </div>
     </header>
 
-    <div class="settings-command-row">
-      <div class="settings-search-wrap">
-        <UInput
-          v-model="settingsSearch"
-          icon="i-lucide-search"
-          size="lg"
-          placeholder="搜索设置并跳转..."
-          aria-label="搜索设置"
-          class="settings-search"
-        />
-        <div
-          v-if="settingsSearch && searchResults.length"
-          class="settings-search-results"
-          role="listbox"
-          aria-label="设置搜索结果"
-        >
-          <button
-            v-for="result in searchResults"
-            :key="`${result.key}-${result.field ?? result.label}`"
-            type="button"
-            role="option"
-            @click="jumpToSearchResult(result)"
-          >
-            <span><strong>{{ result.label }}</strong><small>{{ result.text }}</small></span>
-            <UIcon
-              name="i-lucide-arrow-up-right"
-              aria-hidden="true"
-            />
-          </button>
-        </div>
-        <p
-          v-else-if="settingsSearch"
-          class="settings-search-empty"
-        >
-          没有匹配的设置项
-        </p>
-      </div>
-      <UTabs
-        v-model="settingsMode"
-        :items="modeTabs"
-        :content="false"
-        color="neutral"
-        variant="pill"
-        size="sm"
-        aria-label="设置显示模式"
-      />
-    </div>
-
     <div class="settings-workbench">
       <aside class="settings-navigation">
         <div class="settings-navigation__heading">
-          <span>配置分区</span>
-          <strong>Settings</strong>
+          <strong>设置导航</strong>
+          <span>{{ sectionLinks.length }} 项</span>
+        </div>
+        <div class="settings-search-wrap">
+          <UInput
+            v-model="settingsSearch"
+            icon="i-lucide-search"
+            placeholder="搜索设置"
+            aria-label="搜索设置"
+            class="settings-search"
+          />
+          <div
+            v-if="settingsSearch && searchResults.length"
+            class="settings-search-results"
+            role="listbox"
+            aria-label="设置搜索结果"
+          >
+            <button
+              v-for="result in searchResults"
+              :key="`${result.key}-${result.field ?? result.label}`"
+              type="button"
+              role="option"
+              @click="jumpToSearchResult(result)"
+            >
+              <span><strong>{{ result.label }}</strong><small>{{ result.text }}</small></span>
+              <UIcon
+                name="i-lucide-arrow-up-right"
+                aria-hidden="true"
+              />
+            </button>
+          </div>
+          <p
+            v-else-if="settingsSearch"
+            class="settings-search-empty"
+          >
+            没有匹配的设置项
+          </p>
         </div>
         <nav
+          ref="settingsNavElement"
           class="settings-section-nav"
           aria-label="Settings 分区"
         >
-          <button
-            v-for="item in sectionLinks"
-            :key="item.key"
-            type="button"
-            :class="['settings-section-link', { 'is-active': activeSectionKey === item.key }]"
-            :aria-current="activeSectionKey === item.key ? 'page' : undefined"
-            @click="selectSection(item.key)"
+          <span
+            class="settings-nav-indicator"
+            :style="settingsNavIndicatorStyle"
+            aria-hidden="true"
+          />
+          <div
+            v-for="group in sectionGroups"
+            :key="group.label"
+            class="settings-section-nav-group"
           >
-            <UIcon
-              :name="item.icon"
-              aria-hidden="true"
-            />
-            <span><strong>{{ item.label }}</strong><small>{{ item.description }}</small></span>
-            <UBadge
-              v-if="sectionErrorCounts[item.key]"
-              color="error"
-              variant="soft"
-              :label="String(sectionErrorCounts[item.key])"
-            />
-          </button>
+            <span class="settings-section-nav-group__label">{{ group.label }}</span>
+            <button
+              v-for="item in group.items"
+              :key="item.key"
+              type="button"
+              :data-settings-section="item.key"
+              :class="['settings-section-link', { 'is-active': activeSectionKey === item.key }]"
+              :aria-current="activeSectionKey === item.key ? 'page' : undefined"
+              @click="selectSection(item.key)"
+            >
+              <UIcon
+                :name="item.icon"
+                aria-hidden="true"
+              />
+              <span><strong>{{ item.label }}</strong><small>{{ sectionInventory(item.key) }}</small></span>
+              <UBadge
+                v-if="sectionErrorCounts[item.key]"
+                color="error"
+                variant="soft"
+                :label="String(sectionErrorCounts[item.key])"
+              />
+            </button>
+          </div>
         </nav>
         <div
           v-if="activeRevision"
           class="settings-navigation__baseline"
         >
-          <span>活动基线</span>
-          <strong>Revision #{{ activeRevision.number }}</strong>
-          <small>{{ activationLabel(activeRevision.worker_boundary?.status) }}</small>
+          <span
+            class="settings-baseline-dot"
+            aria-hidden="true"
+          />
+          <div>
+            <strong>Revision #{{ activeRevision.number }}</strong>
+            <small>{{ activationLabel(activeRevision.worker_boundary?.status) }}</small>
+          </div>
         </div>
       </aside>
 
       <main class="settings-current">
-
-    <UAlert
-      v-if="loadError"
-      color="error"
-      variant="soft"
-      icon="i-lucide-circle-x"
-      title="Settings 无法读取"
-      :description="loadError"
-    >
-      <template #actions>
-        <UButton
+        <UAlert
+          v-if="loadError"
           color="error"
-          variant="outline"
-          icon="i-lucide-refresh-cw"
-          label="重试读取"
-          @click="loadSettings(false)"
+          variant="soft"
+          icon="i-lucide-circle-x"
+          title="Settings 无法读取"
+          :description="loadError"
+        >
+          <template #actions>
+            <UButton
+              color="error"
+              variant="outline"
+              icon="i-lucide-refresh-cw"
+              label="重试读取"
+              @click="loadSettings(false)"
+            />
+          </template>
+        </UAlert>
+        <UAlert
+          v-else-if="loading && !settings"
+          color="neutral"
+          variant="soft"
+          icon="i-lucide-loader-circle"
+          title="正在读取 Settings"
+          description="读取活动 Revision、Provider health、storage 与 bootstrap diagnostics。"
         />
-      </template>
-    </UAlert>
-    <UAlert
-      v-else-if="loading && !settings"
-      color="neutral"
-      variant="soft"
-      icon="i-lucide-loader-circle"
-      title="正在读取 Settings"
-      description="读取活动 Revision、Provider health、storage 与 bootstrap diagnostics。"
-    />
-    <UAlert
-      v-if="refreshMessage"
-      color="info"
-      variant="soft"
-      icon="i-lucide-info"
-      title="本地状态已更新"
-      :description="refreshMessage"
-      :close="true"
-      @update:open="refreshMessage = ''"
-    />
-
-    <template v-if="settings && drafts && activeRevision">
-      <section
-        class="active-revision-band"
-        aria-labelledby="active-revision-heading"
-      >
-        <div>
-          <p class="settings-eyebrow">
-            Active configuration
-          </p>
-          <h2 id="active-revision-heading">
-            Revision #{{ activeRevision.number }}
-          </h2>
-          <p>{{ activeRevision.summary }}</p>
-        </div>
-        <div class="active-revision-summary">
-          <UBadge
-            color="success"
-            variant="soft"
-            icon="i-lucide-check-circle-2"
-            label="当前生效"
-          />
-          <span>{{ formatISO(activeRevision.created_at) }}</span>
-          <span>{{ activationLabel(activeRevision.worker_boundary?.status) }}</span>
-          <UButton
-            color="neutral"
-            variant="ghost"
-            icon="i-lucide-braces"
-            label="技术详情"
-            @click="settingsMode = 'full'"
-          />
-        </div>
-        <WorkspaceTechnicalDetails
-          v-if="settingsMode === 'full'"
-          :fields="[
-            { label: 'Revision ID', value: activeRevision.id, code: true, copyValue: activeRevision.id },
-            { label: 'Exact hash', value: activeRevision.hash, code: true, copyValue: activeRevision.hash },
-            { label: 'Created at (UTC)', value: formatISO(activeRevision.created_at), code: true },
-            { label: 'Worker boundary', value: activationLabel(activeRevision.worker_boundary?.status) },
-          ]"
+        <UAlert
+          v-if="refreshMessage"
+          color="info"
+          variant="soft"
+          icon="i-lucide-info"
+          title="本地状态已更新"
+          :description="refreshMessage"
+          :close="true"
+          @update:open="refreshMessage = ''"
         />
-      </section>
 
-      <UForm
-        v-if="activeSectionKey === 'system' && systemValue"
-        id="settings-form-system"
-        :state="drafts.system"
-        :validate="() => sectionFormErrors('system')"
-        :validate-on="['blur', 'change']"
-        @submit="validateSection('system')"
-        @error="focusFirstError($event.errors)"
-      >
-        <SettingsSectionPanel
-          external-actions
-          anchor="system"
-          title="查询、保留与通知"
-          eyebrow="System boundaries"
-          description="控制查询边界、Telemetry 保留和 Owner 浏览器行为。每项 apply 仍创建完整 Revision。"
-          form-id="settings-form-system"
-          :section="drafts.system"
-          :active-revision="activeRevision"
-          :validation="runtimes.system.validation"
-          :validated-fingerprint="runtimes.system.validatedFingerprint"
-          :validating="runtimes.system.validating"
-          :applying="runtimes.system.applying"
-          :error="runtimes.system.error"
-          :outcome="runtimes.system.outcome"
-          @update-summary="setSectionSummary('system', $event)"
-          @reset="resetSection('system')"
-          @rebase="rebaseSection('system', $event)"
-          @apply="requestApply('system')"
-          @refresh-outcome="refreshApplyOutcome('system')"
-        >
-          <div class="settings-form-grid settings-form-grid--three">
-            <UFormField
-              label="最大回看时间（小时）"
-              name="system.query_max_lookback_seconds"
-              :data-field="'system.query_max_lookback_seconds'"
-            >
-              <UInputNumber
-                :model-value="secondsToHours(systemValue.query_max_lookback_seconds)"
-                :min="1"
-                :max="720"
-                :step="1"
-                class="settings-control"
-                @update:model-value="systemValue.query_max_lookback_seconds = hoursToSeconds($event)"
-              />
-            </UFormField>
-            <UFormField
-              label="查询结果上限"
-              name="system.query_max_results"
-              :data-field="'system.query_max_results'"
-            >
-              <UInputNumber
-                v-model="systemValue.query_max_results"
-                :min="1"
-                :max="10000"
-                :step="10"
-                class="settings-control"
-              />
-            </UFormField>
-            <UFormField
-              label="Telemetry 保留天数"
-              name="system.telemetry_retention_days"
-              :data-field="'system.telemetry_retention_days'"
-            >
-              <UInputNumber
-                v-model="systemValue.telemetry_retention_days"
-                :min="1"
-                :max="365"
-                class="settings-control"
-              />
-            </UFormField>
-          </div>
-          <div class="settings-toggle-grid">
-            <USwitch
-              v-model="systemValue.browser_notifications_enabled"
-              label="浏览器提醒"
-              description="启用时由浏览器单独请求 Notification 权限。"
-              @change="handleBrowserNotificationToggle"
-            />
-            <USwitch
-              v-model="systemValue.automatic_escalation_enabled"
-              label="自动 escalation"
-              description="仍受活动 Escalation Policy 和服务端边界约束。"
-            />
-          </div>
-        </SettingsSectionPanel>
-      </UForm>
-
-      <UForm
-        v-if="activeSectionKey === 'scopes' && scopesValue"
-        id="settings-form-scopes"
-        :state="drafts.scopes"
-        :validate="() => sectionFormErrors('scopes')"
-        :validate-on="['blur', 'change']"
-        @submit="validateSection('scopes')"
-        @error="focusFirstError($event.errors)"
-      >
-        <SettingsSectionPanel
-          external-actions
-          anchor="operational-scope"
-          title="Operational Scope"
-          eyebrow="Cluster boundaries"
-          description="维护 Revision 内的 Cluster Scope 和默认 Scope；不会在编辑时激活真实集群。"
-          form-id="settings-form-scopes"
-          :section="drafts.scopes"
-          :active-revision="activeRevision"
-          :validation="runtimes.scopes.validation"
-          :validated-fingerprint="runtimes.scopes.validatedFingerprint"
-          :validating="runtimes.scopes.validating"
-          :applying="runtimes.scopes.applying"
-          :error="runtimes.scopes.error"
-          :outcome="runtimes.scopes.outcome"
-          @update-summary="setSectionSummary('scopes', $event)"
-          @reset="resetSection('scopes')"
-          @rebase="rebaseSection('scopes', $event)"
-          @apply="requestApply('scopes')"
-          @refresh-outcome="refreshApplyOutcome('scopes')"
-        >
-          <div class="settings-list-heading">
-            <span>{{ scopesValue.scopes.length }} / 10 scopes</span>
-            <UButton
-              color="neutral"
-              variant="outline"
-              icon="i-lucide-plus"
-              label="添加 Scope"
-              :disabled="scopesValue.scopes.length >= 10"
-              @click="addScope"
-            />
-          </div>
-          <div class="settings-repeated-list">
-            <article
-              v-for="(scope, index) in scopesValue.scopes.slice(0, settingsMode === 'simple' ? 1 : undefined)"
-              :key="scope.id || `scope-${index}`"
-              class="settings-item"
-            >
-              <header>
-                <UCheckbox
-                  :model-value="scopesValue.defaultIndex === index"
-                  label="Revision 默认 Scope"
-                  @update:model-value="setDefaultScope(index, Boolean($event))"
-                />
-                <UBadge
-                  v-if="scope.active"
-                  color="success"
-                  variant="soft"
-                  label="当前活动"
-                />
-                <UButton
-                  color="error"
-                  variant="ghost"
-                  icon="i-lucide-trash-2"
-                  square
-                  :aria-label="`从本地草稿移除 Scope ${scope.name || index + 1}`"
-                  :disabled="scopesValue.scopes.length <= 1"
-                  @click="removeScope(index)"
-                />
-              </header>
-              <div class="settings-form-grid">
-                <UFormField
-                  label="名称"
-                  :name="`scopes.${index}.name`"
-                  :data-field="`scopes.${index}.name`"
-                >
-                  <UInput
-                    v-model="scope.name"
-                    class="settings-control"
-                    autocomplete="off"
-                  />
-                </UFormField>
-                <UFormField
-                  label="Cluster identity"
-                  :name="`scopes.${index}.cluster_id`"
-                  :data-field="`scopes.${index}.cluster_id`"
-                >
-                  <UInput
-                    v-model="scope.cluster_id"
-                    class="settings-control"
-                    autocomplete="off"
-                    spellcheck="false"
-                  />
-                </UFormField>
-                <UFormField
-                  label="Environment"
-                  :name="`scopes.${index}.environment`"
-                  :data-field="`scopes.${index}.environment`"
-                >
-                  <UInput
-                    v-model="scope.environment"
-                    class="settings-control"
-                    autocomplete="off"
-                  />
-                </UFormField>
-                <UFormField
-                  label="Namespaces"
-                  :name="`scopes.${index}.namespaces`"
-                  :data-field="`scopes.${index}.namespaces`"
-                  help="逗号分隔。"
-                >
-                  <UInput
-                    :model-value="scope.namespaces.join(', ')"
-                    class="settings-control"
-                    autocomplete="off"
-                    spellcheck="false"
-                    @update:model-value="setScopeNamespaces(index, String($event))"
-                  />
-                </UFormField>
-              </div>
-            </article>
-          </div>
-        </SettingsSectionPanel>
-      </UForm>
-
-      <UForm
-        v-if="activeSectionKey === 'policies' && policiesValue"
-        id="settings-form-policies"
-        :state="drafts.policies"
-        :validate="() => sectionFormErrors('policies')"
-        :validate-on="['blur', 'change']"
-        @submit="validateSection('policies')"
-        @error="focusFirstError($event.errors)"
-      >
-        <SettingsSectionPanel
-          external-actions
-          anchor="escalation-policies"
-          title="Escalation Policies"
-          eyebrow="Alert escalation"
-          description="定义哪些服务端告警条件可以创建 Incident；create_incident 始终保持真实契约值。"
-          form-id="settings-form-policies"
-          :section="drafts.policies"
-          :active-revision="activeRevision"
-          :validation="runtimes.policies.validation"
-          :validated-fingerprint="runtimes.policies.validatedFingerprint"
-          :validating="runtimes.policies.validating"
-          :applying="runtimes.policies.applying"
-          :error="runtimes.policies.error"
-          :outcome="runtimes.policies.outcome"
-          @update-summary="setSectionSummary('policies', $event)"
-          @reset="resetSection('policies')"
-          @rebase="rebaseSection('policies', $event)"
-          @apply="requestApply('policies')"
-          @refresh-outcome="refreshApplyOutcome('policies')"
-        >
-          <div class="settings-list-heading">
-            <span>{{ policiesValue.length }} / 50 policies</span>
-            <UButton
-              color="neutral"
-              variant="outline"
-              icon="i-lucide-plus"
-              label="添加 Policy"
-              :disabled="policiesValue.length >= 50"
-              @click="addPolicy"
-            />
-          </div>
-          <UAlert
-            v-if="policiesValue.length === 0"
-            color="neutral"
-            variant="soft"
-            icon="i-lucide-list-x"
-            title="当前 Revision 没有 Escalation Policy"
-            description="自动 escalation 不会因为前端空状态而被推断为开启。"
-          />
-          <div
-            v-else
-            class="settings-repeated-list"
-          >
-            <article
-              v-for="(policy, index) in policiesValue.slice(0, settingsMode === 'simple' ? 3 : undefined)"
-              :key="policy.id || `policy-${index}`"
-              class="settings-item"
-            >
-              <header>
-                <USwitch
-                  v-model="policy.enabled"
-                  :label="policy.enabled ? '已启用' : '已停用'"
-                />
-                <UBadge
-                  color="info"
-                  variant="soft"
-                  label="创建 Incident"
-                />
-                <UButton
-                  color="error"
-                  variant="ghost"
-                  icon="i-lucide-trash-2"
-                  square
-                  :aria-label="`从本地草稿移除 Policy ${policy.name || index + 1}`"
-                  @click="removePolicy(index)"
-                />
-              </header>
-              <div class="settings-form-grid">
-                <UFormField
-                  class="settings-span-two"
-                  label="Policy 名称"
-                  :name="`policies.${index}.name`"
-                  :data-field="`policies.${index}.name`"
-                >
-                  <UInput
-                    v-model="policy.name"
-                    class="settings-control"
-                    autocomplete="off"
-                  />
-                </UFormField>
-                <UFormField
-                  class="settings-span-two"
-                  label="Severity"
-                  :name="`policies.${index}.severities`"
-                  :data-field="`policies.${index}.severities`"
-                >
-                  <div class="settings-checkbox-row">
-                    <UCheckbox
-                      v-for="severity in severityOptions"
-                      :key="severity"
-                      :model-value="policy.severities.includes(severity)"
-                      :label="severity"
-                      @update:model-value="togglePolicySeverity(index, severity, Boolean($event))"
-                    />
-                  </div>
-                </UFormField>
-                <UFormField
-                  label="持续 firing（秒）"
-                  :name="`policies.${index}.minimum_firing_seconds`"
-                  :data-field="`policies.${index}.minimum_firing_seconds`"
-                >
-                  <UInputNumber
-                    v-model="policy.minimum_firing_seconds"
-                    :min="0"
-                    :max="604800"
-                    class="settings-control"
-                  />
-                </UFormField>
-                <UFormField
-                  label="最小复发次数"
-                  :name="`policies.${index}.minimum_recurrence_count`"
-                  :data-field="`policies.${index}.minimum_recurrence_count`"
-                >
-                  <UInputNumber
-                    v-model="policy.minimum_recurrence_count"
-                    :min="1"
-                    :max="100"
-                    class="settings-control"
-                  />
-                </UFormField>
-                <UFormField
-                  class="settings-span-two"
-                  label="Namespaces"
-                  :name="`policies.${index}.namespaces`"
-                  :data-field="`policies.${index}.namespaces`"
-                  help="逗号分隔；留空表示不限。"
-                >
-                  <UInput
-                    :model-value="policy.namespaces.join(', ')"
-                    class="settings-control"
-                    autocomplete="off"
-                    spellcheck="false"
-                    @update:model-value="setPolicyNamespaces(index, String($event))"
-                  />
-                </UFormField>
-                <UFormField
-                  class="settings-span-two"
-                  label="Exact label matchers"
-                  :name="`policies.${index}.label_matchers`"
-                  :data-field="`policies.${index}.label_matchers`"
-                  help="每行 name=value。"
-                >
-                  <UTextarea
-                    :model-value="policyMatchersText(policy)"
-                    :rows="3"
-                    class="settings-control"
-                    spellcheck="false"
-                    @update:model-value="setPolicyMatchers(index, String($event))"
-                  />
-                </UFormField>
-              </div>
-            </article>
-          </div>
-        </SettingsSectionPanel>
-      </UForm>
-
-      <UForm
-        v-if="activeSectionKey === 'providers' && providersValue"
-        id="settings-form-providers"
-        :state="drafts.providers"
-        :validate="() => sectionFormErrors('providers')"
-        :validate-on="['blur', 'change']"
-        @submit="validateSection('providers')"
-        @error="focusFirstError($event.errors)"
-      >
-        <SettingsSectionPanel
-          external-actions
-          anchor="providers"
-          title="Provider 配置"
-          eyebrow="External connections"
-          description="编辑 endpoint、模型和查询边界。Provider test 是独立请求，不代表配置已 apply。"
-          form-id="settings-form-providers"
-          :section="drafts.providers"
-          :active-revision="activeRevision"
-          :validation="runtimes.providers.validation"
-          :validated-fingerprint="runtimes.providers.validatedFingerprint"
-          :validating="runtimes.providers.validating"
-          :applying="runtimes.providers.applying"
-          :error="runtimes.providers.error"
-          :outcome="runtimes.providers.outcome"
-          @update-summary="setSectionSummary('providers', $event)"
-          @reset="resetSection('providers')"
-          @rebase="rebaseSection('providers', $event)"
-          @apply="requestApply('providers')"
-          @refresh-outcome="refreshApplyOutcome('providers')"
-        >
-          <UAlert
-            v-if="providersValue.length === 0"
-            color="neutral"
-            variant="soft"
-            icon="i-lucide-plug"
-            title="当前 Revision 没有 Provider 配置"
-            description="页面只展示服务端返回的 Provider 连接事实。"
-          />
-          <div
-            v-else
-            class="settings-provider-workbench"
-          >
-            <div
-              class="provider-summary-list"
-              role="list"
-              aria-label="Provider 连接摘要"
-            >
-              <article
-                v-for="provider in providersValue"
-                :key="provider.provider"
-                :class="['provider-summary-row', { 'is-selected': selectedProviderConfiguration?.provider === provider.provider }]"
-                role="listitem"
-                tabindex="0"
-                @click="selectedProvider = provider.provider"
-                @keydown.enter.prevent="selectedProvider = provider.provider"
-              >
-                <header>
-                  <div class="provider-summary-name">
-                    <span
-                      class="provider-state-dot"
-                      :data-state="providerState(provider.provider)"
-                    /><strong>{{ providerLabels[provider.provider] }}</strong><code>{{ provider.provider }}</code>
-                  </div>
-                  <UBadge
-                    :color="stateColor(providerState(provider.provider))"
-                    variant="soft"
-                    :label="stateLabel(providerState(provider.provider))"
-                  />
-                </header>
-                <p>{{ providerStateDetail(provider.provider) }}</p>
-                <small>{{ provider.enabled ? '配置已启用' : '配置已停用' }} · {{ provider.endpoint || '服务端默认 Endpoint' }}</small>
-              </article>
-            </div>
-            <article
-              v-if="selectedProviderConfiguration"
-              class="provider-detail-panel"
-            >
-              <header class="provider-detail-header">
-                <div>
-                  <p class="settings-eyebrow">
-                    Provider detail
-                  </p>
-                  <h3>{{ providerLabels[selectedProviderConfiguration.provider] }}</h3>
-                  <p>{{ providerStateDetail(selectedProviderConfiguration.provider) }}</p>
-                </div>
-                <USwitch
-                  v-model="selectedProviderConfiguration.enabled"
-                  :label="selectedProviderConfiguration.enabled ? '已启用' : '已停用'"
-                />
-              </header>
-              <div class="settings-form-grid">
-                <UFormField
-                  class="settings-span-two"
-                  label="Endpoint"
-                  :name="`providers.${selectedProviderConfiguration.provider}.endpoint`"
-                  :data-field="`providers.${selectedProviderConfiguration.provider}.endpoint`"
-                >
-                  <UInput
-                    v-model="selectedProviderConfiguration.endpoint"
-                    type="url"
-                    class="settings-control"
-                    autocomplete="off"
-                    spellcheck="false"
-                  />
-                </UFormField>
-                <UFormField
-                  v-if="selectedProviderConfiguration.provider === 'llm'"
-                  class="settings-span-two"
-                  label="Model"
-                  name="providers.llm.model"
-                  data-field="providers.llm.model"
-                >
-                  <UInput
-                    v-model="selectedProviderConfiguration.model"
-                    class="settings-control"
-                    autocomplete="off"
-                    spellcheck="false"
-                  />
-                </UFormField>
-                <UFormField
-                  label="Timeout（秒）"
-                  :name="`providers.${selectedProviderConfiguration.provider}.timeout_ms`"
-                  :data-field="`providers.${selectedProviderConfiguration.provider}.timeout_ms`"
-                >
-                  <UInputNumber
-                    :model-value="millisecondsToSeconds(selectedProviderConfiguration.timeout_ms)"
-                    :min="1"
-                    :max="60"
-                    :step="1"
-                    class="settings-control"
-                    @update:model-value="selectedProviderConfiguration.timeout_ms = secondsToMilliseconds($event)"
-                  />
-                </UFormField>
-                <UFormField
-                  label="结果上限"
-                  :name="`providers.${selectedProviderConfiguration.provider}.max_results`"
-                  :data-field="`providers.${selectedProviderConfiguration.provider}.max_results`"
-                >
-                  <UInputNumber
-                    v-model="selectedProviderConfiguration.max_results"
-                    :min="1"
-                    :max="10000"
-                    :step="10"
-                    class="settings-control"
-                  />
-                </UFormField>
-                <UFormField
-                  class="settings-span-two"
-                  label="Context Link base"
-                  :name="`providers.${selectedProviderConfiguration.provider}.context_link_base`"
-                  :data-field="`providers.${selectedProviderConfiguration.provider}.context_link_base`"
-                >
-                  <UInput
-                    v-model="selectedProviderConfiguration.context_link_base"
-                    type="url"
-                    class="settings-control"
-                    autocomplete="off"
-                    spellcheck="false"
-                  />
-                </UFormField>
-              </div>
-              <footer class="provider-item-footer">
-                <div
-                  v-if="providerResults[selectedProviderConfiguration.provider]"
-                  class="provider-result"
-                >
-                  <UBadge
-                    :color="stateColor(providerResults[selectedProviderConfiguration.provider]!.state)"
-                    variant="soft"
-                    :label="stateLabel(providerResults[selectedProviderConfiguration.provider]!.state)"
-                  />
-                  <span>{{ providerResults[selectedProviderConfiguration.provider]!.detail }}</span>
-                </div>
-                <span
-                  v-else
-                  class="provider-result-empty"
-                >尚未测试当前本地 Provider 草稿</span>
-                <UButton
-                  color="neutral"
-                  variant="outline"
-                  icon="i-lucide-flask-conical"
-                  label="审阅 Provider test"
-                  @click="openProviderTest(selectedProviderConfiguration.provider)"
-                />
-              </footer>
-            </article>
-          </div>
-        </SettingsSectionPanel>
-      </UForm>
-
-      <UForm
-        v-if="activeSectionKey === 'secret-references' && secretReferencesValue"
-        id="settings-form-secret-references"
-        :state="drafts['secret-references']"
-        :validate="() => sectionFormErrors('secret-references')"
-        :validate-on="['blur', 'change']"
-        @submit="validateSection('secret-references')"
-        @error="focusFirstError($event.errors)"
-      >
-        <SettingsSectionPanel
-          external-actions
-          anchor="secret-references"
-          title="Secret references"
-          eyebrow="Write-only values"
-          description="页面只持有 Secret version reference 与 fingerprint；Secret value 不进入草稿、状态或历史。"
-          form-id="settings-form-secret-references"
-          :section="drafts['secret-references']"
-          :active-revision="activeRevision"
-          :validation="runtimes['secret-references'].validation"
-          :validated-fingerprint="runtimes['secret-references'].validatedFingerprint"
-          :validating="runtimes['secret-references'].validating"
-          :applying="runtimes['secret-references'].applying"
-          :error="runtimes['secret-references'].error"
-          :outcome="runtimes['secret-references'].outcome"
-          @update-summary="setSectionSummary('secret-references', $event)"
-          @reset="resetSection('secret-references')"
-          @rebase="rebaseSection('secret-references', $event)"
-          @apply="requestApply('secret-references')"
-          @refresh-outcome="refreshApplyOutcome('secret-references')"
-        >
-          <div class="settings-list-heading">
-            <span>{{ secretReferencesValue.length }} references</span>
-            <UButton
-              color="warning"
-              variant="outline"
-              icon="i-lucide-key-round"
-              label="创建 Secret version"
-              @click="openSecretModal"
-            />
-          </div>
-          <UAlert
-            v-if="secretReferencesValue.length === 0"
-            color="neutral"
-            variant="soft"
-            icon="i-lucide-key-square"
-            title="当前 Revision 没有 Secret reference"
-            description="Secret 值不会因为空状态而显示或回填。"
-          />
-          <ul
-            v-else
-            class="secret-reference-list"
-            data-field="secret-references"
-          >
-            <li
-              v-for="(reference, index) in secretReferencesValue"
-              :key="`${reference.provider}-${reference.purpose}`"
-            >
-              <div><strong>{{ providerLabels[reference.provider] }} / {{ reference.purpose }}</strong><span>{{ reference.state || 'configured' }}</span></div>
-              <code>{{ reference.fingerprint || reference.secret_version_id }}</code>
-              <UButton
-                color="error"
-                variant="ghost"
-                icon="i-lucide-trash-2"
-                square
-                :aria-label="`从本地草稿移除 ${reference.provider}/${reference.purpose} reference`"
-                @click="removeSecretReference(index)"
-              />
-            </li>
-          </ul>
-        </SettingsSectionPanel>
-      </UForm>
-
-      <section
-        v-if="activeSectionKey === 'revisions'"
-        id="revision-history"
-        class="settings-readonly-section"
-        aria-labelledby="revision-history-heading"
-        tabindex="-1"
-      >
-        <header>
-          <div>
-            <p class="settings-eyebrow">
-              Read-only history
-            </p><h2 id="revision-history-heading">
-              Configuration Revisions
-            </h2>
-          </div>
-          <UBadge
-            color="neutral"
-            variant="soft"
-            :label="`${revisionRows.length} revisions`"
-          />
-        </header>
-        <div class="settings-table-scroll">
-          <UTable
-            :data="revisionRows"
-            :columns="revisionColumns"
-            empty="没有 Revision 历史"
-            class="revision-table"
-          />
-        </div>
-      </section>
-
-      <section
-        v-if="activeSectionKey === 'revisions'"
-        class="settings-readonly-section"
-        aria-labelledby="storage-heading"
-      >
-        <header>
-          <div>
-            <p class="settings-eyebrow">
-              Durability
-            </p><h2 id="storage-heading">
-              存储与备份
-            </h2>
-          </div>
-        </header>
-        <dl
-          v-if="storage"
-          class="settings-facts-grid"
-        >
-          <div><dt>数据库表</dt><dd>{{ storage.database_tables }}</dd></div>
-          <div><dt>配置 Revision</dt><dd>{{ storage.configuration_count }}</dd></div>
-          <div><dt>通知记录</dt><dd>{{ storage.notification_count }}</dd></div>
-          <div><dt>Secret versions</dt><dd>{{ storage.secret_version_count }}</dd></div>
-          <div><dt>Data capacity</dt><dd>{{ formatBytes(storage.data_capacity_bytes) }}</dd></div>
-          <div><dt>Data available</dt><dd>{{ formatBytes(storage.data_available_bytes) }}</dd></div>
-          <div><dt>最近备份</dt><dd>{{ storage.latest_backup_name || "无记录" }}</dd></div>
-          <div><dt>备份时间 (UTC)</dt><dd>{{ formatISO(storage.latest_backup_at) }}</dd></div>
-        </dl>
-      </section>
-
-      <section
-        v-if="activeSectionKey === 'revisions'"
-        class="settings-readonly-section"
-        aria-labelledby="bootstrap-heading"
-      >
-        <header>
-          <div>
-            <p class="settings-eyebrow">
-              Read-only diagnostics
-            </p><h2 id="bootstrap-heading">
-              Bootstrap diagnostics
-            </h2>
-          </div>
-        </header>
-        <dl class="settings-facts-grid settings-facts-grid--diagnostics">
-          <div><dt>Listen boundary</dt><dd>{{ settings.bootstrap.listen_boundary }}</dd></div>
-          <div><dt>MySQL database</dt><dd>{{ settings.bootstrap.mysql_database }}</dd></div>
-          <div><dt>Data directory</dt><dd>{{ settings.bootstrap.data_directory }}</dd></div>
-          <div><dt>Worker target</dt><dd>{{ settings.bootstrap.worker_management_target }}</dd></div>
-          <div><dt>Lifecycle</dt><dd>{{ settings.bootstrap.lifecycle }}</dd></div>
-        </dl>
-      </section>
-    </template>
-      </main>
-
-      <aside
-        v-if="settings && drafts && activeRevision"
-        class="settings-pending"
-        aria-labelledby="settings-pending-heading"
-      >
-        <header>
-          <span>Revision draft</span>
-          <h2 id="settings-pending-heading">
-            待提交变更
-          </h2>
-          <p v-if="activeSectionDraft">
-            {{ settingsSectionLabel(activeSectionDraft.key) }} · base #{{ activeSectionDraft.baseRevisionNumber }}
-          </p>
-          <p v-else>
-            Revision 历史为只读视图
-          </p>
-        </header>
-
-        <template v-if="activeSectionDraft && activeSectionRuntime">
-          <div class="settings-pending__count">
-            <strong>{{ activeSectionChanges.length }}</strong>
-            <span>项本地变更</span>
-          </div>
-          <ul
-            v-if="activeSectionChanges.length"
-            class="settings-pending__changes"
-          >
-            <li
-              v-for="change in activeSectionChanges"
-              :key="change"
-            >
-              {{ change }}
-            </li>
-          </ul>
-          <p
-            v-else
-            class="settings-pending__empty"
-          >
-            当前分区与 Revision #{{ activeSectionDraft.baseRevisionNumber }} 一致。
-          </p>
-
-          <dl class="settings-pending__facts">
+        <template v-if="settings && drafts && activeRevision">
+          <div class="settings-context-bar">
             <div>
-              <dt>草稿状态</dt>
-              <dd>{{ isSettingsSectionDirty(activeSectionDraft) ? "已修改" : "未修改" }}</dd>
+              <strong>{{ activeSectionLink.label }}</strong>
+              <span>Revision #{{ activeRevision.number }} · {{ hasUnsavedChanges ? `${dirtySectionCount} 个分区有未保存修改` : "已生效" }}</span>
             </div>
-            <div>
-              <dt>Validation</dt>
-              <dd>{{ activeSectionValidationStale ? "等待验证" : activeSectionRuntime.validation?.valid ? "已通过" : "未通过" }}</dd>
-            </div>
-            <div>
-              <dt>活动 Revision</dt>
-              <dd>#{{ activeRevision.number }}</dd>
-            </div>
-          </dl>
-
-          <div class="settings-pending__actions">
             <UButton
               color="neutral"
               variant="ghost"
-              icon="i-lucide-rotate-ccw"
-              label="放弃本区修改"
-              :disabled="!isSettingsSectionDirty(activeSectionDraft) || activeSectionRuntime.validating || activeSectionRuntime.applying"
-              @click="resetSection(activeSectionDraft.key)"
-            />
-            <UButton
-              type="submit"
-              :form="`settings-form-${activeSectionDraft.key}`"
-              color="neutral"
-              variant="outline"
-              icon="i-lucide-shield-check"
-              label="验证草稿"
-              :loading="activeSectionRuntime.validating"
-              :disabled="!activeSectionCanValidate"
-            />
-            <UButton
-              color="warning"
-              icon="i-lucide-upload-cloud"
-              label="审阅并应用"
-              :loading="activeSectionRuntime.applying"
-              :disabled="!activeSectionCanApply"
-              @click="requestApply(activeSectionDraft.key)"
+              :icon="advancedSettingsOpen ? 'i-lucide-chevron-up' : 'i-lucide-sliders-horizontal'"
+              :label="advancedSettingsOpen ? '收起高级设置' : '显示高级设置'"
+              @click="advancedSettingsOpen = !advancedSettingsOpen"
             />
           </div>
-          <p class="settings-pending__truth">
-            Apply 创建完整 Configuration Revision；Provider 与 Worker 结果逐项观测，不冒充原子成功。
-          </p>
-        </template>
+          <WorkspaceTechnicalDetails
+            v-if="advancedSettingsOpen"
+            :fields="[
+              { label: 'Revision ID', value: activeRevision.id, code: true, copyValue: activeRevision.id },
+              { label: 'Exact hash', value: activeRevision.hash, code: true, copyValue: activeRevision.hash },
+              { label: 'Created at (UTC)', value: formatISO(activeRevision.created_at), code: true },
+              { label: 'Worker boundary', value: activationLabel(activeRevision.worker_boundary?.status) },
+            ]"
+          />
 
-        <template v-else>
-          <div class="settings-pending__count">
-            <strong>{{ revisionRows.length }}</strong>
-            <span>个历史 Revision</span>
-          </div>
-          <p class="settings-pending__empty">
-            历史记录、存储状态和 Bootstrap diagnostics 不产生本地草稿。
-          </p>
+          <Transition
+            name="settings-panel"
+            mode="out-in"
+          >
+            <div
+              :key="activeSectionKey"
+              class="settings-panel"
+            >
+              <UForm
+                v-if="activeSectionKey === 'system' && systemValue"
+                id="settings-form-system"
+                :state="drafts.system"
+                :validate="() => sectionFormErrors('system')"
+                :validate-on="['blur', 'change']"
+                @submit="validateSection('system')"
+                @error="focusFirstError($event.errors)"
+              >
+                <SettingsSectionPanel
+                  external-actions
+                  anchor="system"
+                  title="查询、保留与通知"
+                  eyebrow="System boundaries"
+                  description="控制查询边界、Telemetry 保留和 Owner 浏览器行为。每项 apply 仍创建完整 Revision。"
+                  form-id="settings-form-system"
+                  :section="drafts.system"
+                  :active-revision="activeRevision"
+                  :validation="runtimes.system.validation"
+                  :validated-fingerprint="runtimes.system.validatedFingerprint"
+                  :validating="runtimes.system.validating"
+                  :applying="runtimes.system.applying"
+                  :error="runtimes.system.error"
+                  :outcome="runtimes.system.outcome"
+                  @update-summary="setSectionSummary('system', $event)"
+                  @reset="resetSection('system')"
+                  @rebase="rebaseSection('system', $event)"
+                  @apply="requestApply('system')"
+                  @refresh-outcome="refreshApplyOutcome('system')"
+                >
+                  <div class="settings-component-group">
+                    <header class="settings-component-group__heading">
+                      <div>
+                        <p class="settings-eyebrow">
+                          查询与 Telemetry
+                        </p>
+                        <h3>读取边界</h3>
+                        <p>把后端边界转换成人类可读单位；技术值仍保留在详情与 Revision 中。</p>
+                      </div>
+                      <UBadge
+                        color="neutral"
+                        variant="soft"
+                        label="只影响读取"
+                      />
+                    </header>
+                    <div class="settings-setting-list">
+                      <div class="settings-setting-row">
+                        <div class="settings-setting-copy">
+                          <strong>最大回看时间</strong>
+                          <p>限制指标、日志和链路查询可以跨越的时间范围。</p>
+                          <small>推荐 24 小时 · 原始值 {{ systemValue.query_max_lookback_seconds }} 秒</small>
+                        </div>
+                        <UFormField
+                          label="小时"
+                          name="system.query_max_lookback_seconds"
+                          :data-field="'system.query_max_lookback_seconds'"
+                          class="settings-setting-field"
+                        >
+                          <UInputNumber
+                            :model-value="secondsToHours(systemValue.query_max_lookback_seconds)"
+                            :min="1"
+                            :max="720"
+                            :step="1"
+                            class="settings-setting-control"
+                            @update:model-value="systemValue.query_max_lookback_seconds = hoursToSeconds($event)"
+                          />
+                        </UFormField>
+                      </div>
+                      <div class="settings-setting-row">
+                        <div class="settings-setting-copy">
+                          <strong>查询结果上限</strong>
+                          <p>为单次查询设置结果数量上限，避免大范围读取拖垮 Provider。</p>
+                          <small>推荐 1,000 条</small>
+                        </div>
+                        <UFormField
+                          label="条"
+                          name="system.query_max_results"
+                          :data-field="'system.query_max_results'"
+                          class="settings-setting-field"
+                        >
+                          <UInputNumber
+                            v-model="systemValue.query_max_results"
+                            :min="1"
+                            :max="10000"
+                            :step="10"
+                            class="settings-setting-control"
+                          />
+                        </UFormField>
+                      </div>
+                      <div class="settings-setting-row">
+                        <div class="settings-setting-copy">
+                          <strong>Telemetry 保留天数</strong>
+                          <p>控制本地 Telemetry 数据的保留窗口，变更会影响存储容量。</p>
+                          <small>当前存储状态可在 Revision 历史中查看</small>
+                        </div>
+                        <UFormField
+                          label="天"
+                          name="system.telemetry_retention_days"
+                          :data-field="'system.telemetry_retention_days'"
+                          class="settings-setting-field"
+                        >
+                          <UInputNumber
+                            v-model="systemValue.telemetry_retention_days"
+                            :min="1"
+                            :max="365"
+                            class="settings-setting-control"
+                          />
+                        </UFormField>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="settings-component-group settings-component-group--behavior">
+                    <header class="settings-component-group__heading">
+                      <div>
+                        <p class="settings-eyebrow">
+                          通知与升级
+                        </p>
+                        <h3>浏览器与告警行为</h3>
+                        <p>每个开关独立形成草稿变更；服务端 Policy 和权限边界仍然优先。</p>
+                      </div>
+                    </header>
+                    <div class="settings-setting-list settings-setting-list--toggles">
+                      <div class="settings-setting-row settings-setting-row--toggle">
+                        <div class="settings-setting-copy">
+                          <strong>浏览器提醒</strong>
+                          <p>启用时由浏览器单独请求 Notification 权限。</p>
+                        </div>
+                        <USwitch
+                          v-model="systemValue.browser_notifications_enabled"
+                          aria-label="浏览器提醒"
+                          data-field="system.browser_notifications_enabled"
+                          @change="handleBrowserNotificationToggle"
+                        />
+                      </div>
+                      <div class="settings-setting-row settings-setting-row--toggle">
+                        <div class="settings-setting-copy">
+                          <strong>自动 escalation</strong>
+                          <p>仅在活动 Escalation Policy 和服务端边界允许时生效。</p>
+                        </div>
+                        <USwitch
+                          v-model="systemValue.automatic_escalation_enabled"
+                          aria-label="自动 escalation"
+                          data-field="system.automatic_escalation_enabled"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </SettingsSectionPanel>
+              </UForm>
+
+              <UForm
+                v-if="activeSectionKey === 'scopes' && scopesValue"
+                id="settings-form-scopes"
+                :state="drafts.scopes"
+                :validate="() => sectionFormErrors('scopes')"
+                :validate-on="['blur', 'change']"
+                @submit="validateSection('scopes')"
+                @error="focusFirstError($event.errors)"
+              >
+                <SettingsSectionPanel
+                  external-actions
+                  anchor="operational-scope"
+                  title="Operational Scope"
+                  eyebrow="Cluster boundaries"
+                  description="维护 Revision 内的 Cluster Scope 和默认 Scope；不会在编辑时激活真实集群。"
+                  form-id="settings-form-scopes"
+                  :section="drafts.scopes"
+                  :active-revision="activeRevision"
+                  :validation="runtimes.scopes.validation"
+                  :validated-fingerprint="runtimes.scopes.validatedFingerprint"
+                  :validating="runtimes.scopes.validating"
+                  :applying="runtimes.scopes.applying"
+                  :error="runtimes.scopes.error"
+                  :outcome="runtimes.scopes.outcome"
+                  @update-summary="setSectionSummary('scopes', $event)"
+                  @reset="resetSection('scopes')"
+                  @rebase="rebaseSection('scopes', $event)"
+                  @apply="requestApply('scopes')"
+                  @refresh-outcome="refreshApplyOutcome('scopes')"
+                >
+                  <div class="settings-domain-editor">
+                    <aside
+                      class="settings-object-list"
+                      aria-label="运行范围列表"
+                    >
+                      <header>
+                        <div><strong>范围规则</strong><span>{{ scopesValue.scopes.length }} / 10</span></div>
+                        <UButton
+                          color="neutral"
+                          variant="ghost"
+                          icon="i-lucide-plus"
+                          square
+                          aria-label="添加运行范围"
+                          :disabled="scopesValue.scopes.length >= 10"
+                          @click="addScope"
+                        />
+                      </header>
+                      <button
+                        v-for="(scope, index) in scopesValue.scopes"
+                        :key="scope.id || `scope-${index}`"
+                        type="button"
+                        :class="['settings-object-button', { 'is-active': selectedScopeIndex === index }]"
+                        @click="selectedScopeIndex = index"
+                      >
+                        <span class="settings-object-button__icon"><UIcon name="i-lucide-box" /></span>
+                        <span>
+                          <strong>{{ scope.name || `范围 ${index + 1}` }}</strong>
+                          <small>{{ scope.cluster_id || '未设置 Cluster' }}</small>
+                        </span>
+                        <span class="settings-object-button__badges">
+                          <UBadge
+                            v-if="scopesValue.defaultIndex === index"
+                            color="primary"
+                            variant="soft"
+                            label="默认"
+                          />
+                          <UBadge
+                            v-if="scope.active"
+                            color="success"
+                            variant="soft"
+                            label="活动"
+                          />
+                        </span>
+                      </button>
+                    </aside>
+
+                    <article
+                      v-if="selectedScope"
+                      class="settings-object-editor"
+                    >
+                      <header>
+                        <div>
+                          <p class="settings-eyebrow">
+                            Scope rule {{ selectedScopeIndex + 1 }}
+                          </p>
+                          <h3>{{ selectedScope.name || '未命名运行范围' }}</h3>
+                          <p>定义可见 Cluster 与 Namespace 边界，不在编辑时激活真实集群。</p>
+                        </div>
+                        <div class="settings-object-editor__actions">
+                          <UCheckbox
+                            :model-value="scopesValue.defaultIndex === selectedScopeIndex"
+                            label="Revision 默认范围"
+                            @update:model-value="setDefaultScope(selectedScopeIndex, Boolean($event))"
+                          />
+                          <UButton
+                            color="error"
+                            variant="ghost"
+                            icon="i-lucide-trash-2"
+                            square
+                            :aria-label="`从草稿移除 ${selectedScope.name || `范围 ${selectedScopeIndex + 1}`}`"
+                            :disabled="scopesValue.scopes.length <= 1"
+                            @click="removeScope(selectedScopeIndex)"
+                          />
+                        </div>
+                      </header>
+                      <div class="settings-form-grid settings-form-grid--scope">
+                        <UFormField
+                          label="范围名称"
+                          :name="`scopes.${selectedScopeIndex}.name`"
+                          :data-field="`scopes.${selectedScopeIndex}.name`"
+                        >
+                          <UInput
+                            v-model="selectedScope.name"
+                            class="settings-control"
+                            autocomplete="off"
+                          />
+                        </UFormField>
+                        <UFormField
+                          label="Cluster identity"
+                          :name="`scopes.${selectedScopeIndex}.cluster_id`"
+                          :data-field="`scopes.${selectedScopeIndex}.cluster_id`"
+                        >
+                          <UInput
+                            v-model="selectedScope.cluster_id"
+                            class="settings-control"
+                            autocomplete="off"
+                            spellcheck="false"
+                          />
+                        </UFormField>
+                        <UFormField
+                          label="Environment"
+                          :name="`scopes.${selectedScopeIndex}.environment`"
+                          :data-field="`scopes.${selectedScopeIndex}.environment`"
+                        >
+                          <UInput
+                            v-model="selectedScope.environment"
+                            class="settings-control"
+                            autocomplete="off"
+                          />
+                        </UFormField>
+                        <UFormField
+                          label="Namespaces"
+                          :name="`scopes.${selectedScopeIndex}.namespaces`"
+                          :data-field="`scopes.${selectedScopeIndex}.namespaces`"
+                          help="逗号分隔；应用后共同构成允许范围。"
+                        >
+                          <UInput
+                            :model-value="selectedScope.namespaces.join(', ')"
+                            class="settings-control"
+                            autocomplete="off"
+                            spellcheck="false"
+                            @update:model-value="setScopeNamespaces(selectedScopeIndex, String($event))"
+                          />
+                        </UFormField>
+                      </div>
+                      <footer class="scope-effective-preview">
+                        <div><span>最终生效范围</span><strong>{{ selectedScope.cluster_id || '未设置 Cluster' }} / {{ selectedScope.environment || '未设置环境' }}</strong></div>
+                        <div class="scope-namespace-list">
+                          <UBadge
+                            v-for="namespace in selectedScope.namespaces"
+                            :key="namespace"
+                            color="neutral"
+                            variant="soft"
+                            :label="namespace"
+                          />
+                          <span v-if="!selectedScope.namespaces.length">尚未选择 Namespace</span>
+                        </div>
+                      </footer>
+                    </article>
+                  </div>
+                </SettingsSectionPanel>
+              </UForm>
+
+              <UForm
+                v-if="activeSectionKey === 'policies' && policiesValue"
+                id="settings-form-policies"
+                :state="drafts.policies"
+                :validate="() => sectionFormErrors('policies')"
+                :validate-on="['blur', 'change']"
+                @submit="validateSection('policies')"
+                @error="focusFirstError($event.errors)"
+              >
+                <SettingsSectionPanel
+                  external-actions
+                  anchor="escalation-policies"
+                  title="Escalation Policies"
+                  eyebrow="Alert escalation"
+                  description="定义哪些服务端告警条件可以创建 Incident；create_incident 始终保持真实契约值。"
+                  form-id="settings-form-policies"
+                  :section="drafts.policies"
+                  :active-revision="activeRevision"
+                  :validation="runtimes.policies.validation"
+                  :validated-fingerprint="runtimes.policies.validatedFingerprint"
+                  :validating="runtimes.policies.validating"
+                  :applying="runtimes.policies.applying"
+                  :error="runtimes.policies.error"
+                  :outcome="runtimes.policies.outcome"
+                  @update-summary="setSectionSummary('policies', $event)"
+                  @reset="resetSection('policies')"
+                  @rebase="rebaseSection('policies', $event)"
+                  @apply="requestApply('policies')"
+                  @refresh-outcome="refreshApplyOutcome('policies')"
+                >
+                  <div class="settings-list-heading">
+                    <span>{{ policiesValue.length }} / 50 policies</span>
+                    <UButton
+                      color="neutral"
+                      variant="outline"
+                      icon="i-lucide-plus"
+                      label="添加 Policy"
+                      :disabled="policiesValue.length >= 50"
+                      @click="addPolicy"
+                    />
+                  </div>
+                  <UAlert
+                    v-if="policiesValue.length === 0"
+                    color="neutral"
+                    variant="soft"
+                    icon="i-lucide-list-x"
+                    title="当前 Revision 没有 Escalation Policy"
+                    description="自动 escalation 不会因为前端空状态而被推断为开启。"
+                  />
+                  <div
+                    v-else
+                    class="settings-domain-editor"
+                  >
+                    <aside
+                      class="settings-object-list"
+                      aria-label="升级策略列表"
+                    >
+                      <button
+                        v-for="(policy, index) in policiesValue"
+                        :key="policy.id || `policy-${index}`"
+                        type="button"
+                        :class="['settings-object-button', { 'is-active': selectedPolicyIndex === index }]"
+                        @click="selectedPolicyIndex = index"
+                      >
+                        <span class="settings-object-button__icon"><UIcon name="i-lucide-route" /></span>
+                        <span>
+                          <strong>{{ policy.name || `策略 ${index + 1}` }}</strong>
+                          <small>{{ policy.severities.join(' · ') || '未选择 Severity' }}</small>
+                        </span>
+                        <UBadge
+                          :color="policy.enabled ? 'success' : 'neutral'"
+                          variant="soft"
+                          :label="policy.enabled ? '启用' : '停用'"
+                        />
+                      </button>
+                    </aside>
+
+                    <article
+                      v-if="selectedPolicy"
+                      class="settings-object-editor"
+                    >
+                      <header>
+                        <div>
+                          <p class="settings-eyebrow">
+                            Escalation policy {{ selectedPolicyIndex + 1 }}
+                          </p>
+                          <h3>{{ selectedPolicy.name || '未命名升级策略' }}</h3>
+                          <p>定义告警进入 Incident 的条件链；不会绕过服务端权限与运行边界。</p>
+                        </div>
+                        <div class="settings-object-editor__actions">
+                          <USwitch
+                            v-model="selectedPolicy.enabled"
+                            :label="selectedPolicy.enabled ? '已启用' : '已停用'"
+                          />
+                          <UButton
+                            color="error"
+                            variant="ghost"
+                            icon="i-lucide-trash-2"
+                            square
+                            :aria-label="`从草稿移除 ${selectedPolicy.name || `策略 ${selectedPolicyIndex + 1}`}`"
+                            @click="removePolicy(selectedPolicyIndex)"
+                          />
+                        </div>
+                      </header>
+                      <div
+                        class="policy-stage-preview"
+                        aria-label="升级条件链"
+                      >
+                        <div><span>01</span><strong>Severity 匹配</strong><small>{{ selectedPolicy.severities.join(', ') || '未设置' }}</small></div>
+                        <UIcon
+                          name="i-lucide-arrow-right"
+                          aria-hidden="true"
+                        />
+                        <div><span>02</span><strong>持续观察</strong><small>{{ secondsToMinutes(selectedPolicy.minimum_firing_seconds) }} 分钟</small></div>
+                        <UIcon
+                          name="i-lucide-arrow-right"
+                          aria-hidden="true"
+                        />
+                        <div><span>03</span><strong>创建 Incident</strong><small>至少 {{ selectedPolicy.minimum_recurrence_count }} 次</small></div>
+                      </div>
+                      <div class="settings-form-grid settings-form-grid--policy">
+                        <UFormField
+                          class="settings-span-two"
+                          label="策略名称"
+                          :name="`policies.${selectedPolicyIndex}.name`"
+                          :data-field="`policies.${selectedPolicyIndex}.name`"
+                        >
+                          <UInput
+                            v-model="selectedPolicy.name"
+                            class="settings-control"
+                            autocomplete="off"
+                          />
+                        </UFormField>
+                        <UFormField
+                          class="settings-span-two"
+                          label="Severity"
+                          :name="`policies.${selectedPolicyIndex}.severities`"
+                          :data-field="`policies.${selectedPolicyIndex}.severities`"
+                        >
+                          <div class="settings-checkbox-row">
+                            <UCheckbox
+                              v-for="severity in severityOptions"
+                              :key="severity"
+                              :model-value="selectedPolicy.severities.includes(severity)"
+                              :label="severity"
+                              @update:model-value="togglePolicySeverity(selectedPolicyIndex, severity, Boolean($event))"
+                            />
+                          </div>
+                        </UFormField>
+                        <UFormField
+                          label="持续 firing（分钟）"
+                          :name="`policies.${selectedPolicyIndex}.minimum_firing_seconds`"
+                          :data-field="`policies.${selectedPolicyIndex}.minimum_firing_seconds`"
+                        >
+                          <UInputNumber
+                            :model-value="secondsToMinutes(selectedPolicy.minimum_firing_seconds)"
+                            :min="0"
+                            :max="10080"
+                            :step="1"
+                            class="settings-control"
+                            @update:model-value="selectedPolicy.minimum_firing_seconds = minutesToSeconds($event)"
+                          />
+                        </UFormField>
+                        <UFormField
+                          label="最小复发次数"
+                          :name="`policies.${selectedPolicyIndex}.minimum_recurrence_count`"
+                          :data-field="`policies.${selectedPolicyIndex}.minimum_recurrence_count`"
+                        >
+                          <UInputNumber
+                            v-model="selectedPolicy.minimum_recurrence_count"
+                            :min="1"
+                            :max="100"
+                            class="settings-control"
+                          />
+                        </UFormField>
+                        <UFormField
+                          class="settings-span-two"
+                          label="Namespaces"
+                          :name="`policies.${selectedPolicyIndex}.namespaces`"
+                          :data-field="`policies.${selectedPolicyIndex}.namespaces`"
+                          help="逗号分隔；留空表示不限。"
+                        >
+                          <UInput
+                            :model-value="selectedPolicy.namespaces.join(', ')"
+                            class="settings-control"
+                            autocomplete="off"
+                            spellcheck="false"
+                            @update:model-value="setPolicyNamespaces(selectedPolicyIndex, String($event))"
+                          />
+                        </UFormField>
+                        <UFormField
+                          class="settings-span-two"
+                          label="Exact label matchers"
+                          :name="`policies.${selectedPolicyIndex}.label_matchers`"
+                          :data-field="`policies.${selectedPolicyIndex}.label_matchers`"
+                          help="每行 name=value。"
+                        >
+                          <UTextarea
+                            :model-value="policyMatchersText(selectedPolicy)"
+                            :rows="3"
+                            class="settings-control"
+                            spellcheck="false"
+                            @update:model-value="setPolicyMatchers(selectedPolicyIndex, String($event))"
+                          />
+                        </UFormField>
+                      </div>
+                    </article>
+                  </div>
+                </SettingsSectionPanel>
+              </UForm>
+
+              <UForm
+                v-if="activeSectionKey === 'providers' && providersValue"
+                id="settings-form-providers"
+                :state="drafts.providers"
+                :validate="() => sectionFormErrors('providers')"
+                :validate-on="['blur', 'change']"
+                @submit="validateSection('providers')"
+                @error="focusFirstError($event.errors)"
+              >
+                <SettingsSectionPanel
+                  external-actions
+                  anchor="providers"
+                  title="Provider 配置"
+                  eyebrow="External connections"
+                  description="编辑 endpoint、模型和查询边界。Provider test 是独立请求，不代表配置已 apply。"
+                  form-id="settings-form-providers"
+                  :section="drafts.providers"
+                  :active-revision="activeRevision"
+                  :validation="runtimes.providers.validation"
+                  :validated-fingerprint="runtimes.providers.validatedFingerprint"
+                  :validating="runtimes.providers.validating"
+                  :applying="runtimes.providers.applying"
+                  :error="runtimes.providers.error"
+                  :outcome="runtimes.providers.outcome"
+                  @update-summary="setSectionSummary('providers', $event)"
+                  @reset="resetSection('providers')"
+                  @rebase="rebaseSection('providers', $event)"
+                  @apply="requestApply('providers')"
+                  @refresh-outcome="refreshApplyOutcome('providers')"
+                >
+                  <UAlert
+                    v-if="providersValue.length === 0"
+                    color="neutral"
+                    variant="soft"
+                    icon="i-lucide-plug"
+                    title="当前 Revision 没有 Provider 配置"
+                    description="页面只展示服务端返回的 Provider 连接事实。"
+                  />
+                  <div
+                    v-else
+                    class="settings-provider-workbench"
+                  >
+                    <div
+                      class="provider-summary-list"
+                      role="list"
+                      aria-label="Provider 连接摘要"
+                    >
+                      <article
+                        v-for="provider in providersValue"
+                        :key="provider.provider"
+                        class="provider-summary-row"
+                        role="listitem"
+                        tabindex="0"
+                        @click="openProviderEditor(provider.provider)"
+                        @keydown.enter.prevent="openProviderEditor(provider.provider)"
+                      >
+                        <div
+                          class="provider-summary-icon"
+                          aria-hidden="true"
+                        >
+                          <UIcon :name="providerIcons[provider.provider]" />
+                        </div>
+                        <div class="provider-summary-content">
+                          <header>
+                            <div class="provider-summary-name">
+                              <span
+                                class="provider-state-dot"
+                                :data-state="providerState(provider.provider)"
+                              /><strong>{{ providerLabels[provider.provider] }}</strong>
+                            </div>
+                            <UBadge
+                              :color="stateColor(providerState(provider.provider))"
+                              variant="soft"
+                              :label="stateLabel(providerState(provider.provider))"
+                            />
+                          </header>
+                          <p>{{ providerDescriptions[provider.provider] }}</p>
+                          <div class="provider-summary-meta">
+                            <span>{{ provider.endpoint || '服务端默认 Endpoint' }}</span>
+                            <span>{{ providerSecretCount(provider.provider) }} 个 Secret 引用</span>
+                            <span>{{ providerCheckedAt(provider.provider) }}</span>
+                          </div>
+                        </div>
+                        <UButton
+                          color="neutral"
+                          variant="ghost"
+                          icon="i-lucide-chevron-right"
+                          square
+                          :aria-label="`编辑 ${providerLabels[provider.provider]}`"
+                          @click.stop="openProviderEditor(provider.provider)"
+                        />
+                      </article>
+                    </div>
+                  </div>
+                </SettingsSectionPanel>
+              </UForm>
+
+              <UForm
+                v-if="activeSectionKey === 'secret-references' && secretReferencesValue"
+                id="settings-form-secret-references"
+                :state="drafts['secret-references']"
+                :validate="() => sectionFormErrors('secret-references')"
+                :validate-on="['blur', 'change']"
+                @submit="validateSection('secret-references')"
+                @error="focusFirstError($event.errors)"
+              >
+                <SettingsSectionPanel
+                  external-actions
+                  anchor="secret-references"
+                  title="Secret references"
+                  eyebrow="Write-only values"
+                  description="页面只持有 Secret version reference 与 fingerprint；Secret value 不进入草稿、状态或历史。"
+                  form-id="settings-form-secret-references"
+                  :section="drafts['secret-references']"
+                  :active-revision="activeRevision"
+                  :validation="runtimes['secret-references'].validation"
+                  :validated-fingerprint="runtimes['secret-references'].validatedFingerprint"
+                  :validating="runtimes['secret-references'].validating"
+                  :applying="runtimes['secret-references'].applying"
+                  :error="runtimes['secret-references'].error"
+                  :outcome="runtimes['secret-references'].outcome"
+                  @update-summary="setSectionSummary('secret-references', $event)"
+                  @reset="resetSection('secret-references')"
+                  @rebase="rebaseSection('secret-references', $event)"
+                  @apply="requestApply('secret-references')"
+                  @refresh-outcome="refreshApplyOutcome('secret-references')"
+                >
+                  <div class="settings-list-heading">
+                    <span>{{ secretReferencesValue.length }} references</span>
+                    <UButton
+                      color="warning"
+                      variant="outline"
+                      icon="i-lucide-key-round"
+                      label="创建 Secret version"
+                      @click="openSecretModal"
+                    />
+                  </div>
+                  <UAlert
+                    v-if="secretReferencesValue.length === 0"
+                    color="neutral"
+                    variant="soft"
+                    icon="i-lucide-key-square"
+                    title="当前 Revision 没有 Secret reference"
+                    description="Secret 值不会因为空状态而显示或回填。"
+                  />
+                  <ul
+                    v-else
+                    class="secret-reference-list"
+                    data-field="secret-references"
+                  >
+                    <li
+                      v-for="(reference, index) in secretReferencesValue"
+                      :key="`${reference.provider}-${reference.purpose}`"
+                    >
+                      <div><strong>{{ providerLabels[reference.provider] }} / {{ reference.purpose }}</strong><span>{{ reference.state || 'configured' }}</span></div>
+                      <code>{{ reference.fingerprint || reference.secret_version_id }}</code>
+                      <UButton
+                        color="error"
+                        variant="ghost"
+                        icon="i-lucide-trash-2"
+                        square
+                        :aria-label="`从本地草稿移除 ${reference.provider}/${reference.purpose} reference`"
+                        @click="removeSecretReference(index)"
+                      />
+                    </li>
+                  </ul>
+                </SettingsSectionPanel>
+              </UForm>
+
+              <section
+                v-if="activeSectionKey === 'revisions'"
+                id="revision-history"
+                class="settings-readonly-section"
+                aria-labelledby="revision-history-heading"
+                tabindex="-1"
+              >
+                <header>
+                  <div>
+                    <p class="settings-eyebrow">
+                      Read-only history
+                    </p><h2 id="revision-history-heading">
+                      Configuration Revisions
+                    </h2>
+                  </div>
+                  <UBadge
+                    color="neutral"
+                    variant="soft"
+                    :label="`${revisionRows.length} revisions`"
+                  />
+                </header>
+                <div class="settings-table-scroll">
+                  <UTable
+                    :data="revisionRows"
+                    :columns="revisionColumns"
+                    empty="没有 Revision 历史"
+                    class="revision-table"
+                  />
+                </div>
+              </section>
+
+              <section
+                v-if="activeSectionKey === 'revisions'"
+                class="settings-readonly-section"
+                aria-labelledby="storage-heading"
+              >
+                <header>
+                  <div>
+                    <p class="settings-eyebrow">
+                      Durability
+                    </p><h2 id="storage-heading">
+                      存储与备份
+                    </h2>
+                  </div>
+                </header>
+                <dl
+                  v-if="storage"
+                  class="settings-facts-grid"
+                >
+                  <div><dt>数据库表</dt><dd>{{ storage.database_tables }}</dd></div>
+                  <div><dt>配置 Revision</dt><dd>{{ storage.configuration_count }}</dd></div>
+                  <div><dt>通知记录</dt><dd>{{ storage.notification_count }}</dd></div>
+                  <div><dt>Secret versions</dt><dd>{{ storage.secret_version_count }}</dd></div>
+                  <div><dt>Data capacity</dt><dd>{{ formatBytes(storage.data_capacity_bytes) }}</dd></div>
+                  <div><dt>Data available</dt><dd>{{ formatBytes(storage.data_available_bytes) }}</dd></div>
+                  <div><dt>最近备份</dt><dd>{{ storage.latest_backup_name || "无记录" }}</dd></div>
+                  <div><dt>备份时间 (UTC)</dt><dd>{{ formatISO(storage.latest_backup_at) }}</dd></div>
+                </dl>
+              </section>
+
+              <section
+                v-if="activeSectionKey === 'revisions'"
+                class="settings-readonly-section"
+                aria-labelledby="bootstrap-heading"
+              >
+                <header>
+                  <div>
+                    <p class="settings-eyebrow">
+                      Read-only diagnostics
+                    </p><h2 id="bootstrap-heading">
+                      Bootstrap diagnostics
+                    </h2>
+                  </div>
+                </header>
+                <dl class="settings-facts-grid settings-facts-grid--diagnostics">
+                  <div><dt>Listen boundary</dt><dd>{{ settings.bootstrap.listen_boundary }}</dd></div>
+                  <div><dt>MySQL database</dt><dd>{{ settings.bootstrap.mysql_database }}</dd></div>
+                  <div><dt>Data directory</dt><dd>{{ settings.bootstrap.data_directory }}</dd></div>
+                  <div><dt>Worker target</dt><dd>{{ settings.bootstrap.worker_management_target }}</dd></div>
+                  <div><dt>Lifecycle</dt><dd>{{ settings.bootstrap.lifecycle }}</dd></div>
+                </dl>
+              </section>
+            </div>
+          </Transition>
         </template>
-      </aside>
+      </main>
     </div>
 
-    <RiskConfirmation
+    <Transition name="settings-actions">
+      <div
+        v-if="activeSectionIsDirty && activeSectionDraft && activeSectionRuntime"
+        class="settings-action-bar"
+        aria-live="polite"
+      >
+        <div class="settings-action-status">
+          <span
+            :class="['settings-action-status__dot', { 'is-valid': activeSectionCanApply, 'is-invalid': activeSectionRuntime.validation && !activeSectionRuntime.validation.valid }]"
+            aria-hidden="true"
+          />
+          <div>
+            <strong>{{ activeSectionStatus }}</strong>
+            <span>{{ settingsSectionLabel(activeSectionDraft.key) }} · base #{{ activeSectionDraft.baseRevisionNumber }}</span>
+          </div>
+        </div>
+        <div class="settings-action-buttons">
+          <UButton
+            color="neutral"
+            variant="ghost"
+            icon="i-lucide-rotate-ccw"
+            label="放弃修改"
+            :disabled="activeSectionRuntime.validating || activeSectionRuntime.applying"
+            @click="resetSection(activeSectionDraft.key)"
+          />
+          <UButton
+            type="submit"
+            :form="`settings-form-${activeSectionDraft.key}`"
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-shield-check"
+            :label="activeSectionCanApply ? '重新验证' : '验证配置'"
+            :loading="activeSectionRuntime.validating"
+            :disabled="!activeSectionCanValidate"
+          />
+          <UButton
+            v-if="activeSectionCanApply"
+            color="primary"
+            icon="i-lucide-git-compare-arrows"
+            label="查看变更并应用"
+            :loading="activeSectionRuntime.applying"
+            @click="requestApply(activeSectionDraft.key)"
+          />
+        </div>
+      </div>
+    </Transition>
+
+    <UModal
       :open="applyConfirmationOpen"
-      kind="configuration"
-      :facts="applyFacts"
+      title="查看变更并应用"
+      :description="pendingApplyDraft ? `${settingsSectionLabel(pendingApplyDraft.key)} · base Revision #${pendingApplyDraft.baseRevisionNumber}` : '配置变更'"
+      :dismissible="true"
       @update:open="applyConfirmationOpen = $event"
-      @confirm="confirmApply"
-    />
+    >
+      <template #body>
+        <div
+          v-if="pendingApplyDraft"
+          class="settings-diff-review"
+        >
+          <UAlert
+            color="success"
+            variant="soft"
+            icon="i-lucide-shield-check"
+            title="配置验证已通过"
+            description="即将基于精确基线创建完整 Configuration Revision。Worker 与 Provider 结果仍会在应用后逐项观测。"
+          />
+          <dl class="settings-diff-identity">
+            <div><dt>设置分区</dt><dd>{{ settingsSectionLabel(pendingApplyDraft.key) }}</dd></div>
+            <div><dt>基线 Revision</dt><dd>#{{ pendingApplyDraft.baseRevisionNumber }}</dd></div>
+            <div><dt>Exact hash</dt><dd><code>{{ pendingApplyDraft.baseRevisionHash }}</code></dd></div>
+            <div><dt>变更说明</dt><dd>{{ pendingApplyDraft.summary }}</dd></div>
+          </dl>
+          <ol class="settings-diff-list">
+            <li
+              v-for="(change, index) in settingsSectionChanges(pendingApplyDraft)"
+              :key="`${change}-${index}`"
+            >
+              <span>{{ String(index + 1).padStart(2, '0') }}</span>
+              <p>{{ change }}</p>
+            </li>
+          </ol>
+          <p class="settings-diff-note">
+            恢复方式：创建后续 Configuration Revision；历史版本不会被原位改写。
+          </p>
+        </div>
+      </template>
+      <template #footer>
+        <div class="settings-modal-actions">
+          <UButton
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-arrow-left"
+            label="返回编辑"
+            @click="applyConfirmationOpen = false"
+          />
+          <UButton
+            color="primary"
+            icon="i-lucide-upload-cloud"
+            label="应用配置"
+            @click="confirmApply"
+          />
+        </div>
+      </template>
+    </UModal>
+
+    <USlideover
+      :open="providerEditorOpen"
+      side="right"
+      :overlay="true"
+      :modal="true"
+      :transition="true"
+      :ui="providerSlideoverUI"
+      :close="true"
+      :title="selectedProviderConfiguration ? `编辑 ${providerLabels[selectedProviderConfiguration.provider]}` : '编辑 Provider'"
+      :description="selectedProviderConfiguration ? providerDescriptions[selectedProviderConfiguration.provider] : 'Provider 配置'"
+      @update:open="closeProviderEditor"
+    >
+      <template #body>
+        <div
+          v-if="selectedProviderConfiguration && selectedProviderEditor"
+          class="settings-provider-editor"
+        >
+          <div class="settings-provider-editor__status">
+            <UBadge
+              :color="stateColor(providerState(selectedProviderConfiguration.provider))"
+              variant="soft"
+              :label="stateLabel(providerState(selectedProviderConfiguration.provider))"
+            />
+            <span>{{ providerSecretCount(selectedProviderConfiguration.provider) }} 个 Secret 引用</span>
+            <span>最近检查：{{ providerCheckedAt(selectedProviderConfiguration.provider) }}</span>
+          </div>
+          <Transition
+            name="settings-panel"
+            mode="out-in"
+          >
+            <component
+              :is="selectedProviderEditor"
+              :key="selectedProviderConfiguration.provider"
+              :model-value="selectedProviderConfiguration"
+              @update:model-value="updateSelectedProviderConfiguration"
+            />
+          </Transition>
+          <UAlert
+            v-if="providerResults[selectedProviderConfiguration.provider]"
+            :color="stateColor(providerResults[selectedProviderConfiguration.provider]!.state)"
+            variant="soft"
+            icon="i-lucide-flask-conical"
+            :title="`最近一次本地测试：${stateLabel(providerResults[selectedProviderConfiguration.provider]!.state)}`"
+            :description="providerResults[selectedProviderConfiguration.provider]!.detail"
+          />
+        </div>
+      </template>
+      <template #footer>
+        <div
+          v-if="selectedProviderConfiguration"
+          class="settings-provider-editor__footer"
+        >
+          <UButton
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-flask-conical"
+            label="测试连接"
+            @click="openProviderTest(selectedProviderConfiguration.provider)"
+          />
+          <UButton
+            color="primary"
+            icon="i-lucide-check"
+            label="完成编辑"
+            @click="providerEditorOpen = false"
+          />
+        </div>
+      </template>
+    </USlideover>
 
     <UModal
       :open="providerTestOpen"
@@ -2101,7 +2381,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.settings-view { display: grid; width: min(100%, 1380px); min-width: 0; gap: var(--co-space-5); margin-inline: auto; padding-bottom: var(--co-page-end-space); }
+.settings-view { display: grid; width: 100%; min-width: 0; gap: var(--co-space-5); margin-inline: auto; padding-bottom: var(--co-page-end-space); }
 .settings-page-heading { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: var(--co-space-5); }
 .settings-heading-copy { min-width: 0; }
 .settings-page-heading h1 { margin: 0; font-size: clamp(24px, 2.2vw, 32px); letter-spacing: 0; }
@@ -2117,23 +2397,25 @@ onBeforeUnmount(() => {
 .settings-search-results button > span { display: grid; min-width: 0; gap: 2px; }
 .settings-search-results small, .settings-search-empty { color: var(--co-text-muted); font-size: 11px; }
 .settings-search-empty { margin: var(--co-space-2) 0 0; }
-.settings-workbench { display: grid; min-width: 0; grid-template-columns: minmax(170px, 196px) minmax(0, 1fr) minmax(220px, 252px); align-items: start; gap: var(--co-space-4); }
-.settings-navigation { position: sticky; top: calc(var(--co-header-height) + var(--co-space-3)); display: grid; min-width: 0; gap: var(--co-space-3); }
-.settings-navigation__heading { display: grid; gap: 2px; padding: 0 var(--co-space-2); }
+.settings-workbench { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr); align-items: start; gap: clamp(var(--co-space-5), 2vw, var(--co-space-8)); }
+.settings-navigation { display: grid; min-width: 0; gap: var(--co-space-3); }
+.settings-navigation__heading { display: flex; min-width: 0; align-items: baseline; justify-content: space-between; gap: var(--co-space-3); padding: 0 var(--co-space-2); }
 .settings-navigation__heading span { color: var(--co-text-muted); font-size: 10px; }
 .settings-navigation__heading strong { font-size: 13px; }
-.settings-section-nav { display: grid; min-width: 0; gap: 4px; }
-.settings-section-link { display: grid; min-width: 0; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--co-space-2); min-height: 54px; padding: var(--co-space-2) var(--co-space-3); border: 1px solid transparent; border-radius: var(--co-radius-control); background: transparent; color: var(--co-text-secondary); text-align: left; cursor: pointer; transition: border-color var(--co-motion-fast) ease, background var(--co-motion-fast) ease, color var(--co-motion-fast) ease; }
+.settings-section-nav { display: grid; min-width: 0; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--co-space-4); }
+.settings-section-nav-group { display: grid; min-width: 0; gap: 4px; }
+.settings-section-nav-group__label { padding: 0 var(--co-space-2) var(--co-space-1); color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 9px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.settings-section-link { display: grid; min-width: 0; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--co-space-2); min-height: 60px; padding: var(--co-space-3); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); background: var(--co-bg-surface); color: var(--co-text-secondary); text-align: left; cursor: pointer; transition: border-color var(--co-motion-fast) ease, background var(--co-motion-fast) ease, color var(--co-motion-fast) ease; }
 .settings-section-link:hover, .settings-section-link:focus-visible { background: var(--co-bg-hover); color: var(--co-text-primary); outline: none; }
-.settings-section-link.is-active { border-color: var(--co-border-subtle); background: var(--co-bg-floating); color: var(--co-text-primary); box-shadow: inset 3px 0 0 var(--co-focus-ring); }
+.settings-section-link.is-active { border-color: var(--co-focus-ring); background: var(--co-bg-floating); color: var(--co-text-primary); box-shadow: inset 0 3px 0 var(--co-focus-ring); }
 .settings-section-link > span { display: grid; min-width: 0; gap: 2px; }
 .settings-section-link strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .settings-section-link small { overflow: hidden; color: var(--co-text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.settings-navigation__baseline { display: grid; gap: 3px; padding: var(--co-space-3); border-radius: var(--co-radius-control); background: var(--co-bg-subtle); }
+.settings-navigation__baseline { display: flex; min-width: 0; flex-wrap: wrap; align-items: baseline; gap: var(--co-space-2) var(--co-space-4); padding: var(--co-space-3); border-top: 1px solid var(--co-border-default); background: var(--co-bg-subtle); }
 .settings-navigation__baseline span, .settings-navigation__baseline small { color: var(--co-text-muted); font-size: 10px; }
 .settings-navigation__baseline strong { font-size: 12px; }
-.settings-current { display: grid; min-width: 0; gap: var(--co-space-3); }
-.settings-pending { position: sticky; top: calc(var(--co-header-height) + var(--co-space-3)); display: grid; min-width: 0; gap: var(--co-space-3); padding: var(--co-space-4); border: 1px solid var(--co-border-subtle); border-radius: var(--co-radius-panel); background: color-mix(in srgb, var(--co-bg-surface) 90%, var(--co-bg-canvas)); box-shadow: var(--co-shadow-row); }
+.settings-current { display: grid; min-width: 0; gap: var(--co-space-4); }
+.settings-pending { position: static; display: grid; min-width: 0; gap: var(--co-space-4); padding: var(--co-space-5); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-panel); background: var(--co-bg-surface); box-shadow: var(--co-shadow-row); }
 .settings-pending > header { display: grid; gap: 2px; padding-bottom: var(--co-space-3); border-bottom: 1px solid var(--co-border-subtle); }
 .settings-pending > header > span { color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 9px; font-weight: 800; text-transform: uppercase; }
 .settings-pending h2 { margin: 0; font-size: 16px; }
@@ -2141,16 +2423,21 @@ onBeforeUnmount(() => {
 .settings-pending__count { display: flex; align-items: baseline; gap: var(--co-space-2); }
 .settings-pending__count strong { font-family: var(--co-font-mono); font-size: 28px; line-height: 1; font-variant-numeric: tabular-nums; }
 .settings-pending__count span { color: var(--co-text-muted); font-size: 10px; }
+.settings-pending__sections { display: grid; gap: 4px; }
+.settings-pending__sections button { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: var(--co-space-2); padding: var(--co-space-2) var(--co-space-3); border: 1px solid transparent; border-radius: var(--co-radius-control); background: var(--co-bg-canvas); color: var(--co-text-secondary); text-align: left; cursor: pointer; }
+.settings-pending__sections button:hover, .settings-pending__sections button:focus-visible { border-color: var(--co-border-default); color: var(--co-text-primary); outline: none; }
+.settings-pending__sections button.is-active { border-color: var(--co-border-default); background: var(--co-bg-floating); color: var(--co-text-primary); box-shadow: inset 3px 0 0 var(--co-focus-ring); }
 .settings-pending__changes { display: grid; gap: var(--co-space-2); max-height: 220px; margin: 0; padding: 0; overflow-y: auto; list-style: none; }
-.settings-pending__changes li { padding: var(--co-space-2); border-radius: var(--co-radius-control); background: var(--co-bg-canvas); color: var(--co-text-secondary); font-size: 10px; overflow-wrap: anywhere; }
+.settings-pending__changes li { display: grid; gap: 2px; padding: var(--co-space-2); border-radius: var(--co-radius-control); background: var(--co-bg-canvas); color: var(--co-text-secondary); font-size: 10px; overflow-wrap: anywhere; }
+.settings-pending__changes li small { color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 9px; }
 .settings-pending__facts { display: grid; margin: 0; }
 .settings-pending__facts div { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: var(--co-space-2); padding: var(--co-space-2) 0; border-bottom: 1px solid var(--co-border-subtle); }
 .settings-pending__facts dt { color: var(--co-text-muted); font-size: 10px; }
 .settings-pending__facts dd { margin: 0; color: var(--co-text-primary); font-size: 10px; font-weight: 700; text-align: right; }
 .settings-pending__actions { display: grid; gap: var(--co-space-2); }
 .settings-pending__actions :deep(button) { width: 100%; justify-content: center; }
-.active-revision-band { display: grid; min-width: 0; grid-template-columns: minmax(220px, .8fr) minmax(0, 1.2fr); align-items: center; gap: var(--co-space-5); padding: var(--co-space-4); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); background: var(--co-bg-surface); box-shadow: var(--co-shadow-row); }
-.active-revision-band h2, .settings-readonly-section h2 { margin: 0; font-size: 18px; letter-spacing: 0; }
+.active-revision-band { display: grid; min-width: 0; grid-template-columns: minmax(260px, .8fr) minmax(0, 1.2fr); align-items: center; gap: var(--co-space-6); padding: var(--co-space-5); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-panel); background: var(--co-bg-surface); box-shadow: var(--co-shadow-row); }
+.active-revision-band h2, .settings-readonly-section h2 { margin: 0; font-size: 24px; letter-spacing: 0; }
 .active-revision-band > div > p:not(.settings-eyebrow) { margin: var(--co-space-1) 0 0; color: var(--co-text-secondary); font-size: 12px; }
 .active-revision-summary { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--co-space-2); color: var(--co-text-muted); font-size: 11px; }
 .active-revision-band dl, .settings-modal-body dl { display: grid; min-width: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; }
@@ -2159,9 +2446,33 @@ onBeforeUnmount(() => {
 .active-revision-band dd, .settings-modal-body dd, .settings-facts-grid dd { min-width: 0; margin: 3px 0 0; color: var(--co-text-primary); overflow-wrap: anywhere; font-family: var(--co-font-mono); font-size: 10px; }
 .settings-form-grid { display: grid; min-width: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--co-space-4); }
 .settings-form-grid--three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.settings-form-grid--policy { grid-template-columns: 1fr; gap: var(--co-space-5); }
+.settings-form-grid--policy .settings-span-two { grid-column: auto; }
+.settings-form-grid--provider { grid-template-columns: minmax(0, 1fr) minmax(220px, .55fr); }
 .settings-span-two { grid-column: span 2; }
 .settings-control { width: 100%; }
 .settings-toggle-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--co-space-4); padding-block: var(--co-space-2); }
+.settings-component-group { display: grid; min-width: 0; gap: var(--co-space-4); padding-block: var(--co-space-2) var(--co-space-5); border-bottom: 1px solid var(--co-border-default); }
+.settings-component-group:last-child { padding-bottom: 0; border-bottom: 0; }
+.settings-component-group__heading { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: var(--co-space-4); }
+.settings-component-group__heading h3 { margin: 0; font-size: 16px; }
+.settings-component-group__heading p:not(.settings-eyebrow) { max-width: 68ch; margin: var(--co-space-1) 0 0; color: var(--co-text-secondary); font-size: 12px; }
+.settings-setting-list { display: grid; min-width: 0; gap: 0; overflow: hidden; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); background: var(--co-bg-canvas); }
+.settings-setting-row { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) minmax(180px, 300px); align-items: center; gap: var(--co-space-6); padding: var(--co-space-4); border-bottom: 1px solid var(--co-border-default); }
+.settings-setting-row:last-child { border-bottom: 0; }
+.settings-setting-copy { min-width: 0; }
+.settings-setting-copy strong { display: block; font-size: 14px; }
+.settings-setting-copy p { margin: 3px 0 0; color: var(--co-text-secondary); font-size: 12px; }
+.settings-setting-copy small { display: block; margin-top: 5px; color: var(--co-text-muted); font-size: 10px; }
+.settings-setting-field { min-width: 0; }
+.settings-setting-field :deep(label) { color: var(--co-text-muted); font-size: 10px; }
+.settings-setting-control { width: 100%; }
+.settings-setting-row--toggle { grid-template-columns: minmax(0, 1fr) auto; min-height: 76px; }
+.settings-setting-list--toggles { background: var(--co-bg-surface); }
+.settings-item__identity { display: flex; min-width: 0; align-items: center; gap: var(--co-space-3); }
+.settings-item__index { color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 10px; font-weight: 750; text-transform: uppercase; }
+.settings-item__header--scope, .settings-item__header--policy { min-height: 42px; }
+.settings-repeated-list--scopes, .settings-repeated-list--policies { grid-template-columns: 1fr; }
 .settings-list-heading { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: var(--co-space-3); }
 .settings-list-heading > span { color: var(--co-text-muted); font-size: 11px; }
 .settings-repeated-list { display: grid; min-width: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--co-space-3); }
@@ -2192,6 +2503,7 @@ onBeforeUnmount(() => {
 .provider-detail-header { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: var(--co-space-3); padding-bottom: var(--co-space-3); border-bottom: 1px solid var(--co-border-default); }
 .provider-detail-header h3 { margin: 0; font-size: 18px; }
 .provider-detail-header p:not(.settings-eyebrow) { margin: 2px 0 0; color: var(--co-text-secondary); font-size: 11px; }
+.provider-detail-status { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--co-space-2); }
 .provider-result { display: flex; min-width: 0; align-items: center; gap: var(--co-space-2); }
 .provider-result span, .provider-result-empty { color: var(--co-text-muted); overflow-wrap: anywhere; font-size: 10px; }
 .secret-reference-list { display: grid; min-width: 0; gap: 0; margin: 0; padding: 0; overflow: hidden; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); list-style: none; }
@@ -2209,25 +2521,26 @@ onBeforeUnmount(() => {
 .settings-facts-grid div { min-width: 0; padding: var(--co-space-3); border-right: 1px solid var(--co-border-default); border-bottom: 1px solid var(--co-border-default); }
 .settings-modal-body { display: grid; min-width: 0; gap: var(--co-space-4); }
 .settings-modal-actions { display: flex; width: 100%; justify-content: flex-end; gap: var(--co-space-2); }
-@media (max-width: 1240px) {
-  .settings-workbench { grid-template-columns: minmax(164px, 184px) minmax(0, 1fr); }
-  .settings-pending { position: static; grid-column: 2; }
+@media (max-width: 1500px) {
+  .settings-setting-row { gap: var(--co-space-4); }
   .settings-repeated-list { grid-template-columns: 1fr; }
   .settings-provider-workbench { grid-template-columns: 1fr; }
+}
+@media (max-width: 1100px) {
+  .settings-section-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 820px) {
   .settings-page-heading, .provider-item-footer { align-items: stretch; flex-direction: column; }
   .settings-page-actions { justify-content: flex-start; }
   .settings-command-row { align-items: stretch; flex-direction: column; }
   .settings-search-wrap { min-width: 0; }
-  .settings-workbench { grid-template-columns: minmax(0, 1fr); }
-  .settings-navigation { position: static; }
-  .settings-section-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .settings-section-nav { grid-template-columns: 1fr; }
   .settings-section-link.is-active { box-shadow: inset 0 3px 0 var(--co-focus-ring); }
-  .settings-pending { grid-column: 1; }
   .active-revision-band { grid-template-columns: 1fr; }
   .active-revision-summary { justify-content: flex-start; }
   .settings-form-grid, .settings-form-grid--three, .settings-toggle-grid { grid-template-columns: 1fr; }
+  .settings-setting-row { grid-template-columns: 1fr; gap: var(--co-space-3); }
+  .settings-setting-row--toggle { grid-template-columns: minmax(0, 1fr) auto; }
   .settings-span-two { grid-column: auto; }
   .settings-facts-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .secret-reference-list li { grid-template-columns: 1fr auto; }
@@ -2238,5 +2551,424 @@ onBeforeUnmount(() => {
   .settings-page-actions, .settings-page-actions :deep(button), .settings-modal-actions, .settings-modal-actions :deep(button) { width: 100%; }
   .settings-modal-actions { flex-direction: column; }
   .active-revision-band dl, .settings-modal-body dl, .settings-facts-grid, .settings-facts-grid--diagnostics { grid-template-columns: 1fr; }
+}
+</style>
+
+<style scoped>
+.settings-view {
+  width: min(100%, 1320px);
+  height: 100%;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: var(--co-space-6);
+  padding-bottom: 0;
+  overflow: hidden;
+}
+
+.settings-page-heading {
+  align-items: center;
+  padding-bottom: var(--co-space-4);
+}
+
+.settings-page-heading h1 { font-size: 28px; }
+.settings-page-heading p:not(.settings-eyebrow) { max-width: 720px; }
+
+.settings-workbench {
+  min-height: 0;
+  grid-template-columns: 256px minmax(0, 1040px);
+  align-items: stretch;
+  justify-content: center;
+  gap: var(--co-space-8);
+  padding-top: var(--co-space-5);
+  overflow: hidden;
+  border-top: 1px solid var(--co-border-default);
+}
+
+.settings-navigation {
+  position: static;
+  height: 100%;
+  min-height: 0;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  align-self: stretch;
+  gap: var(--co-space-3);
+  padding-right: var(--co-space-5);
+  border-right: 1px solid var(--co-border-default);
+}
+
+.settings-navigation__heading { padding: 0 var(--co-space-2); }
+.settings-search-wrap { min-width: 0; flex: none; }
+.settings-search-results { right: auto; width: min(420px, calc(100vw - 48px)); }
+
+.settings-section-nav {
+  position: relative;
+  display: grid;
+  min-height: 0;
+  grid-template-columns: 1fr;
+  align-content: start;
+  gap: var(--co-space-3);
+  padding-right: var(--co-space-1);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.settings-nav-indicator {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 0;
+  border: 1px solid var(--co-border-default);
+  border-radius: 9px;
+  background: var(--co-bg-floating);
+  box-shadow: var(--co-shadow-row);
+  pointer-events: none;
+  transition:
+    height 200ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 160ms ease,
+    transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.settings-section-nav-group { position: relative; z-index: 1; gap: 2px; }
+.settings-section-nav-group__label { padding: var(--co-space-1) var(--co-space-2); }
+
+.settings-section-link {
+  position: relative;
+  z-index: 1;
+  min-height: 48px;
+  padding: var(--co-space-2) var(--co-space-3);
+  border-color: transparent;
+  border-radius: 9px;
+  background: transparent;
+  transition: color 160ms ease;
+}
+
+.settings-section-link:hover,
+.settings-section-link:focus-visible { border-color: transparent; background: color-mix(in srgb, var(--co-bg-hover) 72%, transparent); }
+.settings-section-link.is-active { border-color: transparent; background: transparent; box-shadow: none; color: var(--co-text-primary); }
+.settings-section-link.is-active :deep(svg) { color: var(--co-action-primary); }
+.settings-section-link small { font-size: 9px; }
+
+.settings-navigation__baseline {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--co-space-2);
+  margin-top: var(--co-space-2);
+  padding: var(--co-space-3) var(--co-space-2);
+  background: transparent;
+}
+.settings-navigation__baseline > div { display: grid; gap: 1px; }
+.settings-baseline-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--co-status-success-fg); box-shadow: 0 0 0 3px color-mix(in srgb, var(--co-status-success-fg) 14%, transparent); }
+
+.settings-current {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  max-width: 1040px;
+  align-content: start;
+  gap: var(--co-space-4);
+  padding-right: var(--co-space-2);
+  padding-bottom: 112px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.settings-context-bar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--co-space-4);
+  padding-bottom: var(--co-space-3);
+  border-bottom: 1px solid var(--co-border-subtle);
+}
+.settings-context-bar > div { display: grid; gap: 2px; }
+.settings-context-bar strong { font-size: 13px; }
+.settings-context-bar span { color: var(--co-text-muted); font-size: 10px; }
+.settings-current :deep(.workspace-technical-details) { width: min(100%, 820px); }
+
+.settings-panel { display: grid; width: 100%; min-width: 0; }
+.settings-panel > form { width: min(100%, 820px); }
+.settings-panel > .settings-readonly-section { width: 100%; max-width: 1040px; }
+.settings-panel-enter-active,
+.settings-panel-leave-active {
+  transition:
+    opacity 160ms ease,
+    transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.settings-panel-enter-from { opacity: 0; transform: translateY(6px); }
+.settings-panel-leave-to { opacity: 0; transform: translateY(-2px); }
+
+.settings-component-group { padding-block: 0 var(--co-space-5); }
+.settings-setting-list { border-radius: 10px; background: transparent; }
+.settings-setting-row { grid-template-columns: minmax(0, 1fr) minmax(200px, 280px); gap: var(--co-space-5); padding: var(--co-space-3) var(--co-space-4); }
+.settings-setting-row--toggle { min-height: 68px; }
+.settings-setting-list--toggles { background: transparent; }
+
+.settings-domain-editor {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 220px minmax(0, 1fr);
+  align-items: start;
+  gap: var(--co-space-5);
+}
+
+.settings-object-list {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 2px;
+  padding-right: var(--co-space-4);
+  border-right: 1px solid var(--co-border-default);
+}
+.settings-object-list > header { display: flex; align-items: center; justify-content: space-between; gap: var(--co-space-2); min-height: 40px; padding: 0 var(--co-space-2) var(--co-space-2); }
+.settings-object-list > header > div { display: grid; gap: 1px; }
+.settings-object-list > header strong { font-size: 12px; }
+.settings-object-list > header span { color: var(--co-text-muted); font-size: 10px; }
+.settings-object-button {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--co-space-2);
+  padding: var(--co-space-2);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--co-text-secondary);
+  text-align: left;
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease;
+}
+.settings-object-button:hover,
+.settings-object-button:focus-visible { background: var(--co-bg-hover); color: var(--co-text-primary); outline: none; }
+.settings-object-button.is-active { background: var(--co-bg-surface); color: var(--co-text-primary); }
+.settings-object-button > span:nth-child(2) { display: grid; min-width: 0; gap: 1px; }
+.settings-object-button strong,
+.settings-object-button small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-object-button small { color: var(--co-text-muted); font-size: 9px; }
+.settings-object-button__icon { display: grid; width: 28px; height: 28px; place-items: center; border-radius: 7px; background: var(--co-bg-canvas); color: var(--co-text-muted); }
+.settings-object-button__badges { display: flex; flex-direction: column; gap: 2px; }
+
+.settings-object-editor { display: grid; min-width: 0; gap: var(--co-space-5); }
+.settings-object-editor > header { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: var(--co-space-3); padding-bottom: var(--co-space-3); border-bottom: 1px solid var(--co-border-default); }
+.settings-object-editor h3 { margin: 0; font-size: 17px; }
+.settings-object-editor > header p:not(.settings-eyebrow) { margin: 2px 0 0; color: var(--co-text-secondary); font-size: 11px; }
+.settings-object-editor__actions { display: flex; flex: 0 0 auto; align-items: center; gap: var(--co-space-2); }
+
+.scope-effective-preview { display: grid; gap: var(--co-space-3); padding: var(--co-space-3); border: 1px solid var(--co-border-default); border-radius: 10px; background: var(--co-bg-subtle); }
+.scope-effective-preview > div:first-child { display: flex; align-items: center; justify-content: space-between; gap: var(--co-space-3); }
+.scope-effective-preview span { color: var(--co-text-muted); font-size: 10px; }
+.scope-effective-preview strong { font-family: var(--co-font-mono); font-size: 10px; }
+.scope-namespace-list { display: flex; flex-wrap: wrap; gap: var(--co-space-1); }
+
+.policy-stage-preview { display: grid; min-width: 0; grid-template-columns: repeat(3, minmax(0, 1fr) auto) minmax(0, 1fr); align-items: center; gap: var(--co-space-2); }
+.policy-stage-preview > div { display: grid; min-width: 0; gap: 2px; padding: var(--co-space-3); border: 1px solid var(--co-border-default); border-radius: 9px; background: var(--co-bg-subtle); }
+.policy-stage-preview > div > span { color: var(--co-action-primary); font-family: var(--co-font-mono); font-size: 9px; }
+.policy-stage-preview strong { font-size: 11px; }
+.policy-stage-preview small { overflow: hidden; color: var(--co-text-muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.policy-stage-preview > :deep(svg) { color: var(--co-text-muted); }
+
+.settings-provider-workbench { grid-template-columns: 1fr; }
+.provider-summary-list { gap: 0; border-radius: 10px; background: transparent; }
+.provider-summary-row {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--co-space-3);
+  min-height: 76px;
+  padding: var(--co-space-3) var(--co-space-4);
+  border-bottom: 1px solid var(--co-border-default);
+  background: transparent;
+}
+.provider-summary-row:last-child { border-bottom: 0; }
+.provider-summary-row:hover,
+.provider-summary-row:focus-visible { background: var(--co-bg-hover); }
+.provider-summary-icon { display: grid; width: 38px; height: 38px; place-items: center; border: 1px solid var(--co-border-default); border-radius: 9px; background: var(--co-bg-canvas); color: var(--co-text-secondary); }
+.provider-summary-content { display: grid; min-width: 0; gap: 3px; }
+.provider-summary-content header { display: flex; align-items: center; justify-content: space-between; gap: var(--co-space-3); }
+.provider-summary-content p { margin: 0; color: var(--co-text-secondary); font-size: 11px; }
+.provider-summary-meta { display: flex; min-width: 0; flex-wrap: wrap; gap: var(--co-space-1) var(--co-space-3); color: var(--co-text-muted); font-size: 9px; }
+.provider-summary-meta span:first-child { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.settings-readonly-section { padding-block: var(--co-space-3) var(--co-space-5); border-top: 0; border-bottom: 1px solid var(--co-border-default); }
+.settings-readonly-section h2 { font-size: 22px; }
+.revision-table { min-width: 760px; }
+.settings-facts-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); border-radius: 10px; }
+
+.secret-reference-list { border-radius: 10px; }
+.secret-reference-list li { min-height: 58px; }
+
+.settings-action-bar {
+  position: fixed;
+  right: max(var(--co-page-gutter), calc((100vw - var(--co-sidebar-width) - 1320px) / 2));
+  bottom: max(16px, env(safe-area-inset-bottom));
+  z-index: calc(var(--co-z-sticky) + 3);
+  display: flex;
+  width: min(1040px, calc(100vw - var(--co-sidebar-width) - 256px - (3 * var(--co-page-gutter))));
+  min-height: 64px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--co-space-4);
+  padding: var(--co-space-2) var(--co-space-3);
+  border: 1px solid var(--co-border-strong);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--co-bg-floating) 94%, transparent);
+  box-shadow: var(--co-shadow-floating);
+  backdrop-filter: blur(14px);
+}
+.settings-action-status { display: flex; min-width: 0; align-items: center; gap: var(--co-space-3); }
+.settings-action-status > div { display: grid; min-width: 0; gap: 2px; }
+.settings-action-status strong { font-size: 12px; }
+.settings-action-status span:not(.settings-action-status__dot) { color: var(--co-text-muted); font-size: 9px; }
+.settings-action-status__dot { width: 9px; height: 9px; flex: 0 0 auto; border-radius: 50%; background: var(--co-status-warning-fg); box-shadow: 0 0 0 4px color-mix(in srgb, var(--co-status-warning-fg) 12%, transparent); }
+.settings-action-status__dot.is-valid { background: var(--co-status-success-fg); box-shadow: 0 0 0 4px color-mix(in srgb, var(--co-status-success-fg) 12%, transparent); }
+.settings-action-status__dot.is-invalid { background: var(--co-status-critical-fg); box-shadow: 0 0 0 4px color-mix(in srgb, var(--co-status-critical-fg) 12%, transparent); }
+.settings-action-buttons { display: flex; flex: 0 0 auto; align-items: center; gap: var(--co-space-2); }
+.settings-actions-enter-active,
+.settings-actions-leave-active { transition: opacity 180ms ease, transform 180ms cubic-bezier(0.22, 1, 0.36, 1); }
+.settings-actions-enter-from,
+.settings-actions-leave-to { opacity: 0; transform: translateY(8px); }
+
+.settings-diff-review { display: grid; min-width: 0; gap: var(--co-space-4); }
+.settings-diff-identity { display: grid; margin: 0; }
+.settings-diff-identity > div { display: grid; min-width: 0; grid-template-columns: 120px minmax(0, 1fr); gap: var(--co-space-3); padding: var(--co-space-2) 0; border-bottom: 1px solid var(--co-border-default); }
+.settings-diff-identity dt { color: var(--co-text-muted); font-size: 10px; }
+.settings-diff-identity dd { min-width: 0; margin: 0; font-size: 11px; overflow-wrap: anywhere; }
+.settings-diff-list { display: grid; gap: 0; margin: 0; padding: 0; border: 1px solid var(--co-border-default); border-radius: 10px; list-style: none; }
+.settings-diff-list li { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: var(--co-space-3); padding: var(--co-space-3); border-bottom: 1px solid var(--co-border-default); }
+.settings-diff-list li:last-child { border-bottom: 0; }
+.settings-diff-list span { color: var(--co-action-primary); font-family: var(--co-font-mono); font-size: 9px; }
+.settings-diff-list p { margin: 0; color: var(--co-text-secondary); font-size: 11px; }
+.settings-diff-note { margin: 0; color: var(--co-text-muted); font-size: 10px; }
+
+.settings-view.is-provider-editor-open .settings-current,
+.settings-view.is-provider-editor-open .settings-section-nav { overflow: hidden; }
+
+:global(.settings-provider-overlay) {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: calc(var(--co-z-overlay) + 10) !important;
+  background: rgb(20 18 15 / 28%) !important;
+  backdrop-filter: blur(1px);
+  isolation: isolate;
+}
+
+:global(.settings-provider-slideover) {
+  position: fixed !important;
+  inset: 0 0 0 auto !important;
+  z-index: calc(var(--co-z-overlay) + 11) !important;
+  display: grid !important;
+  width: min(660px, calc(100vw - var(--co-sidebar-rail-width))) !important;
+  max-width: 660px !important;
+  height: 100dvh !important;
+  max-height: 100dvh !important;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden !important;
+  border: 0 !important;
+  border-left: 1px solid var(--co-border-default) !important;
+  border-radius: 12px 0 0 12px !important;
+  background: var(--co-bg-overlay) !important;
+  box-shadow: -20px 0 48px rgb(20 18 15 / 18%) !important;
+  opacity: 1 !important;
+  isolation: isolate;
+  contain: paint;
+}
+
+:global(.settings-provider-slideover__header),
+:global(.settings-provider-slideover__footer) {
+  position: relative;
+  z-index: 2;
+  flex: none !important;
+  background: var(--co-bg-overlay) !important;
+}
+
+:global(.settings-provider-slideover__header) {
+  min-height: var(--co-header-height);
+  padding: var(--co-space-4) var(--co-space-5) !important;
+  border-bottom: 1px solid var(--co-border-default);
+}
+
+:global(.settings-provider-slideover__body) {
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: var(--co-space-5) !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  background: var(--co-bg-overlay) !important;
+}
+
+:global(.settings-provider-slideover__footer) {
+  min-height: 68px;
+  justify-content: flex-end;
+  padding: var(--co-space-3) var(--co-space-5) !important;
+  border-top: 1px solid var(--co-border-default);
+  box-shadow: 0 -8px 24px rgb(20 18 15 / 4%);
+}
+
+.settings-provider-editor { display: grid; min-width: 0; gap: var(--co-space-5); }
+.settings-provider-editor__status { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: var(--co-space-2) var(--co-space-3); padding-bottom: var(--co-space-3); border-bottom: 1px solid var(--co-border-default); }
+.settings-provider-editor__status span { color: var(--co-text-muted); font-size: 10px; }
+.settings-provider-editor__footer { display: flex; width: 100%; justify-content: flex-end; gap: var(--co-space-2); }
+:global(.provider-type-settings) { display: grid; min-width: 0; gap: var(--co-space-5); }
+
+@media (max-width: 1180px) {
+  .settings-workbench { grid-template-columns: 224px minmax(0, 1fr); gap: var(--co-space-5); }
+  .settings-action-bar { right: var(--co-page-gutter); width: calc(100vw - var(--co-sidebar-width) - 224px - (3 * var(--co-page-gutter))); }
+}
+
+@media (max-width: 1024px) {
+  .settings-workbench { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .settings-navigation { height: auto; grid-template-rows: auto auto auto; padding: 0 0 var(--co-space-4); overflow: visible; border-right: 0; border-bottom: 1px solid var(--co-border-default); }
+  .settings-section-nav { display: flex; padding-right: 0; padding-bottom: var(--co-space-1); overflow-x: auto; overflow-y: hidden; scrollbar-gutter: auto; }
+  .settings-nav-indicator { display: none; }
+  .settings-section-nav-group { display: flex; flex: 0 0 auto; }
+  .settings-section-nav-group__label { display: none; }
+  .settings-section-link { min-width: 150px; border-color: var(--co-border-default); }
+  .settings-section-link.is-active { border-color: var(--co-border-strong); background: var(--co-bg-floating); }
+  .settings-navigation__baseline { display: none; }
+  .settings-search-wrap { max-width: 420px; }
+  .settings-action-bar { right: var(--co-page-gutter); left: var(--co-page-gutter); width: auto; }
+}
+
+@media (max-width: 760px) {
+  .settings-page-heading,
+  .settings-context-bar,
+  .settings-action-bar,
+  .settings-object-editor > header { align-items: stretch; flex-direction: column; }
+  .settings-page-actions { justify-content: flex-start; }
+  .settings-domain-editor { grid-template-columns: 1fr; }
+  .settings-object-list { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 0 0 var(--co-space-3); border-right: 0; border-bottom: 1px solid var(--co-border-default); }
+  .settings-object-list > header { grid-column: 1 / -1; }
+  .settings-setting-row,
+  .settings-setting-row--toggle { grid-template-columns: 1fr; gap: var(--co-space-3); }
+  .policy-stage-preview { grid-template-columns: 1fr; }
+  .policy-stage-preview > :deep(svg) { transform: rotate(90deg); justify-self: center; }
+  .settings-action-buttons { width: 100%; flex-wrap: wrap; }
+  .settings-action-buttons :deep(button) { flex: 1 1 auto; }
+  .settings-facts-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  :global(.settings-provider-slideover) { width: 100vw !important; max-width: 100vw !important; border-radius: 0 !important; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-nav-indicator,
+  .settings-section-link,
+  .settings-object-button,
+  .settings-panel-enter-active,
+  .settings-panel-leave-active,
+  .settings-actions-enter-active,
+  .settings-actions-leave-active { transition: none; }
+  :global(.settings-provider-overlay),
+  :global(.settings-provider-slideover) { animation: none !important; transition: none !important; }
+  .settings-panel-enter-from,
+  .settings-panel-leave-to,
+  .settings-actions-enter-from,
+  .settings-actions-leave-to { transform: none; }
 }
 </style>

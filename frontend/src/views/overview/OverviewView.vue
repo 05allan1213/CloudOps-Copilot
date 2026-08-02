@@ -1079,6 +1079,7 @@ onBeforeUnmount(() => window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT
   right: 18px;
   bottom: 18px;
   left: 18px;
+  min-height: 0;
   display: grid;
   grid-template-columns: auto auto minmax(0, 1fr);
   align-items: center;

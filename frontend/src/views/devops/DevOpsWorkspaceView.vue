@@ -178,10 +178,10 @@ const scenarioProposalBlocker = computed(() => {
   if (store.scenarioPlanningError) return store.scenarioPlanningError;
   if (!scenarioDeployment.value || !scenarioID.value) return "Scenario Deployment 不可用。";
   if (scenarioDeployment.value.workload?.desired_replicas === 0) return "Scenario fault 已恢复到 0 replicas。";
-  if (!scenarioDeployment.value.resource_version) return "Kubernetes projection 缺少 resourceVersion。";
-  if (!scenarioInvestigation.value) return "尚无同一 Scenario 的已完成 Agent Investigation 与 Evidence。";
-  if (scenarioFreeze.value?.enabled) return "当前 target 已进入 change freeze。";
-  if (scenarioPlan.value) return `该 Scenario 已有 ${scenarioPlan.value.status} Operation Plan。`;
+  if (!scenarioDeployment.value.resource_version) return "Kubernetes 投影缺少 resourceVersion。";
+  if (!scenarioInvestigation.value) return "尚无同一 Scenario 的已完成 Agent 调查与 Evidence。";
+  if (scenarioFreeze.value?.enabled) return "当前目标已进入 Change Freeze。";
+  if (scenarioPlan.value) return `该 Scenario 已有状态为“${devopsStatusLabel(scenarioPlan.value.status)}”的 Operation Plan。`;
   return "";
 });
 
@@ -215,21 +215,24 @@ const providerReadyCount = computed(() => workspace.value?.providers.filter((pro
 const providerConcernCount = computed(() => workspace.value?.providers.filter((provider) => providerOutcome(provider) === "FAIL").length ?? 0);
 const failedExecutionCount = computed(() => executions.value.filter((item) => ["failed", "precondition_failed", "verification_failed"].includes(item.status)).length);
 const frozenCount = computed(() => workspace.value?.change_freezes.filter((item) => item.enabled).length ?? 0);
+const hasOperationalAttention = computed(() => (
+  proposedCount.value + store.activeExecutions.length + failedExecutionCount.value + frozenCount.value
+) > 0);
 
 const tabs = [
-  { label: "Operations", value: "operations", icon: "i-lucide-shield-check" },
-  { label: "Delivery Identity", value: "identity", icon: "i-lucide-git-commit-horizontal" },
+  { label: "操作与授权", value: "operations", icon: "i-lucide-shield-check" },
+  { label: "交付身份", value: "identity", icon: "i-lucide-git-commit-horizontal" },
 ];
 const confirmationMode = ref<ConfirmationMode>("");
 const confirmationSubject = computed(() => detailSubject.value);
 const confirmationTitle = computed(() => {
-  if (confirmationMode.value === "authorize") return "Owner review · exact authorization";
-  if (confirmationMode.value === "execute") return isOperationPlan(confirmationSubject.value) ? "执行 high-impact Operation Plan" : "执行本地可逆动作";
-  return "创建 immutable Scenario Recovery Plan";
+  if (confirmationMode.value === "authorize") return "负责人审查 · 精确授权";
+  if (confirmationMode.value === "execute") return isOperationPlan(confirmationSubject.value) ? "执行高影响 Operation Plan" : "执行本地可逆动作";
+  return "创建不可变 Scenario 恢复计划";
 });
 const confirmationDescription = computed(() => {
-  if (confirmationMode.value === "authorize") return "Authorization 只绑定当前 content hash；材料变化后必须重新审查。";
-  if (confirmationMode.value === "execute") return "Worker 会再次检查 authority、expiry、exact hash 与 preconditions。";
+  if (confirmationMode.value === "authorize") return "Authorization 只绑定当前内容 Hash；材料变化后必须重新审查。";
+  if (confirmationMode.value === "execute") return "Worker 会再次检查授权、有效期、精确 Hash 与前置条件。";
   return "仅创建持久化 Plan，不授权也不执行 Kubernetes mutation。";
 });
 const confirmationTarget = computed(() => {
@@ -237,12 +240,12 @@ const confirmationTarget = computed(() => {
   return subjectTarget(confirmationSubject.value);
 });
 const confirmationEffect = computed(() => {
-  if (confirmationMode.value === "authorize") return "绑定 Local Owner review 与当前 exact subject。";
-  if (confirmationMode.value === "execute") return "按已授权材料排队执行；排队不代表 Provider observed 或 verified。";
-  return "创建 replicas=0 的 recovery proposal；不产生 Provider side effect。";
+  if (confirmationMode.value === "authorize") return "绑定本地负责人审查与当前精确 Subject。";
+  if (confirmationMode.value === "execute") return "按已授权材料排队执行；排队不代表 Provider 已观测或已验证。";
+  return "创建 replicas=0 的恢复计划；不产生 Provider 外部副作用。";
 });
 const confirmationAuthority = computed(() => {
-  if (confirmationMode.value === "scenario") return "Proposal only · not authorized";
+  if (confirmationMode.value === "scenario") return "仅创建计划 · 未授权";
   if (confirmationMode.value === "authorize") return confirmationSubject.value?.authority ?? "未记录";
   return detailAuthorization.value
     ? `${detailAuthorization.value.authorized_by} · ${detailAuthorization.value.id}`
@@ -255,7 +258,7 @@ const confirmationVersion = computed(() => {
 });
 const confirmationHash = computed(() => confirmationMode.value === "scenario" ? "" : confirmationSubject.value?.content_hash ?? "");
 const confirmationRecovery = computed(() => confirmationMode.value === "scenario"
-  ? "删除或拒绝 proposal 不会回滚任何 Provider 状态；执行仍需独立 authorization。"
+  ? "删除或拒绝计划不会回滚任何 Provider 状态；执行仍需独立授权。"
   : confirmationSubject.value?.risk || "恢复能力由当前 subject 与 Provider adapter 决定。",
 );
 const confirmationPending = computed(() => Boolean(store.mutatingSubjectID));
@@ -303,9 +306,9 @@ function ownershipFor(subject: AuthoritySubject | null, execution: OperationExec
 }
 
 function ownershipLabel(ownership: DevOpsSubjectOwnership): string {
-  if (ownership.kind === "incident") return "Incident-owned";
-  if (ownership.kind === "non_incident") return "DevOps-owned";
-  return "Ownership unknown";
+  if (ownership.kind === "incident") return "Incident 所有";
+  if (ownership.kind === "non_incident") return "DevOps 所有";
+  return "所有权未知";
 }
 
 function ownershipColor(kind: DevOpsSubjectOwnership["kind"]): "warning" | "info" | "neutral" {
@@ -339,6 +342,57 @@ function providerTone(provider: ProviderBranch): "success" | "warning" | "neutra
   return "neutral";
 }
 
+function providerOutcomeLabel(provider: ProviderBranch): string {
+  const outcome = providerOutcome(provider);
+  if (outcome === "PASS") return "可用";
+  if (outcome === "FAIL") return "需要诊断";
+  return "未运行";
+}
+
+function devopsStatusLabel(value?: string): string {
+  const normalized = value?.trim().toLowerCase() ?? "";
+  const labels: Record<string, string> = {
+    active: "已生效",
+    approved: "已批准",
+    authorized: "已授权",
+    cancelled: "已取消",
+    completed: "已完成",
+    disabled: "未启用",
+    expired: "已过期",
+    failed: "执行失败",
+    frozen: "已冻结",
+    healthy: "健康",
+    merged: "已合并",
+    not_authorized: "未授权",
+    not_configured: "未配置",
+    not_run: "尚未运行",
+    observed: "已观测",
+    open: "进行中",
+    passed: "验证通过",
+    precondition_failed: "前置条件失败",
+    proposed: "待审批",
+    ready: "等待执行",
+    rejected: "已拒绝",
+    running: "执行中",
+    succeeded: "已成功",
+    success: "成功",
+    synced: "已同步",
+    verification_failed: "验证失败",
+    warning: "已冻结",
+  };
+  return labels[normalized] ?? (value?.replace(/_/g, " ") || "状态未知");
+}
+
+function providerCausalLabel(): string {
+  const total = workspace.value?.providers.length ?? 0;
+  if (!total) return "Provider 尚未配置";
+  return `${providerReadyCount.value}/${total} 个已就绪`;
+}
+
+function countOrEmpty(count: number, present: string, empty: string): string {
+  return count ? `${count} ${present}` : empty;
+}
+
 function humanOperation(value: string): string {
   const labels: Record<string, string> = {
     "kubernetes.deployment.scale": "调整 Deployment 副本",
@@ -364,21 +418,43 @@ function queueSeverity(row: DevOpsQueueRow): DenseListSeverity {
 }
 
 function queuePhase(row: DevOpsQueueRow): string {
-  if (row.execution?.verification) return `Verification ${row.execution.verification.status}`;
-  if (row.execution) return `Execution ${row.execution.status}`;
+  if (row.execution?.verification) return devopsStatusLabel(row.execution.verification.status);
+  if (row.execution) return devopsStatusLabel(row.execution.status);
   if (row.status === "authorized") return "已授权，等待执行";
-  if (row.status === "proposed") return "等待 Owner 审查";
-  return row.status;
+  if (row.status === "proposed") return "等待负责人审批";
+  return devopsStatusLabel(row.status);
 }
 
 function queueNextStep(row: DevOpsQueueRow): string {
-  if (row.ownership.kind === "incident") return "前往 Incident 继续 Approval、Delivery 或 Verification";
-  if (row.ownership.kind === "unknown") return "刷新 projection 并证明 ownership 后才能继续";
+  if (row.ownership.kind === "incident") return "前往 Incident 继续审批、交付或验证";
+  if (row.ownership.kind === "unknown") return "刷新投影并确认操作归属后才能继续";
   if (row.execution && ["failed", "precondition_failed", "verification_failed"].includes(row.execution.status)) return "查看失败身份与恢复路径";
-  if (row.execution?.status === "running" || row.execution?.status === "ready") return "等待 Provider observation 与 Verification";
-  if (row.status === "proposed") return "核对风险、目标与 exact hash";
+  if (row.execution?.status === "running" || row.execution?.status === "ready") return "等待 Provider 观测与验证";
+  if (row.status === "proposed") return "核对风险、目标与精确 Hash";
   if (row.status === "authorized") return "核对有效授权后排队执行";
   return "查看完整因果链";
+}
+
+function queueRevision(row: DevOpsQueueRow): string {
+  const revision = isOperationPlan(row.subject) ? row.subject.configuration_revision_id : row.subject.run_id;
+  return compactIdentity(revision, 7);
+}
+
+function queueChangeSummary(row: DevOpsQueueRow): string {
+  const parameters = objectValue(row.subject.parameters);
+  const replicas = parameters?.replicas;
+  if (typeof replicas === "number") return `目标副本调整为 ${replicas}`;
+  return row.kind;
+}
+
+function queueExecutionIdentity(row: DevOpsQueueRow): string {
+  return row.execution ? compactIdentity(row.execution.id, 7) : "尚未执行";
+}
+
+function queueVerificationFact(row: DevOpsQueueRow): string {
+  if (row.execution?.verification?.status === "passed") return "验证通过";
+  if (row.execution?.verification?.status === "failed") return "验证失败";
+  return row.execution ? "等待验证" : "";
 }
 
 function baselineTarget(item: DeploymentBaseline): string {
@@ -558,11 +634,11 @@ function deliveryFor(incidentID: string): DeliveryProjection | null {
 function deliveryStageRows(delivery: DeliveryProjection | null) {
   if (!delivery) return [];
   return [
-    { label: "Draft PR", status: delivery.pull_request_state || "not_run", detail: delivery.pull_request_number ? `PR #${delivery.pull_request_number}` : "NOT RUN" },
-    { label: "Required CI", status: delivery.ci_status || "not_run", detail: delivery.ci_status || "NOT RUN" },
-    { label: "Human Merge", status: delivery.merged_commit_sha ? "observed" : "not_run", detail: compactIdentity(delivery.merged_commit_sha, 10) },
-    { label: "Argo Sync", status: delivery.argo_sync_status || "not_run", detail: [delivery.argo_operation_phase, delivery.argo_health_status].filter(Boolean).join(" / ") || "NOT RUN" },
-    { label: "Rollout", status: delivery.status || "not_run", detail: `${delivery.available_replicas}/${delivery.desired_replicas} available` },
+    { label: "PR 草案", status: delivery.pull_request_state || "not_run", detail: delivery.pull_request_number ? `PR #${delivery.pull_request_number}` : "尚未运行" },
+    { label: "必需 CI", status: delivery.ci_status || "not_run", detail: devopsStatusLabel(delivery.ci_status || "not_run") },
+    { label: "人工合并", status: delivery.merged_commit_sha ? "observed" : "not_run", detail: compactIdentity(delivery.merged_commit_sha, 10) },
+    { label: "Argo 同步", status: delivery.argo_sync_status || "not_run", detail: [delivery.argo_operation_phase, delivery.argo_health_status].filter(Boolean).map(devopsStatusLabel).join(" / ") || "尚未运行" },
+    { label: "Rollout", status: delivery.status || "not_run", detail: `可用副本 ${delivery.available_replicas}/${delivery.desired_replicas}` },
   ];
 }
 
@@ -590,20 +666,23 @@ onBeforeUnmount(() => {
   >
     <WorkspaceHeader
       heading-id="devops-heading"
-      eyebrow="Delivery control"
+      eyebrow="交付控制"
       title="DevOps Workspace"
       description="从 Provider 事实到当前 Deployment Baseline，审查非事故操作的完整交付因果链。"
     >
       <template #context>
         <div
           class="header-facts"
-          aria-label="DevOps projection 摘要"
+          aria-label="DevOps 投影摘要"
         >
-          <span><strong>{{ proposedCount }}</strong> 待审批</span>
-          <span><strong>{{ store.activeExecutions.length }}</strong> 执行中</span>
-          <span><strong>{{ failedExecutionCount }}</strong> 失败</span>
-          <span><strong>{{ frozenCount }}</strong> 已冻结</span>
-          <span><strong>{{ activeBaseline ? 1 : 0 }}</strong> Active Baseline</span>
+          <template v-if="hasOperationalAttention">
+            <span><strong>{{ proposedCount }}</strong> 待审批</span>
+            <span><strong>{{ store.activeExecutions.length }}</strong> 执行中</span>
+            <span><strong>{{ failedExecutionCount }}</strong> 失败</span>
+            <span><strong>{{ frozenCount }}</strong> 已冻结</span>
+          </template>
+          <span v-else class="header-facts__healthy"><UIcon name="i-lucide-circle-check" />当前没有待审批、执行失败或变更冻结项</span>
+          <span>{{ activeBaseline ? "当前 Baseline 已生效" : "尚无有效 Baseline" }}</span>
         </div>
       </template>
       <template #actions>
@@ -624,7 +703,7 @@ onBeforeUnmount(() => {
       :icon="providerConcernCount ? 'i-lucide-triangle-alert' : 'i-lucide-plug-zap'"
       title="Provider 连接摘要"
       :description="providerConcernCount ? `${providerConcernCount} 个 Provider 需要诊断；不可用分支不会被解释为已交付。` : `${providerReadyCount}/${workspace.providers.length} 个 Provider 当前可用。`"
-      :badge="providerConcernCount ? `${providerConcernCount} 需关注` : `${providerReadyCount} ready`"
+      :badge="providerConcernCount ? `${providerConcernCount} 个需关注` : `${providerReadyCount} 个已就绪`"
     >
       <template #meta>
         <time :datetime="workspace.collected_at">{{ formatUTC(workspace.collected_at) }}</time>
@@ -642,7 +721,7 @@ onBeforeUnmount(() => {
           </UTooltip>
           <template #content>
             <div class="provider-popover">
-              <header><strong>Provider 诊断</strong><span>只读 projection</span></header>
+              <header><strong>Provider 诊断</strong><span>只读投影</span></header>
               <ul>
                 <li
                   v-for="provider in workspace.providers"
@@ -650,7 +729,7 @@ onBeforeUnmount(() => {
                 >
                   <span :class="`provider-dot provider-dot--${providerTone(provider)}`" />
                   <div><strong>{{ provider.provider }}</strong><small>{{ provider.detail }}</small></div>
-                  <ResultBadge :result="providerOutcome(provider)" :label="providerOutcome(provider)" />
+                  <ResultBadge :result="providerOutcome(provider)" :label="providerOutcomeLabel(provider)" />
                 </li>
               </ul>
               <WorkspaceTechnicalDetails
@@ -701,8 +780,8 @@ onBeforeUnmount(() => {
         @update:model-value="setView"
       />
       <div class="toolbar-summary">
-        <strong>{{ activeView === "operations" ? "操作与 Authority" : "交付身份与 Baseline" }}</strong>
-        <span>{{ activeView === "operations" ? "高风险与待行动状态优先" : "当前 Active Baseline 优先" }}</span>
+        <strong>{{ activeView === "operations" ? "操作与授权" : "交付身份与 Baseline" }}</strong>
+        <span>{{ activeView === "operations" ? "高风险与待行动状态优先" : "当前生效 Baseline 优先" }}</span>
       </div>
       <UButton
         v-if="fullDetailRequested"
@@ -729,8 +808,8 @@ onBeforeUnmount(() => {
     <WorkspaceState
       v-else-if="!workspace"
       kind="empty"
-      title="当前没有 DevOps projection"
-      description="没有加载到 durable operation、identity 或 Provider branch。"
+      title="当前没有 DevOps 投影"
+      description="没有加载到持久化 Operation、交付身份或 Provider 分支。"
     />
 
     <main
@@ -739,17 +818,22 @@ onBeforeUnmount(() => {
     >
       <section
         class="attention-strip"
+        :class="{ 'is-clear': !hasOperationalAttention }"
         aria-labelledby="attention-heading"
       >
         <header>
-          <div><span>Action first</span><h2 id="attention-heading">需要关注</h2></div>
+          <div><span>行动优先</span><h2 id="attention-heading">需要关注</h2></div>
           <p>待审批、执行中、失败和冻结状态优先；正常历史不会占用首屏。</p>
         </header>
-        <dl>
-          <div :class="{ 'has-attention': proposedCount }"><dt>待审批</dt><dd>{{ proposedCount }}</dd><small>{{ proposedCount ? "核对风险与 exact hash" : "当前无待审批项" }}</small></div>
-          <div :class="{ 'is-running': store.activeExecutions.length }"><dt>执行中</dt><dd>{{ store.activeExecutions.length }}</dd><small>{{ store.activeExecutions.length ? "等待 Provider observation" : "当前无执行中操作" }}</small></div>
+        <div v-if="!hasOperationalAttention" class="attention-clear">
+          <UIcon name="i-lucide-shield-check" aria-hidden="true" />
+          <div><strong>当前没有待审批、执行失败或变更冻结项</strong><span>操作队列处于稳定状态。</span></div>
+        </div>
+        <dl v-else>
+          <div :class="{ 'has-attention': proposedCount }"><dt>待审批</dt><dd>{{ proposedCount }}</dd><small>{{ proposedCount ? "核对风险与精确 Hash" : "当前无待审批项" }}</small></div>
+          <div :class="{ 'is-running': store.activeExecutions.length }"><dt>执行中</dt><dd>{{ store.activeExecutions.length }}</dd><small>{{ store.activeExecutions.length ? "等待 Provider 观测" : "当前无执行中操作" }}</small></div>
           <div :class="{ 'has-critical': failedExecutionCount }"><dt>失败</dt><dd>{{ failedExecutionCount }}</dd><small>{{ failedExecutionCount ? "需要检查失败身份与恢复" : "当前无执行失败" }}</small></div>
-          <div :class="{ 'has-attention': frozenCount }"><dt>冻结</dt><dd>{{ frozenCount }}</dd><small>{{ frozenCount ? "目标保持 fail closed" : "当前无 active freeze" }}</small></div>
+          <div :class="{ 'has-attention': frozenCount }"><dt>冻结</dt><dd>{{ frozenCount }}</dd><small>{{ frozenCount ? "目标保持关闭保护" : "当前无生效冻结" }}</small></div>
         </dl>
       </section>
 
@@ -758,18 +842,18 @@ onBeforeUnmount(() => {
         aria-labelledby="causal-heading"
       >
         <header class="section-heading">
-          <div><span>Delivery causality</span><h2 id="causal-heading">从 Provider 到验证基线</h2></div>
-          <p>每一步只呈现当前真实 projection；缺失事实保持 NOT RUN。</p>
+          <div><span>交付因果关系</span><h2 id="causal-heading">从 Provider 到验证基线</h2></div>
+          <p>每一步只呈现当前真实投影；缺失事实保持明确的未运行状态。</p>
         </header>
         <ol class="causal-chain" aria-label="交付因果链">
-          <li><span><UIcon name="i-lucide-plug-zap" /></span><div><small>01</small><strong>Provider</strong><em>{{ providerReadyCount }}/{{ workspace.providers.length }} ready</em></div></li>
-          <li><span><UIcon name="i-lucide-git-compare-arrows" /></span><div><small>02</small><strong>Change</strong><em>{{ deliveries.length || "NOT RUN" }} observed</em></div></li>
-          <li><span><UIcon name="i-lucide-file-diff" /></span><div><small>03</small><strong>Candidate</strong><em>{{ candidates.length || "NOT RUN" }}</em></div></li>
-          <li><span><UIcon name="i-lucide-list-checks" /></span><div><small>04</small><strong>Operation</strong><em>{{ subjects.length || "NOT RUN" }}</em></div></li>
-          <li><span><UIcon name="i-lucide-file-key-2" /></span><div><small>05</small><strong>Authority</strong><em>{{ authorizedCount || "NOT RUN" }}</em></div></li>
-          <li><span><UIcon name="i-lucide-play" /></span><div><small>06</small><strong>Execution</strong><em>{{ executions.length || "NOT RUN" }}</em></div></li>
-          <li><span><UIcon name="i-lucide-shield-check" /></span><div><small>07</small><strong>Verification</strong><em>{{ verifiedCount || "NOT RUN" }}</em></div></li>
-          <li><span><UIcon name="i-lucide-git-commit-horizontal" /></span><div><small>08</small><strong>Baseline</strong><em>{{ activeBaseline ? "Active" : "NOT RUN" }}</em></div></li>
+          <li><span><UIcon name="i-lucide-plug-zap" /></span><div><small>01</small><strong>Provider</strong><em>{{ providerCausalLabel() }}</em></div></li>
+          <li><span><UIcon name="i-lucide-git-compare-arrows" /></span><div><small>02</small><strong>Change</strong><em>{{ countOrEmpty(deliveries.length, "项变更已观测", "未检测到变更") }}</em></div></li>
+          <li><span><UIcon name="i-lucide-file-diff" /></span><div><small>03</small><strong>Candidate</strong><em>{{ countOrEmpty(candidates.length, "个候选项", "尚未生成候选项") }}</em></div></li>
+          <li><span><UIcon name="i-lucide-list-checks" /></span><div><small>04</small><strong>Operation</strong><em>{{ countOrEmpty(subjects.length, "项操作", "尚未生成操作") }}</em></div></li>
+          <li><span><UIcon name="i-lucide-file-key-2" /></span><div><small>05</small><strong>Authority</strong><em>{{ countOrEmpty(authorizedCount, "项已授权", "尚未授权") }}</em></div></li>
+          <li><span><UIcon name="i-lucide-play" /></span><div><small>06</small><strong>Execution</strong><em>{{ countOrEmpty(executions.length, "项已执行", "尚未执行") }}</em></div></li>
+          <li><span><UIcon name="i-lucide-shield-check" /></span><div><small>07</small><strong>Verification</strong><em>{{ countOrEmpty(verifiedCount, "项已验证", "尚未验证") }}</em></div></li>
+          <li><span><UIcon name="i-lucide-git-commit-horizontal" /></span><div><small>08</small><strong>Baseline</strong><em>{{ activeBaseline ? "当前基线已生效" : "尚无有效基线" }}</em></div></li>
         </ol>
       </section>
 
@@ -780,8 +864,8 @@ onBeforeUnmount(() => {
       >
         <header class="section-heading">
           <div>
-            <span>Global / non-incident operations</span><h2 id="queue-heading">Authority Queue</h2>
-            <p>按失败、执行中和待审批排序；选择操作查看阶段、ownership 与下一步。</p>
+            <span>全局非 Incident 操作</span><h2 id="queue-heading">Authority Queue</h2>
+            <p>按失败、执行中和待审批排序；选择操作查看阶段、所有权与下一步。</p>
           </div>
           <UBadge
             color="neutral"
@@ -809,14 +893,26 @@ onBeforeUnmount(() => {
             >{{ humanOperation(item.type) }}</span>
           </template>
           <template #description="{ item }">
-            {{ subjectTarget(item.subject) }} · {{ queueNextStep(item) }}
+            <span class="queue-row-description">
+              <span>{{ subjectTarget(item.subject) }} · {{ queueChangeSummary(item) }}</span>
+              <small>Revision {{ queueRevision(item) }} · Execution {{ queueExecutionIdentity(item) }} · {{ formatUTC(item.execution?.completed_at || item.execution?.created_at || item.createdAt) }}</small>
+            </span>
           </template>
           <template #meta="{ item }">
-            {{ queuePhase(item) }}
+            <span class="queue-row-meta">
+              <strong>{{ queuePhase(item) }}</strong>
+              <small>{{ queueNextStep(item) }}</small>
+            </span>
           </template>
           <template #trailing="{ item }">
-            <UBadge :color="ownershipColor(item.ownership.kind)" variant="soft" :label="ownershipLabel(item.ownership)" />
-            <ResultBadge :result="item.execution?.status || item.status" />
+            <span class="queue-status-stack">
+              <ResultBadge
+                :result="item.execution?.status || item.status"
+                :label="devopsStatusLabel(item.execution?.status || item.status)"
+              />
+              <span>{{ ownershipLabel(item.ownership) }}</span>
+              <small v-if="queueVerificationFact(item)">{{ queueVerificationFact(item) }}</small>
+            </span>
           </template>
         </WorkspaceDenseList>
       </section>
@@ -824,19 +920,19 @@ onBeforeUnmount(() => {
       <WorkspaceStatusRow
         :tone="scenarioProposalBlocker ? 'neutral' : 'info'"
         icon="i-lucide-file-plus-2"
-        title="Scenario Recovery Proposal"
-        :description="scenarioProposalBlocker || 'Evidence、resourceVersion 与 freeze precondition 已齐备；仅创建 proposal，不授权也不执行。'"
-        :badge="scenarioPlan ? scenarioPlan.status : 'Proposal only'"
+        title="Scenario 恢复计划"
+        :description="scenarioProposalBlocker || 'Evidence、resourceVersion 与冻结前置条件已齐备；仅创建计划，不授权也不执行。'"
+        :badge="scenarioPlan ? devopsStatusLabel(scenarioPlan.status) : '仅创建计划'"
       >
         <template #meta>
-          <span>{{ scenarioDeployment?.workload?.ready_replicas ?? 0 }}/{{ scenarioDeployment?.workload?.desired_replicas ?? 0 }} ready</span>
+          <span>副本就绪 {{ scenarioDeployment?.workload?.ready_replicas ?? 0 }}/{{ scenarioDeployment?.workload?.desired_replicas ?? 0 }}</span>
         </template>
         <template #actions>
           <UButton
             color="warning"
             variant="soft"
             icon="i-lucide-file-plus-2"
-            label="创建 Recovery Plan"
+            label="创建恢复计划"
             :disabled="!canProposeScenarioPlan || Boolean(store.mutatingSubjectID)"
             @click="openConfirmation('scenario')"
           />
@@ -845,18 +941,18 @@ onBeforeUnmount(() => {
 
       <section class="freeze-section" aria-labelledby="freeze-heading">
         <header class="section-heading compact-heading">
-          <div><span>Local safety boundary</span><h2 id="freeze-heading">Change Freeze</h2></div>
+          <div><span>本地安全边界</span><h2 id="freeze-heading">Change Freeze</h2></div>
           <UBadge color="neutral" variant="soft" :label="workspace.change_freezes.length ? `${workspace.change_freezes.length} 条` : '无记录'" />
         </header>
         <ul v-if="workspace.change_freezes.length">
           <li v-for="freeze in workspace.change_freezes" :key="`${freeze.target.cluster_id}/${freeze.target.namespace}/${freeze.target.workload_name}`">
             <span class="freeze-icon"><UIcon :name="freeze.enabled ? 'i-lucide-lock-keyhole' : 'i-lucide-lock-keyhole-open'" /></span>
             <div><strong>{{ freeze.target.namespace }}/{{ freeze.target.workload_name }}</strong><small>{{ freeze.reason || "未记录原因" }}</small></div>
-            <ResultBadge :result="freeze.enabled ? 'warning' : 'success'" :label="freeze.enabled ? 'FROZEN' : 'OPEN'" />
+            <ResultBadge :result="freeze.enabled ? 'warning' : 'success'" :label="freeze.enabled ? '已冻结' : '未冻结'" />
             <code>row v{{ freeze.row_version }}</code>
           </li>
         </ul>
-        <p v-else class="inline-empty">当前没有 Change Freeze；未投影状态不会被解释为冻结已解除。</p>
+        <p v-else class="inline-empty inline-empty--healthy"><UIcon name="i-lucide-shield-check" aria-hidden="true" />当前没有 Change Freeze 风险。</p>
       </section>
     </main>
 
@@ -868,7 +964,7 @@ onBeforeUnmount(() => {
       <WorkspaceState
         v-if="detailTargetInvalid"
         kind="invalid"
-        title="DevOps Query 无法恢复目标"
+        title="DevOps 查询无法恢复目标"
         :description="`subject=${requestedSubjectID || '未提供'} · operation=${requestedOperationID || '未提供'}`"
       >
         <template #actions>
@@ -884,7 +980,7 @@ onBeforeUnmount(() => {
       <template v-else>
         <header class="detail-heading">
           <div>
-            <span>Full detail · {{ detailSubject ? (isOperationPlan(detailSubject) ? "Operation Plan" : "Action Card") : "Execution" }}</span>
+            <span>完整详情 · {{ detailSubject ? (isOperationPlan(detailSubject) ? "Operation Plan" : "Action Card") : "Execution" }}</span>
             <h2>{{ detailSubject ? subjectType(detailSubject) : detailExecution?.operation_type }}</h2>
             <code translate="no">{{ detailSubject?.id || detailExecution?.subject_id }}</code>
           </div>
@@ -894,7 +990,10 @@ onBeforeUnmount(() => {
               variant="soft"
               :label="ownershipLabel(detailOwnership)"
             />
-            <ResultBadge :result="detailSubject?.status || detailExecution?.status || 'unknown'" />
+            <ResultBadge
+              :result="detailSubject?.status || detailExecution?.status || 'unknown'"
+              :label="devopsStatusLabel(detailSubject?.status || detailExecution?.status)"
+            />
           </div>
         </header>
 
@@ -912,34 +1011,34 @@ onBeforeUnmount(() => {
           color="error"
           variant="soft"
           icon="i-lucide-shield-x"
-          title="Ownership 无法证明，写入口保持关闭"
+          title="所有权无法证明，写入口保持关闭"
           :description="detailOwnership.reason"
         />
 
         <nav
           v-if="detailOwnership.incidentID"
           class="incident-stage-links"
-          aria-label="Incident lifecycle stages"
+          aria-label="Incident 生命周期阶段"
         >
           <UButton
             color="neutral"
             variant="outline"
             icon="i-lucide-file-key-2"
-            label="Incident Approval"
+            label="Incident 审批"
             :to="incidentStageHref(detailOwnership.incidentID, 'approval')"
           />
           <UButton
             color="neutral"
             variant="outline"
             icon="i-lucide-git-pull-request-arrow"
-            label="Incident Delivery"
+            label="Incident 交付"
             :to="incidentStageHref(detailOwnership.incidentID, 'delivery')"
           />
           <UButton
             color="primary"
             variant="soft"
             icon="i-lucide-shield-check"
-            label="Incident Verification"
+            label="Incident 验证"
             :to="incidentStageHref(detailOwnership.incidentID, 'verification')"
           />
         </nav>
@@ -953,7 +1052,10 @@ onBeforeUnmount(() => {
               <span>ExactIdentity / Authority</span><h3 id="authority-heading">
                 不可变 Subject
               </h3>
-            </div><ResultBadge :result="authorizationCurrent ? 'authorized' : authorizationExpired ? 'expired' : 'not_authorized'" />
+            </div><ResultBadge
+              :result="authorizationCurrent ? 'authorized' : authorizationExpired ? 'expired' : 'not_authorized'"
+              :label="devopsStatusLabel(authorizationCurrent ? 'authorized' : authorizationExpired ? 'expired' : 'not_authorized')"
+            />
           </header>
           <div class="hash-grid">
             <HashValue
@@ -973,16 +1075,16 @@ onBeforeUnmount(() => {
             />
           </div>
           <dl class="fact-grid">
-            <div><dt>Authority</dt><dd>{{ detailSubject?.authority || "未加载 subject" }}</dd></div>
+            <div><dt>Authority</dt><dd>{{ detailSubject?.authority || "未加载 Subject" }}</dd></div>
             <div><dt>Configuration Revision</dt><dd><code>{{ isOperationPlan(detailSubject) ? detailSubject.configuration_revision_id : detailExecution?.configuration_revision_id || "run-bound" }}</code></dd></div>
             <div><dt>Subject expires UTC</dt><dd>{{ formatUTC(detailSubject?.expires_at) }}</dd></div>
-            <div><dt>Authorized by</dt><dd>{{ detailAuthorization ? `${detailAuthorization.authorized_by} · ${detailAuthorization.reason}` : "NOT AUTHORIZED" }}</dd></div>
+            <div><dt>Authorized by</dt><dd>{{ detailAuthorization ? `${detailAuthorization.authorized_by} · ${detailAuthorization.reason}` : "未授权" }}</dd></div>
             <div><dt>Authorization expires UTC</dt><dd>{{ formatUTC(detailAuthorization?.expires_at) }}</dd></div>
-            <div><dt>Risk</dt><dd>{{ detailSubject?.risk || "未加载 subject risk" }}</dd></div>
+            <div><dt>风险</dt><dd>{{ detailSubject?.risk || "未加载 Subject 风险" }}</dd></div>
           </dl>
           <JSONSnapshot
             v-if="detailSubject"
-            title="Exact material payload"
+            title="精确材料载荷"
             :value="selectedPayload"
           />
           <div
@@ -994,7 +1096,7 @@ onBeforeUnmount(() => {
               v-if="canAuthorize"
               color="warning"
               icon="i-lucide-file-key-2"
-              label="授权 exact hash"
+              label="授权精确 Hash"
               :loading="store.mutatingSubjectID === detailSubject?.id"
               @click="openConfirmation('authorize')"
             />
@@ -1010,7 +1112,7 @@ onBeforeUnmount(() => {
             <span
               v-if="!canAuthorize && !canExecute"
               class="muted-copy"
-            >当前状态没有可用 DevOps command。</span>
+            >当前状态没有可用 DevOps 命令。</span>
           </div>
         </section>
 
@@ -1020,13 +1122,13 @@ onBeforeUnmount(() => {
         >
           <header>
             <div>
-              <span>Accepted / dispatched / observed</span><h3 id="execution-heading">
-                Execution & audit
+              <span>已受理 / 已分发 / 已观测</span><h3 id="execution-heading">
+                Execution 与审计
               </h3>
             </div><UBadge
               color="neutral"
               variant="soft"
-              :label="`${subjectExecutions.length || (detailExecution ? 1 : 0)} attempts`"
+              :label="`${subjectExecutions.length || (detailExecution ? 1 : 0)} 次执行`"
             />
           </header>
           <nav
@@ -1040,7 +1142,7 @@ onBeforeUnmount(() => {
               :color="execution.id === detailExecution?.id ? 'primary' : 'neutral'"
               :variant="execution.id === detailExecution?.id ? 'soft' : 'ghost'"
               icon="i-lucide-activity"
-              :label="`Attempt ${execution.attempt} · ${execution.status}`"
+              :label="`第 ${execution.attempt} 次 · ${devopsStatusLabel(execution.status)}`"
               @click="selectExecution(execution)"
             />
           </nav>
@@ -1050,7 +1152,7 @@ onBeforeUnmount(() => {
           >
             <dl class="fact-grid">
               <div><dt>Execution ID</dt><dd><code>{{ detailExecution.id }}</code></dd></div>
-              <div><dt>Status</dt><dd><ResultBadge :result="detailExecution.status" /></dd></div>
+              <div><dt>状态</dt><dd><ResultBadge :result="detailExecution.status" :label="devopsStatusLabel(detailExecution.status)" /></dd></div>
               <div><dt>Attempt</dt><dd>{{ detailExecution.attempt }}</dd></div>
               <div><dt>Created UTC</dt><dd>{{ formatUTC(detailExecution.created_at) }}</dd></div>
               <div><dt>Effect boundary UTC</dt><dd>{{ formatUTC(detailExecution.external_effect_started_at) }}</dd></div>
@@ -1100,14 +1202,14 @@ onBeforeUnmount(() => {
               v-else
               class="empty-copy"
             >
-              尚无 execution audit event。
+              尚无 Execution 审计事件。
             </p>
           </div>
           <p
             v-else
             class="empty-copy"
           >
-            Execution NOT RUN；没有 accepted、dispatched、observed 或 verified 事实。
+            Execution 尚未运行；没有已受理、已分发、已观测或已验证事实。
           </p>
         </section>
 
@@ -1117,10 +1219,10 @@ onBeforeUnmount(() => {
         >
           <header>
             <div>
-              <span>Linear delivery observation</span><h3 id="delivery-rail-heading">
+              <span>线性交付观测</span><h3 id="delivery-rail-heading">
                 Delivery Rail
               </h3>
-            </div><ResultBadge :result="selectedDelivery?.status || 'not_run'" />
+            </div><ResultBadge :result="selectedDelivery?.status || 'not_run'" :label="devopsStatusLabel(selectedDelivery?.status || 'not_run')" />
           </header>
           <ol
             v-if="selectedDelivery"
@@ -1132,7 +1234,7 @@ onBeforeUnmount(() => {
               :key="stage.label"
             >
               <span>{{ String(index + 1).padStart(2, "0") }}</span>
-              <div><strong>{{ stage.label }}</strong><ResultBadge :result="stage.status" /><small>{{ stage.detail }}</small></div>
+              <div><strong>{{ stage.label }}</strong><ResultBadge :result="stage.status" :label="devopsStatusLabel(stage.status)" /><small>{{ stage.detail === 'NOT RUN' ? '尚未运行' : stage.detail }}</small></div>
             </li>
           </ol>
           <div
@@ -1174,7 +1276,7 @@ onBeforeUnmount(() => {
             v-else
             class="empty-copy"
           >
-            Delivery NOT RUN；当前 DevOps projection 没有与该 Incident 绑定的 delivery。
+            Delivery 尚未运行；当前 DevOps 投影没有与该 Incident 绑定的交付记录。
           </p>
         </section>
 
@@ -1185,18 +1287,18 @@ onBeforeUnmount(() => {
         >
           <header>
             <div>
-              <span>Current Evidence Verify</span><h3 id="verification-matrix-heading">
+              <span>当前 Evidence 验证</span><h3 id="verification-matrix-heading">
                 Verification Matrix
               </h3>
-            </div><ResultBadge :result="detailExecution?.verification?.status || 'not_run'" />
+            </div><ResultBadge :result="detailExecution?.verification?.status || 'not_run'" :label="devopsStatusLabel(detailExecution?.verification?.status || 'not_run')" />
           </header>
           <UAlert
             v-if="detailExecution && !detailExecution.verification"
             color="warning"
             variant="soft"
             icon="i-lucide-clock-3"
-            title="尚无 current post-effect observation"
-            description="Execution 状态不能替代 Verification；当前保持 NOT RUN。"
+            title="尚无当前效果后观测"
+            description="Execution 状态不能替代 Verification；当前保持尚未运行。"
           />
           <div
             v-else-if="detailExecution?.verification"
@@ -1206,7 +1308,7 @@ onBeforeUnmount(() => {
             <dl>
               <div><dt>Observation</dt><dd><code>{{ detailExecution.verification.id }}</code></dd></div>
               <div><dt>Source</dt><dd>{{ detailExecution.verification.source }}</dd></div>
-              <div><dt>Status</dt><dd><ResultBadge :result="detailExecution.verification.status" /></dd></div>
+              <div><dt>状态</dt><dd><ResultBadge :result="detailExecution.verification.status" :label="devopsStatusLabel(detailExecution.verification.status)" /></dd></div>
               <div><dt>Observed UTC</dt><dd>{{ formatUTC(detailExecution.verification.observed_at) }}</dd></div>
               <div><dt>Summary</dt><dd>{{ detailExecution.verification.summary }}</dd></div>
             </dl>
@@ -1227,7 +1329,7 @@ onBeforeUnmount(() => {
             v-else
             class="empty-copy"
           >
-            Verification NOT RUN；当前没有 execution。
+            Verification 尚未运行；当前没有 Execution。
           </p>
         </section>
       </template>
@@ -1244,10 +1346,10 @@ onBeforeUnmount(() => {
       >
         <header class="section-heading">
           <div>
-            <span>Current deployment truth</span><h2 id="baseline-heading">DeploymentBaseline</h2>
-            <p>当前 Active Baseline 是交付身份主事实；历史版本仅用于对比与追溯。</p>
+            <span>当前部署事实</span><h2 id="baseline-heading">DeploymentBaseline</h2>
+            <p>当前生效 Baseline 是交付身份主事实；历史版本仅用于对比与追溯。</p>
           </div>
-          <ResultBadge :result="activeBaseline?.status || 'not_run'" :label="activeBaseline ? 'ACTIVE' : 'NOT RUN'" />
+          <ResultBadge :result="activeBaseline?.status || 'not_run'" :label="activeBaseline ? '已生效' : '尚未运行'" />
         </header>
         <div v-if="activeBaseline" class="baseline-summary">
           <div class="baseline-target">
@@ -1263,15 +1365,15 @@ onBeforeUnmount(() => {
           </ol>
           <WorkspaceTechnicalDetails
             title="完整 Baseline 身份"
-            description="Source、Image、GitOps、Configuration 与 Verification exact identity"
+            description="Source、Image、GitOps、Configuration 与 Verification 精确身份"
             :fields="baselineTechnicalFields(activeBaseline)"
           />
         </div>
         <WorkspaceState
           v-else
           kind="empty"
-          title="尚无 verified Deployment Baseline"
-          description="当前没有可证明的 Active Baseline；不会从 Delivery 或 Execution 状态推断。"
+          title="尚无已验证的 Deployment Baseline"
+          description="当前没有可证明的生效 Baseline；不会从 Delivery 或 Execution 状态推断。"
         />
       </section>
 
@@ -1281,8 +1383,8 @@ onBeforeUnmount(() => {
       >
         <header class="section-heading">
           <div>
-            <span>Observed change</span><h2 id="candidate-heading">ChangeCandidate</h2>
-            <p>Candidate 只说明已观察到变更身份；Incident-owned 变更回到 Incident 审批。</p>
+            <span>已观测变更</span><h2 id="candidate-heading">ChangeCandidate</h2>
+            <p>Candidate 只说明已观察到变更身份；Incident 所有的变更回到 Incident 审批。</p>
           </div>
           <UBadge color="neutral" variant="soft" :label="`${candidates.length} 项`" />
         </header>
@@ -1291,7 +1393,7 @@ onBeforeUnmount(() => {
             <div class="identity-list-main">
               <span class="identity-list-icon"><UIcon name="i-lucide-file-diff" /></span>
               <div><strong>{{ candidate.repository || candidate.source_type }}</strong><p>{{ candidate.category }} · {{ candidate.target_path || "未记录 target path" }}</p><small>{{ formatUTC(candidate.change_time) }}</small></div>
-              <UBadge color="warning" variant="soft" label="Incident-owned" />
+              <UBadge color="warning" variant="soft" label="Incident 所有" />
               <UButton
                 color="neutral"
                 variant="outline"
@@ -1316,7 +1418,7 @@ onBeforeUnmount(() => {
       >
         <header class="section-heading">
           <div>
-            <span>Source to observed deployment</span><h2 id="delivery-heading">Delivery projection</h2>
+            <span>从 Source 到部署观测</span><h2 id="delivery-heading">Delivery 投影</h2>
             <p>PR、CI、Merge、Argo 与 Rollout 保持顺序关系，不把中间状态提升为 Verification。</p>
           </div>
           <UBadge color="neutral" variant="soft" :label="`${deliveries.length} 条`" />
@@ -1324,15 +1426,15 @@ onBeforeUnmount(() => {
         <ul v-if="deliveries.length" class="identity-list delivery-list">
           <li v-for="delivery in deliveries" :key="delivery.id">
             <header>
-              <div><strong>{{ delivery.repository }}</strong><p>{{ delivery.argo_application || "未投影 Argo Application" }} · {{ delivery.available_replicas }}/{{ delivery.desired_replicas }} available</p></div>
-              <ResultBadge :result="delivery.status" />
+              <div><strong>{{ delivery.repository }}</strong><p>{{ delivery.argo_application || "未投影 Argo Application" }} · 可用副本 {{ delivery.available_replicas }}/{{ delivery.desired_replicas }}</p></div>
+              <ResultBadge :result="delivery.status" :label="devopsStatusLabel(delivery.status)" />
             </header>
-            <ol class="delivery-chain" aria-label="Delivery projection stages">
-              <li><span>PR</span><strong>{{ delivery.pull_request_number ? `#${delivery.pull_request_number}` : "NOT RUN" }}</strong><ResultBadge :result="delivery.pull_request_state || 'not_run'" /></li>
-              <li><span>CI</span><strong>{{ delivery.ci_status || "NOT RUN" }}</strong><ResultBadge :result="delivery.ci_status || 'not_run'" /></li>
-              <li><span>Merge</span><strong>{{ compactIdentity(delivery.merged_commit_sha, 7) }}</strong><ResultBadge :result="delivery.merged_commit_sha ? 'observed' : 'not_run'" /></li>
-              <li><span>Argo</span><strong>{{ delivery.argo_sync_status || "NOT RUN" }}</strong><ResultBadge :result="delivery.argo_operation_phase || 'not_run'" /></li>
-              <li><span>Rollout</span><strong>{{ delivery.available_replicas }}/{{ delivery.desired_replicas }}</strong><ResultBadge :result="delivery.status || 'not_run'" /></li>
+            <ol class="delivery-chain" aria-label="Delivery 投影阶段">
+              <li><span>PR</span><strong>{{ delivery.pull_request_number ? `#${delivery.pull_request_number}` : "尚未运行" }}</strong><ResultBadge :result="delivery.pull_request_state || 'not_run'" :label="devopsStatusLabel(delivery.pull_request_state || 'not_run')" /></li>
+              <li><span>CI</span><strong>{{ delivery.ci_status ? devopsStatusLabel(delivery.ci_status) : "尚未运行" }}</strong><ResultBadge :result="delivery.ci_status || 'not_run'" :label="devopsStatusLabel(delivery.ci_status || 'not_run')" /></li>
+              <li><span>Merge</span><strong>{{ compactIdentity(delivery.merged_commit_sha, 7) }}</strong><ResultBadge :result="delivery.merged_commit_sha ? 'observed' : 'not_run'" :label="devopsStatusLabel(delivery.merged_commit_sha ? 'observed' : 'not_run')" /></li>
+              <li><span>Argo</span><strong>{{ delivery.argo_sync_status ? devopsStatusLabel(delivery.argo_sync_status) : "尚未运行" }}</strong><ResultBadge :result="delivery.argo_operation_phase || 'not_run'" :label="devopsStatusLabel(delivery.argo_operation_phase || 'not_run')" /></li>
+              <li><span>Rollout</span><strong>{{ delivery.available_replicas }}/{{ delivery.desired_replicas }}</strong><ResultBadge :result="delivery.status || 'not_run'" :label="devopsStatusLabel(delivery.status || 'not_run')" /></li>
             </ol>
             <div class="identity-actions">
               <UButton
@@ -1360,12 +1462,12 @@ onBeforeUnmount(() => {
             </div>
           </li>
         </ul>
-        <p v-else class="inline-empty">GitHub/Argo Delivery branch 为 NOT RUN；当前没有可展示的交付链。</p>
+        <p v-else class="inline-empty">GitHub/Argo Delivery 分支尚未运行；当前没有可展示的交付链。</p>
       </section>
 
       <section class="identity-section" aria-labelledby="history-heading">
         <header class="section-heading">
-          <div><span>Deployment history</span><h2 id="history-heading">Baseline 历史与 Diff</h2><p>选择历史版本，与当前 Active Baseline 做真实字段对比。</p></div>
+          <div><span>部署历史</span><h2 id="history-heading">Baseline 历史与 Diff</h2><p>选择历史版本，与当前生效 Baseline 做真实字段对比。</p></div>
           <UBadge color="neutral" variant="soft" :label="`${historicalBaselines.length} 个历史版本`" />
         </header>
         <WorkspaceDenseList
@@ -1380,14 +1482,14 @@ onBeforeUnmount(() => {
           <template #title="{ item }">{{ baselineTarget(item) }}</template>
           <template #description="{ item }">{{ item.repository }} · {{ compactIdentity(item.source_revision, 9) }}</template>
           <template #meta="{ item }">{{ formatUTC(item.verified_at) }}</template>
-          <template #trailing="{ item }"><ResultBadge :result="item.status" /></template>
+          <template #trailing="{ item }"><ResultBadge :result="item.status" :label="devopsStatusLabel(item.status)" /></template>
         </WorkspaceDenseList>
         <div v-if="comparedBaseline" class="baseline-diff" role="status" aria-live="polite">
-          <header><div><span>Compared baseline</span><strong>{{ baselineTarget(comparedBaseline) }}</strong></div><UButton color="neutral" variant="ghost" icon="i-lucide-x" label="清除对比" @click="router.replace({ path: route.path, query: { ...route.query, baseline: undefined } })" /></header>
+          <header><div><span>对比 Baseline</span><strong>{{ baselineTarget(comparedBaseline) }}</strong></div><UButton color="neutral" variant="ghost" icon="i-lucide-x" label="清除对比" @click="router.replace({ path: route.path, query: { ...route.query, baseline: undefined } })" /></header>
           <dl v-if="baselineDifferences.length">
-            <div v-for="difference in baselineDifferences" :key="difference.label"><dt>{{ difference.label }}</dt><dd><span>历史</span><code>{{ compactIdentity(difference.compared, 10) }}</code></dd><dd><span>Active</span><code>{{ compactIdentity(difference.active, 10) }}</code></dd></div>
+            <div v-for="difference in baselineDifferences" :key="difference.label"><dt>{{ difference.label }}</dt><dd><span>历史</span><code>{{ compactIdentity(difference.compared, 10) }}</code></dd><dd><span>当前生效</span><code>{{ compactIdentity(difference.active, 10) }}</code></dd></div>
           </dl>
-          <p v-else>所选 Baseline 与当前 Active Baseline 的核心身份字段一致。</p>
+          <p v-else>所选 Baseline 与当前生效 Baseline 的核心身份字段一致。</p>
           <WorkspaceTechnicalDetails title="完整对比身份" description="展开核对历史 Baseline 完整值" :fields="baselineTechnicalFields(comparedBaseline)" />
         </div>
       </section>
@@ -1396,9 +1498,9 @@ onBeforeUnmount(() => {
     <WorkspaceInspector
       :open="Boolean(inspectorID)"
       title="DevOps Inspector"
-      description="ExactIdentity、Authority 与当前执行链的只读压缩摘要。"
+      description="ExactIdentity、Authority 与当前执行链的只读摘要。"
       :target-state="inspectorTargetState"
-      target-description="selected Query 未匹配当前 DevOps projection；不会静默选择第一行。"
+      target-description="所选查询未匹配当前 DevOps 投影；不会静默选择第一行。"
       :trigger="inspectorTrigger"
       @update:open="handleInspectorOpenChange"
     >
@@ -1409,7 +1511,7 @@ onBeforeUnmount(() => {
       >
         <header>
           <div><span>{{ isOperationPlan(inspectorSubject) ? "Operation Plan" : "Action Card" }}</span><h3>{{ subjectType(inspectorSubject) }}</h3><code translate="no">{{ inspectorSubject.id }}</code></div>
-          <ResultBadge :result="inspectorSubject.status" />
+          <ResultBadge :result="inspectorSubject.status" :label="devopsStatusLabel(inspectorSubject.status)" />
         </header>
         <UAlert
           :color="inspectorOwnership.kind === 'incident' ? 'warning' : inspectorOwnership.kind === 'non_incident' ? 'info' : 'error'"
@@ -1421,9 +1523,9 @@ onBeforeUnmount(() => {
         <dl class="inspector-facts">
           <div><dt>Authority</dt><dd>{{ inspectorSubject.authority }}</dd></div>
           <div><dt>Expires UTC</dt><dd>{{ formatUTC(inspectorSubject.expires_at) }}</dd></div>
-          <div><dt>Execution</dt><dd>{{ inspectorExecution?.status || "NOT RUN" }}</dd></div>
-          <div><dt>Delivery</dt><dd>{{ inspectorDelivery?.status || "NOT RUN" }}</dd></div>
-          <div><dt>Verification</dt><dd>{{ inspectorExecution?.verification?.status || "NOT RUN" }}</dd></div>
+          <div><dt>Execution</dt><dd>{{ devopsStatusLabel(inspectorExecution?.status || "not_run") }}</dd></div>
+          <div><dt>Delivery</dt><dd>{{ devopsStatusLabel(inspectorDelivery?.status || "not_run") }}</dd></div>
+          <div><dt>Verification</dt><dd>{{ devopsStatusLabel(inspectorExecution?.verification?.status || "not_run") }}</dd></div>
         </dl>
         <HashValue
           label="Exact content hash"
@@ -1443,21 +1545,21 @@ onBeforeUnmount(() => {
             color="neutral"
             variant="outline"
             icon="i-lucide-file-key-2"
-            label="Approval"
+            label="审批"
             :to="incidentStageHref(inspectorOwnership.incidentID, 'approval')"
           />
           <UButton
             color="neutral"
             variant="outline"
             icon="i-lucide-git-pull-request-arrow"
-            label="Delivery"
+            label="交付"
             :to="incidentStageHref(inspectorOwnership.incidentID, 'delivery')"
           />
           <UButton
             color="neutral"
             variant="outline"
             icon="i-lucide-shield-check"
-            label="Verification"
+            label="验证"
             :to="incidentStageHref(inspectorOwnership.incidentID, 'verification')"
           />
         </nav>
@@ -1490,7 +1592,7 @@ onBeforeUnmount(() => {
       :version="confirmationVersion"
       :exact-hash="confirmationHash"
       :recovery="confirmationRecovery"
-      :confirm-label="confirmationMode === 'authorize' ? '授权 exact hash' : confirmationMode === 'execute' ? '排队执行' : '创建 exact Plan'"
+      :confirm-label="confirmationMode === 'authorize' ? '授权精确 Hash' : confirmationMode === 'execute' ? '排队执行' : '创建精确 Plan'"
       :reason-required="confirmationMode === 'authorize'"
       :pending="confirmationPending"
       :severity="confirmationMode === 'execute' ? 'error' : 'warning'"
@@ -1505,6 +1607,8 @@ onBeforeUnmount(() => {
 .header-facts { display: flex; min-width: 0; flex-wrap: wrap; gap: var(--co-space-4); color: var(--co-text-secondary); font-size: 11px; }
 .header-facts span { display: inline-flex; align-items: baseline; gap: var(--co-space-1); }
 .header-facts strong { color: var(--co-text-primary); font-family: var(--co-font-mono); font-size: 16px; font-variant-numeric: tabular-nums; }
+.header-facts .header-facts__healthy { align-items: center; color: var(--co-status-success-fg); }
+.header-facts__healthy svg { width: 14px; height: 14px; }
 .provider-strip, .freeze-section, .scenario-strip, .detail-section, .identity-section, .baseline-hero { min-width: 0; overflow: hidden; border: 1px solid transparent; border-radius: var(--co-radius-frame); background: var(--co-bg-surface); box-shadow: var(--co-shadow-row); }
 .provider-strip { padding: var(--co-space-3); }
 .provider-strip > header, .queue-section > header, .freeze-section > header, .identity-section > header, .detail-heading, .detail-section > header, .devops-inspector > header { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: var(--co-space-3); }
@@ -1539,6 +1643,7 @@ onBeforeUnmount(() => {
 .loading-row { height: var(--co-table-row-height); }
 .operations-index, .operation-detail, .identity-view, .devops-inspector { display: grid; min-width: 0; gap: var(--co-space-4); }
 .attention-strip { display: grid; min-width: 0; grid-template-columns: minmax(180px, .7fr) minmax(0, 1.3fr); gap: var(--co-space-4); padding: var(--co-space-2) 0 var(--co-space-4); border-bottom: 1px solid var(--co-border-subtle); }
+.attention-strip.is-clear { grid-template-columns: minmax(220px, .7fr) minmax(0, 1.3fr); padding-bottom: var(--co-space-3); }
 .attention-strip header { display: grid; align-content: center; min-width: 0; gap: 3px; }
 .attention-strip header span, .section-heading > div > span, .baseline-summary small, .identity-list small, .baseline-diff span { color: var(--co-text-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .attention-strip h2, .section-heading h2, .baseline-hero h2 { margin: 0; font-size: 16px; }
@@ -1551,6 +1656,11 @@ onBeforeUnmount(() => {
 .attention-strip .has-attention dd, .attention-strip .has-attention dt { color: var(--co-status-warning-fg); }
 .attention-strip .has-critical dd, .attention-strip .has-critical dt { color: var(--co-status-critical-fg); }
 .attention-strip .is-running dd, .attention-strip .is-running dt { color: var(--co-status-info-fg); }
+.attention-clear { display: flex; min-width: 0; align-items: center; gap: var(--co-space-3); padding: var(--co-space-3) var(--co-space-4); border: 1px solid var(--co-status-success-border); border-radius: var(--co-radius-control); background: color-mix(in srgb, var(--co-status-success-bg) 52%, var(--co-bg-surface)); }
+.attention-clear > svg { width: 20px; height: 20px; flex: 0 0 auto; color: var(--co-status-success-fg); }
+.attention-clear > div { display: grid; min-width: 0; gap: 2px; }
+.attention-clear strong { color: var(--co-text-secondary); font-size: 12px; }
+.attention-clear span { color: var(--co-text-muted); font-size: 10px; }
 .causal-section { min-width: 0; padding: var(--co-space-2) 0 var(--co-space-4); border-bottom: 1px solid var(--co-border-subtle); }
 .section-heading { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: var(--co-space-3); }
 .section-heading > div { min-width: 0; }
@@ -1577,6 +1687,15 @@ onBeforeUnmount(() => {
 .scenario-strip dd, .fact-grid dd, .inspector-facts dd, .verification-matrix dd { min-width: 0; margin: 2px 0 0; color: var(--co-text-secondary); overflow-wrap: anywhere; }
 .queue-section { min-width: 0; overflow: visible; }
 .queue-section > header { padding: 0 0 var(--co-space-3); }
+.queue-row-description { display: grid; min-width: 0; gap: 2px; }
+.queue-row-description > span { color: var(--co-text-secondary); }
+.queue-row-description small { min-width: 0; overflow: hidden; color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.queue-row-meta { display: grid; max-width: 210px; justify-items: end; gap: 2px; font-family: var(--co-font-sans); text-align: right; }
+.queue-row-meta strong { color: var(--co-text-secondary); font-size: 10px; }
+.queue-row-meta small { color: var(--co-text-muted); font-size: 9px; line-height: 1.35; }
+.queue-status-stack { display: grid; min-width: 92px; justify-items: end; gap: 3px; }
+.queue-status-stack > span { color: var(--co-text-muted); font-size: 10px; }
+.queue-status-stack > small { color: var(--co-status-success-fg); font-size: 9px; }
 .freeze-section > header, .identity-section > header { padding: var(--co-space-3); }
 .identity-section :deep(.workspace-dense-list) { padding: 0 var(--co-space-3) var(--co-space-3); }
 .devops-table-stack { display: grid; min-width: 0; justify-items: start; gap: 3px; }
@@ -1653,6 +1772,8 @@ onBeforeUnmount(() => {
 .baseline-diff dd { display: grid; min-width: 0; gap: 2px; margin: 0; }
 .baseline-diff code { color: var(--co-text-secondary); font-family: var(--co-font-mono); font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .baseline-diff p, .inline-empty { margin: 0; padding: var(--co-space-3) var(--co-space-4); color: var(--co-text-muted); font-size: 11px; }
+.inline-empty--healthy { display: flex; align-items: center; gap: var(--co-space-2); padding-block: var(--co-space-2); color: var(--co-status-success-fg); }
+.inline-empty--healthy svg { width: 15px; height: 15px; }
 .devops-inspector > header > div { display: grid; min-width: 0; gap: 2px; }
 .devops-inspector header code { min-width: 0; color: var(--co-text-muted); overflow-wrap: anywhere; }
 .inspector-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 0; }
@@ -1667,10 +1788,15 @@ onBeforeUnmount(() => {
   .delivery-chain li:nth-child(4) { border-top: 1px solid var(--co-border-subtle); }
 }
 
+@media (max-width: 1024px) {
+  .queue-row-meta { width: 100%; max-width: none; justify-items: start; text-align: left; }
+}
+
 @media (max-width: 900px) {
   .devops-view-switcher { align-items: flex-start; flex-direction: column; }
   .devops-view-switcher > :deep(button:last-child) { margin-left: 0; }
   .attention-strip { grid-template-columns: minmax(0, 1fr); }
+  .attention-strip.is-clear { grid-template-columns: minmax(0, 1fr); }
   .attention-strip dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .attention-strip dl div { padding-block: var(--co-space-2); }
   .section-heading { flex-direction: column; }

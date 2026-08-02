@@ -133,7 +133,6 @@ const traceOverview = computed(() => {
     slowest,
   };
 });
-const recentSearch = computed(() => historyItems.value[0] ?? null);
 const detailRouteActive = computed(() => Boolean(
   parseTracesRoute(route.query as Record<string, unknown>).traceID,
 ));
@@ -190,6 +189,15 @@ function formatDuration(value: number): string {
 
 function providerStateLabel(state?: TelemetryCatalog["provider_state"]): string {
   return ({ available: "可用", partial: "部分可用", unavailable: "不可用", disabled: "已停用" } as Record<string, string>)[state ?? ""] ?? "检查中";
+}
+
+function formatElapsed(createdAt: string, completedAt?: string): string {
+  const started = new Date(createdAt).getTime();
+  const finished = new Date(completedAt ?? "").getTime();
+  if (!Number.isFinite(started) || !Number.isFinite(finished) || finished < started) return "耗时未知";
+  const elapsed = finished - started;
+  if (elapsed < 1000) return `${elapsed} ms`;
+  return `${(elapsed / 1000).toFixed(elapsed < 10_000 ? 2 : 1)} s`;
 }
 
 function normalizeFailure(reason: unknown, fallback: string): RequestFailure {
@@ -480,6 +488,36 @@ function selectPreset(minutes: number) {
   void syncRoute("", "");
 }
 
+function prepareTraceShortcut(kind: "errors" | "slow" | "recent" | "wider" | "clear-operation" | "clear-duration") {
+  if (kind === "errors") {
+    mode.value = "guided";
+    statusFilter.value = "error";
+    minDuration.value = undefined;
+    maxDuration.value = undefined;
+  } else if (kind === "slow") {
+    mode.value = "guided";
+    statusFilter.value = "";
+    minDuration.value = 1000;
+    maxDuration.value = undefined;
+  } else if (kind === "clear-operation") {
+    operationFilter.value = "";
+  } else if (kind === "clear-duration") {
+    minDuration.value = undefined;
+    maxDuration.value = undefined;
+  }
+  if (kind === "errors" || kind === "recent") {
+    const to = new Date();
+    fromValue.value = toLocalInput(new Date(to.getTime() - 15 * 60_000));
+    toValue.value = toLocalInput(to);
+  } else if (kind === "slow" || kind === "wider") {
+    const to = new Date();
+    fromValue.value = toLocalInput(new Date(to.getTime() - 60 * 60_000));
+    toValue.value = toLocalInput(to);
+  }
+  currentSearch.value = null;
+  void syncRoute("", "");
+}
+
 async function searchTraces() {
   const context = telemetryContext();
   if (!context || !canSearch.value) return;
@@ -738,8 +776,7 @@ onBeforeUnmount(() => {
   >
     <WorkspaceHeader
       title="链路分析"
-      eyebrow="Observability / Traces"
-      :description="`${selectedResource ? `${selectedResource.kind} ${selectedResource.name}` : '当前运行范围'} · 沿关键路径定位慢 Span 与错误服务`"
+      :description="`${selectedResource ? `${selectedResource.kind} ${selectedResource.name} · ${selectedResource.namespace}` : '当前运行范围'} · 沿关键路径定位慢 Span 与错误服务`"
     >
       <template #actions>
         <UTooltip text="刷新链路工作区">
@@ -854,92 +891,13 @@ onBeforeUnmount(() => {
     <template v-else>
       <section
         class="trace-discovery-stage"
-        aria-labelledby="trace-queue-heading"
+        aria-labelledby="trace-results-heading"
       >
-        <header class="trace-discovery-stage__header">
-          <div class="trace-discovery-stage__identity">
-            <span class="trace-discovery-stage__icon" aria-hidden="true">
-              <UIcon name="i-lucide-route" />
-            </span>
-            <div>
-              <span>Trace queue</span>
-              <h2 id="trace-queue-heading">
-                Trace 发现队列
-              </h2>
-              <p v-if="currentSearch">
-                {{ currentSearch.result_count }} 条 Trace · {{ formatBytes(currentSearch.response_bytes) }} · 采集于 {{ formatTime(currentSearch.source.collected_at) }}
-              </p>
-              <p v-else>
-                沿服务调用、关键路径与错误 Span 进入专用链路分析工作区。
-              </p>
-            </div>
-          </div>
-          <div
-            v-if="currentSearch"
-            class="trace-discovery-stage__count"
-            aria-label="Trace 搜索数量"
-          >
-            <strong>{{ currentSearch.result_count }}</strong>
-            <span>Trace</span>
-            <small>{{ formatBytes(currentSearch.response_bytes) }}</small>
-          </div>
-          <div class="trace-discovery-stage__actions">
-            <UPopover>
-              <UButton
-                color="neutral"
-                variant="soft"
-                icon="i-lucide-history"
-                :label="`搜索历史 ${historyItems.length}`"
-              />
-              <template #content>
-                <div class="trace-history-popover">
-                  <TracesHistory
-                    :items="historyItems"
-                    :active-i-d="currentSearch?.id ?? ''"
-                    @select="openHistory"
-                  />
-                </div>
-              </template>
-            </UPopover>
-            <UButton
-              color="neutral"
-              variant="soft"
-              icon="i-lucide-bot"
-              label="交给 Agent"
-              :disabled="!canFreeze"
-              @click="openCurrentInAgent"
-            />
-            <UTooltip text="打开关联 Workload">
-              <UButton
-                color="neutral"
-                variant="ghost"
-                icon="i-lucide-box"
-                square
-                aria-label="打开关联 Workload"
-                :to="workloadLocation"
-              />
-            </UTooltip>
-            <UTooltip
-              v-if="tempoURL"
-              text="在 Tempo 中打开"
-            >
-              <UButton
-                color="neutral"
-                variant="ghost"
-                icon="i-lucide-external-link"
-                square
-                aria-label="在 Tempo 中打开"
-                :to="tempoURL"
-                target="_blank"
-                rel="noopener noreferrer"
-                external
-              />
-            </UTooltip>
-          </div>
-        </header>
-
         <div class="trace-workbench">
-          <aside class="trace-query-rail" aria-label="Trace 发现轨道">
+          <aside
+            class="trace-query-rail"
+            aria-label="Trace 查询面板"
+          >
             <TracesQueryControls
               :namespaces="namespaces"
               :resources="namespaceWorkloads"
@@ -988,14 +946,152 @@ onBeforeUnmount(() => {
             />
           </aside>
 
-          <div
-            class="trace-discovery-stage__body"
-            :class="{ 'is-awaiting-search': !currentSearch }"
+          <section
+            class="trace-results-panel"
+            aria-labelledby="trace-results-heading"
           >
-          <main class="trace-queue-pane">
+            <header class="trace-results-header">
+              <div>
+                <h2 id="trace-results-heading">
+                  Trace 结果
+                </h2>
+                <p v-if="currentSearch">
+                  {{ currentSearch.result_count }} 条 Trace · {{ formatElapsed(currentSearch.created_at, currentSearch.completed_at) }} · {{ formatBytes(currentSearch.response_bytes) }}
+                </p>
+                <p v-else>
+                  运行查询后在此比较耗时、Span 数量、错误服务并进入瀑布图。
+                </p>
+              </div>
+              <div class="trace-results-actions">
+                <UTooltip text="打开 Trace 并选择 Span 后保存">
+                  <UButton
+                    color="neutral"
+                    variant="soft"
+                    icon="i-lucide-save"
+                    label="保存 Evidence"
+                    disabled
+                  />
+                </UTooltip>
+                <UButton
+                  color="neutral"
+                  variant="soft"
+                  icon="i-lucide-bot"
+                  label="交给 Agent"
+                  :disabled="!canFreeze"
+                  @click="openCurrentInAgent"
+                />
+                <UPopover :content="{ align: 'end', side: 'bottom', sideOffset: 8, collisionPadding: 16, sticky: 'always' }">
+                  <UButton
+                    color="neutral"
+                    variant="ghost"
+                    icon="i-lucide-history"
+                    :label="`查询历史 ${historyItems.length}`"
+                  />
+                  <template #content>
+                    <div class="trace-history-popover">
+                      <TracesHistory
+                        :items="historyItems"
+                        :active-i-d="currentSearch?.id ?? ''"
+                        @select="openHistory"
+                      />
+                    </div>
+                  </template>
+                </UPopover>
+                <UPopover>
+                  <UButton
+                    color="neutral"
+                    variant="ghost"
+                    icon="i-lucide-ellipsis"
+                    label="更多"
+                  />
+                  <template #content>
+                    <div class="trace-more-menu">
+                      <UButton
+                        color="neutral"
+                        variant="ghost"
+                        icon="i-lucide-archive"
+                        label="创建 Snapshot"
+                        :disabled="!canFreeze || freezing"
+                        :loading="freezing"
+                        @click="freezeContext"
+                      />
+                      <UButton
+                        color="neutral"
+                        variant="ghost"
+                        icon="i-lucide-box"
+                        label="打开关联 Workload"
+                        :to="workloadLocation"
+                      />
+                      <UButton
+                        v-if="tempoURL"
+                        color="neutral"
+                        variant="ghost"
+                        icon="i-lucide-external-link"
+                        label="在 Tempo 中打开"
+                        :to="tempoURL"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        external
+                      />
+                      <UButton
+                        color="neutral"
+                        variant="ghost"
+                        icon="i-lucide-chart-no-axes-combined"
+                        label="查看关联指标"
+                        :to="{ path: '/monitoring', query: workloadLocation.query }"
+                      />
+                      <UButton
+                        color="neutral"
+                        variant="ghost"
+                        icon="i-lucide-logs"
+                        label="查看关联日志"
+                        :to="{ path: '/logs', query: workloadLocation.query }"
+                      />
+                    </div>
+                  </template>
+                </UPopover>
+              </div>
+            </header>
+
             <div
               v-if="currentSearch"
-              class="trace-queue-pane__meta"
+              class="trace-results-overview"
+            >
+              <dl
+                class="trace-results-metrics"
+                aria-label="Trace 结果摘要"
+              >
+                <div><dt>Trace</dt><dd>{{ traceOverview.total }}</dd></div>
+                <div><dt>服务</dt><dd>{{ traceOverview.services }}</dd></div>
+                <div>
+                  <dt>错误链路</dt><dd :class="{ 'is-error': traceOverview.errorTraces > 0 }">
+                    {{ traceOverview.errorTraces }}
+                  </dd>
+                </div>
+                <div><dt>Span</dt><dd>{{ traceOverview.spans }}</dd></div>
+              </dl>
+              <section
+                v-if="traceOverview.slowest"
+                class="trace-results-slowest"
+              >
+                <div>
+                  <span>最慢链路</span>
+                  <strong>{{ traceOverview.slowest.root_service }} · {{ traceOverview.slowest.root_operation }}</strong>
+                  <p>{{ formatDuration(traceOverview.slowest.duration_ms) }} · {{ traceOverview.slowest.span_count }} Span · {{ traceOverview.slowest.error_span_count }} 错误</p>
+                </div>
+                <UButton
+                  color="neutral"
+                  variant="soft"
+                  trailing-icon="i-lucide-arrow-right"
+                  label="分析"
+                  @click="openTrace(traceOverview.slowest, 0)"
+                />
+              </section>
+            </div>
+
+            <div
+              v-if="currentSearch"
+              class="trace-results-meta"
             >
               <span><b>{{ currentSearch.mode === "expert" ? "TRACEQL" : "DISCOVERY" }}</b></span>
               <span>{{ currentSearch.time_range.from }} → {{ currentSearch.time_range.to }}</span>
@@ -1022,18 +1118,8 @@ onBeforeUnmount(() => {
               v-if="currentSearch?.result_expired"
               kind="expired"
               title="Provider Trace summaries 已过期"
-              description="仅保留 Search Execution 审计元数据；请重新搜索。"
-            >
-              <template #actions>
-                <UButton
-                  color="primary"
-                  icon="i-lucide-play"
-                  label="按当前条件重新搜索"
-                  :disabled="!canSearch"
-                  @click="searchTraces"
-                />
-              </template>
-            </WorkspaceState>
+              description="仅保留 Search Execution 审计元数据；请在查询面板重新执行。"
+            />
             <WorkspaceState
               v-if="currentSearch?.status === 'failed' || currentSearch?.status === 'cancelled'"
               kind="error"
@@ -1048,256 +1134,161 @@ onBeforeUnmount(() => {
               @open="openTrace"
             />
             <section
-              v-else-if="!currentSearch"
-              class="trace-ready-state"
-              aria-label="当前 Trace 观测对象"
+              v-if="!currentSearch"
+              class="trace-results-empty"
+              aria-live="polite"
             >
-              <div class="trace-ready-state__main">
-                <div class="trace-ready-state__copy">
-                  <span>当前链路边界</span>
-                  <h3>{{ selectedResource?.name || "当前运行范围" }}</h3>
-                  <p>{{ selectedResource ? `${selectedResource.kind} · ${selectedResource.namespace}` : "等待可观测资源" }} · {{ serviceFilter || "全部服务" }} · {{ operationFilter || "全部操作" }}</p>
-                </div>
-                <div class="trace-ready-state__path" aria-label="Workload 到 Tempo 搜索结果">
-                  <span>
-                    <UIcon name="i-lucide-box" aria-hidden="true" />
-                    <small>Workload</small>
-                    <b>{{ selectedResource?.name || "未选择" }}</b>
-                  </span>
-                  <UIcon name="i-lucide-arrow-right" aria-hidden="true" />
-                  <span>
-                    <UIcon name="i-lucide-waypoints" aria-hidden="true" />
-                    <small>Tempo</small>
-                    <b>{{ providerStateLabel(catalog?.provider_state) }}</b>
-                  </span>
-                  <UIcon name="i-lucide-arrow-right" aria-hidden="true" />
-                  <span>
-                    <UIcon name="i-lucide-git-branch" aria-hidden="true" />
-                    <small>最近发现</small>
-                    <b>{{ recentSearch ? `${recentSearch.result_count} 条 Trace` : "尚未运行" }}</b>
-                  </span>
+              <div class="trace-results-empty__copy">
+                <span><UIcon
+                  name="i-lucide-scan-search"
+                  aria-hidden="true"
+                /></span>
+                <div>
+                  <h3>尚未发现 Trace</h3>
+                  <p>选择服务和操作，或使用 TraceQL 查询链路。</p>
                 </div>
               </div>
-              <div class="trace-ready-state__aside">
-                <dl v-if="recentSearch" class="trace-ready-state__recent">
-                  <div><dt>最近搜索</dt><dd>{{ recentSearch.result_count }} 条</dd></div>
-                  <div><dt>执行时间</dt><dd>{{ formatTime(recentSearch.created_at) }}</dd></div>
-                </dl>
-                <div class="trace-ready-state__actions">
+              <div class="trace-results-empty__suggestions">
+                <span>常用条件</span>
+                <div>
                   <UButton
-                    color="primary"
-                    icon="i-lucide-scan-search"
-                    label="运行 Trace 发现"
-                    :disabled="!canSearch"
-                    @click="searchTraces"
+                    color="neutral"
+                    variant="soft"
+                    icon="i-lucide-circle-alert"
+                    label="错误 Trace"
+                    @click="prepareTraceShortcut('errors')"
                   />
                   <UButton
-                    v-if="recentSearch"
+                    color="neutral"
+                    variant="soft"
+                    icon="i-lucide-timer"
+                    label="耗时 > 1s"
+                    @click="prepareTraceShortcut('slow')"
+                  />
+                  <UButton
+                    color="neutral"
+                    variant="soft"
+                    icon="i-lucide-clock-3"
+                    label="最近 15 分钟"
+                    @click="prepareTraceShortcut('recent')"
+                  />
+                </div>
+              </div>
+            </section>
+            <section
+              v-else-if="currentSearch?.status === 'succeeded' && !currentSearch.result_expired && currentSearch.traces.length === 0"
+              class="trace-results-empty trace-results-empty--no-results"
+              aria-live="polite"
+            >
+              <div class="trace-results-empty__copy">
+                <span><UIcon
+                  name="i-lucide-search-x"
+                  aria-hidden="true"
+                /></span>
+                <div>
+                  <h3>没有找到符合条件的 Trace</h3>
+                  <p>当前范围：{{ currentSearch.resource.namespace }} / {{ currentSearch.resource.name }} / {{ formatTime(currentSearch.time_range.from) }} 至 {{ formatTime(currentSearch.time_range.to) }}</p>
+                </div>
+              </div>
+              <div class="trace-results-empty__suggestions">
+                <span>建议调整</span>
+                <div>
+                  <UButton
                     color="neutral"
                     variant="ghost"
-                    icon="i-lucide-rotate-ccw"
-                    label="查看最近执行"
-                    @click="openHistory(recentSearch.id)"
+                    label="扩大到 1 小时"
+                    @click="prepareTraceShortcut('wider')"
+                  />
+                  <UButton
+                    color="neutral"
+                    variant="ghost"
+                    label="清除 Operation"
+                    @click="prepareTraceShortcut('clear-operation')"
+                  />
+                  <UButton
+                    color="neutral"
+                    variant="ghost"
+                    label="清除耗时筛选"
+                    @click="prepareTraceShortcut('clear-duration')"
                   />
                 </div>
               </div>
             </section>
-            <div
-              v-else
-              class="trace-queue-empty"
-            >
-              <span>
-                <UIcon
-                  :name="currentSearch ? 'i-lucide-search-x' : 'i-lucide-scan-search'"
-                  aria-hidden="true"
-                />
-              </span>
-              <div>
-                <h3>此范围没有 Trace</h3>
-                <p>资源、服务与时间上下文保持不变，可调整 Operation 或扩大时间范围。</p>
-              </div>
-            </div>
-          </main>
-
-          <aside
-            v-if="currentSearch"
-            class="trace-search-summary"
-            aria-labelledby="trace-search-summary-heading"
-          >
-            <header>
-              <div>
-                <span>搜索信号</span>
-                <h3 id="trace-search-summary-heading">
-                  发现摘要
-                </h3>
-              </div>
-              <UIcon
-                name="i-lucide-activity"
-                aria-hidden="true"
-              />
-            </header>
-            <dl class="trace-search-summary__metrics">
-              <div><dt>Trace</dt><dd>{{ traceOverview.total }}</dd></div>
-              <div><dt>服务</dt><dd>{{ traceOverview.services }}</dd></div>
-              <div>
-                <dt>错误链路</dt><dd :class="{ 'is-error': traceOverview.errorTraces > 0 }">
-                  {{ traceOverview.errorTraces }}
-                </dd>
-              </div>
-              <div><dt>Span</dt><dd>{{ traceOverview.spans }}</dd></div>
-            </dl>
-            <section
-              v-if="traceOverview.slowest"
-              class="trace-search-summary__slowest"
-            >
-              <span>Slowest trace</span>
-              <strong>{{ traceOverview.slowest.root_service }} · {{ traceOverview.slowest.root_operation }}</strong>
-              <p>{{ formatDuration(traceOverview.slowest.duration_ms) }} · {{ traceOverview.slowest.span_count }} spans · {{ traceOverview.slowest.error_span_count }} errors</p>
-              <UButton
-                color="neutral"
-                variant="soft"
-                trailing-icon="i-lucide-arrow-right"
-                label="分析最慢链路"
-                @click="openTrace(traceOverview.slowest, 0)"
-              />
-            </section>
-            <div
-              v-else
-              class="trace-search-summary__empty"
-            >
-              <UIcon
-                name="i-lucide-waypoints"
-                aria-hidden="true"
-              />
-              <strong>{{ selectedResource?.name || "当前 Scope" }}</strong>
-              <span>真实搜索结果会在这里汇总服务、错误链路与最慢 Trace。</span>
-            </div>
-            <div class="trace-search-summary__links">
-              <UButton
-                color="neutral"
-                variant="ghost"
-                icon="i-lucide-chart-no-axes-combined"
-                label="关联指标"
-                :to="{ path: '/monitoring', query: workloadLocation.query }"
-              />
-              <UButton
-                color="neutral"
-                variant="ghost"
-                icon="i-lucide-logs"
-                label="关联日志"
-                :to="{ path: '/logs', query: workloadLocation.query }"
-              />
-            </div>
-          </aside>
-          </div>
+          </section>
         </div>
       </section>
-
     </template>
   </WorkspacePageFrame>
 </template>
 
 <style scoped>
 .traces-workspace {
+  width: 100%;
+  max-width: 1600px;
+  margin-inline: auto;
   padding: var(--co-space-5) clamp(var(--co-space-4), 2.5vw, var(--co-space-8)) var(--co-space-10);
   container-name: traces-workspace;
   container-type: inline-size;
 }
 .traces-workspace code { min-width: 0; overflow-wrap: anywhere; color: var(--co-text-secondary); font-family: var(--co-font-mono); font-size: 11px; }
 .trace-discovery-stage { min-width: 0; }
-.trace-discovery-stage__header { display: grid; min-width: 0; min-height: 72px; grid-template-columns: minmax(0, 1fr) auto minmax(0, auto); align-items: center; gap: var(--co-space-5); padding: var(--co-space-2) 0 var(--co-space-4); border-bottom: 1px solid var(--co-border-default); }
-.trace-discovery-stage__identity { display: flex; min-width: 0; align-items: center; gap: var(--co-space-3); }
-.trace-discovery-stage__identity > div { min-width: 0; }
-.trace-discovery-stage__icon { display: grid; width: 42px; height: 42px; flex: 0 0 auto; place-items: center; border: 1px solid var(--co-status-success-border); border-radius: var(--co-radius-panel); color: var(--co-status-success-fg); background: var(--co-status-success-bg); }
-.trace-discovery-stage__identity > div > span,
-.trace-analysis-destination header span { color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 9px; font-weight: 800; text-transform: uppercase; }
-.trace-discovery-stage__header h2 { margin: 2px 0 0; font-size: 18px; }
-.trace-discovery-stage__header p { margin: 2px 0 0; color: var(--co-text-muted); font-size: 10px; }
-.trace-discovery-stage__count { display: grid; min-width: 112px; grid-template-columns: auto auto; align-items: baseline; column-gap: var(--co-space-2); padding-inline: var(--co-space-4); border-left: 1px solid var(--co-border-subtle); border-right: 1px solid var(--co-border-subtle); }
-.trace-discovery-stage__count strong { font-family: var(--co-font-mono); font-size: 25px; font-variant-numeric: tabular-nums; line-height: 1; }
-.trace-discovery-stage__count span { color: var(--co-text-secondary); font-size: 10px; }
-.trace-discovery-stage__count small { grid-column: 1 / -1; margin-top: 4px; color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 9px; }
-.trace-discovery-stage__actions { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--co-space-2); }
-.trace-workbench { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr); align-items: start; gap: var(--co-space-4); margin-top: var(--co-space-4); }
+.trace-workbench { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr); align-items: start; gap: var(--co-space-4); }
 .trace-query-rail { position: static; display: grid; min-width: 0; gap: var(--co-space-3); }
-.trace-discovery-stage__body { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr); gap: var(--co-space-3); }
-.trace-discovery-stage__body.is-awaiting-search { grid-template-columns: minmax(0, 1fr); }
-.trace-queue-pane { min-width: 0; grid-row: 2; }
-.trace-discovery-stage__body.is-awaiting-search .trace-queue-pane { grid-row: 1; }
-.trace-queue-pane__meta { display: flex; width: fit-content; max-width: 100%; min-width: 0; flex-wrap: wrap; align-items: center; gap: var(--co-space-2) var(--co-space-4); margin-bottom: var(--co-space-2); padding: var(--co-space-2) var(--co-space-3); border: 1px solid var(--co-border-subtle); border-radius: var(--co-radius-pill); color: var(--co-text-muted); background: color-mix(in srgb, var(--co-bg-surface) 78%, transparent); font-family: var(--co-font-mono); font-size: 9px; }
-.trace-queue-empty { display: flex; min-height: 164px; align-items: center; justify-content: center; gap: var(--co-space-3); padding: var(--co-space-5); }
-.trace-queue-empty > span { display: grid; width: 44px; height: 44px; flex: 0 0 auto; place-items: center; border-radius: var(--co-radius-panel); color: var(--co-text-muted); background: var(--co-bg-canvas); }
-.trace-queue-empty h3 { margin: 0; font-size: 14px; }
-.trace-queue-empty p { max-width: 440px; margin: var(--co-space-1) 0 0; color: var(--co-text-muted); font-size: 11px; }
-.trace-ready-state { display: grid; min-height: 238px; grid-template-columns: minmax(0, 1fr); align-content: center; align-items: center; gap: var(--co-space-5); padding: var(--co-space-5); overflow: hidden; border: 1px solid var(--co-border-subtle); border-radius: var(--co-radius-frame); background: color-mix(in srgb, var(--co-bg-surface) 72%, transparent); color: var(--co-text-primary); box-shadow: var(--co-shadow-row); }
-.trace-ready-state__main { display: grid; min-width: 0; align-content: center; gap: var(--co-space-3); }
-.trace-ready-state__copy { min-width: 0; }
-.trace-ready-state__copy > span { color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 9px; font-weight: 800; text-transform: uppercase; }
-.trace-ready-state__copy h3 { margin: 4px 0 0; overflow: hidden; font-size: 18px; text-overflow: ellipsis; white-space: nowrap; }
-.trace-ready-state__copy p { margin: 4px 0 0; color: var(--co-text-secondary); font-size: 10px; }
-.trace-ready-state__path { display: grid; min-width: 0; grid-template-columns: minmax(110px, 1fr) auto minmax(110px, 1fr) auto minmax(110px, 1fr); align-items: center; gap: var(--co-space-2); padding: 4px; border-radius: var(--co-radius-panel); background: color-mix(in srgb, var(--co-bg-surface) 76%, var(--co-bg-canvas)); }
-.trace-ready-state__path > span { display: grid; min-width: 0; grid-template-columns: auto minmax(0, 1fr); gap: 1px var(--co-space-2); padding: var(--co-space-3); border-radius: var(--co-radius-control); background: transparent; }
-.trace-ready-state__path > span > svg { grid-row: 1 / 3; align-self: center; color: var(--co-status-success-fg); }
-.trace-ready-state__path > svg { color: var(--co-text-muted); }
-.trace-ready-state__path small,
-.trace-ready-state__path b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.trace-ready-state__path small { color: var(--co-text-muted); font-size: 8px; }
-.trace-ready-state__path b { font-size: 10px; }
-.trace-ready-state__aside { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--co-space-3); padding-top: var(--co-space-4); border-top: 1px solid var(--co-border-subtle); }
-.trace-ready-state__recent { display: grid; min-width: 230px; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; gap: var(--co-space-2); }
-.trace-ready-state__recent div { min-width: 0; padding: var(--co-space-2); border-left: 1px solid var(--co-border-subtle); }
-.trace-ready-state__recent div:first-child { border-left: 0; }
-.trace-ready-state__recent dt { color: var(--co-text-muted); font-size: 9px; }
-.trace-ready-state__recent dd { margin: 3px 0 0; overflow: hidden; color: var(--co-text-primary); font-family: var(--co-font-mono); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.trace-ready-state__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--co-space-1); }
-.trace-history-popover { width: min(400px, calc(100vw - 48px)); padding: var(--co-space-3); }
-.trace-search-summary { display: grid; min-width: 0; grid-row: 1; grid-template-columns: auto minmax(260px, 1fr) minmax(190px, .7fr); align-items: center; gap: var(--co-space-3); padding: var(--co-space-3); border-radius: var(--co-radius-frame); background: color-mix(in srgb, var(--co-bg-surface) 76%, var(--co-bg-canvas)); color: var(--co-text-primary); box-shadow: var(--co-shadow-row); }
-.trace-search-summary > header { display: flex; align-items: center; justify-content: space-between; gap: var(--co-space-3); }
-.trace-search-summary > header > svg { display: none; }
-.trace-search-summary header span,
-.trace-search-summary__slowest > span { color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 9px; font-weight: 800; text-transform: uppercase; }
-.trace-search-summary h3 { margin: 2px 0 0; font-size: 14px; }
-.trace-search-summary__metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; overflow: hidden; }
-.trace-search-summary__metrics div { min-width: 0; padding: var(--co-space-1) var(--co-space-3); border-left: 1px solid var(--co-border-subtle); }
-.trace-search-summary__metrics div:first-child { border-left: 0; }
-.trace-search-summary__metrics dt { color: var(--co-text-muted); font-size: 9px; }
-.trace-search-summary__metrics dd { margin: 3px 0 0; color: var(--co-text-primary); font-family: var(--co-font-mono); font-size: 18px; font-weight: 750; }
-.trace-search-summary__metrics dd.is-error { color: var(--co-status-critical-fg); }
-.trace-search-summary__slowest { display: grid; min-width: 0; gap: var(--co-space-1); padding-left: var(--co-space-3); border-left: 1px solid var(--co-border-subtle); }
-.trace-search-summary__slowest strong { overflow-wrap: anywhere; font-size: 12px; }
-.trace-search-summary__slowest p { margin: 0; color: var(--co-text-muted); font-size: 10px; }
-.trace-search-summary__slowest :deep(button) { width: fit-content; }
-.trace-search-summary__empty { display: grid; min-height: 96px; place-content: center; justify-items: center; gap: var(--co-space-1); text-align: center; }
-.trace-search-summary__empty svg { margin-bottom: var(--co-space-1); color: var(--co-text-muted); }
-.trace-search-summary__empty strong { font-size: 12px; }
-.trace-search-summary__empty span { max-width: 260px; color: var(--co-text-muted); font-size: 10px; }
-.trace-search-summary__links { display: flex; min-width: 0; grid-column: 1 / -1; flex-wrap: wrap; justify-content: flex-end; gap: var(--co-space-1); padding-top: var(--co-space-2); border-top: 1px solid var(--co-border-subtle); }
-
+.trace-results-panel { display: grid; min-width: 0; align-content: start; gap: var(--co-space-3); padding: 0 var(--co-space-4) var(--co-space-4); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); background: var(--co-bg-surface); box-shadow: var(--co-shadow-row); }
+.trace-results-header { display: grid; min-width: 0; min-height: 76px; grid-template-columns: minmax(220px, 1fr) auto; align-items: center; gap: var(--co-space-4); padding: var(--co-space-3) 0; border-bottom: 1px solid var(--co-border-subtle); }
+.trace-results-header > div:first-child { display: grid; min-width: 0; gap: 3px; }
+.trace-results-header h2 { margin: 0; font-size: 18px; }
+.trace-results-header p { margin: 0; color: var(--co-text-secondary); font-size: 12px; }
+.trace-results-actions { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--co-space-2); }
+.trace-more-menu { display: grid; min-width: 250px; gap: 2px; padding: var(--co-space-2); }
+.trace-more-menu :deep(button),
+.trace-more-menu :deep(a) { width: 100%; justify-content: flex-start; }
+.trace-results-overview { display: grid; min-width: 0; grid-template-columns: minmax(360px, .9fr) minmax(320px, 1.1fr); align-items: center; padding-bottom: var(--co-space-3); border-bottom: 1px solid var(--co-border-subtle); }
+.trace-results-metrics { display: grid; min-width: 0; grid-template-columns: repeat(4, minmax(80px, 1fr)); margin: 0; }
+.trace-results-metrics div { min-width: 0; padding: var(--co-space-1) var(--co-space-4); border-left: 1px solid var(--co-border-subtle); }
+.trace-results-metrics div:first-child { padding-left: 0; border-left: 0; }
+.trace-results-metrics dt { color: var(--co-text-muted); font-size: 12px; }
+.trace-results-metrics dd { margin: 3px 0 0; color: var(--co-text-primary); font-family: var(--co-font-mono); font-size: 18px; font-weight: 750; font-variant-numeric: tabular-nums; }
+.trace-results-metrics dd.is-error { color: var(--co-status-critical-fg); }
+.trace-results-slowest { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: var(--co-space-3); padding-left: var(--co-space-4); border-left: 1px solid var(--co-border-subtle); }
+.trace-results-slowest > div { display: grid; min-width: 0; gap: 3px; }
+.trace-results-slowest span { color: var(--co-text-muted); font-size: 12px; font-weight: 650; }
+.trace-results-slowest strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.trace-results-slowest p { margin: 0; color: var(--co-text-muted); font-size: 12px; }
+.trace-results-meta { display: flex; width: fit-content; max-width: 100%; min-width: 0; flex-wrap: wrap; align-items: center; gap: var(--co-space-2) var(--co-space-4); padding-bottom: var(--co-space-2); border-bottom: 1px solid var(--co-border-subtle); color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 11px; }
+.trace-results-empty { display: grid; min-height: 280px; place-content: center; justify-items: center; gap: var(--co-space-5); padding: var(--co-space-6) var(--co-space-5); text-align: center; }
+.trace-results-empty--no-results { min-height: 260px; }
+.trace-results-empty__copy { display: flex; min-width: 0; align-items: center; gap: var(--co-space-4); text-align: left; }
+.trace-results-empty__copy > span { display: grid; width: 48px; height: 48px; flex: 0 0 auto; place-items: center; border-radius: var(--co-radius-control); color: var(--co-text-muted); background: var(--co-bg-canvas); }
+.trace-results-empty__copy > span :deep(svg) { display: block; width: 22px; height: 22px; }
+.trace-results-empty h3 { margin: 0; font-size: 18px; }
+.trace-results-empty p { max-width: 58ch; margin: var(--co-space-2) 0 0; color: var(--co-text-secondary); font-size: 12px; line-height: 1.65; }
+.trace-results-empty__suggestions { display: grid; justify-items: center; gap: var(--co-space-2); }
+.trace-results-empty__suggestions > span { color: var(--co-text-muted); font-size: 12px; font-weight: 650; }
+.trace-results-empty__suggestions > div { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--co-space-2); }
+.trace-history-popover { box-sizing: border-box; width: min(420px, calc(100vw - 32px)); max-height: min(440px, calc(100dvh - 32px)); padding: var(--co-space-3); overflow: hidden; }
 @media (max-width: 1024px) {
   .traces-workspace { padding-inline: var(--co-space-4); }
-  .trace-discovery-stage__header { grid-template-columns: minmax(0, 1fr); align-items: flex-start; padding-block: var(--co-space-3); }
-  .trace-discovery-stage__count { padding: 0; border: 0; }
-  .trace-discovery-stage__actions { justify-content: flex-start; }
-  .trace-discovery-stage__body { grid-template-columns: minmax(0, 1fr); }
-  .trace-search-summary { grid-template-columns: minmax(0, 1fr); }
-  .trace-search-summary__slowest { padding-top: var(--co-space-3); padding-left: 0; border-top: 1px solid var(--co-border-subtle); border-left: 0; }
-  .trace-search-summary__links { justify-content: flex-start; }
-  .trace-ready-state { grid-template-columns: minmax(0, 1fr); }
-  .trace-ready-state__aside { padding-top: var(--co-space-3); padding-left: 0; border-top: 1px solid var(--co-border-subtle); border-left: 0; }
-  .trace-ready-state__path { grid-template-columns: minmax(0, 1fr); }
-  .trace-ready-state__path > svg { display: none; }
-  .trace-ready-state__actions { justify-content: flex-start; }
+  .trace-results-header { grid-template-columns: minmax(0, 1fr); align-items: flex-start; padding-block: var(--co-space-3); }
+  .trace-results-actions { justify-content: flex-start; }
+  .trace-results-overview { grid-template-columns: minmax(0, 1fr); }
+  .trace-results-slowest { margin-top: var(--co-space-3); padding-top: var(--co-space-3); padding-left: 0; border-top: 1px solid var(--co-border-subtle); border-left: 0; }
 }
 
 @container traces-workspace (max-width: 900px) {
-  .trace-discovery-stage__header { grid-template-columns: minmax(0, 1fr); align-items: flex-start; }
-  .trace-discovery-stage__count { padding: 0; border: 0; }
-  .trace-discovery-stage__actions { justify-content: flex-start; }
-  .trace-search-summary { grid-template-columns: minmax(0, 1fr); }
-  .trace-search-summary__slowest { padding-top: var(--co-space-3); padding-left: 0; border-top: 1px solid var(--co-border-subtle); border-left: 0; }
-  .trace-search-summary__links { justify-content: flex-start; }
-  .trace-ready-state__aside { grid-template-columns: minmax(0, 1fr); }
-  .trace-ready-state__actions { justify-content: flex-start; }
+  .trace-results-header { grid-template-columns: minmax(0, 1fr); align-items: flex-start; }
+  .trace-results-actions { justify-content: flex-start; }
+  .trace-results-overview { grid-template-columns: minmax(0, 1fr); }
+  .trace-results-slowest { margin-top: var(--co-space-3); padding-top: var(--co-space-3); padding-left: 0; border-top: 1px solid var(--co-border-subtle); border-left: 0; }
+}
+
+@container traces-workspace (max-width: 620px) {
+  .trace-results-panel { padding-inline: var(--co-space-3); }
+  .trace-results-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .trace-results-metrics div:nth-child(odd) { padding-left: 0; border-left: 0; }
+  .trace-results-slowest { align-items: flex-start; flex-direction: column; }
+  .trace-results-empty { min-height: 260px; padding-inline: var(--co-space-3); }
+  .trace-results-empty__copy { align-items: flex-start; }
 }
 
 @media (prefers-reduced-motion: reduce) {

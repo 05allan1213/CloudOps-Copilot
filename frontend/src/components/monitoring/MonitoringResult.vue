@@ -44,6 +44,19 @@ const changeRate = computed(() => {
   if (first === undefined || latest === undefined || first === 0) return undefined;
   return ((latest - first) / Math.abs(first)) * 100;
 });
+const hasMetricSummary = computed(() => chartSeries.value.length > 0 && !props.execution?.result_expired);
+const summaryEmptyTitle = computed(() => {
+  if (props.execution?.status === "running" || props.execution?.status === "pending") return "统计结果生成中";
+  if (props.execution?.status === "failed") return "未生成统计结果";
+  if (props.execution?.result_expired) return "统计结果已过期";
+  return "暂无统计结果";
+});
+const summaryEmptyDescription = computed(() => {
+  if (props.execution?.status === "running" || props.execution?.status === "pending") return "查询完成后显示当前值、峰值与区间变化。";
+  if (props.execution?.status === "failed") return "修正查询后重新执行即可生成统计。";
+  if (props.execution?.result_expired) return "重新执行查询可恢复指标统计。";
+  return "当前范围没有可计算的时序数据。";
+});
 const technicalFields = computed<TechnicalDetailField[]>(() => {
   const execution = props.execution;
   if (!execution) return [];
@@ -51,6 +64,7 @@ const technicalFields = computed<TechnicalDetailField[]>(() => {
     { label: "Execution", value: execution.id, code: true, copyValue: execution.id },
     { label: "Query hash", value: execution.query_hash, code: true, copyValue: execution.query_hash },
     { label: "Configuration Revision", value: execution.configuration_revision_id, code: true, copyValue: execution.configuration_revision_id },
+    { label: "响应大小", value: formatBytes(execution.response_bytes), code: true },
     { label: "Provider identity", value: execution.source.identity, code: true, copyValue: execution.source.identity },
     { label: "Scope", value: `${execution.scope.cluster_id} / ${execution.resource.namespace}`, code: true },
     { label: "Resource", value: `${execution.resource.kind} / ${execution.resource.name}`, code: true, copyValue: execution.resource.id },
@@ -85,10 +99,6 @@ function formatBytes(value: number): string {
     unit += 1;
   }
   return `${new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 1 }).format(amount)} ${units[unit]}`;
-}
-
-function shortHash(value: string): string {
-  return value.length > 18 ? `${value.slice(0, 14)}…` : value;
 }
 
 function formatMetric(value?: number): string {
@@ -173,11 +183,9 @@ function seriesIdentity(series: QuerySeries): string {
 
     <template v-else>
       <div class="monitoring-result__meta">
-        <span><b>{{ execution.series_count }}</b> series</span>
-        <span><b>{{ execution.sample_count }}</b> samples</span>
-        <span><b>{{ formatBytes(execution.response_bytes) }}</b></span>
-        <span>Revision <b>{{ shortHash(execution.configuration_revision_id) }}</b></span>
-        <span>采集 {{ formatTime(execution.source.collected_at) }}</span>
+        <span><b>{{ execution.series_count }}</b> 条序列</span>
+        <span><b>{{ execution.sample_count }}</b> 个采样点</span>
+        <span>采集于 {{ formatTime(execution.source.collected_at) }}</span>
       </div>
 
       <UAlert
@@ -189,8 +197,14 @@ function seriesIdentity(series: QuerySeries): string {
         :description="[execution.partial ? 'Provider 返回部分结果' : '', execution.truncated ? '结果触及服务端边界并被截断' : ''].filter(Boolean).join('；')"
       />
 
-      <div class="monitoring-result__visual">
-        <div class="monitoring-result__chart-stage">
+      <div
+        class="monitoring-result__visual"
+        :class="{ 'is-empty': !hasMetricSummary }"
+      >
+        <div
+          class="monitoring-result__chart-stage"
+          :class="{ 'is-empty': !hasMetricSummary }"
+        >
           <MonitoringChart
             v-if="chartSeries.length && !execution.result_expired"
             :series="chartSeries"
@@ -208,12 +222,20 @@ function seriesIdentity(series: QuerySeries): string {
             title="遥测结果已过期"
             description="完整结果未长期保留，查询身份与执行审计仍可用。"
           />
-          <WorkspaceState
+          <div
             v-else-if="execution.status === 'succeeded'"
-            kind="empty"
-            title="查询没有返回时序"
-            description="查询已完成，当前范围内没有可显示的数据点。"
-          />
+            class="monitoring-result__no-data"
+            role="status"
+            aria-live="polite"
+          >
+            <UIcon
+              name="i-lucide-inbox"
+              aria-hidden="true"
+            />
+            <h3>查询没有返回时序</h3>
+            <p>查询已完成，当前范围内没有可显示的数据点。</p>
+            <span>扩大时间范围或检查指标采集。</span>
+          </div>
           <WorkspaceState
             v-else
             kind="loading"
@@ -223,6 +245,7 @@ function seriesIdentity(series: QuerySeries): string {
         </div>
 
         <dl
+          v-if="hasMetricSummary"
           class="monitoring-result__summary"
           aria-label="指标摘要"
         >
@@ -249,6 +272,18 @@ function seriesIdentity(series: QuerySeries): string {
             <small>序列 / 采样点</small>
           </div>
         </dl>
+        <aside
+          v-else
+          class="monitoring-result__summary-empty"
+          aria-label="统计摘要"
+        >
+          <UIcon
+            name="i-lucide-chart-spline"
+            aria-hidden="true"
+          />
+          <strong>{{ summaryEmptyTitle }}</strong>
+          <span>{{ summaryEmptyDescription }}</span>
+        </aside>
       </div>
 
       <section
@@ -331,14 +366,14 @@ function seriesIdentity(series: QuerySeries): string {
       <WorkspaceTechnicalDetails
         :fields="technicalFields"
         title="查询技术详情"
-        description="Execution、精确 Hash、Revision、Provider 与 UTC 范围"
+        description="Execution、精确 Hash、响应大小、Revision、Provider 与 UTC 范围"
       />
     </template>
   </section>
 </template>
 
 <style scoped>
-.monitoring-result { display: grid; min-width: 0; gap: var(--co-space-3); }
+.monitoring-result { display: grid; min-width: 0; gap: 10px; }
 .monitoring-result__header,
 .monitoring-result__actions,
 .monitoring-result__meta,
@@ -365,9 +400,18 @@ function seriesIdentity(series: QuerySeries): string {
 .monitoring-result__empty-context div { min-width: 0; padding: var(--co-space-3); border-radius: var(--co-radius-control); background: var(--co-bg-canvas); }
 .monitoring-result__empty-context dt { color: var(--co-text-muted); font-size: 9px; }
 .monitoring-result__empty-context dd { margin: 3px 0 0; overflow: hidden; color: var(--co-text-primary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.monitoring-result__meta { flex-wrap: wrap; gap: var(--co-space-2) var(--co-space-5); padding: var(--co-space-2) 0; color: var(--co-text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
+.monitoring-result__meta { flex-wrap: nowrap; gap: var(--co-space-4); padding: var(--co-space-1) 0 var(--co-space-2); color: var(--co-text-muted); font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.monitoring-result__meta b { color: var(--co-text-secondary); font-weight: 600; }
 .monitoring-result__visual { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) minmax(190px, 224px); align-items: stretch; gap: var(--co-space-3); }
+.monitoring-result__visual.is-empty { grid-template-columns: minmax(0, 1fr) minmax(240px, 250px); align-items: start; }
 .monitoring-result__chart-stage { min-width: 0; }
+.monitoring-result__chart-stage.is-empty { display: grid; box-sizing: border-box; min-height: 280px; place-items: center; padding: var(--co-space-4); border: 1px solid color-mix(in srgb, var(--co-border-subtle) 72%, transparent); border-radius: var(--co-radius-frame); background: transparent; }
+.monitoring-result__chart-stage.is-empty :deep(.workspace-state) { width: min(520px, 100%); }
+.monitoring-result__no-data { display: grid; width: min(420px, 100%); justify-items: center; gap: var(--co-space-2); color: var(--co-text-muted); text-align: center; }
+.monitoring-result__no-data svg { width: 24px; height: 24px; color: var(--co-text-secondary); }
+.monitoring-result__no-data h3 { margin: 0; color: var(--co-text-primary); font-size: 15px; }
+.monitoring-result__no-data p { margin: 0; color: var(--co-text-secondary); font-size: 11px; line-height: 1.55; }
+.monitoring-result__no-data span { font-size: 10px; line-height: 1.5; }
 .monitoring-result__chart-stage :deep(.monitoring-chart) { border-bottom: 0; }
 .monitoring-result__summary { display: grid; min-width: 0; align-content: stretch; gap: var(--co-space-2); margin: 0; }
 .monitoring-result__summary > div { display: grid; min-width: 0; align-content: center; gap: 3px; padding: var(--co-space-3); border-radius: var(--co-radius-control); background: var(--co-bg-surface); box-shadow: var(--co-shadow-row); }
@@ -376,6 +420,10 @@ function seriesIdentity(series: QuerySeries): string {
 .monitoring-result__summary dd { min-width: 0; margin: 0; color: var(--co-text-primary); font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .monitoring-result__summary dd.is-rising { color: var(--co-status-warning-fg); }
 .monitoring-result__summary small { min-width: 0; overflow: hidden; color: var(--co-text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.monitoring-result__summary-empty { display: grid; min-width: 0; align-self: stretch; align-content: center; justify-items: center; gap: var(--co-space-2); padding: 24px 20px 20px; border: 1px solid var(--co-border-subtle); border-radius: var(--co-radius-frame); background: color-mix(in srgb, var(--co-bg-surface) 72%, var(--co-bg-canvas)); color: var(--co-text-muted); text-align: center; }
+.monitoring-result__summary-empty svg { width: 17px; height: 17px; opacity: .62; }
+.monitoring-result__summary-empty strong { color: var(--co-text-secondary); font-size: 12px; }
+.monitoring-result__summary-empty span { max-width: 24ch; font-size: 10px; line-height: 1.55; }
 .monitoring-result__table { min-width: 0; min-height: 230px; overflow: hidden; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); }
 .monitoring-result__table header,
 .monitoring-result__audit header { min-height: 44px; justify-content: space-between; }
@@ -407,5 +455,10 @@ function seriesIdentity(series: QuerySeries): string {
   .monitoring-result__empty { grid-template-columns: minmax(0, 1fr); }
   .monitoring-result__visual { grid-template-columns: minmax(0, 1fr); }
   .monitoring-result__summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .monitoring-result__summary-empty { width: min(250px, 100%); }
+}
+
+@media (max-width: 640px) {
+  .monitoring-result__meta { flex-wrap: wrap; white-space: normal; }
 }
 </style>

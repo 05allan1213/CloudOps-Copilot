@@ -124,7 +124,7 @@ describe("DevOps Workspace store", () => {
     expect(store.loaded).toBe(true);
     expect(store.workspace).toStrictEqual(workspace);
     expect(store.scenarioResources).toBeNull();
-    expect(store.scenarioPlanningError).toContain("Kubernetes Deployment projection");
+    expect(store.scenarioPlanningError).toContain("Kubernetes Deployment 投影");
   });
 
   it("classifies Incident ownership from both execution and Agent run facts", () => {
@@ -230,6 +230,6 @@ describe("DevOps Workspace store", () => {
     expect(result).toStrictEqual(plan);
     expect(proposeOperationPlanMock).toHaveBeenCalledWith(input);
     expect(getWorkspaceMock).toHaveBeenCalledOnce();
-    expect(store.notice).toContain("immutable Operation Plan");
+    expect(store.notice).toContain("不可变 Operation Plan");
   });
 });

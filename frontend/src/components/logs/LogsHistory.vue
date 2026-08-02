@@ -78,10 +78,10 @@ function statusLabel(status: LogQuery["status"]): string {
 </template>
 
 <style scoped>
-.logs-history { min-width: 0; align-self: start; }
+.logs-history { display: grid; min-width: 0; max-height: min(416px, calc(100dvh - 56px)); grid-template-rows: auto minmax(0, 1fr); align-self: start; overflow: hidden; }
 .logs-history > header { display: flex; min-height: 52px; align-items: center; justify-content: space-between; gap: var(--co-space-2); }
 .logs-history h2 { margin: 0; font-size: 14px; }
-.logs-history__list { display: grid; max-height: 620px; overflow-y: auto; gap: 7px; }
+.logs-history__list { display: grid; min-height: 0; max-height: min(340px, calc(100dvh - 116px)); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; gap: 7px; padding-right: 4px; scrollbar-gutter: stable; }
 .logs-history__item { width: 100%; min-height: 66px; justify-content: stretch; border: 1px solid transparent; border-radius: var(--co-radius-frame); background: var(--co-bg-surface); box-shadow: var(--co-shadow-row); }
 .logs-history__item.is-active { border-color: var(--co-action-primary); box-shadow: var(--co-shadow-subtle); background: var(--co-bg-active); }
 .logs-history__copy { display: grid; width: 100%; min-width: 0; gap: 3px; text-align: left; }

@@ -40,6 +40,6 @@ export const appRoutes: RouteRecordRaw[] = [
   { path: "/incidents", name: "incidents", component: () => import("../views/incidents/IncidentListView.vue"), meta: { title: "事件", workspace: "incidents", uiOwner: "nuxt-ui" } },
   { path: "/incidents/:incidentId", name: "incident-detail", component: () => import("../views/incidents/IncidentDetailView.vue"), meta: { title: "事件详情", workspace: "incidents", hidden: true, uiOwner: "nuxt-ui" } },
   { path: "/devops", name: "devops", component: () => import("../views/devops/DevOpsWorkspaceView.vue"), meta: { title: "DevOps", workspace: "devops", uiOwner: "nuxt-ui" } },
-  { path: "/settings", name: "settings", component: () => import("../views/settings/SettingsView.vue"), meta: { title: "设置", workspace: "settings", uiOwner: "nuxt-ui" } },
+  { path: "/settings", name: "settings", component: () => import("../views/settings/SettingsView.vue"), meta: { title: "设置", workspace: "settings", fixedWorkspace: true, uiOwner: "nuxt-ui" } },
   { path: "/:pathMatch(.*)*", name: "not-found", component: () => import("../pages/NotFoundPage.vue"), meta: { title: "页面不存在", hidden: true, uiOwner: "nuxt-ui" } },
 ];

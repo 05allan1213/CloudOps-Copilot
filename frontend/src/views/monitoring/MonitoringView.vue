@@ -115,6 +115,17 @@ const canRun = computed(() => Boolean(
   && validTimeRange.value
   && (mode.value === "guided" ? guidedKey.value : expertQuery.value.trim()),
 ));
+const compactQueryErrorMessage = computed(() => {
+  const error = queryError.value;
+  if (!error) return "";
+  return /network error/i.test(error.message)
+    ? "网络请求未完成，请检查 Prometheus 连接后重试。"
+    : error.message;
+});
+const queryErrorReason = computed(() => {
+  const message = queryError.value?.message ?? "";
+  return /network error/i.test(message) ? message : "";
+});
 const providerLink = computed(() => {
   const link = currentExecution.value?.links.find((item) => item.kind === "provider" && item.provider === "grafana");
   const href = safeExternalURL(link?.href);
@@ -620,7 +631,7 @@ async function confirmAuthorization() {
 }
 
 async function copyQuery() {
-  const query = currentExecution.value?.query || expertQuery.value;
+  const query = mode.value === "expert" ? expertQuery.value : selectedCatalogEntry.value?.query;
   if (!query) return;
   try {
     await navigator.clipboard.writeText(query);
@@ -711,15 +722,37 @@ onBeforeUnmount(() => {
         />
       </template>
     </WorkspaceState>
-    <WorkspaceState
+    <section
       v-if="queryError"
-      kind="error"
-      :title="queryError.code"
-      :description="queryError.message"
-      :request-i-d="queryError.requestID"
-      :trace-i-d="queryError.traceID"
-      :next-steps="queryError.nextSteps"
-    />
+      class="monitoring-query-error"
+      role="alert"
+      aria-live="assertive"
+    >
+      <UIcon
+        name="i-lucide-circle-x"
+        aria-hidden="true"
+      />
+      <div>
+        <strong>查询失败</strong>
+        <span>{{ compactQueryErrorMessage }}</span>
+        <small>
+          错误码：{{ queryError.code }}
+          <template v-if="queryErrorReason"> · {{ queryErrorReason }}</template>
+          <template v-if="queryError.requestID"> · Request {{ queryError.requestID }}</template>
+          <template v-if="queryError.traceID"> · Trace {{ queryError.traceID }}</template>
+        </small>
+      </div>
+      <UButton
+        v-if="queryErrorReason && canRun"
+        color="neutral"
+        variant="outline"
+        size="sm"
+        icon="i-lucide-rotate-cw"
+        label="重试"
+        :loading="queryRunning"
+        @click="runQuery"
+      />
+    </section>
     <UAlert
       v-if="statusMessage"
       color="success"
@@ -780,6 +813,7 @@ onBeforeUnmount(() => {
           @guided-change="selectGuidedQuery"
           @query-change="markQueryChanged"
           @preset="selectPreset"
+          @copy-query="copyQuery"
           @run="runQuery"
           @cancel="stopQuery"
         />
@@ -794,27 +828,17 @@ onBeforeUnmount(() => {
           @cursor="cursorTimestamp = $event"
         >
           <template #actions>
-            <UTooltip text="复制 PromQL">
-              <UButton
-                color="neutral"
-                variant="ghost"
-                icon="i-lucide-copy"
-                square
-                aria-label="复制 PromQL"
-                @click="copyQuery"
-              />
-            </UTooltip>
             <UButton
               color="neutral"
-              variant="outline"
+              variant="soft"
               icon="i-lucide-save"
               label="保存定义"
               :disabled="currentExecution?.status !== 'succeeded'"
               @click="openSaveDialog"
             />
             <UButton
-              color="primary"
-              variant="soft"
+              color="neutral"
+              variant="outline"
               icon="i-lucide-shield-check"
               label="授权一次"
               :disabled="currentExecution?.status !== 'succeeded'"
@@ -823,7 +847,7 @@ onBeforeUnmount(() => {
             />
             <UButton
               color="neutral"
-              variant="outline"
+              variant="ghost"
               icon="i-lucide-bot"
               label="关联 Agent"
               :disabled="currentExecution?.status !== 'succeeded' || currentExecution?.result_expired"
@@ -832,7 +856,7 @@ onBeforeUnmount(() => {
             <UButton
               v-if="providerLink?.availability === 'available'"
               color="neutral"
-              variant="outline"
+              variant="ghost"
               icon="i-lucide-external-link"
               label="Grafana"
               :to="providerLink.href"
@@ -840,10 +864,10 @@ onBeforeUnmount(() => {
               rel="noopener noreferrer"
               external
             />
-            <UPopover>
+            <UPopover :content="{ align: 'end', side: 'bottom', sideOffset: 8, collisionPadding: 16, sticky: 'always' }">
               <UButton
                 color="neutral"
-                variant="soft"
+                variant="ghost"
                 icon="i-lucide-history"
                 :label="`查询历史 ${historyItems.length}`"
               />
@@ -895,11 +919,22 @@ onBeforeUnmount(() => {
 .monitoring-workspace code { min-width: 0; overflow-wrap: anywhere; color: var(--co-text-secondary); font-family: var(--co-font-mono); font-size: 11px; }
 .monitoring-workspace__grid { display: grid; grid-template-columns: minmax(0, 1fr); }
 .monitoring-workspace__query { min-width: 0; margin-bottom: var(--co-space-3); }
-.monitoring-history-popover { width: min(420px, calc(100vw - 48px)); padding: var(--co-space-3); }
+.monitoring-query-error { display: grid; box-sizing: border-box; min-height: 72px; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--co-space-3); padding: 12px 16px; border: 1px solid color-mix(in srgb, var(--co-status-critical-fg) 18%, transparent); border-radius: var(--co-radius-frame); background: color-mix(in srgb, var(--co-status-critical-bg) 58%, transparent); color: var(--co-status-critical-fg); }
+.monitoring-query-error > svg { width: 18px; height: 18px; align-self: start; margin-top: 2px; }
+.monitoring-query-error > div { display: grid; min-width: 0; gap: 2px; }
+.monitoring-query-error strong { color: var(--co-text-primary); font-size: 12px; }
+.monitoring-query-error span { color: var(--co-text-secondary); font-size: 11px; line-height: 1.45; }
+.monitoring-query-error small { overflow-wrap: anywhere; color: var(--co-status-critical-fg); font-family: var(--co-font-mono); font-size: 9px; opacity: .78; }
+.monitoring-history-popover { box-sizing: border-box; width: min(360px, var(--reka-popover-content-available-width, 360px), calc(100vw - 32px)); max-height: min(360px, var(--reka-popover-content-available-height, 360px), calc(100dvh - 32px)); overflow: hidden; padding: var(--co-space-3); }
 
 @media (max-width: 1024px) {
   .monitoring-workspace { padding-inline: var(--co-space-4); }
   .monitoring-workspace__grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 640px) {
+  .monitoring-query-error { grid-template-columns: auto minmax(0, 1fr); }
+  .monitoring-query-error > button { grid-column: 2; justify-self: start; }
 }
 
 @media (prefers-reduced-motion: reduce) {

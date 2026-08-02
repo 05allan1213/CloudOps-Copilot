@@ -43,6 +43,7 @@ import {
 type ResourceRow = KubernetesResource & Record<string, unknown>;
 
 const ALL_NAMESPACES_VALUE = "__all_namespaces__";
+const ALL_KINDS_VALUE = "__all_kinds__";
 
 interface ContextLinkRow {
   link: InfrastructureContextLink;
@@ -118,7 +119,9 @@ const namespaces = computed(() => (
 ));
 const namespaceItems = computed(() => [
   { label: "全部作用域 Namespace", value: ALL_NAMESPACES_VALUE },
-  ...namespaces.value.map((namespace) => ({ label: namespace, value: namespace })),
+  ...namespaces.value
+    .filter((namespace) => namespace.trim().length > 0)
+    .map((namespace) => ({ label: namespace, value: namespace })),
 ]);
 const namespaceSelectValue = computed(() => namespaceValue.value || ALL_NAMESPACES_VALUE);
 const resources = computed<ResourceRow[]>(() => (
@@ -133,12 +136,13 @@ const visibleResources = computed<ResourceRow[]>(() => sortResourcesByAttention(
     return true;
   }) as ResourceRow[]);
 const kindOptions = computed(() => [
-  { label: "全部 Kubernetes Kind", value: "" },
+  { label: "全部 Kubernetes Kind", value: ALL_KINDS_VALUE },
   ...[...new Set((topology.value?.nodes ?? resources.value).map((resource) => resource.kind))]
+    .filter((kind) => kind.trim().length > 0)
     .sort()
     .map((kind) => ({ label: kind, value: kind })),
 ]);
-const selectedKind = computed(() => queryValues(route.query.kind).length === 1 ? queryValues(route.query.kind)[0] : "");
+const selectedKind = computed(() => queryValues(route.query.kind).length === 1 ? queryValues(route.query.kind)[0] : ALL_KINDS_VALUE);
 const timeWindowItems = [
   { label: "最近 1 小时", value: "1h" },
   { label: "最近 6 小时", value: "6h" },
@@ -151,6 +155,13 @@ const selectedTimeWindow = computed(() => {
   const hours = Math.round((to - from) / 3_600_000);
   return hours === 6 ? "6h" : hours === 24 ? "24h" : "1h";
 });
+const hasResourceFilters = computed(() => Boolean(
+  namespaceValue.value
+  || searchValue.value.trim()
+  || resourceType.value !== "all"
+  || healthFilter.value !== "all"
+  || selectedKind.value !== ALL_KINDS_VALUE,
+));
 const providerState = computed(() => topology.value?.provider_state ?? resourcePage.value?.provider_state);
 const providerReady = computed(() => providerState.value === "available" || providerState.value === "partial");
 const providerIdentity = computed(() => topology.value?.source.identity ?? resourcePage.value?.source.identity ?? "未读取");
@@ -366,7 +377,8 @@ function changeResourceType(value: string | number) {
 }
 
 function changeKind(value: string | number) {
-  const kind = String(value);
+  const selected = String(value);
+  const kind = selected === ALL_KINDS_VALUE ? "" : selected;
   resourceType.value = resourceTypeForKinds(kind ? [kind] : []);
   updateQuery({ kind: kind || undefined, resource: undefined });
 }
@@ -438,6 +450,16 @@ function severity(resource: ResourceRow): DenseListSeverity {
   if (resource.health.state === "critical") return "critical";
   if (resource.health.state === "warning") return "warning";
   return resource.health.state === "unknown" ? "info" : "neutral";
+}
+
+function resourceReadyLabel(resource: ResourceRow): string {
+  if (resource.workload) return `Ready ${resource.workload.ready_replicas}/${resource.workload.desired_replicas}`;
+  if (resource.endpoints.length) {
+    const ready = resource.endpoints.filter((endpoint) => endpoint.ready !== false).length;
+    return `Ready ${ready}/${resource.endpoints.length}`;
+  }
+  const readyCondition = resource.conditions.find((condition) => condition.type.toLowerCase() === "ready");
+  return readyCondition ? `Ready ${readyCondition.status}` : "Ready 未报告";
 }
 
 function providerStateLabel(): string {
@@ -618,7 +640,7 @@ onBeforeUnmount(() => {
         :items="resourceTabs"
         :content="false"
         color="primary"
-        variant="link"
+        variant="pill"
         size="sm"
         @update:model-value="changeResourceType"
       />
@@ -649,7 +671,8 @@ onBeforeUnmount(() => {
           />
           <UButton
             type="submit"
-            color="primary"
+            :color="hasResourceFilters ? 'primary' : 'neutral'"
+            :variant="hasResourceFilters ? 'soft' : 'outline'"
             icon="i-lucide-list-filter"
             label="筛选"
           />
@@ -833,17 +856,23 @@ onBeforeUnmount(() => {
           {{ item.name }}
         </template>
         <template #description="{ item }">
-          {{ item.namespace || "cluster-scoped" }} · {{ item.health.summary }}
+          {{ item.namespace || "cluster-scoped" }} · {{ item.kind }} · {{ resourceReadyLabel(item) }}
         </template>
         <template #meta="{ item }">
           {{ item.status || item.node_name || "状态未报告" }}
         </template>
         <template #trailing="{ item }">
-          <UBadge
-            :color="healthColors[item.health.state]"
-            variant="subtle"
-            :label="healthLabels[item.health.state]"
-          />
+          <span
+            class="resource-health-conclusion"
+            :class="{ 'is-healthy': item.health.state === 'healthy' }"
+          >
+            <small>{{ item.health.summary }}</small>
+            <UBadge
+              :color="healthColors[item.health.state]"
+              variant="subtle"
+              :label="healthLabels[item.health.state]"
+            />
+          </span>
           <UIcon
             name="i-lucide-chevron-right"
             aria-hidden="true"
@@ -1252,15 +1281,14 @@ onBeforeUnmount(() => {
 .posture-metric {
   min-width: 0;
   min-height: 66px;
+  border: 1px solid transparent;
   border-radius: var(--co-radius-panel);
   background: var(--co-bg-subtle);
 }
 .posture-metric :deep(span) { display: grid; min-width: 0; justify-items: start; gap: 2px; }
 .posture-metric span { color: var(--co-text-muted); font-size: 10px; }
-.posture-metric strong { color: var(--co-text-primary); font-size: 20px; font-variant-numeric: tabular-nums; }
-.posture-metric.is-active { border-radius: var(--co-radius-overlay); background: var(--co-bg-active); box-shadow: inset 0 0 0 1px var(--co-action-primary); }
-.posture-metric.is-critical.is-active { box-shadow: inset 0 0 0 1px var(--co-status-critical-fg); }
-.posture-metric.is-healthy.is-active { box-shadow: inset 0 0 0 1px var(--co-status-success-fg); }
+.posture-metric strong { color: var(--co-text-primary); font-size: 21px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.posture-metric.is-active { border-color: var(--co-border-default); background: color-mix(in srgb, var(--co-bg-active) 76%, var(--co-bg-surface)); box-shadow: none; }
 
 .resource-controls {
   display: grid;
@@ -1270,7 +1298,10 @@ onBeforeUnmount(() => {
   border-radius: var(--co-radius-frame);
   background: color-mix(in srgb, var(--co-bg-surface) 78%, transparent);
 }
-.resource-type-tabs { min-width: 0; overflow-x: auto; border-radius: var(--co-radius-overlay); background: var(--co-bg-canvas); }
+.resource-type-tabs { min-width: 0; padding: 2px; overflow-x: auto; border: 1px solid var(--co-border-subtle); border-radius: var(--co-radius-control); background: var(--co-bg-canvas); }
+.resource-type-tabs :deep(button) { min-height: 38px; padding-inline: 12px; border-radius: var(--co-radius-control); }
+.resource-type-tabs :deep(svg),
+.resource-filter-row :deep(svg) { width: 16px; height: 16px; }
 .resource-filter-row {
   display: grid;
   min-width: 0;
@@ -1286,6 +1317,11 @@ onBeforeUnmount(() => {
   grid-template-columns: minmax(180px, 1fr) auto;
   gap: var(--co-space-2);
 }
+.resource-filter-row :deep(input),
+.resource-filter-row :deep([role="combobox"]),
+.resource-filter-row :deep(button) { min-height: 38px; border-radius: var(--co-radius-control); }
+.resource-search > :deep(button),
+.filter-actions :deep(button) { padding-inline: 12px; }
 .advanced-filters {
   display: grid;
   width: min(360px, calc(100vw - 32px));
@@ -1318,6 +1354,13 @@ onBeforeUnmount(() => {
   overflow: visible;
 }
 .resource-list-shell :deep(.workspace-dense-list) { margin-top: var(--co-space-2); }
+.resource-list-shell :deep(.workspace-dense-list-item--critical + .workspace-dense-list-item--neutral),
+.resource-list-shell :deep(.workspace-dense-list-item--warning + .workspace-dense-list-item--neutral),
+.resource-list-shell :deep(.workspace-dense-list-item--info + .workspace-dense-list-item--neutral) { margin-top: var(--co-space-1); }
+.resource-list-shell :deep(.workspace-dense-list-item--neutral .workspace-dense-list-meta) { color: var(--co-text-muted); opacity: .72; }
+.resource-health-conclusion { display: grid; min-width: 0; justify-items: end; gap: 3px; }
+.resource-health-conclusion small { max-width: 28ch; overflow: hidden; color: var(--co-text-secondary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.resource-health-conclusion.is-healthy { opacity: .68; }
 .resource-list-heading {
   display: flex;
   min-width: 0;
@@ -1451,8 +1494,17 @@ onBeforeUnmount(() => {
   .projection-issues li { grid-template-columns: minmax(0, 1fr); }
   .resource-list-heading { align-items: flex-start; flex-direction: column; }
   .resource-list-facts { justify-content: flex-start; }
+  .resource-health-conclusion small { max-width: 18ch; }
   .resource-loading-stage__body { grid-template-columns: minmax(0, 1fr); }
   .resource-loading-stage aside { display: none; }
+}
+
+@media (max-width: 520px) {
+  .resource-filter-row { grid-template-columns: minmax(0, 1fr); }
+  .namespace-select,
+  .resource-search,
+  .filter-actions { grid-column: 1; }
+  .filter-actions { justify-content: flex-start; }
 }
 
 @media (prefers-reduced-motion: reduce) {

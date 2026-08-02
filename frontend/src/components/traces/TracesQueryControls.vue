@@ -61,6 +61,12 @@ const presets = [
   { label: "1h", value: 60 },
   { label: "6h", value: 360 },
 ];
+const providerLabel = computed(() => {
+  if (!props.catalog) return "正在确认 Tempo";
+  if (props.catalog.provider_state === "available") return "Tempo 可用";
+  if (props.catalog.provider_state === "partial") return "Tempo 部分可用";
+  return "Tempo 不可用";
+});
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
@@ -87,23 +93,46 @@ function statusValue(value: unknown): string {
     class="trace-discovery-command"
     aria-label="Trace 发现"
   >
-    <header class="trace-discovery-command__heading">
+    <header class="trace-discovery-command__header">
       <div>
-        <span aria-hidden="true">
-          <UIcon name="i-lucide-waypoints" />
-        </span>
-        <div>
-          <small>TRACE DISCOVERY</small>
-          <strong>{{ mode === "guided" ? "服务与操作发现" : "TraceQL 检索" }}</strong>
-        </div>
+        <h2>查询条件</h2>
+        <p>{{ mode === "guided" ? "按服务与操作发现调用链" : "使用 TraceQL 精确检索调用链" }}</p>
       </div>
       <span class="trace-discovery-command__provider">
         <span :class="{ 'is-ready': catalog?.provider_state === 'available' || catalog?.provider_state === 'partial' }" />
-        Tempo {{ catalog?.provider_state === "available" ? "可用" : catalog?.provider_state === "partial" ? "部分可用" : "检查中" }}
+        {{ providerLabel }}
       </span>
     </header>
     <div class="trace-discovery-command__topline">
-      <div class="trace-discovery-command__scope">
+      <div class="trace-discovery-command__field">
+        <span>查询模式</span>
+        <div
+          class="trace-discovery-command__mode"
+          role="group"
+          aria-label="Trace 查询模式"
+        >
+          <UButton
+            :color="mode === 'guided' ? 'primary' : 'neutral'"
+            :variant="mode === 'guided' ? 'soft' : 'ghost'"
+            icon="i-lucide-waypoints"
+            label="服务发现"
+            :aria-pressed="mode === 'guided'"
+            :disabled="searching"
+            @click="emit('update:mode', 'guided')"
+          />
+          <UButton
+            :color="mode === 'expert' ? 'primary' : 'neutral'"
+            :variant="mode === 'expert' ? 'soft' : 'ghost'"
+            icon="i-lucide-braces"
+            label="TraceQL"
+            :aria-pressed="mode === 'expert'"
+            :disabled="searching"
+            @click="emit('update:mode', 'expert')"
+          />
+        </div>
+      </div>
+      <label class="trace-discovery-command__field">
+        <span>Namespace</span>
         <USelect
           :model-value="namespace"
           :items="namespaceItems"
@@ -114,6 +143,9 @@ function statusValue(value: unknown): string {
           @update:model-value="emit('update:namespace', stringValue($event))"
           @change="emit('namespaceChange')"
         />
+      </label>
+      <label class="trace-discovery-command__field">
+        <span>Workload</span>
         <USelect
           :model-value="resourceID"
           :items="resourceItems"
@@ -124,90 +156,82 @@ function statusValue(value: unknown): string {
           @update:model-value="emit('update:resourceID', stringValue($event))"
           @change="emit('resourceChange')"
         />
-      </div>
-      <div
-        class="trace-discovery-command__mode"
-        role="group"
-        aria-label="Trace 查询模式"
-      >
-        <UButton
-          :color="mode === 'guided' ? 'primary' : 'neutral'"
-          :variant="mode === 'guided' ? 'soft' : 'ghost'"
-          label="服务发现"
-          :aria-pressed="mode === 'guided'"
-          :disabled="searching"
-          @click="emit('update:mode', 'guided')"
-        />
-        <UButton
-          :color="mode === 'expert' ? 'primary' : 'neutral'"
-          :variant="mode === 'expert' ? 'soft' : 'ghost'"
-          label="TraceQL"
-          :aria-pressed="mode === 'expert'"
-          :disabled="searching"
-          @click="emit('update:mode', 'expert')"
-        />
-      </div>
-      <div
-        class="trace-discovery-command__presets"
-        role="group"
-        aria-label="Trace 时间范围"
-      >
-        <UButton
-          v-for="preset in presets"
-          :key="preset.value"
-          color="neutral"
-          variant="ghost"
-          size="sm"
-          :label="preset.label"
-          :disabled="searching"
-          @click="emit('preset', preset.value)"
-        />
+      </label>
+      <div class="trace-discovery-command__field">
+        <span>时间范围</span>
+        <div
+          class="trace-discovery-command__presets"
+          role="group"
+          aria-label="Trace 时间范围"
+        >
+          <UButton
+            v-for="preset in presets"
+            :key="preset.value"
+            color="neutral"
+            variant="ghost"
+            size="sm"
+            :label="preset.label"
+            :disabled="searching"
+            @click="emit('preset', preset.value)"
+          />
+        </div>
       </div>
     </div>
 
     <div class="trace-discovery-command__searchline">
       <template v-if="mode === 'guided'">
-        <UInput
-          :model-value="service"
-          class="trace-discovery-command__service"
-          icon="i-lucide-box"
-          size="xl"
-          placeholder="Service，例如 cloudops-api"
-          aria-label="Service"
-          :disabled="searching"
-          @update:model-value="emit('update:service', stringValue($event))"
-        />
-        <UInput
-          :model-value="operation"
-          class="trace-discovery-command__operation"
-          icon="i-lucide-route"
-          size="xl"
-          placeholder="Operation，例如 GET /readyz"
-          aria-label="Operation"
-          :disabled="searching"
-          @update:model-value="emit('update:operation', stringValue($event))"
-        />
+        <label class="trace-discovery-command__field trace-discovery-command__service">
+          <span>Service</span>
+          <UInput
+            :model-value="service"
+            icon="i-lucide-box"
+            size="xl"
+            placeholder="例如 cloudops-api"
+            aria-label="Service"
+            :disabled="searching"
+            @update:model-value="emit('update:service', stringValue($event))"
+          />
+        </label>
+        <label class="trace-discovery-command__field trace-discovery-command__operation">
+          <span>Operation</span>
+          <UInput
+            :model-value="operation"
+            icon="i-lucide-route"
+            size="xl"
+            placeholder="例如 GET /readyz"
+            aria-label="Operation"
+            :disabled="searching"
+            @update:model-value="emit('update:operation', stringValue($event))"
+          />
+        </label>
       </template>
-      <UInput
+      <label
         v-else
-        :model-value="expertQuery"
-        class="trace-discovery-command__traceql"
-        icon="i-lucide-braces"
-        size="xl"
-        placeholder="TraceQL span selector"
-        aria-label="TraceQL span selector"
-        :disabled="searching"
-        @update:model-value="emit('update:expertQuery', stringValue($event))"
-      />
-      <UPopover class="trace-discovery-command__advanced">
+        class="trace-discovery-command__field trace-discovery-command__traceql"
+      >
+        <span>TraceQL</span>
+        <UInput
+          :model-value="expertQuery"
+          icon="i-lucide-braces"
+          size="xl"
+          placeholder="TraceQL span selector"
+          aria-label="TraceQL span selector"
+          :disabled="searching"
+          @update:model-value="emit('update:expertQuery', stringValue($event))"
+        />
+      </label>
+      <UPopover
+        class="trace-discovery-command__filters"
+        :content="{ align: 'end', side: 'bottom', sideOffset: 8, collisionPadding: 16, sticky: 'always' }"
+      >
         <UButton
           color="neutral"
-          variant="ghost"
+          variant="outline"
           icon="i-lucide-sliders-horizontal"
-          label="高级"
+          :label="status || minDurationMS !== undefined || maxDurationMS !== undefined ? '筛选 已启用' : '筛选'"
         />
         <template #content>
-          <div class="trace-discovery-command__advanced-content">
+          <div class="trace-discovery-command__filter-content">
             <label>
               <span>Status</span>
               <USelect
@@ -304,73 +328,71 @@ function statusValue(value: unknown): string {
 </template>
 
 <style scoped>
-.trace-discovery-command { display: grid; min-width: 0; grid-template-columns: minmax(150px, .28fr) minmax(0, 1.72fr); grid-template-areas: "identity scope" "search search"; align-items: center; gap: var(--co-space-3) var(--co-space-4); padding: var(--co-space-3) var(--co-space-4); border: 1px solid var(--co-border-subtle); border-radius: var(--co-radius-frame); background: color-mix(in srgb, var(--co-bg-surface) 78%, var(--co-bg-canvas)); box-shadow: var(--co-shadow-row); }
-.trace-discovery-command__heading { display: grid; min-width: 0; grid-area: identity; gap: var(--co-space-2); }
-.trace-discovery-command__heading > div { display: flex; min-width: 0; align-items: center; gap: var(--co-space-3); }
-.trace-discovery-command__heading > div > span { display: grid; width: 38px; height: 38px; flex: 0 0 auto; place-items: center; border: 1px solid var(--co-status-success-border); border-radius: var(--co-radius-control); color: var(--co-status-success-fg); background: var(--co-status-success-bg); }
-.trace-discovery-command__heading > div > div { display: grid; min-width: 0; gap: 2px; }
-.trace-discovery-command__heading small { color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 8px; font-weight: 800; }
-.trace-discovery-command__heading strong { color: var(--co-text-primary); font-size: 14px; }
-.trace-discovery-command__topline { display: grid; min-width: 0; grid-area: scope; grid-template-columns: minmax(430px, 1fr) minmax(180px, auto) minmax(168px, auto); align-items: center; gap: var(--co-space-2); }
-.trace-discovery-command__scope { display: grid; min-width: 0; grid-template-columns: minmax(180px, .78fr) minmax(240px, 1.22fr); gap: var(--co-space-2); }
-.trace-discovery-command__provider { display: flex; min-width: 0; align-items: center; justify-content: flex-start; gap: var(--co-space-2); color: var(--co-text-muted); font-size: 10px; white-space: nowrap; }
-.trace-discovery-command__provider > span { width: 7px; height: 7px; border-radius: var(--co-radius-pill); background: var(--co-text-muted); }
+.trace-discovery-command { display: grid; min-width: 0; gap: var(--co-space-4); padding: var(--co-space-4); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); background: var(--co-bg-surface); box-shadow: var(--co-shadow-row); }
+.trace-discovery-command__header { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: var(--co-space-4); padding-bottom: var(--co-space-3); border-bottom: 1px solid var(--co-border-subtle); }
+.trace-discovery-command__header > div { min-width: 0; }
+.trace-discovery-command__header h2 { margin: 0; color: var(--co-text-primary); font-size: 17px; }
+.trace-discovery-command__header p { margin: 3px 0 0; color: var(--co-text-muted); font-size: 12px; }
+.trace-discovery-command__topline { display: grid; min-width: 0; grid-template-columns: minmax(190px, .8fr) minmax(170px, .72fr) minmax(240px, 1.15fr) minmax(170px, .68fr); align-items: end; gap: var(--co-space-3); }
+.trace-discovery-command__field { display: grid; min-width: 0; grid-template-rows: 18px 40px; align-content: end; gap: 6px; }
+.trace-discovery-command__field > span,
+.trace-discovery-command__filter-content label > span { min-width: 0; color: var(--co-text-secondary); font-size: 12px; font-weight: 650; line-height: 18px; }
+.trace-discovery-command__provider { display: flex; min-width: 0; align-items: center; justify-content: flex-start; gap: var(--co-space-2); overflow: hidden; color: var(--co-text-secondary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.trace-discovery-command__provider > span { width: 7px; height: 7px; flex: 0 0 auto; border-radius: var(--co-radius-pill); background: var(--co-text-muted); }
 .trace-discovery-command__provider > span.is-ready { background: var(--co-status-success-fg); box-shadow: 0 0 0 4px var(--co-status-success-bg); }
-.trace-discovery-command__searchline { display: grid; min-width: 0; grid-area: search; grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) auto auto auto; align-items: center; gap: var(--co-space-2); padding: var(--co-space-2); border-radius: var(--co-radius-panel); background: color-mix(in srgb, var(--co-bg-canvas) 68%, transparent); }
+.trace-discovery-command__searchline { display: grid; min-width: 0; grid-template-columns: minmax(220px, .82fr) minmax(280px, 1.18fr) auto auto auto; align-items: end; gap: var(--co-space-2); }
 .trace-discovery-command__service,
 .trace-discovery-command__operation { min-width: 0; }
 .trace-discovery-command__traceql { min-width: 0; grid-column: 1 / 3; }
-.trace-discovery-command__traceql :deep(input) { font-family: var(--co-font-mono); font-size: 11px; }
+.trace-discovery-command__traceql :deep(input) { font-family: var(--co-font-mono); font-size: 12px; }
 .trace-discovery-command__mode,
-.trace-discovery-command__presets { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 2px; padding: 3px; border-radius: var(--co-radius-control); background: var(--co-bg-canvas); }
+.trace-discovery-command__presets { display: grid; width: 100%; min-width: 0; height: 40px; align-items: stretch; gap: 0; padding: 2px; overflow: hidden; border-radius: var(--co-radius-pill); background: var(--co-bg-canvas); }
+.trace-discovery-command__mode { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.trace-discovery-command__presets { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .trace-discovery-command__mode :deep(button),
-.trace-discovery-command__presets :deep(button) { min-width: 0; flex: 1; }
-.trace-discovery-command__mode :deep(button),
-.trace-discovery-command__presets :deep(button) { padding-inline: 8px; }
-.trace-discovery-command__advanced-content { display: grid; width: min(920px, calc(100vw - 48px)); min-width: 0; grid-template-columns: repeat(3, minmax(130px, 0.6fr)) repeat(2, minmax(180px, 1fr)) minmax(110px, 0.45fr); align-items: end; gap: var(--co-space-3); padding: var(--co-space-4); border-radius: var(--co-radius-overlay); background: var(--co-bg-overlay); box-shadow: var(--co-shadow-overlay); }
-.trace-discovery-command__advanced-content label { display: grid; min-width: 0; gap: var(--co-space-1); }
-.trace-discovery-command__advanced-content label > span { color: var(--co-text-muted); font-size: 10px; font-weight: 800; }
-.trace-discovery-command__bounds { display: flex; min-width: 0; grid-column: 1 / -1; flex-wrap: wrap; gap: var(--co-space-1) var(--co-space-4); color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 9px; }
+.trace-discovery-command__presets :deep(button) { width: 100%; min-width: 0; height: 100%; min-height: 0; justify-content: center; padding-inline: 8px; }
+.trace-discovery-command__filters,
+.trace-discovery-command__searchline > :deep(button) { align-self: end; }
+.trace-discovery-command__filters { display: flex; min-width: 0; }
+.trace-discovery-command__filters :deep(button),
+.trace-discovery-command__searchline > :deep(button) { height: 40px; }
+.trace-discovery-command__filter-content { display: grid; box-sizing: border-box; width: min(680px, calc(100vw - 32px)); min-width: 0; max-height: min(520px, calc(100dvh - 32px)); grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: end; gap: var(--co-space-3); padding: var(--co-space-4); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; border-radius: var(--co-radius-panel); background: var(--co-bg-overlay); box-shadow: var(--co-shadow-overlay); scrollbar-gutter: stable; }
+.trace-discovery-command__filter-content label { display: grid; min-width: 0; gap: var(--co-space-2); }
+.trace-discovery-command__filter-content :deep(input),
+.trace-discovery-command__filter-content :deep(button),
+.trace-discovery-command__filter-content :deep([role="combobox"]) { width: 100%; min-width: 0; max-width: 100%; }
+.trace-discovery-command__bounds { display: flex; min-width: 0; grid-column: 1 / -1; flex-wrap: wrap; gap: var(--co-space-2) var(--co-space-4); padding-top: var(--co-space-2); border-top: 1px solid var(--co-border-subtle); color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 11px; }
 .trace-discovery-command :deep(input),
 .trace-discovery-command :deep(button),
 .trace-discovery-command :deep([role="combobox"]) { border-radius: var(--co-radius-control); }
+.trace-discovery-command__field > :deep([role="combobox"]),
+.trace-discovery-command__field > :deep(input) { height: 40px; }
 
 @media (max-width: 1180px) {
-  .trace-discovery-command { grid-template-columns: minmax(0, 1fr); grid-template-areas: "identity" "scope" "search"; }
-  .trace-discovery-command__heading { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
-  .trace-discovery-command__topline { grid-template-columns: minmax(360px, 1fr) minmax(180px, auto) minmax(160px, auto); }
-  .trace-discovery-command__searchline { grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) auto auto; }
-  .trace-discovery-command__advanced-content { width: min(680px, calc(100vw - 48px)); grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .trace-discovery-command__topline { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 1024px) {
   .trace-discovery-command { padding: var(--co-space-3); }
-  .trace-discovery-command__heading { grid-template-columns: minmax(0, 1fr); align-items: flex-start; }
-  .trace-discovery-command__topline { grid-template-columns: minmax(0, 1fr); }
-  .trace-discovery-command__scope { grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); }
   .trace-discovery-command__searchline { grid-template-columns: minmax(0, 1fr) auto; }
   .trace-discovery-command__service,
   .trace-discovery-command__operation,
   .trace-discovery-command__traceql { grid-column: 1 / -1; }
 }
 
-@container traces-workspace (max-width: 900px) {
-  .trace-discovery-command { grid-template-columns: minmax(0, 1fr); grid-template-areas: "identity" "scope" "search"; padding: var(--co-space-3); }
-  .trace-discovery-command__heading { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
-  .trace-discovery-command__topline { grid-template-columns: minmax(0, 1fr) minmax(180px, auto); }
-  .trace-discovery-command__scope { grid-column: 1 / -1; grid-template-columns: minmax(150px, .8fr) minmax(0, 1.2fr); }
-  .trace-discovery-command__presets { min-width: 168px; }
-  .trace-discovery-command__searchline { grid-template-columns: repeat(2, minmax(0, 1fr)) auto auto; }
+@media (max-width: 700px) {
+  .trace-discovery-command__filter-content { width: calc(100vw - 24px); max-height: calc(100dvh - 24px); grid-template-columns: minmax(0, 1fr); padding: var(--co-space-3); }
+  .trace-discovery-command__bounds { grid-column: 1; }
 }
 
 @container traces-workspace (max-width: 620px) {
-  .trace-discovery-command__heading { grid-template-columns: minmax(0, 1fr); }
+  .trace-discovery-command__header { align-items: flex-start; }
   .trace-discovery-command__topline { grid-template-columns: minmax(0, 1fr); }
-  .trace-discovery-command__scope { grid-template-columns: minmax(0, 1fr); }
   .trace-discovery-command__searchline { grid-template-columns: minmax(0, 1fr) auto; }
   .trace-discovery-command__service,
   .trace-discovery-command__operation,
   .trace-discovery-command__traceql { grid-column: 1 / -1; }
+  .trace-discovery-command__filter-content { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -46,6 +46,7 @@ let headingObserver: MutationObserver | undefined;
 let headingObserverTimeout: number | undefined;
 
 const isFullBleed = computed(() => route.meta.fullBleed === true);
+const isFixedWorkspace = computed(() => route.meta.fixedWorkspace === true);
 const sidebarRail = computed(() => sidebarCollapsed.value || compactDesktop.value);
 const notificationSlideoverUI = {
   overlay: "notification-slideover-overlay",
@@ -352,7 +353,10 @@ onBeforeUnmount(() => {
         class="app-main"
         data-testid="app-main"
         tabindex="-1"
-        :class="{ 'app-main--full-bleed': isFullBleed }"
+        :class="{
+          'app-main--full-bleed': isFullBleed,
+          'app-main--fixed-workspace': isFixedWorkspace,
+        }"
       >
         <RouterView v-slot="{ Component }">
           <Transition
@@ -488,6 +492,8 @@ onBeforeUnmount(() => {
 
 .route-ui-boundary { min-width: 0; min-height: 100%; isolation: isolate; }
 .app-main--full-bleed .route-ui-boundary { height: 100%; }
+.app-main--fixed-workspace { overflow: hidden; }
+.app-main--fixed-workspace .route-ui-boundary { height: 100%; min-height: 0; }
 
 :global(.notification-slideover) {
   width: min(440px, calc(100vw - var(--co-sidebar-rail-width)));

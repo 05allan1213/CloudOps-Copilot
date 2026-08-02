@@ -5,6 +5,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 
 import type { AgentStep, ConsultationMessage } from "../../api/agent";
 import { COPY_FEEDBACK_DURATION_MS } from "../../composables/useCopyFeedback";
+import AgentMarkdown from "./AgentMarkdown.vue";
 import CopyFeedbackButton from "../workspace/CopyFeedbackButton.vue";
 import { useAgentWorkspaceStore } from "../../stores/agentWorkspace";
 
@@ -25,6 +26,8 @@ const dateFormatter = new Intl.DateTimeFormat("zh-CN", { dateStyle: "short", tim
 const run = computed(() => store.selectedRun);
 const messages = computed(() => store.consultation?.messages ?? []);
 const canCancel = computed(() => run.value?.status === "pending" || run.value?.status === "running");
+const executionStatus = computed(() => statusLabel(run.value?.status));
+const outcomeStatus = computed(() => run.value?.outcome ? statusLabel(run.value.outcome) : "尚无结论");
 const instanceID = computed(() => props.compact ? "global-agent-conversation" : "agent-conversation");
 const heading = computed(() => store.selection === "consultation"
   ? store.consultation?.title || "Consultation"
@@ -105,14 +108,6 @@ function statusLabel(value?: string): string {
   } as Record<string, string>)[value || ""] || value || "无运行";
 }
 
-function statusColor(value?: string): "success" | "info" | "warning" | "error" | "neutral" {
-  if (value === "completed" || value === "diagnosed") return "success";
-  if (value === "pending" || value === "running") return "info";
-  if (value === "insufficient") return "warning";
-  if (value === "failed" || value === "cancelled") return "error";
-  return "neutral";
-}
-
 function streamColor(): "success" | "info" | "warning" | "error" | "neutral" {
   if (store.streamState === "connected") return "success";
   if (store.streamState === "connecting") return "info";
@@ -123,11 +118,11 @@ function streamColor(): "success" | "info" | "warning" | "error" | "neutral" {
 
 function streamLabel(): string {
   return ({
-    connecting: "Connecting",
-    connected: "Live",
-    reconnecting: "Reconnecting",
-    disconnected: "Disconnected",
-    stopped: "Stopped",
+    connecting: "连接事件流",
+    connected: "实时同步",
+    reconnecting: "正在重连",
+    disconnected: "同步已断开",
+    stopped: "事件流已结束",
   })[store.streamState];
 }
 
@@ -215,11 +210,10 @@ watch(
           :label="streamLabel()"
           data-testid="agent-stream-state"
         />
-        <UBadge
-          :color="statusColor(run?.outcome || run?.status)"
-          variant="subtle"
-          :label="statusLabel(run?.outcome || run?.status)"
-        />
+        <span
+          v-if="run"
+          class="run-status-copy"
+        >调查{{ executionStatus }} · 结论：{{ outcomeStatus }}</span>
         <UTooltip
           v-if="canCancel"
           text="取消当前 Agent 运行"
@@ -243,10 +237,15 @@ watch(
       role="alert"
       aria-live="assertive"
     >
-      <UIcon name="i-lucide-circle-alert" aria-hidden="true" />
+      <UIcon
+        name="i-lucide-circle-alert"
+        aria-hidden="true"
+      />
       <div>
         <strong>{{ store.error }}</strong>
-        <p v-if="failureDescription">{{ failureDescription }}</p>
+        <p v-if="failureDescription">
+          {{ failureDescription }}
+        </p>
       </div>
       <UTooltip text="关闭错误">
         <UButton
@@ -307,7 +306,10 @@ watch(
         v-else-if="!store.selectedID"
         class="conversation-empty"
       >
-        <span class="conversation-empty-visual" aria-hidden="true">
+        <span
+          class="conversation-empty-visual"
+          aria-hidden="true"
+        >
           <span><UIcon name="i-lucide-bot" /></span>
         </span>
         <span class="empty-kicker">Agent / standby</span>
@@ -352,7 +354,16 @@ watch(
                   :datetime="item.row.time"
                 >{{ formatTime(item.row.time) }}</time>
               </header>
-              <p>{{ item.row.content }}</p>
+              <AgentMarkdown
+                v-if="item.row.role === 'assistant'"
+                :source="item.row.content"
+              />
+              <p
+                v-else
+                class="owner-content"
+              >
+                {{ item.row.content }}
+              </p>
               <footer>
                 <span v-if="item.row.footer"><UIcon
                   name="i-lucide-database"
@@ -428,10 +439,11 @@ watch(
         <UTextarea
           :id="`${instanceID}-message`"
           v-model="draft"
+          class="composer-textarea"
           name="agent_message"
           autocomplete="off"
           :maxlength="16000"
-          :rows="compact ? 2 : 3"
+          :rows="compact ? 2 : 2"
           placeholder="询问当前 Snapshot 中可由 Evidence 支持的问题…"
           autoresize
           @keydown.ctrl.enter.prevent="submitMessage"
@@ -534,8 +546,9 @@ watch(
 .section-kicker { color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 8px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
 .conversation-title h2 { max-width: 720px; margin: 0; overflow: hidden; color: var(--co-text-primary); font-size: 15px; font-weight: 720; letter-spacing: 0; text-overflow: ellipsis; white-space: nowrap; }
 .run-identity { max-width: 560px; overflow: hidden; color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
-.run-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 6px; }
+.run-actions { display: flex; flex: 0 0 auto; align-items: center; gap: 8px; }
 .run-actions :deep(button) { width: 30px; min-width: 30px; height: 30px; border-radius: 8px; }
+.run-status-copy { color: var(--co-text-muted); font-size: 9px; white-space: nowrap; }
 .conversation-error {
   display: grid;
   min-width: 0;
@@ -563,7 +576,7 @@ watch(
 .conversation-alert :deep(*) { min-width: 0; }
 .conversation-alert :deep(p) { overflow-wrap: anywhere; white-space: normal; word-break: break-word; }
 
-.message-list { min-height: 0; flex: 1 1 auto; padding: 24px clamp(18px, 3vw, 42px) 18px; overflow-y: auto; overscroll-behavior: contain; scroll-behavior: smooth; }
+.message-list { min-height: 0; flex: 1 1 auto; padding: 18px clamp(22px, 3.6vw, 56px) 16px; overflow-y: auto; overscroll-behavior: contain; scroll-behavior: smooth; }
 .message-list.is-idle {
   background-image:
     linear-gradient(to right, color-mix(in srgb, var(--co-border-default) 48%, transparent) 1px, transparent 1px),
@@ -604,33 +617,30 @@ watch(
 .conversation-empty .empty-kicker { color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 8px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
 .conversation-empty strong { color: var(--co-text-primary); font-size: 14px; font-weight: 720; }
 .conversation-empty small { color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 9px; }
-.conversation-rows { position: relative; width: min(100%, 900px); margin-inline: auto; }
-.conversation-row { width: 100%; padding-bottom: 18px; }
+.conversation-rows { position: relative; width: 100%; max-width: 980px; margin-inline: auto; }
+.conversation-row { width: 100%; padding-bottom: 8px; }
 .is-virtualized .conversation-row { position: absolute; top: 0; left: 0; }
 
-.message { display: grid; width: 100%; grid-template-columns: 34px minmax(0, 1fr); gap: 12px; }
-.message-avatar { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid var(--co-border-default); border-radius: 10px; color: var(--co-text-secondary); background: var(--co-bg-floating); box-shadow: 0 7px 16px rgb(52 46 39 / 6%); }
+.message { display: grid; width: 100%; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; padding: 12px 0 16px; border-bottom: 1px solid color-mix(in srgb, var(--co-border-default) 58%, transparent); }
+.message-avatar { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 9px; color: var(--co-text-muted); background: color-mix(in srgb, var(--co-bg-surface) 72%, transparent); }
 .message-avatar :deep(svg) { width: 15px; height: 15px; }
-.assistant-message .message-avatar { border-color: color-mix(in srgb, var(--co-ink-action) 34%, var(--co-border-default)); color: var(--co-bg-canvas); background: var(--co-ink-action); }
-.message-body { min-width: 0; padding: 15px 16px; border: 1px solid var(--co-border-default); border-radius: 12px; background: var(--co-bg-floating); box-shadow: 0 10px 30px rgb(52 46 39 / 6%); }
+.assistant-message .message-avatar { color: var(--co-status-success-fg); background: var(--co-viz-live-soft); }
+.message-body { min-width: 0; padding: 0; background: transparent; }
 .message-body > header, .message-body > footer { display: flex; min-width: 0; align-items: center; gap: var(--co-space-2); }
 .message-body > header { justify-content: space-between; }
-.message-body > header strong { font-size: 10px; font-weight: 760; }
+.message-body > header strong { color: var(--co-text-primary); font-size: 10px; font-weight: 760; }
 .message-body time { color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 8px; }
-.message-body p { margin: 8px 0 0; color: var(--co-text-secondary); font-size: 13px; line-height: 1.72; overflow-wrap: anywhere; white-space: pre-wrap; }
-.message-body > footer { justify-content: flex-end; margin-top: 12px; padding-top: 8px; border-top: 1px solid color-mix(in srgb, var(--co-border-default) 74%, transparent); color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 8px; }
+.message-body > .agent-markdown,
+.message-body > .owner-content { margin-top: 10px; }
+.owner-content { margin-bottom: 0; color: var(--co-text-secondary); font-size: 13px; line-height: 1.72; overflow-wrap: anywhere; white-space: pre-wrap; }
+.message-body > footer { justify-content: flex-end; margin-top: 8px; color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 8px; }
 .message-body > footer > span { display: inline-flex; min-width: 0; align-items: center; gap: 4px; margin-right: auto; overflow-wrap: anywhere; }
 .message-body > footer :deep(svg) { width: 13px; height: 13px; }
-.owner-message { width: min(82%, 720px); grid-template-columns: minmax(0, 1fr) 34px; margin-left: auto; }
-.owner-message .message-avatar { grid-column: 2; grid-row: 1; color: var(--co-bg-canvas); background: var(--co-ink-action); }
-.owner-message .message-body { grid-column: 1; grid-row: 1; border-color: var(--co-ink-action); color: var(--co-text-on-action); background: var(--co-ink-action); box-shadow: 0 12px 32px color-mix(in srgb, var(--co-ink-action) 18%, transparent); }
-.owner-message .message-body p,
-.owner-message .message-body time,
-.owner-message .message-body > footer { color: color-mix(in srgb, var(--co-text-on-action) 78%, transparent); }
-.owner-message .message-body > footer { border-top-color: color-mix(in srgb, var(--co-text-on-action) 15%, transparent); }
-.owner-message .message-body :deep(button) { color: var(--co-text-on-action); }
+.owner-message,
+.assistant-message { padding: 13px 14px 16px; border: 0; border-radius: 10px; background: color-mix(in srgb, var(--co-bg-surface) 70%, transparent); }
+.owner-message .message-avatar { color: var(--co-text-secondary); background: var(--co-bg-floating); }
 
-.tool-row { display: grid; width: calc(100% - 46px); min-width: 0; min-height: 48px; grid-template-columns: 25px minmax(0, 1fr) auto 28px; align-items: center; gap: 9px; margin-left: 46px; padding: 7px 9px; border: 1px solid var(--co-border-default); border-radius: 10px; background: color-mix(in srgb, var(--co-bg-surface) 74%, transparent); }
+.tool-row { display: grid; width: calc(100% - 42px); min-width: 0; min-height: 44px; grid-template-columns: 24px minmax(0, 1fr) auto 28px; align-items: center; gap: 9px; margin: 2px 0 8px 42px; padding: 6px 8px; border-left: 2px solid var(--co-border-strong); background: color-mix(in srgb, var(--co-bg-surface) 58%, transparent); }
 .tool-state { display: grid; width: 25px; height: 25px; place-items: center; border-radius: 8px; color: var(--co-text-muted); background: var(--co-bg-floating); }
 .tool-state :deep(svg) { width: 15px; height: 15px; }
 .tool-row[data-status="completed"] .tool-state { color: var(--co-status-success-fg); }
@@ -642,10 +652,11 @@ watch(
 .tool-duration { font-variant-numeric: tabular-nums; }
 .tool-row code { color: var(--co-status-info-fg); }
 
-.composer { display: grid; min-width: 0; flex: 0 0 auto; gap: 8px; margin: 0 clamp(14px, 2.4vw, 28px) 16px; padding: 10px 11px 9px; border: 1px solid var(--co-border-strong); border-radius: 14px; background: color-mix(in srgb, var(--co-bg-floating) 90%, transparent); box-shadow: 0 16px 42px rgb(52 46 39 / 11%); backdrop-filter: blur(var(--co-glass-blur)); }
-.composer-field { min-width: 0; }
+.composer { display: grid; min-width: 0; max-width: none; flex: 0 0 auto; gap: 6px; width: auto; margin: 0 12px 12px; padding: 8px 10px 8px; border: 1px solid var(--co-border-strong); border-radius: 11px; background: color-mix(in srgb, var(--co-bg-floating) 92%, transparent); box-shadow: 0 10px 28px rgb(52 46 39 / 8%); backdrop-filter: blur(var(--co-glass-blur)); }
+.composer-field { width: 100%; min-width: 0; }
 .composer-field :deep(label) { color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 8px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
-.composer-field :deep(textarea) { width: 100%; max-height: 180px; border: 0; color: var(--co-text-primary); background: transparent; box-shadow: none; resize: vertical; }
+.composer-textarea { width: 100%; min-width: 0; }
+.composer-textarea :deep(textarea) { display: block; width: 100%; min-height: 46px; max-height: 120px; border: 0; color: var(--co-text-primary); background: transparent; box-shadow: none; resize: none; }
 .composer-actions, .modal-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--co-space-2); }
 .composer-actions > span { margin-right: auto; color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 8px; font-variant-numeric: tabular-nums; }
 .composer-actions :deep(button) { min-height: 34px; border-radius: 9px; }
@@ -658,8 +669,9 @@ watch(
 .is-compact .message { grid-template-columns: 29px minmax(0, 1fr); gap: 8px; }
 .is-compact .message-avatar { width: 29px; height: 29px; border-radius: 8px; }
 .is-compact .message-body { padding: 11px 12px; border-radius: 10px; }
-.is-compact .message-body p { font-size: 12px; line-height: 1.62; }
-.is-compact .owner-message { width: 90%; grid-template-columns: minmax(0, 1fr) 29px; }
+.is-compact .owner-content { font-size: 12px; line-height: 1.62; }
+.is-compact .owner-message { width: 100%; }
+.is-compact .message-body > .agent-markdown { font-size: 12px; line-height: 1.62; }
 .is-compact .tool-row { width: calc(100% - 37px); margin-left: 37px; }
 .is-compact .composer { margin: 0 10px 10px; padding: 8px 9px; border-radius: 11px; }
 .is-compact .run-identity { max-width: 220px; }
