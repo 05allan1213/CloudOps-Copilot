@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/05allan1213/CloudOps-Copilot/internal/settings"
 	"github.com/05allan1213/CloudOps-Copilot/internal/telemetry"
@@ -124,6 +125,9 @@ func TestWorkspaceModelPromptIncludesImmutableSubjectAndEvidenceFacts(t *testing
 	}}}
 
 	prompt := workspaceModelPrompt(execution, run, workspaceGuidanceInput{})
+	if len(prompt) > 9000 {
+		t.Fatalf("Workspace prompt length=%d exceeds 9000 bytes", len(prompt))
+	}
 	for _, expected := range []string{
 		"CloudOpsScenarioRequiredEnvMissing", "REQUIRED_ENV", "cloudops-scenario-fault", "0/1 ready",
 		"evidence-kubernetes", "absolute_time_window", "Subject Context",
@@ -131,6 +135,13 @@ func TestWorkspaceModelPromptIncludesImmutableSubjectAndEvidenceFacts(t *testing
 		if !strings.Contains(prompt, expected) {
 			t.Fatalf("Workspace prompt does not contain %q:\n%s", expected, prompt)
 		}
+	}
+}
+
+func TestWorkspacePromptBoundPreservesUTF8(t *testing.T) {
+	result := workspacePromptBound("调查 cloudops-scenario-fault", 5)
+	if !utf8.ValidString(result) || result != "调" {
+		t.Fatalf("bounded prompt=%q is not the expected valid UTF-8 prefix", result)
 	}
 }
 
