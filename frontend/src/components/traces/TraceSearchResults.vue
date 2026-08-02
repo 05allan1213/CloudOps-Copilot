@@ -133,7 +133,7 @@ defineExpose({ restoreScroll });
 </template>
 
 <style scoped>
-.trace-search-results { display: grid; max-height: 590px; overflow-y: auto; gap: var(--co-space-2); padding: 2px; }
+.trace-search-results { display: grid; max-height: 590px; grid-auto-rows: minmax(74px, auto); align-content: start; overflow-y: auto; gap: var(--co-space-2); padding: 2px; }
 .trace-summary-row { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) 34px; align-items: center; overflow: hidden; border: 1px solid var(--co-border-subtle); border-radius: var(--co-radius-frame); background: color-mix(in srgb, var(--co-bg-surface) 86%, var(--co-bg-canvas)); box-shadow: var(--co-shadow-row); transition: border-color var(--co-motion-fast) var(--co-ease-out), background var(--co-motion-fast) var(--co-ease-out), box-shadow var(--co-motion-fast) var(--co-ease-out); }
 .trace-summary-row:hover,
 .trace-summary-row.is-active { z-index: 1; border-color: var(--co-border-default); background: var(--co-bg-hover); box-shadow: var(--co-shadow-section); }
