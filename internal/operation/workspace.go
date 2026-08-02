@@ -178,9 +178,12 @@ func (s *WorkspaceService) Workspace(ctx context.Context, limit int) (DevOpsWork
 }
 
 func (r *Repository) changeFreezes(ctx context.Context, limit int) ([]ChangeFreezeState, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT cluster_id,environment,namespace,workload_kind,workload_name,
-enabled,reason,row_version,updated_at
-FROM operation_change_freezes ORDER BY updated_at DESC,id DESC LIMIT ?`, limit)
+	rows, err := r.db.QueryContext(ctx, `SELECT card.target_json,freeze.enabled,freeze.reason,
+freeze.row_version,freeze.updated_at
+FROM operation_change_freezes freeze
+JOIN operation_executions execution ON execution.id=freeze.updated_by_execution_id
+JOIN agent_action_cards card ON card.id=execution.action_card_id
+ORDER BY freeze.updated_at DESC,freeze.id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -188,10 +191,15 @@ FROM operation_change_freezes ORDER BY updated_at DESC,id DESC LIMIT ?`, limit)
 	result := make([]ChangeFreezeState, 0)
 	for rows.Next() {
 		var item ChangeFreezeState
+		var targetJSON json.RawMessage
 		var updatedAt time.Time
-		if err = rows.Scan(&item.Target.ClusterID, &item.Target.Environment, &item.Target.Namespace,
-			&item.Target.WorkloadKind, &item.Target.WorkloadName, &item.Enabled, &item.Reason,
-			&item.RowVersion, &updatedAt); err != nil {
+		if err = rows.Scan(&targetJSON, &item.Enabled, &item.Reason, &item.RowVersion, &updatedAt); err != nil {
+			return nil, err
+		}
+		if err = decodeExact(targetJSON, &item.Target); err != nil {
+			return nil, err
+		}
+		if err = validateTarget(item.Target); err != nil {
 			return nil, err
 		}
 		value := updatedAt.UTC()
