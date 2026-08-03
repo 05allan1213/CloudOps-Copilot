@@ -696,9 +696,34 @@ export const useAgentWorkspaceStore = defineStore("agent-workspace", {
         const updated = await updateKnowledgeItem(item.id, { status }, controller.signal);
         if (controller.signal.aborted || mutationController !== controller) return;
         this.knowledge = this.knowledge.map((candidate) => candidate.id === updated.id ? updated : candidate);
-        this.notice = status === "active" ? "Knowledge 已启用新 revision。" : "Knowledge 已禁用，不会进入后续自动检索。";
+        this.notice = status === "active" ? "Knowledge 已启用，可用于后续自动检索。" : "Knowledge 已禁用，不会进入后续自动检索。";
       } catch (error) {
         if (!controller.signal.aborted) this.setFailure(error, "Knowledge 状态更新失败。 ");
+      } finally {
+        if (mutationController === controller) {
+          mutationController = undefined;
+          this.mutating = false;
+        }
+      }
+    },
+
+    async reviseKnowledge(item: KnowledgeItem, content: string): Promise<boolean> {
+      const normalized = content.trim();
+      if (this.mutating || !normalized || normalized === item.current_revision.content.trim()) return false;
+      mutationController?.abort();
+      const controller = new AbortController();
+      mutationController = controller;
+      this.mutating = true;
+      this.clearFailure();
+      try {
+        const updated = await updateKnowledgeItem(item.id, { content: normalized }, controller.signal);
+        if (controller.signal.aborted || mutationController !== controller) return false;
+        this.knowledge = this.knowledge.map((candidate) => candidate.id === updated.id ? updated : candidate);
+        this.notice = `Knowledge 已保存为不可变 revision ${updated.current_revision.revision}。`;
+        return true;
+      } catch (error) {
+        if (!controller.signal.aborted) this.setFailure(error, "Knowledge revision 保存失败。 ");
+        return false;
       } finally {
         if (mutationController === controller) {
           mutationController = undefined;

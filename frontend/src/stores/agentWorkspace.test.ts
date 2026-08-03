@@ -303,6 +303,44 @@ describe("Agent Workspace store", () => {
     expect(store.notice).toContain("其他 Knowledge 未修改");
   });
 
+  it("separates Knowledge lifecycle changes from immutable revisions", async () => {
+    const store = useAgentWorkspaceStore();
+    const selected = knowledgeFixture("knowledge-1");
+    const disabled = { ...selected, status: "disabled" as const };
+    const revised = {
+      ...selected,
+      current_revision: {
+        ...selected.current_revision,
+        id: "knowledge-1-revision-2",
+        revision: 2,
+        content: "Updated owner-confirmed content",
+      },
+    };
+    store.knowledge = [selected];
+    mocks.updateKnowledgeItem.mockResolvedValueOnce(disabled).mockResolvedValueOnce(revised);
+
+    await store.setKnowledgeStatus(selected, "disabled");
+    expect(mocks.updateKnowledgeItem).toHaveBeenNthCalledWith(1, "knowledge-1", { status: "disabled" }, expect.any(AbortSignal));
+    expect(store.knowledge[0]?.current_revision.revision).toBe(1);
+    expect(store.notice).not.toContain("revision");
+
+    await expect(store.reviseKnowledge(disabled, "  Updated owner-confirmed content  ")).resolves.toBe(true);
+    expect(mocks.updateKnowledgeItem).toHaveBeenNthCalledWith(2, "knowledge-1", { content: "Updated owner-confirmed content" }, expect.any(AbortSignal));
+    expect(store.knowledge[0]?.current_revision.revision).toBe(2);
+    expect(store.notice).toContain("revision 2");
+  });
+
+  it("does not submit an unchanged Knowledge revision", async () => {
+    const store = useAgentWorkspaceStore();
+    const selected = knowledgeFixture("knowledge-1");
+    store.knowledge = [selected];
+
+    await expect(store.reviseKnowledge(selected, `  ${selected.current_revision.content}  `)).resolves.toBe(false);
+
+    expect(mocks.updateKnowledgeItem).not.toHaveBeenCalled();
+    expect(store.knowledge).toEqual([selected]);
+  });
+
   it("keeps Knowledge state when delete fails", async () => {
     const store = useAgentWorkspaceStore();
     const selected = knowledgeFixture("knowledge-1");

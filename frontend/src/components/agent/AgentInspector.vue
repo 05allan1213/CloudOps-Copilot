@@ -16,6 +16,8 @@ const emit = defineEmits<{ "toggle-collapse": [] }>();
 const store = useAgentWorkspaceStore();
 const authoritySelection = ref<AuthoritySelection | null>(null);
 const authorityReason = ref("");
+const knowledgeRevision = ref<KnowledgeItem | null>(null);
+const knowledgeRevisionContent = ref("");
 const knowledgeDeletion = ref<KnowledgeItem | null>(null);
 const inspectorTab = ref<"context" | "evidence" | "authority">("context");
 const evidenceScroll = ref<HTMLDivElement | null>(null);
@@ -163,6 +165,22 @@ function updateAuthorityOpen(value: boolean) {
 
 function openKnowledgeDeletion(item: KnowledgeItem) {
   if (!store.mutating) knowledgeDeletion.value = item;
+}
+
+function openKnowledgeRevision(item: KnowledgeItem) {
+  if (store.mutating) return;
+  knowledgeRevision.value = item;
+  knowledgeRevisionContent.value = item.current_revision.content;
+}
+
+async function confirmKnowledgeRevision() {
+  const item = knowledgeRevision.value;
+  if (!item) return;
+  if (await store.reviseKnowledge(item, knowledgeRevisionContent.value)) knowledgeRevision.value = null;
+}
+
+function updateKnowledgeRevisionOpen(value: boolean) {
+  if (!value && !store.mutating) knowledgeRevision.value = null;
 }
 
 async function confirmKnowledgeDeletion() {
@@ -674,10 +692,20 @@ onBeforeUnmount(() => {
             color="neutral"
             variant="outline"
             :icon="item.status === 'active' ? 'i-lucide-ban' : 'i-lucide-circle-check'"
-            :label="item.status === 'active' ? '禁用检索' : '启用新 revision'"
+            :label="item.status === 'active' ? '禁用检索' : '启用检索'"
             size="xs"
             :loading="store.mutating"
             @click="store.setKnowledgeStatus(item, item.status === 'active' ? 'disabled' : 'active')"
+          />
+          <UButton
+            color="neutral"
+            variant="ghost"
+            icon="i-lucide-pencil"
+            label="编辑 Knowledge"
+            size="xs"
+            :disabled="store.mutating"
+            :aria-label="`编辑 Knowledge ${item.title}`"
+            @click="openKnowledgeRevision(item)"
           />
           <UTooltip text="永久删除当前 Knowledge">
             <UButton
@@ -806,6 +834,66 @@ onBeforeUnmount(() => {
             :loading="store.mutating"
             :disabled="authorityReason.trim().length < 2"
             @click="confirmAuthority"
+          />
+        </div>
+      </template>
+    </UModal>
+
+    <UModal
+      :open="Boolean(knowledgeRevision)"
+      title="编辑 Knowledge"
+      description="保存会创建新的不可变 revision；旧 revision 和来源 provenance 保持可追溯。"
+      :close="false"
+      :dismissible="!store.mutating"
+      :ui="{ content: 'agent-knowledge-revision-modal' }"
+      @update:open="updateKnowledgeRevisionOpen"
+    >
+      <template #body>
+        <div
+          v-if="knowledgeRevision"
+          class="knowledge-revision-modal-content"
+        >
+          <UAlert
+            color="info"
+            variant="soft"
+            icon="i-lucide-file-plus-2"
+            :title="`从 revision ${knowledgeRevision.current_revision.revision} 创建新 revision`"
+            description="状态切换不会创建 revision；只有 Owner 确认的内容变更会追加不可变记录。"
+          />
+          <UFormField
+            label="Knowledge 内容"
+            :name="`${instanceID}-knowledge-content`"
+            required
+          >
+            <UTextarea
+              :id="`${instanceID}-knowledge-content`"
+              v-model="knowledgeRevisionContent"
+              name="knowledge_content"
+              autocomplete="off"
+              :maxlength="16000"
+              :rows="10"
+              autofocus
+            />
+          </UFormField>
+        </div>
+      </template>
+      <template #footer>
+        <div class="modal-actions">
+          <UButton
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-x"
+            label="取消"
+            :disabled="store.mutating"
+            @click="knowledgeRevision = null"
+          />
+          <UButton
+            color="primary"
+            icon="i-lucide-file-plus-2"
+            label="保存新 revision"
+            :loading="store.mutating"
+            :disabled="!knowledgeRevisionContent.trim() || knowledgeRevisionContent.trim() === knowledgeRevision?.current_revision.content.trim()"
+            @click="confirmKnowledgeRevision"
           />
         </div>
       </template>
@@ -987,7 +1075,7 @@ onBeforeUnmount(() => {
 .copy-status { position: sticky; bottom: var(--co-space-2); margin: 0 var(--co-space-2); pointer-events: none; color: var(--co-status-success-fg); font-size: 9px; text-align: right; }
 
 .authority-modal-content { display: grid; min-width: 0; gap: var(--co-space-4); }
-.knowledge-delete-modal-content { display: grid; min-width: 0; gap: var(--co-space-4); }
+.knowledge-revision-modal-content, .knowledge-delete-modal-content { display: grid; min-width: 0; gap: var(--co-space-4); }
 .authority-modal-facts { display: grid; gap: var(--co-space-1); margin: 0; }
 .authority-modal-facts > div { display: grid; min-width: 0; grid-template-columns: 116px minmax(0, 1fr); gap: var(--co-space-3); padding: var(--co-space-1) 0; border-bottom: 1px solid var(--co-border-default); }
 .authority-modal-facts dt { color: var(--co-text-muted); font-size: 10px; }
@@ -995,6 +1083,7 @@ onBeforeUnmount(() => {
 .authority-modal-facts pre { margin: 0; }
 .modal-actions { display: flex; width: 100%; justify-content: flex-end; gap: var(--co-space-2); }
 :global(.agent-authority-modal) { width: min(720px, calc(100vw - 32px)); }
+:global(.agent-knowledge-revision-modal) { width: min(720px, calc(100vw - 32px)); }
 :global(.agent-knowledge-delete-modal) { width: min(560px, calc(100vw - 32px)); }
 :global(.agent-authority-modal-body) { min-height: 0; overflow-y: auto; }
 </style>
