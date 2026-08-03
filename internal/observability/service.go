@@ -49,6 +49,8 @@ type Service struct {
 	wg      sync.WaitGroup
 }
 
+const ownerQueryCancellationWindow = 500 * time.Millisecond
+
 func NewService(ctx context.Context, store Store, revisions RevisionStore, provider Provider) (*Service, error) {
 	if store == nil || revisions == nil || provider == nil {
 		return nil, errors.New("observability service requires store, Configuration Revision store, and Provider")
@@ -139,7 +141,7 @@ func (s *Service) StartOwner(ctx context.Context, request StartQueryRequest) (Ex
 	if err != nil {
 		return Execution{}, err
 	}
-	s.launch(execution.ID, prepared)
+	s.launch(execution.ID, prepared, ownerQueryCancellationWindow)
 	return s.decorateExecution(ctx, execution)
 }
 
@@ -160,11 +162,11 @@ func (s *Service) StartAgent(ctx context.Context, request AgentQueryRequest) (Ex
 	if err != nil {
 		return Execution{}, err
 	}
-	s.launch(execution.ID, prepared)
+	s.launch(execution.ID, prepared, 0)
 	return s.decorateExecution(ctx, execution)
 }
 
-func (s *Service) launch(executionID string, prepared PreparedQuery) {
+func (s *Service) launch(executionID string, prepared PreparedQuery, delay time.Duration) {
 	queryCtx, cancel := context.WithCancel(context.Background())
 	s.mu.Lock()
 	s.cancels[executionID] = cancel
@@ -178,6 +180,15 @@ func (s *Service) launch(executionID string, prepared PreparedQuery) {
 			delete(s.cancels, executionID)
 			s.mu.Unlock()
 		}()
+		if delay > 0 {
+			timer := time.NewTimer(delay)
+			defer timer.Stop()
+			select {
+			case <-timer.C:
+			case <-queryCtx.Done():
+				return
+			}
+		}
 		select {
 		case s.semaphore <- struct{}{}:
 			defer func() { <-s.semaphore }()
