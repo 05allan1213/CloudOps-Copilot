@@ -156,6 +156,10 @@ const providerSlideoverUI = {
   body: "settings-provider-slideover__body",
   footer: "settings-provider-slideover__footer",
 };
+const providerTestModalUI = {
+  overlay: "settings-provider-test-overlay",
+  content: "settings-provider-test-modal",
+};
 let mounted = true;
 let draftRecoveryChecked = false;
 let draftPersistenceReady = false;
@@ -2381,6 +2385,7 @@ onBeforeUnmount(() => {
       description="该请求会使用当前本地 Provider 配置、已引用的 Secret version 和默认 Scope 访问目标 Provider；它不会 apply Configuration Revision。"
       :dismissible="!providerTesting"
       :close="!providerTesting"
+      :ui="providerTestModalUI"
       @update:open="closeProviderTest"
     >
       <template #body>
@@ -3142,6 +3147,14 @@ onBeforeUnmount(() => {
   opacity: 1 !important;
   isolation: isolate;
   contain: paint;
+}
+
+:global(.settings-provider-test-overlay) {
+  z-index: calc(var(--co-z-overlay) + 12) !important;
+}
+
+:global(.settings-provider-test-modal) {
+  z-index: calc(var(--co-z-overlay) + 13) !important;
 }
 
 :global(.settings-provider-slideover__header),
