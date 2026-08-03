@@ -62,4 +62,4 @@ rg -n '^  /api/v1/' docs/api-v1-openapi.yaml
 make check-naming
 ```
 
-OpenAPI、runtime route、typed frontend client 与 contract test 必须在同一变更中保持一致。真实 UI -> API -> Provider 证据见 [实施状态](evidence/cloudops-implementation-status.md)；静态 route 或 fixture 不能替代该证据。
+OpenAPI、runtime route、typed frontend client 与 capability matrix 必须保持一致。`make check-capability-matrix` 验证所有公开 route、typed client function 和 API operation 都已归类；fixture test 不能替代真实 UI -> API -> Provider 集成测试。

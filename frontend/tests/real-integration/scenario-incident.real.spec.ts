@@ -47,7 +47,7 @@ interface CollectionResponse<T> {
 
 function requiredIncidentID(): string {
   const artifact = readRunArtifact<IncidentArtifact>("objects/incident.json");
-  if (!artifact?.incident_id) throw new Error("objects/incident.json with current run incident_id is required");
+  if (!artifact?.incident_id) throw new Error("objects/incident.json with the test-owned incident_id is required");
   return artifact.incident_id;
 }
 

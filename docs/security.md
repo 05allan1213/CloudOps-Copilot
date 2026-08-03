@@ -50,7 +50,7 @@ Kubernetes operation 还必须同时满足 allowlisted Deployment scale、active
 
 本地 secret、bootstrap credential、runtime PID/log 与 backup 位于 Git 忽略的 `.cloudops/`，目录权限为 `0700`，secret/manifest 文件按 `0600` 创建。Provider credential 只能通过 backend env 或 mounted file 进入相应进程，不能进入 Git、Helm values、前端 bundle、localStorage、API response、Evidence、日志、Trace 或文档。
 
-Settings 的 secret API 只接受 write，读取仅返回 metadata/fingerprint。Phase 9 的 LLM 验收只记录 provider/model、token usage 与 hash，不输出 secret value。
+Settings 的 secret API 只接受 write，读取仅返回 metadata/fingerprint。Agent 与集成测试只记录 provider/model、token usage 与 hash，不输出 secret value。
 
 ## 6. Provider and external effects
 
@@ -59,7 +59,7 @@ Settings 的 secret API 只接受 write，读取仅返回 metadata/fingerprint�
 - Logs/Trace/annotation/GitHub text/runbook/tool error/model output 均是不可信输入，必须 sanitize 并携带 provenance。
 - LLM 只能生成 Evidence-bound 内容，没有 credential、approval 或 execution authority。
 - GitHub/Argo/Registry 是 optional external branches；没有凭据、Plan/Authorization 与明确运行权限时保持 `NOT RUN`。
-- 普通源码 push 不触发 Registry publish；hosted signing/attestation/cleanup 只由显式 workflow dispatch 执行。
+- 普通源码 push 不触发 Registry publish；Golden image publish 只由显式 workflow dispatch 执行。
 
 ## 7. Evidence integrity
 
@@ -74,4 +74,4 @@ make check-naming
 python3 scripts/check-immutable-workflow-dependencies.py
 ```
 
-当前源码、Chart、runtime、data 与外部边界的逐项结果见 [实施状态](evidence/cloudops-implementation-status.md) 和 [Phase 9 最终证据](evidence/phase-9-scenario/final-evidence-report.md)。
+安全相关代码或配置变更应同时运行对应 Go test、Helm contract、naming check 和 workflow dependency check。公开或多用户部署不在当前支持边界内。

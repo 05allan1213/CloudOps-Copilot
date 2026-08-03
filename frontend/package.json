@@ -12,8 +12,10 @@
     "lint:no-new-warnings": "eslint . --ext .ts,.vue --max-warnings 2564",
     "typecheck": "vue-tsc --noEmit",
     "typecheck:e2e": "tsc -p tsconfig.e2e.json --noEmit",
+    "check:capabilities": "node ../scripts/generate-real-ui-capability-matrix.mjs --manifest frontend/tests/real-integration/capabilities.json",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:e2e:incident-devops": "playwright test --config tests/e2e/incident-devops.playwright.config.ts incident-workspace.spec.ts devops-workspace.spec.ts",
     "test:e2e:stable": "playwright test tests/e2e/baseline-readonly.spec.ts",
     "test:e2e:update": "playwright test --update-snapshots"
   },

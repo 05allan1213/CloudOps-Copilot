@@ -57,7 +57,7 @@ interface PriorAttemptLedger {
 
 function requiredAlert(): AlertArtifact {
   const artifact = readRunArtifact<AlertArtifact>("objects/alert.json");
-  if (!artifact?.alert_id) throw new Error("objects/alert.json with current run alert_id is required");
+  if (!artifact?.alert_id) throw new Error("objects/alert.json with the test-owned alert_id is required");
   return artifact;
 }
 

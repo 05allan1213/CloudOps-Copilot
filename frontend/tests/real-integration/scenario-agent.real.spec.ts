@@ -9,9 +9,13 @@ import {
 } from "./support";
 
 const runID = process.env.CLOUDOPS_REAL_INTEGRATION_RUN_ID || "";
-const scenarioID = "scenario-20260802180235-ba6defe2";
+const scenarioID = process.env.CLOUDOPS_REAL_INTEGRATION_SCENARIO_ID || "";
 const scenarioWorkload = "cloudops-scenario-fault";
 const artifactPath = "objects/agent-consultation.json";
+
+test.beforeAll(() => {
+  expect(scenarioID, "CLOUDOPS_REAL_INTEGRATION_SCENARIO_ID").toMatch(/^scenario-/);
+});
 
 interface AgentArtifact {
   run_id: string;

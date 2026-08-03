@@ -40,7 +40,7 @@ interface BootstrapSnapshot {
   active_scope: OperationalScope;
 }
 
-interface TemporaryScopeReader {
+interface IntegrationScopeEnvironment {
   run_id: string;
   cluster_name: string;
   cluster_id: string;
@@ -126,44 +126,46 @@ async function activateScopeFromHeader(page: Page, clusterID: string): Promise<O
 }
 
 test("activate and restore a genuinely independent Kubernetes Scope", async ({ page }, testInfo) => {
-  const reader = readRunArtifact<TemporaryScopeReader>("scope-reader.json");
-  test.skip(!reader, "temporary secondary kind reader is not active");
+  const reader = readRunArtifact<IntegrationScopeEnvironment>("scope-environment.json");
+  if (!reader) {
+    throw new Error("independent Scope is required; run `make real-integration-scope-up` with the current CLOUDOPS_REAL_INTEGRATION_RUN_ID");
+  }
   const tracker = trackBrowserEvidence(page);
-  const secondaryName = `Temporary ${reader!.cluster_id}`;
+  const secondaryName = `Integration ${reader.cluster_id}`;
 
   await proveCapability(tracker, testInfo, {
     capabilityID: "shell.scope-activate",
-    uiAction: "通过 Settings 注册独立 kind reader Scope，从 Header 切换并刷新验证，再切回原 Scope并删除临时配置",
+    uiAction: "通过 Settings 注册独立 Kubernetes Scope，从 Header 切换并刷新验证，再切回原 Scope 并恢复配置",
     expectedOperations: ["POST /api/v1/scopes/{id}/activate"],
     uiResult: "第二 Scope 的 Worker 探测、active_operational_scope 持久化与跨页回显均成功，最终 active hash 与原 Scope 恢复",
   }, async () => {
     const initial = await openSettings(page);
     const original = initial.active_revision.scope;
     expect(original.id).toMatch(/^[0-9a-f-]{36}$/);
-    expect(initial.active_revision.scopes.some((scope) => scope.cluster_id === reader!.cluster_id)).toBe(false);
+    expect(initial.active_revision.scopes.some((scope) => scope.cluster_id === reader.cluster_id)).toBe(false);
 
     await page.getByRole("button", { name: "添加运行范围" }).click();
     const secondaryIndex = initial.active_revision.scopes.length;
     await fillField(page, `scopes.${secondaryIndex}.name`, secondaryName);
-    await fillField(page, `scopes.${secondaryIndex}.cluster_id`, reader!.cluster_id);
+    await fillField(page, `scopes.${secondaryIndex}.cluster_id`, reader.cluster_id);
     await fillField(page, `scopes.${secondaryIndex}.environment`, "integration");
     await fillField(page, `scopes.${secondaryIndex}.namespaces`, "default");
-    await fillField(page, "scopes.summary", `${reader!.run_id} temporary independent Scope`);
+    await fillField(page, "scopes.summary", `${reader.run_id} independent Scope integration`);
     await validateAndApply(page);
 
     let observed = await refreshSettings(page);
-    const secondary = observed.active_revision.scopes.find((scope) => scope.cluster_id === reader!.cluster_id);
+    const secondary = observed.active_revision.scopes.find((scope) => scope.cluster_id === reader.cluster_id);
     expect(secondary?.id).toMatch(/^[0-9a-f-]{36}$/);
 
     await waitForApiResponse(page, "GET /api/v1/scopes", () => page.goto("/overview"));
-    await activateScopeFromHeader(page, reader!.cluster_id);
+    await activateScopeFromHeader(page, reader.cluster_id);
     let bootstrapResponse = await waitForApiResponse(page, "GET /api/v1/bootstrap", () => page.reload());
     let bootstrap = await responseData<BootstrapSnapshot>(bootstrapResponse);
-    expect(bootstrap.active_scope.cluster_id).toBe(reader!.cluster_id);
+    expect(bootstrap.active_scope.cluster_id).toBe(reader.cluster_id);
 
     await waitForApiResponse(page, "GET /api/v1/scopes", () => page.goto("/settings"));
     observed = await refreshSettings(page);
-    expect(observed.active_revision.scope.cluster_id).toBe(reader!.cluster_id);
+    expect(observed.active_revision.scope.cluster_id).toBe(reader.cluster_id);
 
     await page.goto("/overview");
     await activateScopeFromHeader(page, original.cluster_id);
@@ -172,13 +174,13 @@ test("activate and restore a genuinely independent Kubernetes Scope", async ({ p
     expect(bootstrap.active_scope.id).toBe(original.id);
 
     observed = await openSettings(page);
-    await page.locator(".settings-object-list button").filter({ hasText: reader!.cluster_id }).click();
+    await page.locator(".settings-object-list button").filter({ hasText: reader.cluster_id }).click();
     await page.getByRole("button", { name: `从草稿移除 ${secondaryName}` }).click();
     await fillField(page, "scopes.summary", initial.active_revision.summary);
     await validateAndApply(page);
     observed = await refreshSettings(page);
     expect(observed.active_revision.hash).toBe(initial.active_revision.hash);
     expect(observed.active_revision.scope.id).toBe(original.id);
-    expect(observed.active_revision.scopes.some((scope) => scope.cluster_id === reader!.cluster_id)).toBe(false);
+    expect(observed.active_revision.scopes.some((scope) => scope.cluster_id === reader.cluster_id)).toBe(false);
   });
 });

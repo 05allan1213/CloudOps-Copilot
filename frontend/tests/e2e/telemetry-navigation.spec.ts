@@ -5,8 +5,8 @@ test("Monitoring context navigation renders Logs and Traces workspaces", async (
   await expect(page.locator("#monitoring-heading")).toBeVisible();
 
   await page.getByRole("link", { name: "日志", exact: true }).click();
-  await expect(page.locator("#logs-heading")).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "日志分析" })).toBeVisible();
 
   await page.getByRole("link", { name: "链路", exact: true }).click();
-  await expect(page.locator("#traces-heading")).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "链路分析" })).toBeVisible();
 });

@@ -1,6 +1,6 @@
 # Architecture
 
-本文描述当前工作树的可运行架构。[实施规范](CloudOps-Implementation-Spec.md) 是产品权威；历史代际设计只保留决策 provenance。
+本文描述 CloudOps-Copilot 的运行架构。领域语义以 [Domain](domain.md) 为准，公开传输合同以 [OpenAPI](api-v1-openapi.yaml) 为准。
 
 ## 1. Runtime topology
 
@@ -105,6 +105,4 @@ charts/cloudops         -> sole runtime and Scenario render source
 scripts/local-lifecycle -> kind + Helm + Scenario + backup/restore/doctor
 ```
 
-旧 Compose、raw manifests、parallel Chart、`server-monitor` runtime、temporary demo model adapter、GitOps demo contract 和 inactive Workspace UI 已删除。第一方实现名称由 `make check-naming` 保证语义化、无产品代际或 numbered phase identity。
-
-当前运行与验收边界见 [实施状态](evidence/cloudops-implementation-status.md) 和 [Phase 9 最终证据](evidence/phase-9-scenario/final-evidence-report.md)。
+第一方实现名称由 `make check-naming` 保持语义化。运行方式见 [Operations](operations.md)，权限边界见 [Security](security.md)，可靠性与恢复合同见 [Reliability](reliability.md)。

@@ -320,7 +320,7 @@ watch(() => route.query, (query) => Object.assign(queryState, queryCodec.decode(
       <header class="fixture-topbar">
         <div>
           <strong>CloudOps</strong>
-          <span>Gate 3 presentation fixture</span>
+          <span>Workspace foundation fixture</span>
         </div>
         <UButton
           color="neutral"
@@ -563,7 +563,7 @@ watch(() => route.query, (query) => Object.assign(queryState, queryCodec.decode(
               :rows="filteredRows"
               :columns="columns"
               :row-key="(row: WorkspaceFixtureRow) => row.id"
-              storage-key="gate3-workspace-fixture"
+              storage-key="workspace-foundation-fixture"
               caption="20,000 行资源可信度 fixture"
               :critical-column-ids="['severity', 'resource', 'status']"
               :selected-id="inspector.selectedID.value"

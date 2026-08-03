@@ -167,8 +167,6 @@ const openapiShapes = new Map(openapiOperations.map((operation) => [operationSha
 const runtimeShapes = new Map(runtimeOperations.map((operation) => [operationShape(operation.key), operation]));
 const sourceCorpus = consumerFiles.map((file) => sourceText(file)).join("\n");
 const inventory = {
-  generated_at: new Date().toISOString(),
-  source_head: process.env.SOURCE_HEAD ?? "",
   routes,
   client_functions: clientFunctions.map((entry) => ({
     ...entry,
@@ -191,11 +189,42 @@ const capabilityFunctions = new Set();
 const capabilityRoutes = new Set();
 const functionNames = new Set(clientFunctions.map((entry) => entry.name));
 const routePaths = new Set(routes.map((route) => route.path));
+const capabilityIDs = new Set();
+const allowedManifestKeys = new Set(["capabilities", "exclusions"]);
+const requiredCapabilityKeys = [
+  "capability_id",
+  "domain",
+  "routes",
+  "ui_action",
+  "client_functions",
+  "api_operations",
+  "backend_owner",
+  "durable_effect",
+  "ui_echo",
+  "isolation",
+];
+
+for (const key of Object.keys(manifest)) {
+  if (!allowedManifestKeys.has(key)) errors.push(`manifest contains runtime metadata or unknown field: ${key}`);
+}
+if (!Array.isArray(manifest.capabilities) || manifest.capabilities.length === 0) {
+  errors.push("manifest must define at least one capability");
+}
 
 for (const capability of manifest.capabilities ?? []) {
+  for (const key of requiredCapabilityKeys) {
+    if (!(key in capability)) errors.push(`${capability.capability_id ?? "<missing>"}: missing field ${key}`);
+  }
+  for (const key of Object.keys(capability)) {
+    if (![...requiredCapabilityKeys, "control"].includes(key)) {
+      errors.push(`${capability.capability_id ?? "<missing>"}: runtime metadata or unknown field ${key}`);
+    }
+  }
   if (!/^[a-z0-9][a-z0-9._-]+$/.test(capability.capability_id ?? "")) {
     errors.push(`invalid capability_id: ${capability.capability_id ?? "<missing>"}`);
   }
+  if (capabilityIDs.has(capability.capability_id)) errors.push(`duplicate capability_id: ${capability.capability_id}`);
+  capabilityIDs.add(capability.capability_id);
   for (const route of capability.routes ?? []) {
     capabilityRoutes.add(route);
     if (!routePaths.has(route)) errors.push(`${capability.capability_id}: unknown route ${route}`);
@@ -238,7 +267,6 @@ for (const route of routes) {
 
 const result = {
   ...inventory,
-  run_id: manifest.run_id,
   capabilities: manifest.capabilities,
   exclusions,
   validation: {

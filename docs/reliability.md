@@ -28,7 +28,7 @@ Shutdown 顺序为停止新 claim、bounded drain、取消剩余 handler/heartbe
 - `scenario-status`：只读核对 runtime、fault、Provider、Agent、history 与 write gate；
 - `scenario-down`：先恢复/等待 Alert resolved，再删除 Scenario runtime、关闭 write gate/RBAC，保留 history。
 
-Active Scenario 会跨 `local-up` 保持同一 identity 与 recovered/degraded 状态，避免升级期间静默替换验收对象。
+Active Scenario 会跨 `local-up` 保持同一 identity 与 recovered/degraded 状态，避免升级期间静默替换运行对象。
 
 ## 4. Backup, restore and retention
 
@@ -62,4 +62,4 @@ make scenario-status
 go test -race -count=1 ./...
 ```
 
-当前完整 Scenario、failure-state、browser 与 cleanup evidence 见 [Phase 9 最终证据](evidence/phase-9-scenario/final-evidence-report.md)。
+Scenario 流程还应通过真实浏览器集成测试验证 Provider effect、持久化结果、刷新回显和 runtime cleanup；生成的日志、截图与 trace 不进入源码仓库。

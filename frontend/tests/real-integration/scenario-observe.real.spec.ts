@@ -11,8 +11,12 @@ import {
 } from "./support";
 
 const runID = process.env.CLOUDOPS_REAL_INTEGRATION_RUN_ID || "";
-const scenarioID = "scenario-20260802180235-ba6defe2";
+const scenarioID = process.env.CLOUDOPS_REAL_INTEGRATION_SCENARIO_ID || "";
 const scenarioWorkload = "cloudops-scenario-fault";
+
+test.beforeAll(() => {
+  expect(scenarioID, "CLOUDOPS_REAL_INTEGRATION_SCENARIO_ID").toMatch(/^scenario-/);
+});
 
 async function selectOption(page: Page, combobox: string | RegExp, option: string) {
   await page.getByRole("combobox", { name: combobox }).click();
@@ -104,24 +108,12 @@ test("infrastructure.topology-sse", async ({ page }, testInfo) => {
 
 test("monitoring.query-cancel", async ({ page }, testInfo) => {
   const tracker = trackBrowserEvidence(page);
-  const retainedArtifact = readRunArtifact<{ execution_id?: string }>("objects/monitoring-cancel.json");
-  const priorAttempt = readRunArtifact<{
-    api_evidence?: Array<{ method: string; path: string; status: number | null }>;
-  }>("attempts/monitoring.query-cancel/attempt-04.json");
-  const retainedCancelPath = priorAttempt?.api_evidence?.find((record) => (
-    record.method === "POST"
-    && record.status !== null
-    && record.status >= 200
-    && record.status < 300
-    && /^\/api\/v1\/monitoring\/queries\/[^/]+\/cancel$/.test(record.path)
-  ))?.path;
-  const retainedExecutionID = retainedArtifact?.execution_id
-    ?? retainedCancelPath?.split("/").at(-2)
-    ?? "";
+  const existingArtifact = readRunArtifact<{ execution_id?: string }>("objects/monitoring-cancel.json");
+  const existingExecutionID = existingArtifact?.execution_id ?? "";
 
-  await page.goto(retainedExecutionID ? `/monitoring?execution=${retainedExecutionID}` : "/monitoring");
+  await page.goto(existingExecutionID ? `/monitoring?execution=${existingExecutionID}` : "/monitoring");
   await expect(page.getByRole("heading", { name: "监控", level: 1 })).toBeVisible();
-  if (!retainedExecutionID) {
+  if (!existingExecutionID) {
     await selectScenarioWorkload(page, true);
     await page.getByRole("button", { name: "6h", exact: true }).click();
     await selectOption(page, "查询 Step", "30s");
@@ -131,15 +123,15 @@ test("monitoring.query-cancel", async ({ page }, testInfo) => {
 
   await proveCapability(tracker, testInfo, {
     capabilityID: "monitoring.query-cancel",
-    uiAction: retainedExecutionID
-      ? `从 Monitoring deep link 重新进入并展开技术详情，读取已由原查询控件取消的 execution ${retainedExecutionID}`
+    uiAction: existingExecutionID
+      ? `从 Monitoring deep link 重新进入并展开技术详情，读取当前测试运行已取消的 execution ${existingExecutionID}`
       : `选择 demo/${scenarioWorkload} 的最大合法 6h/30s 高基数 scoped PromQL，在执行前预等待原查询工具栏取消控件并立即点击`,
-    expectedOperations: retainedExecutionID
+    expectedOperations: existingExecutionID
       ? ["GET /api/v1/monitoring/queries/{id}"]
       : ["POST /api/v1/monitoring/queries", "POST /api/v1/monitoring/queries/{id}/cancel"],
     uiResult: "同一 Query Execution 在刷新与 deep link 重进后保持 cancelled durable terminal state",
   }, async () => {
-    let executionID = retainedExecutionID;
+    let executionID = existingExecutionID;
     if (!executionID) {
       const cancel = page.getByRole("button", { name: "取消", exact: true });
       const cancelClick = cancel.click({ timeout: 45_000 });
@@ -332,7 +324,6 @@ test("Trace search, detail history and durable Evidence echo", async ({ page }, 
     capabilityID: "traces.search-detail-history",
     uiAction: `选择 demo/${scenarioWorkload}，从 Trace 控件搜索最近 15m，打开真实 Trace/Waterfall 并刷新`,
     uiResult: "Tempo Search、Trace detail 与 Span Waterfall 在刷新后保持同一 durable identities",
-    commit: "74edd32",
     ...(priorSearch?.search_id ? {
       expectedOperations: ["GET /api/v1/traces/searches/{id}", "GET /api/v1/traces/{trace_id}"],
     } : {}),

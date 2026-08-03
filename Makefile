@@ -17,6 +17,7 @@ BUILD_DIR ?= $(TMPDIR)/cloudops-copilot-build
 FRONTEND_DIR := frontend
 CHART_DIR := charts/cloudops
 LOCAL_LIFECYCLE := scripts/local-lifecycle.sh
+REAL_INTEGRATION_SCOPE := scripts/real-integration-scope.sh
 RUNTIME_RENDER_CHECK := scripts/check-runtime-render.sh
 NAMING_CHECK := scripts/check-first-party-naming.sh
 GO_FILES := $(shell find cmd internal migrations -type f -name '*.go' -print 2>/dev/null | sort)
@@ -25,9 +26,10 @@ SHELL_FILES := $(shell find scripts -type f -name '*.sh' -print 2>/dev/null | so
 .PHONY: help \
 	local-up local-open local-status local-logs local-restart local-doctor local-down \
 	local-backup local-restore local-reset scenario-up scenario-status scenario-down \
+	real-integration-scope-up real-integration-scope-status real-integration-scope-down \
 	build build-go build-api build-worker build-migrate build-demo build-frontend frontend-install \
 	test test-go test-race test-frontend frontend-lint frontend-lint-budget frontend-typecheck frontend-e2e-typecheck frontend-unit frontend-e2e frontend-e2e-stable \
-	vet lint lint-go check-gofmt check-goimports check-deps check-structure check-naming \
+	vet lint lint-go check-gofmt check-goimports check-deps check-structure check-naming check-capability-matrix \
 	actionlint shellcheck helm-lint helm-template helm-contracts kubeconform static-checks check \
 	docker-build docker-build-api docker-build-worker docker-build-migrate docker-build-demo
 
@@ -74,6 +76,15 @@ scenario-status: ## Show Scenario resources, fault, Evidence Plane, Agent, and w
 scenario-down: ## Remove only Scenario runtime resources and retain CloudOps history.
 	bash $(LOCAL_LIFECYCLE) scenario-down
 
+real-integration-scope-up: ## Provision the independent Kubernetes Scope used by real integration tests.
+	bash $(REAL_INTEGRATION_SCOPE) up
+
+real-integration-scope-status: ## Show the independent real-integration Scope state.
+	bash $(REAL_INTEGRATION_SCOPE) status
+
+real-integration-scope-down: ## Remove the independent real-integration Scope and its local state.
+	bash $(REAL_INTEGRATION_SCOPE) down
+
 build: build-go build-frontend ## Build all local application artifacts.
 
 build-go: build-api build-worker build-migrate build-demo
@@ -108,7 +119,7 @@ test-go:
 test-race:
 	$(GO) test -race -count=1 ./...
 
-test-frontend: frontend-lint-budget frontend-typecheck frontend-e2e-typecheck frontend-unit
+test-frontend: frontend-lint-budget frontend-typecheck frontend-e2e-typecheck frontend-unit check-capability-matrix
 
 frontend-lint:
 	cd $(FRONTEND_DIR) && $(NPM) run lint
@@ -125,10 +136,10 @@ frontend-e2e-typecheck:
 frontend-unit:
 	cd $(FRONTEND_DIR) && $(NPM) test
 
-frontend-e2e: ## Run deterministic frontend Playwright presentation gates.
+frontend-e2e: ## Run deterministic frontend Playwright fixture tests.
 	cd $(FRONTEND_DIR) && $(NPM) run test:e2e
 
-frontend-e2e-stable: ## Run the stable read-only Chromium regression gate.
+frontend-e2e-stable: ## Run the stable read-only Chromium regression suite.
 	cd $(FRONTEND_DIR) && $(NPM) run test:e2e:stable
 
 vet:
@@ -166,6 +177,9 @@ check-structure:
 
 check-naming:
 	bash $(NAMING_CHECK)
+
+check-capability-matrix: ## Validate route, client, OpenAPI, and runtime capability coverage.
+	cd $(FRONTEND_DIR) && $(NPM) run check:capabilities
 
 actionlint:
 	$(call require_cmd,$(ACTIONLINT))

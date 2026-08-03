@@ -255,7 +255,7 @@ function agentContextSnapshot() {
         name: "checkout-api",
       },
     ],
-    filters: { source: "gate-02-shell-fixture" },
+    filters: { source: "shell-fixture" },
     time_range: { from: at(-900), to: at(900) },
     query_definition_refs: [],
     query_execution_refs: [],

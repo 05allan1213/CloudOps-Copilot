@@ -11,7 +11,7 @@ func TestChangeIntegrationsDefaultOff(t *testing.T) {
 	t.Setenv("AUTH_ENABLED", "false")
 	cfg := Load()
 	if cfg.ChangeIntelligenceEnabled || cfg.GitHubEnabled || cfg.ArgoCDEnabled || cfg.ImageRevisionRequired || cfg.RegistryMetadataEnabled {
-		t.Fatalf("Phase 3 external integrations must default off: %+v", cfg)
+		t.Fatalf("external integrations must default off: %+v", cfg)
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
@@ -104,6 +104,6 @@ func TestChangeIntegrationRequiresPersistenceMappingAndReadCredentials(t *testin
 	t.Setenv("ARGOCD_SERVER", "https://argocd.example")
 	cfg = Load()
 	if err := cfg.Validate(); err != nil {
-		t.Fatalf("valid read-only Phase 3 configuration rejected: %v", err)
+		t.Fatalf("valid read-only integration configuration rejected: %v", err)
 	}
 }
