@@ -80,9 +80,10 @@ type CatalogRequest struct {
 }
 
 type LogFilter struct {
-	Text    string   `json:"text,omitempty"`
-	Levels  []string `json:"levels,omitempty"`
-	TraceID string   `json:"trace_id,omitempty"`
+	Text       string   `json:"text,omitempty"`
+	Levels     []string `json:"levels,omitempty"`
+	TraceID    string   `json:"trace_id,omitempty"`
+	ScenarioID string   `json:"scenario_id,omitempty"`
 }
 
 type StartLogQueryRequest struct {

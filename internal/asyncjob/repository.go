@@ -292,7 +292,7 @@ func (r *Repository) EnqueueIn(ctx context.Context, executor DBTX, task NewTask)
 	if len(payload) == 0 {
 		payload = []byte(`{}`)
 	}
-	const insertSQL = `INSERT INTO async_tasks (
+	const insertFromActiveSQL = `INSERT INTO async_tasks (
 public_id, incident_id, cycle_no, queue, task_type, subject_type, subject_id,
 transition, expected_subject_version, payload_schema_version, payload_json,
 configuration_revision_id,
@@ -302,9 +302,16 @@ available_at, attempt, max_attempts, lease_generation, created_at, updated_at
           COALESCE(?, NOW(6)), 0, ?, 0, NOW(6), NOW(6)
 FROM active_configuration AS active WHERE active.singleton_id = 1
 ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`
-	result, err := executor.ExecContext(
-		ctx,
-		insertSQL,
+	const insertExplicitRevisionSQL = `INSERT INTO async_tasks (
+public_id, incident_id, cycle_no, queue, task_type, subject_type, subject_id,
+transition, expected_subject_version, payload_schema_version, payload_json,
+configuration_revision_id,
+dedupe_key, replay_generation, logical_operation_key, migrated_legacy, migrated_legacy_context, status, priority,
+available_at, attempt, max_attempts, lease_generation, created_at, updated_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 'ready', ?,
+          COALESCE(?, NOW(6)), 0, ?, 0, NOW(6), NOW(6))
+ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`
+	args := []any{
 		uuid.NewString(),
 		task.IncidentID,
 		task.CycleNo,
@@ -316,6 +323,13 @@ ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`
 		task.ExpectedSubjectVersion,
 		task.PayloadSchemaVersion,
 		[]byte(payload),
+	}
+	insertSQL := insertFromActiveSQL
+	if task.ConfigurationRevisionID != 0 {
+		insertSQL = insertExplicitRevisionSQL
+		args = append(args, task.ConfigurationRevisionID)
+	}
+	args = append(args,
 		task.DedupeKey,
 		nullString(task.LogicalOperationKey),
 		task.MigratedLegacy,
@@ -324,6 +338,7 @@ ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)`
 		nullTime(task.AvailableAt),
 		task.MaxAttempts,
 	)
+	result, err := executor.ExecContext(ctx, insertSQL, args...)
 	if err != nil {
 		return nil, fmt.Errorf("enqueue async task: %w", err)
 	}

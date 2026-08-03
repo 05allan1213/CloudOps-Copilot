@@ -67,15 +67,22 @@ func (r *WorkspaceRunner) runBoundedTools(ctx context.Context, lease WorkspaceLe
 			},
 		})
 
+		logFilter := telemetry.LogFilter{}
+		if _, scenarioID, ok := workspaceScenarioSubject(execution); ok {
+			logFilter.ScenarioID = scenarioID
+		}
+		logFrom := workspaceBoundedLogFrom(
+			execution.Snapshot.TimeRange.From, execution.Snapshot.TimeRange.To, logFilter.ScenarioID,
+		)
 		logRequest, logPrepareErr := telemetry.PrepareBoundedLogToolRequest(
 			execution.Snapshot.Scope.ClusterID, resource.Namespace, resource,
-			execution.Snapshot.TimeRange.From, execution.Snapshot.TimeRange.To,
-			min(100, max(1, revision.General.QueryMaxResults)), revision,
+			logFrom, execution.Snapshot.TimeRange.To,
+			min(100, max(1, revision.General.QueryMaxResults)), logFilter, revision,
 		)
 		logArgs, _ := json.Marshal(map[string]any{
 			"resource": resource.ID, "query": logRequest.Query,
-			"from": execution.Snapshot.TimeRange.From, "to": execution.Snapshot.TimeRange.To,
-			"configuration_revision": revision.ID,
+			"from": logFrom, "to": execution.Snapshot.TimeRange.To,
+			"configuration_revision": revision.ID, "scenario_id": logFilter.ScenarioID,
 		})
 		calls = append(calls, workspaceToolCall{
 			name: "logs.query", arguments: logArgs,
@@ -83,7 +90,7 @@ func (r *WorkspaceRunner) runBoundedTools(ctx context.Context, lease WorkspaceLe
 				if logPrepareErr != nil {
 					return WorkspaceToolObservation{}, logPrepareErr
 				}
-				return r.observeLogs(toolCtx, resource, logRequest)
+				return r.observeLogs(toolCtx, execution, resource, logRequest)
 			},
 		})
 
@@ -117,6 +124,17 @@ func (r *WorkspaceRunner) runBoundedTools(ctx context.Context, lease WorkspaceLe
 		}
 	}
 	return nil
+}
+
+func workspaceBoundedLogFrom(from, to time.Time, scenarioID string) time.Time {
+	if scenarioID == "" {
+		return from
+	}
+	focused := to.Add(-30 * time.Second)
+	if focused.After(from) {
+		return focused
+	}
+	return from
 }
 
 func (r *WorkspaceRunner) executeTool(ctx context.Context, lease WorkspaceLease, call workspaceToolCall, timeout time.Duration) error {
@@ -165,6 +183,7 @@ func (r *WorkspaceRunner) observeKubernetes(ctx context.Context, execution Works
 		facts = append(facts, map[string]any{
 			"kind": item.Kind, "namespace": item.Namespace, "name": item.Name,
 			"status": item.Status, "health": item.Health.State, "summary": workspaceBound(item.Health.Summary, 256),
+			"containers": item.Containers,
 		})
 	}
 	factsJSON, _ := json.Marshal(facts)
@@ -185,6 +204,7 @@ func (r *WorkspaceRunner) observeKubernetes(ctx context.Context, execution Works
 		Facts:   factsJSON, Provenance: provenance, ObservedAt: collected, CollectedAt: collected,
 		Truncated: projection.Truncated, Partial: projection.Partial || len(projection.Issues) > 0,
 		SourceRevision: projection.Source.ServerVersion,
+		TypedFacts:     workspaceScenarioKubernetesFacts(execution, projection),
 	}, nil
 }
 
@@ -222,7 +242,7 @@ func (r *WorkspaceRunner) observeMetrics(ctx context.Context, resource telemetry
 	}, nil
 }
 
-func (r *WorkspaceRunner) observeLogs(ctx context.Context, resource telemetry.ResourceReference, request telemetry.ProviderLogRequest) (WorkspaceToolObservation, error) {
+func (r *WorkspaceRunner) observeLogs(ctx context.Context, execution WorkspaceExecutionContext, resource telemetry.ResourceReference, request telemetry.ProviderLogRequest) (WorkspaceToolObservation, error) {
 	result, err := r.config.Telemetry.QueryLogs(ctx, request)
 	if err != nil {
 		return WorkspaceToolObservation{}, err
@@ -235,7 +255,7 @@ func (r *WorkspaceRunner) observeLogs(ctx context.Context, resource telemetry.Re
 		}
 		facts = append(facts, map[string]any{
 			"timestamp": entry.Timestamp.UTC(), "level": entry.Level, "service": entry.Service,
-			"trace_id": entry.TraceID, "message": workspaceBound(entry.Message, 320),
+			"trace_id": entry.TraceID, "message": workspaceBound(entry.Message, 320), "reason": workspaceLogReason(entry.Attributes),
 		})
 		if entry.Timestamp.After(observed) {
 			observed = entry.Timestamp.UTC()
@@ -251,7 +271,112 @@ func (r *WorkspaceRunner) observeLogs(ctx context.Context, resource telemetry.Re
 		Summary: fmt.Sprintf("Elasticsearch 返回 %d 条 bounded log entries。", len(result.Entries)),
 		Facts:   factsJSON, Provenance: provenance, ObservedAt: observed, CollectedAt: result.Source.CollectedAt.UTC(),
 		Truncated: result.Truncated, Partial: result.Partial, SourceRevision: result.Source.ServerVersion,
+		TypedFacts: workspaceScenarioLogFacts(execution, resource, result.Entries),
 	}, nil
+}
+
+func workspaceScenarioKubernetesFacts(execution WorkspaceExecutionContext, projection infrastructure.Projection) []EvidenceFact {
+	resource, scenarioID, ok := workspaceScenarioSubject(execution)
+	if !ok {
+		return nil
+	}
+	var deployment *infrastructure.Resource
+	for index := range projection.Nodes {
+		item := &projection.Nodes[index]
+		if item.Kind == resource.Kind && item.Namespace == resource.Namespace && item.Name == resource.Name &&
+			item.Labels["cloudops.io/scenario-id"] == scenarioID {
+			deployment = item
+			break
+		}
+	}
+	if deployment == nil {
+		return nil
+	}
+	attributes := map[string]string{
+		"scenario_id": scenarioID, "cluster_id": execution.Snapshot.Scope.ClusterID,
+		"namespace": resource.Namespace, "workload_kind": resource.Kind, "workload": resource.Name,
+		"container": "scenario", "env_key": "REQUIRED_ENV",
+		"resource_uid": deployment.SourceUID, "resource_version": deployment.ResourceVersion,
+		"generation": fmt.Sprint(deployment.Generation), "init_container_count": fmt.Sprint(deployment.InitContainerCount),
+		"ephemeral_container_count": fmt.Sprint(deployment.EphemeralCount),
+	}
+	facts := []EvidenceFact{workspaceRuntimeFact(
+		"workload.subject_confirmed", "kubernetes", "kubernetes.resources/deployment", "scenario-subject", "support", attributes,
+	)}
+	for _, container := range deployment.Containers {
+		if container.Name != "scenario" {
+			continue
+		}
+		if deployment.ContainersTruncated || container.EnvNamesTruncated || container.HasEnvFrom ||
+			container.HasSecretReference {
+			break
+		}
+		factType, claimUse := "kubernetes.required_env_absent", "support"
+		for _, name := range container.EnvNames {
+			if name == "REQUIRED_ENV" {
+				factType, claimUse = "kubernetes.required_env_present", "blocking"
+				break
+			}
+		}
+		attributes["env_names"] = strings.Join(container.EnvNames, ",")
+		facts = append(facts, workspaceRuntimeFact(
+			factType, "kubernetes", "kubernetes.resources/deployment-pod-template", "scenario-required-env", claimUse, attributes,
+		))
+		break
+	}
+	return facts
+}
+
+func workspaceScenarioLogFacts(execution WorkspaceExecutionContext, resource telemetry.ResourceReference, entries []telemetry.LogEntry) []EvidenceFact {
+	_, scenarioID, ok := workspaceScenarioSubject(execution)
+	if !ok || resource.Kind != "Deployment" || resource.Namespace != "demo" || resource.Name != "cloudops-scenario-fault" {
+		return nil
+	}
+	for _, entry := range entries {
+		if entry.Attributes["scenario_id"] != scenarioID || workspaceLogReason(entry.Attributes) != "required_env_missing" {
+			continue
+		}
+		return []EvidenceFact{workspaceRuntimeFact(
+			"log.required_env_missing", "elasticsearch", "logs.query/structured-reason", "scenario-required-env-log", "support",
+			map[string]string{
+				"scenario_id": scenarioID, "namespace": resource.Namespace, "workload_kind": resource.Kind,
+				"workload": resource.Name, "reason": "required_env_missing", "env_key": "REQUIRED_ENV",
+			},
+		)}
+	}
+	return nil
+}
+
+func workspaceRuntimeFact(factType, source, collectionPath, group, claimUse string, attributes map[string]string) EvidenceFact {
+	return EvidenceFact{
+		Type: factType, SourceSystem: source, CollectionPath: collectionPath, CorroborationGroup: group,
+		Authority: "runtime_observation", Integrity: "verified", Freshness: "fresh", Completeness: "complete",
+		ClaimUse: claimUse, CollectionStatus: CollectionAvailable, Direct: true, Attributes: attributes,
+	}
+}
+
+func workspaceScenarioSubject(execution WorkspaceExecutionContext) (telemetry.ResourceReference, string, bool) {
+	resource, ok := workspaceWorkloadResource(execution.Snapshot.Resources)
+	if !ok || execution.Snapshot.Scope.ClusterID != "cloudops-local" || execution.Snapshot.Scope.Environment != "local" ||
+		resource.Kind != "Deployment" || resource.Namespace != "demo" || resource.Name != "cloudops-scenario-fault" {
+		return telemetry.ResourceReference{}, "", false
+	}
+	var filters struct {
+		ScenarioID string `json:"scenario_id"`
+	}
+	if json.Unmarshal(execution.Snapshot.Filters, &filters) != nil || !workspaceScenarioIdentity(filters.ScenarioID) {
+		return telemetry.ResourceReference{}, "", false
+	}
+	return resource, filters.ScenarioID, true
+}
+
+func workspaceLogReason(attributes map[string]string) string {
+	for _, key := range []string{"reason", "error.reason", "cloudops.reason"} {
+		if value := strings.ToLower(strings.TrimSpace(attributes[key])); value != "" {
+			return workspaceBound(value, 128)
+		}
+	}
+	return ""
 }
 
 func (r *WorkspaceRunner) observeTraces(ctx context.Context, resource telemetry.ResourceReference, request telemetry.ProviderTraceSearchRequest) (WorkspaceToolObservation, error) {

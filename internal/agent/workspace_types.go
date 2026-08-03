@@ -243,6 +243,8 @@ type WorkspaceExecutionContext struct {
 
 type WorkspaceExecutionLimits struct {
 	MaxToolCalls     int
+	MaxModelCalls    int
+	TokenBudget      int64
 	MaxEvidenceItems int
 	MaxRuntime       time.Duration
 	ToolTimeout      time.Duration
@@ -262,18 +264,29 @@ type WorkspaceToolObservation struct {
 	Truncated      bool
 	Partial        bool
 	SourceRevision string
+	TypedFacts     []EvidenceFact
 }
 
 type WorkspaceCompletion struct {
 	Outcome        WorkspaceOutcome
 	Uncertainty    string
 	Answer         string
+	Diagnosis      *DiagnosisRecord
 	FailureCode    string
 	FailureSummary string
 	ModelProvider  string
 	ActualModel    string
+	ModelCalls     int
 	InputTokens    int64
 	OutputTokens   int64
+}
+
+type WorkspaceDiagnosisContext struct {
+	IncidentID  string
+	CycleNo     uint64
+	Facts       []EvidenceFact
+	Policy      ClaimPolicy
+	Sufficiency SufficiencyResult
 }
 
 type WorkspaceModelRequest struct {
@@ -296,6 +309,14 @@ type WorkspaceModel interface {
 
 type WorkspaceModelFactory interface {
 	Model(context.Context, string) (WorkspaceModel, string, string, error)
+}
+
+type WorkspaceDiagnosisModel interface {
+	SynthesizeDiagnosis(context.Context, DiagnosisView) (DiagnosisCandidate, ModelUsage, error)
+}
+
+type WorkspaceDiagnosisModelFactory interface {
+	DiagnosisModel(context.Context, string) (WorkspaceDiagnosisModel, string, string, error)
 }
 
 type KnowledgeRevision struct {

@@ -87,10 +87,10 @@ func prepareTraceSearch(request StartTraceSearchRequest, revision settings.Revis
 
 // PrepareBoundedLogToolRequest creates the fixed guided Logs request available
 // to Agent read tools. It cannot carry expert Elasticsearch query text.
-func PrepareBoundedLogToolRequest(clusterID, namespace string, resource ResourceReference, from, to time.Time, limit int, revision settings.Revision) (ProviderLogRequest, error) {
+func PrepareBoundedLogToolRequest(clusterID, namespace string, resource ResourceReference, from, to time.Time, limit int, filter LogFilter, revision settings.Revision) (ProviderLogRequest, error) {
 	prepared, err := prepareLogQuery(StartLogQueryRequest{
 		Mode: ModeGuided, ClusterID: clusterID, Namespace: namespace,
-		Resource: resource, From: from, To: to, Limit: limit,
+		Resource: resource, From: from, To: to, Limit: limit, Filter: filter,
 	}, revision)
 	if err != nil {
 		return ProviderLogRequest{}, err
@@ -321,6 +321,14 @@ func normalizeLogQuery(mode QueryMode, raw string, filter LogFilter, scope setti
 		map[string]any{"term": map[string]any{workloadField: resource.Name}},
 	}
 	var user any
+	filter.ScenarioID = strings.TrimSpace(filter.ScenarioID)
+	if filter.ScenarioID != "" {
+		if len(filter.ScenarioID) > 63 || !strings.HasPrefix(filter.ScenarioID, "scenario-") ||
+			strings.HasSuffix(filter.ScenarioID, "-") || !validLowerLabel(filter.ScenarioID[len("scenario-"):]) {
+			return "", fmt.Errorf("%w: scenario_id is invalid", ErrInvalid)
+		}
+		fixed = append(fixed, map[string]any{"term": map[string]any{"scenario_id": filter.ScenarioID}})
+	}
 	switch mode {
 	case ModeGuided:
 		filter.Text = strings.TrimSpace(filter.Text)
@@ -364,6 +372,20 @@ func normalizeLogQuery(mode QueryMode, raw string, filter LogFilter, scope setti
 		return "", fmt.Errorf("%w: normalized Elasticsearch query exceeds %d bytes", ErrInvalid, MaximumQueryBytes)
 	}
 	return string(encoded), nil
+}
+
+func validLowerLabel(value string) bool {
+	if value == "" {
+		return false
+	}
+	for index := range len(value) {
+		character := value[index]
+		if (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') || character == '-' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func decodeBoundedElasticsearchQuery(raw string, target *any) error {

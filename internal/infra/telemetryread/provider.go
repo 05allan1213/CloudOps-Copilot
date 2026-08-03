@@ -125,7 +125,8 @@ func (p *Provider) QueryLogs(ctx context.Context, request telemetry.ProviderLogR
 		},
 		"_source": []string{
 			"@timestamp", "message", "msg", "level", "log.level", "service", "service.name",
-			"trace_id", "trace.id", "span_id", "span.id", "cloudops.cluster_id",
+			"trace_id", "trace.id", "span_id", "span.id", "scenario_id", "cloudops.cluster_id",
+			"reason", "error.reason", "cloudops.reason",
 			"kubernetes.namespace", "kubernetes.namespace_name", "kubernetes.deployment.name",
 			"kubernetes.statefulset.name", "kubernetes.daemonset.name", "kubernetes.pod.name",
 		},
@@ -308,7 +309,7 @@ func parseElasticsearch(content []byte, request telemetry.ProviderLogRequest) (t
 		spanID := canonicalHex(stringValue(firstValue(hit.Source, "span.id", "span_id")), 16)
 		service := boundedString(stringValue(firstValue(hit.Source, "service.name", "service")), 256)
 		attributes := map[string]string{}
-		for _, field := range []string{"kubernetes.pod.name", "kubernetes.container.name", "kubernetes.node.name", "logger", "caller"} {
+		for _, field := range []string{"scenario_id", "reason", "error.reason", "cloudops.reason", "kubernetes.pod.name", "kubernetes.container.name", "kubernetes.node.name", "logger", "caller"} {
 			if value := boundedString(stringValue(firstValue(hit.Source, field)), 1024); value != "" {
 				attributes[field] = sensitiveValue.ReplaceAllString(value, "$1=[REDACTED]")
 				fieldSet[field] = struct{}{}

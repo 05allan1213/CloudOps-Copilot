@@ -52,6 +52,7 @@ func validateRemediationPlanView(item *RemediationPlanView) error {
 	if item.Kind != "remediation_plan" || item.Cycle == 0 || item.Version == 0 || item.PlanVersion == 0 ||
 		item.PlanContentSchemaVersion == 0 || item.IncidentVersion == 0 || item.HashSchemaVersion == 0 ||
 		!validRemediationPlanStatus(item.Status) || item.OperationType != "restore_required_env" ||
+		(item.SourceType != "gitops" && item.SourceType != "local_scenario") ||
 		(item.RiskLevel != "low" && item.RiskLevel != "medium" && item.RiskLevel != "high") {
 		return fmt.Errorf("%w: invalid remediation plan identity", ErrInvalidArgument)
 	}
@@ -64,7 +65,7 @@ func validateRemediationPlanView(item *RemediationPlanView) error {
 	if !validWorkbenchDiff(item.BoundedDiff) {
 		return fmt.Errorf("%w: invalid bounded remediation diff", ErrInvalidArgument)
 	}
-	if err := validateRemediationTarget(&item.Target); err != nil {
+	if err := validateRemediationTarget(&item.Target, item.SourceType); err != nil {
 		return err
 	}
 	for _, hash := range []string{
@@ -76,18 +77,39 @@ func validateRemediationPlanView(item *RemediationPlanView) error {
 			return fmt.Errorf("%w: invalid remediation plan hash", ErrInvalidArgument)
 		}
 	}
-	if !validResolutionRevision(item.ExpectedTreeHash) {
-		return fmt.Errorf("%w: invalid remediation tree hash", ErrInvalidArgument)
+	switch item.SourceType {
+	case "gitops":
+		if item.PlanContentSchemaVersion > 2 || item.RuntimeBaseHash != "" || !validResolutionRevision(item.ExpectedTreeHash) {
+			return fmt.Errorf("%w: invalid GitOps remediation identity", ErrInvalidArgument)
+		}
+	case "local_scenario":
+		if item.PlanContentSchemaVersion != 3 || validateExpectedHash(item.RuntimeBaseHash) != nil || item.ExpectedTreeHash != "" {
+			return fmt.Errorf("%w: invalid local Scenario remediation identity", ErrInvalidArgument)
+		}
 	}
 	item.CanonicalManifest, err = projectWorkbenchJSON(item.CanonicalManifest, maxWorkbenchManifestJSONBytes, true, true)
 	if err != nil {
 		return err
 	}
-	var manifest workbenchCanonicalManifest
-	if err := decodeWorkbenchObject(item.CanonicalManifest, maxWorkbenchManifestJSONBytes, &manifest); err != nil ||
-		manifest.Path != item.Target.Path || manifest.BaseBlobSHA != item.Target.BaseBlobSHA ||
-		manifest.FileMode != item.Target.FileMode || manifest.PostImageHash != item.ExpectedPostImageHash {
-		return fmt.Errorf("%w: remediation manifest does not match its target", ErrInvalidArgument)
+	if item.SourceType == "gitops" {
+		var manifest workbenchCanonicalManifest
+		if err := decodeWorkbenchObject(item.CanonicalManifest, maxWorkbenchManifestJSONBytes, &manifest); err != nil ||
+			manifest.Path != item.Target.Path || manifest.BaseBlobSHA != item.Target.BaseBlobSHA ||
+			manifest.FileMode != item.Target.FileMode || manifest.PostImageHash != item.ExpectedPostImageHash {
+			return fmt.Errorf("%w: remediation manifest does not match its target", ErrInvalidArgument)
+		}
+	} else {
+		var manifest workbenchLocalScenarioManifest
+		if err := decodeWorkbenchObject(item.CanonicalManifest, maxWorkbenchManifestJSONBytes, &manifest); err != nil {
+			return fmt.Errorf("%w: local Scenario remediation manifest does not match its target", ErrInvalidArgument)
+		}
+		manifest.Patch, err = projectWorkbenchJSON(manifest.Patch, maxWorkbenchManifestJSONBytes, true, true)
+		if err != nil || manifest.PatchType != "application/strategic-merge-patch+json" ||
+			manifest.SourceType != item.SourceType || manifest.TargetLocator != item.Target.Path ||
+			manifest.RuntimeSnapshotHash != item.RuntimeBaseHash || manifest.PostImageHash != item.ExpectedPostImageHash ||
+			validateExpectedHash(manifest.PatchHash) != nil || sha256Hex(manifest.Patch) != manifest.PatchHash {
+			return fmt.Errorf("%w: local Scenario remediation manifest does not match its target", ErrInvalidArgument)
+		}
 	}
 	item.PolicySnapshot, err = projectWorkbenchJSON(item.PolicySnapshot, maxWorkbenchPolicyJSONBytes, true, true)
 	if err != nil {
@@ -150,16 +172,23 @@ func validateRemediationPlanView(item *RemediationPlanView) error {
 	return nil
 }
 
-func validateRemediationTarget(target *RemediationTargetView) error {
-	if target == nil || !validWorkbenchText(target.Repository, 255, true) ||
-		!validWorkbenchText(target.BaseBranch, 255, true) ||
-		!validWorkbenchText(target.Path, 1024, true) ||
-		!validWorkbenchText(target.FieldRef, 1024, true) ||
-		!validWorkbenchText(target.FileMode, 16, true) ||
-		!validResolutionRevision(target.BaseRevision) ||
-		!validResolutionRevision(target.LastKnownGoodRevision) ||
-		!validResolutionRevision(target.BaseBlobSHA) {
+func validateRemediationTarget(target *RemediationTargetView, sourceType string) error {
+	if target == nil || !validWorkbenchText(target.Path, 1024, true) || !validWorkbenchText(target.FieldRef, 1024, true) {
 		return fmt.Errorf("%w: invalid remediation target", ErrInvalidArgument)
+	}
+	if sourceType == "gitops" {
+		if !validWorkbenchText(target.Repository, 255, true) || !validWorkbenchText(target.BaseBranch, 255, true) ||
+			!validWorkbenchText(target.FileMode, 16, true) || !validResolutionRevision(target.BaseRevision) ||
+			!validResolutionRevision(target.LastKnownGoodRevision) || !validResolutionRevision(target.BaseBlobSHA) {
+			return fmt.Errorf("%w: invalid GitOps remediation target", ErrInvalidArgument)
+		}
+	} else if sourceType == "local_scenario" {
+		if target.Repository != "" || target.BaseBranch != "" || target.BaseRevision != "" ||
+			target.LastKnownGoodRevision != "" || target.BaseBlobSHA != "" || target.FileMode != "" {
+			return fmt.Errorf("%w: local Scenario remediation target contains Git identity", ErrInvalidArgument)
+		}
+	} else {
+		return fmt.Errorf("%w: invalid remediation source type", ErrInvalidArgument)
 	}
 	resource := target.Resource
 	if !validWorkbenchText(resource.APIVersion, 64, true) ||
@@ -187,10 +216,17 @@ func validateRemediationDecision(decision *RemediationDecisionView, plan *Remedi
 		!validWorkbenchText(decision.RequestID, 128, true) {
 		return fmt.Errorf("%w: invalid remediation decision", ErrInvalidArgument)
 	}
-	if decision.ApprovedPlanHash != plan.CanonicalPlanHash ||
-		decision.ApprovedBaseSHA != plan.Target.BaseRevision ||
+	expectedDecisionSchema, expectedBaseSHA, expectedTreeHash := uint64(1), plan.Target.BaseRevision, plan.ExpectedTreeHash
+	if plan.SourceType == "local_scenario" {
+		expectedDecisionSchema, expectedBaseSHA, expectedTreeHash = 2, "", ""
+		if decision.Decision != "rejected" {
+			return fmt.Errorf("%w: local Scenario remediation Plans are reject-only", ErrInvalidArgument)
+		}
+	}
+	if decision.DecisionSchemaVersion != expectedDecisionSchema || decision.ApprovedPlanHash != plan.CanonicalPlanHash ||
+		decision.ApprovedBaseSHA != expectedBaseSHA ||
 		decision.ApprovedPostImageHash != plan.ExpectedPostImageHash ||
-		decision.ApprovedTreeHash != plan.ExpectedTreeHash ||
+		decision.ApprovedTreeHash != expectedTreeHash ||
 		decision.ApprovedPatchHash != plan.ProposedPatchHash ||
 		decision.ApprovedPolicyHash != plan.PolicyHash ||
 		decision.ApprovedVerificationHash != plan.VerificationPlanHash ||
@@ -575,6 +611,16 @@ type workbenchCanonicalManifest struct {
 	BaseBlobSHA   string `json:"base_blob_sha"`
 	FileMode      string `json:"file_mode"`
 	PostImageHash string `json:"post_image_hash"`
+}
+
+type workbenchLocalScenarioManifest struct {
+	SourceType          string          `json:"source_type"`
+	PatchType           string          `json:"patch_type"`
+	TargetLocator       string          `json:"target_locator"`
+	RuntimeSnapshotHash string          `json:"runtime_snapshot_hash"`
+	PatchHash           string          `json:"patch_hash"`
+	Patch               json.RawMessage `json:"patch"`
+	PostImageHash       string          `json:"post_image_hash"`
 }
 
 func validateWorkbenchNextCursor(value string) error {

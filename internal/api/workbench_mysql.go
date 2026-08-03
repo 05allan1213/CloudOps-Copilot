@@ -12,10 +12,10 @@ import (
 const remediationPlansQuery = `
 SELECT p.id, p.public_id, p.cycle_no, p.status, p.row_version,
        p.plan_version, p.plan_content_schema_version, p.incident_version,
-       ar.public_id, p.operation_type, p.risk_level, p.patch_summary,
-       p.rollback_plan, p.validation_plan, p.target_repository,
-       p.target_base_branch, p.target_base_revision, p.last_known_good_sha,
-       p.base_blob_sha, p.file_mode, p.target_path, p.target_field_ref,
+	       ar.public_id, p.operation_type, p.source_type, COALESCE(p.runtime_base_hash,''), p.risk_level, p.patch_summary,
+	       p.rollback_plan, p.validation_plan, p.target_repository,
+	       COALESCE(p.target_base_branch,''), p.target_base_revision, COALESCE(p.last_known_good_sha,''),
+	       COALESCE(p.base_blob_sha,''), COALESCE(p.file_mode,''), p.target_path, p.target_field_ref,
        p.target_resource_json, p.hash_schema_version, p.diagnosis_hash,
        p.canonical_plan_hash, p.expected_before_hash,
        p.expected_post_image_hash, p.expected_tree_hash,
@@ -60,6 +60,8 @@ type mysqlRemediationPlanProjection struct {
 	IncidentVersion          uint64
 	CreatedByAgentRunID      string
 	OperationType            string
+	SourceType               string
+	RuntimeBaseHash          string
 	RiskLevel                string
 	PatchSummary             string
 	RollbackPlan             string
@@ -174,7 +176,7 @@ func scanRemediationPlanProjection(scanner workbenchScanner) (uint64, Remediatio
 	if err := scanner.Scan(
 		&row.ID, &row.PublicID, &row.Cycle, &row.Status, &row.Version,
 		&row.PlanVersion, &row.PlanContentSchemaVersion, &row.IncidentVersion,
-		&row.CreatedByAgentRunID, &row.OperationType, &row.RiskLevel, &row.PatchSummary,
+		&row.CreatedByAgentRunID, &row.OperationType, &row.SourceType, &row.RuntimeBaseHash, &row.RiskLevel, &row.PatchSummary,
 		&row.RollbackPlan, &row.ValidationPlan, &row.Repository, &row.BaseBranch,
 		&row.BaseRevision, &row.LastKnownGoodRevision, &row.BaseBlobSHA, &row.FileMode,
 		&row.Path, &row.FieldRef, &row.TargetJSON, &row.HashSchemaVersion,
@@ -207,6 +209,7 @@ func scanRemediationPlanProjection(scanner workbenchScanner) (uint64, Remediatio
 		Version: row.Version, PlanVersion: row.PlanVersion,
 		PlanContentSchemaVersion: row.PlanContentSchemaVersion, IncidentVersion: row.IncidentVersion,
 		CreatedByAgentRunID: row.CreatedByAgentRunID, OperationType: row.OperationType,
+		SourceType: row.SourceType, RuntimeBaseHash: row.RuntimeBaseHash,
 		RiskLevel: row.RiskLevel, PatchSummary: row.PatchSummary, RollbackPlan: row.RollbackPlan,
 		ValidationPlan: row.ValidationPlan,
 		Target: RemediationTargetView{

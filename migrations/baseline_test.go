@@ -17,15 +17,34 @@ func TestSemanticMigrationContract(t *testing.T) {
 			migrationNames = append(migrationNames, entry.Name())
 		}
 	}
-	if len(migrationNames) != 12 || migrationNames[0] != "00001_cloudops_baseline.sql" ||
+	if len(migrationNames) != 14 || migrationNames[0] != "00001_cloudops_baseline.sql" ||
 		migrationNames[1] != "00002_platform_foundation.sql" || migrationNames[2] != "00003_infrastructure_topology.sql" ||
 		migrationNames[3] != "00004_operational_scope_registry.sql" || migrationNames[4] != "00005_observability_queries.sql" ||
 		migrationNames[5] != "00006_telemetry_evidence_context.sql" || migrationNames[6] != "00007_alert_lifecycle.sql" ||
 		migrationNames[7] != "00008_agent_workspace.sql" || migrationNames[8] != "00009_agent_workspace_tasks.sql" ||
 		migrationNames[9] != "00010_incident_recovery_loop.sql" ||
 		migrationNames[10] != "00011_controlled_operations.sql" ||
-		migrationNames[11] != "00012_provider_timeout_contract.sql" {
-		t.Fatalf("embedded migrations=%v, want exact semantic history through provider timeout contract", migrationNames)
+		migrationNames[11] != "00012_provider_timeout_contract.sql" ||
+		migrationNames[12] != "00013_agent_final_answer_authority.sql" ||
+		migrationNames[13] != "00014_local_scenario_reject_plan.sql" {
+		t.Fatalf("embedded migrations=%v, want exact semantic history through Agent answer authority", migrationNames)
+	}
+	authorityContents, err := FS.ReadFile(migrationNames[12])
+	if err != nil {
+		t.Fatal(err)
+	}
+	authoritySQL := string(authorityContents)
+	for _, required := range []string{
+		"ADD COLUMN `final_answer`", "chk_agent_runs_final_answer",
+		"JSON_EXTRACT(`final_diagnosis`, '$.answer')", "SET `final_diagnosis` = NULL",
+		"JSON_LENGTH(`final_diagnosis`) = 1",
+	} {
+		if !strings.Contains(authoritySQL, required) {
+			t.Errorf("Agent answer authority migration missing %q", required)
+		}
+	}
+	if strings.Contains(authoritySQL, "-- +goose Down") {
+		t.Fatal("Agent answer authority migration unexpectedly contains a reverse migration")
 	}
 
 	contents, err := FS.ReadFile(migrationNames[0])

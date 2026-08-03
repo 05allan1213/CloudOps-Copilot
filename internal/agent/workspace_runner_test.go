@@ -72,7 +72,75 @@ func TestWorkspaceRuntimeExceededRequiresOwnedDeadline(t *testing.T) {
 	}
 }
 
-func TestWorkspaceModelOutcomeRequiresTwoCitedEvidenceSources(t *testing.T) {
+func TestWorkspaceScenarioLogFactsRequireExactScenarioIdentity(t *testing.T) {
+	const scenarioID = "scenario-20260803104650-1133f132"
+	execution := WorkspaceExecutionContext{Snapshot: WorkspaceContextSnapshot{
+		Scope: settings.OperationalScope{ClusterID: "cloudops-local", Environment: "local", Namespaces: []string{"demo"}},
+		Resources: []telemetry.ResourceReference{{
+			ID: "resource-1", Kind: "Deployment", Namespace: "demo", Name: "cloudops-scenario-fault",
+		}},
+		Filters: json.RawMessage(`{"scenario_id":"` + scenarioID + `"}`),
+	}}
+	resource := execution.Snapshot.Resources[0]
+	entry := telemetry.LogEntry{Attributes: map[string]string{
+		"scenario_id": scenarioID,
+		"reason":      "required_env_missing",
+	}}
+	facts := workspaceScenarioLogFacts(execution, resource, []telemetry.LogEntry{entry})
+	if len(facts) != 1 || facts[0].Type != "log.required_env_missing" || facts[0].Attributes["scenario_id"] != scenarioID {
+		t.Fatalf("exact Scenario log fact=%+v", facts)
+	}
+	entry.Attributes["scenario_id"] = "scenario-20260803103759-545fe4e0"
+	if facts = workspaceScenarioLogFacts(execution, resource, []telemetry.LogEntry{entry}); len(facts) != 0 {
+		t.Fatalf("cross-Scenario log produced facts=%+v", facts)
+	}
+}
+
+func TestWorkspaceScenarioLogRangeStaysCompleteWithinProviderBound(t *testing.T) {
+	from := time.Date(2026, 8, 3, 10, 42, 0, 0, time.UTC)
+	to := time.Date(2026, 8, 3, 10, 56, 0, 0, time.UTC)
+	if got := workspaceBoundedLogFrom(from, to, "scenario-20260803104650-1133f132"); !got.Equal(to.Add(-30 * time.Second)) {
+		t.Fatalf("focused Scenario log from=%s", got)
+	}
+	if got := workspaceBoundedLogFrom(from, to, ""); !got.Equal(from) {
+		t.Fatalf("ordinary workload log from=%s want=%s", got, from)
+	}
+	shortFrom := to.Add(-20 * time.Second)
+	if got := workspaceBoundedLogFrom(shortFrom, to, "scenario-20260803104650-1133f132"); !got.Equal(shortFrom) {
+		t.Fatalf("short Scenario log window expanded from=%s want=%s", got, shortFrom)
+	}
+}
+
+func TestWorkspaceCancellationCompletionPreservesModelUsage(t *testing.T) {
+	usage := Usage{ModelCalls: 2, InputTokens: 321, OutputTokens: 123}
+	err := workspaceErrorWithExecutionUsage(ErrCancelled, "llm", "deepseek-v4-flash", usage)
+	if !errors.Is(err, ErrCancelled) {
+		t.Fatalf("wrapped cancellation no longer matches ErrCancelled: %v", err)
+	}
+	completion := workspaceCompletionWithExecutionUsage(WorkspaceCompletion{
+		Outcome: WorkspaceOutcomeCancelled, Uncertainty: "unknown", Answer: "cancelled",
+	}, err)
+	if completion.ModelProvider != "llm" || completion.ActualModel != "deepseek-v4-flash" ||
+		completion.ModelCalls != 2 || completion.InputTokens != 321 || completion.OutputTokens != 123 {
+		t.Fatalf("cancel completion lost model usage: %+v", completion)
+	}
+}
+
+func TestWorkspaceModelUsageReservationFailsClosedAtImmutableBudget(t *testing.T) {
+	limits := WorkspaceExecutionLimits{MaxModelCalls: 3, TokenBudget: 1000}
+	current := Usage{ModelCalls: 1, InputTokens: 200, OutputTokens: 100}
+	if err := workspaceReserveModelUsage(current, Usage{ModelCalls: 2, InputTokens: 500, OutputTokens: 200}, limits); err != nil {
+		t.Fatalf("exact remaining budget was rejected: %v", err)
+	}
+	if err := workspaceReserveModelUsage(current, Usage{ModelCalls: 3, InputTokens: 1, OutputTokens: 1}, limits); !errors.Is(err, ErrBudgetExceeded) {
+		t.Fatalf("model-call overrun error=%v", err)
+	}
+	if err := workspaceReserveModelUsage(current, Usage{ModelCalls: 1, InputTokens: 701, OutputTokens: 0}, limits); !errors.Is(err, ErrBudgetExceeded) {
+		t.Fatalf("token overrun error=%v", err)
+	}
+}
+
+func TestWorkspaceModelCompletionNeverPromotesPlainAnswerToDiagnosis(t *testing.T) {
 	evidence := []EvidenceCitation{
 		{EvidenceID: "evidence-kubernetes", Source: "kubernetes"},
 		{EvidenceID: "evidence-prometheus", Source: "prometheus"},
@@ -82,25 +150,21 @@ func TestWorkspaceModelOutcomeRequiresTwoCitedEvidenceSources(t *testing.T) {
 	tests := []struct {
 		name   string
 		answer string
-		want   WorkspaceOutcome
 	}{
-		{name: "no citation", answer: "没有可追溯引用。", want: WorkspaceOutcomeInsufficient},
-		{name: "one source", answer: "[Evidence: evidence-kubernetes]", want: WorkspaceOutcomeInsufficient},
-		{name: "two citations from one source", answer: "evidence-prometheus evidence-prometheus-second", want: WorkspaceOutcomeInsufficient},
-		{name: "two distinct current sources", answer: "evidence-kubernetes evidence-prometheus", want: WorkspaceOutcomeDiagnosed},
+		{name: "no citation", answer: "没有可追溯引用。"},
+		{name: "one source", answer: "[Evidence: evidence-kubernetes]"},
+		{name: "two citations from one source", answer: "evidence-prometheus evidence-prometheus-second"},
+		{name: "two distinct current sources", answer: "evidence-kubernetes evidence-prometheus"},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			outcome, uncertainty := workspaceModelOutcome(test.answer, evidence)
-			if outcome != test.want {
-				t.Fatalf("outcome=%q want=%q", outcome, test.want)
+			completion := workspaceModelCompletion(WorkspaceModelResponse{Answer: test.answer}, WorkspaceRun{Evidence: evidence}, "llm", "deepseek-v4-flash")
+			if completion.Outcome != WorkspaceOutcomeInsufficient || completion.Uncertainty != "high" {
+				t.Fatalf("plain answer outcome=%q uncertainty=%q", completion.Outcome, completion.Uncertainty)
 			}
-			if outcome == WorkspaceOutcomeDiagnosed && uncertainty != "medium" {
-				t.Fatalf("diagnosed uncertainty=%q want medium", uncertainty)
-			}
-			if outcome == WorkspaceOutcomeInsufficient && uncertainty != "high" {
-				t.Fatalf("insufficient uncertainty=%q want high", uncertainty)
+			if completion.Diagnosis != nil {
+				t.Fatalf("plain answer unexpectedly produced Diagnosis: %+v", completion.Diagnosis)
 			}
 		})
 	}

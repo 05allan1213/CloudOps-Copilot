@@ -2754,6 +2754,8 @@ components:
         - incident_version
         - created_by_agent_run_id
         - operation_type
+        - source_type
+        - runtime_base_hash
         - risk_level
         - patch_summary
         - rollback_plan
@@ -2793,6 +2795,11 @@ components:
         incident_version: { type: integer, minimum: 1 }
         created_by_agent_run_id: { type: string, format: uuid }
         operation_type: { type: string, const: restore_required_env }
+        source_type: { type: string, enum: [gitops, local_scenario] }
+        runtime_base_hash:
+          oneOf:
+            - { $ref: "#/components/schemas/SHA256" }
+            - { type: string, const: "" }
         risk_level: { type: string, enum: [low, medium, high] }
         patch_summary: { type: string, maxLength: 2048 }
         rollback_plan: { type: string, maxLength: 4096 }
@@ -2803,7 +2810,10 @@ components:
         canonical_plan_hash: { $ref: "#/components/schemas/SHA256" }
         expected_before_hash: { $ref: "#/components/schemas/SHA256" }
         expected_post_image_hash: { $ref: "#/components/schemas/SHA256" }
-        expected_tree_hash: { $ref: "#/components/schemas/GitObjectID" }
+        expected_tree_hash:
+          oneOf:
+            - { $ref: "#/components/schemas/GitObjectID" }
+            - { type: string, const: "" }
         proposed_patch_hash: { $ref: "#/components/schemas/SHA256" }
         canonical_manifest:
           type: object
@@ -2837,9 +2847,18 @@ components:
       properties:
         repository: { type: string, maxLength: 255 }
         base_branch: { type: string, maxLength: 255 }
-        base_revision: { $ref: "#/components/schemas/GitObjectID" }
-        last_known_good_revision: { $ref: "#/components/schemas/GitObjectID" }
-        base_blob_sha: { $ref: "#/components/schemas/GitObjectID" }
+        base_revision:
+          oneOf:
+            - { $ref: "#/components/schemas/GitObjectID" }
+            - { type: string, const: "" }
+        last_known_good_revision:
+          oneOf:
+            - { $ref: "#/components/schemas/GitObjectID" }
+            - { type: string, const: "" }
+        base_blob_sha:
+          oneOf:
+            - { $ref: "#/components/schemas/GitObjectID" }
+            - { type: string, const: "" }
         file_mode: { type: string, maxLength: 16 }
         path: { type: string, maxLength: 1024 }
         field_ref: { type: string, maxLength: 1024 }
@@ -2896,9 +2915,15 @@ components:
         expires_at: { type: string, format: date-time }
         approved_hash_schema_version: { type: integer, minimum: 1 }
         approved_plan_hash: { $ref: "#/components/schemas/SHA256" }
-        approved_base_sha: { $ref: "#/components/schemas/GitObjectID" }
+        approved_base_sha:
+          oneOf:
+            - { $ref: "#/components/schemas/GitObjectID" }
+            - { type: string, const: "" }
         approved_post_image_hash: { $ref: "#/components/schemas/SHA256" }
-        approved_tree_hash: { $ref: "#/components/schemas/GitObjectID" }
+        approved_tree_hash:
+          oneOf:
+            - { $ref: "#/components/schemas/GitObjectID" }
+            - { type: string, const: "" }
         approved_patch_hash: { $ref: "#/components/schemas/SHA256" }
         approved_policy_hash: { $ref: "#/components/schemas/SHA256" }
         approved_verification_hash: { $ref: "#/components/schemas/SHA256" }

@@ -65,6 +65,15 @@ func TestMySQLAlertInvestigationIsAtomicAndIncidentIndependent(t *testing.T) {
 JOIN context_snapshots snapshot ON snapshot.agent_run_id=run.id
 JOIN agent_workspace_tasks task ON task.agent_run_id=run.id
 WHERE run.public_id=? AND run.alert_id IS NOT NULL AND run.incident_id IS NULL AND task.status='ready'`, 1, view.Investigations[0].ID)
+	var availableAt, createdAt time.Time
+	if err := db.QueryRowContext(ctx, `SELECT task.available_at, task.created_at
+FROM agent_workspace_tasks task JOIN agent_runs run ON run.id = task.agent_run_id
+WHERE run.public_id = ?`, view.Investigations[0].ID).Scan(&availableAt, &createdAt); err != nil {
+		t.Fatal(err)
+	}
+	if availableAt.Sub(createdAt) < ownerInvestigationClaimGrace {
+		t.Fatalf("Alert Investigation claim grace=%s want at least %s", availableAt.Sub(createdAt), ownerInvestigationClaimGrace)
+	}
 	assertAgentWorkspaceCount(t, ctx, db, `SELECT COUNT(*) FROM alert_events event JOIN alerts alert ON alert.id=event.alert_id
 WHERE alert.public_id=? AND event.event_type='alert_investigation_requested'`, 1, alertID)
 }
@@ -197,6 +206,7 @@ func TestMySQLWorkspaceLeaseTakeoverAndCancellation(t *testing.T) {
 	}
 	if err := repository.CompleteWorkspaceTask(ctx, second, WorkspaceCompletion{
 		Outcome: WorkspaceOutcomeDiagnosed, Uncertainty: "low", Answer: "must be replaced by cancellation",
+		ModelProvider: "llm", ActualModel: "deepseek-v4-flash", ModelCalls: 2, InputTokens: 321, OutputTokens: 123,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -209,6 +219,9 @@ func TestMySQLWorkspaceLeaseTakeoverAndCancellation(t *testing.T) {
 WHERE task_id=? AND attempt=1 AND status='lease_expired'`, 1, second.TaskID)
 	assertAgentWorkspaceCount(t, ctx, db, `SELECT COUNT(*) FROM agent_workspace_task_attempts
 WHERE task_id=? AND attempt=2 AND status='cancelled'`, 1, second.TaskID)
+	assertAgentWorkspaceCount(t, ctx, db, `SELECT COUNT(*) FROM agent_runs
+WHERE public_id=? AND used_model_calls=2 AND input_tokens=321 AND output_tokens=123
+AND final_answer='本次 Agent 工作已取消。' AND final_diagnosis IS NULL`, 1, run.ID)
 
 	pending, err := repository.StartAlertInvestigation(ctx, alertID, "pending-cancel", "cancel before claim")
 	if err != nil {
@@ -220,6 +233,123 @@ WHERE task_id=? AND attempt=2 AND status='cancelled'`, 1, second.TaskID)
 	}
 	if _, claimed, err = repository.ClaimWorkspaceTask(ctx, "worker-c", 10*time.Second); err != nil || claimed {
 		t.Fatalf("cancelled pending task claimed=%v error=%v", claimed, err)
+	}
+}
+
+func TestMySQLWorkspaceCompletionRevalidatesDiagnosisAndEnqueuesRemediation(t *testing.T) {
+	db := openAgentWorkspaceIntegrationDB(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	settingsService, err := settings.NewService(db, t.TempDir(), settings.BootstrapDiagnostics{MySQLDatabase: "agent-diagnosis-integration"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision, err := settingsService.ActiveRevision(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := revision.Scopes[0]
+	alertID := insertWorkspaceAlert(t, ctx, db, scope, "diagnosis-authority")
+	if _, err = db.ExecContext(ctx, `UPDATE alerts
+SET labels_json=JSON_OBJECT('alertname','CloudOpsScenarioRequiredEnvMissing','scenario_id','diagnosis-authority')
+WHERE public_id=?`, alertID); err != nil {
+		t.Fatal(err)
+	}
+	repository, err := NewWorkspaceRepository(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alertService, err := alertdomain.NewService(db, nil, repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	linked, err := alertService.LinkIncident(ctx, alertdomain.LinkIncidentRequest{
+		AlertID: alertID, ExpectedVersion: 1, IdempotencyKey: workspaceSHA256([]byte("diagnosis-authority-link")), Create: true,
+		Actor: alertdomain.Actor{Provider: "local", Login: "owner", Role: "owner"},
+	})
+	if err != nil || len(linked.IncidentLinks) != 1 {
+		t.Fatalf("link Incident=%#v error=%v", linked, err)
+	}
+	incidentPublicID := linked.IncidentLinks[0].IncidentID
+	clock := time.Now().UTC().Truncate(time.Microsecond)
+	repository.now = func() time.Time { return clock }
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runPublicID, err := repository.StartIncidentInvestigationTx(ctx, tx, incidentPublicID,
+		"diagnosis-authority-investigation", "validate current typed Evidence", 1, 0)
+	if err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if err = tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	clock = clock.Add(ownerInvestigationClaimGrace + time.Second)
+	lease, claimed, err := repository.ClaimWorkspaceTask(ctx, "diagnosis-authority-worker", 30*time.Second)
+	if err != nil || !claimed || lease.RunPublicID != runPublicID {
+		t.Fatalf("claim=%#v claimed=%v error=%v", lease, claimed, err)
+	}
+	facts := insertWorkspaceTypedGoldenEvidence(t, ctx, db, lease, incidentPublicID, 1, clock)
+	diagnosisContext, err := repository.WorkspaceDiagnosisContext(ctx, lease)
+	if err != nil || diagnosisContext.Sufficiency.Outcome != SufficiencyReady {
+		t.Fatalf("Diagnosis context=%#v error=%v", diagnosisContext, err)
+	}
+	factIDs := make([]string, 0, len(facts))
+	for _, fact := range facts {
+		factIDs = append(factIDs, fact.ID)
+	}
+	diagnosis, err := ValidateDiagnosisRecord(DiagnosisCandidate{
+		ClaimType: GoldenRequiredEnvClaimPolicy().ClaimType, Confidence: DiagnosisConfirmed,
+		Summary:         "REQUIRED_ENV was removed in the deployed GitOps revision and the current runtime symptoms corroborate that regression.",
+		EvidenceFactIDs: factIDs, Unknowns: []string{}, RemediationHint: RemediationRestoreRequiredEnv,
+	}, DiagnosisValidationInput{
+		IncidentID: incidentPublicID, CycleNo: 1, Facts: diagnosisContext.Facts,
+		Policy: diagnosisContext.Policy, Sufficiency: diagnosisContext.Sufficiency,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tampered := diagnosis
+	tampered.DiagnosisHash = strings.Repeat("0", 64)
+	completion := WorkspaceCompletion{
+		Outcome: WorkspaceOutcomeDiagnosed, Uncertainty: "low", Answer: "结构化 Diagnosis 已通过当前 Evidence 约束。",
+		Diagnosis: &tampered, ModelProvider: "llm", ActualModel: "deepseek-v4-flash",
+		ModelCalls: 2, InputTokens: 700, OutputTokens: 300,
+	}
+	if err = repository.CompleteWorkspaceTask(ctx, lease, completion); !errors.Is(err, ErrPermission) {
+		t.Fatalf("tampered Diagnosis completion error=%v", err)
+	}
+	assertAgentWorkspaceCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks WHERE task_type='remediation.prepare' AND subject_id=?`, 0, lease.RunID)
+	completion.Diagnosis = &diagnosis
+	if err = repository.CompleteWorkspaceTask(ctx, lease, completion); err != nil {
+		t.Fatal(err)
+	}
+	var finalAnswer string
+	var finalDiagnosis []byte
+	var usedModelCalls int
+	var inputTokens, outputTokens, runRowVersion uint64
+	if err = db.QueryRowContext(ctx, `SELECT final_answer,final_diagnosis,used_model_calls,input_tokens,output_tokens,row_version
+FROM agent_runs WHERE id=?`, lease.RunID).Scan(&finalAnswer, &finalDiagnosis, &usedModelCalls, &inputTokens, &outputTokens, &runRowVersion); err != nil {
+		t.Fatal(err)
+	}
+	if finalAnswer != completion.Answer || usedModelCalls != 2 || inputTokens != 700 || outputTokens != 300 {
+		t.Fatalf("completed answer/usage=%q %d/%d/%d", finalAnswer, usedModelCalls, inputTokens, outputTokens)
+	}
+	var storedDiagnosis DiagnosisRecord
+	if err = json.Unmarshal(finalDiagnosis, &storedDiagnosis); err != nil || storedDiagnosis.DiagnosisHash != diagnosis.DiagnosisHash {
+		t.Fatalf("stored Diagnosis=%#v error=%v", storedDiagnosis, err)
+	}
+	var taskRevision string
+	var taskExpectedVersion uint64
+	if err = db.QueryRowContext(ctx, `SELECT revision.public_id,task.expected_subject_version
+FROM async_tasks AS task JOIN configuration_revisions AS revision ON revision.id=task.configuration_revision_id
+WHERE task.task_type='remediation.prepare' AND task.subject_id=?`, lease.RunID).Scan(&taskRevision, &taskExpectedVersion); err != nil {
+		t.Fatal(err)
+	}
+	if taskRevision != lease.ConfigurationRevisionID || taskExpectedVersion != runRowVersion {
+		t.Fatalf("remediation task revision/version=%s/%d want=%s/%d", taskRevision, taskExpectedVersion, lease.ConfigurationRevisionID, runRowVersion)
 	}
 }
 
@@ -556,6 +686,88 @@ VALUES (?,'prometheus',?,?,?,2,?,'firing','critical',?,?,?,?,?,'cloudops-api','a
 		t.Fatal(err)
 	}
 	return alertID
+}
+
+func insertWorkspaceTypedGoldenEvidence(
+	t *testing.T,
+	ctx context.Context,
+	db *sql.DB,
+	lease WorkspaceLease,
+	incidentPublicID string,
+	cycleNo uint64,
+	at time.Time,
+) []EvidenceFact {
+	t.Helper()
+	var incidentID uint64
+	if err := db.QueryRowContext(ctx, `SELECT incident_id FROM agent_runs WHERE id=?`, lease.RunID).Scan(&incidentID); err != nil {
+		t.Fatal(err)
+	}
+	evidencePublicID := uuid.NewString()
+	stepPublicID := uuid.NewString()
+	argumentsHash := workspaceSHA256([]byte("typed-golden-arguments:" + evidencePublicID))
+	stepResult, err := db.ExecContext(ctx, `INSERT INTO agent_steps
+(public_id,agent_run_id,incident_id,cycle_no,sequence,step_type,short_reason,selected_tool,arguments_hash,
+ result_summary,result_ref,evidence_public_id,status,started_at,finished_at,created_at)
+VALUES (?,?,?,?,1,'tool','collect typed golden facts','integration.read',?,
+ 'typed golden facts collected',?,?, 'completed',?,?,?)`, stepPublicID, lease.RunID, incidentID, cycleNo,
+		argumentsHash, evidencePublicID, evidencePublicID, at, at, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stepID, err := stepResult.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts := goldenFacts()
+	for index := range facts {
+		facts[index].EvidenceID = evidencePublicID
+		facts[index].IncidentID = incidentPublicID
+		facts[index].CycleNo = cycleNo
+	}
+	provenance := map[string]string{
+		"agent_run_id": lease.RunPublicID, "agent_step_id": stepPublicID, "collector": "integration-test",
+	}
+	metadata, err := typedEvidenceMetadata(facts, provenance, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contentHash := workspaceSHA256([]byte("typed-golden-content:" + evidencePublicID))
+	envelope, err := json.Marshal(TypedEvidenceEnvelope{
+		SchemaVersion: TypedEvidenceFactSchemaVersion, Status: CollectionAvailable,
+		SourceSystem: "integration", CollectionPath: "typed-golden", TemplateVersion: "v1",
+		Summary: "Nine independently sourced facts satisfy the frozen REQUIRED_ENV policy.", Facts: facts,
+		Provenance: provenance, ContentHash: contentHash,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	redactionCounts := json.RawMessage(`{}`)
+	promptSafetyFlags := json.RawMessage(`{}`)
+	_, err = db.ExecContext(ctx, `INSERT INTO evidence_items
+(public_id,incident_id,evidence_contract_version,cycle_no,migrated_legacy,migrated_legacy_context,
+ agent_run_id,agent_step_id,type,source,producer_type,producer_id,producer_version,
+ producer_dedupe_key,adapter_version,query_template_id,query_template_version,
+ scope_snapshot_hash,arguments_hash,tool_name,resource_ref,time_range_json,query_text,
+ summary,facts_json,fact_schema_version,fact_schema_hash,provenance_json,provenance_hash,
+ trust_axes_json,claim_use,corroboration_groups_json,input_evidence_ids_json,
+ input_sample_ids_json,input_hashes_json,result_hash,content_hash,raw_ref,
+ safe_raw_reference,redaction_json,redaction_policy_version,redaction_counts_json,
+ prompt_safety_flags_json,truncated,valid,idempotency_key,collected_at,observed_at,created_at)
+VALUES (?,?,1,?,0,0,?,?,'agent_observation',?,'agent_step',?,'agent-step-evidence/v1',
+ ?, 'integration-read/v1','golden-facts','v1',?,?,'integration.read','Deployment/scenario',JSON_OBJECT(),'',
+ ?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,'','',JSON_OBJECT(),'observation-redaction/v1',?,?,0,1,?,?,?,?)`,
+		evidencePublicID, incidentID, cycleNo, lease.RunID, uint64(stepID), "integration", stepPublicID,
+		workspaceSHA256([]byte("typed-golden-producer:"+evidencePublicID)),
+		workspaceSHA256([]byte("typed-golden-scope:"+incidentPublicID)), argumentsHash,
+		"Nine independently sourced facts satisfy the frozen REQUIRED_ENV policy.", envelope,
+		TypedEvidenceFactSchemaHash(), metadata.provenance, metadata.provenanceHash, metadata.trustAxes,
+		metadata.claimUse, metadata.corroborationGroups, metadata.inputEvidenceIDs, metadata.inputSampleIDs,
+		metadata.inputHashes, contentHash, contentHash, redactionCounts, promptSafetyFlags,
+		workspaceSHA256([]byte("typed-golden-idempotency:"+evidencePublicID)), at, at, at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return facts
 }
 
 func openAgentWorkspaceIntegrationDB(t *testing.T) *sql.DB {

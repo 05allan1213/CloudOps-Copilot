@@ -166,7 +166,7 @@ configuration_revision_id, dedupe_key, max_attempts, status
 		if err != nil {
 			t.Fatal(err)
 		}
-		port, err := NewPort(db)
+		port, err := NewPort(db, PortOptions{DeliveryEnabled: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -270,7 +270,7 @@ status, operation_step, expected_subject_version, logical_operation_key
 			incidentID, strings.Repeat("9", 64)); err != nil {
 			t.Fatal(err)
 		}
-		port, err := NewPort(db)
+		port, err := NewPort(db, PortOptions{DeliveryEnabled: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -301,7 +301,7 @@ func TestMySQLInvestigationRetryAuthorizationIsDurableConcurrentAndHardBounded(t
 	db := openCommandIntegrationDB(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	port, err := NewPort(db)
+	port, err := NewPort(db, PortOptions{DeliveryEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -606,7 +606,7 @@ func TestMySQLRemediationDecisionCommandIsAtomicAndFenced(t *testing.T) {
 	db := openCommandIntegrationDB(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	port, err := NewPort(db)
+	port, err := NewPort(db, PortOptions{DeliveryEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -691,6 +691,25 @@ FROM remediation_decisions d JOIN remediation_plans p ON p.id = d.plan_id WHERE 
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks WHERE subject_type = 'remediation_plan' AND subject_id = ?`, 0, fixture.plan.ID)
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incidents WHERE id = ? AND status = 'investigating' AND version = ?`, 1, fixture.incidentID, fixture.plan.IncidentVersion+2)
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_events WHERE incident_id = ? AND cycle_no = ? AND event_type = 'remediation_plan_rejected'`, 1, fixture.incidentID, fixture.plan.CycleNo)
+	})
+
+	t.Run("approval persists and defers delivery when external writes are disabled", func(t *testing.T) {
+		disabledPort, err := NewPort(db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fixture := insertCommandRemediationFixture(t, ctx, db)
+		request := newRemediationDecisionRequest(fixture, remediation.DecisionApproved, "approve-deferred", owner, fixture.plan.RowVersion, fixture.plan.CanonicalPlanHash)
+		approved, err := disabledPort.Execute(ctx, request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if approved.Status != string(remediation.DecisionApproved) || approved.Version != fixture.plan.RowVersion+1 {
+			t.Fatalf("deferred approval result=%+v", approved)
+		}
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM remediation_decisions WHERE plan_id = ? AND decision = 'approved'`, 1, fixture.plan.ID)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks WHERE subject_type = 'remediation_plan' AND subject_id = ? AND transition = 'change.ensure_pr'`, 0, fixture.plan.ID)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_events WHERE incident_id = ? AND cycle_no = ? AND event_type = 'remediation_delivery_deferred' AND JSON_UNQUOTE(JSON_EXTRACT(metadata_json, '$.reason')) = 'github_write_disabled'`, 1, fixture.incidentID, fixture.plan.CycleNo)
 	})
 
 	t.Run("stale version and hash fail closed", func(t *testing.T) {

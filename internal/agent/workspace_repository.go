@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
 	"github.com/05allan1213/CloudOps-Copilot/internal/settings"
 	"github.com/05allan1213/CloudOps-Copilot/internal/telemetry"
 )
@@ -24,7 +25,7 @@ COALESCE(alert.public_id, ''), COALESCE(incident.public_id, ''), COALESCE(consul
 COALESCE(revision.public_id, ''), COALESCE(snapshot.public_id, ''),
 COALESCE(JSON_UNQUOTE(JSON_EXTRACT(snapshot.filters_json, '$.scenario_id')), ''), run.status, COALESCE(run.outcome, ''),
 run.uncertainty, run.objective, COALESCE(run.model_provider, ''), COALESCE(run.actual_model, ''),
-COALESCE(JSON_UNQUOTE(JSON_EXTRACT(run.final_diagnosis, '$.answer')), ''),
+	COALESCE(run.final_answer, ''),
 run.prompt_version, COALESCE(run.tool_schema_version, ''), run.failure_code, run.failure_summary,
 run.cancel_requested_at, run.started_at, run.completed_at, run.created_at, run.updated_at,
 (SELECT COUNT(*) FROM agent_evidence_citations AS citation_count WHERE citation_count.agent_run_id=run.id)`
@@ -38,6 +39,7 @@ LEFT JOIN context_snapshots AS snapshot ON snapshot.id = run.context_snapshot_id
 
 type WorkspaceRepository struct {
 	db         *sql.DB
+	tasks      *asyncjob.Repository
 	now        func() time.Time
 	runbookDir string
 }
@@ -51,7 +53,11 @@ func NewWorkspaceRepository(db *sql.DB) (*WorkspaceRepository, error) {
 	if db == nil {
 		return nil, errors.New("agent workspace repository requires MySQL")
 	}
-	return &WorkspaceRepository{db: db, now: time.Now}, nil
+	tasks, err := asyncjob.NewRepository(db)
+	if err != nil {
+		return nil, fmt.Errorf("initialize Agent Workspace async task repository: %w", err)
+	}
+	return &WorkspaceRepository{db: db, tasks: tasks, now: time.Now}, nil
 }
 
 func (r *WorkspaceRepository) SetRunbookDir(dir string) {
@@ -98,12 +104,12 @@ func (r *WorkspaceRepository) StartIncidentInvestigationTx(
 		cycleNo, version                                          uint64
 		clusterID, environment, namespace, targetKind, targetName string
 		summary, scopePublicID                                    string
-		firstSeenAt, lastSeenAt                                   time.Time
+		firstSeenAt                                               time.Time
 		migratedLegacyContext                                     bool
 	)
 	err := tx.QueryRowContext(ctx, `SELECT incident.id, incident.cycle_no, incident.version,
 incident.cluster, incident.environment, incident.namespace, incident.target_kind, incident.target_name,
-incident.summary, incident.first_seen_at, incident.last_seen_at,
+incident.summary, incident.first_seen_at,
 incident.migrated_legacy_context,
 active.configuration_revision_id, scope.id, scope.public_id
 FROM incidents AS incident
@@ -115,7 +121,7 @@ WHERE incident.public_id = ?
 ORDER BY scope.is_default DESC, scope.id
 LIMIT 1 FOR UPDATE`, incidentPublicID).Scan(
 		&incidentID, &cycleNo, &version, &clusterID, &environment, &namespace, &targetKind, &targetName,
-		&summary, &firstSeenAt, &lastSeenAt, &migratedLegacyContext,
+		&summary, &firstSeenAt, &migratedLegacyContext,
 		&revisionID, &scopeID, &scopePublicID,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -161,7 +167,7 @@ max_steps, max_tool_calls, max_model_calls, token_budget, max_evidence_items,
 max_runtime_ms, tool_timeout_ms, max_evidence_bytes, max_checkpoint_bytes,
 max_step_retries, failure_code, uncertainty, migrated_legacy_context, created_at, updated_at
 ) VALUES (?, 'incident', ?, NULL, NULL, ?, NULL, ?, ?, ?, ?, 'workspace', 'pending',
-?, 'provider-pending', ?, 12, 8, 1, 12000, 12, 120000, 15000, 16384, 32768, 1, '',
+	?, 'provider-pending', ?, 12, 8, 3, 12000, 12, 120000, 15000, 16384, 32768, 1, '',
 'unknown', ?, ?, ?)`, runPublicID, incidentID, revisionID, cycleNo, expectedVersion+1,
 		authorization, idempotencyKey, objective, WorkspacePromptVersion, migratedLegacyContext, now, now)
 	if err != nil {
@@ -173,14 +179,7 @@ max_step_retries, failure_code, uncertainty, migrated_legacy_context, created_at
 	}
 	runID := uint64(runIDValue)
 
-	from := firstSeenAt.UTC().Add(-5 * time.Minute)
-	to := lastSeenAt.UTC().Add(5 * time.Minute)
-	if to.Before(now) {
-		to = now
-	}
-	if to.Sub(from) > 24*time.Hour {
-		from = to.Add(-24 * time.Hour)
-	}
+	from, to := workspaceInvestigationWindow(firstSeenAt, now)
 	resources := []telemetry.ResourceReference{{
 		ID:   workspaceKubernetesResourceID(clusterID, targetKind, namespace, targetName),
 		Kind: targetKind, Namespace: namespace, Name: targetName,
@@ -220,7 +219,7 @@ created_by, created_at
 	if _, err = tx.ExecContext(ctx, `UPDATE agent_runs SET context_snapshot_id=? WHERE id=? AND context_snapshot_id IS NULL`, snapshotID, runID); err != nil {
 		return "", err
 	}
-	if err = enqueueWorkspaceTask(ctx, tx, runID, revisionID, now); err != nil {
+	if err = enqueueWorkspaceTask(ctx, tx, runID, revisionID, now.Add(ownerInvestigationClaimGrace), now); err != nil {
 		return "", err
 	}
 	updated, err := tx.ExecContext(ctx, `UPDATE incidents
@@ -253,14 +252,14 @@ func (r *WorkspaceRepository) StartAlertInvestigationTx(ctx context.Context, tx 
 	var alertID, revisionID uint64
 	var clusterID, environment, namespace, targetKind, targetName, summary string
 	var labelsJSON json.RawMessage
-	var startsAt, lastSeenAt time.Time
+	var startsAt time.Time
 	err = tx.QueryRowContext(ctx, `SELECT alert.id, alert.cluster, alert.environment, alert.namespace,
-alert.target_kind, alert.target_name, alert.summary, alert.starts_at, alert.last_seen_at,
+alert.target_kind, alert.target_name, alert.summary, alert.starts_at,
 alert.labels_json, active.configuration_revision_id
 FROM alerts AS alert JOIN active_configuration AS active ON active.singleton_id = 1
 WHERE alert.public_id = ? FOR UPDATE`, strings.TrimSpace(alertPublicID)).Scan(
 		&alertID, &clusterID, &environment, &namespace, &targetKind, &targetName, &summary,
-		&startsAt, &lastSeenAt, &labelsJSON, &revisionID,
+		&startsAt, &labelsJSON, &revisionID,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrNotFound
@@ -301,14 +300,7 @@ max_step_retries, failure_code, uncertainty, created_at, updated_at
 	if err != nil {
 		return "", err
 	}
-	from := startsAt.UTC().Add(-5 * time.Minute)
-	to := lastSeenAt.UTC().Add(5 * time.Minute)
-	if to.Before(now) {
-		to = now
-	}
-	if to.Sub(from) > 24*time.Hour {
-		from = to.Add(-24 * time.Hour)
-	}
+	from, to := workspaceInvestigationWindow(startsAt, now)
 	resources := []telemetry.ResourceReference{{
 		ID:   workspaceKubernetesResourceID(clusterID, targetKind, namespace, targetName),
 		Kind: targetKind, Namespace: namespace, Name: targetName,
@@ -349,7 +341,7 @@ created_by, created_at
 	if _, err = tx.ExecContext(ctx, `UPDATE agent_runs SET context_snapshot_id=? WHERE id=? AND context_snapshot_id IS NULL`, snapshotID, runID); err != nil {
 		return "", err
 	}
-	if err = enqueueWorkspaceTask(ctx, tx, uint64(runID), revisionID, now); err != nil {
+	if err = enqueueWorkspaceTask(ctx, tx, uint64(runID), revisionID, now.Add(ownerInvestigationClaimGrace), now); err != nil {
 		return "", err
 	}
 	if err = insertWorkspaceEvent(ctx, tx, uint64(runID), nil, 1, "run.created", map[string]any{
@@ -359,6 +351,18 @@ created_by, created_at
 		return "", err
 	}
 	return runPublicID, nil
+}
+
+func workspaceInvestigationWindow(firstSeen, now time.Time) (time.Time, time.Time) {
+	to := now.UTC()
+	from := firstSeen.UTC().Add(-5 * time.Minute)
+	if from.After(to) {
+		from = to.Add(-5 * time.Minute)
+	}
+	if to.Sub(from) > 24*time.Hour {
+		from = to.Add(-24 * time.Hour)
+	}
+	return from, to
 }
 
 func workspaceScenarioID(labelsJSON json.RawMessage) string {
@@ -509,7 +513,7 @@ max_step_retries, failure_code, uncertainty, created_at, updated_at
 		return ConsultationMessage{}, WorkspaceRun{}, fmt.Errorf("persist Consultation turn: %w", err)
 	}
 	runID64, _ := runResult.LastInsertId()
-	if err = enqueueWorkspaceTask(ctx, tx, uint64(runID64), revisionID, now); err != nil {
+	if err = enqueueWorkspaceTask(ctx, tx, uint64(runID64), revisionID, now, now); err != nil {
 		return ConsultationMessage{}, WorkspaceRun{}, err
 	}
 	var sequence uint64

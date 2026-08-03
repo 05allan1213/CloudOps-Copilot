@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/05allan1213/CloudOps-Copilot/internal/asyncjob"
 	"github.com/05allan1213/CloudOps-Copilot/internal/schemaversion"
 )
 
@@ -22,10 +24,12 @@ type workspaceStepLease struct {
 	StartedAt     time.Time
 }
 
-func enqueueWorkspaceTask(ctx context.Context, tx *sql.Tx, runID, revisionID uint64, now time.Time) error {
+const ownerInvestigationClaimGrace = 3 * time.Second
+
+func enqueueWorkspaceTask(ctx context.Context, tx *sql.Tx, runID, revisionID uint64, availableAt, createdAt time.Time) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO agent_workspace_tasks
 (public_id,agent_run_id,configuration_revision_id,task_type,status,priority,available_at,max_attempts,created_at,updated_at)
-VALUES (?,?,?,'workspace.run','ready',0,?,2,?,?)`, uuid.NewString(), runID, revisionID, now, now, now)
+VALUES (?,?,?,'workspace.run','ready',0,?,2,?,?)`, uuid.NewString(), runID, revisionID, availableAt, createdAt, createdAt)
 	if err != nil {
 		return fmt.Errorf("enqueue Agent Workspace task: %w", err)
 	}
@@ -306,7 +310,8 @@ func (r *WorkspaceRepository) WorkspaceExecution(ctx context.Context, lease Work
 snapshot.subject_type,revision.public_id,snapshot.cluster_id,snapshot.environment,snapshot.namespaces_json,
 snapshot.resource_refs_json,snapshot.filters_json,snapshot.range_start,snapshot.range_end,
 snapshot.query_definition_refs_json,snapshot.query_execution_refs_json,snapshot.evidence_refs_json,
-snapshot.content_hash,snapshot.created_at,run.max_tool_calls,run.max_evidence_items,run.max_runtime_ms,run.tool_timeout_ms,
+	snapshot.content_hash,snapshot.created_at,run.max_tool_calls,run.max_model_calls,run.token_budget,
+	run.max_evidence_items,run.max_runtime_ms,run.tool_timeout_ms,
 COALESCE(JSON_UNQUOTE(JSON_EXTRACT(alert.labels_json,'$.alertname')),'')
 FROM agent_runs run JOIN context_snapshots snapshot ON snapshot.id=run.context_snapshot_id
 JOIN configuration_revisions revision ON revision.id=snapshot.configuration_revision_id
@@ -317,7 +322,8 @@ LEFT JOIN alerts alert ON alert.id=run.alert_id WHERE run.id=?`, lease.RunID).Sc
 		&result.Snapshot.ConfigurationRevisionID, &result.Snapshot.Scope.ClusterID, &result.Snapshot.Scope.Environment,
 		&namespaces, &resources, &result.Snapshot.Filters, &result.Snapshot.TimeRange.From, &result.Snapshot.TimeRange.To,
 		&definitions, &queries, &evidence, &result.Snapshot.ContentHash, &result.Snapshot.CreatedAt,
-		&result.Limits.MaxToolCalls, &result.Limits.MaxEvidenceItems, &maxRuntimeMS, &toolTimeoutMS,
+		&result.Limits.MaxToolCalls, &result.Limits.MaxModelCalls, &result.Limits.TokenBudget,
+		&result.Limits.MaxEvidenceItems, &maxRuntimeMS, &toolTimeoutMS,
 		&result.AlertName)
 	if err != nil {
 		return WorkspaceExecutionContext{}, err
@@ -334,6 +340,168 @@ LEFT JOIN alerts alert ON alert.id=run.alert_id WHERE run.id=?`, lease.RunID).Sc
 	result.Snapshot.TimeRange.From, result.Snapshot.TimeRange.To = result.Snapshot.TimeRange.From.UTC(), result.Snapshot.TimeRange.To.UTC()
 	result.Snapshot.CreatedAt = result.Snapshot.CreatedAt.UTC()
 	return result, nil
+}
+
+func (r *WorkspaceRepository) WorkspaceDiagnosisContext(ctx context.Context, lease WorkspaceLease) (WorkspaceDiagnosisContext, error) {
+	if err := r.guardWorkspaceLease(ctx, r.db, lease); err != nil {
+		return WorkspaceDiagnosisContext{}, err
+	}
+	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return WorkspaceDiagnosisContext{}, err
+	}
+	defer workspaceRollback(tx)
+	var subjectType, incidentPublicID string
+	var incidentID, cycleNo uint64
+	var migratedLegacy, migratedLegacyContext bool
+	if err = tx.QueryRowContext(ctx, `SELECT run.subject_type,incident.id,incident.public_id,run.cycle_no,
+	run.migrated_legacy,run.migrated_legacy_context
+	FROM agent_runs AS run JOIN incidents AS incident ON incident.id=run.incident_id
+	WHERE run.id=? FOR SHARE`, lease.RunID).Scan(
+		&subjectType, &incidentID, &incidentPublicID, &cycleNo, &migratedLegacy, &migratedLegacyContext,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return WorkspaceDiagnosisContext{}, ErrPermission
+		}
+		return WorkspaceDiagnosisContext{}, err
+	}
+	if subjectType != string(WorkspaceSubjectIncident) || cycleNo == 0 {
+		return WorkspaceDiagnosisContext{}, ErrPermission
+	}
+	facts, err := loadWorkspaceTypedEvidence(ctx, tx, lease.RunID, incidentID, incidentPublicID, cycleNo, migratedLegacy, migratedLegacyContext)
+	if err != nil {
+		return WorkspaceDiagnosisContext{}, err
+	}
+	policy, err := workspaceClaimPolicy(ctx, tx, lease.RunID, incidentID, cycleNo)
+	if err != nil {
+		return WorkspaceDiagnosisContext{}, err
+	}
+	sufficiency, err := EvaluateSufficiency(SufficiencyInput{
+		IncidentID: incidentPublicID, CycleNo: cycleNo, Facts: facts, Policy: policy,
+	})
+	if err != nil {
+		return WorkspaceDiagnosisContext{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return WorkspaceDiagnosisContext{}, err
+	}
+	return WorkspaceDiagnosisContext{
+		IncidentID: incidentPublicID, CycleNo: cycleNo, Facts: facts, Policy: policy, Sufficiency: sufficiency,
+	}, nil
+}
+
+type workspaceEvidenceQueryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func loadWorkspaceTypedEvidence(
+	ctx context.Context,
+	queryer workspaceEvidenceQueryer,
+	runID, incidentID uint64,
+	incidentPublicID string,
+	cycleNo uint64,
+	migratedLegacy, migratedLegacyContext bool,
+) (_ []EvidenceFact, retErr error) {
+	rows, err := queryer.QueryContext(ctx, `SELECT public_id,evidence_contract_version,producer_type,
+	COALESCE(producer_id,''),COALESCE(producer_version,''),producer_dedupe_key,COALESCE(agent_step_id,0),
+	COALESCE(fact_schema_version,0),COALESCE(fact_schema_hash,''),facts_json,
+	COALESCE(provenance_json,JSON_OBJECT()),COALESCE(provenance_hash,''),
+	COALESCE(trust_axes_json,JSON_OBJECT()),COALESCE(claim_use,''),
+	COALESCE(corroboration_groups_json,JSON_ARRAY()),COALESCE(input_evidence_ids_json,JSON_ARRAY()),
+	COALESCE(input_sample_ids_json,JSON_ARRAY()),COALESCE(input_hashes_json,JSON_ARRAY()),
+	result_hash,content_hash,COALESCE(redaction_policy_version,''),
+	COALESCE(redaction_counts_json,JSON_OBJECT()),COALESCE(prompt_safety_flags_json,JSON_OBJECT()),
+	truncated,valid,migrated_legacy,migrated_legacy_context,COALESCE(observed_at,collected_at),collected_at
+	FROM evidence_items
+	WHERE agent_run_id=? AND incident_id=? AND cycle_no=?
+	AND (fact_schema_hash=? OR producer_version=?)
+	ORDER BY collected_at,id`, runID, incidentID, cycleNo, TypedEvidenceFactSchemaHash(), TypedEvidenceProducerVersion)
+	if err != nil {
+		return nil, fmt.Errorf("load Workspace typed Evidence: %w", err)
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("close Workspace typed Evidence rows: %w", closeErr))
+		}
+	}()
+	facts := make([]EvidenceFact, 0)
+	seenFacts := make(map[string]struct{})
+	for rows.Next() {
+		var document TypedEvidenceDocument
+		if err = rows.Scan(
+			&document.PublicID, &document.ContractVersion, &document.ProducerType, &document.ProducerID,
+			&document.ProducerVersion, &document.ProducerDedupeKey, &document.AgentStepID,
+			&document.FactSchemaVersion, &document.FactSchemaHash, &document.Facts,
+			&document.Provenance, &document.ProvenanceHash, &document.TrustAxes, &document.ClaimUse,
+			&document.CorroborationGroups, &document.InputEvidenceIDs, &document.InputSampleIDs, &document.InputHashes,
+			&document.ResultHash, &document.ContentHash, &document.RedactionPolicyVersion,
+			&document.RedactionCounts, &document.PromptSafetyFlags, &document.Truncated, &document.Valid,
+			&document.MigratedLegacy, &document.MigratedLegacyContext, &document.ObservedAt, &document.CollectedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan Workspace typed Evidence: %w", err)
+		}
+		decoded, decodeErr := DecodeTypedEvidence(document, TypedEvidenceExpectation{
+			IncidentID: incidentPublicID, CycleNo: cycleNo,
+			MigratedLegacy: migratedLegacy, MigratedLegacyContext: migratedLegacyContext,
+		})
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		for _, fact := range decoded {
+			if _, duplicate := seenFacts[fact.ID]; duplicate {
+				return nil, fmt.Errorf("%w: Workspace typed Evidence fact identity is duplicated", ErrPermission)
+			}
+			seenFacts[fact.ID] = struct{}{}
+			facts = append(facts, fact)
+			if len(facts) > 256 {
+				return nil, fmt.Errorf("%w: Workspace typed Evidence exceeds its bound", ErrBudgetExceeded)
+			}
+		}
+	}
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate Workspace typed Evidence: %w", err)
+	}
+	return facts, nil
+}
+
+func workspaceClaimPolicy(ctx context.Context, tx *sql.Tx, runID, incidentID, cycleNo uint64) (ClaimPolicy, error) {
+	policy := GoldenRequiredEnvClaimPolicy()
+	if tx == nil || runID == 0 || incidentID == 0 || cycleNo == 0 {
+		return policy, ErrInvalidArgument
+	}
+	var clusterID, environment string
+	var resourcesJSON, filtersJSON []byte
+	if err := tx.QueryRowContext(ctx, `SELECT snapshot.cluster_id,snapshot.environment,
+snapshot.resource_refs_json,snapshot.filters_json
+FROM agent_runs run JOIN context_snapshots snapshot ON snapshot.id=run.context_snapshot_id
+WHERE run.id=? AND run.incident_id=? AND run.cycle_no=?`, runID, incidentID, cycleNo).
+		Scan(&clusterID, &environment, &resourcesJSON, &filtersJSON); err != nil {
+		return ClaimPolicy{}, err
+	}
+	var resources []struct {
+		Kind      string `json:"kind"`
+		Namespace string `json:"namespace"`
+		Name      string `json:"name"`
+	}
+	var filters struct {
+		ScenarioID string `json:"scenario_id"`
+	}
+	if json.Unmarshal(resourcesJSON, &resources) != nil || json.Unmarshal(filtersJSON, &filters) != nil {
+		return ClaimPolicy{}, ErrPermission
+	}
+	if clusterID != "cloudops-local" || environment != "local" || len(resources) != 1 ||
+		resources[0].Kind != "Deployment" || resources[0].Namespace != "demo" ||
+		resources[0].Name != "cloudops-scenario-fault" || !workspaceScenarioIdentity(filters.ScenarioID) {
+		return policy, nil
+	}
+	linkedScenarioID, err := workspaceIncidentScenarioID(ctx, tx, incidentID, cycleNo)
+	if err != nil {
+		return ClaimPolicy{}, err
+	}
+	if linkedScenarioID != filters.ScenarioID {
+		return ClaimPolicy{}, ErrPermission
+	}
+	return LocalScenarioRequiredEnvClaimPolicy(), nil
 }
 
 func (r *WorkspaceRepository) StartWorkspaceTool(ctx context.Context, lease WorkspaceLease, tool string, arguments json.RawMessage) (workspaceStepLease, error) {
@@ -406,17 +574,18 @@ func (r *WorkspaceRepository) CompleteWorkspaceTool(ctx context.Context, lease W
 	if err = r.guardWorkspaceLease(ctx, tx, lease); err != nil {
 		return "", err
 	}
-	var status, argumentsHash, snapshotHash string
+	var status, argumentsHash, snapshotHash, runPublicID, incidentPublicID string
 	var incidentID, cycleNo sql.NullInt64
 	var migratedLegacy, migratedLegacyContext bool
 	var timeFrom, timeTo time.Time
 	if err = tx.QueryRowContext(ctx, `SELECT step.status,step.arguments_hash,snapshot.content_hash,snapshot.range_start,snapshot.range_end,
-run.incident_id,run.cycle_no,run.migrated_legacy,run.migrated_legacy_context
+run.incident_id,run.cycle_no,run.migrated_legacy,run.migrated_legacy_context,run.public_id,COALESCE(incident.public_id,'')
 	FROM agent_steps step JOIN agent_runs run ON run.id=step.agent_run_id
 	JOIN context_snapshots snapshot ON snapshot.id=run.context_snapshot_id
+	LEFT JOIN incidents incident ON incident.id=run.incident_id
 	WHERE step.id=? AND step.agent_run_id=? FOR UPDATE`, step.InternalID, lease.RunID).
 		Scan(&status, &argumentsHash, &snapshotHash, &timeFrom, &timeTo, &incidentID, &cycleNo,
-			&migratedLegacy, &migratedLegacyContext); err != nil {
+			&migratedLegacy, &migratedLegacyContext, &runPublicID, &incidentPublicID); err != nil {
 		return "", err
 	}
 	if status != "running" || argumentsHash != step.ArgumentsHash {
@@ -448,14 +617,44 @@ run.incident_id,run.cycle_no,run.migrated_legacy,run.migrated_legacy_context
 	})
 	contentHash := workspaceSHA256(contentMaterial)
 	provenanceHash := workspaceSHA256(provenance)
+	producerVersion := WorkspaceToolVersion
+	factSchemaVersion := TypedEvidenceFactSchemaVersion
 	factSchemaHash := workspaceSHA256([]byte("cloudops.agent-workspace/facts/v1"))
 	window, _ := json.Marshal(map[string]time.Time{"from": timeFrom.UTC(), "to": timeTo.UTC()})
 	groups, _ := json.Marshal([][]string{{observation.Source + "/" + observation.Tool}})
 	empty := json.RawMessage(`[]`)
 	redaction := json.RawMessage(`{"policy":"agent-workspace-evidence/v1","raw_text":"allowlisted-summary-only"}`)
+	redactionPolicy := "agent-workspace-evidence/v1"
 	redactionCounts := json.RawMessage(`{"secret_fields":0,"raw_payloads_omitted":1}`)
 	promptFlags := json.RawMessage(`{"untrusted_content":true,"instruction_text_not_executed":true,"hidden_reasoning_omitted":true}`)
 	evidencePublicID := uuid.NewString()
+	claimUse := "context"
+	citationUse := "context"
+	rowTruncated := observation.Truncated || observation.Partial
+	if len(observation.TypedFacts) > 0 && !rowTruncated && incidentID.Valid && incidentID.Int64 > 0 &&
+		cycleNo.Valid && cycleNo.Int64 > 0 && incidentPublicID != "" {
+		typed, typedErr := buildWorkspaceTypedEvidence(
+			observation, evidencePublicID, incidentPublicID, runPublicID, step.PublicID,
+			snapshotHash, contentHash, uint64(cycleNo.Int64), migratedLegacy,
+		)
+		if typedErr != nil {
+			return "", typedErr
+		}
+		facts = typed.facts
+		provenance = typed.metadata.provenance
+		provenanceHash = typed.metadata.provenanceHash
+		trust = typed.metadata.trustAxes
+		claimUse = typed.metadata.claimUse
+		groups = typed.metadata.corroborationGroups
+		empty = typed.metadata.inputEvidenceIDs
+		producerVersion = TypedEvidenceProducerVersion
+		factSchemaHash = TypedEvidenceFactSchemaHash()
+		redaction = json.RawMessage(`{"policy":"observation-redaction/v1","values":"not-projected"}`)
+		redactionPolicy = "observation-redaction/v1"
+		if claimUse == "support" || claimUse == "blocking" {
+			citationUse = claimUse
+		}
+	}
 	query := strings.TrimSpace(observation.Query)
 	if query == "" {
 		query = observation.Tool
@@ -469,20 +668,16 @@ corroboration_groups_json,input_evidence_ids_json,input_sample_ids_json,input_ha
 content_hash,raw_ref,safe_raw_reference,redaction_json,redaction_policy_version,redaction_counts_json,prompt_safety_flags_json,
 truncated,valid,migrated_legacy,migrated_legacy_context,idempotency_key,collected_at,observed_at,created_at)
 VALUES (
-	?,?,1,?,?,?,'agent.workspace.observation',?,
-'agent_step',?,?,?,'provider-gateway/v1',?,'1',
-?,?,?,?,?,?,?,?,1,?,?,?,?,'context',
-?,?,?,?,?,?,?,?,?,?,'agent-workspace-evidence/v1',
-?,?,?,1,?,?,?, ?,?,?)`,
-		evidencePublicID, workspaceNullableInt64(incidentID), workspaceNullableInt64(cycleNo), lease.RunID,
-		step.InternalID, observation.Source, step.PublicID, WorkspaceToolVersion,
-		contentHash, observation.Tool, snapshotHash, argumentsHash, observation.Tool, observation.ResourceRef, window,
-		query, workspaceBound(observation.Summary, 4096), facts, factSchemaHash, provenance, provenanceHash, trust,
-		groups, empty, empty, empty, workspaceNullableString(observation.SourceRevision), contentHash, contentHash,
-		"agent-workspace-step:"+step.PublicID, "agent-workspace-step:"+step.PublicID, redaction, redactionCounts,
-		promptFlags, observation.Truncated || observation.Partial, migratedLegacy, migratedLegacyContext,
-		contentHash, observation.CollectedAt.UTC(),
-		observation.ObservedAt.UTC(), now)
+	?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		evidencePublicID, workspaceNullableInt64(incidentID), TypedEvidenceContractVersion,
+		workspaceNullableInt64(cycleNo), lease.RunID, step.InternalID, "agent.workspace.observation", observation.Source,
+		TypedEvidenceProducerAgentStep, step.PublicID, producerVersion, contentHash, "provider-gateway/v1", observation.Tool, "1",
+		snapshotHash, argumentsHash, observation.Tool, observation.ResourceRef, window, query,
+		workspaceBound(observation.Summary, 4096), facts, factSchemaVersion, factSchemaHash, provenance, provenanceHash,
+		trust, claimUse, groups, empty, empty, empty, workspaceNullableString(observation.SourceRevision), contentHash,
+		contentHash, "agent-workspace-step:"+step.PublicID, "agent-workspace-step:"+step.PublicID, redaction,
+		redactionPolicy, redactionCounts, promptFlags, rowTruncated, true, migratedLegacy, migratedLegacyContext,
+		contentHash, observation.CollectedAt.UTC(), observation.ObservedAt.UTC(), now)
 	if err != nil {
 		return "", fmt.Errorf("persist Agent Workspace Evidence: %w", err)
 	}
@@ -492,7 +687,7 @@ VALUES (
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO agent_evidence_citations
 (public_id,agent_run_id,message_id,evidence_item_id,citation_use,created_at)
-VALUES (?,?,NULL,?,'context',?)`, uuid.NewString(), lease.RunID, evidenceID, now); err != nil {
+VALUES (?,?,NULL,?,?,?)`, uuid.NewString(), lease.RunID, evidenceID, citationUse, now); err != nil {
 		return "", err
 	}
 	duration := now.Sub(step.StartedAt).Milliseconds()
@@ -556,7 +751,7 @@ updated_at=?,row_version=row_version+1 WHERE id=?`, now, lease.RunID); err != ni
 }
 
 func (r *WorkspaceRepository) CompleteWorkspaceTask(ctx context.Context, lease WorkspaceLease, completion WorkspaceCompletion) error {
-	if completion.Outcome == "" || strings.TrimSpace(completion.Uncertainty) == "" || strings.TrimSpace(completion.Answer) == "" {
+	if !validWorkspaceCompletion(completion) {
 		return ErrInvalidArgument
 	}
 	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
@@ -567,23 +762,58 @@ func (r *WorkspaceRepository) CompleteWorkspaceTask(ctx context.Context, lease W
 	if err = r.guardWorkspaceLease(ctx, tx, lease); err != nil {
 		return err
 	}
-	var consultationID, snapshotID, incidentID, cycleNo sql.NullInt64
-	var subjectType, runPublicID string
+	var canonicalIncidentID sql.NullInt64
+	if err = tx.QueryRowContext(ctx, `SELECT incident_id FROM agent_runs WHERE id=?`, lease.RunID).Scan(&canonicalIncidentID); err != nil {
+		return err
+	}
+	if canonicalIncidentID.Valid {
+		var lockedIncidentID uint64
+		if err = tx.QueryRowContext(ctx, `SELECT id FROM incidents WHERE id=? FOR UPDATE`, canonicalIncidentID.Int64).Scan(&lockedIncidentID); err != nil {
+			return err
+		}
+	}
+	var consultationID, snapshotID, incidentID, cycleNo, revisionID sql.NullInt64
+	var subjectType, runPublicID, revisionPublicID string
 	var migratedLegacy, migratedLegacyContext bool
 	var runStatus string
 	var cancelRequested sql.NullTime
-	if err = tx.QueryRowContext(ctx, `SELECT status,consultation_id,context_snapshot_id,cancel_requested_at,
-	subject_type,public_id,incident_id,cycle_no,migrated_legacy,migrated_legacy_context
-	FROM agent_runs WHERE id=? FOR UPDATE`, lease.RunID).Scan(&runStatus, &consultationID, &snapshotID, &cancelRequested,
-		&subjectType, &runPublicID, &incidentID, &cycleNo, &migratedLegacy, &migratedLegacyContext); err != nil {
+	var runRowVersion uint64
+	var maxModelCalls int
+	var tokenBudget int64
+	if err = tx.QueryRowContext(ctx, `SELECT run.status,run.consultation_id,run.context_snapshot_id,run.cancel_requested_at,
+	run.subject_type,run.public_id,run.incident_id,run.cycle_no,run.configuration_revision_id,
+	COALESCE(revision.public_id,''),run.migrated_legacy,run.migrated_legacy_context,run.row_version,
+	run.max_model_calls,run.token_budget
+	FROM agent_runs AS run
+	LEFT JOIN configuration_revisions AS revision ON revision.id=run.configuration_revision_id
+	WHERE run.id=? FOR UPDATE`, lease.RunID).Scan(&runStatus, &consultationID, &snapshotID, &cancelRequested,
+		&subjectType, &runPublicID, &incidentID, &cycleNo, &revisionID, &revisionPublicID,
+		&migratedLegacy, &migratedLegacyContext, &runRowVersion, &maxModelCalls, &tokenBudget); err != nil {
 		return err
 	}
 	if runStatus != "pending" && runStatus != "running" {
 		return ErrConflict
 	}
+	if !revisionID.Valid || revisionID.Int64 <= 0 || revisionPublicID != lease.ConfigurationRevisionID || runRowVersion == 0 {
+		return ErrConflict
+	}
 	now := r.now().UTC()
 	if cancelRequested.Valid {
-		completion = WorkspaceCompletion{Outcome: WorkspaceOutcomeCancelled, Uncertainty: "unknown", Answer: "本次 Agent 工作已取消。", FailureCode: "OWNER_CANCELLED", FailureSummary: "Owner requested cancellation"}
+		completion.Outcome = WorkspaceOutcomeCancelled
+		completion.Uncertainty = "unknown"
+		completion.Answer = "本次 Agent 工作已取消。"
+		completion.Diagnosis = nil
+		completion.FailureCode = "OWNER_CANCELLED"
+		completion.FailureSummary = "Owner requested cancellation"
+	}
+	if completion.ModelCalls > maxModelCalls || completion.OutputTokens > tokenBudget ||
+		completion.InputTokens > tokenBudget-completion.OutputTokens {
+		return ErrBudgetExceeded
+	}
+	validatedDiagnosis, err := validateWorkspaceCompletionDiagnosis(ctx, tx, lease.RunID, subjectType,
+		incidentID, cycleNo, migratedLegacy, migratedLegacyContext, completion)
+	if err != nil {
+		return err
 	}
 	terminalStatus, taskStatus, attemptStatus := "completed", "succeeded", "succeeded"
 	eventType := "run.completed"
@@ -633,15 +863,41 @@ WHERE agent_run_id=? AND message_id IS NULL`, messageID, lease.RunID); err != ni
 		promptHash = workspaceSHA256([]byte(WorkspacePromptVersion))
 		toolVersion, toolHash = WorkspaceToolVersion, workspaceSHA256([]byte(WorkspaceToolVersion))
 	}
-	diagnosis, _ := json.Marshal(map[string]string{"answer": workspaceBound(completion.Answer, 16000)})
-	if _, err = tx.ExecContext(ctx, `UPDATE agent_runs SET status=?,outcome=?,uncertainty=?,model=?,model_provider=?,actual_model=?,
-	final_diagnosis=?,prompt_hash=?,tool_schema_version=?,tool_schema_hash=?,failure_code=?,failure_summary=?,used_model_calls=IF(? IS NULL,0,1),
+	var finalDiagnosis any
+	if validatedDiagnosis != nil {
+		diagnosisJSON, marshalErr := json.Marshal(validatedDiagnosis)
+		if marshalErr != nil || len(diagnosisJSON) > 32*1024 {
+			return ErrInvalidArgument
+		}
+		finalDiagnosis = diagnosisJSON
+	}
+	runResult, err := tx.ExecContext(ctx, `UPDATE agent_runs SET status=?,outcome=?,uncertainty=?,model=?,model_provider=?,actual_model=?,
+	final_diagnosis=?,final_answer=?,prompt_hash=?,tool_schema_version=?,tool_schema_hash=?,failure_code=?,failure_summary=?,used_model_calls=?,
 	input_tokens=?,output_tokens=?,completed_at=?,updated_at=?,row_version=row_version+1
 	WHERE id=? AND status IN ('pending','running')`, terminalStatus, completion.Outcome, completion.Uncertainty, model,
-		modelProvider, actualModel, diagnosis, promptHash, toolVersion, toolHash, workspaceBound(completion.FailureCode, 128),
-		workspaceBound(completion.FailureSummary, 2048), modelProvider, completion.InputTokens, completion.OutputTokens,
-		now, now, lease.RunID); err != nil {
+		modelProvider, actualModel, finalDiagnosis, workspaceBound(completion.Answer, 16000), promptHash, toolVersion, toolHash,
+		workspaceBound(completion.FailureCode, 128), workspaceBound(completion.FailureSummary, 2048), completion.ModelCalls,
+		completion.InputTokens, completion.OutputTokens,
+		now, now, lease.RunID)
+	if err != nil {
 		return err
+	}
+	if rows, rowsErr := runResult.RowsAffected(); rowsErr != nil || rows != 1 {
+		if rowsErr != nil {
+			return rowsErr
+		}
+		return ErrConflict
+	}
+	if validatedDiagnosis != nil && validatedDiagnosis.Candidate.Confidence == DiagnosisConfirmed &&
+		validatedDiagnosis.Candidate.RemediationHint == RemediationRestoreRequiredEnv {
+		if cycleNo.Int64 > int64(^uint32(0)) {
+			return ErrInvalidArgument
+		}
+		if err = r.enqueueWorkspaceRemediationPrepare(ctx, tx, lease, runPublicID, uint64(incidentID.Int64),
+			uint32(cycleNo.Int64), uint64(revisionID.Int64), runRowVersion+1, migratedLegacy,
+			migratedLegacyContext, now); err != nil {
+			return err
+		}
 	}
 	terminalColumn := "completed_at"
 	switch taskStatus {
@@ -693,6 +949,116 @@ WHERE task_id=? AND attempt=? AND lease_owner=? AND lease_generation=? AND statu
 		}
 	}
 	return tx.Commit()
+}
+
+func validWorkspaceCompletion(completion WorkspaceCompletion) bool {
+	switch completion.Outcome {
+	case WorkspaceOutcomeDiagnosed, WorkspaceOutcomeInsufficient, WorkspaceOutcomeCancelled, WorkspaceOutcomeFailed:
+	default:
+		return false
+	}
+	if strings.TrimSpace(completion.Uncertainty) == "" || strings.TrimSpace(completion.Answer) == "" ||
+		completion.ModelCalls < 0 || completion.InputTokens < 0 || completion.OutputTokens < 0 {
+		return false
+	}
+	provider, model := strings.TrimSpace(completion.ModelProvider), strings.TrimSpace(completion.ActualModel)
+	if (provider == "") != (model == "") || completion.ModelCalls > 0 && provider == "" {
+		return false
+	}
+	return true
+}
+
+func validateWorkspaceCompletionDiagnosis(
+	ctx context.Context,
+	tx *sql.Tx,
+	runID uint64,
+	subjectType string,
+	incidentID, cycleNo sql.NullInt64,
+	migratedLegacy, migratedLegacyContext bool,
+	completion WorkspaceCompletion,
+) (*DiagnosisRecord, error) {
+	if completion.Outcome != WorkspaceOutcomeDiagnosed {
+		if completion.Diagnosis != nil {
+			return nil, ErrInvalidArgument
+		}
+		return nil, nil
+	}
+	if completion.Diagnosis == nil || subjectType != string(WorkspaceSubjectIncident) ||
+		!incidentID.Valid || incidentID.Int64 <= 0 || !cycleNo.Valid || cycleNo.Int64 <= 0 {
+		return nil, ErrPermission
+	}
+	var incidentPublicID string
+	if err := tx.QueryRowContext(ctx, `SELECT public_id FROM incidents WHERE id=? AND cycle_no=? FOR UPDATE`,
+		incidentID.Int64, cycleNo.Int64).Scan(&incidentPublicID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrPermission
+		}
+		return nil, err
+	}
+	facts, err := loadWorkspaceTypedEvidence(ctx, tx, runID, uint64(incidentID.Int64), incidentPublicID,
+		uint64(cycleNo.Int64), migratedLegacy, migratedLegacyContext)
+	if err != nil {
+		return nil, err
+	}
+	policy, err := workspaceClaimPolicy(ctx, tx, runID, uint64(incidentID.Int64), uint64(cycleNo.Int64))
+	if err != nil {
+		return nil, ErrPermission
+	}
+	sufficiency, err := EvaluateSufficiency(SufficiencyInput{
+		IncidentID: incidentPublicID, CycleNo: uint64(cycleNo.Int64), Facts: facts, Policy: policy,
+	})
+	if err != nil || sufficiency.Outcome != SufficiencyReady {
+		return nil, ErrPermission
+	}
+	validated, err := ValidateDiagnosisRecord(completion.Diagnosis.Candidate, DiagnosisValidationInput{
+		IncidentID: incidentPublicID, CycleNo: uint64(cycleNo.Int64), Facts: facts,
+		Policy: policy, Sufficiency: sufficiency,
+	})
+	if err != nil {
+		return nil, ErrPermission
+	}
+	providedJSON, providedErr := json.Marshal(completion.Diagnosis)
+	validatedJSON, validatedErr := json.Marshal(validated)
+	if providedErr != nil || validatedErr != nil || !bytes.Equal(providedJSON, validatedJSON) {
+		return nil, ErrPermission
+	}
+	return &validated, nil
+}
+
+func (r *WorkspaceRepository) enqueueWorkspaceRemediationPrepare(
+	ctx context.Context,
+	tx *sql.Tx,
+	lease WorkspaceLease,
+	runPublicID string,
+	incidentID uint64,
+	cycleNo uint32,
+	revisionID, expectedRunVersion uint64,
+	migratedLegacy, migratedLegacyContext bool,
+	availableAt time.Time,
+) error {
+	if r.tasks == nil || incidentID == 0 || cycleNo == 0 || revisionID == 0 || expectedRunVersion == 0 || lease.MaxAttempts == 0 {
+		return ErrUnavailable
+	}
+	payload, err := json.Marshal(struct {
+		AgentRunID string `json:"agent_run_id"`
+		CycleNo    uint64 `json:"cycle_no"`
+	}{AgentRunID: runPublicID, CycleNo: uint64(cycleNo)})
+	if err != nil {
+		return err
+	}
+	dedupe := workspaceSHA256([]byte(fmt.Sprintf("workspace-remediation-prepare\x00%s\x00%d", runPublicID, expectedRunVersion)))
+	_, err = r.tasks.EnqueueIn(ctx, tx, asyncjob.NewTask{
+		IncidentID: incidentID, CycleNo: cycleNo, ConfigurationRevisionID: revisionID,
+		Type: asyncjob.TaskRemediationPrepare, SubjectType: "agent_run", SubjectID: lease.RunID,
+		Transition: "remediation.prepare", ExpectedSubjectVersion: expectedRunVersion,
+		PayloadSchemaVersion: 1, Payload: payload, DedupeKey: dedupe,
+		MigratedLegacy: migratedLegacy, MigratedLegacyContext: migratedLegacyContext,
+		AvailableAt: &availableAt, MaxAttempts: lease.MaxAttempts,
+	})
+	if err != nil {
+		return fmt.Errorf("enqueue Workspace remediation.prepare: %w", err)
+	}
+	return nil
 }
 
 func (r *WorkspaceRepository) RetryWorkspaceTask(ctx context.Context, lease WorkspaceLease, code, summary string, delay time.Duration) error {

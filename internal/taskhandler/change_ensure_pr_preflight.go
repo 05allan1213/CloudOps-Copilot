@@ -297,9 +297,10 @@ func validateCurrentChangeDiagnosis(stored agent.DiagnosisRecord, incidentPublic
 	if err != nil || sufficiency.Outcome != agent.SufficiencyReady {
 		return fmt.Errorf("%w: current Evidence no longer satisfies the configured ClaimPolicy", asyncjob.ErrPolicyViolation)
 	}
-	validated, err := validateDiagnosis(stored.Candidate, investigationSnapshot{
-		IncidentPublicID: incidentPublicID, Task: asyncjob.Task{CycleNo: cycleNo}, Facts: facts,
-	}, policy, sufficiency)
+	validated, err := agent.ValidateDiagnosisRecord(stored.Candidate, agent.DiagnosisValidationInput{
+		IncidentID: incidentPublicID, CycleNo: uint64(cycleNo), Facts: facts,
+		Policy: policy, Sufficiency: sufficiency,
+	})
 	if err != nil {
 		return fmt.Errorf("%w: final Diagnosis no longer validates: %v", asyncjob.ErrPolicyViolation, err)
 	}

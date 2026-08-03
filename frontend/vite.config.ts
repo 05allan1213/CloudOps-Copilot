@@ -70,7 +70,7 @@ export default defineConfig({
     target: "baseline-widely-available",
   },
   test: {
-    exclude: [...configDefaults.exclude, "tests/e2e/**"],
+    exclude: [...configDefaults.exclude, "tests/e2e/**", "tests/real-integration/**"],
   },
   resolve: {
     alias: {

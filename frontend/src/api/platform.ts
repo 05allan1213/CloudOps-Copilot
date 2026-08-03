@@ -1,6 +1,8 @@
 import { getJSON, postJSON } from "./client";
 import type { TopologySnapshot } from "./infrastructure";
 
+const settingsValidationTimeoutMS = 70_000;
+
 export type ProviderIdentity =
   | "llm"
   | "kubernetes"
@@ -205,7 +207,7 @@ export function getStorageStatus(signal?: AbortSignal): Promise<StorageStatus> {
 }
 
 export function validateSettings(draft: ConfigurationDraft): Promise<ConfigurationValidation> {
-  return postJSON("/api/v1/settings/validate", draft);
+  return postJSON("/api/v1/settings/validate", draft, { timeout: settingsValidationTimeoutMS });
 }
 
 export function applyConfiguration(

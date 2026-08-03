@@ -189,22 +189,23 @@ type Task struct {
 }
 
 type NewTask struct {
-	IncidentID             uint64
-	CycleNo                uint32
-	Type                   TaskType
-	SubjectType            string
-	SubjectID              uint64
-	Transition             string
-	ExpectedSubjectVersion uint64
-	PayloadSchemaVersion   uint32
-	Payload                json.RawMessage
-	DedupeKey              string
-	LogicalOperationKey    string
-	MigratedLegacy         bool
-	MigratedLegacyContext  bool
-	Priority               int
-	AvailableAt            *time.Time
-	MaxAttempts            uint32
+	IncidentID              uint64
+	CycleNo                 uint32
+	ConfigurationRevisionID uint64
+	Type                    TaskType
+	SubjectType             string
+	SubjectID               uint64
+	Transition              string
+	ExpectedSubjectVersion  uint64
+	PayloadSchemaVersion    uint32
+	Payload                 json.RawMessage
+	DedupeKey               string
+	LogicalOperationKey     string
+	MigratedLegacy          bool
+	MigratedLegacyContext   bool
+	Priority                int
+	AvailableAt             *time.Time
+	MaxAttempts             uint32
 }
 
 func (t NewTask) Validate() error {

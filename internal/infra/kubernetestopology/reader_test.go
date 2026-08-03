@@ -2,6 +2,7 @@ package kubernetestopology
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -28,8 +29,13 @@ func TestReaderProjectsTypedRelationshipsAndSanitizedEvents(t *testing.T) {
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "ops", UID: types.UID("namespace-uid")}, Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive}},
 		&appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "ops", UID: types.UID("deployment-uid"), Labels: map[string]string{"app": "api"}},
-			Spec:       appsv1.DeploymentSpec{Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "api"}}},
-			Status:     appsv1.DeploymentStatus{ReadyReplicas: 1},
+			Spec: appsv1.DeploymentSpec{
+				Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "api"}},
+				Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{
+					Name: "api", Env: []corev1.EnvVar{{Name: "PUBLIC_MODE", Value: "sensitive-value-not-projected"}, {Name: "REQUIRED_ENV", Value: "present"}},
+				}}}},
+			},
+			Status: appsv1.DeploymentStatus{ReadyReplicas: 1},
 		},
 		&appsv1.ReplicaSet{
 			ObjectMeta: metav1.ObjectMeta{Name: "api-rs", Namespace: "ops", UID: types.UID("replicaset-uid"), OwnerReferences: []metav1.OwnerReference{{Kind: "Deployment", Name: "api", UID: types.UID("deployment-uid")}}},
@@ -109,6 +115,20 @@ func TestReaderProjectsTypedRelationshipsAndSanitizedEvents(t *testing.T) {
 	}
 	if len(pod.OwnerReferences) != 1 || pod.OwnerReferences[0].ID != deployment.ID {
 		t.Fatalf("Pod owner references = %#v, want converged Deployment owner", pod.OwnerReferences)
+	}
+	if len(deployment.Containers) != 1 || deployment.Containers[0].Name != "api" ||
+		len(deployment.Containers[0].EnvNames) != 2 || deployment.Containers[0].EnvNames[0] != "PUBLIC_MODE" ||
+		deployment.Containers[0].EnvNames[1] != "REQUIRED_ENV" {
+		t.Fatalf("Deployment container env-name projection = %#v", deployment.Containers)
+	}
+	if deployment.ContainersTruncated || deployment.Containers[0].EnvNamesTruncated ||
+		deployment.Containers[0].HasEnvFrom || deployment.Containers[0].HasValueFrom ||
+		deployment.Containers[0].HasSecretReference {
+		t.Fatalf("Deployment container projection reported unexpected uncertainty: %#v", deployment.Containers[0])
+	}
+	encoded, err := json.Marshal(deployment.Containers)
+	if err != nil || strings.Contains(string(encoded), "sensitive-value-not-projected") {
+		t.Fatalf("Deployment container projection leaked an env value: %s (err=%v)", encoded, err)
 	}
 
 	events, truncated, err := reader.Events(context.Background(), "cluster-a", pod, 10)

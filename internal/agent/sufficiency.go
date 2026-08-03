@@ -106,6 +106,29 @@ func GoldenRequiredEnvClaimPolicy() ClaimPolicy {
 	}
 }
 
+// LocalScenarioRequiredEnvClaimPolicy is intentionally narrower than the
+// production Golden policy. It may only be selected for the exact bounded
+// local Scenario subject; it never authorizes a production/GitOps diagnosis.
+func LocalScenarioRequiredEnvClaimPolicy() ClaimPolicy {
+	return ClaimPolicy{
+		Version:   "local-scenario-required-env/v1",
+		ClaimType: GoldenRequiredEnvClaimPolicy().ClaimType,
+		Requirements: []FactRequirement{
+			{Facet: "subject", AnyOf: []string{"workload.subject_confirmed"}},
+			{Facet: "runtime-env", AnyOf: []string{"kubernetes.required_env_absent"}},
+			{Facet: "log-symptom", AnyOf: []string{"log.required_env_missing"}},
+		},
+		BlockingFactTypes:        []string{"kubernetes.required_env_present"},
+		MinIndependentCollectors: 2,
+		RequireDirectFact:        true,
+	}
+}
+
+func IsLocalScenarioRequiredEnvPolicy(policy ClaimPolicy) bool {
+	local := LocalScenarioRequiredEnvClaimPolicy()
+	return policy.Version == local.Version && policy.ClaimType == local.ClaimType
+}
+
 // EvaluateSufficiency applies only deterministic policy. Model confidence and
 // stop proposals are deliberately absent from the input.
 func EvaluateSufficiency(input SufficiencyInput) (SufficiencyResult, error) {

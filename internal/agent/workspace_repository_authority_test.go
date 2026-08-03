@@ -79,3 +79,16 @@ func TestAuthorityContentHashRejectsInvalidJSON(t *testing.T) {
 		t.Fatal("invalid authority JSON unexpectedly produced a hash")
 	}
 }
+
+func TestWorkspaceInvestigationWindowEndsAtCollectionTime(t *testing.T) {
+	now := time.Date(2026, 8, 3, 11, 34, 0, 0, time.UTC)
+	from, to := workspaceInvestigationWindow(now.Add(-time.Minute), now)
+	if !to.Equal(now) || !from.Equal(now.Add(-6*time.Minute)) {
+		t.Fatalf("fresh investigation window=%s..%s", from, to)
+	}
+
+	from, to = workspaceInvestigationWindow(now.Add(-48*time.Hour), now)
+	if !to.Equal(now) || !from.Equal(now.Add(-24*time.Hour)) {
+		t.Fatalf("bounded investigation window=%s..%s", from, to)
+	}
+}

@@ -53,6 +53,7 @@ const effectiveDecisionState = computed(() => {
       : `The previous command ended as ${feedback.state.replace(/_/g, " ")}. Refresh or resolve the reported condition before a new Decision.`;
   return { ...decisionState.value, available: false, reason };
 });
+const approveAllowed = computed(() => props.plan.source_type !== "local_scenario");
 const elementSuffix = computed(() => props.plan.id.replace(/[^a-zA-Z0-9_-]/g, "-"));
 const dialogTitleID = computed(() => `decision-dialog-title-${elementSuffix.value}`);
 const reasonID = computed(() => `decision-reason-${elementSuffix.value}`);
@@ -76,7 +77,7 @@ watch(
 );
 
 async function openDialog(nextDecision: "approved" | "rejected", event: MouseEvent) {
-  if (!effectiveDecisionState.value.available || props.commandPending) return;
+	if (!effectiveDecisionState.value.available || props.commandPending || (nextDecision === "approved" && !approveAllowed.value)) return;
   decision.value = nextDecision;
   reason.value = "";
   reasonError.value = "";
@@ -104,7 +105,7 @@ function onDialogCancel(event: Event) {
 }
 
 function submitDecision() {
-  if (!effectiveDecisionState.value.available || props.commandPending) return;
+	if (!effectiveDecisionState.value.available || props.commandPending || (decision.value === "approved" && !approveAllowed.value)) return;
   const boundedReason = reason.value.trim();
   if (!boundedReason) {
     reasonError.value = "Enter the evidence-backed reason for this immutable Decision.";
@@ -127,7 +128,12 @@ function submitDecision() {
       <div>
         <span>Remediation Plan</span>
         <h3>{{ plan.patch_summary }}</h3>
-        <p><code translate="no">{{ plan.target.repository }}</code> · <code translate="no">{{ plan.target.path }}</code> · {{ plan.target.field_ref }}</p>
+        <p>
+          <code
+            v-if="plan.target.repository"
+            translate="no"
+          >{{ plan.target.repository }} · </code><code translate="no">{{ plan.target.path }}</code> · {{ plan.target.field_ref }}
+        </p>
       </div>
       <div class="plan-status">
         <ResultBadge :result="plan.status" />
@@ -143,8 +149,14 @@ function submitDecision() {
       <div><dt>Cycle / Plan Version</dt><dd>{{ plan.cycle }} / {{ plan.plan_version }}</dd></div>
       <div><dt>Incident Version</dt><dd>{{ plan.incident_version }}</dd></div>
       <div><dt>Operation</dt><dd>{{ plan.operation_type.replace(/_/g, " ") }}</dd></div>
+      <div><dt>Source</dt><dd>{{ plan.source_type.replace(/_/g, " ") }}</dd></div>
       <div><dt>Target Resource</dt><dd>{{ plan.target.resource.kind }}/{{ plan.target.resource.name }} · {{ plan.target.resource.namespace }}</dd></div>
-      <div><dt>Base Branch</dt><dd><code translate="no">{{ plan.target.base_branch }}</code></dd></div>
+      <div v-if="plan.source_type === 'gitops'">
+        <dt>Base Branch</dt><dd><code translate="no">{{ plan.target.base_branch }}</code></dd>
+      </div>
+      <div v-else>
+        <dt>Runtime Base</dt><dd><code translate="no">{{ plan.runtime_base_hash }}</code></dd>
+      </div>
       <div><dt>Policy Version</dt><dd><code translate="no">{{ plan.policy_version }}</code></dd></div>
       <div><dt>Expires</dt><dd><time :datetime="plan.expires_at">{{ formatIncidentTime(plan.expires_at) }}</time></dd></div>
       <div><dt>Provenance</dt><dd>{{ resourceProvenance(plan) }}</dd></div>
@@ -188,16 +200,24 @@ function submitDecision() {
           :value="plan.diagnosis_hash"
         />
         <HashValue
+          v-if="plan.source_type === 'gitops'"
           label="Base Revision"
           :value="plan.target.base_revision"
         />
         <HashValue
+          v-if="plan.source_type === 'gitops'"
           label="Last-known-good Revision"
           :value="plan.target.last_known_good_revision"
         />
         <HashValue
+          v-if="plan.source_type === 'gitops'"
           label="Base Blob"
           :value="plan.target.base_blob_sha"
+        />
+        <HashValue
+          v-else
+          label="Runtime Base"
+          :value="plan.runtime_base_hash"
         />
         <HashValue
           label="Expected Before"
@@ -208,6 +228,7 @@ function submitDecision() {
           :value="plan.expected_post_image_hash"
         />
         <HashValue
+          v-if="plan.source_type === 'gitops'"
           label="Expected Tree"
           :value="plan.expected_tree_hash"
         />
@@ -317,6 +338,7 @@ function submitDecision() {
             :value="plan.decision.approved_plan_hash"
           />
           <HashValue
+            v-if="plan.source_type === 'gitops'"
             label="Approved Base"
             :value="plan.decision.approved_base_sha"
           />
@@ -325,6 +347,7 @@ function submitDecision() {
             :value="plan.decision.approved_post_image_hash"
           />
           <HashValue
+            v-if="plan.source_type === 'gitops'"
             label="Approved Tree"
             :value="plan.decision.approved_tree_hash"
           />
@@ -361,7 +384,8 @@ function submitDecision() {
         <button
           type="button"
           class="approve-button"
-          :disabled="!effectiveDecisionState.available || commandPending"
+          :disabled="!approveAllowed || !effectiveDecisionState.available || commandPending"
+          :title="approveAllowed ? undefined : 'Local Scenario Plans are reject-only'"
           @click="openDialog('approved', $event)"
         >
           Approve Exact Plan

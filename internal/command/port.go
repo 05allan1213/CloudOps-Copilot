@@ -38,14 +38,21 @@ type remediationDecisionRepository interface {
 // effect, task enqueue, Timeline event, and idempotent response shares one
 // MySQL transaction.
 type Port struct {
-	idempotency  *Store
-	tasks        *asyncjob.Repository
-	workspace    *agent.WorkspaceRepository
-	remediations remediationDecisionRepository
-	recovery     *recovery.Coordinator
+	idempotency     *Store
+	tasks           *asyncjob.Repository
+	workspace       *agent.WorkspaceRepository
+	remediations    remediationDecisionRepository
+	recovery        *recovery.Coordinator
+	deliveryEnabled bool
 }
 
-func NewPort(db *sql.DB) (*Port, error) {
+// PortOptions controls side effects that require external delivery authority.
+// The zero value is deliberately fail-closed for local API composition.
+type PortOptions struct {
+	DeliveryEnabled bool
+}
+
+func NewPort(db *sql.DB, options ...PortOptions) (*Port, error) {
 	idempotency, err := NewStore(db)
 	if err != nil {
 		return nil, err
@@ -66,7 +73,15 @@ func NewPort(db *sql.DB) (*Port, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Port{idempotency: idempotency, tasks: tasks, workspace: workspace, remediations: remediations, recovery: recoveryCoordinator}, nil
+	var opts PortOptions
+	if len(options) > 0 {
+		opts = options[0]
+	}
+	return &Port{
+		idempotency: idempotency, tasks: tasks, workspace: workspace,
+		remediations: remediations, recovery: recoveryCoordinator,
+		deliveryEnabled: opts.DeliveryEnabled,
+	}, nil
 }
 
 func (p *Port) Execute(ctx context.Context, request api.CommandRequest) (api.CommandResult, error) {
@@ -654,7 +669,7 @@ func (p *Port) decideRemediation(ctx context.Context, tx *sql.Tx, request api.Co
 		"request_id":  request.RequestID,
 	}
 	eventType := "remediation_plan_" + body.Decision
-	if decision.Decision == remediation.DecisionApproved {
+	if decision.Decision == remediation.DecisionApproved && p.deliveryEnabled {
 		payload, err := json.Marshal(struct {
 			PlanID string `json:"plan_id"`
 		}{PlanID: plan.PublicID})
@@ -674,6 +689,9 @@ func (p *Port) decideRemediation(ctx context.Context, tx *sql.Tx, request api.Co
 			return api.CommandResult{}, err
 		}
 		metadata["task_id"] = task.PublicID
+	} else if decision.Decision == remediation.DecisionApproved {
+		metadata["delivery_status"] = "deferred"
+		metadata["delivery_reason"] = "github_write_disabled"
 	} else {
 		updated, err := tx.ExecContext(ctx, `UPDATE incidents
 SET status = 'investigating', version = version + 1,
@@ -696,6 +714,20 @@ WHERE id = ? AND cycle_no = ? AND version = ?
 	}
 	if err := appendCommandEvent(ctx, tx, incident, eventType, request.Actor, metadataJSON); err != nil {
 		return api.CommandResult{}, err
+	}
+	if decision.Decision == remediation.DecisionApproved && !p.deliveryEnabled {
+		deferredMetadata, err := json.Marshal(map[string]any{
+			"decision_id": decision.PublicID,
+			"plan_id":     plan.PublicID,
+			"plan_hash":   plan.CanonicalPlanHash,
+			"reason":      "github_write_disabled",
+		})
+		if err != nil || len(deferredMetadata) > 8192 {
+			return api.CommandResult{}, errors.New("remediation delivery-deferred Timeline metadata is invalid")
+		}
+		if err := appendCommandEvent(ctx, tx, incident, "remediation_delivery_deferred", request.Actor, deferredMetadata); err != nil {
+			return api.CommandResult{}, err
+		}
 	}
 	return api.CommandResult{
 		HTTPStatus: http.StatusAccepted,

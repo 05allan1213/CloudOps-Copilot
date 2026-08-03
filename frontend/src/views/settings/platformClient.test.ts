@@ -49,7 +49,7 @@ describe("Settings typed platform client", () => {
     await testProvider(provider, [], "cluster-a");
     await createSecret({ provider: "prometheus", purpose: "token", value: "write-only" });
 
-    expect(client.postJSON).toHaveBeenNthCalledWith(1, "/api/v1/settings/validate", draft);
+    expect(client.postJSON).toHaveBeenNthCalledWith(1, "/api/v1/settings/validate", draft, { timeout: 70_000 });
     expect(client.postJSON).toHaveBeenNthCalledWith(2, "/api/v1/configuration-revisions", {
       validation_id: "validation-1",
       expected_active_revision_id: "revision-1",

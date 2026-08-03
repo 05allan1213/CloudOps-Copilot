@@ -66,7 +66,7 @@ func TestMySQLOperationalRecoveryLifecycleFromAlertsToOwnerClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	commands, err := command.NewPort(db)
+	commands, err := command.NewPort(db, command.PortOptions{DeliveryEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}

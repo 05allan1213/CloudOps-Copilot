@@ -196,7 +196,11 @@ func NewWorker(ctx context.Context, cfg WorkerConfig) (*Worker, error) {
 			return nil, fmt.Errorf("initialize production async task handlers: %w", buildErr)
 		}
 	} else {
-		runner = &standbyTaskRunner{store: repository}
+		runner, err = newSettingsRemediationRunner(cfg, mysql.SQLDB(), repository, settingsService, recoveryKubernetes)
+		if err != nil {
+			_ = mysql.Close()
+			return nil, fmt.Errorf("initialize Settings remediation runner: %w", err)
+		}
 	}
 	if runner == nil {
 		runner, err = asyncjob.NewRunner(asyncjob.RunnerConfig{

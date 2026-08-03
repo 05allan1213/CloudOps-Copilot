@@ -39,7 +39,7 @@ func InitAPIContainer(cfg *config.Config, infra *di.Infra, runtimeReadiness hand
 		if err != nil {
 			return nil, fmt.Errorf("query port init failed: %w", err)
 		}
-		container.Commands, err = commandapp.NewPort(infra.MySQL.SQLDB())
+		container.Commands, err = commandapp.NewPort(infra.MySQL.SQLDB(), commandapp.PortOptions{DeliveryEnabled: cfg.GitHubWriteEnabled})
 		if err != nil {
 			return nil, fmt.Errorf("command port init failed: %w", err)
 		}

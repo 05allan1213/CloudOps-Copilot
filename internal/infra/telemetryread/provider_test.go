@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -64,7 +65,7 @@ func TestElasticsearchAdapterBoundsProjectsAndRedactsRows(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
           "timed_out":false,"_shards":{"failed":0},"hits":{"total":{"value":2},"hits":[
-            {"_id":"a","_source":{"@timestamp":"2026-07-26T13:50:00Z","level":"error","message":"request failed authorization=private-value","service":{"name":"cloudops-api"},"trace":{"id":"0123456789abcdef0123456789abcdef"},"span":{"id":"0123456789abcdef"},"kubernetes":{"pod":{"name":"cloudops-api-a"}}}},
+			{"_id":"a","_source":{"@timestamp":"2026-07-26T13:50:00Z","level":"error","message":"request failed authorization=private-value","reason":"required_env_missing","scenario_id":"scenario-20260726135000-a1b2c3d4","service":{"name":"cloudops-api"},"trace":{"id":"0123456789abcdef0123456789abcdef"},"span":{"id":"0123456789abcdef"},"kubernetes":{"pod":{"name":"cloudops-api-a"}}}},
             {"_id":"b","_source":{"@timestamp":"2026-07-26T13:51:00Z","level":"info","message":"second row"}}
           ]}}
         `))
@@ -89,8 +90,14 @@ func TestElasticsearchAdapterBoundsProjectsAndRedactsRows(t *testing.T) {
 	}
 	entry := result.Entries[0]
 	if strings.Contains(entry.Message, "private-value") || !strings.Contains(entry.Message, "[REDACTED]") ||
-		entry.TraceID != "0123456789abcdef0123456789abcdef" || entry.Resource != resource {
+		entry.TraceID != "0123456789abcdef0123456789abcdef" || entry.Resource != resource ||
+		entry.Attributes["reason"] != "required_env_missing" ||
+		entry.Attributes["scenario_id"] != "scenario-20260726135000-a1b2c3d4" {
 		t.Fatalf("entry=%#v", entry)
+	}
+	sourceFields := captured["_source"].([]any)
+	if !slices.Contains(sourceFields, any("reason")) || !slices.Contains(sourceFields, any("scenario_id")) {
+		t.Fatalf("bounded request did not allowlist structured reason: %#v", sourceFields)
 	}
 	sortItems := captured["sort"].([]any)
 	firstSort := sortItems[0].(map[string]any)["@timestamp"].(map[string]any)

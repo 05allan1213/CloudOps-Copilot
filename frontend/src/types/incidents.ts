@@ -272,6 +272,8 @@ export interface RemediationPlanView {
   incident_version: number;
   created_by_agent_run_id: string;
   operation_type: "restore_required_env";
+  source_type: "gitops" | "local_scenario";
+  runtime_base_hash: string;
   risk_level: "low" | "medium" | "high";
   patch_summary: string;
   rollback_plan: string;
