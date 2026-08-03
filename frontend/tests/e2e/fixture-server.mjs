@@ -676,6 +676,7 @@ function remediationPlan() {
     incident_version: stale ? incident.version - 2 : incident.version - 1,
     created_by_agent_run_id: publicID(30, 1),
     operation_type: "restore_required_env",
+    source_type: "gitops",
     risk_level: "medium",
     patch_summary: "Restore REQUIRED_CHECKOUT_REGION for the checkout-api Deployment",
     rollback_plan: "Revert the exact approved commit and wait for Argo to observe the prior immutable revision.",

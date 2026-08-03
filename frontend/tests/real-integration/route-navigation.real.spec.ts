@@ -69,7 +69,7 @@ test.describe.serial("real browser public route navigation", () => {
     await page.goto("/real-integration-not-found");
     await expect(page.getByRole("heading", { name: "页面不存在", level: 1 })).toBeVisible();
 
-    recordRunArtifact("phase-2-route-observations.json", {
+    recordRunArtifact("route-observations.json", {
       observed_at: new Date().toISOString(),
       browser: await page.evaluate(() => navigator.userAgent),
       routes: observations,
@@ -113,7 +113,7 @@ test.describe.serial("real browser public route navigation", () => {
 
     const apiEvidence = tracker.since(0);
     assertHealthyEvidence(apiEvidence, "detail navigation");
-    recordRunArtifact("phase-2-detail-navigation.json", {
+    recordRunArtifact("detail-navigation.json", {
       observed_at: new Date().toISOString(),
       alert_url: alertURL,
       incident_url: incidentURL,

@@ -27,15 +27,17 @@ test("stable Incident read path preserves keyboard, URL, and back state", async 
   await page.keyboard.press("Enter");
   await expect.poll(() => page.getByTestId("app-main").evaluate((main) => main.contains(document.activeElement))).toBe(true);
 
-  await expect(page.getByTestId("incident-results").locator("tbody tr")).toHaveCount(3);
+  await expect(page.getByTestId("incident-results").getByTestId("incident-row-summary")).toHaveCount(3);
   await page.getByLabel("服务").fill("checkout-api");
   await page.getByTestId("incident-filter-apply").click();
   await expect(page).toHaveURL(/service=checkout-api/);
 
-  await page.getByTestId("incident-row-link").first().click();
-  await expect(page.locator(".incident-detail-view h1")).toBeFocused();
+  await page.getByTestId("incident-row-summary").first().click();
+  await expect(page.getByRole("link", { name: "打开完整 Incident 详情" })).toBeVisible();
+  await page.getByRole("link", { name: "打开完整 Incident 详情" }).click();
+  await expect(page.locator(".incident-detail-view h1")).toBeVisible();
   await page.goBack();
-  await expect(page.getByTestId("incident-results").locator("tbody tr")).toHaveCount(3);
+  await expect(page.getByTestId("incident-results").getByTestId("incident-row-summary")).toHaveCount(3);
   await expect(page.getByLabel("服务")).toHaveValue("checkout-api");
   expect(mutations).toEqual([]);
   browser.expectClean();
@@ -44,20 +46,22 @@ test("stable Incident read path preserves keyboard, URL, and back state", async 
 test("closed Global Agent stays idle while Notification SSE remains independent", async ({ page }) => {
   const requests: string[] = [];
   const mutations: string[] = [];
+  const agentEventStreamRequested = () => requests.some((url) =>
+    /\/api\/v1\/agent\/consultations\/[^/]+\/events(?:\?|$)/.test(url));
   page.on("request", (outgoing) => {
     requests.push(outgoing.url());
     if (!new Set(["GET", "HEAD", "OPTIONS"]).has(outgoing.method())) mutations.push(`${outgoing.method()} ${outgoing.url()}`);
   });
 
-  await page.goto("/incidents?e2e=agent-lifecycle", { waitUntil: "domcontentloaded" });
+  await page.goto("/overview?e2e=agent-lifecycle", { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(500);
-  expect(requests.some((url) => url.includes("/api/v1/agent/"))).toBe(false);
+  expect(agentEventStreamRequested()).toBe(false);
   expect(requests.some((url) => url.includes("/api/v1/notification-events"))).toBe(true);
 
-  await page.getByRole("button", { name: "打开全局 Agent 面板" }).click();
+  await page.getByRole("button", { name: "在 Dock 中打开" }).click();
   await expect(page.getByTestId("global-agent-drawer")).toBeVisible();
-  await expect.poll(() => requests.some((url) => url.includes("/api/v1/agent/"))).toBe(true);
-  await page.getByRole("button", { name: "关闭 Agent 面板" }).click();
+  await expect.poll(agentEventStreamRequested).toBe(true);
+  await page.getByRole("button", { name: "关闭 Agent Dock" }).click();
   await expect(page.getByTestId("global-agent-drawer")).toBeHidden();
   expect(mutations).toEqual([]);
 });
