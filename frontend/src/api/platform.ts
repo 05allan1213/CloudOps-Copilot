@@ -1,6 +1,8 @@
 import { getJSON, postJSON } from "./client";
 import type { TopologySnapshot } from "./infrastructure";
 
+const settingsValidationTimeoutMS = 70_000;
+
 export type ProviderIdentity =
   | "llm"
   | "kubernetes"
@@ -205,11 +207,20 @@ export function getStorageStatus(signal?: AbortSignal): Promise<StorageStatus> {
 }
 
 export function validateSettings(draft: ConfigurationDraft): Promise<ConfigurationValidation> {
-  return postJSON("/api/v1/settings/validate", draft);
+  return postJSON("/api/v1/settings/validate", draft, { timeout: settingsValidationTimeoutMS });
 }
 
-export function applyConfiguration(validationID: string, draft: ConfigurationDraft): Promise<ConfigurationRevision> {
-  return postJSON("/api/v1/configuration-revisions", { validation_id: validationID, draft });
+export function applyConfiguration(
+  validationID: string,
+  draft: ConfigurationDraft,
+  expectedActiveRevision: { id: string; hash: string },
+): Promise<ConfigurationRevision> {
+  return postJSON("/api/v1/configuration-revisions", {
+    validation_id: validationID,
+    expected_active_revision_id: expectedActiveRevision.id,
+    expected_active_revision_hash: expectedActiveRevision.hash,
+    draft,
+  });
 }
 
 export function createSecret(input: { provider: ProviderIdentity; purpose: string; value: string }): Promise<SecretVersion> {
@@ -228,11 +239,15 @@ export function configurationDraft(revision: ConfigurationRevision): Configurati
   const scopes = revision.scopes?.length ? revision.scopes : [revision.scope];
   return {
     summary: revision.summary,
-    general: structuredClone(revision.general),
-    scope: structuredClone(revision.scope),
-    scopes: structuredClone(scopes),
-    providers: structuredClone(revision.providers),
-    escalation_policies: structuredClone(revision.escalation_policies ?? []),
-    secret_references: structuredClone(revision.secret_references),
+    general: cloneJSON(revision.general),
+    scope: cloneJSON(revision.scope),
+    scopes: cloneJSON(scopes),
+    providers: cloneJSON(revision.providers),
+    escalation_policies: cloneJSON(revision.escalation_policies ?? []),
+    secret_references: cloneJSON(revision.secret_references),
   };
+}
+
+function cloneJSON<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
 }

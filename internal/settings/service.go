@@ -14,7 +14,10 @@ import (
 	"github.com/google/uuid"
 )
 
-const validationLifetime = 10 * time.Minute
+const (
+	validationLifetime          = 10 * time.Minute
+	maximumProviderProbeTimeout = 60 * time.Second
+)
 
 type Service struct {
 	db             *sql.DB
@@ -42,7 +45,7 @@ func NewService(db *sql.DB, dataDir string, bootstrap BootstrapDiagnostics) (*Se
 	}
 	return &Service{
 		db: db, dataDir: dataDir, bootstrap: bootstrap,
-		now: time.Now, httpTimeout: 5 * time.Second,
+		now: time.Now, httpTimeout: maximumProviderProbeTimeout,
 		providerProbes: make(map[Provider]func(context.Context, string) (string, error)),
 	}, nil
 }
@@ -59,6 +62,10 @@ func (s *Service) SetProviderProbe(provider Provider, probe func(context.Context
 func (s *Service) Validate(ctx context.Context, input Draft) (Validation, error) {
 	draft, fieldErrors, draftHash := normalizeDraft(input)
 	fieldErrors = append(fieldErrors, s.validateSecretReferences(ctx, draft)...)
+	historicalRestore, err := s.successfullyObservedHash(ctx, draftHash)
+	if err != nil {
+		return Validation{}, err
+	}
 	providerResults := make([]ProviderResult, 0, len(draft.Providers))
 	for _, provider := range draft.Providers {
 		if !provider.Enabled {
@@ -75,7 +82,7 @@ func (s *Service) Validate(ctx context.Context, input Draft) (Validation, error)
 			result = s.testProvider(ctx, provider, draft.SecretRefs, draft.Scope.ClusterID)
 		}
 		providerResults = append(providerResults, result)
-		if result.State != "available" {
+		if result.State != "available" && !historicalProviderRestoreAllowed(provider.Provider, historicalRestore) {
 			if len(clusterErrors) > 0 {
 				fieldErrors = append(fieldErrors, clusterErrors...)
 			} else {
@@ -101,6 +108,27 @@ func (s *Service) Validate(ctx context.Context, input Draft) (Validation, error)
 		return Validation{}, err
 	}
 	return validation, nil
+}
+
+func (s *Service) successfullyObservedHash(ctx context.Context, hash string) (bool, error) {
+	var exists bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(
+	SELECT 1
+	FROM configuration_revisions AS revision
+	JOIN configuration_activation_tasks AS task ON task.configuration_revision_id = revision.id
+	WHERE revision.configuration_hash = ?
+	  AND task.status = 'succeeded'
+	  AND task.observed_hash = revision.configuration_hash
+	  AND task.observed_at IS NOT NULL
+)`, hash).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("check previously observed configuration hash: %w", err)
+	}
+	return exists, nil
+}
+
+func historicalProviderRestoreAllowed(provider Provider, historicalRestore bool) bool {
+	return historicalRestore && (provider == ProviderGitHub || provider == ProviderArgoCD)
 }
 
 func (s *Service) persistValidation(ctx context.Context, validation Validation, draft Draft) error {
@@ -129,10 +157,15 @@ created_by, created_at, expires_at
 	return nil
 }
 
-func (s *Service) Apply(ctx context.Context, validationID string, input Draft) (Revision, error) {
+func (s *Service) Apply(ctx context.Context, validationID string, input Draft, expected RevisionExpectation) (Revision, error) {
 	draft, fieldErrors, draftHash := normalizeDraft(input)
 	if len(fieldErrors) != 0 || draftHash == "" {
 		return Revision{}, errors.Join(ErrInvalidDraft, fieldErrorsError(fieldErrors))
+	}
+	expected.ID = strings.TrimSpace(expected.ID)
+	expected.Hash = strings.TrimSpace(expected.Hash)
+	if len(expected.ID) != 36 || len(expected.Hash) != 64 {
+		return Revision{}, ErrInvalidDraft
 	}
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
@@ -144,12 +177,13 @@ func (s *Service) Apply(ctx context.Context, validationID string, input Draft) (
 	var valid bool
 	var expiresAt time.Time
 	var appliedRevisionPublicID string
+	var providerResultsJSON []byte
 	if err := tx.QueryRowContext(ctx, `SELECT validation.draft_hash, validation.valid,
-validation.expires_at, COALESCE(revision.public_id, '')
+validation.expires_at, COALESCE(revision.public_id, ''), validation.provider_results_json
 FROM configuration_validations AS validation
 LEFT JOIN configuration_revisions AS revision ON revision.id = validation.applied_revision_id
 WHERE validation.public_id = ? FOR UPDATE`, strings.TrimSpace(validationID)).
-		Scan(&validatedHash, &valid, &expiresAt, &appliedRevisionPublicID); err != nil {
+		Scan(&validatedHash, &valid, &expiresAt, &appliedRevisionPublicID, &providerResultsJSON); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Revision{}, ErrNotFound
 		}
@@ -168,14 +202,27 @@ WHERE validation.public_id = ? FOR UPDATE`, strings.TrimSpace(validationID)).
 	if !expiresAt.After(s.now().UTC()) {
 		return Revision{}, ErrValidationExpired
 	}
+	var providerResults []ProviderResult
+	if err := json.Unmarshal(providerResultsJSON, &providerResults); err != nil {
+		return Revision{}, fmt.Errorf("decode validated provider results: %w", err)
+	}
 	if errs := s.validateSecretReferencesWith(ctx, tx, draft); len(errs) != 0 {
 		return Revision{}, errors.Join(ErrInvalidDraft, fieldErrorsError(errs))
 	}
 
 	var activeRevisionID uint64
-	if err := tx.QueryRowContext(ctx, `SELECT configuration_revision_id
-FROM active_configuration WHERE singleton_id = 1 FOR UPDATE`).Scan(&activeRevisionID); err != nil {
+	var activeRevisionPublicID, activeRevisionHash string
+	if err := tx.QueryRowContext(ctx, `SELECT active.configuration_revision_id,
+	revision.public_id, revision.configuration_hash
+	FROM active_configuration AS active
+	JOIN configuration_revisions AS revision ON revision.id = active.configuration_revision_id
+	WHERE active.singleton_id = 1 FOR UPDATE`).Scan(
+		&activeRevisionID, &activeRevisionPublicID, &activeRevisionHash,
+	); err != nil {
 		return Revision{}, fmt.Errorf("lock active configuration: %w", err)
+	}
+	if activeRevisionPublicID != expected.ID || activeRevisionHash != expected.Hash {
+		return Revision{}, ErrRevisionChanged
 	}
 	var nextNumber uint64
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(revision_number), 0) + 1 FROM configuration_revisions`).Scan(&nextNumber); err != nil {
@@ -275,13 +322,9 @@ configuration_revision_id, provider, purpose, secret_version_id
 		return Revision{}, fmt.Errorf("activate operational scope: %w", err)
 	}
 	for _, provider := range draft.Providers {
-		state := "disabled"
-		detail := "Provider is disabled in the active revision"
-		var checkedAt any
-		if provider.Enabled {
-			state = "available"
-			detail = "Provider validation passed before activation"
-			checkedAt = s.now().UTC()
+		state, detail, checkedAt, ok := validatedProviderHealth(provider, providerResults)
+		if !ok {
+			return Revision{}, ErrValidationStale
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE provider_health
 SET configuration_revision_id = ?, state = ?, detail = ?, checked_at = ?, updated_at = NOW(6)
@@ -311,6 +354,26 @@ SET applied_revision_id = ? WHERE public_id = ? AND applied_revision_id IS NULL`
 		return Revision{}, fmt.Errorf("commit configuration apply: %w", err)
 	}
 	return s.Revision(ctx, publicID)
+}
+
+func validatedProviderHealth(config ProviderConfiguration, results []ProviderResult) (string, string, any, bool) {
+	if !config.Enabled {
+		return "disabled", "Provider is disabled in the active revision", nil, true
+	}
+	for _, result := range results {
+		if result.Provider != config.Provider {
+			continue
+		}
+		if result.State != "available" && result.State != "unavailable" && result.State != "partial" && result.State != "not_configured" {
+			return "", "", nil, false
+		}
+		var checkedAt any
+		if result.CheckedAt != nil {
+			checkedAt = *result.CheckedAt
+		}
+		return result.State, result.Detail, checkedAt, true
+	}
+	return "", "", nil, false
 }
 
 func (s *Service) ActivateScope(ctx context.Context, publicID string) (OperationalScope, error) {

@@ -40,7 +40,7 @@ func telemetryTestRange() (time.Time, time.Time) {
 func TestPrepareLogQueryEnforcesScopeBoundsAndTailIdentity(t *testing.T) {
 	from, to := telemetryTestRange()
 	request := StartLogQueryRequest{
-		Mode: ModeGuided, Filter: LogFilter{Text: "request failed", Levels: []string{"error", "warn"}},
+		Mode: ModeGuided, Filter: LogFilter{Text: "request failed", Levels: []string{"error", "warn"}, ScenarioID: "scenario-20260803104650-1133f132"},
 		ClusterID: "cloudops-local", Namespace: "cloudops-system", Resource: telemetryTestResource(),
 		From: from, To: to, Limit: 100, Tail: true,
 	}
@@ -51,7 +51,7 @@ func TestPrepareLogQueryEnforcesScopeBoundsAndTailIdentity(t *testing.T) {
 	if prepared.Kind != "logs_tail" || prepared.Bounds.MaxResults != 100 {
 		t.Fatalf("prepared=%#v", prepared)
 	}
-	for _, exact := range []string{"cloudops.cluster_id", "cloudops-local", "kubernetes.namespace", "cloudops-system", "kubernetes.deployment.name", "cloudops-api"} {
+	for _, exact := range []string{"cloudops.cluster_id", "cloudops-local", "kubernetes.namespace", "cloudops-system", "kubernetes.deployment.name", "cloudops-api", "scenario_id", "scenario-20260803104650-1133f132"} {
 		if !strings.Contains(prepared.Query, exact) {
 			t.Fatalf("normalized query %q is missing %q", prepared.Query, exact)
 		}
@@ -62,6 +62,11 @@ func TestPrepareLogQueryEnforcesScopeBoundsAndTailIdentity(t *testing.T) {
 		t.Fatalf("unsupported level error=%v", err)
 	}
 	request.Filter.Levels = nil
+	request.Filter.ScenarioID = "scenario-INVALID"
+	if _, err := prepareLogQuery(request, telemetryTestRevision()); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("invalid scenario_id error=%v", err)
+	}
+	request.Filter.ScenarioID = ""
 	request.To = request.From.Add(2 * time.Hour)
 	if _, err := prepareLogQuery(request, telemetryTestRevision()); !errors.Is(err, ErrBoundExceeded) {
 		t.Fatalf("lookback error=%v", err)

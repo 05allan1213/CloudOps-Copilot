@@ -35,6 +35,39 @@ func TestMySQLRepositoryQueueFencing(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	t.Run("explicit Configuration Revision does not drift to active", func(t *testing.T) {
+		incidentID := insertIntegrationIncident(t, ctx, db)
+		var activeRevisionID uint64
+		if err := db.QueryRowContext(ctx, `SELECT configuration_revision_id FROM active_configuration WHERE singleton_id=1`).Scan(&activeRevisionID); err != nil {
+			t.Fatal(err)
+		}
+		result, err := db.ExecContext(ctx, `INSERT INTO configuration_revisions
+(public_id,revision_number,configuration_hash,summary,query_max_lookback_seconds,query_max_results,
+ telemetry_retention_days,browser_notifications_enabled,automatic_escalation_enabled,created_by)
+SELECT ?,MAX(revision_number)+1,?,'async explicit revision test',86400,1000,30,0,0,'integration-test'
+FROM configuration_revisions`, uuid.NewString(), integrationHash(fmt.Sprintf("explicit-revision:%d", incidentID)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		explicitRevisionID, err := result.LastInsertId()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if uint64(explicitRevisionID) == activeRevisionID {
+			t.Fatal("explicit test revision unexpectedly became active")
+		}
+
+		task := integrationTask(incidentID, "explicit-revision", 3)
+		task.ConfigurationRevisionID = uint64(explicitRevisionID)
+		created, err := repository.Enqueue(ctx, task)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if created.ConfigurationRevisionID != uint64(explicitRevisionID) {
+			t.Fatalf("task revision=%d want explicit revision=%d (active=%d)", created.ConfigurationRevisionID, explicitRevisionID, activeRevisionID)
+		}
+	})
+
 	t.Run("concurrent workers claim distinct rows with SKIP LOCKED", func(t *testing.T) {
 		incidentID := insertIntegrationIncident(t, ctx, db)
 		const count = 12

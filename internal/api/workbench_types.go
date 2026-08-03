@@ -19,6 +19,8 @@ type RemediationPlanView struct {
 	IncidentVersion          uint64                   `json:"incident_version"`
 	CreatedByAgentRunID      string                   `json:"created_by_agent_run_id"`
 	OperationType            string                   `json:"operation_type"`
+	SourceType               string                   `json:"source_type"`
+	RuntimeBaseHash          string                   `json:"runtime_base_hash"`
 	RiskLevel                string                   `json:"risk_level"`
 	PatchSummary             string                   `json:"patch_summary"`
 	RollbackPlan             string                   `json:"rollback_plan"`

@@ -1,0 +1,25 @@
+{
+  "screenshots": [
+    "review/incident-inspector-1920x1080-light.png",
+    "review/monitoring-1920x1080-light.png",
+    "review/atlas-1920x1080-light.png",
+    "review/incident-inspector-1920x1080-dark.png",
+    "review/monitoring-1920x1080-dark.png",
+    "review/atlas-1920x1080-dark.png",
+    "review/incident-inspector-1440x900-light.png",
+    "review/monitoring-1440x900-light.png",
+    "review/atlas-1440x900-light.png",
+    "review/incident-inspector-1440x900-dark.png",
+    "review/monitoring-1440x900-dark.png",
+    "review/atlas-1440x900-dark.png",
+    "review/settings-partial-1440x900-light.png",
+    "review/exceptional-states-1440x900-light.png",
+    "review/settings-partial-1440x900-dark.png",
+    "review/exceptional-states-1440x900-dark.png",
+    "review/agent-1280x800-light.png",
+    "review/agent-1024x768-light.png",
+    "review/incident-browser-zoom-125-light.png",
+    "review/incident-browser-zoom-150-light.png",
+    "review/settings-1024x768-text-200-light.png"
+  ]
+}

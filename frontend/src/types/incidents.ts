@@ -272,6 +272,8 @@ export interface RemediationPlanView {
   incident_version: number;
   created_by_agent_run_id: string;
   operation_type: "restore_required_env";
+  source_type: "gitops" | "local_scenario";
+  runtime_base_hash: string;
   risk_level: "low" | "medium" | "high";
   patch_summary: string;
   rollback_plan: string;
@@ -583,7 +585,14 @@ export interface IncidentListQuery {
   to?: string;
   limit?: number;
   cursor?: string;
+  /** Client-owned list presentation state; the API adapter strips these keys. */
+  sort?: IncidentListSort;
+  direction?: IncidentListDirection;
+  selected?: string;
 }
+
+export type IncidentListSort = "severity" | "status" | "updated";
+export type IncidentListDirection = "asc" | "desc";
 
 export type LoadState =
   | "loading"

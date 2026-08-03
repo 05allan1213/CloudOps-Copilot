@@ -38,6 +38,13 @@ const (
 	OperationRestoreRequiredEnv OperationType = "restore_required_env"
 )
 
+type PlanSourceType string
+
+const (
+	PlanSourceGitOps        PlanSourceType = "gitops"
+	PlanSourceLocalScenario PlanSourceType = "local_scenario"
+)
+
 type RiskLevel string
 
 const (
@@ -82,8 +89,10 @@ type RemediationPlan struct {
 	PlanHash           string
 	Status             PlanStatus
 	OperationType      OperationType
+	SourceType         PlanSourceType
 	TargetRepository   string
 	TargetBaseRevision string
+	RuntimeBaseHash    string
 	TargetPath         string
 	Parameters         Parameters
 	EvidenceReferences []string
@@ -146,6 +155,7 @@ type Approval struct {
 	CreatedAt         time.Time
 
 	DecisionSchemaVersion     int
+	PlanSourceType            PlanSourceType
 	IncidentID                uint64
 	CycleNo                   uint64
 	PlanVersion               int

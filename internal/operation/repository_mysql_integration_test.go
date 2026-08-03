@@ -112,7 +112,7 @@ func TestMySQLExactAuthorityLocalExecutionAndInvalidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	devops, err := projection.Workspace(ctx, 50)
-	if err != nil || len(devops.ChangeFreezes) != 1 || len(devops.Executions) != 1 {
+	if err != nil || len(devops.ChangeFreezes) != 1 || len(devops.Executions) != 1 || devops.ChangeFreezes[0].Target != target {
 		t.Fatalf("DevOps projection=%#v error=%v", devops, err)
 	}
 
@@ -267,6 +267,7 @@ WHERE active.singleton_id=1`).Scan(&target.ClusterID, &target.Environment, &name
 		t.Fatalf("namespaces=%v error=%v", namespaces, err)
 	}
 	target.Namespace, target.WorkloadKind, target.WorkloadName = namespaces[0], "Deployment", "cloudops-api"
+	target.ScenarioID = "scenario-operation-integration"
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	alertID := uuid.NewString()
 	suffix := uuid.NewString()

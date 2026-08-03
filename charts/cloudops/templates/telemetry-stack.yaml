@@ -45,6 +45,7 @@ data:
             "message": { "type": "text" },
             "level": { "type": "keyword", "ignore_above": 32 },
             "service": { "type": "keyword", "ignore_above": 256 },
+            "reason": { "type": "keyword", "ignore_above": 128 },
             "trace_id": { "type": "keyword", "ignore_above": 32 },
             "span_id": { "type": "keyword", "ignore_above": 16 },
             "scenario_id": { "type": "keyword", "ignore_above": 128 },
@@ -153,6 +154,8 @@ data:
               to: level
             - from: json.service
               to: service
+            - from: json.reason
+              to: reason
             - from: json.trace_id
               to: trace_id
             - from: json.span_id

@@ -1,17 +1,8 @@
 <script setup lang="ts">
-import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, ref, type Component } from "vue";
-import {
-  Gauge,
-  GitPullRequest,
-  Logs,
-  ScanSearch,
-  Server,
-  Settings,
-  TriangleAlert,
-  X,
-} from "lucide-vue-next";
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch, type Component as VueComponent } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
+import { isApiError } from "../../api/client";
 import {
   getNotifications,
   markAllNotificationsRead,
@@ -19,7 +10,6 @@ import {
   openNotificationStream,
   type OwnerNotification,
 } from "../../api/notifications";
-import { isApiError } from "../../api/client";
 import {
   activateScope,
   getBootstrap,
@@ -27,22 +17,28 @@ import {
   type BootstrapSnapshot,
   type OperationalScope,
 } from "../../api/platform";
-import { mobileMoreNavigation, type NavigationIcon } from "../../navigation";
+import { invalidateQueryDomain, setQueryCacheContext } from "../../composables/queryCache";
+import {
+  activateWorkspaceSectionReveals,
+  consumeWorkspaceRouteEntrance,
+} from "../../composables/workspaceMotion";
+import {
+  AGENT_CONTEXT_EVENT,
+  AGENT_OPEN_EVENT,
+  type AgentOpenRequest,
+  type AgentPageContext,
+} from "../../utils/agentContext";
 import { dispatchOperationalScopeChange, queryForScopeChange } from "../../utils/operationalScope";
-import { openAgentPanel } from "../../utils/agentContext";
-import GlobalAgentPanel from "../agent/GlobalAgentPanel.vue";
 import AppHeader from "./AppHeader.vue";
 import AppSidebar from "./AppSidebar.vue";
-import MobileBottomNav from "./MobileBottomNav.vue";
 import NotificationInbox from "./NotificationInbox.vue";
 
 const route = useRoute();
 const router = useRouter();
 const sidebarCollapsed = ref(readCollapsedPreference());
+const compactDesktop = ref(readCompactDesktop());
 const notificationsOpen = ref(false);
-const moreOpen = ref(false);
 const notificationTrigger = ref<HTMLElement | null>(null);
-const moreTrigger = ref<HTMLElement | null>(null);
 const notifications = ref<OwnerNotification[]>([]);
 const unreadCount = ref(0);
 const notificationLoading = ref(false);
@@ -53,29 +49,56 @@ const selectedScopeID = ref("");
 const scopeSwitching = ref(false);
 const scopeSwitchError = ref("");
 const streamState = ref<"connected" | "reconnecting" | "stopped">("stopped");
+const online = ref(typeof navigator === "undefined" || navigator.onLine);
+const routeBoundary = ref<HTMLElement | null>(null);
+const routeFirstVisit = ref(consumeWorkspaceRouteEntrance(route.path));
+const agentPanelRequested = ref(false);
+let agentPanelModule: Promise<{ default: VueComponent }> | undefined;
+const loadAgentPanel = () => (agentPanelModule ??= import("../agent/GlobalAgentPanel.vue"));
+const LazyGlobalAgentPanel = defineAsyncComponent(() => loadAgentPanel().then((module) => module.default));
+let pendingAgentOpen: AgentOpenRequest | null = null;
+let latestAgentContext: AgentPageContext | null = null;
+let compactDesktopQuery: MediaQueryList | undefined;
 let closeNotificationStream: (() => void) | undefined;
 let streamStartedAt = 0;
+let headingObserver: MutationObserver | undefined;
+let headingObserverTimeout: number | undefined;
+let disposeSectionReveals: (() => void) | undefined;
 
-const pageTitle = computed(() => (typeof route.meta.title === "string" ? route.meta.title : ""));
 const isFullBleed = computed(() => route.meta.fullBleed === true);
-const moreIcons: Partial<Record<NavigationIcon, Component>> = {
-  Server: markRaw(Server),
-  Gauge: markRaw(Gauge),
-  Logs: markRaw(Logs),
-  ScanSearch: markRaw(ScanSearch),
-  GitPullRequest: markRaw(GitPullRequest),
-  Settings: markRaw(Settings),
+const isFixedWorkspace = computed(() => route.meta.fixedWorkspace === true);
+const sidebarRail = computed(() => sidebarCollapsed.value || compactDesktop.value);
+const notificationSlideoverUI = {
+  overlay: "notification-slideover-overlay",
+  content: "notification-slideover",
+  header: "notification-slideover-header",
+  body: "notification-slideover-body",
 };
 
 function readCollapsedPreference(): boolean {
   try {
-    return window.localStorage.getItem("cloudops.sidebar.collapsed") === "true";
+    return typeof window !== "undefined" && window.localStorage.getItem("cloudops.sidebar.collapsed") === "true";
   } catch {
     return false;
   }
 }
 
+function readCompactDesktop(): boolean {
+  return typeof window !== "undefined" && window.matchMedia("(max-width: 1199px)").matches;
+}
+
+function operationalScopeIdentity(scope: OperationalScope): string {
+  return [scope.id, scope.cluster_id, scope.environment, [...scope.namespaces].sort().join(",")]
+    .filter(Boolean)
+    .join(":");
+}
+
+function updateCompactDesktop(event: MediaQueryListEvent | MediaQueryList) {
+  compactDesktop.value = event.matches;
+}
+
 function toggleSidebar() {
+  if (compactDesktop.value) return;
   sidebarCollapsed.value = !sidebarCollapsed.value;
   try {
     window.localStorage.setItem("cloudops.sidebar.collapsed", String(sidebarCollapsed.value));
@@ -89,20 +112,22 @@ function openNotifications(trigger: HTMLElement) {
   notificationsOpen.value = true;
 }
 
-function openMore(trigger: HTMLElement) {
-  moreTrigger.value = trigger;
-  moreOpen.value = true;
+function focusNotificationHeading() {
+  void nextTick(() => {
+    const heading = document.querySelector<HTMLElement>("#notification-inbox-title");
+    if (!heading) return;
+    heading.setAttribute("tabindex", "-1");
+    heading.focus({ preventScroll: true });
+  });
 }
 
 function restoreNotificationFocus() {
-  notificationTrigger.value?.focus();
-}
-
-function restoreMoreFocus() {
-  moreTrigger.value?.focus();
+  if (notificationTrigger.value?.isConnected) notificationTrigger.value.focus({ preventScroll: true });
+  notificationTrigger.value = null;
 }
 
 async function refreshNotifications() {
+  invalidateQueryDomain("notifications");
   notificationLoading.value = true;
   notificationError.value = "";
   try {
@@ -130,6 +155,7 @@ async function readPlatformContext(): Promise<BootstrapSnapshot> {
   selectedScopeID.value = next.active_scope.id
     ?? registeredScopes.find((scope) => scope.cluster_id === next.active_scope.cluster_id)?.id
     ?? "";
+  setQueryCacheContext({ operationalScope: operationalScopeIdentity(next.active_scope) });
   return next;
 }
 
@@ -160,6 +186,7 @@ function applyLocalScope(scope: OperationalScope) {
   const activeScope = { ...scope, active: true };
   scopes.value = scopes.value.map((item) => ({ ...item, active: item.id === activeScope.id }));
   selectedScopeID.value = activeScope.id ?? "";
+  setQueryCacheContext({ operationalScope: operationalScopeIdentity(activeScope) });
   if (bootstrap.value) {
     bootstrap.value = {
       ...bootstrap.value,
@@ -222,9 +249,9 @@ function receiveNotification(item: OwnerNotification) {
 function mirrorOwnerNotification(item: OwnerNotification) {
   const createdAt = new Date(item.created_at).getTime();
   const enabled = bootstrap.value?.active_revision.general.browser_notifications_enabled === true;
-  if (!enabled || !document.hidden || (item.severity !== "P1" && item.severity !== "P2") ||
-      !Number.isFinite(createdAt) || createdAt < streamStartedAt || !("Notification" in window) ||
-      window.Notification.permission !== "granted") return;
+  if (!enabled || !document.hidden || (item.severity !== "P1" && item.severity !== "P2")
+      || !Number.isFinite(createdAt) || createdAt < streamStartedAt || !("Notification" in window)
+      || window.Notification.permission !== "granted") return;
   new window.Notification(`CloudOps ${item.severity}`, {
     body: item.reason,
     tag: `cloudops-${item.source_type}-${item.source_id}-${item.source_state}`,
@@ -256,16 +283,86 @@ async function readAllNotifications() {
   }
 }
 
+function stopHeadingObserver() {
+  headingObserver?.disconnect();
+  headingObserver = undefined;
+  if (headingObserverTimeout !== undefined) window.clearTimeout(headingObserverTimeout);
+  headingObserverTimeout = undefined;
+}
+
 function focusRouteHeading() {
+  stopHeadingObserver();
   void nextTick(() => {
-    const heading = document.querySelector<HTMLElement>("#main-content h1");
-    if (!heading) return;
-    if (!heading.hasAttribute("tabindex")) heading.setAttribute("tabindex", "-1");
-    heading.focus({ preventScroll: true });
+    const focusHeading = () => {
+      const heading = document.querySelector<HTMLElement>("#main-content > :not(.fade-leave-active):not(.fade-leave-to) h1");
+      if (!heading) return false;
+      if (!heading.hasAttribute("tabindex")) heading.setAttribute("tabindex", "-1");
+      heading.focus({ preventScroll: true });
+      return true;
+    };
+    if (focusHeading()) return;
+    const main = document.querySelector<HTMLElement>("#main-content");
+    if (!main) return;
+    headingObserver = new MutationObserver(() => {
+      if (focusHeading()) stopHeadingObserver();
+    });
+    headingObserver.observe(main, { childList: true, subtree: true });
+    headingObserverTimeout = window.setTimeout(stopHeadingObserver, 2_000);
   });
 }
 
+function startRoutePresentation() {
+  focusRouteHeading();
+  disposeSectionReveals?.();
+  disposeSectionReveals = routeBoundary.value
+    ? activateWorkspaceSectionReveals(routeBoundary.value, route.path, routeFirstVisit.value)
+    : undefined;
+}
+
+function stopRoutePresentation() {
+  disposeSectionReveals?.();
+  disposeSectionReveals = undefined;
+}
+
+function captureAgentContext(event: Event) {
+  latestAgentContext = (event as CustomEvent<AgentPageContext | null>).detail ?? null;
+}
+
+function requestAgentPanel(event: Event) {
+  if (agentPanelRequested.value) return;
+  const request = (event as CustomEvent<AgentOpenRequest>).detail ?? {};
+  pendingAgentOpen = { ...request, context: request.context ?? latestAgentContext ?? undefined };
+  void loadAgentPanel().then(() => { agentPanelRequested.value = true; });
+}
+
+function replayPendingAgentEvent() {
+  if (latestAgentContext) {
+    window.dispatchEvent(new CustomEvent(AGENT_CONTEXT_EVENT, { detail: latestAgentContext }));
+  }
+  if (pendingAgentOpen) {
+    const request = pendingAgentOpen;
+    pendingAgentOpen = null;
+    window.dispatchEvent(new CustomEvent(AGENT_OPEN_EVENT, { detail: request }));
+  }
+}
+
+function updateConnectivity() {
+  online.value = navigator.onLine;
+}
+
+watch(() => route.path, (path) => {
+  stopRoutePresentation();
+  routeFirstVisit.value = consumeWorkspaceRouteEntrance(path);
+}, { flush: "sync" });
+
 onMounted(async () => {
+  compactDesktopQuery = window.matchMedia("(max-width: 1199px)");
+  updateCompactDesktop(compactDesktopQuery);
+  compactDesktopQuery.addEventListener("change", updateCompactDesktop);
+  window.addEventListener("online", updateConnectivity);
+  window.addEventListener("offline", updateConnectivity);
+  window.addEventListener(AGENT_CONTEXT_EVENT, captureAgentContext);
+  window.addEventListener(AGENT_OPEN_EVENT, requestAgentPanel);
   await Promise.all([refreshNotifications(), refreshBootstrap()]);
   streamStartedAt = Date.now();
   streamState.value = "connected";
@@ -275,128 +372,253 @@ onMounted(async () => {
     streamState.value = "connected";
   });
   window.addEventListener("cloudops:configuration-applied", handleConfigurationApplied);
+  await nextTick();
+  startRoutePresentation();
 });
 
 onBeforeUnmount(() => {
+  stopHeadingObserver();
+  stopRoutePresentation();
+  compactDesktopQuery?.removeEventListener("change", updateCompactDesktop);
   closeNotificationStream?.();
   streamState.value = "stopped";
   window.removeEventListener("cloudops:configuration-applied", handleConfigurationApplied);
+  window.removeEventListener("online", updateConnectivity);
+  window.removeEventListener("offline", updateConnectivity);
+  window.removeEventListener(AGENT_CONTEXT_EVENT, captureAgentContext);
+  window.removeEventListener(AGENT_OPEN_EVENT, requestAgentPanel);
 });
 </script>
 
 <template>
-  <a class="skip-link" href="#main-content">跳到主要内容</a>
+  <a
+    class="skip-link"
+    href="#main-content"
+  >跳到主要内容</a>
   <div class="app-shell">
-    <AppSidebar :collapsed="sidebarCollapsed" @toggle="toggleSidebar" />
+    <AppSidebar
+      :collapsed="sidebarRail"
+      :collapse-locked="compactDesktop"
+      @toggle="toggleSidebar"
+    />
     <div class="app-frame">
+      <div
+        class="shell-top-wash"
+        aria-hidden="true"
+      />
       <AppHeader
-        :page-title="pageTitle"
         :unread-count="unreadCount"
+        :provider-health="bootstrap?.provider_health"
+        :scenario-state="bootstrap?.scenario_state ?? 'inactive'"
         :active-scope="bootstrap?.active_scope"
         :scopes="scopes"
         :selected-scope-id="selectedScopeID"
         :scope-switching="scopeSwitching"
-        :provider-health="bootstrap?.provider_health"
-        :scenario-state="bootstrap?.scenario_state ?? 'inactive'"
-        @change-scope="changeActiveScope"
-        @open-agent="openAgentPanel()"
         @open-notifications="openNotifications"
+        @change-scope="changeActiveScope"
       />
-      <div v-if="scopeSwitchError" class="scope-switch-alert" role="alert" aria-live="polite">
-        <TriangleAlert :size="18" aria-hidden="true" />
-        <span>{{ scopeSwitchError }}</span>
-        <button type="button" aria-label="关闭集群切换错误" title="关闭" @click="scopeSwitchError = ''">
-          <X :size="17" aria-hidden="true" />
-        </button>
-      </div>
-      <main id="main-content" class="app-main" :class="{ 'app-main--full-bleed': isFullBleed }">
+      <UAlert
+        v-if="scopeSwitchError"
+        class="scope-switch-alert"
+        color="error"
+        variant="soft"
+        icon="i-lucide-triangle-alert"
+        title="运行范围切换异常"
+        :description="scopeSwitchError"
+        :close="{ 'aria-label': '关闭集群切换错误' }"
+        role="alert"
+        aria-live="polite"
+        @update:open="scopeSwitchError = ''"
+      />
+      <UAlert
+        v-if="!online"
+        class="offline-alert"
+        color="warning"
+        variant="soft"
+        icon="i-lucide-wifi-off"
+        title="当前处于离线只读状态"
+        description="已加载内容保持可读；所有写请求由客户端阻止，恢复网络后需重新读取服务端状态。"
+        role="status"
+      />
+      <main
+        id="main-content"
+        class="app-main"
+        data-testid="app-main"
+        tabindex="-1"
+        :class="{
+          'app-main--full-bleed': isFullBleed,
+          'app-main--fixed-workspace': isFixedWorkspace,
+        }"
+      >
         <RouterView v-slot="{ Component }">
-          <Transition name="fade" @after-enter="focusRouteHeading">
-            <component :is="Component" :key="route.path" />
+          <Transition
+            :css="false"
+            @before-leave="stopRoutePresentation"
+            @after-enter="startRoutePresentation"
+          >
+            <div
+              ref="routeBoundary"
+              :key="route.path"
+              class="route-ui-boundary"
+              :data-route-motion="routeFirstVisit ? 'first-visit' : 'cached-return'"
+            >
+              <component :is="Component" />
+            </div>
           </Transition>
         </RouterView>
       </main>
     </div>
+    <component
+      :is="LazyGlobalAgentPanel"
+      v-if="agentPanelRequested"
+      @vue:mounted="replayPendingAgentEvent"
+    />
   </div>
 
-  <MobileBottomNav @open-more="openMore" />
-  <GlobalAgentPanel />
-
-  <el-drawer
-    v-model="notificationsOpen"
-    class="notification-drawer"
-    direction="rtl"
-    size="min(94vw, 440px)"
+  <USlideover
+    v-model:open="notificationsOpen"
     title="Owner 通知"
-    :append-to-body="true"
-    :lock-scroll="true"
-    :close-on-click-modal="true"
-    :close-on-press-escape="true"
-    @closed="restoreNotificationFocus"
+    description="实时事件、待处理状态与可信上下文入口"
+    side="right"
+    :close="{ 'aria-label': '关闭通知收件箱' }"
+    :ui="notificationSlideoverUI"
+    @after:enter="focusNotificationHeading"
+    @after:leave="restoreNotificationFocus"
   >
-    <NotificationInbox
-      :items="notifications"
-      :unread-count="unreadCount"
-      :loading="notificationLoading"
-      :error="notificationError"
-      :stream-state="streamState"
-      @refresh="refreshNotifications"
-      @read="readNotification"
-      @read-all="readAllNotifications"
-      @navigate="notificationsOpen = false"
-    />
-  </el-drawer>
-
-  <el-drawer
-    v-model="moreOpen"
-    class="more-workspaces-sheet"
-    direction="btt"
-    size="min(72dvh, 520px)"
-    title="更多工作区"
-    :append-to-body="true"
-    :lock-scroll="true"
-    :close-on-click-modal="true"
-    :close-on-press-escape="true"
-    @closed="restoreMoreFocus"
-  >
-    <nav class="more-workspaces" aria-label="更多工作区">
-      <RouterLink
-        v-for="item in mobileMoreNavigation"
-        :key="item.index"
-        :to="item.index"
-        @click="moreOpen = false"
-      >
-        <component :is="moreIcons[item.icon]" :size="21" aria-hidden="true" />
-        <span>{{ item.title }}</span>
-      </RouterLink>
-    </nav>
-  </el-drawer>
+    <template #body>
+      <NotificationInbox
+        :items="notifications"
+        :unread-count="unreadCount"
+        :loading="notificationLoading"
+        :error="notificationError"
+        :stream-state="streamState"
+        @refresh="refreshNotifications"
+        @read="readNotification"
+        @read-all="readAllNotifications"
+        @navigate="notificationsOpen = false"
+      />
+    </template>
+  </USlideover>
 </template>
 
 <style scoped>
-.skip-link { position: fixed; top: var(--co-space-2); left: var(--co-space-2); z-index: var(--co-z-skip-link); padding: var(--co-space-3) var(--co-space-4); border-radius: var(--co-radius-control); color: var(--co-text-on-action); background: var(--co-action-primary); box-shadow: var(--co-shadow-overlay); transform: translateY(calc(-100% - var(--co-space-4))); transition: transform var(--co-motion-fast) var(--co-ease-out); }
-.skip-link:focus-visible { transform: translateY(0); }
-.scope-switch-alert { position: fixed; top: calc(var(--co-header-height) + var(--co-space-3)); right: max(var(--co-space-4), env(safe-area-inset-right)); z-index: var(--co-z-overlay); display: grid; width: min(440px, calc(100vw - 32px)); min-height: 48px; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--co-space-3); padding: var(--co-space-3); border: 1px solid var(--co-status-critical-border); border-radius: var(--co-radius-panel); color: var(--co-status-critical-fg); background: var(--co-status-critical-bg); box-shadow: var(--co-shadow-overlay); overflow-wrap: anywhere; font-size: 12px; }
-.scope-switch-alert button { display: grid; width: 36px; height: 36px; place-items: center; padding: 0; border: 0; border-radius: var(--co-radius-control); color: inherit; background: transparent; cursor: pointer; }
-.scope-switch-alert button:hover { background: var(--co-bg-hover); }
-.app-shell { display: flex; min-width: 0; min-height: 100dvh; align-items: flex-start; background: var(--co-bg-canvas); }
-.app-frame { flex: 1; min-width: 0; min-height: 100dvh; }
-.app-main { min-width: 0; min-height: calc(100dvh - var(--co-header-height)); padding: clamp(16px, 2vw, 32px) max(clamp(16px, 2vw, 32px), env(safe-area-inset-right)) max(clamp(24px, 3vw, 48px), env(safe-area-inset-bottom)) max(clamp(16px, 2vw, 32px), env(safe-area-inset-left)); background: var(--co-bg-canvas); }
-.app-main--full-bleed { height: calc(100dvh - var(--co-header-height)); padding: 0; overflow: hidden; }
-.more-workspaces { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--co-space-3); }
-.more-workspaces a { display: flex; min-width: 0; min-height: 64px; align-items: center; gap: var(--co-space-3); padding: 0 var(--co-space-4); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-panel); color: var(--co-text-secondary); background: var(--co-bg-surface); font-weight: 700; }
-.more-workspaces a:hover { border-color: var(--co-border-strong); color: var(--co-text-primary); background: var(--co-bg-hover); }
-.more-workspaces a.router-link-active { border-color: var(--co-status-info-border); color: var(--co-action-primary); background: var(--co-bg-active); }
-:global(.notification-drawer.el-drawer), :global(.more-workspaces-sheet.el-drawer) { background: var(--co-bg-surface); }
-:global(.notification-drawer .el-drawer__header), :global(.more-workspaces-sheet .el-drawer__header) { min-height: var(--co-header-height); margin: 0; padding: 0 max(var(--co-space-4), env(safe-area-inset-right)) 0 max(var(--co-space-4), env(safe-area-inset-left)); border-bottom: 1px solid var(--co-border-default); color: var(--co-text-primary); font-weight: 750; }
-:global(.notification-drawer .el-drawer__body) { padding: var(--co-space-5); overscroll-behavior: contain; }
-:global(.more-workspaces-sheet .el-drawer__body) { padding: var(--co-space-5) max(var(--co-space-4), env(safe-area-inset-right)) max(var(--co-space-5), env(safe-area-inset-bottom)) max(var(--co-space-4), env(safe-area-inset-left)); overscroll-behavior: contain; }
-:global(.notification-drawer .el-drawer__close-btn), :global(.more-workspaces-sheet .el-drawer__close-btn) { width: 44px; height: 44px; border-radius: var(--co-radius-control); }
-@media (max-width: 767px) {
-  .scope-switch-alert { right: max(var(--co-space-3), env(safe-area-inset-right)); left: max(var(--co-space-3), env(safe-area-inset-left)); width: auto; }
-  .app-main { min-height: calc(100dvh - var(--co-header-height)); padding: var(--co-space-4) max(var(--co-space-4), env(safe-area-inset-right)) calc(82px + env(safe-area-inset-bottom)) max(var(--co-space-4), env(safe-area-inset-left)); overflow-x: hidden; }
-  .app-main--full-bleed { height: calc(100dvh - var(--co-header-height) - 58px - env(safe-area-inset-bottom)); padding: 0; }
-  :global(.notification-drawer .el-drawer__body) { padding: var(--co-space-4); }
+.skip-link {
+  position: fixed;
+  top: var(--co-space-2);
+  left: var(--co-space-2);
+  z-index: var(--co-z-skip-link);
+  padding: var(--co-space-3) var(--co-space-4);
+  border-radius: var(--co-radius-control);
+  color: var(--co-text-on-action);
+  background: var(--co-action-primary);
+  box-shadow: var(--co-shadow-overlay);
+  transform: translateY(calc(-100% - var(--co-space-4)));
+  transition: transform var(--co-motion-fast) var(--co-ease-out);
 }
-@media (max-width: 359px) { .more-workspaces { grid-template-columns: 1fr; } }
+
+.skip-link:focus-visible { transform: translateY(0); }
+
+.scope-switch-alert,
+.offline-alert {
+  position: fixed;
+  top: calc(var(--co-header-height) + var(--co-space-3));
+  right: var(--co-space-4);
+  z-index: var(--co-z-overlay);
+  width: min(440px, calc(100vw - 32px));
+  box-shadow: var(--co-shadow-overlay);
+}
+
+.offline-alert { top: calc(var(--co-header-height) + 92px); }
+
+.app-shell {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: 100dvh;
+  min-width: 0;
+  min-height: 0;
+  align-items: flex-start;
+  overflow: hidden;
+  background: var(--co-bg-canvas);
+}
+
+.app-frame {
+  position: relative;
+  display: flex;
+  height: 100dvh;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  flex-direction: column;
+}
+
+.shell-top-wash {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 0;
+  height: 170px;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--co-bg-canvas) 78%, var(--co-ink-action) 8%) 0%,
+    color-mix(in srgb, var(--co-bg-canvas) 62%, transparent) 42%,
+    transparent 100%
+  );
+  backdrop-filter: blur(18px);
+  mask-image: linear-gradient(to bottom, #000 0%, rgb(0 0 0 / 70%) 48%, transparent 100%);
+}
+
+.app-main {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  padding: var(--co-page-gutter) max(var(--co-page-gutter), env(safe-area-inset-right))
+    max(var(--co-page-end-space), env(safe-area-inset-bottom))
+    max(var(--co-page-gutter), env(safe-area-inset-left));
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: transparent;
+}
+
+.app-main--full-bleed {
+  height: auto;
+  padding: 0;
+  overflow: hidden;
+}
+
+.route-ui-boundary { min-width: 0; min-height: 100%; isolation: isolate; }
+.app-main--full-bleed .route-ui-boundary { height: 100%; }
+.app-main--fixed-workspace { overflow: hidden; }
+.app-main--fixed-workspace .route-ui-boundary { height: 100%; min-height: 0; }
+
+:global(.notification-slideover) {
+  width: min(440px, calc(100vw - var(--co-sidebar-rail-width)));
+  max-width: none;
+  overflow: hidden;
+  border-left: 1px solid var(--co-border-default);
+  border-radius: var(--co-radius-overlay) 0 0 var(--co-radius-overlay);
+  background: var(--co-bg-overlay);
+  box-shadow: var(--co-shadow-overlay);
+  z-index: calc(var(--co-z-overlay) + 1);
+}
+
+:global(.notification-slideover-overlay) { z-index: var(--co-z-overlay); }
+
+:global(.notification-slideover-header) {
+  min-height: var(--co-header-height);
+  padding: 0 var(--co-space-4);
+  border-bottom: 1px solid var(--co-border-default);
+}
+
+:global(.notification-slideover-body) {
+  padding: var(--co-space-5);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
 </style>

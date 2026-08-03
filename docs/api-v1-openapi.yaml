@@ -1025,6 +1025,19 @@ paths:
         default: { $ref: "#/components/responses/Problem" }
   /api/v1/logs/queries/{id}/evidence:
     parameters: [{ $ref: "#/components/parameters/PublicID" }]
+    get:
+      operationId: listLogEvidence
+      description: Durable Evidence retained by the exact Logs Query Execution, including stable public identities for refresh and direct entry.
+      responses:
+        "200":
+          description: Retained Logs Evidence
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TelemetryEvidencePage" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
     post:
       operationId: retainLogEvidence
       description: Persist only explicitly selected, sanitized log facts as Evidence.
@@ -1092,6 +1105,21 @@ paths:
       description: Exact Trace Search with short-lived in-process summaries when still available.
       responses:
         "200": { description: Bounded Trace Search projection }
+        "404": { $ref: "#/components/responses/Problem" }
+        "501": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+        default: { $ref: "#/components/responses/Problem" }
+  /api/v1/traces/searches/{id}/evidence:
+    parameters: [{ $ref: "#/components/parameters/PublicID" }]
+    get:
+      operationId: listTraceEvidence
+      description: Durable Evidence retained by the exact Tempo Trace Query Execution, including stable public identities for refresh and direct entry.
+      responses:
+        "200":
+          description: Retained Trace Evidence
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TelemetryEvidencePage" }
         "404": { $ref: "#/components/responses/Problem" }
         "501": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
@@ -1663,7 +1691,7 @@ components:
         enabled: { type: boolean }
         endpoint: { type: string, maxLength: 2048 }
         model: { type: string, maxLength: 255 }
-        timeout_ms: { type: integer, minimum: 1000, maximum: 60000 }
+        timeout_ms: { type: integer, minimum: 1000, maximum: 300000 }
         max_results: { type: integer, minimum: 1, maximum: 10000 }
         context_link_base: { type: string, maxLength: 2048 }
     SecretReference:
@@ -2138,6 +2166,33 @@ components:
       properties:
         from: { type: string, format: date-time }
         to: { type: string, format: date-time }
+    TelemetryEvidence:
+      type: object
+      additionalProperties: false
+      required: [id, type, source, query_id, configuration_revision_id, scope, resource, time_range, summary, item_count, content_hash, truncated, collected_at]
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, enum: [log_selection, trace_selection] }
+        source: { type: string, enum: [elasticsearch, tempo] }
+        query_id: { type: string, format: uuid }
+        configuration_revision_id: { type: string, format: uuid }
+        scope: { $ref: "#/components/schemas/OperationalScope" }
+        resource: { $ref: "#/components/schemas/MonitoringResourceReference" }
+        time_range: { $ref: "#/components/schemas/MonitoringTimeRange" }
+        summary: { type: string, maxLength: 4096 }
+        item_count: { type: integer, minimum: 0, maximum: 32 }
+        content_hash: { $ref: "#/components/schemas/SHA256" }
+        truncated: { type: boolean }
+        collected_at: { type: string, format: date-time }
+    TelemetryEvidencePage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items: { $ref: "#/components/schemas/TelemetryEvidence" }
     StartMonitoringQuery:
       type: object
       additionalProperties: false
@@ -2344,9 +2399,11 @@ components:
     ApplyConfiguration:
       type: object
       additionalProperties: false
-      required: [validation_id, draft]
+      required: [validation_id, expected_active_revision_id, expected_active_revision_hash, draft]
       properties:
         validation_id: { type: string, format: uuid }
+        expected_active_revision_id: { type: string, format: uuid }
+        expected_active_revision_hash: { $ref: "#/components/schemas/SHA256" }
         draft: { $ref: "#/components/schemas/ConfigurationDraft" }
     SecretInput:
       type: object
@@ -2697,6 +2754,8 @@ components:
         - incident_version
         - created_by_agent_run_id
         - operation_type
+        - source_type
+        - runtime_base_hash
         - risk_level
         - patch_summary
         - rollback_plan
@@ -2736,6 +2795,11 @@ components:
         incident_version: { type: integer, minimum: 1 }
         created_by_agent_run_id: { type: string, format: uuid }
         operation_type: { type: string, const: restore_required_env }
+        source_type: { type: string, enum: [gitops, local_scenario] }
+        runtime_base_hash:
+          oneOf:
+            - { $ref: "#/components/schemas/SHA256" }
+            - { type: string, const: "" }
         risk_level: { type: string, enum: [low, medium, high] }
         patch_summary: { type: string, maxLength: 2048 }
         rollback_plan: { type: string, maxLength: 4096 }
@@ -2746,7 +2810,10 @@ components:
         canonical_plan_hash: { $ref: "#/components/schemas/SHA256" }
         expected_before_hash: { $ref: "#/components/schemas/SHA256" }
         expected_post_image_hash: { $ref: "#/components/schemas/SHA256" }
-        expected_tree_hash: { $ref: "#/components/schemas/GitObjectID" }
+        expected_tree_hash:
+          oneOf:
+            - { $ref: "#/components/schemas/GitObjectID" }
+            - { type: string, const: "" }
         proposed_patch_hash: { $ref: "#/components/schemas/SHA256" }
         canonical_manifest:
           type: object
@@ -2780,9 +2847,18 @@ components:
       properties:
         repository: { type: string, maxLength: 255 }
         base_branch: { type: string, maxLength: 255 }
-        base_revision: { $ref: "#/components/schemas/GitObjectID" }
-        last_known_good_revision: { $ref: "#/components/schemas/GitObjectID" }
-        base_blob_sha: { $ref: "#/components/schemas/GitObjectID" }
+        base_revision:
+          oneOf:
+            - { $ref: "#/components/schemas/GitObjectID" }
+            - { type: string, const: "" }
+        last_known_good_revision:
+          oneOf:
+            - { $ref: "#/components/schemas/GitObjectID" }
+            - { type: string, const: "" }
+        base_blob_sha:
+          oneOf:
+            - { $ref: "#/components/schemas/GitObjectID" }
+            - { type: string, const: "" }
         file_mode: { type: string, maxLength: 16 }
         path: { type: string, maxLength: 1024 }
         field_ref: { type: string, maxLength: 1024 }
@@ -2839,9 +2915,15 @@ components:
         expires_at: { type: string, format: date-time }
         approved_hash_schema_version: { type: integer, minimum: 1 }
         approved_plan_hash: { $ref: "#/components/schemas/SHA256" }
-        approved_base_sha: { $ref: "#/components/schemas/GitObjectID" }
+        approved_base_sha:
+          oneOf:
+            - { $ref: "#/components/schemas/GitObjectID" }
+            - { type: string, const: "" }
         approved_post_image_hash: { $ref: "#/components/schemas/SHA256" }
-        approved_tree_hash: { $ref: "#/components/schemas/GitObjectID" }
+        approved_tree_hash:
+          oneOf:
+            - { $ref: "#/components/schemas/GitObjectID" }
+            - { type: string, const: "" }
         approved_patch_hash: { $ref: "#/components/schemas/SHA256" }
         approved_policy_hash: { $ref: "#/components/schemas/SHA256" }
         approved_verification_hash: { $ref: "#/components/schemas/SHA256" }

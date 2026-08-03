@@ -349,34 +349,69 @@ func (r *Repository) RetainEvidence(ctx context.Context, execution executionReco
 	return evidenceProjection(publicID, execution, input, collectedAt), nil
 }
 
-func existingEvidence(ctx context.Context, tx *sql.Tx, executionID int64, contentHash string) (Evidence, bool, error) {
-	var item Evidence
-	var scopeJSON, resourceID, resourceKind, resourceNamespace, resourceName []byte
-	var from, to time.Time
-	err := tx.QueryRowContext(ctx, `SELECT e.public_id, e.type, e.source, qe.public_id, cr.public_id,
+func (r *Repository) EvidenceForExecution(ctx context.Context, queryID string) ([]Evidence, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT e.public_id, e.type, e.source, qe.public_id, cr.public_id,
  qe.cluster_id, qe.environment, qe.namespaces_json, qe.resource_id, qe.resource_kind, qe.resource_namespace,
- qe.resource_name, qe.range_start, qe.range_end, e.summary, JSON_LENGTH(JSON_EXTRACT(e.facts_json,'$.facts')),
+ qe.resource_name, qe.range_start, qe.range_end, e.summary,
+ COALESCE(JSON_LENGTH(JSON_EXTRACT(e.facts_json,'$.facts')), 0), e.content_hash, e.truncated, e.collected_at
+ FROM evidence_items e JOIN query_executions qe ON qe.id=e.query_execution_id
+ JOIN configuration_revisions cr ON cr.id=qe.configuration_revision_id
+ WHERE qe.public_id=?
+ ORDER BY e.collected_at DESC, e.id DESC
+ LIMIT 100`, strings.TrimSpace(queryID))
+	if err != nil {
+		return nil, fmt.Errorf("list retained Workspace Evidence: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	items := []Evidence{}
+	for rows.Next() {
+		item, scanErr := scanEvidence(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func existingEvidence(ctx context.Context, tx *sql.Tx, executionID int64, contentHash string) (Evidence, bool, error) {
+	item, err := scanEvidence(tx.QueryRowContext(ctx, `SELECT e.public_id, e.type, e.source, qe.public_id, cr.public_id,
+ qe.cluster_id, qe.environment, qe.namespaces_json, qe.resource_id, qe.resource_kind, qe.resource_namespace,
+	 qe.resource_name, qe.range_start, qe.range_end, e.summary,
+	 COALESCE(JSON_LENGTH(JSON_EXTRACT(e.facts_json,'$.facts')), 0),
  e.content_hash, e.truncated, e.collected_at
  FROM evidence_items e JOIN query_executions qe ON qe.id=e.query_execution_id
  JOIN configuration_revisions cr ON cr.id=qe.configuration_revision_id
- WHERE e.query_execution_id=? AND e.content_hash=? LIMIT 1`, executionID, contentHash).Scan(
-		&item.ID, &item.Type, &item.Source, &item.QueryID, &item.ConfigurationRevision,
-		&item.Scope.ClusterID, &item.Scope.Environment, &scopeJSON, &resourceID, &resourceKind,
-		&resourceNamespace, &resourceName, &from, &to, &item.Summary, &item.ItemCount,
-		&item.ContentHash, &item.Truncated, &item.CollectedAt)
+	 WHERE e.query_execution_id=? AND e.content_hash=? LIMIT 1`, executionID, contentHash))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Evidence{}, false, nil
 	}
 	if err != nil {
 		return Evidence{}, false, err
 	}
-	if json.Unmarshal(scopeJSON, &item.Scope.Namespaces) != nil {
-		return Evidence{}, false, ErrUnavailable
+	return item, true, nil
+}
+
+func scanEvidence(row rowScanner) (Evidence, error) {
+	var item Evidence
+	var scopeJSON []byte
+	var resourceID, resourceKind, resourceNamespace, resourceName string
+	var from, to time.Time
+	err := row.Scan(
+		&item.ID, &item.Type, &item.Source, &item.QueryID, &item.ConfigurationRevision,
+		&item.Scope.ClusterID, &item.Scope.Environment, &scopeJSON, &resourceID, &resourceKind,
+		&resourceNamespace, &resourceName, &from, &to, &item.Summary, &item.ItemCount,
+		&item.ContentHash, &item.Truncated, &item.CollectedAt)
+	if err != nil {
+		return Evidence{}, err
 	}
-	item.Resource = ResourceReference{ID: string(resourceID), Kind: string(resourceKind), Namespace: string(resourceNamespace), Name: string(resourceName)}
+	if json.Unmarshal(scopeJSON, &item.Scope.Namespaces) != nil {
+		return Evidence{}, ErrUnavailable
+	}
+	item.Resource = ResourceReference{ID: resourceID, Kind: resourceKind, Namespace: resourceNamespace, Name: resourceName}
 	item.TimeRange = TimeRange{From: from.UTC(), To: to.UTC()}
 	item.CollectedAt = item.CollectedAt.UTC()
-	return item, true, nil
+	return item, nil
 }
 
 func evidenceProjection(publicID string, execution executionRecord, input evidenceInsert, collectedAt time.Time) Evidence {

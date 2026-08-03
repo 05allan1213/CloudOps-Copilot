@@ -1,21 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import {
-  Archive,
-  CheckCircle2,
-  ChevronRight,
-  ExternalLink,
-  GitBranch,
-  History,
-  LoaderCircle,
-  Play,
-  RefreshCw,
-  Save,
-  ScanSearch,
-  Server,
-  Timer,
-  TriangleAlert,
-} from "lucide-vue-next";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import { isApiError } from "../../api/client";
@@ -24,6 +8,7 @@ import { getBootstrap, type BootstrapSnapshot } from "../../api/platform";
 import {
   createTelemetryConsultation,
   getTraceDetail,
+  getTraceEvidence,
   getTraceSearch,
   getTraceSearches,
   getTracesCatalog,
@@ -38,41 +23,66 @@ import {
   type TraceSpan,
   type TraceSummary,
 } from "../../api/telemetry";
-import { waterfallPosition } from "../../models/telemetry";
-import { openAgentPanel, publishAgentContext, type AgentPageContext } from "../../utils/agentContext";
+import TraceDetailWorkspace from "../../components/traces/TraceDetailWorkspace.vue";
+import TraceSearchResults from "../../components/traces/TraceSearchResults.vue";
+import TracesHistory from "../../components/traces/TracesHistory.vue";
+import TracesQueryControls from "../../components/traces/TracesQueryControls.vue";
+import {
+  buildTracesRouteQuery,
+  parseTracesRoute,
+  type TracesRouteState,
+} from "../../components/traces/tracesRoute";
+import WorkspaceHeader from "../../components/workspace/WorkspaceHeader.vue";
+import WorkspacePageFrame from "../../components/workspace/WorkspacePageFrame.vue";
+import { invalidateQueryDomain } from "../../composables/queryCache";
+import { resolveTelemetryResourceID } from "../../models/telemetry";
+import { safeExternalURL } from "../../models/workbench";
+import {
+  openAgentPanel,
+  publishAgentContext,
+  shouldClearAgentContextOnUnmount,
+  type AgentPageContext,
+} from "../../utils/agentContext";
 import { OPERATIONAL_SCOPE_CHANGED_EVENT } from "../../utils/operationalScope";
 
 interface RequestFailure {
+  status: number | null;
   message: string;
   code: string;
   requestID: string;
   traceID: string;
+  nextSteps: readonly string[];
 }
+
+type ResultsHandle = InstanceType<typeof TraceSearchResults>;
 
 const route = useRoute();
 const router = useRouter();
+const initialRoute = parseTracesRoute(route.query as Record<string, unknown>);
 const bootstrap = ref<BootstrapSnapshot | null>(null);
 const workloads = ref<KubernetesResource[]>([]);
 const catalog = ref<TelemetryCatalog | null>(null);
 const historyItems = ref<TraceSearch[]>([]);
 const currentSearch = ref<TraceSearch | null>(null);
 const detail = ref<TraceDetail | null>(null);
-const selectedResourceID = ref(queryValue(route.query.resource));
-const selectedNamespace = ref(queryValue(route.query.namespace));
-const mode = ref<TelemetryQueryMode>(queryValue(route.query.mode) === "expert" ? "expert" : "guided");
-const serviceFilter = ref("");
-const operationFilter = ref("");
-const statusFilter = ref("");
-const minDuration = ref<number | undefined>();
-const maxDuration = ref<number | undefined>();
+const selectedResourceID = ref(initialRoute.resource);
+const selectedNamespace = ref(initialRoute.namespace);
+const mode = ref<TelemetryQueryMode>(initialRoute.mode);
+const serviceFilter = ref(initialRoute.service);
+const operationFilter = ref(initialRoute.operation);
+const statusFilter = ref(initialRoute.status);
+const minDuration = ref<number | undefined>(initialRoute.minDurationMS);
+const maxDuration = ref<number | undefined>(initialRoute.maxDurationMS);
 const expertQuery = ref("{}");
-const fromValue = ref(toLocalInput(new Date(Date.now() - 15 * 60_000)));
-const toValue = ref(toLocalInput(new Date()));
-const limit = ref(100);
+const fromValue = ref(routeTime(initialRoute.from) || toLocalInput(new Date(Date.now() - 15 * 60_000)));
+const toValue = ref(routeTime(initialRoute.to) || toLocalInput(new Date()));
+const limit = ref(initialRoute.limit);
 const selectedSpanIDs = ref(new Set<string>());
 const inspectedSpan = ref<TraceSpan | null>(null);
 const retainedEvidence = ref<TelemetryEvidence[]>([]);
+const evidenceQueryID = ref(initialRoute.evidenceQueryID);
 const consultation = ref<Consultation | null>(null);
+const resultsList = ref<ResultsHandle | null>(null);
 const loading = ref(true);
 const searching = ref(false);
 const detailLoading = ref(false);
@@ -81,57 +91,101 @@ const freezing = ref(false);
 const pageError = ref<RequestFailure | null>(null);
 const queryError = ref<RequestFailure | null>(null);
 const statusMessage = ref("");
-let controller: AbortController | undefined;
 let mounted = true;
-
-const allowedTraceLimits = [1, 50, 100, 200];
+let routeReady = false;
+let routeMutationDepth = 0;
+let workspaceGeneration = 0;
+let searchGeneration = 0;
+let detailGeneration = 0;
+let listScrollTop = 0;
+let workspaceController: AbortController | undefined;
+let searchController: AbortController | undefined;
+let detailController: AbortController | undefined;
 
 const namespaces = computed(() => bootstrap.value?.active_scope.namespaces ?? []);
-const namespaceWorkloads = computed(() => workloads.value.filter((item) => !selectedNamespace.value || item.namespace === selectedNamespace.value));
-const selectedResource = computed(() => workloads.value.find((item) => item.id === selectedResourceID.value) ?? null);
-const providerReady = computed(() => catalog.value?.provider_state === "available" || catalog.value?.provider_state === "partial");
+const namespaceWorkloads = computed(() => workloads.value.filter((item) => (
+  !selectedNamespace.value || item.namespace === selectedNamespace.value
+)));
+const selectedResource = computed(() => (
+  workloads.value.find((item) => item.id === selectedResourceID.value) ?? null
+));
+const providerReady = computed(() => (
+  catalog.value?.provider_state === "available" || catalog.value?.provider_state === "partial"
+));
 const validTimeRange = computed(() => {
   const from = new Date(fromValue.value).getTime();
   const to = new Date(toValue.value).getTime();
   return Number.isFinite(from) && Number.isFinite(to) && from < to;
 });
-const canSearch = computed(() => Boolean(selectedResource.value && providerReady.value && validTimeRange.value && !searching.value));
-const canFreeze = computed(() => Boolean(detail.value?.query_id || currentSearch.value?.status === "succeeded"));
-const workloadLocation = computed(() => ({ path: "/infrastructure", query: contextRouteQuery() }));
-const tempoLink = computed(() => detail.value?.links.find((link) => link.provider === "tempo" && link.target === "external"));
+const canSearch = computed(() => Boolean(
+  selectedResource.value
+  && providerReady.value
+  && validTimeRange.value
+  && !searching.value
+  && (mode.value === "guided" || expertQuery.value.trim()),
+));
+const canFreeze = computed(() => Boolean(
+  detail.value?.query_id
+  || (currentSearch.value?.status === "succeeded" && !currentSearch.value.result_expired),
+));
+const traceOverview = computed(() => {
+  const traces = currentSearch.value?.traces ?? [];
+  const slowest = traces.reduce<TraceSummary | null>((selected, trace) => (
+    !selected || trace.duration_ms > selected.duration_ms ? trace : selected
+  ), null);
+  return {
+    total: traces.length,
+    services: new Set(traces.map((trace) => trace.root_service).filter(Boolean)).size,
+    errorTraces: traces.filter((trace) => trace.error_span_count > 0).length,
+    spans: traces.reduce((total, trace) => total + trace.span_count, 0),
+    slowest,
+  };
+});
+const detailRouteActive = computed(() => Boolean(
+  parseTracesRoute(route.query as Record<string, unknown>).traceID,
+));
+const workloadLocation = computed(() => ({
+  path: "/infrastructure",
+  query: {
+    cluster: bootstrap.value?.active_scope.cluster_id ?? "",
+    namespace: selectedNamespace.value,
+    resource: selectedResourceID.value,
+    from: validTimeRange.value ? new Date(fromValue.value).toISOString() : "",
+    to: validTimeRange.value ? new Date(toValue.value).toISOString() : "",
+  },
+}));
+const tempoURL = computed(() => {
+  const links = detail.value?.links ?? currentSearch.value?.links ?? [];
+  const link = links.find((item) => (
+    item.provider === "tempo"
+    && item.target === "external"
+    && item.availability === "available"
+  ));
+  return safeExternalURL(link?.href);
+});
+
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "medium" });
-
-function queryValue(value: unknown): string {
-  if (Array.isArray(value)) return typeof value[0] === "string" ? value[0] : "";
-  return typeof value === "string" ? value : "";
-}
-
-function routeOptionalNumber(value: unknown): number | undefined {
-  const text = queryValue(value);
-  if (!text) return undefined;
-  const parsed = Number(text);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
-}
-
-function routeLimit(value: unknown, fallback: number): number {
-  const parsed = Number(queryValue(value));
-  return allowedTraceLimits.includes(parsed) ? parsed : fallback;
-}
 
 function toLocalInput(value: Date): string {
   const offset = value.getTimezoneOffset() * 60_000;
   return new Date(value.getTime() - offset).toISOString().slice(0, 16);
 }
 
-function routeTime(value: unknown): string {
-  const parsed = new Date(queryValue(value));
-  return Number.isNaN(parsed.getTime()) ? "" : toLocalInput(parsed);
+function routeTime(value: string): string {
+  const parsed = new Date(value);
+  return value && !Number.isNaN(parsed.getTime()) ? toLocalInput(parsed) : "";
 }
 
 function formatTime(value?: string): string {
   if (!value) return "无";
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? value : dateFormatter.format(parsed);
+}
+
+function formatBytes(value: number): string {
+  if (!Number.isFinite(value) || value < 1) return "0 B";
+  if (value < 1024) return `${value} B`;
+  return `${(value / 1024).toFixed(value < 10240 ? 1 : 0)} KiB`;
 }
 
 function formatDuration(value: number): string {
@@ -141,19 +195,31 @@ function formatDuration(value: number): string {
   return `${(value / 1000).toFixed(2)} s`;
 }
 
-function formatBytes(value: number): string {
-  if (!Number.isFinite(value) || value < 1) return "0 B";
-  if (value < 1024) return `${value} B`;
-  return `${(value / 1024).toFixed(value < 10240 ? 1 : 0)} KiB`;
-}
-
 function providerStateLabel(state?: TelemetryCatalog["provider_state"]): string {
   return ({ available: "可用", partial: "部分可用", unavailable: "不可用", disabled: "已停用" } as Record<string, string>)[state ?? ""] ?? "检查中";
 }
 
+function formatElapsed(createdAt: string, completedAt?: string): string {
+  const started = new Date(createdAt).getTime();
+  const finished = new Date(completedAt ?? "").getTime();
+  if (!Number.isFinite(started) || !Number.isFinite(finished) || finished < started) return "耗时未知";
+  const elapsed = finished - started;
+  if (elapsed < 1000) return `${elapsed} ms`;
+  return `${(elapsed / 1000).toFixed(elapsed < 10_000 ? 2 : 1)} s`;
+}
+
 function normalizeFailure(reason: unknown, fallback: string): RequestFailure {
-  if (!isApiError(reason)) return { message: fallback, code: "REQUEST_FAILED", requestID: "", traceID: "" };
-  return { message: reason.message, code: reason.code || "REQUEST_FAILED", requestID: reason.requestID, traceID: reason.traceID };
+  if (!isApiError(reason)) {
+    return { status: null, message: fallback, code: "REQUEST_FAILED", requestID: "", traceID: "", nextSteps: [] };
+  }
+  return {
+    status: reason.status,
+    message: reason.message,
+    code: reason.code || "REQUEST_FAILED",
+    requestID: reason.requestID,
+    traceID: reason.traceID,
+    nextSteps: reason.nextSteps,
+  };
 }
 
 function telemetryContext() {
@@ -163,14 +229,19 @@ function telemetryContext() {
   return {
     cluster_id: clusterID,
     namespace: resource.namespace,
-    resource: { id: resource.id, kind: resource.kind, namespace: resource.namespace, name: resource.name },
+    resource: {
+      id: resource.id,
+      kind: resource.kind,
+      namespace: resource.namespace,
+      name: resource.name,
+    },
   };
 }
 
 function currentAgentContext(): AgentPageContext | null {
   const current = detail.value ?? currentSearch.value;
   const queryID = detail.value?.query_id || currentSearch.value?.id;
-  if (!current || !queryID || (currentSearch.value?.status && currentSearch.value.status !== "succeeded")) return null;
+  if (!current || !queryID || currentSearch.value?.result_expired) return null;
   return {
     route: route.fullPath,
     input: {
@@ -182,8 +253,12 @@ function currentAgentContext(): AgentPageContext | null {
       filters: {
         workspace: "traces",
         provider: "tempo",
+        mode: mode.value,
         trace_id: detail.value?.trace_id,
         query_hash: currentSearch.value?.query_hash,
+        service: serviceFilter.value,
+        operation: operationFilter.value,
+        status: statusFilter.value,
       },
       from: current.time_range.from,
       to: current.time_range.to,
@@ -198,124 +273,277 @@ function publishCurrentAgentContext() {
   publishAgentContext(currentAgentContext());
 }
 
-function contextRouteQuery(): Record<string, string> {
+function routeState(searchID = currentSearch.value?.id ?? "", traceID = detail.value?.trace_id ?? "") {
   return {
     cluster: bootstrap.value?.active_scope.cluster_id ?? "",
     namespace: selectedNamespace.value,
     resource: selectedResourceID.value,
+    mode: mode.value,
+    service: serviceFilter.value,
+    operation: operationFilter.value,
+    status: statusFilter.value,
+    minDurationMS: minDuration.value,
+    maxDurationMS: maxDuration.value,
+    limit: limit.value,
+    searchID,
+    traceID,
+    evidenceQueryID: evidenceQueryID.value,
     from: validTimeRange.value ? new Date(fromValue.value).toISOString() : "",
     to: validTimeRange.value ? new Date(toValue.value).toISOString() : "",
   };
 }
 
-async function syncRoute(searchID?: string, traceID?: string) {
-  const query: Record<string, string> = { ...contextRouteQuery(), mode: mode.value };
-  if (serviceFilter.value) query.service = serviceFilter.value;
-  if (operationFilter.value) query.operation = operationFilter.value;
-  if (statusFilter.value) query.status = statusFilter.value;
-  if (minDuration.value !== undefined) query.min_duration_ms = String(minDuration.value);
-  if (maxDuration.value !== undefined) query.max_duration_ms = String(maxDuration.value);
-  query.limit = String(limit.value);
-  if (searchID) query.search = searchID;
-  if (traceID) query.trace_id = traceID;
-  for (const key of Object.keys(query)) if (!query[key]) delete query[key];
-  await router.replace({ path: "/traces", query });
+async function syncRoute(
+  searchID = currentSearch.value?.id ?? "",
+  traceID = detail.value?.trace_id ?? "",
+  navigation: "replace" | "push" = "replace",
+) {
+  routeMutationDepth += 1;
+  try {
+    const location = { path: "/traces", query: buildTracesRouteQuery(routeState(searchID, traceID)) };
+    if (navigation === "push") await router.push(location);
+    else await router.replace(location);
+  } finally {
+    await nextTick();
+    routeMutationDepth -= 1;
+  }
+}
+
+function applyRouteFilters(parsed: TracesRouteState) {
+  mode.value = parsed.mode;
+  serviceFilter.value = parsed.service;
+  operationFilter.value = parsed.operation;
+  statusFilter.value = parsed.status;
+  minDuration.value = parsed.minDurationMS;
+  maxDuration.value = parsed.maxDurationMS;
+  limit.value = parsed.limit;
+  const from = routeTime(parsed.from);
+  const to = routeTime(parsed.to);
+  if (from && to) [fromValue.value, toValue.value] = [from, to];
 }
 
 async function loadCatalogAndHistory(signal?: AbortSignal) {
   const context = telemetryContext();
-  if (!context) return;
+  if (!context) {
+    catalog.value = null;
+    historyItems.value = [];
+    return;
+  }
   const [nextCatalog, nextHistory] = await Promise.all([
     getTracesCatalog(context, signal),
-    getTraceSearches({ cluster_id: context.cluster_id, namespace: context.namespace, resource_id: context.resource.id, limit: 30 }, signal),
+    getTraceSearches({
+      cluster_id: context.cluster_id,
+      namespace: context.namespace,
+      resource_id: context.resource.id,
+      limit: 30,
+    }, signal),
   ]);
+  if (signal?.aborted) return;
   catalog.value = nextCatalog;
   historyItems.value = nextHistory;
 }
 
+function resetDetail() {
+  detailController?.abort();
+  detailGeneration += 1;
+  detailLoading.value = false;
+  detail.value = null;
+  inspectedSpan.value = null;
+  selectedSpanIDs.value = new Set();
+  retainedEvidence.value = [];
+  evidenceQueryID.value = "";
+  consultation.value = null;
+}
+
+function applySearch(result: TraceSearch) {
+  currentSearch.value = result;
+  mode.value = result.mode;
+  expertQuery.value = result.query;
+  fromValue.value = toLocalInput(new Date(result.time_range.from));
+  toValue.value = toLocalInput(new Date(result.time_range.to));
+  resetDetail();
+}
+
+function applyDetail(result: TraceDetail) {
+  detail.value = result;
+  selectedSpanIDs.value = new Set();
+  inspectedSpan.value = result.spans[0] ?? null;
+  consultation.value = null;
+}
+
+function traceDetailOptions(searchID?: string) {
+  const context = telemetryContext();
+  if (searchID) return { search_id: searchID };
+  if (!context) return null;
+  return {
+    context,
+    from: new Date(fromValue.value).toISOString(),
+    to: new Date(toValue.value).toISOString(),
+  };
+}
+
 async function loadWorkspace() {
-  controller?.abort();
-  controller = new AbortController();
+  workspaceController?.abort();
+  searchController?.abort();
+  detailController?.abort();
+  workspaceController = new AbortController();
+  const signal = workspaceController.signal;
+  const generation = ++workspaceGeneration;
+  searchGeneration += 1;
+  detailGeneration += 1;
   loading.value = true;
+  searching.value = false;
+  detailLoading.value = false;
   pageError.value = null;
+  queryError.value = null;
   currentSearch.value = null;
   detail.value = null;
+  selectedSpanIDs.value = new Set();
+  inspectedSpan.value = null;
+  retainedEvidence.value = [];
+  evidenceQueryID.value = "";
+  consultation.value = null;
   try {
-    const snapshot = await getBootstrap(controller.signal);
-    if (!mounted) return;
+    const snapshot = await getBootstrap(signal);
+    if (!mounted || signal.aborted || generation !== workspaceGeneration) return;
     bootstrap.value = snapshot;
-    selectedNamespace.value = queryValue(route.query.namespace) || snapshot.active_scope.namespaces[0] || "";
-    const page = await getResources({ cluster: snapshot.active_scope.cluster_id, kind: ["Deployment", "StatefulSet", "DaemonSet"], limit: 500 }, controller.signal);
+    const parsed = parseTracesRoute(route.query as Record<string, unknown>);
+    selectedNamespace.value = parsed.namespace || snapshot.active_scope.namespaces[0] || "";
+    const page = await getResources({
+      cluster: snapshot.active_scope.cluster_id,
+      kind: ["Deployment", "StatefulSet", "DaemonSet"],
+      limit: 500,
+    }, signal);
+    if (!mounted || signal.aborted || generation !== workspaceGeneration) return;
     workloads.value = page.items.filter((item) => item.layer === "workload");
-    const requested = queryValue(route.query.resource);
-    selectedResourceID.value = workloads.value.some((item) => item.id === requested)
-      ? requested
-      : workloads.value.find((item) => item.namespace === selectedNamespace.value)?.id ?? workloads.value[0]?.id ?? "";
+    const resolved = resolveTelemetryResourceID(
+      workloads.value,
+      parsed.resource,
+      parsed.legacyWorkload,
+      selectedNamespace.value,
+    );
+    selectedResourceID.value = resolved
+      || workloads.value.find((item) => item.namespace === selectedNamespace.value)?.id
+      || workloads.value[0]?.id
+      || "";
     if (selectedResource.value?.namespace) selectedNamespace.value = selectedResource.value.namespace;
-    const from = routeTime(route.query.from);
-    const to = routeTime(route.query.to);
-    if (from && to) [fromValue.value, toValue.value] = [from, to];
-    serviceFilter.value = queryValue(route.query.service);
-    operationFilter.value = queryValue(route.query.operation);
-    statusFilter.value = ["error", "ok"].includes(queryValue(route.query.status)) ? queryValue(route.query.status) : "";
-    minDuration.value = routeOptionalNumber(route.query.min_duration_ms);
-    maxDuration.value = routeOptionalNumber(route.query.max_duration_ms);
-    limit.value = routeLimit(route.query.limit, 100);
-    await loadCatalogAndHistory(controller.signal);
-    const searchID = queryValue(route.query.search);
-    if (searchID) await openHistory(searchID, false);
-    const traceID = queryValue(route.query.trace_id);
-    if (traceID) await openTrace(traceID, searchID || undefined, false);
+    applyRouteFilters(parsed);
+    await loadCatalogAndHistory(signal);
+    if (!mounted || signal.aborted || generation !== workspaceGeneration) return;
+
+    if (parsed.searchID) {
+      try {
+        const result = await getTraceSearch(parsed.searchID, signal);
+        if (!mounted || signal.aborted || generation !== workspaceGeneration) return;
+        applySearch(result);
+      } catch (reason) {
+        if (!signal.aborted) queryError.value = normalizeFailure(reason, "Trace 搜索历史读取失败。");
+      }
+    }
+    if (parsed.traceID) {
+      const options = traceDetailOptions(parsed.searchID || undefined);
+      if (options) {
+        detailLoading.value = true;
+        try {
+          const [result, evidence] = await Promise.all([
+            getTraceDetail(parsed.traceID, options, signal),
+            parsed.evidenceQueryID ? getTraceEvidence(parsed.evidenceQueryID, signal) : Promise.resolve([]),
+          ]);
+          if (!mounted || signal.aborted || generation !== workspaceGeneration) return;
+          applyDetail(result);
+          evidenceQueryID.value = parsed.evidenceQueryID;
+          retainedEvidence.value = evidence;
+        } catch (reason) {
+          if (!signal.aborted) queryError.value = normalizeFailure(reason, "Trace detail 读取失败。");
+        } finally {
+          if (!signal.aborted && generation === workspaceGeneration) detailLoading.value = false;
+        }
+      }
+    }
+    if (parsed.legacyWorkload || parsed.resource !== selectedResourceID.value) {
+      await syncRoute(parsed.searchID, parsed.traceID);
+    }
   } catch (reason) {
-    if (!controller.signal.aborted) pageError.value = normalizeFailure(reason, "Traces Workspace 读取失败。");
+    if (!signal.aborted && mounted && generation === workspaceGeneration) {
+      pageError.value = normalizeFailure(reason, "Traces Workspace 读取失败。");
+    }
   } finally {
-    if (!controller.signal.aborted) loading.value = false;
+    if (!signal.aborted && generation === workspaceGeneration) loading.value = false;
   }
 }
 
 async function refreshAll() {
+  invalidateQueryDomain(["platform", "infrastructure", "traces"]);
   statusMessage.value = "";
-  queryError.value = null;
   await loadWorkspace();
 }
 
 async function changeNamespace() {
   selectedResourceID.value = namespaceWorkloads.value[0]?.id ?? "";
-  currentSearch.value = null;
-  detail.value = null;
-  retainedEvidence.value = [];
-  consultation.value = null;
-  await loadCatalogAndHistory();
-  await syncRoute();
+  await syncRoute("", "");
+  await loadWorkspace();
 }
 
 async function changeResource() {
   if (selectedResource.value?.namespace) selectedNamespace.value = selectedResource.value.namespace;
+  await syncRoute("", "");
+  await loadWorkspace();
+}
+
+function changeMode(value: TelemetryQueryMode) {
+  mode.value = value;
   currentSearch.value = null;
-  detail.value = null;
-  retainedEvidence.value = [];
-  consultation.value = null;
-  await loadCatalogAndHistory();
-  await syncRoute();
+  void syncRoute("", "");
 }
 
 function selectPreset(minutes: number) {
   const to = new Date();
-  const from = new Date(to.getTime() - minutes * 60_000);
-  fromValue.value = toLocalInput(from);
+  fromValue.value = toLocalInput(new Date(to.getTime() - minutes * 60_000));
   toValue.value = toLocalInput(to);
+  currentSearch.value = null;
+  void syncRoute("", "");
+}
+
+function prepareTraceShortcut(kind: "errors" | "slow" | "recent" | "wider" | "clear-operation" | "clear-duration") {
+  if (kind === "errors") {
+    mode.value = "guided";
+    statusFilter.value = "error";
+    minDuration.value = undefined;
+    maxDuration.value = undefined;
+  } else if (kind === "slow") {
+    mode.value = "guided";
+    statusFilter.value = "";
+    minDuration.value = 1000;
+    maxDuration.value = undefined;
+  } else if (kind === "clear-operation") {
+    operationFilter.value = "";
+  } else if (kind === "clear-duration") {
+    minDuration.value = undefined;
+    maxDuration.value = undefined;
+  }
+  if (kind === "errors" || kind === "recent") {
+    const to = new Date();
+    fromValue.value = toLocalInput(new Date(to.getTime() - 15 * 60_000));
+    toValue.value = toLocalInput(to);
+  } else if (kind === "slow" || kind === "wider") {
+    const to = new Date();
+    fromValue.value = toLocalInput(new Date(to.getTime() - 60 * 60_000));
+    toValue.value = toLocalInput(to);
+  }
+  currentSearch.value = null;
+  void syncRoute("", "");
 }
 
 async function searchTraces() {
   const context = telemetryContext();
   if (!context || !canSearch.value) return;
+  searchController?.abort();
+  searchController = new AbortController();
+  const signal = searchController.signal;
+  const generation = ++searchGeneration;
   searching.value = true;
   queryError.value = null;
   statusMessage.value = "";
-  detail.value = null;
-  selectedSpanIDs.value = new Set();
-  retainedEvidence.value = [];
-  consultation.value = null;
   try {
     const result = await startTraceSearch({
       ...context,
@@ -325,60 +553,108 @@ async function searchTraces() {
         service: serviceFilter.value.trim() || undefined,
         operation: operationFilter.value.trim() || undefined,
         status: statusFilter.value || undefined,
-        min_duration_ms: minDuration.value || undefined,
-        max_duration_ms: maxDuration.value || undefined,
+        min_duration_ms: minDuration.value,
+        max_duration_ms: maxDuration.value,
       } : {},
       from: new Date(fromValue.value).toISOString(),
       to: new Date(toValue.value).toISOString(),
       limit: limit.value,
-    });
-    currentSearch.value = result;
+    }, signal);
+    if (!mounted || signal.aborted || generation !== searchGeneration) return;
+    applySearch(result);
     historyItems.value = [result, ...historyItems.value.filter((item) => item.id !== result.id)].slice(0, 30);
-    await syncRoute(result.id);
+    listScrollTop = 0;
+    await syncRoute(result.id, "");
   } catch (reason) {
-    queryError.value = normalizeFailure(reason, "Tempo Trace 搜索失败。");
+    if (!signal.aborted && mounted && generation === searchGeneration) {
+      queryError.value = normalizeFailure(reason, "Tempo Trace 搜索失败。");
+    }
   } finally {
-    searching.value = false;
+    if (generation === searchGeneration) searching.value = false;
   }
+}
+
+function cancelSearchRequest() {
+  if (!searching.value) return;
+  searchController?.abort();
+  searchGeneration += 1;
+  searching.value = false;
+  statusMessage.value = "已停止等待当前请求；若服务端已经接受搜索，可稍后从历史重新读取。";
 }
 
 async function openHistory(id: string, updateRoute = true) {
+  searchController?.abort();
+  searchController = new AbortController();
+  const signal = searchController.signal;
+  const generation = ++searchGeneration;
+  searching.value = true;
   queryError.value = null;
-  detail.value = null;
   try {
-    const result = await getTraceSearch(id);
-    currentSearch.value = result;
-    mode.value = result.mode;
-    expertQuery.value = result.query;
-    fromValue.value = toLocalInput(new Date(result.time_range.from));
-    toValue.value = toLocalInput(new Date(result.time_range.to));
-    if (updateRoute) await syncRoute(result.id);
+    const result = await getTraceSearch(id, signal);
+    if (!mounted || signal.aborted || generation !== searchGeneration) return;
+    applySearch(result);
+    listScrollTop = 0;
+    if (updateRoute) await syncRoute(result.id, "");
   } catch (reason) {
-    queryError.value = normalizeFailure(reason, "Trace 搜索历史读取失败。");
+    if (!signal.aborted && generation === searchGeneration) {
+      queryError.value = normalizeFailure(reason, "Trace 搜索历史读取失败。");
+    }
+  } finally {
+    if (generation === searchGeneration) searching.value = false;
   }
 }
 
-async function openTrace(trace: TraceSummary | string, searchID = currentSearch.value?.id, updateRoute = true) {
-  const traceID = typeof trace === "string" ? trace : trace.trace_id;
-  const context = telemetryContext();
-  if (!context || detailLoading.value) return;
+async function openTrace(trace: TraceSummary, scrollTop: number) {
+  listScrollTop = scrollTop;
+  await openTraceID(trace.trace_id, currentSearch.value?.id, true);
+}
+
+async function openTraceID(traceID: string, searchID?: string, updateRoute = false, retainedQueryID = "") {
+  const options = traceDetailOptions(searchID);
+  if (!options) return;
+  detailController?.abort();
+  detailController = new AbortController();
+  const signal = detailController.signal;
+  const generation = ++detailGeneration;
   detailLoading.value = true;
   queryError.value = null;
-  selectedSpanIDs.value = new Set();
+  detail.value = null;
   inspectedSpan.value = null;
+  selectedSpanIDs.value = new Set();
   retainedEvidence.value = [];
+  evidenceQueryID.value = retainedQueryID;
   consultation.value = null;
+  if (updateRoute) await syncRoute(searchID ?? "", traceID, "push");
   try {
-    detail.value = await getTraceDetail(traceID, searchID
-      ? { search_id: searchID }
-      : { context, from: new Date(fromValue.value).toISOString(), to: new Date(toValue.value).toISOString() });
-    if (detail.value.spans.length) inspectedSpan.value = detail.value.spans[0];
-    if (updateRoute) await syncRoute(searchID, traceID);
+    const [result, evidence] = await Promise.all([
+      getTraceDetail(traceID, options, signal),
+      retainedQueryID ? getTraceEvidence(retainedQueryID, signal) : Promise.resolve([]),
+    ]);
+    if (!mounted || signal.aborted || generation !== detailGeneration) return;
+    applyDetail(result);
+    retainedEvidence.value = evidence;
   } catch (reason) {
-    queryError.value = normalizeFailure(reason, "Trace detail 读取失败。");
+    if (!signal.aborted && mounted && generation === detailGeneration) {
+      queryError.value = normalizeFailure(reason, "Trace detail 读取失败。");
+    }
   } finally {
-    detailLoading.value = false;
+    if (generation === detailGeneration) detailLoading.value = false;
   }
+}
+
+async function restoreResultsScroll() {
+  await nextTick();
+  await resultsList.value?.restoreScroll(listScrollTop);
+}
+
+function returnFromDetail() {
+  const back = window.history.state?.back;
+  if (typeof back === "string" && back) {
+    router.back();
+    return;
+  }
+  resetDetail();
+  void syncRoute(currentSearch.value?.id ?? "", "").then(restoreResultsScroll);
 }
 
 function toggleSpan(spanID: string) {
@@ -392,13 +668,6 @@ function inspectSpan(span: TraceSpan) {
   inspectedSpan.value = span;
 }
 
-function spanStyle(span: TraceSpan) {
-  const value = detail.value
-    ? waterfallPosition(detail.value.start_time, detail.value.duration_ms, span.start_time, span.duration_ms)
-    : { left: 0, width: 0.35 };
-  return { left: `${value.left}%`, width: `${value.width}%` };
-}
-
 async function retainSelectedEvidence() {
   const current = detail.value;
   if (!current || selectedSpanIDs.value.size === 0 || savingEvidence.value) return;
@@ -407,12 +676,23 @@ async function retainSelectedEvidence() {
   try {
     const evidence = await saveTraceEvidence(current.query_id, current.trace_id, [...selectedSpanIDs.value]);
     retainedEvidence.value = [evidence, ...retainedEvidence.value];
-    statusMessage.value = `已保留 ${evidence.item_count} 个 span Evidence。`;
+    evidenceQueryID.value = current.query_id;
+    await syncRoute(currentSearch.value?.id ?? "", current.trace_id);
+    statusMessage.value = `已保留 ${evidence.item_count} 个 Span Evidence。`;
   } catch (reason) {
     queryError.value = normalizeFailure(reason, "Trace Evidence 保存失败。");
   } finally {
     savingEvidence.value = false;
   }
+}
+
+function openCurrentInAgent() {
+  const context = currentAgentContext();
+  if (!context) {
+    statusMessage.value = "请先打开一个仍保留结果的 Trace，再关联或新建 Agent 调查。";
+    return;
+  }
+  openAgentPanel({ context });
 }
 
 async function freezeContext() {
@@ -447,136 +727,597 @@ async function freezeContext() {
   }
 }
 
+async function applyRouteNavigation() {
+  const parsed = parseTracesRoute(route.query as Record<string, unknown>);
+  const resolved = resolveTelemetryResourceID(
+    workloads.value,
+    parsed.resource,
+    parsed.legacyWorkload,
+    parsed.namespace,
+  );
+  const activeCluster = bootstrap.value?.active_scope.cluster_id ?? "";
+  const contextChanged = (
+    (parsed.cluster && parsed.cluster !== activeCluster)
+    || parsed.namespace !== selectedNamespace.value
+    || (resolved && resolved !== selectedResourceID.value)
+    || Boolean(parsed.legacyWorkload)
+  );
+  if (contextChanged) {
+    await loadWorkspace();
+    return;
+  }
+  applyRouteFilters(parsed);
+  if (parsed.searchID && parsed.searchID !== currentSearch.value?.id) {
+    await openHistory(parsed.searchID, false);
+  } else if (!parsed.searchID && currentSearch.value) {
+    currentSearch.value = null;
+  }
+  if (parsed.traceID) {
+    if (parsed.traceID !== detail.value?.trace_id) {
+      await openTraceID(parsed.traceID, parsed.searchID || currentSearch.value?.id, false, parsed.evidenceQueryID);
+    } else if (parsed.evidenceQueryID !== evidenceQueryID.value) {
+      evidenceQueryID.value = parsed.evidenceQueryID;
+      retainedEvidence.value = parsed.evidenceQueryID ? await getTraceEvidence(parsed.evidenceQueryID) : [];
+    }
+  } else {
+    resetDetail();
+    await restoreResultsScroll();
+  }
+}
+
 function receiveScopeChange() {
   void loadWorkspace();
 }
 
-onMounted(() => {
+onMounted(async () => {
   window.addEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT, receiveScopeChange);
-  void loadWorkspace();
+  await loadWorkspace();
+  if (mounted) routeReady = true;
 });
 
-watch([() => route.fullPath, currentSearch, detail, retainedEvidence], publishCurrentAgentContext, { flush: "post" });
+watch(() => route.fullPath, () => {
+  publishCurrentAgentContext();
+  if (routeReady && routeMutationDepth === 0) void applyRouteNavigation();
+});
+watch([currentSearch, detail, retainedEvidence], publishCurrentAgentContext, { flush: "post" });
 
 onBeforeUnmount(() => {
   mounted = false;
-  controller?.abort();
+  workspaceGeneration += 1;
+  searchGeneration += 1;
+  detailGeneration += 1;
+  workspaceController?.abort();
+  searchController?.abort();
+  detailController?.abort();
   window.removeEventListener(OPERATIONAL_SCOPE_CHANGED_EVENT, receiveScopeChange);
-  publishAgentContext(null);
+  if (shouldClearAgentContextOnUnmount(route.path)) publishAgentContext(null);
 });
 </script>
 
 <template>
-  <section class="telemetry-workspace traces-workspace" aria-labelledby="traces-heading">
-    <header class="telemetry-heading">
-      <div>
-        <div class="telemetry-heading__line"><ScanSearch :size="20" aria-hidden="true" /><h1 id="traces-heading">链路</h1><span class="provider-state" :data-state="catalog?.provider_state ?? 'checking'"><span aria-hidden="true" />Tempo {{ providerStateLabel(catalog?.provider_state) }}</span></div>
-        <p>{{ bootstrap?.active_scope.cluster_id || "活动集群" }} / {{ selectedNamespace || "Namespace" }}<span v-if="selectedResource"> / {{ selectedResource.kind }} {{ selectedResource.name }}</span></p>
-      </div>
-      <button class="icon-button" type="button" title="刷新链路工作区" aria-label="刷新链路工作区" :disabled="loading" @click="refreshAll"><RefreshCw :size="18" :class="{ spinning: loading }" aria-hidden="true" /></button>
-    </header>
+  <WorkspacePageFrame
+    class="traces-workspace"
+    width="full"
+    aria-labelledby="traces-heading"
+  >
+    <WorkspaceHeader
+      title="链路分析"
+      :description="`${selectedResource ? `${selectedResource.kind} ${selectedResource.name} · ${selectedResource.namespace}` : '当前运行范围'} · 沿关键路径定位慢 Span 与错误服务`"
+    >
+      <template #actions>
+        <UTooltip text="刷新链路工作区">
+          <UButton
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-refresh-cw"
+            square
+            aria-label="刷新链路工作区"
+            :loading="loading"
+            @click="refreshAll"
+          />
+        </UTooltip>
+      </template>
+    </WorkspaceHeader>
 
-    <div v-if="pageError" class="telemetry-notice is-error" role="alert"><TriangleAlert :size="18" aria-hidden="true" /><div><strong>{{ pageError.code }}</strong><span>{{ pageError.message }}</span></div></div>
-    <div v-if="queryError" class="telemetry-notice is-error" role="alert" aria-live="assertive"><TriangleAlert :size="18" aria-hidden="true" /><div><strong>{{ queryError.code }}</strong><span>{{ queryError.message }}</span><small v-if="queryError.requestID">Request {{ queryError.requestID }} · Trace {{ queryError.traceID || "无" }}</small></div></div>
-    <div v-if="statusMessage" class="telemetry-notice is-success" role="status" aria-live="polite"><CheckCircle2 :size="18" aria-hidden="true" /><span>{{ statusMessage }}</span></div>
-    <div v-if="loading" class="telemetry-loading" role="status"><LoaderCircle :size="22" class="spinning" aria-hidden="true" />正在读取活动 Scope 与真实 Workload…</div>
+    <WorkspaceState
+      v-if="pageError"
+      :kind="pageError.status === 401 || pageError.status === 403 ? 'permission-denied' : 'error'"
+      :title="pageError.code"
+      :description="pageError.message"
+      :request-i-d="pageError.requestID"
+      :trace-i-d="pageError.traceID"
+      :next-steps="pageError.nextSteps"
+    >
+      <template #actions>
+        <UButton
+          color="neutral"
+          variant="outline"
+          icon="i-lucide-refresh-cw"
+          label="重试"
+          @click="refreshAll"
+        />
+      </template>
+    </WorkspaceState>
+    <WorkspaceState
+      v-if="queryError"
+      :kind="queryError.status === 401 || queryError.status === 403 ? 'permission-denied' : 'error'"
+      :title="queryError.code"
+      :description="queryError.message"
+      :request-i-d="queryError.requestID"
+      :trace-i-d="queryError.traceID"
+      :next-steps="queryError.nextSteps"
+    />
+    <UAlert
+      v-if="statusMessage"
+      color="success"
+      variant="soft"
+      icon="i-lucide-circle-check"
+      title="状态更新"
+      :description="statusMessage"
+      role="status"
+    />
+
+    <WorkspaceState
+      v-if="loading"
+      kind="loading"
+      title="正在读取活动 Scope"
+      description="加载真实 Workload、Tempo 查询目录与历史身份。"
+    />
+
+    <template v-else-if="detailRouteActive">
+      <WorkspaceState
+        v-if="detailLoading"
+        kind="loading"
+        title="正在读取 Tempo Trace detail"
+        description="保留 Trace、Search 与 Configuration Revision 身份。"
+      />
+      <TraceDetailWorkspace
+        v-else-if="detail"
+        :detail="detail"
+        :selected-i-ds="selectedSpanIDs"
+        :inspected-span="inspectedSpan"
+        :retained-evidence="retainedEvidence"
+        :consultation="consultation"
+        :saving-evidence="savingEvidence"
+        :freezing="freezing"
+        :can-freeze="canFreeze"
+        :search-stale="Boolean(currentSearch?.stale)"
+        :workload-location="workloadLocation"
+        @back="returnFromDetail"
+        @toggle="toggleSpan"
+        @inspect="inspectSpan"
+        @save-evidence="retainSelectedEvidence"
+        @open-agent="openCurrentInAgent"
+        @freeze="freezeContext"
+      />
+      <WorkspaceState
+        v-else
+        kind="empty"
+        title="Trace detail 当前不可用"
+        description="可返回搜索结果或刷新当前深链。"
+      >
+        <template #actions>
+          <UButton
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-arrow-left"
+            label="返回"
+            @click="returnFromDetail"
+          />
+          <UButton
+            color="primary"
+            icon="i-lucide-refresh-cw"
+            label="重试"
+            @click="refreshAll"
+          />
+        </template>
+      </WorkspaceState>
+    </template>
 
     <template v-else>
-      <section class="telemetry-query-band" aria-label="Trace 搜索">
-        <div class="context-controls">
-          <label><span>Namespace</span><select v-model="selectedNamespace" name="traces-namespace" autocomplete="off" @change="changeNamespace"><option v-for="namespace in namespaces" :key="namespace" :value="namespace">{{ namespace }}</option></select></label>
-          <label class="workload-control"><span>Workload</span><select v-model="selectedResourceID" name="traces-workload" autocomplete="off" @change="changeResource"><option v-for="resource in namespaceWorkloads" :key="resource.id" :value="resource.id">{{ resource.kind }} · {{ resource.name }}</option></select></label>
-          <div class="field-group"><span>查询模式</span><div class="segmented-control" role="group" aria-label="Trace 查询模式"><button type="button" :aria-pressed="mode === 'guided'" @click="mode = 'guided'">引导</button><button type="button" :aria-pressed="mode === 'expert'" @click="mode = 'expert'">Expert</button></div></div>
-        </div>
+      <section
+        class="trace-discovery-stage"
+        aria-labelledby="trace-results-heading"
+      >
+        <div class="trace-workbench">
+          <aside
+            class="trace-query-rail"
+            aria-label="Trace 查询面板"
+          >
+            <TracesQueryControls
+              :namespaces="namespaces"
+              :resources="namespaceWorkloads"
+              :catalog="catalog"
+              :namespace="selectedNamespace"
+              :resource-i-d="selectedResourceID"
+              :mode="mode"
+              :service="serviceFilter"
+              :operation="operationFilter"
+              :status="statusFilter"
+              :min-duration-m-s="minDuration"
+              :max-duration-m-s="maxDuration"
+              :expert-query="expertQuery"
+              :from="fromValue"
+              :to="toValue"
+              :limit="limit"
+              :valid-time-range="validTimeRange"
+              :can-search="canSearch"
+              :searching="searching"
+              @update:namespace="selectedNamespace = $event"
+              @update:resource-i-d="selectedResourceID = $event"
+              @update:mode="changeMode"
+              @update:service="serviceFilter = $event"
+              @update:operation="operationFilter = $event"
+              @update:status="statusFilter = $event"
+              @update:min-duration-m-s="minDuration = $event"
+              @update:max-duration-m-s="maxDuration = $event"
+              @update:expert-query="expertQuery = $event"
+              @update:from="fromValue = $event"
+              @update:to="toValue = $event"
+              @update:limit="limit = $event"
+              @namespace-change="changeNamespace"
+              @resource-change="changeResource"
+              @preset="selectPreset"
+              @search="searchTraces"
+              @cancel="cancelSearchRequest"
+            />
 
-        <div v-if="mode === 'guided'" class="guided-grid trace-guided-grid">
-          <label><span>Service</span><input v-model="serviceFilter" name="trace-service" type="search" autocomplete="off" placeholder="例如：cloudops-api…" /></label>
-          <label><span>Operation</span><input v-model="operationFilter" name="trace-operation" type="search" autocomplete="off" placeholder="例如：GET /readyz…" /></label>
-          <label><span>Status</span><select v-model="statusFilter" name="trace-status" autocomplete="off"><option value="">全部</option><option value="error">Error</option><option value="ok">OK</option></select></label>
-          <label><span>最短耗时（ms）</span><input v-model.number="minDuration" name="trace-min-duration" type="number" inputmode="numeric" autocomplete="off" min="0" /></label>
-          <label><span>最长耗时（ms）</span><input v-model.number="maxDuration" name="trace-max-duration" type="number" inputmode="numeric" autocomplete="off" min="0" /></label>
-        </div>
-        <label v-else class="expert-editor"><span>TraceQL span selector</span><textarea v-model="expertQuery" name="trace-expert-query" autocomplete="off" rows="5" spellcheck="false" /></label>
+            <UAlert
+              v-if="catalog && !providerReady"
+              color="error"
+              variant="soft"
+              icon="i-lucide-ban"
+              :title="`Tempo ${providerStateLabel(catalog.provider_state)}`"
+              :description="`${catalog.provider_detail} · ${catalog.source.identity || '当前 Configuration Revision 没有可用采集端点'}`"
+            />
+          </aside>
 
-        <div class="time-controls">
-          <div class="preset-control" role="group" aria-label="Trace 时间范围快捷选择"><button type="button" @click="selectPreset(15)">15m</button><button type="button" @click="selectPreset(60)">1h</button><button type="button" @click="selectPreset(360)">6h</button></div>
-          <label><span>开始</span><input v-model="fromValue" name="traces-from" type="datetime-local" autocomplete="off" /></label>
-          <label><span>结束</span><input v-model="toValue" name="traces-to" type="datetime-local" autocomplete="off" /></label>
-          <label><span>上限</span><select v-model.number="limit" name="traces-limit" autocomplete="off"><option :value="1">1</option><option :value="50">50</option><option :value="100">100</option><option :value="200">200</option></select></label>
-        </div>
-
-        <div class="query-actions">
-          <div class="bound-summary"><span>Lookback ≤ {{ Math.round((catalog?.bounds.max_lookback_seconds ?? 0) / 3600) }}h</span><span>Traces ≤ {{ catalog?.bounds.max_results ?? 0 }}</span><span>Response ≤ {{ formatBytes(catalog?.bounds.max_response_bytes ?? 0) }}</span><span>Timeout {{ catalog?.bounds.timeout_ms ?? 0 }}ms</span></div>
-          <button class="command-button is-primary" type="button" :disabled="!canSearch" @click="searchTraces"><LoaderCircle v-if="searching" :size="17" class="spinning" aria-hidden="true" /><Play v-else :size="17" aria-hidden="true" />搜索 Trace</button>
-        </div>
-        <div v-if="catalog && !providerReady" class="provider-unavailable" role="status"><TriangleAlert :size="18" aria-hidden="true" /><div><strong>Tempo {{ providerStateLabel(catalog.provider_state) }}</strong><span>{{ catalog.provider_detail }}</span><small>{{ catalog.source.identity || "当前 Configuration Revision 没有可用端点" }}</small></div></div>
-      </section>
-
-      <div class="telemetry-result-grid">
-        <main class="telemetry-result-column">
-          <section class="result-header"><div><span class="section-kicker">Trace Search</span><h2>搜索结果</h2></div><div class="result-actions"><RouterLink class="command-button" :to="workloadLocation"><Server :size="16" aria-hidden="true" />Workload</RouterLink></div></section>
-          <div v-if="currentSearch" class="execution-meta"><span><b>{{ currentSearch.result_count }}</b> traces</span><span><b>{{ formatBytes(currentSearch.response_bytes) }}</b></span><span>采集 {{ formatTime(currentSearch.source.collected_at) }}</span><span v-if="currentSearch.partial" class="is-warning">部分结果</span><span v-if="currentSearch.truncated" class="is-warning">已截断</span><span v-if="currentSearch.stale" class="is-warning">已陈旧</span></div>
-          <div v-if="currentSearch?.truncated" class="telemetry-notice is-warning" role="status"><TriangleAlert :size="18" aria-hidden="true" /><span>结果达到当前上限；请收窄时间或 TraceQL 条件。</span></div>
-          <div v-if="currentSearch?.result_expired" class="telemetry-notice is-warning" role="status"><History :size="18" aria-hidden="true" /><span>Provider Trace summaries 已过期，仅保留执行元数据。请重新搜索。</span></div>
-          <div v-if="!currentSearch && !detailLoading && !detail" class="empty-result"><ScanSearch :size="30" aria-hidden="true" /><strong>尚无 Trace 搜索</strong><span>选择真实 Workload 与时间范围后搜索。</span></div>
-          <div v-else-if="currentSearch?.status === 'succeeded' && !currentSearch.result_expired && currentSearch.traces.length === 0 && !detail" class="empty-result" data-testid="traces-empty"><ScanSearch :size="30" aria-hidden="true" /><strong>此范围没有 Trace</strong><span>资源与时间上下文保持不变。</span></div>
-
-          <section v-if="currentSearch?.traces.length" class="trace-list" aria-label="Trace 搜索结果">
-            <button v-for="trace in currentSearch.traces" :key="trace.trace_id" class="trace-summary-row" :class="{ active: detail?.trace_id === trace.trace_id }" type="button" @click="openTrace(trace)"><div><strong>{{ trace.root_service }} · {{ trace.root_operation }}</strong><code>{{ trace.trace_id }}</code><small>{{ formatTime(trace.start_time) }}</small></div><span>{{ formatDuration(trace.duration_ms) }}</span><span>{{ trace.span_count }} spans</span><span :class="{ 'error-count': trace.error_span_count > 0 }">{{ trace.error_span_count }} errors</span><ChevronRight :size="16" aria-hidden="true" /></button>
-          </section>
-
-          <div v-if="detailLoading" class="telemetry-loading" role="status"><LoaderCircle :size="22" class="spinning" aria-hidden="true" />正在读取 Tempo Trace detail…</div>
-          <template v-else-if="detail">
-            <section class="trace-detail-heading"><div><span class="section-kicker">Trace detail</span><h2>{{ detail.root_service }} · {{ detail.root_operation }}</h2><p>{{ detail.trace_id }}</p></div><div class="result-actions"><button class="command-button" type="button" :disabled="selectedSpanIDs.size === 0 || savingEvidence" @click="retainSelectedEvidence"><Save :size="16" aria-hidden="true" />保存 Evidence</button><a v-if="tempoLink" class="command-button" :href="tempoLink.href" target="_blank" rel="noopener noreferrer"><ExternalLink :size="16" aria-hidden="true" />Tempo</a></div></section>
-            <div class="execution-meta"><span><b>{{ detail.spans.length }}</b> spans</span><span><b>{{ formatDuration(detail.duration_ms) }}</b></span><span><b>{{ formatBytes(detail.response_bytes) }}</b></span><span v-if="detail.partial" class="is-warning">部分结果</span><span v-if="detail.truncated" class="is-warning">已截断</span></div>
-            <div class="waterfall-scroll" data-testid="trace-waterfall">
-              <div class="waterfall" role="list" aria-label="Trace waterfall">
-                <div class="waterfall-header" aria-hidden="true"><span>Span</span><span>0 → {{ formatDuration(detail.duration_ms) }}</span><span>耗时</span></div>
-                <div v-for="span in detail.spans" :key="span.span_id" class="waterfall-row" :class="{ active: inspectedSpan?.span_id === span.span_id }" :style="{ '--span-depth': span.depth }" role="listitem">
-                  <label class="span-label"><input type="checkbox" autocomplete="off" :checked="selectedSpanIDs.has(span.span_id)" :aria-label="`选择 span ${span.name}`" @change="toggleSpan(span.span_id)" /><span class="span-copy"><strong>{{ span.name }}</strong><small>{{ span.service }}</small></span></label>
-                  <button class="waterfall-inspect" type="button" :aria-label="`检查 span ${span.name}`" @click="inspectSpan(span)"><span class="span-track" aria-hidden="true"><i class="span-bar" :class="{ 'is-error': span.status === 'error', 'is-critical': span.critical_path }" :style="spanStyle(span)" /></span><span class="span-duration">{{ formatDuration(span.duration_ms) }}</span></button>
-                </div>
+          <section
+            class="trace-results-panel"
+            aria-labelledby="trace-results-heading"
+          >
+            <header class="trace-results-header">
+              <div>
+                <h2 id="trace-results-heading">
+                  Trace 结果
+                </h2>
+                <p v-if="currentSearch">
+                  {{ currentSearch.result_count }} 条 Trace · {{ formatElapsed(currentSearch.created_at, currentSearch.completed_at) }} · {{ formatBytes(currentSearch.response_bytes) }}
+                </p>
+                <p v-else>
+                  运行查询后在此比较耗时、Span 数量、错误服务并进入瀑布图。
+                </p>
               </div>
+              <div class="trace-results-actions">
+                <UTooltip text="打开 Trace 并选择 Span 后保存">
+                  <UButton
+                    color="neutral"
+                    variant="soft"
+                    icon="i-lucide-save"
+                    label="保存 Evidence"
+                    disabled
+                  />
+                </UTooltip>
+                <UButton
+                  color="neutral"
+                  variant="soft"
+                  icon="i-lucide-bot"
+                  label="交给 Agent"
+                  :disabled="!canFreeze"
+                  @click="openCurrentInAgent"
+                />
+                <UPopover :content="{ align: 'end', side: 'bottom', sideOffset: 8, collisionPadding: 16, sticky: 'always' }">
+                  <UButton
+                    color="neutral"
+                    variant="ghost"
+                    icon="i-lucide-history"
+                    :label="`查询历史 ${historyItems.length}`"
+                  />
+                  <template #content>
+                    <div class="trace-history-popover">
+                      <TracesHistory
+                        :items="historyItems"
+                        :active-i-d="currentSearch?.id ?? ''"
+                        @select="openHistory"
+                      />
+                    </div>
+                  </template>
+                </UPopover>
+                <UPopover>
+                  <UButton
+                    color="neutral"
+                    variant="ghost"
+                    icon="i-lucide-ellipsis"
+                    label="更多"
+                  />
+                  <template #content>
+                    <div class="trace-more-menu">
+                      <UButton
+                        color="neutral"
+                        variant="ghost"
+                        icon="i-lucide-archive"
+                        label="创建 Snapshot"
+                        :disabled="!canFreeze || freezing"
+                        :loading="freezing"
+                        @click="freezeContext"
+                      />
+                      <UButton
+                        color="neutral"
+                        variant="ghost"
+                        icon="i-lucide-box"
+                        label="打开关联 Workload"
+                        :to="workloadLocation"
+                      />
+                      <UButton
+                        v-if="tempoURL"
+                        color="neutral"
+                        variant="ghost"
+                        icon="i-lucide-external-link"
+                        label="在 Tempo 中打开"
+                        :to="tempoURL"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        external
+                      />
+                      <UButton
+                        color="neutral"
+                        variant="ghost"
+                        icon="i-lucide-chart-no-axes-combined"
+                        label="查看关联指标"
+                        :to="{ path: '/monitoring', query: workloadLocation.query }"
+                      />
+                      <UButton
+                        color="neutral"
+                        variant="ghost"
+                        icon="i-lucide-logs"
+                        label="查看关联日志"
+                        :to="{ path: '/logs', query: workloadLocation.query }"
+                      />
+                    </div>
+                  </template>
+                </UPopover>
+              </div>
+            </header>
+
+            <div
+              v-if="currentSearch"
+              class="trace-results-overview"
+            >
+              <dl
+                class="trace-results-metrics"
+                aria-label="Trace 结果摘要"
+              >
+                <div><dt>Trace</dt><dd>{{ traceOverview.total }}</dd></div>
+                <div><dt>服务</dt><dd>{{ traceOverview.services }}</dd></div>
+                <div>
+                  <dt>错误链路</dt><dd :class="{ 'is-error': traceOverview.errorTraces > 0 }">
+                    {{ traceOverview.errorTraces }}
+                  </dd>
+                </div>
+                <div><dt>Span</dt><dd>{{ traceOverview.spans }}</dd></div>
+              </dl>
+              <section
+                v-if="traceOverview.slowest"
+                class="trace-results-slowest"
+              >
+                <div>
+                  <span>最慢链路</span>
+                  <strong>{{ traceOverview.slowest.root_service }} · {{ traceOverview.slowest.root_operation }}</strong>
+                  <p>{{ formatDuration(traceOverview.slowest.duration_ms) }} · {{ traceOverview.slowest.span_count }} Span · {{ traceOverview.slowest.error_span_count }} 错误</p>
+                </div>
+                <UButton
+                  color="neutral"
+                  variant="soft"
+                  trailing-icon="i-lucide-arrow-right"
+                  label="分析"
+                  @click="openTrace(traceOverview.slowest, 0)"
+                />
+              </section>
             </div>
 
-            <section class="snapshot-bar" aria-labelledby="trace-context-heading"><div><Archive :size="18" aria-hidden="true" /><div><h2 id="trace-context-heading">冻结上下文</h2><span>{{ retainedEvidence.length }} 条 Evidence · Trace detail execution {{ detail.query_id }}</span></div></div><button class="command-button is-primary" type="button" :disabled="!canFreeze || freezing" @click="freezeContext"><LoaderCircle v-if="freezing" :size="16" class="spinning" aria-hidden="true" /><Archive v-else :size="16" aria-hidden="true" />创建 Snapshot</button></section>
-            <dl v-if="consultation" class="snapshot-proof" data-testid="context-snapshot"><div><dt>Consultation</dt><dd>{{ consultation.id }}</dd></div><div><dt>Snapshot</dt><dd>{{ consultation.context_snapshot.id }}</dd></div><div><dt>Content hash</dt><dd>{{ consultation.context_snapshot.content_hash }}</dd></div></dl>
-          </template>
-        </main>
-
-        <aside class="telemetry-inspector" aria-label="Span 详情与历史">
-          <section>
-            <div class="section-title"><div><GitBranch :size="17" aria-hidden="true" /><h2>Span 详情</h2></div><span v-if="inspectedSpan?.critical_path">Critical path</span></div>
-            <div v-if="!inspectedSpan" class="aside-empty">选择 waterfall 中的 span 查看属性与事件。</div>
-            <template v-else>
-              <dl class="field-list"><div><dt>span_id</dt><dd>{{ inspectedSpan.span_id }}</dd></div><div><dt>parent</dt><dd>{{ inspectedSpan.parent_span_id || "root" }}</dd></div><div><dt>service</dt><dd>{{ inspectedSpan.service }}</dd></div><div><dt>kind</dt><dd>{{ inspectedSpan.kind || "unspecified" }}</dd></div><div><dt>status</dt><dd>{{ inspectedSpan.status }}</dd></div><div v-for="(value, key) in inspectedSpan.attributes" :key="key"><dt>{{ key }}</dt><dd>{{ value }}</dd></div></dl>
-              <div v-if="inspectedSpan.events?.length" class="span-events"><div class="section-title"><div><Timer :size="15" aria-hidden="true" /><h2>Events</h2></div></div><dl class="field-list"><div v-for="event in inspectedSpan.events" :key="`${event.timestamp}:${event.name}`"><dt>{{ formatTime(event.timestamp) }}</dt><dd>{{ event.name }}</dd></div></dl></div>
-            </template>
+            <div
+              v-if="currentSearch"
+              class="trace-results-meta"
+            >
+              <span><b>{{ currentSearch.mode === "expert" ? "TRACEQL" : "DISCOVERY" }}</b></span>
+              <span>{{ currentSearch.time_range.from }} → {{ currentSearch.time_range.to }}</span>
+              <UBadge
+                v-if="currentSearch.truncated"
+                color="warning"
+                variant="soft"
+                label="已截断"
+              />
+            </div>
+            <WorkspaceState
+              v-if="currentSearch?.partial"
+              kind="partial"
+              title="Tempo 仅返回部分 Trace summaries"
+              description="可用结果继续显示；请收窄时间范围或过滤条件后重试。"
+            />
+            <WorkspaceState
+              v-if="currentSearch?.stale"
+              kind="stale"
+              title="Trace 搜索结果已陈旧"
+              description="当前内容仍可检查，但不声明它代表最新 Provider 状态。"
+            />
+            <WorkspaceState
+              v-if="currentSearch?.result_expired"
+              kind="expired"
+              title="Provider Trace summaries 已过期"
+              description="仅保留 Search Execution 审计元数据；请在查询面板重新执行。"
+            />
+            <WorkspaceState
+              v-if="currentSearch?.status === 'failed' || currentSearch?.status === 'cancelled'"
+              kind="error"
+              :title="currentSearch.error_code || `Trace 搜索${currentSearch.status === 'cancelled' ? '已取消' : '失败'}`"
+              :description="currentSearch.error_detail || '服务端保留了此次 Search Execution 身份。'"
+            />
+            <TraceSearchResults
+              v-if="currentSearch?.traces.length"
+              ref="resultsList"
+              :traces="currentSearch.traces"
+              active-trace-i-d=""
+              @open="openTrace"
+            />
+            <section
+              v-if="!currentSearch"
+              class="trace-results-empty"
+              aria-live="polite"
+            >
+              <div class="trace-results-empty__copy">
+                <span><UIcon
+                  name="i-lucide-scan-search"
+                  aria-hidden="true"
+                /></span>
+                <div>
+                  <h3>尚未发现 Trace</h3>
+                  <p>选择服务和操作，或使用 TraceQL 查询链路。</p>
+                </div>
+              </div>
+              <div class="trace-results-empty__suggestions">
+                <span>常用条件</span>
+                <div>
+                  <UButton
+                    color="neutral"
+                    variant="soft"
+                    icon="i-lucide-circle-alert"
+                    label="错误 Trace"
+                    @click="prepareTraceShortcut('errors')"
+                  />
+                  <UButton
+                    color="neutral"
+                    variant="soft"
+                    icon="i-lucide-timer"
+                    label="耗时 > 1s"
+                    @click="prepareTraceShortcut('slow')"
+                  />
+                  <UButton
+                    color="neutral"
+                    variant="soft"
+                    icon="i-lucide-clock-3"
+                    label="最近 15 分钟"
+                    @click="prepareTraceShortcut('recent')"
+                  />
+                </div>
+              </div>
+            </section>
+            <section
+              v-else-if="currentSearch?.status === 'succeeded' && !currentSearch.result_expired && currentSearch.traces.length === 0"
+              class="trace-results-empty trace-results-empty--no-results"
+              aria-live="polite"
+            >
+              <div class="trace-results-empty__copy">
+                <span><UIcon
+                  name="i-lucide-search-x"
+                  aria-hidden="true"
+                /></span>
+                <div>
+                  <h3>没有找到符合条件的 Trace</h3>
+                  <p>当前范围：{{ currentSearch.resource.namespace }} / {{ currentSearch.resource.name }} / {{ formatTime(currentSearch.time_range.from) }} 至 {{ formatTime(currentSearch.time_range.to) }}</p>
+                </div>
+              </div>
+              <div class="trace-results-empty__suggestions">
+                <span>建议调整</span>
+                <div>
+                  <UButton
+                    color="neutral"
+                    variant="ghost"
+                    label="扩大到 1 小时"
+                    @click="prepareTraceShortcut('wider')"
+                  />
+                  <UButton
+                    color="neutral"
+                    variant="ghost"
+                    label="清除 Operation"
+                    @click="prepareTraceShortcut('clear-operation')"
+                  />
+                  <UButton
+                    color="neutral"
+                    variant="ghost"
+                    label="清除耗时筛选"
+                    @click="prepareTraceShortcut('clear-duration')"
+                  />
+                </div>
+              </div>
+            </section>
           </section>
-          <section>
-            <div class="section-title"><div><History :size="17" aria-hidden="true" /><h2>搜索历史</h2></div><span>{{ historyItems.length }}</span></div>
-            <div v-if="historyItems.length === 0" class="aside-empty">尚无持久化执行元数据。</div>
-            <button v-for="item in historyItems" :key="item.id" class="history-row" :class="{ active: currentSearch?.id === item.id }" type="button" @click="openHistory(item.id)"><span>{{ item.mode }} · {{ item.result_count }} traces</span><small>{{ formatTime(item.created_at) }}<template v-if="item.result_expired"> · 结果已过期</template></small></button>
-          </section>
-        </aside>
-      </div>
+        </div>
+      </section>
     </template>
-  </section>
+  </WorkspacePageFrame>
 </template>
 
-<style scoped lang="scss">
-@use "../../styles/telemetry-workspace";
-
-.trace-guided-grid { grid-template-columns: 1.2fr 1.2fr 0.7fr 0.8fr 0.8fr; }
-.span-label { display: flex; align-items: center; gap: 7px; }
-.span-label input { width: 16px; height: 16px; flex: 0 0 16px; accent-color: var(--co-action-primary); }
-.span-events { margin-top: 14px; }
-
-@media (max-width: 1100px) {
-  .trace-guided-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+<style scoped>
+.traces-workspace {
+  width: 100%;
+  max-width: 1600px;
+  margin-inline: auto;
+  padding: var(--co-space-5) clamp(var(--co-space-4), 2.5vw, var(--co-space-8)) var(--co-space-10);
+  container-name: traces-workspace;
+  container-type: inline-size;
+}
+.traces-workspace code { min-width: 0; overflow-wrap: anywhere; color: var(--co-text-secondary); font-family: var(--co-font-mono); font-size: 11px; }
+.trace-discovery-stage { min-width: 0; }
+.trace-workbench { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr); align-items: start; gap: var(--co-space-4); }
+.trace-query-rail { position: static; display: grid; min-width: 0; gap: var(--co-space-3); }
+.trace-results-panel { display: grid; min-width: 0; align-content: start; gap: var(--co-space-3); padding: 0 var(--co-space-4) var(--co-space-4); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); background: var(--co-bg-surface); box-shadow: var(--co-shadow-row); }
+.trace-results-header { display: grid; min-width: 0; min-height: 76px; grid-template-columns: minmax(220px, 1fr) auto; align-items: center; gap: var(--co-space-4); padding: var(--co-space-3) 0; border-bottom: 1px solid var(--co-border-subtle); }
+.trace-results-header > div:first-child { display: grid; min-width: 0; gap: 3px; }
+.trace-results-header h2 { margin: 0; font-size: 18px; }
+.trace-results-header p { margin: 0; color: var(--co-text-secondary); font-size: 12px; }
+.trace-results-actions { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--co-space-2); }
+.trace-more-menu { display: grid; min-width: 250px; gap: 2px; padding: var(--co-space-2); }
+.trace-more-menu :deep(button),
+.trace-more-menu :deep(a) { width: 100%; justify-content: flex-start; }
+.trace-results-overview { display: grid; min-width: 0; grid-template-columns: minmax(360px, .9fr) minmax(320px, 1.1fr); align-items: center; padding-bottom: var(--co-space-3); border-bottom: 1px solid var(--co-border-subtle); }
+.trace-results-metrics { display: grid; min-width: 0; grid-template-columns: repeat(4, minmax(80px, 1fr)); margin: 0; }
+.trace-results-metrics div { min-width: 0; padding: var(--co-space-1) var(--co-space-4); border-left: 1px solid var(--co-border-subtle); }
+.trace-results-metrics div:first-child { padding-left: 0; border-left: 0; }
+.trace-results-metrics dt { color: var(--co-text-muted); font-size: 12px; }
+.trace-results-metrics dd { margin: 3px 0 0; color: var(--co-text-primary); font-family: var(--co-font-mono); font-size: 18px; font-weight: 750; font-variant-numeric: tabular-nums; }
+.trace-results-metrics dd.is-error { color: var(--co-status-critical-fg); }
+.trace-results-slowest { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: var(--co-space-3); padding-left: var(--co-space-4); border-left: 1px solid var(--co-border-subtle); }
+.trace-results-slowest > div { display: grid; min-width: 0; gap: 3px; }
+.trace-results-slowest span { color: var(--co-text-muted); font-size: 12px; font-weight: 650; }
+.trace-results-slowest strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.trace-results-slowest p { margin: 0; color: var(--co-text-muted); font-size: 12px; }
+.trace-results-meta { display: flex; width: fit-content; max-width: 100%; min-width: 0; flex-wrap: wrap; align-items: center; gap: var(--co-space-2) var(--co-space-4); padding-bottom: var(--co-space-2); border-bottom: 1px solid var(--co-border-subtle); color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 11px; }
+.trace-results-empty { display: grid; min-height: 280px; place-content: center; justify-items: center; gap: var(--co-space-5); padding: var(--co-space-6) var(--co-space-5); text-align: center; }
+.trace-results-empty--no-results { min-height: 260px; }
+.trace-results-empty__copy { display: flex; min-width: 0; align-items: center; gap: var(--co-space-4); text-align: left; }
+.trace-results-empty__copy > span { display: grid; width: 48px; height: 48px; flex: 0 0 auto; place-items: center; border-radius: var(--co-radius-control); color: var(--co-text-muted); background: var(--co-bg-canvas); }
+.trace-results-empty__copy > span :deep(svg) { display: block; width: 22px; height: 22px; }
+.trace-results-empty h3 { margin: 0; font-size: 18px; }
+.trace-results-empty p { max-width: 58ch; margin: var(--co-space-2) 0 0; color: var(--co-text-secondary); font-size: 12px; line-height: 1.65; }
+.trace-results-empty__suggestions { display: grid; justify-items: center; gap: var(--co-space-2); }
+.trace-results-empty__suggestions > span { color: var(--co-text-muted); font-size: 12px; font-weight: 650; }
+.trace-results-empty__suggestions > div { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--co-space-2); }
+.trace-history-popover { box-sizing: border-box; width: min(420px, calc(100vw - 32px)); max-height: min(440px, calc(100dvh - 32px)); padding: var(--co-space-3); overflow: hidden; }
+@media (max-width: 1024px) {
+  .traces-workspace { padding-inline: var(--co-space-4); }
+  .trace-results-header { grid-template-columns: minmax(0, 1fr); align-items: flex-start; padding-block: var(--co-space-3); }
+  .trace-results-actions { justify-content: flex-start; }
+  .trace-results-overview { grid-template-columns: minmax(0, 1fr); }
+  .trace-results-slowest { margin-top: var(--co-space-3); padding-top: var(--co-space-3); padding-left: 0; border-top: 1px solid var(--co-border-subtle); border-left: 0; }
 }
 
-@media (max-width: 700px) {
-  .trace-guided-grid { grid-template-columns: 1fr; }
+@container traces-workspace (max-width: 900px) {
+  .trace-results-header { grid-template-columns: minmax(0, 1fr); align-items: flex-start; }
+  .trace-results-actions { justify-content: flex-start; }
+  .trace-results-overview { grid-template-columns: minmax(0, 1fr); }
+  .trace-results-slowest { margin-top: var(--co-space-3); padding-top: var(--co-space-3); padding-left: 0; border-top: 1px solid var(--co-border-subtle); border-left: 0; }
+}
+
+@container traces-workspace (max-width: 620px) {
+  .trace-results-panel { padding-inline: var(--co-space-3); }
+  .trace-results-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .trace-results-metrics div:nth-child(odd) { padding-left: 0; border-left: 0; }
+  .trace-results-slowest { align-items: flex-start; flex-direction: column; }
+  .trace-results-empty { min-height: 260px; padding-inline: var(--co-space-3); }
+  .trace-results-empty__copy { align-items: flex-start; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .traces-workspace * { scroll-behavior: auto; }
 }
 </style>

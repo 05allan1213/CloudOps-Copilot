@@ -73,6 +73,7 @@ type remediationPrepareDurableFacts struct {
 	RunCompletedAt        time.Time
 	Diagnosis             agent.DiagnosisRecord
 	Evidence              []remediation.EvidenceBinding
+	Facts                 []agent.EvidenceFact
 	Baseline              remediationPrepareBaseline
 	PlanVersion           int
 }
@@ -160,6 +161,35 @@ func (l *mysqlRemediationPrepareLoader) Load(ctx context.Context, task asyncjob.
 }
 
 func (l *mysqlRemediationPrepareLoader) loadDurableFacts(ctx context.Context, task asyncjob.Task) (_ remediationPrepareDurableFacts, err error) {
+	return l.loadDurableFactsForPolicy(ctx, task, agent.GoldenRequiredEnvClaimPolicy(), remediationPrepareDurableTarget{
+		Namespace: l.policy.Namespace,
+		Kind:      "Deployment",
+		Name:      l.policy.Workload,
+	}, true)
+}
+
+type remediationPrepareDurableTarget struct {
+	Cluster     string
+	Environment string
+	Namespace   string
+	Kind        string
+	Name        string
+}
+
+func (target remediationPrepareDurableTarget) matches(facts remediationPrepareDurableFacts) bool {
+	return target.Namespace != "" && target.Kind != "" && target.Name != "" &&
+		(target.Cluster == "" || target.Cluster == facts.Cluster) &&
+		(target.Environment == "" || target.Environment == facts.Environment) &&
+		target.Namespace == facts.Namespace && target.Kind == facts.TargetKind && target.Name == facts.TargetName
+}
+
+func (l *mysqlRemediationPrepareLoader) loadDurableFactsForPolicy(
+	ctx context.Context,
+	task asyncjob.Task,
+	claimPolicy agent.ClaimPolicy,
+	target remediationPrepareDurableTarget,
+	requireBaseline bool,
+) (_ remediationPrepareDurableFacts, err error) {
 	tx, err := l.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return remediationPrepareDurableFacts{}, fmt.Errorf("begin remediation.prepare read snapshot: %w", err)
@@ -195,7 +225,7 @@ WHERE r.id = ? AND r.incident_id = ? AND r.cycle_no = ?
 	if result.AgentRunVersion != task.ExpectedSubjectVersion || runStatus != "completed" || !completedAt.Valid ||
 		result.MigratedLegacy != task.MigratedLegacy || result.MigratedLegacyContext != task.MigratedLegacyContext ||
 		incidentStatus != "investigating" || expectedIncidentVersion != result.IncidentVersion ||
-		result.Namespace != l.policy.Namespace || result.TargetKind != "Deployment" || result.TargetName != l.policy.Workload {
+		!target.matches(result) {
 		return remediationPrepareDurableFacts{}, asyncjob.ErrSubjectVersionMismatch
 	}
 	result.RunCompletedAt = completedAt.Time.UTC().Truncate(time.Microsecond)
@@ -207,16 +237,18 @@ WHERE r.id = ? AND r.incident_id = ? AND r.cycle_no = ?
 	if err != nil {
 		return remediationPrepareDurableFacts{}, err
 	}
-	if err := validateCurrentRemediationDiagnosis(diagnosis, result.IncidentPublicID, task.CycleNo, facts); err != nil {
+	if err := validateCurrentRemediationDiagnosisWithPolicy(diagnosis, result.IncidentPublicID, task.CycleNo, facts, claimPolicy); err != nil {
 		return remediationPrepareDurableFacts{}, err
 	}
-	result.Diagnosis, result.Evidence = diagnosis, evidence
+	result.Diagnosis, result.Evidence, result.Facts = diagnosis, evidence, facts
 
-	baseline, err := l.loadActiveBaseline(ctx, tx, result, task.CreatedAt.UTC())
-	if err != nil {
-		return remediationPrepareDurableFacts{}, err
+	if requireBaseline {
+		baseline, baselineErr := l.loadActiveBaseline(ctx, tx, result, task.CreatedAt.UTC())
+		if baselineErr != nil {
+			return remediationPrepareDurableFacts{}, baselineErr
+		}
+		result.Baseline = baseline
 	}
-	result.Baseline = baseline
 	var maxPlanVersion uint64
 	var actionable int
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(plan_version), 0),
@@ -303,17 +335,17 @@ WHERE public_id = ? AND incident_id = ? AND cycle_no = ?`,
 	return bindings, facts, nil
 }
 
-func validateCurrentRemediationDiagnosis(stored agent.DiagnosisRecord, incidentPublicID string, cycleNo uint32, facts []agent.EvidenceFact) error {
-	policy := agent.GoldenRequiredEnvClaimPolicy()
+func validateCurrentRemediationDiagnosisWithPolicy(stored agent.DiagnosisRecord, incidentPublicID string, cycleNo uint32, facts []agent.EvidenceFact, policy agent.ClaimPolicy) error {
 	sufficiency, err := agent.EvaluateSufficiency(agent.SufficiencyInput{
 		IncidentID: incidentPublicID, CycleNo: uint64(cycleNo), Facts: facts, Policy: policy,
 	})
 	if err != nil || sufficiency.Outcome != agent.SufficiencyReady {
 		return fmt.Errorf("%w: current Evidence no longer satisfies the Diagnosis policy", asyncjob.ErrPolicyViolation)
 	}
-	validated, err := validateDiagnosis(stored.Candidate, investigationSnapshot{
-		IncidentPublicID: incidentPublicID, Task: asyncjob.Task{CycleNo: cycleNo}, Facts: facts,
-	}, policy, sufficiency)
+	validated, err := agent.ValidateDiagnosisRecord(stored.Candidate, agent.DiagnosisValidationInput{
+		IncidentID: incidentPublicID, CycleNo: uint64(cycleNo), Facts: facts,
+		Policy: policy, Sufficiency: sufficiency,
+	})
 	if err != nil {
 		return fmt.Errorf("%w: final Diagnosis no longer validates: %v", asyncjob.ErrPolicyViolation, err)
 	}

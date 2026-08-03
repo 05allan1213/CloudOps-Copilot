@@ -155,7 +155,7 @@ expect_one ClusterRoleBinding cloudops-filebeat-metadata-readonly
   exit 1
 }
 
-[[ "$(jq -r '[.[] | select(.kind == "ConfigMap" and .metadata.name == "cloudops-telemetry") | select(.data["elasticsearch-policy.json"] | contains("\"min_age\": \"7d\"")) | select(.data["filebeat.yml"] | contains("/var/log/containers/*_cloudops-system_*.log") and contains("add_kubernetes_metadata") and contains("deployment: true") and contains("trace_id")) | select(.data["tempo.yaml"] | contains("backend_scheduler:") and contains("backend_worker:") and contains("block_retention: 72h"))] | length' "${objects}")" == "1" ]] || {
+[[ "$(jq -r '[.[] | select(.kind == "ConfigMap" and .metadata.name == "cloudops-telemetry") | select(.data["elasticsearch-policy.json"] | contains("\"min_age\": \"7d\"")) | select(.data["elasticsearch-template.json"] | contains("\"reason\": { \"type\": \"keyword\", \"ignore_above\": 128 }")) | select(.data["filebeat.yml"] | contains("/var/log/containers/*_cloudops-system_*.log") and contains("add_kubernetes_metadata") and contains("deployment: true") and contains("trace_id") and contains("from: json.reason") and contains("to: reason")) | select(.data["tempo.yaml"] | contains("backend_scheduler:") and contains("backend_worker:") and contains("block_retention: 72h"))] | length' "${objects}")" == "1" ]] || {
   printf 'FAIL: telemetry configuration must preserve log correlation and bounded raw retention\n' >&2
   exit 1
 }

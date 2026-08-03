@@ -241,6 +241,27 @@ export interface AgentContextInput {
   evidence_refs: string[];
 }
 
+export interface CreatedAgentConsultation {
+  id: string;
+  title: string;
+  status: string;
+  context_snapshot: {
+    id: string;
+    consultation_id: string;
+    configuration_revision_id: string;
+    scope: OperationalScope;
+    resource_refs: TelemetryResourceReference[];
+    filters?: Record<string, unknown>;
+    time_range: TelemetryTimeRange;
+    query_definition_refs: string[];
+    query_execution_refs: string[];
+    evidence_refs: string[];
+    content_hash: string;
+    created_at: string;
+  };
+  created_at: string;
+}
+
 export interface SaveKnowledgeInput {
   title: string;
   content: string;
@@ -252,6 +273,27 @@ export interface SaveKnowledgeInput {
   resource_refs: TelemetryResourceReference[];
   review_at?: string;
   expires_at?: string;
+}
+
+export interface ActionCardProposalInput {
+  run_id: string;
+  action_type: "local.change_freeze.set";
+  target: {
+    cluster_id: string;
+    environment: string;
+    namespace: string;
+    workload_kind: "Deployment";
+    workload_name: string;
+    scenario_id: string;
+  };
+  parameters: { enabled: boolean; reason: string };
+  preconditions: Array<{
+    type: "local.change_freeze";
+    expected_enabled: boolean;
+    expected_version: number;
+  }>;
+  risk: string;
+  expires_at: string;
 }
 
 export interface OperationPlanProposalInput {
@@ -285,8 +327,8 @@ export function getAgentInvestigation(id: string, signal?: AbortSignal): Promise
   return getJSON(`/api/v1/agent/investigations/${encodeURIComponent(id)}`, { signal });
 }
 
-export function cancelAgentInvestigation(id: string): Promise<AgentRun> {
-  return postJSON(`/api/v1/agent/investigations/${encodeURIComponent(id)}/cancel`);
+export function cancelAgentInvestigation(id: string, signal?: AbortSignal): Promise<AgentRun> {
+  return postJSON(`/api/v1/agent/investigations/${encodeURIComponent(id)}/cancel`, undefined, { signal });
 }
 
 export async function getAgentConsultations(signal?: AbortSignal): Promise<ConsultationSummary[]> {
@@ -297,18 +339,23 @@ export function getAgentConsultation(id: string, signal?: AbortSignal): Promise<
   return getJSON(`/api/v1/agent/consultations/${encodeURIComponent(id)}`, { signal });
 }
 
-export function attachAgentSnapshot(id: string, input: AgentContextInput): Promise<AgentContextSnapshot> {
-  return postJSON(`/api/v1/agent/consultations/${encodeURIComponent(id)}/snapshots`, input);
+export function createAgentConsultation(input: AgentContextInput, signal?: AbortSignal): Promise<CreatedAgentConsultation> {
+  return postJSON("/api/v1/agent/consultations", input, { signal });
 }
 
-export function sendAgentMessage(id: string, content: string, idempotencyKey: string): Promise<{ message: ConsultationMessage; run: AgentRun }> {
+export function attachAgentSnapshot(id: string, input: AgentContextInput, signal?: AbortSignal): Promise<AgentContextSnapshot> {
+  return postJSON(`/api/v1/agent/consultations/${encodeURIComponent(id)}/snapshots`, input, { signal });
+}
+
+export function sendAgentMessage(id: string, content: string, idempotencyKey: string, signal?: AbortSignal): Promise<{ message: ConsultationMessage; run: AgentRun }> {
   return postJSON(`/api/v1/agent/consultations/${encodeURIComponent(id)}/messages`, { content }, {
     headers: { "Idempotency-Key": idempotencyKey },
+    signal,
   });
 }
 
-export function cancelAgentConsultation(id: string): Promise<AgentRun> {
-  return postJSON(`/api/v1/agent/consultations/${encodeURIComponent(id)}/cancel`);
+export function cancelAgentConsultation(id: string, signal?: AbortSignal): Promise<AgentRun> {
+  return postJSON(`/api/v1/agent/consultations/${encodeURIComponent(id)}/cancel`, undefined, { signal });
 }
 
 export async function getKnowledgeItems(signal?: AbortSignal): Promise<KnowledgeItem[]> {
@@ -319,16 +366,16 @@ export function getKnowledgeItem(id: string, signal?: AbortSignal): Promise<Know
   return getJSON(`/api/v1/knowledge-items/${encodeURIComponent(id)}`, { signal });
 }
 
-export function createKnowledgeItem(input: SaveKnowledgeInput): Promise<KnowledgeItem> {
-  return postJSON("/api/v1/knowledge-items", input);
+export function createKnowledgeItem(input: SaveKnowledgeInput, signal?: AbortSignal): Promise<KnowledgeItem> {
+  return postJSON("/api/v1/knowledge-items", input, { signal });
 }
 
-export function updateKnowledgeItem(id: string, input: Partial<SaveKnowledgeInput> & { status?: "active" | "disabled" }): Promise<KnowledgeItem> {
-  return patchJSON(`/api/v1/knowledge-items/${encodeURIComponent(id)}`, input);
+export function updateKnowledgeItem(id: string, input: Partial<SaveKnowledgeInput> & { status?: "active" | "disabled" }, signal?: AbortSignal): Promise<KnowledgeItem> {
+  return patchJSON(`/api/v1/knowledge-items/${encodeURIComponent(id)}`, input, { signal });
 }
 
-export function deleteKnowledgeItem(id: string): Promise<void> {
-  return deleteJSON(`/api/v1/knowledge-items/${encodeURIComponent(id)}`);
+export function deleteKnowledgeItem(id: string, signal?: AbortSignal): Promise<void> {
+  return deleteJSON(`/api/v1/knowledge-items/${encodeURIComponent(id)}`, { signal });
 }
 
 export async function getRunbookGuidance(signal?: AbortSignal): Promise<RunbookGuidance[]> {
@@ -339,16 +386,20 @@ export async function getOperationPlans(signal?: AbortSignal): Promise<Operation
   return (await getJSON<{ items: OperationPlan[] }>("/api/v1/operation-plans?limit=100", { signal })).items;
 }
 
+export function proposeActionCard(input: ActionCardProposalInput): Promise<ActionCard> {
+  return postJSON("/api/v1/agent/action-cards", input);
+}
+
 export function proposeOperationPlan(input: OperationPlanProposalInput): Promise<OperationPlan> {
   return postJSON("/api/v1/operation-plans", input);
 }
 
-export function authorizeActionCard(id: string, expectedHash: string, reason: string): Promise<ActionCard> {
-  return postJSON(`/api/v1/agent/action-cards/${encodeURIComponent(id)}/authorizations`, { expected_hash: expectedHash, reason });
+export function authorizeActionCard(id: string, expectedHash: string, reason: string, signal?: AbortSignal): Promise<ActionCard> {
+  return postJSON(`/api/v1/agent/action-cards/${encodeURIComponent(id)}/authorizations`, { expected_hash: expectedHash, reason }, { signal });
 }
 
-export function authorizeOperationPlan(id: string, expectedHash: string, reason: string): Promise<OperationPlan> {
-  return postJSON(`/api/v1/operation-plans/${encodeURIComponent(id)}/authorizations`, { expected_hash: expectedHash, reason });
+export function authorizeOperationPlan(id: string, expectedHash: string, reason: string, signal?: AbortSignal): Promise<OperationPlan> {
+  return postJSON(`/api/v1/operation-plans/${encodeURIComponent(id)}/authorizations`, { expected_hash: expectedHash, reason }, { signal });
 }
 
 const streamEventTypes = [
@@ -367,7 +418,7 @@ const streamEventTypes = [
 export function openAgentEventStream(
   consultationID: string,
   onEvent: (event: AgentStreamEvent) => void,
-  onError?: () => void,
+  onError?: (event?: Event) => void,
   onOpen?: () => void,
 ): () => void {
   const source = new EventSource(apiURL(`/api/v1/agent/consultations/${encodeURIComponent(consultationID)}/events`));

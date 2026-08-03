@@ -54,6 +54,23 @@ package-lock.json
 frontend/playwright-report/
 frontend/test-results/
 
+# Frontend redesign prework: keep source and curated evidence, ignore regenerated output.
+docs/evidence/frontend-redesign/prework/prototypes/cloudops-prework/node_modules/
+docs/evidence/frontend-redesign/prework/prototypes/cloudops-prework/dist/
+docs/evidence/frontend-redesign/prework/prototypes/cloudops-prework/output/
+docs/evidence/frontend-redesign/prework/prototypes/cloudops-prework/.playwright/
+docs/evidence/frontend-redesign/prework/prototypes/cloudops-prework/.playwright-cli/
+docs/evidence/frontend-redesign/prework/prototypes/cloudops-prework/auto-imports.d.ts
+docs/evidence/frontend-redesign/prework/prototypes/cloudops-prework/components.d.ts
+!docs/evidence/frontend-redesign/prework/prototypes/cloudops-prework/package-lock.json
+docs/evidence/frontend-redesign/prework/output/playwright/.playwright-cli/
+docs/evidence/frontend-redesign/prework/output/playwright/prototype/*-artifacts/
+docs/evidence/frontend-redesign/prework/output/playwright/prototype/*-check/
+docs/evidence/frontend-redesign/prework/output/playwright/prototype/html-report/
+docs/evidence/frontend-redesign/prework/output/playwright/prototype/targeted-interaction/
+docs/evidence/frontend-redesign/prework/output/playwright/prototype/test-results/
+docs/evidence/frontend-redesign/prework/output/playwright/prototype/results.json
+
 # Project build outputs
 main
 probe

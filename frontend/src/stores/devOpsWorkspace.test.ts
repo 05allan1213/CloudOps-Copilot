@@ -2,14 +2,29 @@ import { createPinia, setActivePinia } from "pinia";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  authorizeOperationPlan,
   getAgentInvestigations,
+  proposeActionCard,
   proposeOperationPlan,
+  type ActionCard,
+  type ActionCardProposalInput,
+  type AgentRun,
   type OperationPlan,
   type OperationPlanProposalInput,
 } from "../api/agent";
-import { getDevOpsWorkspace, type DevOpsWorkspace } from "../api/devops";
+import {
+  executeOperationPlan,
+  getDevOpsWorkspace,
+  type DevOpsWorkspace,
+  type OperationExecution,
+} from "../api/devops";
 import { getResources, type ResourcePage } from "../api/infrastructure";
-import { useDevOpsWorkspaceStore } from "./devOpsWorkspace";
+import {
+  classifyDevOpsRun,
+  classifyDevOpsSubject,
+  incidentStageHref,
+  useDevOpsWorkspaceStore,
+} from "./devOpsWorkspace";
 
 vi.mock("../api/devops", () => ({
   executeActionCard: vi.fn(),
@@ -20,6 +35,7 @@ vi.mock("../api/agent", () => ({
   authorizeActionCard: vi.fn(),
   authorizeOperationPlan: vi.fn(),
   getAgentInvestigations: vi.fn(),
+  proposeActionCard: vi.fn(),
   proposeOperationPlan: vi.fn(),
 }));
 vi.mock("../api/infrastructure", () => ({
@@ -29,7 +45,10 @@ vi.mock("../api/infrastructure", () => ({
 const getWorkspaceMock = vi.mocked(getDevOpsWorkspace);
 const getResourcesMock = vi.mocked(getResources);
 const getInvestigationsMock = vi.mocked(getAgentInvestigations);
+const proposeActionCardMock = vi.mocked(proposeActionCard);
 const proposeOperationPlanMock = vi.mocked(proposeOperationPlan);
+const authorizeOperationPlanMock = vi.mocked(authorizeOperationPlan);
+const executeOperationPlanMock = vi.mocked(executeOperationPlan);
 
 const workspace = { collected_at: "2026-07-28T00:00:00Z" } as DevOpsWorkspace;
 const resources = {
@@ -42,6 +61,32 @@ const resources = {
   truncated: false,
   collected_at: "2026-07-28T00:00:00Z",
 } satisfies ResourcePage;
+
+function investigation(
+  id: string,
+  subjectType: AgentRun["subject_type"],
+  incidentID = "",
+): AgentRun {
+  return {
+    id,
+    subject_type: subjectType,
+    ...(incidentID ? { incident_id: incidentID } : {}),
+    configuration_revision_id: "revision-1",
+    context_snapshot_id: "context-1",
+    status: "completed",
+    uncertainty: "low",
+    objective: "Focused ownership fixture",
+    prompt_version: "test/v1",
+    created_at: "2026-07-28T00:00:00Z",
+    updated_at: "2026-07-28T00:00:00Z",
+    evidence_count: 1,
+    steps: [],
+    evidence_citations: [],
+    guidance_citations: [],
+    action_cards: [],
+    operation_plans: [],
+  };
+}
 
 describe("DevOps Workspace store", () => {
   beforeEach(() => {
@@ -84,7 +129,77 @@ describe("DevOps Workspace store", () => {
     expect(store.loaded).toBe(true);
     expect(store.workspace).toStrictEqual(workspace);
     expect(store.scenarioResources).toBeNull();
-    expect(store.scenarioPlanningError).toContain("Kubernetes Deployment projection");
+    expect(store.scenarioPlanningError).toContain("Kubernetes Deployment 投影");
+  });
+
+  it("classifies Incident ownership from both execution and Agent run facts", () => {
+    const subject = { id: "plan-1", run_id: "run-1" } as OperationPlan;
+    const execution = {
+      id: "execution-1",
+      subject_id: subject.id,
+      incident_id: "incident-from-execution",
+    } as OperationExecution;
+
+    expect(classifyDevOpsSubject(subject, [execution], [])).toMatchObject({
+      kind: "incident",
+      incidentID: "incident-from-execution",
+    });
+    expect(classifyDevOpsSubject(subject, [], [investigation("run-1", "incident", "incident-from-run")])).toMatchObject({
+      kind: "incident",
+      incidentID: "incident-from-run",
+    });
+    expect(classifyDevOpsRun("run-1", [investigation("run-1", "consultation")])).toMatchObject({
+      kind: "non_incident",
+      incidentID: "",
+    });
+    expect(classifyDevOpsRun("missing", [])).toMatchObject({ kind: "unknown" });
+  });
+
+  it("builds stable Incident stage links without accepting an empty identity", () => {
+    expect(incidentStageHref("incident/with space", "approval")).toBe("/incidents/incident%2Fwith%20space#approval");
+    expect(incidentStageHref("incident-1", "delivery")).toBe("/incidents/incident-1#delivery");
+    expect(incidentStageHref("incident-1", "verification")).toBe("/incidents/incident-1#verification");
+    expect(incidentStageHref("  ", "verification")).toBe("");
+  });
+
+  it("blocks Incident-owned authorization and execution before an API mutation", async () => {
+    const plan = {
+      id: "plan-incident",
+      run_id: "run-incident",
+      content_hash: "a".repeat(64),
+    } as OperationPlan;
+    const store = useDevOpsWorkspaceStore();
+    store.workspace = { executions: [] } as unknown as DevOpsWorkspace;
+    store.investigations = [investigation("run-incident", "incident", "incident-1")];
+
+    await store.authorizePlan(plan, "Owner review");
+    const execution = await store.executePlan(plan);
+
+    expect(authorizeOperationPlanMock).not.toHaveBeenCalled();
+    expect(executeOperationPlanMock).not.toHaveBeenCalled();
+    expect(execution).toBeNull();
+    expect(store.failure?.code).toBe("INCIDENT_OWNED_OPERATION");
+    expect(store.error).toContain("Incident 生命周期");
+  });
+
+  it("blocks unknown ownership but retains a proven non-incident Plan path", async () => {
+    const plan = {
+      id: "plan-global",
+      run_id: "run-global",
+      content_hash: "b".repeat(64),
+    } as OperationPlan;
+    const store = useDevOpsWorkspaceStore();
+    store.workspace = { executions: [] } as unknown as DevOpsWorkspace;
+
+    await store.authorizePlan(plan, "Unknown run");
+    expect(authorizeOperationPlanMock).not.toHaveBeenCalled();
+    expect(store.failure?.code).toBe("DEVOPS_OWNERSHIP_UNKNOWN");
+
+    store.investigations = [investigation("run-global", "consultation")];
+    authorizeOperationPlanMock.mockResolvedValueOnce(plan);
+    await store.authorizePlan(plan, "Reviewed global operation");
+
+    expect(authorizeOperationPlanMock).toHaveBeenCalledWith(plan.id, plan.content_hash, "Reviewed global operation");
   });
 
   it("proposes one exact Scenario scale plan and then refreshes durable state", async () => {
@@ -113,12 +228,43 @@ describe("DevOps Workspace store", () => {
     const plan = { id: "22222222-2222-4222-8222-222222222222", status: "proposed" } as OperationPlan;
     proposeOperationPlanMock.mockResolvedValueOnce(plan);
     const store = useDevOpsWorkspaceStore();
+    store.investigations = [investigation(input.run_id, "alert")];
 
     const result = await store.proposeScenarioPlan(input);
 
     expect(result).toStrictEqual(plan);
     expect(proposeOperationPlanMock).toHaveBeenCalledWith(input);
     expect(getWorkspaceMock).toHaveBeenCalledOnce();
-    expect(store.notice).toContain("immutable Operation Plan");
+    expect(store.notice).toContain("不可变 Operation Plan");
+  });
+
+  it("proposes one exact local Change Freeze Action Card from a proven Scenario run", async () => {
+    const input = {
+      run_id: "11111111-1111-4111-8111-111111111111",
+      action_type: "local.change_freeze.set",
+      target: {
+        cluster_id: "cloudops-local",
+        environment: "local",
+        namespace: "demo",
+        workload_kind: "Deployment",
+        workload_name: "cloudops-scenario-fault",
+        scenario_id: "scenario-20260728000000-deadbeef",
+      },
+      parameters: { enabled: true, reason: "ui-int-run bounded freeze" },
+      preconditions: [{ type: "local.change_freeze", expected_enabled: false, expected_version: 0 }],
+      risk: "Changes only the bounded local Scenario freeze record.",
+      expires_at: "2026-07-28T01:00:00Z",
+    } satisfies ActionCardProposalInput;
+    const card = { id: "22222222-2222-4222-8222-222222222222", status: "proposed" } as ActionCard;
+    proposeActionCardMock.mockResolvedValueOnce(card);
+    const store = useDevOpsWorkspaceStore();
+    store.investigations = [investigation(input.run_id, "alert")];
+
+    const result = await store.proposeScenarioActionCard(input);
+
+    expect(result).toStrictEqual(card);
+    expect(proposeActionCardMock).toHaveBeenCalledWith(input);
+    expect(getWorkspaceMock).toHaveBeenCalledOnce();
+    expect(store.notice).toContain("Change Freeze Action Card");
   });
 });

@@ -26,7 +26,7 @@ SHELL_FILES := $(shell find scripts -type f -name '*.sh' -print 2>/dev/null | so
 	local-up local-open local-status local-logs local-restart local-doctor local-down \
 	local-backup local-restore local-reset scenario-up scenario-status scenario-down \
 	build build-go build-api build-worker build-migrate build-demo build-frontend frontend-install \
-	test test-go test-race test-frontend frontend-lint frontend-typecheck frontend-unit frontend-e2e \
+	test test-go test-race test-frontend frontend-lint frontend-lint-budget frontend-typecheck frontend-e2e-typecheck frontend-unit frontend-e2e frontend-e2e-stable \
 	vet lint lint-go check-gofmt check-goimports check-deps check-structure check-naming \
 	actionlint shellcheck helm-lint helm-template helm-contracts kubeconform static-checks check \
 	docker-build docker-build-api docker-build-worker docker-build-migrate docker-build-demo
@@ -108,19 +108,28 @@ test-go:
 test-race:
 	$(GO) test -race -count=1 ./...
 
-test-frontend: frontend-lint frontend-typecheck frontend-unit
+test-frontend: frontend-lint-budget frontend-typecheck frontend-e2e-typecheck frontend-unit
 
 frontend-lint:
 	cd $(FRONTEND_DIR) && $(NPM) run lint
 
+frontend-lint-budget:
+	cd $(FRONTEND_DIR) && $(NPM) run lint:no-new-warnings
+
 frontend-typecheck:
 	cd $(FRONTEND_DIR) && $(NPM) exec -- vue-tsc --noEmit
+
+frontend-e2e-typecheck:
+	cd $(FRONTEND_DIR) && $(NPM) run typecheck:e2e
 
 frontend-unit:
 	cd $(FRONTEND_DIR) && $(NPM) test
 
 frontend-e2e: ## Run deterministic frontend Playwright presentation gates.
 	cd $(FRONTEND_DIR) && $(NPM) run test:e2e
+
+frontend-e2e-stable: ## Run the stable read-only Chromium regression gate.
+	cd $(FRONTEND_DIR) && $(NPM) run test:e2e:stable
 
 vet:
 	$(GO) vet ./...

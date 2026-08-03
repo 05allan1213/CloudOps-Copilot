@@ -22,7 +22,7 @@ type SettingsPort interface {
 	ActivateScope(context.Context, string) (settings.OperationalScope, error)
 	Settings(context.Context) (settings.SettingsSnapshot, error)
 	Validate(context.Context, settings.Draft) (settings.Validation, error)
-	Apply(context.Context, string, settings.Draft) (settings.Revision, error)
+	Apply(context.Context, string, settings.Draft, settings.RevisionExpectation) (settings.Revision, error)
 	Revisions(context.Context, int) ([]settings.Revision, error)
 	WriteSecret(context.Context, settings.SecretInput) (settings.SecretVersion, error)
 	TestProvider(context.Context, settings.ProviderConfiguration, []settings.SecretReference, string) (settings.ProviderResult, error)
@@ -51,8 +51,10 @@ type revisionPage struct {
 }
 
 type applyConfigurationRequest struct {
-	ValidationID string         `json:"validation_id"`
-	Draft        settings.Draft `json:"draft"`
+	ValidationID               string         `json:"validation_id"`
+	ExpectedActiveRevisionID   string         `json:"expected_active_revision_id"`
+	ExpectedActiveRevisionHash string         `json:"expected_active_revision_hash"`
+	Draft                      settings.Draft `json:"draft"`
 }
 
 type providerTestRequest struct {
@@ -195,11 +197,15 @@ func (h *Handler) createConfigurationRevision(c *gin.Context) {
 		return
 	}
 	request.ValidationID = strings.TrimSpace(request.ValidationID)
-	if request.ValidationID == "" {
-		h.writeProblem(c, http.StatusBadRequest, "INVALID_CONFIGURATION", "validation_id is required")
+	request.ExpectedActiveRevisionID = strings.TrimSpace(request.ExpectedActiveRevisionID)
+	request.ExpectedActiveRevisionHash = strings.TrimSpace(request.ExpectedActiveRevisionHash)
+	if request.ValidationID == "" || request.ExpectedActiveRevisionID == "" || request.ExpectedActiveRevisionHash == "" {
+		h.writeProblem(c, http.StatusBadRequest, "INVALID_CONFIGURATION", "validation_id and expected active revision identity are required")
 		return
 	}
-	value, err := h.settings.Apply(c.Request.Context(), request.ValidationID, request.Draft)
+	value, err := h.settings.Apply(c.Request.Context(), request.ValidationID, request.Draft, settings.RevisionExpectation{
+		ID: request.ExpectedActiveRevisionID, Hash: request.ExpectedActiveRevisionHash,
+	})
 	if err != nil {
 		h.writeSettingsError(c, err)
 		return
@@ -409,6 +415,8 @@ func (h *Handler) writeSettingsError(c *gin.Context, err error) {
 		h.writeProblem(c, http.StatusConflict, "VALIDATION_EXPIRED", "configuration validation has expired")
 	case errors.Is(err, settings.ErrValidationFailed):
 		h.writeProblem(c, http.StatusUnprocessableEntity, "VALIDATION_FAILED", "configuration validation did not pass")
+	case errors.Is(err, settings.ErrRevisionChanged):
+		h.writeProblem(c, http.StatusConflict, "CONFIGURATION_REVISION_CHANGED", "active Configuration Revision no longer matches the expected identity")
 	case errors.Is(err, settings.ErrInvalidDraft):
 		h.writeProblem(c, http.StatusBadRequest, "INVALID_CONFIGURATION", "operational configuration is invalid")
 	case errors.Is(err, settings.ErrNotFound):

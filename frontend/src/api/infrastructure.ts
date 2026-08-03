@@ -1,4 +1,5 @@
-import { getJSON } from "./client";
+import { queryCache, queryIdentityFor } from "../composables/queryCache";
+import { apiURL, getJSON } from "./client";
 import type { OperationalScope } from "./platform";
 
 export type KubernetesProviderState = "available" | "partial" | "unavailable" | "disabled";
@@ -176,6 +177,14 @@ export interface EventPage {
   collected_at: string;
 }
 
+export interface TopologyRefreshEvent {
+  cursor: string;
+  snapshot_id?: string;
+  content_hash?: string;
+  provider_state: KubernetesProviderState;
+  collected_at: string;
+}
+
 export interface InfrastructureQuery {
   cluster?: string;
   namespace?: string;
@@ -201,8 +210,58 @@ function queryString(query: InfrastructureQuery = {}): string {
   return encoded ? `?${encoded}` : "";
 }
 
+function infrastructureReadIdentity(url: string) {
+  return queryIdentityFor("infrastructure", { url });
+}
+
+export function projectResolvedInfrastructureScope(
+  query: InfrastructureQuery,
+  resolvedCluster: string,
+): number {
+  if (!resolvedCluster || query.cluster) return 0;
+  const canonicalQuery = { ...query, cluster: resolvedCluster };
+  const paths = ["/api/v1/topology", "/api/v1/resources"];
+  return paths.reduce((count, path) => {
+    const sourceURL = `${path}${queryString(query)}`;
+    const canonicalURL = `${path}${queryString(canonicalQuery)}`;
+    return count + (queryCache.project(
+      infrastructureReadIdentity(sourceURL),
+      infrastructureReadIdentity(canonicalURL),
+    ) ? 1 : 0);
+  }, 0);
+}
+
 export function getTopology(query: InfrastructureQuery = {}, signal?: AbortSignal): Promise<TopologySnapshot> {
   return getJSON(`/api/v1/topology${queryString(query)}`, { signal });
+}
+
+export function openTopologyEventStream(
+  query: InfrastructureQuery,
+  onEvent: (event: TopologyRefreshEvent) => void,
+  onError?: (event?: Event) => void,
+  onOpen?: () => void,
+): () => void {
+  const streamQuery: InfrastructureQuery = {
+    cluster: query.cluster,
+    namespace: query.namespace,
+    from: query.from,
+    to: query.to,
+  };
+  const source = new EventSource(apiURL(`/api/v1/topology/events${queryString(streamQuery)}`));
+  source.addEventListener("topology.refresh", (event) => {
+    try {
+      const message = event as MessageEvent<string>;
+      const payload = JSON.parse(message.data) as Omit<TopologyRefreshEvent, "cursor">;
+      const cursor = message.lastEventId.trim();
+      if (!cursor || !payload.provider_state || !payload.collected_at) throw new Error("Invalid topology refresh event");
+      onEvent({ cursor, ...payload });
+    } catch {
+      onError?.();
+    }
+  });
+  source.onopen = () => onOpen?.();
+  source.onerror = (event) => onError?.(event);
+  return () => source.close();
 }
 
 export function getResources(query: InfrastructureQuery = {}, signal?: AbortSignal): Promise<ResourcePage> {

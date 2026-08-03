@@ -81,6 +81,10 @@ func TestMySQLTelemetryMetadataEvidenceAndFrozenContext(t *testing.T) {
 	if err != nil || replayed.ID != evidence.ID {
 		t.Fatalf("idempotent Evidence replay=%#v error=%v", replayed, err)
 	}
+	retained, err := repository.EvidenceForExecution(ctx, execution.ID)
+	if err != nil || len(retained) != 1 || retained[0].ID != evidence.ID || retained[0].QueryID != execution.ID || retained[0].ItemCount != 1 {
+		t.Fatalf("durable Evidence projection=%#v error=%v", retained, err)
+	}
 
 	request := CreateConsultationRequest{
 		Title: "Investigate selected log", ClusterID: scope.ClusterID, Environment: scope.Environment,

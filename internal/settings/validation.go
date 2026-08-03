@@ -19,6 +19,8 @@ var (
 	labelNamePattern       = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 )
 
+const maximumProviderTimeoutMS = 300000
+
 func normalizeDraft(input Draft) (Draft, []FieldError, string) {
 	result := input
 	result.Summary = strings.TrimSpace(result.Summary)
@@ -272,8 +274,8 @@ func validateNormalizedDraft(draft Draft) []FieldError {
 			add(prefix, "UNKNOWN_PROVIDER", "Provider identity 无效")
 			continue
 		}
-		if item.TimeoutMS < 1000 || item.TimeoutMS > 60000 {
-			add(prefix+".timeout_ms", "INVALID_TIMEOUT", "Provider timeout 需为 1000 至 60000 ms")
+		if item.TimeoutMS < 1000 || item.TimeoutMS > maximumProviderTimeoutMS {
+			add(prefix+".timeout_ms", "INVALID_TIMEOUT", "Provider timeout 需为 1000 至 300000 ms")
 		}
 		if item.MaxResults < 1 || item.MaxResults > 10000 {
 			add(prefix+".max_results", "INVALID_LIMIT", "Provider 结果上限需为 1 至 10000")

@@ -1,0 +1,168 @@
+Gate 12A command and tool record
+Recorded: 2026-07-31 Asia/Shanghai
+
+Identity and merge verification
+
+  git status --short --branch
+  git rev-parse HEAD
+  git branch --all --verbose --no-abbrev
+  git show --no-patch --format='commit=%H%nparents=%P%nsubject=%s%n' 41db39c 44e649e 3f4b20e cf0a9fc 8c5784b 65c55a6
+  git log -1 --format='%H %s' -- <each of the six handoff files>
+
+Result: PASS
+- main contained all six --no-ff merges in plan section 0.5 order.
+- Every merge second parent matched its clean lane handoff tip.
+- Merged identity before Gate 12A cleanup: 65c55a673599ed68e326712445d3c01c1709ea75.
+
+Allowed dependency/build checks
+
+  cd frontend
+  npm run typecheck
+
+Result: PASS
+
+  cd frontend
+  npm run build
+
+Result: PASS
+Known non-blocking output only:
+- upstream VueUse PURE-annotation placement warnings;
+- existing Vite display warning for chunks over 500 KiB.
+No public .map file was emitted.
+
+Required zero-residual scans
+
+  rg -n 'element-plus|@element-plus|<el-|El(Button|Dialog|Drawer|Dropdown|Icon|Input|Message|MessageBox|Option|Result|Select)' frontend/src frontend/package.json frontend/package-lock.json
+
+Result: PASS, exit 1 with no output.
+
+  rg -n 'MobileBottomNav|mobilePrimaryNavigation|mobileMoreNavigation' frontend/src
+
+Result: PASS, exit 1 with no output.
+
+  cd frontend
+  npm ls element-plus @element-plus/icons-vue --depth=0
+
+Result: PASS. Output tree was (empty); npm exited 1 because neither requested
+package exists.
+
+  rg -n 'legacy-element-plus|variables\.scss|light\.scss|dark\.scss|_telemetry-workspace\.scss' frontend/src frontend/package.json
+
+Result: PASS, exit 1 with no output.
+
+  rg -n '"i-[a-z0-9-]+"' frontend/src | rg -v '"i-lucide-'
+
+Result: PASS, no non-Lucide double-quoted icon ID.
+
+  rg -n -P '[\x{1F300}-\x{1FAFF}\x{2600}-\x{27BF}]' frontend/src
+
+Result: PASS, exit 1 with no emoji match.
+
+  rg -n 'frontend-redesign/prework/prototypes|cloudops-prework' frontend/src
+
+Result: PASS, exit 1 with no production prototype import. A broader test-tree
+scan only identifies the test-owned Nuxt UI production-smoke fixture import.
+
+  find frontend/dist -type f -name '*.map' -print
+
+Result: PASS, no output.
+
+  rg -o 'component:' frontend/src/router/routes.ts | wc -l
+  rg -o 'component: \(\) => import\(' frontend/src/router/routes.ts | wc -l
+
+Result: PASS, 14 component routes and 14 dynamic imports.
+
+Exception-ledger scans
+
+  rg -n -o '(#[0-9A-Fa-f]{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\))' frontend/src/styles/tokens.css frontend/src/theme/atlasTheme.ts frontend/src/theme/atlasTheme.test.ts frontend/src/components/monitoring/monitoringPresentation.test.ts | wc -l
+
+Result: PASS, 91 occurrences in the exact four ledger files.
+
+  rg -n '(#[0-9A-Fa-f]{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\))' frontend/src --glob '*.{vue,ts,css,scss}' --glob '!**/styles/tokens.css' --glob '!**/theme/atlasTheme.ts' --glob '!**/theme/atlasTheme.test.ts' --glob '!**/components/monitoring/monitoringPresentation.test.ts'
+
+Result: PASS, exit 1 with no raw color outside the ledger allowlist.
+
+  rg -o ':deep\(' frontend/src --glob '*.vue' | wc -l
+  rg -o ':global\(' frontend/src --glob '*.vue' | wc -l
+  rg -n '!important' frontend/src | wc -l
+
+Result: PASS, respectively 32, 13, and 14. These exact counts and boundaries
+are documented in exception-ledger.md.
+
+Detailed design ID scan
+
+  comm -23 \
+    <(rg -o 'D-[0-9]{2}|FR-(SUP|CX)-[0-9]{3}' /home/monody/k8s/CloudOps-前端详细设计决策记录.md /home/monody/k8s/CloudOps-前端详细设计决策补充与复核.md | sed 's/.*://' | sort -u) \
+    <(rg -o 'D-[0-9]{2}|FR-(SUP|CX)-[0-9]{3}' docs/CloudOps-Frontend-Refactor-Plan.md | sort -u)
+
+Result: PASS, no missing ID output.
+
+Real runtime and browser
+
+  curl -sS -o /dev/null -w 'frontend=%{http_code}\n' http://127.0.0.1:5173/
+  curl -sS -o /dev/null -w 'backend_ready=%{http_code}\n' http://127.0.0.1:18080/readyz
+
+Result: PASS, frontend=200 and backend_ready=200.
+
+  curl -sS http://127.0.0.1:5173/api/v1/bootstrap | \
+    jq '{revision:.active_revision.number,scenario_state,provider_states:[.provider_health[].state]}'
+
+Result: PASS. Active configuration Revision was 13, Scenario state was
+inactive, and all nine Provider states were available.
+
+  curl -sS 'http://127.0.0.1:5173/api/v1/logs/queries?limit=30' | \
+    jq '.items as $items | {count:($items|length),failed:([$items[]|select(.status=="failed")]|length),expired:([$items[]|select(.result_expired==true)]|length),retained_success:([$items[]|select(.status=="succeeded" and .result_expired!=true)]|length)}'
+
+Result: PASS. count=23, failed=3, expired=20, retained_success=0. This is the
+data limitation behind LOGS_REAL_RETAINED_RESULT_INSPECTOR=NOT RUN.
+
+Playwright prerequisite:
+
+  command -v npx
+
+Result: PASS.
+
+Browser audit implementation:
+
+  /home/monody/.codex/skills/playwright/scripts/playwright_cli.sh -s=g12a open http://127.0.0.1:5173/overview --config=output/playwright/gate-12a/playwright-cli.json
+  /home/monody/.codex/skills/playwright/scripts/playwright_cli.sh -s=g12a run-code <commands/readonly-route-audit.js>
+
+Result: PASS.
+- Chromium, 1440x900, Light, zh-CN, Asia/Shanghai.
+- 16/16 route cases returned navigation HTTP 200 and a visible H1.
+- All observed application API statuses were 200.
+- Console errors/warnings, page errors, failed requests, blocked writes,
+  unbounded horizontal overflow: zero.
+- Settings overlap detector: six Nuxt UI number-input internal pairs; direct
+  screenshot inspection confirmed no incoherent overlap.
+- Cross-route and Inspector results are recorded in browser/results.md.
+
+Final integrity checks
+
+  git diff --check
+  git diff --cached --check
+  git diff --cached --name-status
+  git diff --cached --stat
+
+Result: PASS immediately before the local Gate 12A commit.
+- git diff --check: exit 0.
+- git diff --cached --check: exit 0.
+- Staged inventory: the 24 Gate 12A source/dependency files and six durable
+  evidence files only.
+- Generated .playwright-cli/ and output/ content remained untracked and was not
+  staged.
+
+Gate 12B and write paths
+
+  Full lint: NOT RUN
+  No-new-warning suite: NOT RUN
+  E2E typecheck: NOT RUN
+  Full unit suite: NOT RUN
+  Dependency audit: NOT RUN
+  Stable/full E2E: NOT RUN
+  Dark/multi-viewport/zoom: NOT RUN
+  Firefox/WebKit: NOT RUN
+  Complete accessibility/Lighthouse: NOT RUN
+  Performance/bundle/large-data/memory/SSE soak: NOT RUN
+  Every write command family and cleanup proof: NOT RUN
+  Owner final visual acceptance: NOT RUN

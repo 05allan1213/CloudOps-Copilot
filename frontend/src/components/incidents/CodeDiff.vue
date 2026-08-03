@@ -54,9 +54,10 @@ async function copyDiff() {
           title="Copy complete bounded diff"
           @click="copyDiff"
         >
-          <el-icon aria-hidden="true">
-            <CopyDocument />
-          </el-icon>
+          <CopyDocument
+            :size="16"
+            aria-hidden="true"
+          />
         </button>
       </div>
     </header>

@@ -27,6 +27,12 @@ body {
   min-height: 100dvh;
 }
 
+/* Reka positions teleported poppers in a body-level wrapper but leaves its
+ * stacking order unset. Keep every select/popover/menu above workspace layers. */
+[data-reka-popper-content-wrapper] {
+  z-index: var(--co-z-popover) !important;
+}
+
 button,
 input,
 textarea,
@@ -40,7 +46,7 @@ input,
 select,
 textarea {
   touch-action: manipulation;
-  -webkit-tap-highlight-color: rgba(113, 169, 255, 0.2);
+  -webkit-tap-highlight-color: color-mix(in srgb, var(--co-action-primary) 20%, transparent);
 }
 
 a {
@@ -59,6 +65,12 @@ h3 {
   letter-spacing: 0;
   scroll-margin-top: calc(var(--co-header-height) + var(--co-space-4));
   text-wrap: balance;
+}
+
+h1[tabindex="-1"]:focus,
+h2[tabindex="-1"]:focus,
+h3[tabindex="-1"]:focus {
+  outline: none;
 }
 
 code,
@@ -98,29 +110,7 @@ pre,
   background: var(--co-border-strong);
 }
 
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity var(--co-motion-fast) var(--co-ease-out);
-}
-
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
-
-.el-button {
-  min-height: 44px;
-  transition: background-color var(--co-motion-fast) var(--co-ease-out),
-    border-color var(--co-motion-fast) var(--co-ease-out),
-    color var(--co-motion-fast) var(--co-ease-out);
-}
-
-.el-input__wrapper,
-.el-select__wrapper {
-  min-height: 40px;
-}
-
-@keyframes page-enter {
+@keyframes co-section-reveal {
   from {
     opacity: 0;
     transform: translateY(4px);
@@ -131,24 +121,42 @@ pre,
   }
 }
 
-.app-main > * {
-  animation: page-enter var(--co-motion-fast) var(--co-ease-out);
+.co-section-reveal-pending { opacity: 0; transform: translateY(4px); }
+.co-section-reveal-visible {
+  animation: co-section-reveal var(--co-motion-page) var(--co-ease-out) both;
+}
+
+.co-theme-transitioning,
+.co-theme-transitioning body,
+.co-theme-transitioning .app-shell,
+.co-theme-transitioning .app-sidebar,
+.co-theme-transitioning .app-header,
+.co-theme-transitioning .app-main,
+.co-theme-transitioning [role="dialog"],
+.co-theme-transitioning canvas {
+  transition:
+    color var(--co-motion-theme) var(--co-ease-out),
+    background-color var(--co-motion-theme) var(--co-ease-out),
+    border-color var(--co-motion-theme) var(--co-ease-out),
+    box-shadow var(--co-motion-theme) var(--co-ease-out);
 }
 
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
-    animation-duration: 0.01ms !important;
+    animation-duration: var(--co-motion-reduced) !important;
     animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+    transition-duration: var(--co-motion-reduced) !important;
     scroll-behavior: auto !important;
   }
 
-  .fade-enter-active,
-  .fade-leave-active {
+  .co-theme-transitioning,
+  .co-theme-transitioning * {
     transition: none;
   }
+
+  .co-section-reveal-pending { opacity: 1; transform: none; }
 }
 
 @media (max-width: 767px) {
@@ -160,16 +168,4 @@ pre,
     min-height: 44px !important;
   }
 
-  .el-button,
-  .el-input__wrapper,
-  .el-select__wrapper {
-    min-height: 44px;
-  }
-
-  .el-input__inner,
-  .el-select__input,
-  .el-select__placeholder,
-  .el-select__selected-item {
-    font-size: 16px;
-  }
 }

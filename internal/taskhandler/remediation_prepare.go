@@ -21,8 +21,10 @@ const remediationPreparePayloadSchema = 1
 type RemediationPrepareInput struct {
 	AgentRunID            uint64
 	PlanPublicID          string
+	SourceType            remediation.PlanSourceType
 	Baseline              RemediationPrepareBaselineFence
 	Request               remediation.RestoreEnvCompileRequest
+	LocalRequest          remediation.LocalScenarioCompileRequest
 	MigratedLegacy        bool
 	MigratedLegacyContext bool
 }
@@ -89,18 +91,36 @@ func (o *remediationPrepareOperation) handle(ctx context.Context, execution asyn
 	if err != nil {
 		return remediationPrepareLoadFailure(err)
 	}
-	request := input.Request
-	if input.AgentRunID != task.SubjectID || request.IncidentID != task.IncidentID || request.CycleNo != uint64(task.CycleNo) ||
+	sourceType := input.SourceType
+	if sourceType == "" {
+		sourceType = remediation.PlanSourceGitOps
+	}
+	requestIncidentID, requestCycleNo, createdByAgentRunID := input.Request.IncidentID, input.Request.CycleNo, input.Request.CreatedByAgentRunID
+	if sourceType == remediation.PlanSourceLocalScenario {
+		requestIncidentID, requestCycleNo, createdByAgentRunID = input.LocalRequest.IncidentID, input.LocalRequest.CycleNo, input.LocalRequest.CreatedByAgentRunID
+	}
+	if input.AgentRunID != task.SubjectID || requestIncidentID != task.IncidentID || requestCycleNo != uint64(task.CycleNo) ||
 		input.MigratedLegacy != task.MigratedLegacy || input.MigratedLegacyContext != task.MigratedLegacyContext ||
-		request.CreatedByAgentRunID == "" || payload.AgentRunID != request.CreatedByAgentRunID ||
-		input.Baseline.ID == 0 || input.Baseline.RowVersion == 0 || input.Baseline.GitOpsRevision != request.LastKnownGoodRevision ||
-		input.Baseline.ConfigHash == "" || input.Baseline.ObservationID == 0 || input.Baseline.ObservationHash == "" {
+		createdByAgentRunID == "" || payload.AgentRunID != createdByAgentRunID {
 		return asyncjob.Dead("remediation_input_mismatch", "compiled remediation input is outside the task Incident/cycle", nil)
+	}
+	if sourceType == remediation.PlanSourceGitOps && (input.Baseline.ID == 0 || input.Baseline.RowVersion == 0 ||
+		input.Baseline.GitOpsRevision != input.Request.LastKnownGoodRevision || input.Baseline.ConfigHash == "" ||
+		input.Baseline.ObservationID == 0 || input.Baseline.ObservationHash == "") {
+		return asyncjob.Dead("remediation_input_mismatch", "compiled GitOps remediation input has no DeploymentBaseline fence", nil)
 	}
 	if _, err := uuid.Parse(input.PlanPublicID); err != nil {
 		return asyncjob.Dead("remediation_input_mismatch", "compiled remediation input has no deterministic Plan identity", nil)
 	}
-	plan, err := remediation.CompileRestoreRequiredEnv(request)
+	var plan remediation.RemediationPlan
+	switch sourceType {
+	case remediation.PlanSourceGitOps:
+		plan, err = remediation.CompileRestoreRequiredEnv(input.Request)
+	case remediation.PlanSourceLocalScenario:
+		plan, err = remediation.CompileLocalScenarioRestoreRequiredEnv(input.LocalRequest)
+	default:
+		err = remediation.ErrInvalidArgument
+	}
 	if err != nil {
 		return asyncjob.Dead("remediation_compile_rejected", boundChange(err.Error(), 2048), nil)
 	}
@@ -155,8 +175,16 @@ func NewMySQLRemediationPrepareStore(repository remediation.Repository) (Remedia
 }
 
 func (s *mysqlRemediationPrepareStore) PersistIn(ctx context.Context, tx asyncjob.DBTX, task asyncjob.Task, input RemediationPrepareInput, plan *remediation.RemediationPlan) error {
+	sourceType := input.SourceType
+	if sourceType == "" {
+		sourceType = remediation.PlanSourceGitOps
+	}
+	createdByAgentRunID := input.Request.CreatedByAgentRunID
+	if sourceType == remediation.PlanSourceLocalScenario {
+		createdByAgentRunID = input.LocalRequest.CreatedByAgentRunID
+	}
 	if plan == nil || input.AgentRunID != task.SubjectID || plan.IncidentID != task.IncidentID || plan.CycleNo != uint64(task.CycleNo) ||
-		plan.PublicID != input.PlanPublicID || plan.CreatedByAgentRunID != input.Request.CreatedByAgentRunID {
+		plan.PublicID != input.PlanPublicID || plan.SourceType != sourceType || plan.CreatedByAgentRunID != createdByAgentRunID {
 		return asyncjob.ErrInvalidMutation
 	}
 	var runPublicID, runStatus string
@@ -176,31 +204,33 @@ FOR SHARE`, task.SubjectID, task.IncidentID, task.CycleNo).
 		plan.MigratedLegacyContext != task.MigratedLegacyContext {
 		return asyncjob.ErrSubjectVersionMismatch
 	}
-	var baselinePublicID, baselineStatus, baselineRevision, configHash string
-	var baselineVersion uint64
-	if err := tx.QueryRowContext(ctx, `
+	if plan.SourceType == remediation.PlanSourceGitOps {
+		var baselinePublicID, baselineStatus, baselineRevision, configHash string
+		var baselineVersion uint64
+		if err := tx.QueryRowContext(ctx, `
 SELECT public_id, row_version, status, gitops_revision, config_hash
 FROM deployment_baselines
 WHERE id = ?
 FOR SHARE`, input.Baseline.ID).
-		Scan(&baselinePublicID, &baselineVersion, &baselineStatus, &baselineRevision, &configHash); err != nil {
-		return err
-	}
-	if baselinePublicID != input.Baseline.PublicID || baselineVersion != input.Baseline.RowVersion || baselineStatus != "active" ||
-		baselineRevision != input.Baseline.GitOpsRevision || configHash != input.Baseline.ConfigHash {
-		return asyncjob.ErrPolicyViolation
-	}
-	var observationBaselineID uint64
-	var observationHash string
-	if err := tx.QueryRowContext(ctx, `
+			Scan(&baselinePublicID, &baselineVersion, &baselineStatus, &baselineRevision, &configHash); err != nil {
+			return err
+		}
+		if baselinePublicID != input.Baseline.PublicID || baselineVersion != input.Baseline.RowVersion || baselineStatus != "active" ||
+			baselineRevision != input.Baseline.GitOpsRevision || configHash != input.Baseline.ConfigHash {
+			return asyncjob.ErrPolicyViolation
+		}
+		var observationBaselineID uint64
+		var observationHash string
+		if err := tx.QueryRowContext(ctx, `
 SELECT baseline_id, content_hash
 FROM baseline_observations
 WHERE id = ? AND observation_type = 'config_blob'
 FOR SHARE`, input.Baseline.ObservationID).Scan(&observationBaselineID, &observationHash); err != nil {
-		return err
-	}
-	if observationBaselineID != input.Baseline.ID || observationHash != input.Baseline.ObservationHash || observationHash != input.Baseline.ConfigHash {
-		return asyncjob.ErrPolicyViolation
+			return err
+		}
+		if observationBaselineID != input.Baseline.ID || observationHash != input.Baseline.ObservationHash || observationHash != input.Baseline.ConfigHash {
+			return asyncjob.ErrPolicyViolation
+		}
 	}
 	var existingPlanID uint64
 	var existingAuthorization sql.NullInt64

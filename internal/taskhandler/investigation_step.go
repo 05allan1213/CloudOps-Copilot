@@ -1141,7 +1141,10 @@ func (o *investigationStepOperation) executeSynthesis(ctx context.Context, execu
 	if err := snapshot.State.Usage.CanCharge(usage, snapshot.State.Limits); err != nil {
 		return o.prepareInsufficient(snapshot, investigationStepPayload{Mode: stepModeSynthesize}, "diagnosis_usage_exceeded_budget", captured)
 	}
-	diagnosis, err := validateDiagnosis(candidate, snapshot, o.cfg.ClaimPolicy, sufficiency)
+	diagnosis, err := agent.ValidateDiagnosisRecord(candidate, agent.DiagnosisValidationInput{
+		IncidentID: snapshot.IncidentPublicID, CycleNo: uint64(snapshot.Task.CycleNo), Facts: snapshot.Facts,
+		Policy: o.cfg.ClaimPolicy, Sufficiency: sufficiency,
+	})
 	if err != nil {
 		return preparedInvestigationStep{}, agent.NewRuntimeError(agent.ErrorMalformedModel, err.Error(), err)
 	}
@@ -1669,97 +1672,6 @@ func evidenceEnvelope(observation agent.ToolObservation) ([]byte, error) {
 
 func deterministicPublicID(kind, taskPublicID string) string {
 	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(kind+"\x00"+taskPublicID)).String()
-}
-
-func validateDiagnosis(candidate agent.DiagnosisCandidate, snapshot investigationSnapshot, policy agent.ClaimPolicy, sufficiency agent.SufficiencyResult) (agent.DiagnosisRecord, error) {
-	candidate.ClaimType = strings.TrimSpace(candidate.ClaimType)
-	candidate.Summary = strings.TrimSpace(candidate.Summary)
-	if candidate.ClaimType != policy.ClaimType || candidate.Summary == "" || len(candidate.Summary) > 4096 {
-		return agent.DiagnosisRecord{}, errors.New("diagnosis claim type or summary is invalid")
-	}
-	switch candidate.Confidence {
-	case agent.DiagnosisConfirmed, agent.DiagnosisLikely, agent.DiagnosisUnknown:
-	default:
-		return agent.DiagnosisRecord{}, errors.New("diagnosis confidence is not an allowed enum")
-	}
-	switch candidate.RemediationHint {
-	case agent.RemediationRestoreRequiredEnv, agent.RemediationCollectMore, agent.RemediationNone:
-	default:
-		return agent.DiagnosisRecord{}, errors.New("diagnosis remediation hint is not an allowed enum")
-	}
-	if candidate.Confidence == agent.DiagnosisConfirmed {
-		if sufficiency.Outcome != agent.SufficiencyReady {
-			return agent.DiagnosisRecord{}, errors.New("confirmed diagnosis is unsupported by deterministic sufficiency")
-		}
-		if policy.ClaimType == agent.GoldenRequiredEnvClaimPolicy().ClaimType && candidate.RemediationHint != agent.RemediationRestoreRequiredEnv {
-			return agent.DiagnosisRecord{}, errors.New("golden confirmed diagnosis requires restore_required_env")
-		}
-	} else if candidate.RemediationHint == agent.RemediationRestoreRequiredEnv {
-		return agent.DiagnosisRecord{}, errors.New("restore_required_env requires a confirmed diagnosis")
-	}
-	if containsProhibitedDiagnosisText(candidate.Summary) {
-		return agent.DiagnosisRecord{}, errors.New("diagnosis summary contains prohibited execution instructions")
-	}
-	if len(candidate.EvidenceFactIDs) == 0 || len(candidate.EvidenceFactIDs) > 64 || len(candidate.Unknowns) > 20 {
-		return agent.DiagnosisRecord{}, errors.New("diagnosis evidence or unknowns exceed bounds")
-	}
-	facts := make(map[string]agent.EvidenceFact, len(snapshot.Facts))
-	for _, fact := range snapshot.Facts {
-		facts[fact.ID] = fact
-	}
-	candidate.EvidenceFactIDs = stableUniqueInvestigation(candidate.EvidenceFactIDs)
-	evidenceIDs := make([]string, 0, len(candidate.EvidenceFactIDs))
-	for _, id := range candidate.EvidenceFactIDs {
-		fact, ok := facts[id]
-		if !ok || fact.IncidentID != snapshot.IncidentPublicID || fact.CycleNo != uint64(snapshot.Task.CycleNo) ||
-			fact.EvidenceID == "" || fact.CollectionStatus != agent.CollectionAvailable || fact.Integrity != "verified" ||
-			fact.ClaimUse == "forbidden" || fact.Truncated {
-			return agent.DiagnosisRecord{}, fmt.Errorf("diagnosis references unusable fact %q", id)
-		}
-		evidenceIDs = append(evidenceIDs, fact.EvidenceID)
-	}
-	if candidate.Confidence == agent.DiagnosisConfirmed {
-		for _, required := range sufficiency.SupportingIDs {
-			if !slices.Contains(candidate.EvidenceFactIDs, required) {
-				return agent.DiagnosisRecord{}, fmt.Errorf("confirmed diagnosis omits supporting fact %q", required)
-			}
-		}
-	}
-	for index := range candidate.Unknowns {
-		candidate.Unknowns[index] = strings.TrimSpace(candidate.Unknowns[index])
-		if candidate.Unknowns[index] == "" || len(candidate.Unknowns[index]) > 1024 || containsProhibitedDiagnosisText(candidate.Unknowns[index]) {
-			return agent.DiagnosisRecord{}, errors.New("diagnosis unknown is empty, oversized, or contains instructions")
-		}
-	}
-	candidate.Unknowns = stableUniqueInvestigation(candidate.Unknowns)
-	evidenceIDs = stableUniqueInvestigation(evidenceIDs)
-	policyJSON, err := json.Marshal(policy)
-	if err != nil {
-		return agent.DiagnosisRecord{}, fmt.Errorf("encode diagnosis policy: %w", err)
-	}
-	record := agent.DiagnosisRecord{
-		Candidate: candidate, ClaimPolicyVersion: policy.Version,
-		ClaimPolicyHash: hashBytesInvestigation(policyJSON), EvidenceIDs: evidenceIDs,
-	}
-	unsigned, err := json.Marshal(record)
-	if err != nil {
-		return agent.DiagnosisRecord{}, fmt.Errorf("encode diagnosis record: %w", err)
-	}
-	record.DiagnosisHash = hashBytesInvestigation(unsigned)
-	return record, nil
-}
-
-func containsProhibitedDiagnosisText(value string) bool {
-	normalized := strings.ToLower(value)
-	for _, prohibited := range []string{
-		"kubectl apply", "kubectl patch", "kubectl delete", "argocd sync", "argo cd sync",
-		"create pull request", "force push", "execute shell", "restart deployment", "scale deployment",
-	} {
-		if strings.Contains(normalized, prohibited) {
-			return true
-		}
-	}
-	return false
 }
 
 func stableUniqueInvestigation(values []string) []string {

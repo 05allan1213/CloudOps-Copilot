@@ -22,6 +22,10 @@ commonEnv:
   APP_ENV: local
   TRACE_OTLP_ENDPOINT: otel-collector.cloudops-system.svc:4317
 
+worker:
+  env:
+    INCIDENT_AGENT_MAX_RUNTIME_SECONDS: "300"
+
 observability:
   stack:
     enabled: true

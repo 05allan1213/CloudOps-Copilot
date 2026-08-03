@@ -53,6 +53,7 @@ const effectiveDecisionState = computed(() => {
       : `The previous command ended as ${feedback.state.replace(/_/g, " ")}. Refresh or resolve the reported condition before a new Decision.`;
   return { ...decisionState.value, available: false, reason };
 });
+const approveAllowed = computed(() => props.plan.source_type !== "local_scenario");
 const elementSuffix = computed(() => props.plan.id.replace(/[^a-zA-Z0-9_-]/g, "-"));
 const dialogTitleID = computed(() => `decision-dialog-title-${elementSuffix.value}`);
 const reasonID = computed(() => `decision-reason-${elementSuffix.value}`);
@@ -76,7 +77,7 @@ watch(
 );
 
 async function openDialog(nextDecision: "approved" | "rejected", event: MouseEvent) {
-  if (!effectiveDecisionState.value.available || props.commandPending) return;
+	if (!effectiveDecisionState.value.available || props.commandPending || (nextDecision === "approved" && !approveAllowed.value)) return;
   decision.value = nextDecision;
   reason.value = "";
   reasonError.value = "";
@@ -104,7 +105,7 @@ function onDialogCancel(event: Event) {
 }
 
 function submitDecision() {
-  if (!effectiveDecisionState.value.available || props.commandPending) return;
+	if (!effectiveDecisionState.value.available || props.commandPending || (decision.value === "approved" && !approveAllowed.value)) return;
   const boundedReason = reason.value.trim();
   if (!boundedReason) {
     reasonError.value = "Enter the evidence-backed reason for this immutable Decision.";
@@ -127,7 +128,12 @@ function submitDecision() {
       <div>
         <span>Remediation Plan</span>
         <h3>{{ plan.patch_summary }}</h3>
-        <p><code translate="no">{{ plan.target.repository }}</code> · <code translate="no">{{ plan.target.path }}</code> · {{ plan.target.field_ref }}</p>
+        <p>
+          <code
+            v-if="plan.target.repository"
+            translate="no"
+          >{{ plan.target.repository }} · </code><code translate="no">{{ plan.target.path }}</code> · {{ plan.target.field_ref }}
+        </p>
       </div>
       <div class="plan-status">
         <ResultBadge :result="plan.status" />
@@ -143,8 +149,14 @@ function submitDecision() {
       <div><dt>Cycle / Plan Version</dt><dd>{{ plan.cycle }} / {{ plan.plan_version }}</dd></div>
       <div><dt>Incident Version</dt><dd>{{ plan.incident_version }}</dd></div>
       <div><dt>Operation</dt><dd>{{ plan.operation_type.replace(/_/g, " ") }}</dd></div>
+      <div><dt>Source</dt><dd>{{ plan.source_type.replace(/_/g, " ") }}</dd></div>
       <div><dt>Target Resource</dt><dd>{{ plan.target.resource.kind }}/{{ plan.target.resource.name }} · {{ plan.target.resource.namespace }}</dd></div>
-      <div><dt>Base Branch</dt><dd><code translate="no">{{ plan.target.base_branch }}</code></dd></div>
+      <div v-if="plan.source_type === 'gitops'">
+        <dt>Base Branch</dt><dd><code translate="no">{{ plan.target.base_branch }}</code></dd>
+      </div>
+      <div v-else>
+        <dt>Runtime Base</dt><dd><code translate="no">{{ plan.runtime_base_hash }}</code></dd>
+      </div>
       <div><dt>Policy Version</dt><dd><code translate="no">{{ plan.policy_version }}</code></dd></div>
       <div><dt>Expires</dt><dd><time :datetime="plan.expires_at">{{ formatIncidentTime(plan.expires_at) }}</time></dd></div>
       <div><dt>Provenance</dt><dd>{{ resourceProvenance(plan) }}</dd></div>
@@ -188,16 +200,24 @@ function submitDecision() {
           :value="plan.diagnosis_hash"
         />
         <HashValue
+          v-if="plan.source_type === 'gitops'"
           label="Base Revision"
           :value="plan.target.base_revision"
         />
         <HashValue
+          v-if="plan.source_type === 'gitops'"
           label="Last-known-good Revision"
           :value="plan.target.last_known_good_revision"
         />
         <HashValue
+          v-if="plan.source_type === 'gitops'"
           label="Base Blob"
           :value="plan.target.base_blob_sha"
+        />
+        <HashValue
+          v-else
+          label="Runtime Base"
+          :value="plan.runtime_base_hash"
         />
         <HashValue
           label="Expected Before"
@@ -208,6 +228,7 @@ function submitDecision() {
           :value="plan.expected_post_image_hash"
         />
         <HashValue
+          v-if="plan.source_type === 'gitops'"
           label="Expected Tree"
           :value="plan.expected_tree_hash"
         />
@@ -317,6 +338,7 @@ function submitDecision() {
             :value="plan.decision.approved_plan_hash"
           />
           <HashValue
+            v-if="plan.source_type === 'gitops'"
             label="Approved Base"
             :value="plan.decision.approved_base_sha"
           />
@@ -325,6 +347,7 @@ function submitDecision() {
             :value="plan.decision.approved_post_image_hash"
           />
           <HashValue
+            v-if="plan.source_type === 'gitops'"
             label="Approved Tree"
             :value="plan.decision.approved_tree_hash"
           />
@@ -361,7 +384,8 @@ function submitDecision() {
         <button
           type="button"
           class="approve-button"
-          :disabled="!effectiveDecisionState.available || commandPending"
+          :disabled="!approveAllowed || !effectiveDecisionState.available || commandPending"
+          :title="approveAllowed ? undefined : 'Local Scenario Plans are reject-only'"
           @click="openDialog('approved', $event)"
         >
           Approve Exact Plan
@@ -404,9 +428,10 @@ function submitDecision() {
           aria-label="Close Decision dialog"
           @click="closeDialog"
         >
-          <el-icon aria-hidden="true">
-            <Close />
-          </el-icon>
+          <Close
+            :size="16"
+            aria-hidden="true"
+          />
         </button>
       </header>
       <div class="dialog-body">
@@ -472,7 +497,7 @@ function submitDecision() {
   gap: var(--co-space-5);
   padding: var(--co-space-5);
   border: 1px solid var(--co-border-default);
-  border-radius: var(--co-radius-panel);
+  border-radius: var(--co-radius-frame);
   background: var(--co-bg-surface);
 }
 
@@ -517,6 +542,7 @@ function submitDecision() {
   gap: 2px;
   padding: var(--co-space-3) var(--co-space-4);
   border-left: 3px solid var(--co-status-warning-fg);
+  border-radius: var(--co-radius-panel);
   color: var(--co-status-warning-fg);
   background: var(--co-status-warning-bg);
 }
@@ -530,18 +556,18 @@ function submitDecision() {
 .hash-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 var(--co-space-5); }
 
 .plan-notes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--co-space-4); }
-.plan-notes section { min-width: 0; padding: var(--co-space-4); border-left: 3px solid var(--co-action-primary); background: var(--co-bg-subtle); }
+.plan-notes section { min-width: 0; padding: var(--co-space-4); border-left: 3px solid var(--co-action-primary); border-radius: var(--co-radius-panel); background: var(--co-bg-subtle); }
 .plan-notes h4,
 .plan-notes p { margin: 0; }
 .plan-notes h4 { font-size: 13px; }
 .plan-notes p { margin-top: var(--co-space-2); color: var(--co-text-secondary); white-space: pre-wrap; overflow-wrap: anywhere; }
 
-.contract-snapshots { border-block: 1px solid var(--co-border-default); }
+.contract-snapshots { overflow: hidden; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); }
 .decision-bindings { border-top: 1px solid color-mix(in srgb, currentcolor 28%, transparent); }
 .contract-snapshots > summary,
-.decision-bindings > summary { width: fit-content; min-height: 44px; padding: var(--co-space-3) 0; color: var(--co-action-primary); font-weight: 700; cursor: pointer; }
+.decision-bindings > summary { width: fit-content; min-height: 44px; padding: var(--co-space-3); color: var(--co-action-primary); font-weight: 700; cursor: pointer; }
 .decision-bindings > summary { color: inherit; }
-.contract-snapshots > div { padding-bottom: var(--co-space-4); }
+.contract-snapshots > div { padding: 0 var(--co-space-3) var(--co-space-4); }
 
 .evidence-bindings ul { display: grid; margin: 0; padding: 0; list-style: none; }
 .evidence-bindings li { display: grid; grid-template-columns: minmax(180px, .5fr) minmax(0, 1fr); min-width: 0; align-items: center; gap: var(--co-space-3); border-bottom: 1px solid var(--co-border-default); }
@@ -550,7 +576,7 @@ function submitDecision() {
 .evidence-bindings code { min-width: 0; overflow-wrap: anywhere; font-size: 11px; }
 .evidence-bindings :deep(.hash-value) { border-bottom: 0; }
 
-.persisted-decision { padding: var(--co-space-4); border-left: 3px solid var(--co-status-success-fg); background: var(--co-status-success-bg); }
+.persisted-decision { padding: var(--co-space-4); border-left: 3px solid var(--co-status-success-fg); border-radius: var(--co-radius-panel); background: var(--co-status-success-bg); }
 .persisted-decision > p { margin: 0; overflow-wrap: anywhere; }
 
 .decision-actions { align-items: center; padding-top: var(--co-space-4); border-top: 1px solid var(--co-border-default); }
@@ -560,10 +586,10 @@ function submitDecision() {
 .decision-buttons { flex: 0 0 auto; }
 .decision-buttons button,
 .dialog-actions button { min-height: 44px; padding: 0 var(--co-space-4); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); font-weight: 700; cursor: pointer; }
-.approve-button,
-.submit-decision { border-color: var(--co-status-success-border) !important; color: var(--co-status-success-fg); background: var(--co-status-success-bg); }
-.reject-button,
-.submit-decision--reject { border-color: var(--co-status-critical-border) !important; color: var(--co-status-critical-fg); background: var(--co-status-critical-bg); }
+.decision-buttons .approve-button,
+.dialog-actions .submit-decision { border-color: var(--co-status-success-border); color: var(--co-status-success-fg); background: var(--co-status-success-bg); }
+.decision-buttons .reject-button,
+.dialog-actions .submit-decision--reject { border-color: var(--co-status-critical-border); color: var(--co-status-critical-fg); background: var(--co-status-critical-bg); }
 .decision-buttons button:hover,
 .dialog-actions button:hover { filter: brightness(.96); }
 .decision-buttons button:disabled,
@@ -583,7 +609,7 @@ function submitDecision() {
   box-shadow: var(--co-shadow-overlay);
 }
 
-.decision-dialog::backdrop { background: rgb(0 0 0 / 56%); }
+.decision-dialog::backdrop { background: var(--co-backdrop); }
 .decision-dialog > header { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: var(--co-space-4); padding: max(var(--co-space-4), env(safe-area-inset-top)) max(var(--co-space-5), env(safe-area-inset-right)) var(--co-space-4) max(var(--co-space-5), env(safe-area-inset-left)); border-bottom: 1px solid var(--co-border-default); }
 .decision-dialog h4 { margin: 2px 0 0; font-size: 18px; }
 .dialog-close { display: grid; width: 44px; height: 44px; flex: 0 0 auto; place-items: center; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); color: var(--co-text-primary); background: transparent; cursor: pointer; }
@@ -593,7 +619,7 @@ function submitDecision() {
 .dialog-body label { font-weight: 700; }
 .dialog-body textarea { width: 100%; min-height: 132px; resize: vertical; padding: var(--co-space-3); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); color: var(--co-text-primary); background: var(--co-bg-surface); font-size: 16px; }
 .dialog-body small { color: var(--co-text-muted); }
-.reason-error { color: var(--co-status-critical-fg) !important; }
+.dialog-body .reason-error { color: var(--co-status-critical-fg); }
 .dialog-actions { justify-content: flex-end; padding-top: var(--co-space-2); }
 .dialog-actions button:first-child { color: var(--co-text-secondary); background: transparent; }
 

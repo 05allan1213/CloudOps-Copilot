@@ -21,8 +21,8 @@ const planSelect = `SELECT
 	    p.id, p.public_id, p.incident_id, i.public_id,
 	    p.cycle_no, p.incident_version, ar.public_id, p.business_budget_authorization_id, p.diagnosis_hash,
 	    p.plan_version, p.plan_hash, p.status, p.migrated_legacy, p.migrated_legacy_context, p.operation_type,
-    p.target_repository, p.target_base_revision, p.target_base_branch,
-    p.last_known_good_sha, p.base_blob_sha, p.file_mode, p.target_path,
+	    p.source_type, p.target_repository, p.target_base_revision, COALESCE(p.runtime_base_hash,''), COALESCE(p.target_base_branch,''),
+	    COALESCE(p.last_known_good_sha,''), COALESCE(p.base_blob_sha,''), COALESCE(p.file_mode,''), p.target_path,
     p.target_resource_json, p.target_field_ref, p.parameters_json,
     p.evidence_references_json, p.risk_level, p.policy_snapshot_hash,
     p.expected_before_hash, p.expected_post_image_hash, p.expected_tree_hash,
@@ -130,7 +130,7 @@ func (r *Repository) CreatePlanIn(ctx context.Context, executor remediation.Pers
 	result, err := executor.ExecContext(ctx, `INSERT INTO remediation_plans (
 	    public_id, incident_id, cycle_no, incident_version,
 	    created_by_agent_run_id, business_budget_authorization_id, diagnosis_hash, plan_version, plan_hash, status,
-	    migrated_legacy, migrated_legacy_context, operation_type, target_repository, target_base_revision,
+	    migrated_legacy, migrated_legacy_context, operation_type, source_type, target_repository, target_base_revision, runtime_base_hash,
     target_base_branch, last_known_good_sha, base_blob_sha, file_mode, target_path,
     target_resource_json, target_field_ref, parameters_json, evidence_references_json,
     risk_level, policy_snapshot_hash, expected_before_hash,
@@ -142,14 +142,14 @@ func (r *Repository) CreatePlanIn(ctx context.Context, executor remediation.Pers
 	    plan_content_schema_version, row_version, created_at, updated_at, expires_at
 	) VALUES (
 	    ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_approval', ?, ?,
-    'restore_required_env', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'low', ?, ?, ?, ?,
+	    'restore_required_env', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'low', ?, ?, ?, ?,
     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 )`,
 		plan.PublicID, plan.IncidentID, plan.CycleNo, plan.IncidentVersion,
 		agentRun.id, nullableBudgetAuthorization(plan.BusinessBudgetAuthorizationID), plan.DiagnosisHash, plan.PlanVersion, plan.PlanHash,
 		plan.MigratedLegacy, plan.MigratedLegacyContext,
-		plan.TargetRepository, plan.TargetBaseRevision, plan.TargetBaseBranch,
-		plan.LastKnownGoodRevision, plan.BaseBlobSHA, plan.FileMode, plan.TargetPath,
+		plan.SourceType, plan.TargetRepository, plan.TargetBaseRevision, nullableString(plan.RuntimeBaseHash), nullableString(plan.TargetBaseBranch),
+		nullableString(plan.LastKnownGoodRevision), nullableString(plan.BaseBlobSHA), nullableString(plan.FileMode), plan.TargetPath,
 		targetJSON, plan.TargetFieldRef, parametersJSON, evidenceReferencesJSON,
 		plan.PolicySnapshotHash, plan.ExpectedBeforeHash, plan.ExpectedPostImageHash,
 		plan.ExpectedTreeHash, plan.ProposedPatchHash, []byte(plan.CanonicalChangeManifest),
@@ -293,15 +293,15 @@ func (r *Repository) RecordDecisionIn(ctx context.Context, executor remediation.
 	}
 
 	result, err := executor.ExecContext(ctx, `INSERT INTO remediation_decisions (
-	    public_id, decision_schema_version, incident_id,
+	    public_id, decision_schema_version, plan_source_type, incident_id,
     cycle_no, plan_id, plan_version, decision, actor_provider, actor_login,
     actor_role, reason, request_id, request_authenticated_at, expires_at,
     approved_hash_schema_version, approved_plan_hash, approved_base_sha,
     approved_post_image_hash, approved_tree_hash, approved_patch_hash,
     approved_policy_hash, approved_verification_hash, approved_evidence_set_hash,
     created_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		decision.PublicID, decision.DecisionSchemaVersion, decision.IncidentID,
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		decision.PublicID, decision.DecisionSchemaVersion, decision.PlanSourceType, decision.IncidentID,
 		decision.CycleNo, decision.PlanID, decision.PlanVersion, decision.Decision,
 		decision.ActorProvider, decision.Actor, decision.Role, decision.Reason,
 		decision.RequestID, decision.RequestAuthenticatedAt.UTC(), decision.ExpiresAt.UTC(),
@@ -480,7 +480,7 @@ ORDER BY (p.public_id = ?) DESC, p.id DESC LIMIT 1`
 		&plan.CycleNo, &plan.IncidentVersion,
 		&plan.CreatedByAgentRunID, &budgetAuthorization, &plan.DiagnosisHash, &plan.PlanVersion,
 		&plan.PlanHash, &status, &migratedLegacy, &migratedLegacyContext, &plan.OperationType,
-		&plan.TargetRepository, &plan.TargetBaseRevision, &plan.TargetBaseBranch,
+		&plan.SourceType, &plan.TargetRepository, &plan.TargetBaseRevision, &plan.RuntimeBaseHash, &plan.TargetBaseBranch,
 		&plan.LastKnownGoodRevision, &plan.BaseBlobSHA, &plan.FileMode,
 		&plan.TargetPath, &targetJSON, &plan.TargetFieldRef, &parametersJSON,
 		&evidenceReferencesJSON, &plan.RiskLevel, &plan.PolicySnapshotHash,
@@ -539,6 +539,7 @@ func samePlanContent(left, right remediation.RemediationPlan) bool {
 	return left.IncidentID == right.IncidentID && left.IncidentPublicID == right.IncidentPublicID &&
 		left.CycleNo == right.CycleNo && left.IncidentVersion == right.IncidentVersion &&
 		left.PlanVersion == right.PlanVersion && left.CanonicalPlanHash == right.CanonicalPlanHash &&
+		left.SourceType == right.SourceType && left.RuntimeBaseHash == right.RuntimeBaseHash &&
 		left.ExpectedPostImageHash == right.ExpectedPostImageHash && left.CreatedByAgentRunID == right.CreatedByAgentRunID &&
 		left.BusinessBudgetAuthorizationID == right.BusinessBudgetAuthorizationID &&
 		left.MigratedLegacy == right.MigratedLegacy && left.MigratedLegacyContext == right.MigratedLegacyContext
@@ -551,7 +552,14 @@ func nullableBudgetAuthorization(id uint64) any {
 	return id
 }
 
-const decisionSelect = `SELECT id, public_id, decision_schema_version,
+func nullableString(value string) any {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return value
+}
+
+const decisionSelect = `SELECT id, public_id, decision_schema_version, plan_source_type,
 	    incident_id, cycle_no, plan_id, plan_version,
     decision, actor_provider, actor_login, actor_role, reason, request_id,
     request_authenticated_at, expires_at, approved_hash_schema_version,
@@ -567,7 +575,7 @@ func loadDecision(ctx context.Context, executor remediation.PersistenceTX, planI
 	}
 	var decision remediation.Approval
 	err := executor.QueryRowContext(ctx, query, planID).Scan(
-		&decision.ID, &decision.PublicID, &decision.DecisionSchemaVersion,
+		&decision.ID, &decision.PublicID, &decision.DecisionSchemaVersion, &decision.PlanSourceType,
 		&decision.IncidentID, &decision.CycleNo,
 		&decision.PlanID, &decision.PlanVersion, &decision.Decision,
 		&decision.ActorProvider, &decision.Actor, &decision.Role, &decision.Reason,
@@ -586,6 +594,7 @@ func loadDecision(ctx context.Context, executor remediation.PersistenceTX, planI
 
 func sameDecision(left, right remediation.Approval) bool {
 	return left.PublicID == right.PublicID && left.DecisionSchemaVersion == right.DecisionSchemaVersion &&
+		left.PlanSourceType == right.PlanSourceType &&
 		left.IncidentID == right.IncidentID &&
 		left.CycleNo == right.CycleNo && left.PlanID == right.PlanID && left.PlanVersion == right.PlanVersion &&
 		left.Decision == right.Decision && left.ActorProvider == right.ActorProvider && left.Actor == right.Actor &&

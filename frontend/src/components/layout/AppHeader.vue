@@ -1,136 +1,377 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { Activity, Bell, Bot, ChevronRight, FlaskConical, LoaderCircle, Moon, Network, Sun, UserRound } from "lucide-vue-next";
 
-import type { OperationalScope, ProviderHealth } from "../../api/platform";
+import type { OperationalScope, ProviderHealth, ProviderState } from "../../api/platform";
 import { useTheme } from "../../composables/useTheme";
 
 const props = defineProps<{
-  pageTitle: string;
   unreadCount: number;
+  providerHealth?: ProviderHealth[];
+  scenarioState: "inactive" | "active";
   activeScope?: OperationalScope;
   scopes: OperationalScope[];
   selectedScopeId: string;
   scopeSwitching: boolean;
-  providerHealth?: ProviderHealth[];
-  scenarioState: "inactive" | "active";
 }>();
+
 const emit = defineEmits<{
-  changeScope: [scopeID: string];
-  openAgent: [];
   openNotifications: [trigger: HTMLElement];
+  changeScope: [scopeID: string];
 }>();
 
 const { isDark, toggleTheme } = useTheme();
-const environmentLabel = import.meta.env.VITE_ENVIRONMENT_LABEL || "Demo / kind";
+const headerTooltipUI = { content: "header-tooltip-content" } as const;
+const headerTooltipBottom = { side: "bottom", sideOffset: 4 } as const;
+const headerTooltipBottomEnd = { ...headerTooltipBottom, align: "end" } as const;
+const selectableScopes = computed(() => props.scopes
+  .filter((scope): scope is OperationalScope & { id: string } => Boolean(scope.id))
+  .map((scope) => ({
+    label: scope.cluster_id,
+    description: `${scope.environment} · ${scope.namespaces.join(", ")}`,
+    value: scope.id,
+  })));
+const selectedScope = computed(() => props.selectedScopeId || props.activeScope?.id || "");
+const scopeSummary = computed(() => props.activeScope
+  ? `${props.activeScope.cluster_id} · ${props.activeScope.environment}`
+  : "运行范围暂不可用");
 const themeActionLabel = computed(() => (isDark.value ? "切换浅色主题" : "切换深色主题"));
 const notificationCountLabel = computed(() => (props.unreadCount > 99 ? "99+" : String(props.unreadCount)));
 const notificationActionLabel = computed(() => props.unreadCount > 0
   ? `打开通知收件箱，${notificationCountLabel.value} 条未读`
   : "打开通知收件箱");
-const scopeDetail = computed(() => props.activeScope
-  ? `${props.activeScope.environment} · ${props.activeScope.namespaces.join(", ")}`
-  : "Operational Scope 暂不可用");
-const selectableScopes = computed(() => props.scopes.filter((scope): scope is OperationalScope & { id: string } => Boolean(scope.id)));
 const availableProviders = computed(() => props.providerHealth?.filter((item) => item.state === "available").length ?? 0);
 const providerCount = computed(() => props.providerHealth?.length ?? 0);
-const scenarioLabel = computed(() => props.scenarioState === "active" ? "Scenario Active" : "Live Mode");
+const providerSummary = computed(() => `${availableProviders.value}/${providerCount.value}`);
+const providerWarning = computed(() => providerCount.value > 0 && availableProviders.value < providerCount.value);
+const providerActionLabel = computed(() => providerCount.value
+  ? `Provider 健康：${providerSummary.value} 可用，打开 Provider 设置`
+  : "Provider 健康暂不可用，打开 Provider 设置");
+const scenarioLabel = computed(() => props.scenarioState === "active" ? "Scenario" : "Live");
+
+const providerStateLabels: Record<ProviderState, string> = {
+  available: "可用",
+  partial: "部分可用",
+  unavailable: "不可用",
+  disabled: "已禁用",
+  not_configured: "未配置",
+};
+
+function changeScope(value: unknown) {
+  if (typeof value === "string" && value && value !== props.activeScope?.id) emit("changeScope", value);
+}
 
 function openNotifications(event: MouseEvent) {
   emit("openNotifications", event.currentTarget as HTMLElement);
 }
-
-function changeScope(event: Event) {
-  const scopeID = (event.currentTarget as HTMLSelectElement).value;
-  if (scopeID && scopeID !== props.activeScope?.id) emit("changeScope", scopeID);
-}
 </script>
 
 <template>
-  <header class="app-header">
-    <div class="header-leading">
-      <RouterLink class="product-mark" to="/overview" aria-label="CloudOps 总览">
-        <span class="product-icon" aria-hidden="true"><Activity :size="19" /></span>
-        <strong>CloudOps</strong>
-      </RouterLink>
-      <nav class="breadcrumb" aria-label="面包屑">
-        <RouterLink to="/overview">控制台</RouterLink>
-        <ChevronRight :size="14" aria-hidden="true" />
-        <span aria-current="page">{{ pageTitle }}</span>
-      </nav>
-    </div>
-    <div class="header-actions">
-      <span class="scenario-boundary" :class="{ 'is-active': scenarioState === 'active' }" role="status" :aria-label="`运行模式：${scenarioLabel}`">
-        <FlaskConical :size="14" aria-hidden="true" />
-        <span>{{ scenarioLabel }}</span>
+  <header
+    class="app-header"
+    aria-label="全局运行上下文"
+  >
+    <div class="context-cluster">
+      <span class="context-orbit" aria-hidden="true">
+        <UIcon name="i-lucide-orbit" />
       </span>
-      <label class="environment-boundary" :title="scopeDetail">
-        <Network :size="15" aria-hidden="true" />
-        <span class="visually-hidden">活动集群</span>
-        <select
-          aria-label="活动集群"
-          autocomplete="off"
-          name="active_cluster"
+      <div class="scope-control">
+        <span>Operational scope</span>
+        <USelect
+          :model-value="selectedScope"
+          :items="selectableScopes"
+          value-key="value"
+          label-key="label"
+          variant="none"
+          :loading="scopeSwitching"
           :disabled="scopeSwitching || selectableScopes.length < 2"
-          :value="selectedScopeId || activeScope?.id || ''"
-          @change="changeScope"
+          :placeholder="activeScope?.cluster_id || '运行范围'"
+          :aria-label="`活动运行范围：${scopeSummary}`"
+          :title="scopeSummary"
+          :ui="{ base: 'scope-select-base', value: 'scope-select-value', trailing: 'scope-select-trailing' }"
+          @update:model-value="changeScope"
+        />
+      </div>
+      <span class="context-divider" aria-hidden="true" />
+      <span class="environment-label">
+        {{ activeScope?.environment || "local" }}
+      </span>
+      <span
+        class="live-state"
+        :class="{ 'is-scenario': scenarioState === 'active' }"
+        role="status"
+      >
+        <i aria-hidden="true" />
+        {{ scenarioLabel }}
+      </span>
+    </div>
+
+    <div class="header-actions">
+      <UTooltip
+        :content="headerTooltipBottomEnd"
+        :ui="headerTooltipUI"
+      >
+        <UButton
+          class="provider-health-trigger"
+          color="neutral"
+          variant="ghost"
+          icon="i-lucide-plug-zap"
+          :label="providerSummary"
+          to="/settings#providers"
+          :aria-label="providerActionLabel"
+          :class="{ 'has-warning': providerWarning }"
+        />
+        <template #content>
+          <section
+            class="provider-health-detail"
+            aria-label="Provider 健康明细"
+          >
+            <header>
+              <strong>Provider 健康</strong>
+              <span>{{ providerSummary }} 可用</span>
+            </header>
+            <ul v-if="providerHealth?.length">
+              <li
+                v-for="provider in providerHealth"
+                :key="provider.provider"
+              >
+                <span class="provider-name">{{ provider.provider }}</span>
+                <UBadge
+                  size="xs"
+                  :color="provider.state === 'available' ? 'success' : provider.state === 'partial' ? 'warning' : 'neutral'"
+                  variant="soft"
+                  :label="providerStateLabels[provider.state]"
+                />
+                <small>{{ provider.detail }}</small>
+              </li>
+            </ul>
+            <p v-else>
+              尚未返回 Provider 健康快照。
+            </p>
+            <footer>打开 Provider 设置查看完整上下文</footer>
+          </section>
+        </template>
+      </UTooltip>
+
+      <span class="action-divider" aria-hidden="true" />
+
+      <div class="notification-control">
+        <UTooltip
+          text="通知"
+          :content="headerTooltipBottom"
+          :ui="headerTooltipUI"
         >
-          <option v-if="!selectableScopes.length" value="">{{ activeScope?.cluster_id || environmentLabel }}</option>
-          <option v-for="scope in selectableScopes" :key="scope.id" :value="scope.id">
-            {{ scope.cluster_id }} · {{ scope.environment }}
-          </option>
-        </select>
-        <LoaderCircle v-if="scopeSwitching" class="scope-spinner" :size="14" aria-hidden="true" />
-        <small v-if="providerCount">{{ availableProviders }}/{{ providerCount }}</small>
-      </label>
-      <button type="button" class="icon-button" aria-label="打开全局 Agent 面板" title="Agent" @click="emit('openAgent')">
-        <Bot :size="19" aria-hidden="true" />
-      </button>
-      <button type="button" class="icon-button notification-button" :aria-label="notificationActionLabel" title="通知" @click="openNotifications">
-        <Bell :size="19" aria-hidden="true" />
-        <span v-if="unreadCount" class="notification-count">{{ notificationCountLabel }}</span>
-      </button>
-      <button type="button" class="icon-button" :aria-label="themeActionLabel" :title="themeActionLabel" @click="toggleTheme">
-        <Sun v-if="isDark" :size="19" aria-hidden="true" />
-        <Moon v-else :size="19" aria-hidden="true" />
-      </button>
-      <span class="user-trigger" aria-label="本地 Owner 上下文"><span class="user-avatar" aria-hidden="true"><UserRound :size="17" /></span><span class="user-copy"><strong>Owner</strong><small>local</small></span></span>
+          <UButton
+            color="neutral"
+            variant="ghost"
+            icon="i-lucide-bell"
+            square
+            :aria-label="notificationActionLabel"
+            @click="openNotifications"
+          />
+        </UTooltip>
+        <span
+          v-if="unreadCount"
+          class="notification-count"
+          aria-hidden="true"
+        >{{ notificationCountLabel }}</span>
+      </div>
+
+      <UTooltip
+        :text="themeActionLabel"
+        :content="headerTooltipBottom"
+        :ui="headerTooltipUI"
+      >
+        <UButton
+          color="neutral"
+          variant="ghost"
+          :icon="isDark ? 'i-lucide-sun' : 'i-lucide-moon'"
+          square
+          :aria-label="themeActionLabel"
+          @click="toggleTheme"
+        />
+      </UTooltip>
+
+      <UTooltip
+        text="本地 Owner"
+        :content="headerTooltipBottomEnd"
+        :ui="headerTooltipUI"
+      >
+        <UButton
+          class="owner-action"
+          color="neutral"
+          variant="ghost"
+          icon="i-lucide-user-round"
+          square
+          aria-label="本地 Owner"
+        />
+      </UTooltip>
     </div>
   </header>
 </template>
 
 <style scoped>
-.app-header { position: sticky; top: 0; z-index: var(--co-z-header); display: flex; min-height: var(--co-header-height); align-items: center; justify-content: space-between; gap: var(--co-space-3); padding: 0 max(var(--co-space-4), env(safe-area-inset-right)) 0 var(--co-space-5); border-bottom: 1px solid var(--co-border-default); background: color-mix(in srgb, var(--co-bg-surface) 94%, transparent); backdrop-filter: blur(12px); }
-.header-leading, .header-actions, .product-mark, .breadcrumb, .environment-boundary, .scenario-boundary, .user-trigger { display: flex; align-items: center; }
-.header-leading { min-width: 0; gap: var(--co-space-4); }
-.header-actions { flex: 0 0 auto; gap: var(--co-space-2); }
-.product-mark { min-height: 44px; gap: var(--co-space-2); color: var(--co-text-primary); }
-.product-icon, .user-avatar { display: grid; flex: 0 0 auto; place-items: center; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); color: var(--co-action-primary); background: var(--co-bg-subtle); }
-.product-icon { width: 31px; height: 31px; }
-.product-mark strong { font-size: 14px; }
-.breadcrumb { min-width: 0; gap: var(--co-space-2); padding-left: var(--co-space-4); border-left: 1px solid var(--co-border-default); color: var(--co-text-muted); font-size: 13px; white-space: nowrap; }
-.breadcrumb a { color: var(--co-action-primary); }
-.breadcrumb span { overflow: hidden; text-overflow: ellipsis; }
-.environment-boundary { min-height: 34px; max-width: 280px; gap: var(--co-space-2); padding: 0 var(--co-space-2); border: 1px solid var(--co-status-info-border); border-radius: var(--co-radius-pill); color: var(--co-status-info-fg); background: var(--co-status-info-bg); font-size: 11px; font-weight: 700; }
-.scenario-boundary { min-height: 34px; gap: var(--co-space-1); padding: 0 var(--co-space-2); border: 1px solid var(--co-status-success-border); border-radius: var(--co-radius-pill); color: var(--co-status-success-fg); background: var(--co-status-success-bg); font-size: 10px; font-weight: 800; white-space: nowrap; }
-.scenario-boundary.is-active { border-color: var(--co-status-warning-border); color: var(--co-status-warning-fg); background: var(--co-status-warning-bg); }
-.environment-boundary:hover, .environment-boundary:focus-within { border-color: var(--co-action-primary); background: var(--co-bg-active); }
-.environment-boundary select { min-width: 0; max-width: 170px; border: 0; color: var(--co-status-info-fg); background-color: var(--co-status-info-bg); cursor: pointer; font-size: 11px; font-weight: 750; text-overflow: ellipsis; }
-.environment-boundary option { color: var(--co-text-primary); background-color: var(--co-bg-surface); }
-.environment-boundary select:disabled { cursor: default; opacity: 1; }
-.environment-boundary small { padding-left: var(--co-space-2); border-left: 1px solid var(--co-status-info-border); font-family: var(--co-font-mono); font-size: 10px; }
-.scope-spinner { flex: 0 0 auto; animation: scope-spin 0.8s linear infinite; }
-.icon-button { position: relative; display: grid; width: 38px; height: 38px; flex: 0 0 38px; place-items: center; padding: 0; border: 1px solid transparent; border-radius: var(--co-radius-control); color: var(--co-text-secondary); background: transparent; cursor: pointer; }
-.icon-button:hover { border-color: var(--co-border-default); color: var(--co-text-primary); background: var(--co-bg-hover); }
-.notification-count { position: absolute; top: 2px; right: 1px; min-width: 17px; height: 17px; padding: 0 4px; border: 2px solid var(--co-bg-surface); border-radius: var(--co-radius-pill); color: #fff; background: var(--co-status-critical-fg); font-size: 9px; font-weight: 800; line-height: 13px; }
-.user-trigger { gap: var(--co-space-2); padding-left: var(--co-space-2); }
-.user-avatar { width: 31px; height: 31px; }
-.user-copy { display: grid; line-height: 1.1; }
-.user-copy strong { font-size: 12px; }.user-copy small { color: var(--co-text-muted); font-size: 10px; }
-@keyframes scope-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .scope-spinner { animation: none; } }
-@media (max-width: 1024px) { .scenario-boundary span { display: none; } }
-@media (max-width: 900px) { .user-copy, .product-mark strong { display: none; } .breadcrumb { padding-left: 0; border-left: 0; } .environment-boundary small { display: none; } }
-@media (max-width: 767px) { .app-header { padding-inline: max(var(--co-space-3), env(safe-area-inset-left)) max(var(--co-space-3), env(safe-area-inset-right)); } .product-mark, .user-trigger { display: none; } .header-leading { overflow: hidden; } .breadcrumb a, .breadcrumb svg { display: none; } .breadcrumb span { color: var(--co-text-primary); font-weight: 750; } .environment-boundary { max-width: 118px; padding-inline: var(--co-space-2); } .environment-boundary select { width: 84px; font-size: 16px; } }
-@media (max-width: 359px) { .header-actions { gap: var(--co-space-1); } .environment-boundary { max-width: 108px; } .environment-boundary select { width: 74px; } }
+.app-header {
+  position: relative;
+  z-index: var(--co-z-header);
+  height: var(--co-header-height);
+  flex: 0 0 var(--co-header-height);
+  pointer-events: none;
+}
+
+.context-cluster,
+.header-actions {
+  position: absolute;
+  top: 20px;
+  display: flex;
+  height: 40px;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--co-border-default) 46%, transparent);
+  background: color-mix(in srgb, var(--co-bg-canvas) 84%, transparent);
+  box-shadow: var(--co-shadow-chrome);
+  backdrop-filter: blur(12px);
+  pointer-events: auto;
+}
+
+.context-cluster {
+  left: clamp(18px, 2vw, 28px);
+  max-width: min(520px, calc(100% - 330px));
+  gap: 8px;
+  padding: 4px 10px 4px 5px;
+  border-radius: 12px;
+}
+
+.context-orbit {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--co-viz-live) 16%, var(--co-border-default));
+  border-radius: 9px;
+  color: var(--co-viz-live);
+  background: color-mix(in srgb, var(--co-bg-surface) 80%, transparent);
+}
+
+.context-orbit :deep(svg) { width: 17px; height: 17px; }
+.scope-control { display: grid; min-width: 0; gap: 1px; }
+.scope-control > span {
+  padding-left: 8px;
+  color: var(--co-text-muted);
+  font-family: var(--co-font-mono);
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: uppercase;
+}
+.scope-control :deep(.scope-select-base) {
+  width: auto;
+  min-height: 24px;
+  min-width: 0;
+  max-width: 220px;
+  padding: 0 28px 0 8px;
+  color: var(--co-text-primary);
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: none;
+}
+.scope-control :deep(.scope-select-value) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scope-control :deep(.scope-select-trailing) { right: 4px; width: 20px; justify-content: center; }
+.context-divider,
+.action-divider { width: 1px; height: 22px; flex: 0 0 1px; background: var(--co-border-default); }
+.environment-label {
+  max-width: 90px;
+  overflow: hidden;
+  color: var(--co-text-secondary);
+  font-family: var(--co-font-mono);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--co-status-success-fg);
+  font-family: var(--co-font-mono);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.live-state i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--co-viz-live);
+  box-shadow: 0 0 0 4px var(--co-viz-live-soft);
+}
+.live-state.is-scenario { color: var(--co-status-warning-fg); }
+.live-state.is-scenario i { background: var(--co-viz-amber); box-shadow: 0 0 0 4px color-mix(in srgb, var(--co-viz-amber) 12%, transparent); }
+
+.header-actions {
+  right: clamp(18px, 2vw, 28px);
+  gap: 2px;
+  padding: 3px 5px;
+  border-radius: 12px;
+}
+.header-actions :deep(button),
+.header-actions :deep(a) { width: 32px; min-width: 32px; height: 32px; border-radius: 9px; }
+.provider-health-trigger { width: auto !important; font-family: var(--co-font-mono); font-variant-numeric: tabular-nums; }
+.provider-health-trigger.has-warning { color: var(--co-status-warning-fg); }
+.action-divider { margin-inline: 3px; }
+.notification-control { position: relative; display: grid; place-items: center; }
+.notification-count {
+  position: absolute;
+  top: -2px;
+  right: -3px;
+  display: grid;
+  min-width: 15px;
+  height: 15px;
+  padding-inline: 3px;
+  place-items: center;
+  border: 2px solid var(--co-bg-floating);
+  border-radius: 999px;
+  color: white;
+  background: var(--co-viz-failure);
+  font-size: 8px;
+  font-weight: 800;
+  line-height: 1;
+  pointer-events: none;
+}
+.owner-action { background: transparent; }
+:global(.header-tooltip-content) {
+  position: relative;
+  z-index: var(--co-z-popover) !important;
+}
+
+.provider-health-detail {
+  display: grid;
+  width: 340px;
+  gap: var(--co-space-3);
+  padding: var(--co-space-2);
+  color: var(--co-text-primary);
+}
+.provider-health-detail header,
+.provider-health-detail li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--co-space-2);
+}
+.provider-health-detail header span,
+.provider-health-detail footer,
+.provider-health-detail p,
+.provider-health-detail small { color: var(--co-text-muted); font-size: 11px; }
+.provider-health-detail ul { display: grid; gap: var(--co-space-2); margin: 0; padding: 0; list-style: none; }
+.provider-health-detail li { padding-top: var(--co-space-2); border-top: 1px solid var(--co-border-default); }
+.provider-health-detail small { grid-column: 1 / -1; overflow-wrap: anywhere; }
+.provider-name { font-family: var(--co-font-mono); font-size: 12px; }
+.provider-health-detail p { margin: 0; }
+.provider-health-detail footer { padding-top: var(--co-space-2); border-top: 1px solid var(--co-border-default); }
+
+@media (max-width: 1160px) {
+  .context-cluster { max-width: calc(100% - 246px); }
+  .environment-label, .context-divider { display: none; }
+}
 </style>

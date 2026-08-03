@@ -1,100 +1,170 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
-import { Search } from "lucide-vue-next";
+import { computed, h, ref, resolveComponent } from "vue";
 
 import type { KubernetesResource, ResourceLayer } from "../../api/infrastructure";
+import DenseDataTable, { type DenseRowSeverity, type DenseTableColumn } from "../workspace/DenseDataTable.vue";
+
+type ResourceRow = KubernetesResource & Record<string, unknown>;
 
 const props = withDefaults(defineProps<{
   resources: KubernetesResource[];
   selectedId?: string;
-  compact?: boolean;
-}>(), { selectedId: "", compact: false });
-const emit = defineEmits<{ select: [resource: KubernetesResource] }>();
+}>(), {
+  selectedId: "",
+});
+const emit = defineEmits<{
+  select: [resource: KubernetesResource, trigger: HTMLElement | null];
+}>();
 
+const UBadge = resolveComponent("UBadge");
 const search = ref("");
 const layer = ref<ResourceLayer | "all">("all");
-const layerLabels: Record<ResourceLayer, string> = {
-  namespace: "Namespace",
-  service: "Service",
-  workload: "Workload",
-  pod: "Pod",
-  node: "Node",
-  gateway: "Ingress / Gateway",
+const layerItems: Array<{ label: string; value: ResourceLayer | "all" }> = [
+  { label: "全部资源层", value: "all" },
+  { label: "Namespace", value: "namespace" },
+  { label: "Service", value: "service" },
+  { label: "Workload", value: "workload" },
+  { label: "Pod", value: "pod" },
+  { label: "Node", value: "node" },
+  { label: "Ingress / Gateway", value: "gateway" },
+];
+const healthLabels: Record<KubernetesResource["health"]["state"], string> = {
+  healthy: "健康",
+  warning: "警告",
+  critical: "故障",
+  unknown: "未知",
 };
+const healthColors = {
+  healthy: "success",
+  warning: "warning",
+  critical: "error",
+  unknown: "neutral",
+} as const;
 
-const filtered = computed(() => {
+const filtered = computed<ResourceRow[]>(() => {
   const value = search.value.trim().toLocaleLowerCase();
   return props.resources.filter((resource) => {
     if (layer.value !== "all" && resource.layer !== layer.value) return false;
     if (!value) return true;
     return `${resource.kind} ${resource.namespace ?? ""} ${resource.name}`.toLocaleLowerCase().includes(value);
-  });
+  }) as ResourceRow[];
 });
+
+const columns: DenseTableColumn<ResourceRow>[] = [
+  { id: "kind", accessorKey: "kind", header: "Kind", label: "Kind", size: 118 },
+  { id: "name", accessorKey: "name", header: "资源", label: "资源", size: 238 },
+  { id: "namespace", accessorKey: "namespace", header: "Namespace", label: "Namespace", size: 170 },
+  {
+    id: "health",
+    accessorKey: "health",
+    header: "健康",
+    label: "健康",
+    size: 108,
+    cell: ({ row }) => h(UBadge, {
+      color: healthColors[row.original.health.state],
+      variant: "subtle",
+      label: healthLabels[row.original.health.state],
+    }),
+  },
+  {
+    id: "summary",
+    accessorFn: (row) => row.health.summary,
+    header: "状态摘要",
+    label: "状态摘要",
+    size: 300,
+    optional: true,
+  },
+];
+
+function severity(resource: ResourceRow): DenseRowSeverity {
+  if (resource.health.state === "critical") return "critical";
+  if (resource.health.state === "warning") return "warning";
+  return resource.health.state === "unknown" ? "info" : "neutral";
+}
+
+function selectResource(resource: ResourceRow, trigger: HTMLElement | null) {
+  emit("select", resource, trigger);
+}
 </script>
 
 <template>
-  <section class="structured-view" :class="{ 'is-compact': compact }" aria-label="Atlas 结构化资源视图" data-testid="atlas-structured-view">
-    <header>
-      <label>
-        <span>搜索资源</span>
-        <span class="search-control"><Search :size="16" aria-hidden="true" /><input v-model="search" name="atlas-resource-search" type="search" autocomplete="off" aria-label="资源搜索" placeholder="名称、Kind 或 Namespace…" /></span>
-      </label>
-      <label>
-        <span>资源层</span>
-        <select v-model="layer" name="atlas-resource-layer" autocomplete="off">
-          <option value="all">全部资源层</option>
-          <option v-for="(label, value) in layerLabels" :key="value" :value="value">{{ label }}</option>
-        </select>
-      </label>
+  <section
+    class="structured-view"
+    aria-label="Atlas 结构化资源视图"
+    data-testid="atlas-structured-view"
+  >
+    <header class="structured-toolbar">
+      <UInput
+        v-model="search"
+        class="structured-search"
+        icon="i-lucide-search"
+        name="atlas-resource-search"
+        autocomplete="off"
+        aria-label="搜索 Atlas 资源"
+        placeholder="名称、Kind 或 Namespace"
+      />
+      <USelect
+        v-model="layer"
+        class="structured-layer"
+        :items="layerItems"
+        value-key="value"
+        label-key="label"
+        aria-label="筛选资源层"
+      />
       <output aria-live="polite">{{ filtered.length }} / {{ resources.length }}</output>
     </header>
 
-    <ul v-if="filtered.length" class="resource-list">
-      <li v-for="resource in filtered" :key="resource.id">
-        <button type="button" :class="{ 'is-selected': resource.id === selectedId }" @click="emit('select', resource)">
-          <span class="resource-kind">{{ resource.kind }}</span>
-          <strong>{{ resource.name }}</strong>
-          <span class="resource-namespace mono-text">{{ resource.namespace || "cluster" }}</span>
-          <span class="health-state" :class="`is-${resource.health.state}`">{{ resource.health.state }}</span>
-          <small>{{ resource.health.summary }}</small>
-        </button>
-      </li>
-    </ul>
-    <p v-else class="empty-state">没有符合当前筛选条件的真实资源。</p>
+    <DenseDataTable
+      :rows="filtered"
+      :columns="columns"
+      :row-key="(resource: ResourceRow) => resource.id"
+      storage-key="atlas-structured-resources"
+      caption="Operations Atlas 结构化资源"
+      :critical-column-ids="['kind', 'name', 'health']"
+      :selected-id="selectedId"
+      empty="没有符合当前筛选条件的真实资源"
+      :severity="severity"
+      :copy-value="(resource: ResourceRow) => `${resource.kind}/${resource.namespace || 'cluster'}/${resource.name} (${resource.id})`"
+      :virtualized="filtered.length > 250"
+      @select="selectResource"
+    />
   </section>
 </template>
 
 <style scoped>
-.structured-view { display: grid; min-height: 0; grid-template-rows: auto 1fr; color: var(--co-text-primary); background: var(--co-bg-canvas); }
-.structured-view > header { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(160px, 220px) auto; align-items: end; gap: var(--co-space-3); padding: var(--co-space-4); border-bottom: 1px solid var(--co-border-default); background: var(--co-bg-surface); }
-label { display: grid; gap: var(--co-space-1); color: var(--co-text-muted); font-size: 11px; font-weight: 700; }
-.search-control { display: flex; min-height: 42px; align-items: center; gap: var(--co-space-2); padding: 0 var(--co-space-3); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); color: var(--co-text-muted); background: var(--co-bg-canvas); }
-.search-control:focus-within { border-color: var(--co-focus-ring); box-shadow: 0 0 0 2px color-mix(in srgb, var(--co-focus-ring) 32%, transparent); }
-input, select { width: 100%; min-height: 42px; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); color: var(--co-text-primary); background: var(--co-bg-canvas); font: inherit; }
-input { min-width: 0; min-height: auto; padding: 0; border: 0; outline: 0; }
-select { padding: 0 var(--co-space-3); }
-output { padding-bottom: var(--co-space-3); color: var(--co-text-muted); font-family: var(--co-font-mono); font-size: 11px; }
-.resource-list { min-height: 0; margin: 0; padding: var(--co-space-3); overflow-y: auto; overscroll-behavior: contain; list-style: none; }
-.resource-list li { content-visibility: auto; contain-intrinsic-size: 68px; }
-.resource-list button { display: grid; width: 100%; min-height: 64px; grid-template-columns: 96px minmax(140px, 1fr) minmax(90px, 0.7fr) auto; align-items: center; gap: var(--co-space-2); padding: var(--co-space-2) var(--co-space-3); border: 0; border-bottom: 1px solid var(--co-border-default); color: var(--co-text-primary); text-align: left; background: transparent; cursor: pointer; }
-.resource-list button:hover { background: var(--co-bg-hover); }
-.resource-list button.is-selected { background: var(--co-bg-active); box-shadow: inset 3px 0 var(--co-action-primary); }
-.resource-kind, .resource-namespace { overflow: hidden; color: var(--co-text-muted); text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
-.resource-list strong { overflow-wrap: anywhere; font-size: 13px; }
-.resource-list small { grid-column: 2 / -1; color: var(--co-text-secondary); overflow-wrap: anywhere; }
-.health-state { padding: 2px 7px; border: 1px solid var(--co-status-neutral-border); border-radius: var(--co-radius-pill); color: var(--co-status-neutral-fg); font-size: 10px; font-weight: 800; }
-.health-state.is-healthy { border-color: var(--co-status-success-border); color: var(--co-status-success-fg); }
-.health-state.is-warning { border-color: var(--co-status-warning-border); color: var(--co-status-warning-fg); }
-.health-state.is-critical { border-color: var(--co-status-critical-border); color: var(--co-status-critical-fg); }
-.empty-state { display: grid; min-height: 180px; place-items: center; margin: 0; padding: var(--co-space-5); color: var(--co-text-muted); }
-.is-compact > header { grid-template-columns: 1fr; }
-.is-compact output { padding: 0; }
-.is-compact .resource-list button { grid-template-columns: 80px minmax(100px, 1fr) auto; }
-.is-compact .resource-namespace { display: none; }
-@media (max-width: 720px) {
-  .structured-view > header { grid-template-columns: 1fr; }
-  output { padding: 0; }
-  .resource-list button { grid-template-columns: 74px minmax(100px, 1fr) auto; }
-  .resource-namespace { display: none; }
+.structured-view {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  color: var(--co-text-primary);
+  background: var(--co-bg-canvas);
+}
+
+.structured-toolbar {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(240px, 1fr) minmax(180px, 240px) auto;
+  align-items: center;
+  gap: var(--co-space-3);
+  min-height: 56px;
+  padding: var(--co-space-2) var(--co-space-3);
+  border-bottom: 1px solid var(--co-border-default);
+  background: var(--co-bg-surface);
+}
+
+.structured-search,
+.structured-layer { min-width: 0; }
+.structured-toolbar output {
+  color: var(--co-text-muted);
+  font-family: var(--co-font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 1024px) {
+  .structured-toolbar { grid-template-columns: minmax(180px, 1fr) minmax(160px, 200px); }
+  .structured-toolbar output { grid-column: 1 / -1; }
 }
 </style>

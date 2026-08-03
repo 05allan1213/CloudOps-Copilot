@@ -17,7 +17,9 @@ describe("typed Workbench presentation helpers", () => {
 
   it("only permits HTTP deep links", () => {
     expect(safeExternalURL("https://github.com/example/repo/pull/1")).toContain("https://github.com/");
+    expect(safeExternalURL("http://grafana.example.test/d/cloudops")).toContain("http://grafana.example.test/");
     expect(safeExternalURL("javascript:alert(1)")).toBe("");
+    expect(safeExternalURL("data:text/html,unsafe")).toBe("");
     expect(safeExternalURL("not a url")).toBe("");
   });
 });

@@ -1,0 +1,170 @@
+Gate 3 focused validation
+Recorded: 2026-07-31T11:29:57+08:00
+Rollback point: 470c6aece2de69893cafae6200ac672a7c071a73
+Worktree: Gate 3 implementation and evidence; local rollback commit pending at evidence edit time
+
+TYPECHECK
+
+$ npm run typecheck
+> cloudops-workbench@0.1.0 typecheck
+> vue-tsc --noEmit
+exit=0
+RESULT=PASS
+
+FOCUSED TESTS
+
+$ npx vitest run src/api/client.test.ts src/router/scrollBehavior.test.ts src/utils/contextLink.test.ts src/composables/useLatestAsync.test.ts src/composables/useRealtimeCleanup.test.ts src/composables/useWorkspaceInspector.test.ts src/composables/useWorkspaceQuery.test.ts src/components/workspace/workspacePresentation.test.ts src/composables/incidents/useIncidentRealtime.test.ts
+Test Files  9 passed (9)
+Tests       28 passed (28)
+exit=0
+RESULT=PASS
+
+TARGETED ESLINT, FINAL
+
+$ npx eslint src/components/workspace src/composables/useLatestAsync.ts src/composables/useLatestAsync.test.ts src/composables/useRealtimeCleanup.ts src/composables/useRealtimeCleanup.test.ts src/composables/useWorkspaceInspector.ts src/composables/useWorkspaceInspector.test.ts src/composables/useWorkspaceQuery.ts src/composables/useWorkspaceQuery.test.ts src/api/client.ts src/api/client.test.ts src/router/scrollBehavior.ts src/router/scrollBehavior.test.ts src/utils/contextLink.ts src/utils/contextLink.test.ts tests/fixtures/workspace-foundation --ext .ts,.vue --max-warnings 0
+exit=0
+findings=0
+RESULT=PASS
+
+The first diagnostic run returned 0 errors and 140 warnings in new files.
+Existing rules formatted the files, and explicit optional prop defaults closed
+the remaining six warnings. No warning budget or lint rule changed.
+
+A pre-final typecheck rejected `AggregateError` because the current project lib
+target does not provide it. The cleanup implementation was kept compatible by
+attempting every disposer and then rethrowing the first failure. No TypeScript
+configuration or source strictness changed; the final typecheck above passed.
+
+ELEMENT PLUS BOUNDARY
+
+$ rg -n 'element-plus|@element-plus|<el-|El(Button|Dialog|Drawer|Dropdown|Icon|Input|Message|MessageBox|Option|Result|Select)' frontend/src/components/workspace frontend/src/composables/useLatestAsync.ts frontend/src/composables/useRealtimeCleanup.ts frontend/src/composables/useWorkspaceInspector.ts frontend/src/composables/useWorkspaceQuery.ts frontend/tests/fixtures/workspace-foundation -g '!node_modules/**'
+exit=1
+output=<empty>
+RESULT=PASS
+
+PRODUCTION FIXTURE IMPORT BOUNDARY
+
+$ rg -n 'tests/fixtures|workspace-foundation' frontend/src
+exit=1
+output=<empty>
+RESULT=PASS
+
+NON-LUCIDE QUOTED ICONS
+
+$ rg -n --pcre2 '"i-(?!lucide-)[^"]+"' frontend/src/components/workspace frontend/tests/fixtures/workspace-foundation -g '!node_modules/**'
+exit=1
+output=<empty>
+
+$ rg -n --pcre2 "'i-(?!lucide-)[^']+'" frontend/src/components/workspace frontend/tests/fixtures/workspace-foundation -g '!node_modules/**'
+exit=1
+output=<empty>
+RESULT=PASS
+
+EMOJI
+
+$ rg -n --pcre2 '[\x{1F300}-\x{1FAFF}\x{2600}-\x{27BF}]' frontend/src/components/workspace frontend/tests/fixtures/workspace-foundation -g '!node_modules/**'
+exit=1
+output=<empty>
+RESULT=PASS
+
+BRITTLE OVERRIDES
+
+$ rg -n ':deep\(|:global\(|!important' frontend/src/components/workspace frontend/tests/fixtures/workspace-foundation -g '!node_modules/**'
+exit=1
+output=<empty>
+RESULT=PASS
+
+DIFF CHECK
+
+$ git diff --check
+exit=0
+output=<empty>
+RESULT=PASS
+
+BROWSER
+
+Tool: /home/monody/.codex/skills/playwright/scripts/playwright_cli.sh
+Session: gate3-workspace
+Config: output/playwright/gate3-workspace/playwright-cli.json
+Page: http://127.0.0.1:52732/workspace
+Browser: Chromium 1228, zh-CN, Asia/Shanghai, reduced motion
+Data classification: FIXTURE_PRESENTATION_EVIDENCE
+
+Actions exercised with Playwright CLI:
+- Light/Dark at 1440x900 and final Console/Network inspection
+- 1280x800 and 1024x768 desktop degradation and overflow measurement
+- CDP-equivalent 125%/150% zoom checks and 200% root text enlargement
+- 20,000-row virtualization, keyboard activation, pinned columns, local-only
+  column preference, full copy, selection, and in-place existing-row update
+- Inspector direct URL, push/replace/Back/Forward/full-page push, scroll and
+  Focus entry/restore, dirty dismissal guard, and topmost Escape
+- invalid, deleted, permission-denied, and expired Inspector targets
+- Loading, Empty, Error, Partial, Stale, Disconnected, Permission Denied,
+  Expired, long ApiError identity, and retry presentation
+- Connecting, Live, Reconnecting, Disconnected, Stale, Cursor expired,
+  Resyncing, Resync failed, and Stopped realtime presentation
+- Acknowledgement, Configuration, Approval exact hash, Rollback, and Forced
+  termination confirmation compositions
+- background refresh retained revision 12 while pending and advanced to
+  revision 13 only after completion; the refresh button was disabled in flight
+- simulated submit used in-button loading, retained the exact edited input on
+  failure, and displayed the expected inline error
+- cancellable long operation exposed stage and 00:00:42 elapsed time; cancel
+  changed presentation to request-sent without claiming the Provider stopped
+- reduced-motion spinner removal and normal motion-state preservation
+
+$ playwright-cli --session gate3-workspace console
+Total messages: 2
+Errors: 0
+Warnings: 0
+RESULT=PASS
+
+$ playwright-cli --session gate3-workspace requests
+GET https://api.iconify.design/lucide.json?... -> 200
+failed_requests=0
+cloudops_api_requests=0
+provider_requests=0
+RESULT=PASS
+
+B1=PASS
+B2=NOT RUN
+B3=PASS
+B4=PASS
+B5=PASS
+B6_FIREFOX=NOT RUN
+B6_WEBKIT=NOT RUN
+B7=NOT RUN
+B8=NOT RUN
+REAL_READONLY_INTEGRATION=NOT RUN
+WRITE_PATH_E2E=NOT RUN
+
+Two exploratory scan invocations did not produce Gate assertions: one compound
+command had a shell quote parse error, and one broad icon token pattern matched
+ordinary substrings such as request-i-d. The exact quoted-icon scans above are
+the corrected reproducible checks and passed.
+
+NOT RUN UNDER THE APPROVED GATE CADENCE
+
+full_lint=NOT RUN
+lint_no_new_warnings_full_run=NOT RUN
+typecheck_e2e=NOT RUN
+full_unit=NOT RUN
+production_build=NOT RUN
+npm_audit=NOT RUN
+full_e2e_stable=NOT RUN
+full_e2e=NOT RUN
+firefox=NOT RUN
+webkit=NOT RUN
+lighthouse=NOT RUN
+full_performance_matrix=NOT RUN
+real_readonly_integration=NOT RUN
+write_path_e2e=NOT RUN
+
+GATE_03 EXIT
+
+SHARED_WORKSPACE_FOUNDATION=PASS
+URL_INSPECTOR_CONTRACT=PASS
+ERROR_AND_ASYNC_PRESENTATION=PASS
+GATE_03=PASS
+GATE_04_ENTRY_CONDITION=PASS
+CURRENT_GATE=GATE_04_READY_NOT_STARTED

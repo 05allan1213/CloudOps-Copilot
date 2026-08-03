@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 export interface IncidentZone {
   id: string;
   label: string;
   index: string;
+  aliases?: string[];
 }
 
 const props = defineProps<{
@@ -16,10 +17,14 @@ const route = useRoute();
 const router = useRouter();
 const activeZone = ref(zoneFromHash(route.hash) || props.zones[0]?.id || "");
 let observer: IntersectionObserver | null = null;
+const zoneItems = computed(() => props.zones.map((zone) => ({
+  label: `${zone.index} · ${zone.label}`,
+  value: zone.id,
+})));
 
 function zoneFromHash(hash: string): string {
   const id = hash.replace(/^#/, "");
-  return props.zones.some((zone) => zone.id === id) ? id : "";
+  return props.zones.find((zone) => zone.id === id || zone.aliases?.includes(id))?.id ?? "";
 }
 
 function navigateToZone(zoneID: string) {
@@ -52,8 +57,8 @@ function syncZoneHash(zoneID: string) {
   });
 }
 
-function onZoneSelect(event: Event) {
-  navigateToZone((event.target as HTMLSelectElement).value);
+function onZoneSelect(value: string) {
+  navigateToZone(value);
 }
 
 watch(
@@ -114,22 +119,15 @@ onBeforeUnmount(() => observer?.disconnect());
     </ol>
 
     <div class="mobile-zone-select">
-      <label for="incident-zone-select">Jump to section</label>
-      <select
+      <label for="incident-zone-select">跳转到生命周期区块</label>
+      <USelect
         id="incident-zone-select"
-        name="incident_zone"
-        autocomplete="off"
-        :value="activeZone"
-        @change="onZoneSelect"
-      >
-        <option
-          v-for="zone in zones"
-          :key="zone.id"
-          :value="zone.id"
-        >
-          {{ zone.index }} · {{ zone.label }}
-        </option>
-      </select>
+        :model-value="activeZone"
+        :items="zoneItems"
+        value-key="value"
+        aria-label="跳转到生命周期区块"
+        @update:model-value="onZoneSelect"
+      />
     </div>
   </nav>
 </template>
@@ -140,7 +138,9 @@ onBeforeUnmount(() => observer?.disconnect());
   top: 0;
   z-index: var(--co-z-sticky);
   min-width: 0;
-  border-block: 1px solid var(--co-border-default);
+  overflow: hidden;
+  border: 1px solid var(--co-border-default);
+  border-radius: var(--co-radius-frame);
   background: color-mix(in srgb, var(--co-bg-canvas) 94%, transparent);
   backdrop-filter: blur(10px);
 }
@@ -201,7 +201,7 @@ onBeforeUnmount(() => observer?.disconnect());
     text-transform: uppercase;
   }
 
-  .mobile-zone-select select {
+  .mobile-zone-select :deep(button) {
     width: 100%;
     min-height: 44px;
     padding: 0 36px 0 var(--co-space-3);

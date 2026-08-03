@@ -426,10 +426,12 @@ func TestChangeEnsurePRRejectsDiagnosisAndSufficiencyDrift(t *testing.T) {
 	for _, fact := range facts {
 		factIDs = append(factIDs, fact.ID)
 	}
-	diagnosis, err := validateDiagnosis(agent.DiagnosisCandidate{
+	diagnosis, err := agent.ValidateDiagnosisRecord(agent.DiagnosisCandidate{
 		ClaimType: policy.ClaimType, Summary: "The required environment node is absent from the deployed GitOps revision.",
 		Confidence: agent.DiagnosisConfirmed, EvidenceFactIDs: factIDs, RemediationHint: agent.RemediationRestoreRequiredEnv,
-	}, investigationSnapshot{IncidentPublicID: incidentID, Task: asyncjob.Task{CycleNo: 2}, Facts: facts}, policy, sufficiency)
+	}, agent.DiagnosisValidationInput{
+		IncidentID: incidentID, CycleNo: 2, Facts: facts, Policy: policy, Sufficiency: sufficiency,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

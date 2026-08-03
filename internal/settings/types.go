@@ -11,6 +11,7 @@ var (
 	ErrValidationFailed  = errors.New("operational configuration validation failed")
 	ErrValidationExpired = errors.New("operational configuration validation expired")
 	ErrValidationStale   = errors.New("operational configuration validation does not match the draft")
+	ErrRevisionChanged   = errors.New("active operational configuration revision changed")
 	ErrNotFound          = errors.New("settings resource not found")
 	ErrUnavailable       = errors.New("settings dependency unavailable")
 )
@@ -131,6 +132,11 @@ type Draft struct {
 	Providers          []ProviderConfiguration `json:"providers"`
 	EscalationPolicies []EscalationPolicy      `json:"escalation_policies"`
 	SecretRefs         []SecretReference       `json:"secret_references"`
+}
+
+type RevisionExpectation struct {
+	ID   string
+	Hash string
 }
 
 type FieldError struct {

@@ -20,7 +20,9 @@ import (
 const (
 	HashSchemaVersion               = 1
 	PlanContentSchemaVersion        = 2
+	LocalScenarioPlanSchemaVersion  = 3
 	DecisionSchemaVersion           = 1
+	LocalScenarioDecisionSchema     = 2
 	RestoreRequiredEnvPolicyVersion = "restore-required-env-policy/v1"
 	MaxPlanDiffBytes                = 64 * 1024
 	MaxPostImageBytes               = 256 * 1024
@@ -182,7 +184,7 @@ func CompileRestoreRequiredEnv(request RestoreEnvCompileRequest) (RemediationPla
 	plan := RemediationPlan{
 		PublicID: uuid.NewString(), IncidentID: request.IncidentID, IncidentPublicID: request.IncidentPublicID,
 		PlanVersion: request.PlanVersion, PlanHash: "", Status: PlanAwaitingApproval,
-		OperationType: OperationRestoreRequiredEnv, TargetRepository: request.Repository,
+		OperationType: OperationRestoreRequiredEnv, SourceType: PlanSourceGitOps, TargetRepository: request.Repository,
 		TargetBaseRevision: strings.ToLower(request.BaseRevision), TargetPath: request.TargetPath,
 		Parameters:         Parameters{Target: request.Target, ProposedValue: ProposedValue{}},
 		EvidenceReferences: evidenceIDs(evidence), RiskLevel: RiskLow,
@@ -269,8 +271,8 @@ func CanonicalPlanHash(plan RemediationPlan) (string, error) {
 	})
 	fields := [][]byte{
 		[]byte(fmt.Sprint(plan.HashSchemaVersion)), []byte(fmt.Sprint(plan.PlanContentSchemaVersion)), []byte(plan.IncidentPublicID), []byte(fmt.Sprint(plan.IncidentVersion)), []byte(fmt.Sprint(plan.CycleNo)), []byte(fmt.Sprint(plan.PlanVersion)),
-		[]byte(plan.CreatedByAgentRunID), []byte(plan.DiagnosisHash), []byte(string(plan.OperationType)),
-		[]byte(plan.TargetRepository), []byte(plan.TargetBaseBranch), []byte(plan.TargetBaseRevision), []byte(plan.LastKnownGoodRevision), []byte(plan.TargetPath),
+		[]byte(plan.CreatedByAgentRunID), []byte(plan.DiagnosisHash), []byte(string(plan.OperationType)), []byte(string(plan.SourceType)),
+		[]byte(plan.TargetRepository), []byte(plan.TargetBaseBranch), []byte(plan.TargetBaseRevision), []byte(plan.RuntimeBaseHash), []byte(plan.LastKnownGoodRevision), []byte(plan.TargetPath),
 		[]byte(plan.BaseBlobSHA), []byte(plan.FileMode), []byte(plan.TargetFieldRef), []byte(plan.ExpectedBeforeHash),
 		[]byte(plan.ExpectedPostImageHash), []byte(plan.ExpectedTreeHash), []byte(plan.CanonicalChangeManifest), []byte(plan.ProposedPatchHash),
 		[]byte(plan.BoundedDiff), []byte(plan.PatchSummary), []byte(plan.PolicyVersion), []byte(plan.PolicySnapshot), []byte(plan.PolicySnapshotHash), []byte(plan.VerificationPlan),
@@ -284,7 +286,10 @@ func CanonicalPlanHash(plan RemediationPlan) (string, error) {
 // compiler. Persistence adapters call this before accepting a row and again
 // after reading one back from durable storage.
 func ValidatePlan(plan RemediationPlan) error {
-	if plan.PlanContentSchemaVersion != PlanContentSchemaVersion || plan.HashSchemaVersion != HashSchemaVersion {
+	if plan.HashSchemaVersion != HashSchemaVersion ||
+		(plan.SourceType == PlanSourceGitOps && plan.PlanContentSchemaVersion != PlanContentSchemaVersion) ||
+		(plan.SourceType == PlanSourceLocalScenario && plan.PlanContentSchemaVersion != LocalScenarioPlanSchemaVersion) ||
+		(plan.SourceType != PlanSourceGitOps && plan.SourceType != PlanSourceLocalScenario) {
 		return fmt.Errorf("%w: unsupported plan schema", ErrInvalidArgument)
 	}
 	if _, err := uuid.Parse(plan.PublicID); err != nil {
@@ -304,12 +309,24 @@ func ValidatePlan(plan RemediationPlan) error {
 	default:
 		return fmt.Errorf("%w: invalid plan status", ErrInvalidArgument)
 	}
-	if plan.RiskLevel != RiskLow || plan.TargetRepository == "" || plan.TargetBaseBranch == "" || plan.TargetPath == "" || plan.TargetFieldRef == "" || plan.FileMode != "100644" {
+	if plan.RiskLevel != RiskLow || plan.TargetPath == "" || plan.TargetFieldRef == "" {
 		return fmt.Errorf("%w: invalid plan target", ErrInvalidArgument)
 	}
-	for _, objectID := range []string{plan.TargetBaseRevision, plan.LastKnownGoodRevision, plan.BaseBlobSHA, plan.ExpectedTreeHash} {
-		if !validObjectID(objectID) {
-			return fmt.Errorf("%w: invalid Git object identity", ErrInvalidArgument)
+	switch plan.SourceType {
+	case PlanSourceGitOps:
+		if plan.TargetRepository == "" || plan.TargetBaseBranch == "" || plan.FileMode != "100644" || plan.RuntimeBaseHash != "" {
+			return fmt.Errorf("%w: invalid GitOps plan target", ErrInvalidArgument)
+		}
+		for _, objectID := range []string{plan.TargetBaseRevision, plan.LastKnownGoodRevision, plan.BaseBlobSHA, plan.ExpectedTreeHash} {
+			if !validObjectID(objectID) {
+				return fmt.Errorf("%w: invalid Git object identity", ErrInvalidArgument)
+			}
+		}
+	case PlanSourceLocalScenario:
+		if plan.TargetRepository != "" || plan.TargetBaseBranch != "" || plan.LastKnownGoodRevision != "" ||
+			plan.BaseBlobSHA != "" || plan.FileMode != "" || plan.ExpectedTreeHash != "" ||
+			plan.TargetBaseRevision != "" || len(plan.RuntimeBaseHash) != 64 || !isLowerHex(plan.RuntimeBaseHash) {
+			return fmt.Errorf("%w: local Scenario plan contains Git identity or has no runtime base hash", ErrInvalidArgument)
 		}
 	}
 	for _, digest := range []string{
@@ -333,9 +350,13 @@ func ValidatePlan(plan RemediationPlan) error {
 	if len(plan.CanonicalChangeManifest) == 0 || len(plan.CanonicalChangeManifest) > 4096 || !json.Valid(plan.CanonicalChangeManifest) || hashBytes(plan.CanonicalChangeManifest) != plan.ProposedPatchHash {
 		return fmt.Errorf("%w: canonical change manifest", ErrInvalidArgument)
 	}
-	var manifest canonicalChangeManifest
-	if err := json.Unmarshal(plan.CanonicalChangeManifest, &manifest); err != nil || manifest.Path != plan.TargetPath || manifest.BaseBlobSHA != plan.BaseBlobSHA || manifest.FileMode != plan.FileMode || manifest.PostImageHash != plan.ExpectedPostImageHash {
-		return fmt.Errorf("%w: canonical change manifest binding", ErrInvalidArgument)
+	if plan.SourceType == PlanSourceGitOps {
+		var manifest canonicalChangeManifest
+		if err := json.Unmarshal(plan.CanonicalChangeManifest, &manifest); err != nil || manifest.Path != plan.TargetPath || manifest.BaseBlobSHA != plan.BaseBlobSHA || manifest.FileMode != plan.FileMode || manifest.PostImageHash != plan.ExpectedPostImageHash {
+			return fmt.Errorf("%w: canonical change manifest binding", ErrInvalidArgument)
+		}
+	} else if err := validateLocalScenarioManifest(plan); err != nil {
+		return err
 	}
 	if len(plan.PolicySnapshot) == 0 || len(plan.PolicySnapshot) > MaxPolicyBytes || !json.Valid(plan.PolicySnapshot) || plan.PolicyVersion == "" || hashBytes(plan.PolicySnapshot) != plan.PolicySnapshotHash {
 		return fmt.Errorf("%w: policy snapshot binding", ErrInvalidArgument)
@@ -386,11 +407,16 @@ func NewApproval(plan RemediationPlan, provider, login, role, reason, requestID 
 }
 
 func NewDecision(plan RemediationPlan, decision Decision, provider, login, role, reason, requestID string, authenticatedAt, expiresAt time.Time) (Approval, error) {
-	if plan.OperationType != OperationRestoreRequiredEnv || plan.CanonicalPlanHash == "" || plan.HashSchemaVersion != HashSchemaVersion || plan.PlanContentSchemaVersion != PlanContentSchemaVersion {
+	if plan.OperationType != OperationRestoreRequiredEnv || plan.CanonicalPlanHash == "" || plan.HashSchemaVersion != HashSchemaVersion ||
+		(plan.SourceType == PlanSourceGitOps && plan.PlanContentSchemaVersion != PlanContentSchemaVersion) ||
+		(plan.SourceType == PlanSourceLocalScenario && plan.PlanContentSchemaVersion != LocalScenarioPlanSchemaVersion) {
 		return Approval{}, fmt.Errorf("%w: plan is not an approvable restore plan", ErrInvalidArgument)
 	}
 	if decision != DecisionApproved && decision != DecisionRejected {
 		return Approval{}, fmt.Errorf("%w: invalid decision", ErrInvalidArgument)
+	}
+	if plan.SourceType == PlanSourceLocalScenario && decision != DecisionRejected {
+		return Approval{}, fmt.Errorf("%w: local Scenario plans are reject-only", ErrPolicyRejected)
 	}
 	provider = strings.TrimSpace(provider)
 	login = strings.TrimSpace(login)
@@ -402,7 +428,12 @@ func NewDecision(plan RemediationPlan, decision Decision, provider, login, role,
 	if provider != "local" || login != "owner" || role != "owner" || reason == "" || requestID == "" || authenticatedAt.IsZero() || expiresAt.IsZero() || !expiresAt.After(authenticatedAt) || !authenticatedAt.Before(plan.ExpiresAt) || expiresAt.After(plan.ExpiresAt) {
 		return Approval{}, fmt.Errorf("%w: approval identity or expiry is invalid", ErrInvalidArgument)
 	}
-	return Approval{PublicID: uuid.NewString(), PlanID: plan.ID, Decision: decision, Actor: login, CreatedAt: authenticatedAt, DecisionSchemaVersion: DecisionSchemaVersion, IncidentID: plan.IncidentID, CycleNo: plan.CycleNo, PlanVersion: plan.PlanVersion, ActorProvider: provider, Role: role, Reason: reason, RequestID: requestID, RequestAuthenticatedAt: authenticatedAt, ExpiresAt: expiresAt, ApprovedHashSchemaVersion: plan.HashSchemaVersion, ApprovedPlanHash: plan.CanonicalPlanHash, ApprovedPatchHash: plan.ProposedPatchHash, ApprovedBaseSHA: plan.TargetBaseRevision, ApprovedPostImageHash: plan.ExpectedPostImageHash, ApprovedTreeHash: plan.ExpectedTreeHash, ApprovedPolicyHash: plan.PolicySnapshotHash, ApprovedVerificationHash: plan.VerificationPlanHash, ApprovedEvidenceSetHash: plan.EvidenceSetHash}, nil
+	decisionSchema := DecisionSchemaVersion
+	approvedBase, approvedTree := plan.TargetBaseRevision, plan.ExpectedTreeHash
+	if plan.SourceType == PlanSourceLocalScenario {
+		decisionSchema, approvedBase, approvedTree = LocalScenarioDecisionSchema, "", ""
+	}
+	return Approval{PublicID: uuid.NewString(), PlanID: plan.ID, Decision: decision, Actor: login, CreatedAt: authenticatedAt, DecisionSchemaVersion: decisionSchema, PlanSourceType: plan.SourceType, IncidentID: plan.IncidentID, CycleNo: plan.CycleNo, PlanVersion: plan.PlanVersion, ActorProvider: provider, Role: role, Reason: reason, RequestID: requestID, RequestAuthenticatedAt: authenticatedAt, ExpiresAt: expiresAt, ApprovedHashSchemaVersion: plan.HashSchemaVersion, ApprovedPlanHash: plan.CanonicalPlanHash, ApprovedPatchHash: plan.ProposedPatchHash, ApprovedBaseSHA: approvedBase, ApprovedPostImageHash: plan.ExpectedPostImageHash, ApprovedTreeHash: approvedTree, ApprovedPolicyHash: plan.PolicySnapshotHash, ApprovedVerificationHash: plan.VerificationPlanHash, ApprovedEvidenceSetHash: plan.EvidenceSetHash}, nil
 }
 
 func ValidateApprovalBinding(plan RemediationPlan, approval Approval, now time.Time) error {
@@ -413,7 +444,11 @@ func ValidateApprovalBinding(plan RemediationPlan, approval Approval, now time.T
 }
 
 func ValidateDecisionBinding(plan RemediationPlan, decision Approval, now time.Time) error {
-	if decision.DecisionSchemaVersion != DecisionSchemaVersion || decision.IncidentID != plan.IncidentID || decision.CycleNo != plan.CycleNo || decision.PlanID != plan.ID || decision.PlanVersion != plan.PlanVersion || decision.Decision != DecisionApproved && decision.Decision != DecisionRejected || decision.ApprovedHashSchemaVersion != plan.HashSchemaVersion || decision.ApprovedPlanHash != plan.CanonicalPlanHash || decision.ApprovedPatchHash != plan.ProposedPatchHash || decision.ApprovedBaseSHA != plan.TargetBaseRevision || decision.ApprovedPostImageHash != plan.ExpectedPostImageHash || decision.ApprovedTreeHash != plan.ExpectedTreeHash || decision.ApprovedPolicyHash != plan.PolicySnapshotHash || decision.ApprovedVerificationHash != plan.VerificationPlanHash || decision.ApprovedEvidenceSetHash != plan.EvidenceSetHash {
+	expectedSchema, expectedBase, expectedTree := DecisionSchemaVersion, plan.TargetBaseRevision, plan.ExpectedTreeHash
+	if plan.SourceType == PlanSourceLocalScenario {
+		expectedSchema, expectedBase, expectedTree = LocalScenarioDecisionSchema, "", ""
+	}
+	if decision.DecisionSchemaVersion != expectedSchema || decision.PlanSourceType != plan.SourceType || decision.IncidentID != plan.IncidentID || decision.CycleNo != plan.CycleNo || decision.PlanID != plan.ID || decision.PlanVersion != plan.PlanVersion || decision.Decision != DecisionApproved && decision.Decision != DecisionRejected || plan.SourceType == PlanSourceLocalScenario && decision.Decision != DecisionRejected || decision.ApprovedHashSchemaVersion != plan.HashSchemaVersion || decision.ApprovedPlanHash != plan.CanonicalPlanHash || decision.ApprovedPatchHash != plan.ProposedPatchHash || decision.ApprovedBaseSHA != expectedBase || decision.ApprovedPostImageHash != plan.ExpectedPostImageHash || decision.ApprovedTreeHash != expectedTree || decision.ApprovedPolicyHash != plan.PolicySnapshotHash || decision.ApprovedVerificationHash != plan.VerificationPlanHash || decision.ApprovedEvidenceSetHash != plan.EvidenceSetHash {
 		return ErrApprovalMismatch
 	}
 	if _, err := uuid.Parse(decision.PublicID); err != nil || decision.ActorProvider != "local" || decision.Actor != "owner" || decision.Role != "owner" || strings.TrimSpace(decision.Reason) == "" || strings.TrimSpace(decision.RequestID) == "" || decision.RequestAuthenticatedAt.IsZero() || decision.CreatedAt.IsZero() || decision.ExpiresAt.IsZero() || decision.RequestAuthenticatedAt.After(decision.CreatedAt) || decision.ExpiresAt.After(plan.ExpiresAt) || !decision.ExpiresAt.After(decision.RequestAuthenticatedAt) || !now.UTC().Before(decision.ExpiresAt) || !now.UTC().Before(plan.ExpiresAt) {

@@ -241,7 +241,7 @@ function reportCodeLabel(value: string): string {
   min-width: 0;
 }
 
-.report { gap: var(--co-space-5); padding: var(--co-space-5); border: 1px solid var(--co-status-success-border); border-radius: var(--co-radius-panel); background: var(--co-bg-surface); }
+.report { gap: var(--co-space-5); padding: var(--co-space-5); border: 1px solid var(--co-status-success-border); border-radius: var(--co-radius-frame); background: var(--co-bg-surface); }
 .report-header { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: var(--co-space-4); }
 .report-header > div { min-width: 0; }
 .report-header span { color: var(--co-text-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
@@ -249,9 +249,9 @@ function reportCodeLabel(value: string): string {
 .report-header p { margin: 0; color: var(--co-text-secondary); text-transform: capitalize; }
 
 .report-withheld,
-.no-change-banner { display: grid; gap: 2px; padding: var(--co-space-3) var(--co-space-4); border-left: 3px solid var(--co-status-critical-fg); color: var(--co-status-critical-fg); background: var(--co-status-critical-bg); }
+.no-change-banner { display: grid; gap: 2px; padding: var(--co-space-3) var(--co-space-4); border-left: 3px solid var(--co-status-critical-fg); border-radius: var(--co-radius-panel); color: var(--co-status-critical-fg); background: var(--co-status-critical-bg); }
 .no-change-banner { border-left-color: var(--co-status-neutral-border); color: var(--co-text-secondary); background: var(--co-bg-subtle); }
-.impact { padding: var(--co-space-4); border-left: 3px solid var(--co-status-success-fg); color: var(--co-text-secondary); background: var(--co-status-success-bg); }
+.impact { padding: var(--co-space-4); border-left: 3px solid var(--co-status-success-fg); border-radius: var(--co-radius-panel); color: var(--co-text-secondary); background: var(--co-status-success-bg); }
 .impact h4,
 .impact p { margin: 0; }
 .impact h4 { color: var(--co-status-success-fg); font-size: 14px; }
@@ -267,12 +267,12 @@ function reportCodeLabel(value: string): string {
 .identity-section > h4,
 .limits h4 { margin: 0; color: var(--co-text-primary); font-size: 15px; }
 .hash-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 var(--co-space-5); }
-.limits { padding: var(--co-space-4); border-left: 3px solid var(--co-status-neutral-border); background: var(--co-bg-subtle); }
+.limits { padding: var(--co-space-4); border-left: 3px solid var(--co-status-neutral-border); border-radius: var(--co-radius-panel); background: var(--co-bg-subtle); }
 .limits ul { display: grid; gap: var(--co-space-2); margin: 0; padding-left: var(--co-space-5); color: var(--co-text-secondary); }
 
-.report-package { border-block: 1px solid var(--co-border-default); }
-.report-package > summary { width: fit-content; min-height: 44px; padding: var(--co-space-3) 0; color: var(--co-action-primary); font-weight: 700; cursor: pointer; }
-.report-package > div { padding-bottom: var(--co-space-4); }
+.report-package { overflow: hidden; border: 1px solid var(--co-border-default); border-radius: var(--co-radius-frame); }
+.report-package > summary { width: fit-content; min-height: 44px; padding: var(--co-space-3); color: var(--co-action-primary); font-weight: 700; cursor: pointer; }
+.report-package > div { padding: 0 var(--co-space-3) var(--co-space-4); }
 
 @media (max-width: 980px) {
   .report-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }

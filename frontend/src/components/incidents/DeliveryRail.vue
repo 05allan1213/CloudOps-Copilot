@@ -18,11 +18,13 @@ interface SectionProblem {
 }
 
 const props = withDefaults(defineProps<{
+  sectionID?: string;
   state: LoadState;
   error?: SectionProblem | null;
   delivery: DeliveryView | null;
   refreshing?: boolean;
 }>(), {
+  sectionID: "delivery",
   error: null,
   refreshing: false,
 });
@@ -72,7 +74,7 @@ const stages = computed(() => {
 
 <template>
   <IncidentSectionShell
-    id="delivery"
+    :id="sectionID"
     title="Delivery Rail"
     :state="state"
     :error="error"
@@ -123,9 +125,10 @@ const stages = computed(() => {
           target="_blank"
           rel="noopener noreferrer"
         >
-          <el-icon aria-hidden="true">
-            <LinkIcon />
-          </el-icon>
+          <LinkIcon
+            :size="16"
+            aria-hidden="true"
+          />
           Open GitHub PR<span v-if="delivery.pr_number"> #{{ delivery.pr_number }}</span> in new tab
         </a>
         <span v-else>No safe HTTP pull-request link was projected.</span>
@@ -239,7 +242,9 @@ const stages = computed(() => {
   min-width: 0;
   margin: 0;
   padding: 0;
-  border-block: 1px solid var(--co-border-default);
+  overflow: hidden;
+  border: 1px solid var(--co-border-default);
+  border-radius: var(--co-radius-frame);
   list-style: none;
 }
 
@@ -272,7 +277,7 @@ const stages = computed(() => {
 .delivery-grid dt { color: var(--co-text-muted); font-size: 10px; font-weight: 700; text-transform: uppercase; }
 .delivery-grid dd { min-width: 0; margin: 3px 0 0; color: var(--co-text-secondary); overflow-wrap: anywhere; }
 
-.delivery-failure { display: grid; gap: 2px; padding: var(--co-space-3) var(--co-space-4); border-left: 3px solid var(--co-status-critical-fg); color: var(--co-status-critical-fg); background: var(--co-status-critical-bg); }
+.delivery-failure { display: grid; gap: 2px; padding: var(--co-space-3) var(--co-space-4); border-left: 3px solid var(--co-status-critical-fg); border-radius: var(--co-radius-panel); color: var(--co-status-critical-fg); background: var(--co-status-critical-bg); }
 
 @media (max-width: 1050px) {
   .delivery-rail { grid-template-columns: minmax(0, 1fr); }

@@ -38,9 +38,10 @@ async function copyValue() {
       :title="`复制 ${label}`"
       @click="copyValue"
     >
-      <el-icon aria-hidden="true">
-        <CopyDocument />
-      </el-icon>
+      <CopyDocument
+        :size="16"
+        aria-hidden="true"
+      />
     </button>
     <small
       role="status"

@@ -10,9 +10,12 @@ import {
 import { severityLabel } from "../../models/incidents";
 import type { IncidentSeverity } from "../../types/incidents";
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   severity: IncidentSeverity;
-}>();
+  showIcon?: boolean;
+}>(), {
+  showIcon: true,
+});
 
 const definitions: Record<IncidentSeverity, { icon: Component; tone: string }> = {
   critical: { icon: markRaw(CircleCloseFilled), tone: "critical" },
@@ -29,12 +32,12 @@ const definition = computed(() => definitions[props.severity] ?? definitions.unk
     class="severity-badge"
     :class="`severity-badge--${definition.tone}`"
   >
-    <el-icon
+    <component
+      :is="definition.icon"
+      v-if="showIcon"
       :size="14"
       aria-hidden="true"
-    >
-      <component :is="definition.icon" />
-    </el-icon>
+    />
     {{ severityLabel(severity) }}
   </span>
 </template>

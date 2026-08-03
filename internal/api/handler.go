@@ -155,11 +155,13 @@ var routes = []RouteSpec{
 	{Method: http.MethodGet, Path: "/api/v1/logs/queries"},
 	{Method: http.MethodPost, Path: "/api/v1/logs/queries"},
 	{Method: http.MethodGet, Path: "/api/v1/logs/queries/:id"},
+	{Method: http.MethodGet, Path: "/api/v1/logs/queries/:id/evidence"},
 	{Method: http.MethodPost, Path: "/api/v1/logs/queries/:id/evidence"},
 	{Method: http.MethodGet, Path: "/api/v1/traces/catalog"},
 	{Method: http.MethodGet, Path: "/api/v1/traces/searches"},
 	{Method: http.MethodPost, Path: "/api/v1/traces/searches"},
 	{Method: http.MethodGet, Path: "/api/v1/traces/searches/:id"},
+	{Method: http.MethodGet, Path: "/api/v1/traces/searches/:id/evidence"},
 	{Method: http.MethodGet, Path: "/api/v1/traces/:trace_id"},
 	{Method: http.MethodPost, Path: "/api/v1/traces/searches/:id/traces/:trace_id/evidence"},
 	{Method: http.MethodPost, Path: "/api/v1/agent/consultations"},
@@ -242,9 +244,11 @@ func RegisterRoutes(group *gin.RouterGroup, handler *Handler) {
 	queries.GET("/logs/catalog", handler.getLogCatalog)
 	queries.GET("/logs/queries", handler.listLogQueries)
 	queries.GET("/logs/queries/:id", handler.getLogQuery)
+	queries.GET("/logs/queries/:id/evidence", handler.listLogEvidence)
 	queries.GET("/traces/catalog", handler.getTraceCatalog)
 	queries.GET("/traces/searches", handler.listTraceSearches)
 	queries.GET("/traces/searches/:id", handler.getTraceSearch)
+	queries.GET("/traces/searches/:id/evidence", handler.listTraceEvidence)
 	queries.GET("/traces/:trace_id", handler.getTraceDetail)
 	queries.GET("/agent/investigations", handler.listAgentInvestigations)
 	queries.GET("/agent/investigations/:id", handler.getAgentInvestigation)
@@ -756,7 +760,7 @@ func problemTitle(code string) string {
 		return "Forbidden"
 	case "RESOURCE_NOT_FOUND", "ROUTE_NOT_FOUND", "SETTINGS_RESOURCE_NOT_FOUND", "NOTIFICATION_NOT_FOUND":
 		return "Resource not found"
-	case "IDEMPOTENCY_KEY_REUSED", "STALE_EXPECTATION", "STALE_VALIDATION", "VALIDATION_EXPIRED", "COMMAND_CONFLICT":
+	case "IDEMPOTENCY_KEY_REUSED", "STALE_EXPECTATION", "STALE_VALIDATION", "VALIDATION_EXPIRED", "CONFIGURATION_REVISION_CHANGED", "COMMAND_CONFLICT":
 		return "Command conflict"
 	case "INVALID_TRANSITION", "VALIDATION_FAILED":
 		return "Invalid transition"
@@ -775,6 +779,8 @@ func problemNextSteps(code string) []string {
 	switch code {
 	case "STALE_VALIDATION", "VALIDATION_EXPIRED":
 		return []string{"重新验证当前配置草稿", "确认 validation_id 与未修改的草稿匹配后再次应用"}
+	case "CONFIGURATION_REVISION_CHANGED":
+		return []string{"刷新活动 Configuration Revision", "显式 rebase 草稿并重新验证后再应用"}
 	case "VALIDATION_FAILED", "INVALID_CONFIGURATION":
 		return []string{"检查响应中的字段错误", "修正配置或 Provider 状态后重新验证"}
 	case "SETTINGS_UNAVAILABLE", "NOTIFICATIONS_UNAVAILABLE", "QUERY_UNAVAILABLE", "COMMAND_UNAVAILABLE":

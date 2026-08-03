@@ -8,6 +8,28 @@
       name="description"
       content="CloudOps 本地云原生运维与 Agent 控制台"
     />
+    <script>
+      (() => {
+        const root = document.documentElement;
+        let stored = null;
+        try {
+          stored = window.localStorage.getItem("cloudops-theme");
+        } catch {
+          stored = null;
+        }
+        const mode = stored === "light" || stored === "dark"
+          ? stored
+          : window.matchMedia("(prefers-color-scheme: light)").matches
+            ? "light"
+            : "dark";
+        root.classList.remove("light", "dark");
+        root.classList.add(mode);
+        root.dataset.theme = mode;
+        root.style.colorScheme = mode;
+        document.querySelector('meta[name="theme-color"]')
+          ?.setAttribute("content", mode === "dark" ? "#0b0f14" : "#f4f6f8");
+      })();
+    </script>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <title>CloudOps</title>
   </head>

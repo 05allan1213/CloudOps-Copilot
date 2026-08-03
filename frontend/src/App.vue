@@ -3,5 +3,7 @@ import AppLayout from "./components/layout/AppLayout.vue";
 </script>
 
 <template>
-  <AppLayout />
+  <UApp>
+    <AppLayout />
+  </UApp>
 </template>

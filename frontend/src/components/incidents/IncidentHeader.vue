@@ -58,12 +58,12 @@ const projectionUpdatedAt = computed(() => props.lastUpdatedAt || props.incident
           class="realtime-chip"
           :class="`realtime-chip--${realtimeDefinition.tone}`"
         >
-          <el-icon
+          <component
+            :is="realtimeDefinition.icon"
             :size="15"
+            class="realtime-icon"
             aria-hidden="true"
-          >
-            <component :is="realtimeDefinition.icon" />
-          </el-icon>
+          />
           {{ realtimeDefinition.label }}
         </span>
         <span
@@ -80,7 +80,11 @@ const projectionUpdatedAt = computed(() => props.lastUpdatedAt || props.incident
     <dl class="header-facts">
       <div>
         <dt>当前阶段</dt>
-        <dd>{{ incident.attention.stage }}<template v-if="incident.attention.required"> · {{ humanizeCode(incident.attention.reason_code) }}</template></dd>
+        <dd>
+          {{ incident.attention.stage }}<template v-if="incident.attention.required">
+            · {{ humanizeCode(incident.attention.reason_code) }}
+          </template>
+        </dd>
       </div>
       <div>
         <dt>关联 Alert</dt>
@@ -188,8 +192,8 @@ const projectionUpdatedAt = computed(() => props.lastUpdatedAt || props.incident
 .realtime-chip--success { border-color: var(--co-status-success-border); color: var(--co-status-success-fg); background: var(--co-status-success-bg); }
 .realtime-chip--warning { border-color: var(--co-status-warning-border); color: var(--co-status-warning-fg); background: var(--co-status-warning-bg); }
 
-.realtime-chip--warning :deep(.el-icon) {
-  animation: realtime-rotation 1s linear infinite;
+.realtime-chip--warning .realtime-icon {
+  animation: realtime-rotation var(--co-spinner-duration) linear infinite;
 }
 
 .projection-refresh {
@@ -201,7 +205,10 @@ const projectionUpdatedAt = computed(() => props.lastUpdatedAt || props.incident
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   margin: 0;
-  border-block: 1px solid var(--co-border-default);
+  overflow: hidden;
+  border: 1px solid var(--co-border-default);
+  border-radius: var(--co-radius-frame);
+  background: var(--co-bg-surface);
 }
 
 .header-facts div {
@@ -231,7 +238,7 @@ const projectionUpdatedAt = computed(() => props.lastUpdatedAt || props.incident
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .realtime-chip--warning :deep(.el-icon) { animation: none; }
+  .realtime-chip--warning .realtime-icon { animation: none; }
 }
 
 @media (max-width: 900px) {

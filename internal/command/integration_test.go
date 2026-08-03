@@ -166,7 +166,7 @@ configuration_revision_id, dedupe_key, max_attempts, status
 		if err != nil {
 			t.Fatal(err)
 		}
-		port, err := NewPort(db)
+		port, err := NewPort(db, PortOptions{DeliveryEnabled: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -270,7 +270,7 @@ status, operation_step, expected_subject_version, logical_operation_key
 			incidentID, strings.Repeat("9", 64)); err != nil {
 			t.Fatal(err)
 		}
-		port, err := NewPort(db)
+		port, err := NewPort(db, PortOptions{DeliveryEnabled: true})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -301,7 +301,7 @@ func TestMySQLInvestigationRetryAuthorizationIsDurableConcurrentAndHardBounded(t
 	db := openCommandIntegrationDB(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	port, err := NewPort(db)
+	port, err := NewPort(db, PortOptions{DeliveryEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,15 +315,42 @@ func TestMySQLInvestigationRetryAuthorizationIsDurableConcurrentAndHardBounded(t
 		}
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_cycle_budget_authorizations WHERE incident_id = ?`, 0, incidentID)
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks
-		WHERE incident_id = ? AND cycle_no = 1 AND task_type = 'investigation.advance'
-		  AND subject_type = 'incident' AND subject_id = ?
-		  AND transition = 'investigation.start' AND expected_subject_version = 1
-		  AND JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.mode')) = 'start'
-		  AND status = 'ready'`, 1, incidentID, incidentID)
+		WHERE incident_id = ? AND transition = 'investigation.start'`, 0, incidentID)
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*)
 		FROM agent_workspace_tasks task
 		JOIN agent_runs run ON run.id = task.agent_run_id
-		WHERE run.incident_id = ?`, 0, incidentID)
+		WHERE run.incident_id = ? AND run.run_kind='workspace' AND run.subject_type='incident'
+		  AND run.status='pending' AND task.status='ready'`, 1, incidentID)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incidents
+		WHERE id=? AND status='investigating' AND version=2 AND current_agent_run_id IS NOT NULL`, 1, incidentID)
+	})
+
+	t.Run("ready legacy start is atomically superseded by Workspace", func(t *testing.T) {
+		incidentID, publicID := insertCommandBudgetIncident(t, ctx, db, 0)
+		legacyPublicID := uuid.NewString()
+		if _, err := db.ExecContext(ctx, `INSERT INTO async_tasks (
+		 public_id,incident_id,cycle_no,queue,task_type,subject_type,subject_id,transition,
+		 expected_subject_version,payload_schema_version,payload_json,configuration_revision_id,
+		 dedupe_key,status,priority,available_at,max_attempts,created_at,updated_at
+		) VALUES (?, ?, 1, 'investigate', 'investigation.advance', 'incident', ?, 'investigation.start',
+		          1, 1, JSON_OBJECT('mode','start','incident_public_id',?,'cycle_no',1),
+		          (SELECT configuration_revision_id FROM active_configuration WHERE singleton_id=1),
+		          ?, 'ready', 100, NOW(6), 5, NOW(6), NOW(6))`,
+			legacyPublicID, incidentID, incidentID, publicID, canonicalHash("legacy-ready", publicID)); err != nil {
+			t.Fatal(err)
+		}
+
+		request := newInvestigationStartRequest(publicID, 1, "workspace-supersedes-ready", actor, "use bounded local Workspace")
+		accepted, err := port.Execute(ctx, request)
+		if err != nil || accepted.Status != "investigation_started" || accepted.Version != 2 {
+			t.Fatalf("superseded legacy start=%+v error=%v", accepted, err)
+		}
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks
+		WHERE public_id=? AND status='cancelled' AND cancelled_at IS NOT NULL
+		  AND last_error_code='superseded_by_workspace'`, 1, legacyPublicID)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*)
+		FROM agent_workspace_tasks task JOIN agent_runs run ON run.id=task.agent_run_id
+		WHERE run.incident_id=? AND run.run_kind='workspace' AND task.status='ready'`, 1, incidentID)
 	})
 
 	t.Run("active run rejects a second start without orphan work", func(t *testing.T) {
@@ -385,20 +412,18 @@ func TestMySQLInvestigationRetryAuthorizationIsDurableConcurrentAndHardBounded(t
 
 		request := newInvestigationStartRequest(publicID, 1, "reconcile-dead-run", actor, "retry after terminal task failure")
 		accepted, err := port.Execute(ctx, request)
-		if err != nil || accepted.Status != "investigation_queued" || accepted.Version != 1 {
+		if err != nil || accepted.Status != "investigation_started" || accepted.Version != 2 {
 			t.Fatalf("reconciled investigation command=%+v error=%v", accepted, err)
 		}
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM agent_runs
 		WHERE id = ? AND status = 'failed' AND outcome = 'failed' AND row_version = 4
 		  AND failure_code = 'invalid_agent_run_state'`, 1, runID)
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks
-		WHERE incident_id = ? AND cycle_no = 1 AND subject_type = 'incident'
-		  AND subject_id = ? AND transition = 'investigation.start'
-		  AND expected_subject_version = 1 AND status = 'ready'`, 1, incidentID, incidentID)
+		WHERE incident_id = ? AND transition = 'investigation.start'`, 0, incidentID)
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*)
 		FROM agent_workspace_tasks task
 		JOIN agent_runs run ON run.id = task.agent_run_id
-		WHERE run.incident_id = ?`, 0, incidentID)
+		WHERE run.incident_id = ? AND run.run_kind='workspace' AND task.status='ready'`, 1, incidentID)
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_events
 		WHERE incident_id = ? AND event_type = 'agent_run_failed'`, 1, incidentID)
 	})
@@ -495,13 +520,11 @@ func TestMySQLInvestigationRetryAuthorizationIsDurableConcurrentAndHardBounded(t
 		}
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_cycle_budget_authorizations WHERE incident_id = ? AND cycle_no = 1 AND slot_no = 4`, 1, incidentID)
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks
-		WHERE incident_id = ? AND cycle_no = 1 AND subject_type = 'incident'
-		  AND subject_id = ? AND transition = 'investigation.start'
-		  AND expected_subject_version = 1 AND status = 'ready'`, 1, incidentID, incidentID)
+		WHERE incident_id = ? AND transition = 'investigation.start'`, 0, incidentID)
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*)
 		FROM agent_workspace_tasks task
 		JOIN agent_runs run ON run.id = task.agent_run_id
-		WHERE run.incident_id = ?`, 0, incidentID)
+		WHERE run.incident_id = ? AND run.run_kind='workspace' AND task.status='ready'`, 1, incidentID)
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_events WHERE incident_id = ? AND event_type = 'agent_run_retry_authorized'`, 1, incidentID)
 		var reason, authorizationPublicID string
 		if err := db.QueryRowContext(ctx, `SELECT reason, public_id FROM incident_cycle_budget_authorizations WHERE incident_id = ?`, incidentID).Scan(&reason, &authorizationPublicID); err != nil {
@@ -510,15 +533,16 @@ func TestMySQLInvestigationRetryAuthorizationIsDurableConcurrentAndHardBounded(t
 		if strings.TrimSpace(reason) == "" {
 			t.Fatal("retry authorization reason is empty")
 		}
-		var taskAuthorizationPublicID string
-		if err := db.QueryRowContext(ctx, `SELECT JSON_UNQUOTE(JSON_EXTRACT(payload_json, '$.business_budget_authorization_id'))
-		FROM async_tasks
-		WHERE incident_id = ? AND cycle_no = 1 AND subject_type = 'incident'
-		  AND transition = 'investigation.start' AND status = 'ready'`, incidentID).Scan(&taskAuthorizationPublicID); err != nil {
+		var runAuthorizationPublicID string
+		if err := db.QueryRowContext(ctx, `SELECT authorization.public_id
+		FROM agent_runs run
+		JOIN incident_cycle_budget_authorizations authorization
+		  ON authorization.id=run.business_budget_authorization_id
+		WHERE run.incident_id=? AND run.cycle_no=1 AND run.run_kind='workspace'`, incidentID).Scan(&runAuthorizationPublicID); err != nil {
 			t.Fatal(err)
 		}
-		if taskAuthorizationPublicID != authorizationPublicID {
-			t.Fatalf("investigation.start authorization=%q, want %q", taskAuthorizationPublicID, authorizationPublicID)
+		if runAuthorizationPublicID != authorizationPublicID {
+			t.Fatalf("Investigation Workspace authorization=%q, want %q", runAuthorizationPublicID, authorizationPublicID)
 		}
 
 		missingIncidentID, missingPublicID := insertCommandBudgetIncident(t, ctx, db, 3)
@@ -582,7 +606,7 @@ func TestMySQLRemediationDecisionCommandIsAtomicAndFenced(t *testing.T) {
 	db := openCommandIntegrationDB(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	port, err := NewPort(db)
+	port, err := NewPort(db, PortOptions{DeliveryEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -667,6 +691,25 @@ FROM remediation_decisions d JOIN remediation_plans p ON p.id = d.plan_id WHERE 
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks WHERE subject_type = 'remediation_plan' AND subject_id = ?`, 0, fixture.plan.ID)
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incidents WHERE id = ? AND status = 'investigating' AND version = ?`, 1, fixture.incidentID, fixture.plan.IncidentVersion+2)
 		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_events WHERE incident_id = ? AND cycle_no = ? AND event_type = 'remediation_plan_rejected'`, 1, fixture.incidentID, fixture.plan.CycleNo)
+	})
+
+	t.Run("approval persists and defers delivery when external writes are disabled", func(t *testing.T) {
+		disabledPort, err := NewPort(db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fixture := insertCommandRemediationFixture(t, ctx, db)
+		request := newRemediationDecisionRequest(fixture, remediation.DecisionApproved, "approve-deferred", owner, fixture.plan.RowVersion, fixture.plan.CanonicalPlanHash)
+		approved, err := disabledPort.Execute(ctx, request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if approved.Status != string(remediation.DecisionApproved) || approved.Version != fixture.plan.RowVersion+1 {
+			t.Fatalf("deferred approval result=%+v", approved)
+		}
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM remediation_decisions WHERE plan_id = ? AND decision = 'approved'`, 1, fixture.plan.ID)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM async_tasks WHERE subject_type = 'remediation_plan' AND subject_id = ? AND transition = 'change.ensure_pr'`, 0, fixture.plan.ID)
+		assertCommandIntegrationCount(t, ctx, db, `SELECT COUNT(*) FROM incident_events WHERE incident_id = ? AND cycle_no = ? AND event_type = 'remediation_delivery_deferred' AND JSON_UNQUOTE(JSON_EXTRACT(metadata_json, '$.reason')) = 'github_write_disabled'`, 1, fixture.incidentID, fixture.plan.CycleNo)
 	})
 
 	t.Run("stale version and hash fail closed", func(t *testing.T) {

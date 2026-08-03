@@ -1,0 +1,174 @@
+{
+  "config": {
+    "argv": [
+      "/home/monody/.nvm/versions/node/v24.13.0/bin/node",
+      "/home/monody/k8s/CloudOps-Copilot/docs/evidence/frontend-redesign/prework/prototypes/cloudops-prework/node_modules/.bin/playwright",
+      "test",
+      "tests/cross-browser.spec.ts",
+      "--project=webkit",
+      "--reporter=list,json"
+    ],
+    "configFile": "/home/monody/k8s/CloudOps-Copilot/docs/evidence/frontend-redesign/prework/prototypes/cloudops-prework/playwright.config.ts",
+    "rootDir": "/home/monody/k8s/CloudOps-Copilot/docs/evidence/frontend-redesign/prework/prototypes/cloudops-prework/tests",
+    "failOnFlakyTests": false,
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/home/monody/k8s/CloudOps-Copilot/docs/evidence/frontend-redesign/prework/output/playwright/prototype/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium",
+        "name": "chromium",
+        "testDir": "/home/monody/k8s/CloudOps-Copilot/docs/evidence/frontend-redesign/prework/prototypes/cloudops-prework/tests",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.spec.ts"
+        ],
+        "timeout": 45000
+      },
+      {
+        "outputDir": "/home/monody/k8s/CloudOps-Copilot/docs/evidence/frontend-redesign/prework/output/playwright/prototype/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "firefox",
+        "name": "firefox",
+        "testDir": "/home/monody/k8s/CloudOps-Copilot/docs/evidence/frontend-redesign/prework/prototypes/cloudops-prework/tests",
+        "testIgnore": [],
+        "testMatch": [
+          "**/cross-browser.spec.ts"
+        ],
+        "timeout": 45000
+      },
+      {
+        "outputDir": "/home/monody/k8s/CloudOps-Copilot/docs/evidence/frontend-redesign/prework/output/playwright/prototype/test-results",
+        "repeatEach": 1,
+        "retries": 0,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "webkit",
+        "name": "webkit",
+        "testDir": "/home/monody/k8s/CloudOps-Copilot/docs/evidence/frontend-redesign/prework/prototypes/cloudops-prework/tests",
+        "testIgnore": [],
+        "testMatch": [
+          "**/cross-browser.spec.ts"
+        ],
+        "timeout": 45000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "list"
+      ],
+      [
+        "json"
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.61.1",
+    "workers": 1,
+    "webServer": {
+      "command": "npm run dev -- --port 4187 --strictPort",
+      "url": "http://127.0.0.1:4187",
+      "reuseExistingServer": true,
+      "timeout": 30000
+    }
+  },
+  "suites": [
+    {
+      "title": "cross-browser.spec.ts",
+      "file": "cross-browser.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [
+        {
+          "title": "critical read-only shell, theme and Inspector flow works",
+          "ok": false,
+          "tags": [],
+          "tests": [
+            {
+              "timeout": 45000,
+              "annotations": [],
+              "expectedStatus": "passed",
+              "projectId": "webkit",
+              "projectName": "webkit",
+              "results": [
+                {
+                  "workerIndex": 0,
+                  "parallelIndex": 0,
+                  "status": "failed",
+                  "duration": 1,
+                  "error": {
+                    "message": "Error: browserType.launch: \n╔══════════════════════════════════════════════════════╗\n║ Host system is missing dependencies to run browsers. ║\n║ Missing libraries:                                   ║\n║     libgtk-4.so.1                                    ║\n║     libgraphene-1.0.so.0                             ║\n║     libxslt.so.1                                     ║\n║     libevent-2.1.so.7                                ║\n║     libgstallocators-1.0.so.0                        ║\n║     libgstapp-1.0.so.0                               ║\n║     libgstpbutils-1.0.so.0                           ║\n║     libgstaudio-1.0.so.0                             ║\n║     libgsttag-1.0.so.0                               ║\n║     libgstvideo-1.0.so.0                             ║\n║     libgstgl-1.0.so.0                                ║\n║     libgstcodecparsers-1.0.so.0                      ║\n║     libgstfft-1.0.so.0                               ║\n║     libflite.so.1                                    ║\n║     libflite_usenglish.so.1                          ║\n║     libflite_cmu_grapheme_lang.so.1                  ║\n║     libflite_cmu_grapheme_lex.so.1                   ║\n║     libflite_cmu_indic_lang.so.1                     ║\n║     libflite_cmu_indic_lex.so.1                      ║\n║     libflite_cmulex.so.1                             ║\n║     libflite_cmu_time_awb.so.1                       ║\n║     libflite_cmu_us_awb.so.1                         ║\n║     libflite_cmu_us_kal16.so.1                       ║\n║     libflite_cmu_us_kal.so.1                         ║\n║     libflite_cmu_us_rms.so.1                         ║\n║     libflite_cmu_us_slt.so.1                         ║\n║     libwebpdemux.so.2                                ║\n║     libavif.so.16                                    ║\n║     libharfbuzz-icu.so.0                             ║\n║     libwebpmux.so.3                                  ║\n║     libmanette-0.2.so.0                              ║\n║     libenchant-2.so.2                                ║\n║     libhyphen.so.0                                   ║\n║     libsecret-1.so.0                                 ║\n║     libwoff2dec.so.1.0.2                             ║\n║     libGLESv2.so.2                                   ║\n║     libx264.so                                       ║\n╚══════════════════════════════════════════════════════╝",
+                    "stack": "Error: browserType.launch: \n╔══════════════════════════════════════════════════════╗\n║ Host system is missing dependencies to run browsers. ║\n║ Missing libraries:                                   ║\n║     libgtk-4.so.1                                    ║\n║     libgraphene-1.0.so.0                             ║\n║     libxslt.so.1                                     ║\n║     libevent-2.1.so.7                                ║\n║     libgstallocators-1.0.so.0                        ║\n║     libgstapp-1.0.so.0                               ║\n║     libgstpbutils-1.0.so.0                           ║\n║     libgstaudio-1.0.so.0                             ║\n║     libgsttag-1.0.so.0                               ║\n║     libgstvideo-1.0.so.0                             ║\n║     libgstgl-1.0.so.0                                ║\n║     libgstcodecparsers-1.0.so.0                      ║\n║     libgstfft-1.0.so.0                               ║\n║     libflite.so.1                                    ║\n║     libflite_usenglish.so.1                          ║\n║     libflite_cmu_grapheme_lang.so.1                  ║\n║     libflite_cmu_grapheme_lex.so.1                   ║\n║     libflite_cmu_indic_lang.so.1                     ║\n║     libflite_cmu_indic_lex.so.1                      ║\n║     libflite_cmulex.so.1                             ║\n║     libflite_cmu_time_awb.so.1                       ║\n║     libflite_cmu_us_awb.so.1                         ║\n║     libflite_cmu_us_kal16.so.1                       ║\n║     libflite_cmu_us_kal.so.1                         ║\n║     libflite_cmu_us_rms.so.1                         ║\n║     libflite_cmu_us_slt.so.1                         ║\n║     libwebpdemux.so.2                                ║\n║     libavif.so.16                                    ║\n║     libharfbuzz-icu.so.0                             ║\n║     libwebpmux.so.3                                  ║\n║     libmanette-0.2.so.0                              ║\n║     libenchant-2.so.2                                ║\n║     libhyphen.so.0                                   ║\n║     libsecret-1.so.0                                 ║\n║     libwoff2dec.so.1.0.2                             ║\n║     libGLESv2.so.2                                   ║\n║     libx264.so                                       ║\n╚══════════════════════════════════════════════════════╝"
+                  },
+                  "errors": [
+                    {
+                      "message": "Error: browserType.launch: \n╔══════════════════════════════════════════════════════╗\n║ Host system is missing dependencies to run browsers. ║\n║ Missing libraries:                                   ║\n║     libgtk-4.so.1                                    ║\n║     libgraphene-1.0.so.0                             ║\n║     libxslt.so.1                                     ║\n║     libevent-2.1.so.7                                ║\n║     libgstallocators-1.0.so.0                        ║\n║     libgstapp-1.0.so.0                               ║\n║     libgstpbutils-1.0.so.0                           ║\n║     libgstaudio-1.0.so.0                             ║\n║     libgsttag-1.0.so.0                               ║\n║     libgstvideo-1.0.so.0                             ║\n║     libgstgl-1.0.so.0                                ║\n║     libgstcodecparsers-1.0.so.0                      ║\n║     libgstfft-1.0.so.0                               ║\n║     libflite.so.1                                    ║\n║     libflite_usenglish.so.1                          ║\n║     libflite_cmu_grapheme_lang.so.1                  ║\n║     libflite_cmu_grapheme_lex.so.1                   ║\n║     libflite_cmu_indic_lang.so.1                     ║\n║     libflite_cmu_indic_lex.so.1                      ║\n║     libflite_cmulex.so.1                             ║\n║     libflite_cmu_time_awb.so.1                       ║\n║     libflite_cmu_us_awb.so.1                         ║\n║     libflite_cmu_us_kal16.so.1                       ║\n║     libflite_cmu_us_kal.so.1                         ║\n║     libflite_cmu_us_rms.so.1                         ║\n║     libflite_cmu_us_slt.so.1                         ║\n║     libwebpdemux.so.2                                ║\n║     libavif.so.16                                    ║\n║     libharfbuzz-icu.so.0                             ║\n║     libwebpmux.so.3                                  ║\n║     libmanette-0.2.so.0                              ║\n║     libenchant-2.so.2                                ║\n║     libhyphen.so.0                                   ║\n║     libsecret-1.so.0                                 ║\n║     libwoff2dec.so.1.0.2                             ║\n║     libGLESv2.so.2                                   ║\n║     libx264.so                                       ║\n╚══════════════════════════════════════════════════════╝"
+                    }
+                  ],
+                  "stdout": [],
+                  "stderr": [],
+                  "retry": 0,
+                  "startTime": "2026-07-30T10:49:38.106Z",
+                  "annotations": [],
+                  "attachments": [
+                    {
+                      "name": "error-context",
+                      "contentType": "text/markdown",
+                      "path": "/home/monody/k8s/CloudOps-Copilot/docs/evidence/frontend-redesign/prework/output/playwright/prototype/test-results/cross-browser-critical-rea-f6b4a-me-and-Inspector-flow-works-webkit/error-context.md"
+                    },
+                    {
+                      "name": "trace",
+                      "contentType": "application/zip",
+                      "path": "/home/monody/k8s/CloudOps-Copilot/docs/evidence/frontend-redesign/prework/output/playwright/prototype/test-results/cross-browser-critical-rea-f6b4a-me-and-Inspector-flow-works-webkit/trace.zip"
+                    }
+                  ]
+                }
+              ],
+              "status": "unexpected"
+            }
+          ],
+          "id": "988e5ab7a922d34581e7-af06fabe3de873493175",
+          "file": "cross-browser.spec.ts",
+          "line": 5,
+          "column": 1
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-07-30T10:49:34.608Z",
+    "duration": 3745.4950000000003,
+    "expected": 0,
+    "skipped": 0,
+    "unexpected": 1,
+    "flaky": 0
+  }
+}

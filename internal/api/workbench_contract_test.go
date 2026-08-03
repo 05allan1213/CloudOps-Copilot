@@ -153,6 +153,70 @@ func TestTypedWorkbenchProjectionRejectsUnsafeOrUnboundedData(t *testing.T) {
 	}
 }
 
+func TestLocalScenarioRemediationProjectionAcceptsBoundPatchManifest(t *testing.T) {
+	plan := validRemediationPlanFixture()
+	patch, err := json.Marshal(map[string]any{
+		"apiVersion": "apps/v1",
+		"kind":       "Deployment",
+		"metadata":   map[string]any{"name": "cloudops-scenario-fault", "namespace": "demo"},
+		"spec": map[string]any{"template": map[string]any{"spec": map[string]any{"containers": []any{
+			map[string]any{"name": "scenario", "env": []any{map[string]any{"name": "REQUIRED_ENV", "value": "present"}}},
+		}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeBaseHash := strings.Repeat("a", 64)
+	plan.SourceType = "local_scenario"
+	plan.RuntimeBaseHash = runtimeBaseHash
+	plan.Status = "awaiting_approval"
+	plan.PlanContentSchemaVersion = 3
+	plan.Target.Repository = ""
+	plan.Target.BaseBranch = ""
+	plan.Target.BaseRevision = ""
+	plan.Target.LastKnownGoodRevision = ""
+	plan.Target.BaseBlobSHA = ""
+	plan.Target.FileMode = ""
+	plan.Target.Path = "kubernetes://cloudops-local/apps/v1/namespaces/demo/deployments/cloudops-scenario-fault"
+	plan.ExpectedBeforeHash = runtimeBaseHash
+	plan.ExpectedTreeHash = ""
+	plan.Decision = nil
+	manifest := map[string]any{
+		"source_type":           plan.SourceType,
+		"patch_type":            "application/strategic-merge-patch+json",
+		"target_locator":        plan.Target.Path,
+		"runtime_snapshot_hash": runtimeBaseHash,
+		"patch_hash":            sha256Hex(patch),
+		"patch":                 json.RawMessage(patch),
+		"post_image_hash":       plan.ExpectedPostImageHash,
+	}
+	plan.CanonicalManifest, err = json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.ProposedPatchHash = sha256Hex(plan.CanonicalManifest)
+	plan.PolicyVersion = "local-scenario-restore-required-env/v1"
+	plan.PolicySnapshot, err = json.Marshal(map[string]any{"version": plan.PolicyVersion})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.PolicyHash = sha256Hex(plan.PolicySnapshot)
+
+	if err := validateRemediationPlanView(&plan); err != nil {
+		t.Fatalf("valid local Scenario projection rejected: %v", err)
+	}
+
+	manifest["patch_hash"] = strings.Repeat("f", 64)
+	plan.CanonicalManifest, err = json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.ProposedPatchHash = sha256Hex(plan.CanonicalManifest)
+	if err := validateRemediationPlanView(&plan); err == nil {
+		t.Fatal("local Scenario projection accepted an unbound patch hash")
+	}
+}
+
 func validWorkbenchProjection(t *testing.T) *MemoryQueryPort {
 	t.Helper()
 	projection := NewMemoryQueryPort()
@@ -185,7 +249,7 @@ func validRemediationPlanFixture() RemediationPlanView {
 	item := RemediationPlanView{
 		ID: workbenchPlanID, Kind: "remediation_plan", Cycle: 1, Status: "approved", Version: 2,
 		PlanVersion: 1, PlanContentSchemaVersion: 2, IncidentVersion: 3,
-		CreatedByAgentRunID: workbenchAgentRunID, OperationType: "restore_required_env", RiskLevel: "low",
+		CreatedByAgentRunID: workbenchAgentRunID, OperationType: "restore_required_env", SourceType: "gitops", RiskLevel: "low",
 		PatchSummary: "restore REQUIRED_ENV", RollbackPlan: "submit a new reviewed plan",
 		ValidationPlan: "run golden-required-env/v1",
 		Target: RemediationTargetView{

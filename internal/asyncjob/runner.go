@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"runtime/debug"
 	"sync"
 	"time"
@@ -306,7 +307,14 @@ func (r *Runner) execute(pool PoolConfig, execution Execution, semaphore chan st
 	}
 	resolveCtx, cancelResolve := context.WithTimeout(r.handlerCtx, resolveBudget)
 	defer cancelResolve()
-	_ = r.cfg.Store.Resolve(resolveCtx, execution.Lease, result)
+	if err := r.cfg.Store.Resolve(resolveCtx, execution.Lease, result); err != nil {
+		slog.ErrorContext(resolveCtx, "resolve async task failed",
+			"task_id", execution.Task.ID,
+			"task_type", execution.Task.Type,
+			"disposition", result.Disposition,
+			"error", err,
+		)
+	}
 }
 
 func (r *Runner) heartbeat(ctx context.Context, lease Lease, pool PoolConfig) error {

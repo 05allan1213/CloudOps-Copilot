@@ -481,6 +481,10 @@ func deploymentResource(clusterID string, item appsv1.Deployment) infrastructure
 		ObservedGeneration: item.Status.ObservedGeneration,
 	}
 	resource.Selector = labelSelector(item.Spec.Selector)
+	resource.Containers = containerEnvironments(item.Spec.Template.Spec.Containers)
+	resource.ContainersTruncated = len(item.Spec.Template.Spec.Containers) > 32
+	resource.InitContainerCount = len(item.Spec.Template.Spec.InitContainers)
+	resource.EphemeralCount = len(item.Spec.Template.Spec.EphemeralContainers)
 	for _, condition := range item.Status.Conditions {
 		resource.Conditions = append(resource.Conditions, infrastructure.ResourceCondition{Type: string(condition.Type), Status: string(condition.Status), Reason: bounded(condition.Reason, 128), Message: sanitized(condition.Message, 512), LastTransitionTime: condition.LastTransitionTime.UTC()})
 	}
@@ -497,6 +501,10 @@ func statefulSetResource(clusterID string, item appsv1.StatefulSet) infrastructu
 	resource.Generation = item.Generation
 	resource.Workload = &infrastructure.WorkloadStatus{DesiredReplicas: desired, UpdatedReplicas: item.Status.UpdatedReplicas, ReadyReplicas: item.Status.ReadyReplicas, AvailableReplicas: item.Status.AvailableReplicas, ObservedGeneration: item.Status.ObservedGeneration}
 	resource.Selector = labelSelector(item.Spec.Selector)
+	resource.Containers = containerEnvironments(item.Spec.Template.Spec.Containers)
+	resource.ContainersTruncated = len(item.Spec.Template.Spec.Containers) > 32
+	resource.InitContainerCount = len(item.Spec.Template.Spec.InitContainers)
+	resource.EphemeralCount = len(item.Spec.Template.Spec.EphemeralContainers)
 	for _, condition := range item.Status.Conditions {
 		resource.Conditions = append(resource.Conditions, infrastructure.ResourceCondition{Type: string(condition.Type), Status: string(condition.Status), Reason: bounded(condition.Reason, 128), Message: sanitized(condition.Message, 512), LastTransitionTime: condition.LastTransitionTime.UTC()})
 	}
@@ -510,6 +518,10 @@ func daemonSetResource(clusterID string, item appsv1.DaemonSet) infrastructure.R
 	resource.Generation = item.Generation
 	resource.Workload = &infrastructure.WorkloadStatus{DesiredReplicas: desired, UpdatedReplicas: item.Status.UpdatedNumberScheduled, ReadyReplicas: item.Status.NumberReady, AvailableReplicas: item.Status.NumberAvailable, ObservedGeneration: item.Status.ObservedGeneration}
 	resource.Selector = labelSelector(item.Spec.Selector)
+	resource.Containers = containerEnvironments(item.Spec.Template.Spec.Containers)
+	resource.ContainersTruncated = len(item.Spec.Template.Spec.Containers) > 32
+	resource.InitContainerCount = len(item.Spec.Template.Spec.InitContainers)
+	resource.EphemeralCount = len(item.Spec.Template.Spec.EphemeralContainers)
 	for _, condition := range item.Status.Conditions {
 		resource.Conditions = append(resource.Conditions, infrastructure.ResourceCondition{Type: string(condition.Type), Status: string(condition.Status), Reason: bounded(condition.Reason, 128), Message: sanitized(condition.Message, 512), LastTransitionTime: condition.LastTransitionTime.UTC()})
 	}
@@ -545,6 +557,10 @@ func podResource(clusterID string, item corev1.Pod, replicaSetOwners map[string]
 		health = infrastructure.ResourceHealth{State: infrastructure.HealthWarning, Summary: fmt.Sprintf("%s · restarts %d", item.Status.Phase, restarts)}
 	}
 	resource := baseResource(clusterID, "v1", "Pod", infrastructure.LayerPod, item.Namespace, item.Name, string(item.UID), string(item.Status.Phase), health, item.Labels, item.CreationTimestamp.Time)
+	resource.Containers = containerEnvironments(item.Spec.Containers)
+	resource.ContainersTruncated = len(item.Spec.Containers) > 32
+	resource.InitContainerCount = len(item.Spec.InitContainers)
+	resource.EphemeralCount = len(item.Spec.EphemeralContainers)
 	resource.NodeName = bounded(item.Spec.NodeName, 253)
 	if item.Status.PodIP != "" {
 		resource.Addresses = []string{bounded(item.Status.PodIP, 256)}
@@ -564,6 +580,52 @@ func podResource(clusterID string, item corev1.Pod, replicaSetOwners map[string]
 		resource.Conditions = append(resource.Conditions, infrastructure.ResourceCondition{Type: string(condition.Type), Status: string(condition.Status), Reason: bounded(condition.Reason, 128), Message: sanitized(condition.Message, 512), LastTransitionTime: condition.LastTransitionTime.UTC()})
 	}
 	return resource
+}
+
+func containerEnvironments(containers []corev1.Container) []infrastructure.ContainerEnvironment {
+	const (
+		maxContainers = 32
+		maxEnvNames   = 128
+	)
+	result := make([]infrastructure.ContainerEnvironment, 0, minInt(len(containers), maxContainers))
+	for _, container := range containers {
+		if len(result) == maxContainers {
+			break
+		}
+		names := make([]string, 0, minInt(len(container.Env), maxEnvNames))
+		seen := make(map[string]struct{}, len(container.Env))
+		truncated := false
+		hasValueFrom, hasSecretReference := false, false
+		for _, item := range container.Env {
+			if item.ValueFrom != nil {
+				hasValueFrom = true
+				if item.ValueFrom.SecretKeyRef != nil {
+					hasSecretReference = true
+				}
+			}
+			name := bounded(strings.TrimSpace(item.Name), 128)
+			if name == "" {
+				continue
+			}
+			if _, exists := seen[name]; exists {
+				continue
+			}
+			seen[name] = struct{}{}
+			names = append(names, name)
+			if len(names) == maxEnvNames {
+				truncated = len(seen) < len(container.Env)
+				break
+			}
+		}
+		sort.Strings(names)
+		result = append(result, infrastructure.ContainerEnvironment{
+			Name: bounded(container.Name, 253), EnvNames: names, EnvNamesTruncated: truncated,
+			HasEnvFrom: len(container.EnvFrom) > 0, HasValueFrom: hasValueFrom,
+			HasSecretReference: hasSecretReference,
+		})
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+	return result
 }
 
 func ingressResource(clusterID string, item networkingv1.Ingress) infrastructure.Resource {

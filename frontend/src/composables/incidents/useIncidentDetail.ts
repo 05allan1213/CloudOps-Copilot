@@ -3,22 +3,28 @@ import { onBeforeUnmount, reactive, ref } from "vue";
 import { isApiError } from "../../api/client";
 import {
   closeIncident,
+  decideRemediation as submitRemediationDecision,
   decideIncidentRecovery,
+  getIncidentDelivery,
   getIncident,
   getIncidentDecision,
   getIncidentResolutionReport,
   listIncidentAlerts,
   listIncidentEvidence,
   listIncidentInvestigations,
+  listIncidentRemediationPlans,
+  listIncidentSignals,
   listIncidentTimeline,
   listIncidentVerifications,
   newCommandKey,
   startInvestigation,
 } from "../../api/incidents";
+import { invalidateQueryDomain } from "../queryCache";
 import { commandFeedbackForFailure, retainCommandAttempt, type CommandAttemptIdentity, type CommandFeedback } from "../../models/commands";
 import { isCurrentRequest, loadStateForStatus } from "../../models/incidents";
 import type {
   CommandOutcome,
+  DeliveryView,
   IncidentAlertRelationView,
   IncidentDecisionView,
   IncidentEvidenceView,
@@ -27,7 +33,9 @@ import type {
   IncidentTimelineEventView,
   IncidentView,
   LoadState,
+  RemediationPlanView,
   ResolutionReportView,
+  ResourceView,
   VerificationRunView,
 } from "../../types/incidents";
 
@@ -79,10 +87,13 @@ export function useIncidentDetail(incidentID: string) {
   const refreshing = ref(false);
   const lastUpdatedAt = ref("");
   const alerts = collectionSection<IncidentAlertRelationView>();
+  const signals = collectionSection<ResourceView>();
   const timeline = collectionSection<IncidentTimelineEventView>();
   const evidence = collectionSection<IncidentEvidenceView>();
   const investigations = collectionSection<IncidentInvestigationView>();
   const decision = resourceSection<IncidentDecisionView>();
+  const remediationPlans = collectionSection<RemediationPlanView>();
+  const delivery = resourceSection<DeliveryView>();
   const verifications = collectionSection<VerificationRunView>();
   const resolutionReport = resourceSection<ResolutionReportView>();
   const backgroundControllers = new Set<AbortController>();
@@ -93,6 +104,7 @@ export function useIncidentDetail(incidentID: string) {
 
   async function load(options: { preserve?: boolean } = {}) {
     const preserve = options.preserve ?? incident.value !== null;
+    if (preserve) invalidateQueryDomain("incidents");
     const identity = ++requestIdentity;
     controller?.abort();
     controller = new AbortController();
@@ -108,10 +120,13 @@ export function useIncidentDetail(incidentID: string) {
       pageState.value = "ready";
       await Promise.all([
         loadCollection(identity, alerts, (cursor, requestSignal) => listIncidentAlerts(incidentID, cursor, requestSignal), refreshOptions(alerts, preserve, signal)),
+        loadCollection(identity, signals, (cursor, requestSignal) => listIncidentSignals(incidentID, cursor, requestSignal), refreshOptions(signals, preserve, signal)),
         loadCollection(identity, timeline, (cursor, requestSignal) => listIncidentTimeline(incidentID, cursor, requestSignal), timelineRefreshOptions(preserve, signal)),
         loadCollection(identity, evidence, (cursor, requestSignal) => listIncidentEvidence(incidentID, cursor, requestSignal), refreshOptions(evidence, preserve, signal)),
         loadCollection(identity, investigations, (cursor, requestSignal) => listIncidentInvestigations(incidentID, cursor, requestSignal), refreshOptions(investigations, preserve, signal)),
         loadResource(identity, decision, (requestSignal) => getIncidentDecision(incidentID, requestSignal), preserve, signal),
+        loadCollection(identity, remediationPlans, (cursor, requestSignal) => listIncidentRemediationPlans(incidentID, cursor, requestSignal), refreshOptions(remediationPlans, preserve, signal)),
+        loadResource(identity, delivery, (requestSignal) => getIncidentDelivery(incidentID, requestSignal), preserve, signal),
         loadCollection(identity, verifications, (cursor, requestSignal) => listIncidentVerifications(incidentID, cursor, requestSignal), refreshOptions(verifications, preserve, signal)),
         loadResource(identity, resolutionReport, (requestSignal) => getIncidentResolutionReport(incidentID, requestSignal), preserve, signal),
       ]);
@@ -126,6 +141,7 @@ export function useIncidentDetail(incidentID: string) {
   }
 
   async function refreshResource(resource: IncidentRealtimeEvent["resource"]) {
+    invalidateQueryDomain("incidents");
     if (!incident.value) {
       await load();
       return;
@@ -138,8 +154,11 @@ export function useIncidentDetail(incidentID: string) {
           updates = await Promise.all([
             refreshIncident(identity, signal),
             loadCollection(identity, alerts, (cursor, requestSignal) => listIncidentAlerts(incidentID, cursor, requestSignal), refreshOptions(alerts, true, signal)),
+            loadCollection(identity, signals, (cursor, requestSignal) => listIncidentSignals(incidentID, cursor, requestSignal), refreshOptions(signals, true, signal)),
             loadCollection(identity, timeline, (cursor, requestSignal) => listIncidentTimeline(incidentID, cursor, requestSignal), timelineRefreshOptions(true, signal)),
             loadResource(identity, decision, (requestSignal) => getIncidentDecision(incidentID, requestSignal), true, signal),
+            loadCollection(identity, remediationPlans, (cursor, requestSignal) => listIncidentRemediationPlans(incidentID, cursor, requestSignal), refreshOptions(remediationPlans, true, signal)),
+            loadResource(identity, delivery, (requestSignal) => getIncidentDelivery(incidentID, requestSignal), true, signal),
             loadCollection(identity, verifications, (cursor, requestSignal) => listIncidentVerifications(incidentID, cursor, requestSignal), refreshOptions(verifications, true, signal)),
             loadResource(identity, resolutionReport, (requestSignal) => getIncidentResolutionReport(incidentID, requestSignal), true, signal),
           ]);
@@ -147,7 +166,7 @@ export function useIncidentDetail(incidentID: string) {
         case "signals":
           updates = await Promise.all([
             refreshIncident(identity, signal),
-            loadCollection(identity, alerts, (cursor, requestSignal) => listIncidentAlerts(incidentID, cursor, requestSignal), refreshOptions(alerts, true, signal)),
+            loadCollection(identity, signals, (cursor, requestSignal) => listIncidentSignals(incidentID, cursor, requestSignal), refreshOptions(signals, true, signal)),
             loadCollection(identity, timeline, (cursor, requestSignal) => listIncidentTimeline(incidentID, cursor, requestSignal), timelineRefreshOptions(true, signal)),
           ]);
           break;
@@ -165,10 +184,17 @@ export function useIncidentDetail(incidentID: string) {
           ]);
           break;
         case "remediation_plans":
+          updates = await Promise.all([
+            refreshIncident(identity, signal),
+            loadResource(identity, decision, (requestSignal) => getIncidentDecision(incidentID, requestSignal), true, signal),
+            loadCollection(identity, remediationPlans, (cursor, requestSignal) => listIncidentRemediationPlans(incidentID, cursor, requestSignal), refreshOptions(remediationPlans, true, signal)),
+          ]);
+          break;
         case "delivery":
           updates = await Promise.all([
             refreshIncident(identity, signal),
             loadResource(identity, decision, (requestSignal) => getIncidentDecision(incidentID, requestSignal), true, signal),
+            loadResource(identity, delivery, (requestSignal) => getIncidentDelivery(incidentID, requestSignal), true, signal),
           ]);
           break;
         case "verifications":
@@ -177,6 +203,7 @@ export function useIncidentDetail(incidentID: string) {
             loadCollection(identity, timeline, (cursor, requestSignal) => listIncidentTimeline(incidentID, cursor, requestSignal), timelineRefreshOptions(true, signal)),
             loadCollection(identity, verifications, (cursor, requestSignal) => listIncidentVerifications(incidentID, cursor, requestSignal), refreshOptions(verifications, true, signal)),
             loadResource(identity, decision, (requestSignal) => getIncidentDecision(incidentID, requestSignal), true, signal),
+            loadResource(identity, delivery, (requestSignal) => getIncidentDelivery(incidentID, requestSignal), true, signal),
             loadResource(identity, resolutionReport, (requestSignal) => getIncidentResolutionReport(incidentID, requestSignal), true, signal),
           ]);
           break;
@@ -313,6 +340,21 @@ export function useIncidentDetail(incidentID: string) {
     );
   }
 
+  function decideRemediation(plan: RemediationPlanView, decisionValue: "approved" | "rejected", reason: string) {
+    if (!incident.value) throw new Error("Incident 尚未加载");
+    const body = {
+      decision: decisionValue,
+      expected_version: plan.version,
+      expected_hash: plan.canonical_plan_hash,
+      reason,
+    };
+    return runCommand(
+      decisionValue === "approved" ? "Approve Remediation Plan" : "Reject Remediation Plan",
+      plan.id,
+      (idempotencyKey) => submitRemediationDecision(plan.id, body, { idempotencyKey }),
+    );
+  }
+
   async function loadCollection<T extends Identified>(
     identity: number,
     section: Section<T[]>,
@@ -435,21 +477,27 @@ export function useIncidentDetail(incidentID: string) {
     refreshing,
     lastUpdatedAt,
     alerts,
+    signals,
     timeline,
     evidence,
     investigations,
     decision,
+    remediationPlans,
+    delivery,
     verifications,
     resolutionReport,
     load,
     refreshResource,
     moreAlerts: () => loadMore(alerts, (cursor, signal) => listIncidentAlerts(incidentID, cursor, signal)),
+    moreSignals: () => loadMore(signals, (cursor, signal) => listIncidentSignals(incidentID, cursor, signal)),
     moreTimeline: () => loadMore(timeline, (cursor, signal) => listIncidentTimeline(incidentID, cursor, signal)),
     moreEvidence: () => loadMore(evidence, (cursor, signal) => listIncidentEvidence(incidentID, cursor, signal)),
     moreInvestigations: () => loadMore(investigations, (cursor, signal) => listIncidentInvestigations(incidentID, cursor, signal)),
+    moreRemediationPlans: () => loadMore(remediationPlans, (cursor, signal) => listIncidentRemediationPlans(incidentID, cursor, signal)),
     moreVerifications: () => loadMore(verifications, (cursor, signal) => listIncidentVerifications(incidentID, cursor, signal)),
     investigate,
     decideRecovery,
+    decideRemediation,
     close,
     retryLastCommand,
     clearCommandFeedback,

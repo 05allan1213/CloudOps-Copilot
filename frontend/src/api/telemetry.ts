@@ -279,8 +279,8 @@ export function getLogsCatalog(context: TelemetryContext, signal?: AbortSignal):
   return getJSON(`/api/v1/logs/catalog?${contextQuery(context)}`, { signal });
 }
 
-export function startLogQuery(input: StartLogQueryInput): Promise<LogQuery> {
-  return postJSON("/api/v1/logs/queries", input);
+export function startLogQuery(input: StartLogQueryInput, signal?: AbortSignal): Promise<LogQuery> {
+  return postJSON("/api/v1/logs/queries", input, { signal });
 }
 
 export function getLogQuery(id: string, signal?: AbortSignal): Promise<LogQuery> {
@@ -292,6 +292,14 @@ export async function getLogQueries(filter: HistoryFilter, signal?: AbortSignal)
   return page.items;
 }
 
+export async function getLogEvidence(queryID: string, signal?: AbortSignal): Promise<TelemetryEvidence[]> {
+  const page = await getJSON<{ items: TelemetryEvidence[] }>(
+    `/api/v1/logs/queries/${encodeURIComponent(queryID)}/evidence`,
+    { signal },
+  );
+  return page.items;
+}
+
 export function saveLogEvidence(queryID: string, itemIDs: string[]): Promise<TelemetryEvidence> {
   return postJSON(`/api/v1/logs/queries/${encodeURIComponent(queryID)}/evidence`, { item_ids: itemIDs });
 }
@@ -300,8 +308,8 @@ export function getTracesCatalog(context: TelemetryContext, signal?: AbortSignal
   return getJSON(`/api/v1/traces/catalog?${contextQuery(context)}`, { signal });
 }
 
-export function startTraceSearch(input: StartTraceSearchInput): Promise<TraceSearch> {
-  return postJSON("/api/v1/traces/searches", input);
+export function startTraceSearch(input: StartTraceSearchInput, signal?: AbortSignal): Promise<TraceSearch> {
+  return postJSON("/api/v1/traces/searches", input, { signal });
 }
 
 export function getTraceSearch(id: string, signal?: AbortSignal): Promise<TraceSearch> {
@@ -310,6 +318,14 @@ export function getTraceSearch(id: string, signal?: AbortSignal): Promise<TraceS
 
 export async function getTraceSearches(filter: HistoryFilter, signal?: AbortSignal): Promise<TraceSearch[]> {
   const page = await getJSON<{ items: TraceSearch[] }>(`/api/v1/traces/searches${historyQuery(filter)}`, { signal });
+  return page.items;
+}
+
+export async function getTraceEvidence(queryID: string, signal?: AbortSignal): Promise<TelemetryEvidence[]> {
+  const page = await getJSON<{ items: TelemetryEvidence[] }>(
+    `/api/v1/traces/searches/${encodeURIComponent(queryID)}/evidence`,
+    { signal },
+  );
   return page.items;
 }
 

@@ -38,6 +38,7 @@ type Client struct {
 	maxResponseBytes int64
 	maxTokens        int
 	maxRetries       int
+	reasoningEffort  string
 	observer         LLMObserver
 }
 
@@ -49,6 +50,7 @@ type Options struct {
 	HTTPClient       *http.Client
 	MaxResponseBytes int64
 	MaxTokens        int
+	ReasoningEffort  string
 	// MaxRetries overrides the client retry count when non-nil. Agent Runtime sets zero
 	// so its persisted retry policy is the only retry owner.
 	MaxRetries *int
@@ -56,11 +58,12 @@ type Options struct {
 }
 
 type chatRequest struct {
-	Model       string        `json:"model"`
-	Messages    []ChatMessage `json:"messages"`
-	Temperature float64       `json:"temperature"`
-	MaxTokens   int           `json:"max_tokens,omitempty"`
-	Stream      bool          `json:"stream,omitempty"`
+	Model           string        `json:"model"`
+	Messages        []ChatMessage `json:"messages"`
+	Temperature     float64       `json:"temperature"`
+	MaxTokens       int           `json:"max_tokens,omitempty"`
+	Stream          bool          `json:"stream,omitempty"`
+	ReasoningEffort string        `json:"reasoning_effort,omitempty"`
 }
 
 type ChatMessage struct {
@@ -118,6 +121,7 @@ func NewClient(options Options) *Client {
 		maxResponseBytes: maxResponseBytes,
 		maxTokens:        options.MaxTokens,
 		maxRetries:       maxRetries,
+		reasoningEffort:  strings.TrimSpace(options.ReasoningEffort),
 		observer:         options.Observer,
 	}
 }
@@ -268,10 +272,11 @@ func (c *Client) doRequest(ctx context.Context, systemPrompt, userPrompt string)
 
 func (c *Client) doRequestMessages(ctx context.Context, messages []ChatMessage, temperature float64) (string, *ChatUsage, error) {
 	message, usage, err := c.doChatRequest(ctx, chatRequest{
-		Model:       c.model,
-		Messages:    messages,
-		Temperature: temperature,
-		MaxTokens:   c.maxTokens,
+		Model:           c.model,
+		Messages:        messages,
+		Temperature:     temperature,
+		MaxTokens:       c.maxTokens,
+		ReasoningEffort: c.reasoningEffort,
 	})
 	if err != nil {
 		return "", usage, err
@@ -338,11 +343,12 @@ func (c *Client) doChatStreamRequest(ctx context.Context, messages []ChatMessage
 	defer cancel()
 
 	body, err := json.Marshal(chatRequest{
-		Model:       c.model,
-		Messages:    messages,
-		Temperature: 0.3,
-		MaxTokens:   c.maxTokens,
-		Stream:      true,
+		Model:           c.model,
+		Messages:        messages,
+		Temperature:     0.3,
+		MaxTokens:       c.maxTokens,
+		Stream:          true,
+		ReasoningEffort: c.reasoningEffort,
 	})
 	if err != nil {
 		return "", nil, fmt.Errorf("marshal llm stream request: %w", err)
@@ -411,7 +417,11 @@ func (c *Client) doChatStreamRequest(ctx context.Context, messages []ChatMessage
 	if err := scanner.Err(); err != nil {
 		return builder.String(), usageResult, fmt.Errorf("read llm stream: %w", err)
 	}
-	return builder.String(), usageResult, nil
+	content = builder.String()
+	if strings.TrimSpace(content) == "" {
+		return content, usageResult, ErrInvalidResponse
+	}
+	return content, usageResult, nil
 }
 
 func responseBodyDetail(body io.Reader) string {

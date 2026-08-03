@@ -22,7 +22,9 @@ type TelemetryPort interface {
 	TraceSearch(context.Context, string) (telemetry.TraceSearch, error)
 	TraceSearches(context.Context, string, string, string, int) ([]telemetry.TraceSearch, error)
 	Trace(context.Context, telemetry.TraceDetailRequest) (telemetry.TraceDetail, error)
+	LogEvidence(context.Context, string) ([]telemetry.Evidence, error)
 	SaveLogEvidence(context.Context, string, telemetry.SaveEvidenceRequest) (telemetry.Evidence, error)
+	TraceEvidence(context.Context, string) ([]telemetry.Evidence, error)
 	SaveTraceEvidence(context.Context, string, string, telemetry.SaveEvidenceRequest) (telemetry.Evidence, error)
 	CreateConsultation(context.Context, telemetry.CreateConsultationRequest) (telemetry.Consultation, error)
 	AttachContextSnapshot(context.Context, string, telemetry.AttachContextSnapshotRequest) (telemetry.ContextSnapshot, error)
@@ -34,6 +36,10 @@ type logQueryPage struct {
 
 type traceSearchPage struct {
 	Items []telemetry.TraceSearch `json:"items"`
+}
+
+type telemetryEvidencePage struct {
+	Items []telemetry.Evidence `json:"items"`
 }
 
 func (h *Handler) getLogCatalog(c *gin.Context)   { h.getTelemetryCatalog(c, "elasticsearch") }
@@ -126,6 +132,25 @@ func (h *Handler) saveLogEvidence(c *gin.Context) {
 		return
 	}
 	h.writeJSON(c, http.StatusCreated, value)
+}
+
+func (h *Handler) listLogEvidence(c *gin.Context) {
+	if !h.requireTelemetry(c) {
+		return
+	}
+	id, ok := h.publicID(c)
+	if !ok {
+		return
+	}
+	items, err := h.telemetry.LogEvidence(c.Request.Context(), id)
+	if err != nil {
+		h.writeTelemetryError(c, err)
+		return
+	}
+	if items == nil {
+		items = []telemetry.Evidence{}
+	}
+	h.writeJSON(c, http.StatusOK, telemetryEvidencePage{Items: items})
 }
 
 func (h *Handler) startTraceSearch(c *gin.Context) {
@@ -225,6 +250,25 @@ func (h *Handler) saveTraceEvidence(c *gin.Context) {
 		return
 	}
 	h.writeJSON(c, http.StatusCreated, value)
+}
+
+func (h *Handler) listTraceEvidence(c *gin.Context) {
+	if !h.requireTelemetry(c) {
+		return
+	}
+	id, ok := h.publicID(c)
+	if !ok {
+		return
+	}
+	items, err := h.telemetry.TraceEvidence(c.Request.Context(), id)
+	if err != nil {
+		h.writeTelemetryError(c, err)
+		return
+	}
+	if items == nil {
+		items = []telemetry.Evidence{}
+	}
+	h.writeJSON(c, http.StatusOK, telemetryEvidencePage{Items: items})
 }
 
 func (h *Handler) createTelemetryConsultation(c *gin.Context) {

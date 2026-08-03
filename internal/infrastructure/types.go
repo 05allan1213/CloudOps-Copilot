@@ -115,6 +115,17 @@ type ResourceCondition struct {
 	LastTransitionTime time.Time `json:"last_transition_time,omitempty"`
 }
 
+// ContainerEnvironment projects only bounded environment variable names. It
+// intentionally excludes literal values and valueFrom payloads.
+type ContainerEnvironment struct {
+	Name               string   `json:"name"`
+	EnvNames           []string `json:"env_names"`
+	EnvNamesTruncated  bool     `json:"env_names_truncated,omitempty"`
+	HasEnvFrom         bool     `json:"has_env_from,omitempty"`
+	HasValueFrom       bool     `json:"has_value_from,omitempty"`
+	HasSecretReference bool     `json:"has_secret_reference,omitempty"`
+}
+
 type WorkloadStatus struct {
 	DesiredReplicas    int32 `json:"desired_replicas"`
 	UpdatedReplicas    int32 `json:"updated_replicas"`
@@ -136,28 +147,32 @@ type ContextLink struct {
 }
 
 type Resource struct {
-	ID              string              `json:"id"`
-	SourceUID       string              `json:"source_uid,omitempty"`
-	APIVersion      string              `json:"api_version"`
-	Kind            string              `json:"kind"`
-	Layer           ResourceLayer       `json:"layer"`
-	Namespace       string              `json:"namespace,omitempty"`
-	Name            string              `json:"name"`
-	ResourceVersion string              `json:"resource_version,omitempty"`
-	Generation      int64               `json:"generation,omitempty"`
-	Status          string              `json:"status,omitempty"`
-	Workload        *WorkloadStatus     `json:"workload,omitempty"`
-	Health          ResourceHealth      `json:"health"`
-	OwnerReferences []ResourceReference `json:"owner_references"`
-	Selector        map[string]string   `json:"selector"`
-	Labels          map[string]string   `json:"labels"`
-	Endpoints       []ResourceEndpoint  `json:"endpoints"`
-	Ports           []ResourcePort      `json:"ports"`
-	Conditions      []ResourceCondition `json:"conditions"`
-	NodeName        string              `json:"node_name,omitempty"`
-	Addresses       []string            `json:"addresses"`
-	CreatedAt       time.Time           `json:"created_at,omitempty"`
-	Links           []ContextLink       `json:"links"`
+	ID                  string                 `json:"id"`
+	SourceUID           string                 `json:"source_uid,omitempty"`
+	APIVersion          string                 `json:"api_version"`
+	Kind                string                 `json:"kind"`
+	Layer               ResourceLayer          `json:"layer"`
+	Namespace           string                 `json:"namespace,omitempty"`
+	Name                string                 `json:"name"`
+	ResourceVersion     string                 `json:"resource_version,omitempty"`
+	Generation          int64                  `json:"generation,omitempty"`
+	Status              string                 `json:"status,omitempty"`
+	Workload            *WorkloadStatus        `json:"workload,omitempty"`
+	Health              ResourceHealth         `json:"health"`
+	OwnerReferences     []ResourceReference    `json:"owner_references"`
+	Selector            map[string]string      `json:"selector"`
+	Labels              map[string]string      `json:"labels"`
+	Endpoints           []ResourceEndpoint     `json:"endpoints"`
+	Ports               []ResourcePort         `json:"ports"`
+	Conditions          []ResourceCondition    `json:"conditions"`
+	Containers          []ContainerEnvironment `json:"containers,omitempty"`
+	ContainersTruncated bool                   `json:"containers_truncated,omitempty"`
+	InitContainerCount  int                    `json:"init_container_count,omitempty"`
+	EphemeralCount      int                    `json:"ephemeral_container_count,omitempty"`
+	NodeName            string                 `json:"node_name,omitempty"`
+	Addresses           []string               `json:"addresses"`
+	CreatedAt           time.Time              `json:"created_at,omitempty"`
+	Links               []ContextLink          `json:"links"`
 }
 
 type TopologyEdge struct {

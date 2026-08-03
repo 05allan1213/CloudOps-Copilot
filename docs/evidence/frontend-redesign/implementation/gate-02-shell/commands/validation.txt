@@ -1,0 +1,130 @@
+Gate 2 focused validation
+Recorded: 2026-07-31T01:57:32+08:00
+Base and current HEAD: b27af59ebc38f08cd0037ffa926685e78fbaa19e
+Worktree: Gate 2 implementation accepted by the Owner; local rollback commit pending at evidence edit time
+
+TYPECHECK
+
+$ npm run typecheck
+> vue-tsc --noEmit
+exit=0
+RESULT=PASS
+
+FOCUSED TESTS
+
+$ npm exec vitest -- run src/navigation.test.ts src/router/routes.test.ts src/router/scrollBehavior.test.ts src/composables/useTheme.test.ts src/utils/agentContext.test.ts src/api/notifications.test.ts
+Test Files  6 passed (6)
+Tests       19 passed (19)
+exit=0
+RESULT=PASS
+
+TARGETED ESLINT
+
+$ npm exec eslint -- src/components/agent/GlobalAgentPanel.vue src/components/layout/AppHeader.vue src/components/layout/AppLayout.vue src/components/layout/AppSidebar.vue src/components/layout/NotificationInbox.vue src/components/layout/SidebarMenu.vue src/composables/useTheme.ts src/composables/useTheme.test.ts src/main.ts src/navigation.ts src/navigation.test.ts src/router/routes.ts src/router/routes.test.ts src/router/scrollBehavior.ts src/router/scrollBehavior.test.ts src/utils/agentContext.ts src/utils/agentContext.test.ts src/api/notifications.test.ts tests/e2e/support.ts
+exit=0
+findings=0
+RESULT=PASS
+
+FIXTURE SYNTAX
+
+$ node --check tests/e2e/fixture-server.mjs
+exit=0
+RESULT=PASS
+
+MOBILE NAVIGATION RETIREMENT
+
+$ rg -n 'MobileBottomNav|mobilePrimaryNavigation|mobileMoreNavigation' src
+exit=1
+output=<empty>
+RESULT=PASS
+
+SHELL ELEMENT PLUS BOUNDARY
+
+$ rg -n '(from|import).*element-plus|<el-' src/components/layout src/components/agent/GlobalAgentPanel.vue
+exit=1
+output=<empty>
+RESULT=PASS
+
+SHELL EMOJI
+
+$ rg -n --pcre2 '[\x{1F300}-\x{1FAFF}\x{2600}-\x{27BF}]' src/components/layout src/components/agent/GlobalAgentPanel.vue src/navigation.ts
+exit=1
+output=<empty>
+RESULT=PASS
+
+DIFF CHECK
+
+$ git diff --check
+exit=0
+output=<empty>
+RESULT=PASS
+
+BROWSER
+
+Tool: /home/monody/.codex/skills/playwright/scripts/playwright_cli.sh
+Session: gate2-shell-final
+Config: output/playwright/gate2-shell-clean/playwright-cli.json
+Application: http://127.0.0.1:52731/incidents
+Fixture: http://127.0.0.1:18082
+Browser: Chromium 1228, zh-CN, Asia/Shanghai, reduced motion
+
+Actions exercised with Playwright CLI:
+- resize/open/reload at 1920x1080, 1440x900, 1280x800, and 1024x768
+- Light/Dark toggle and LocalStorage reload persistence
+- Sidebar expanded/rail persistence, hover Tooltip, keyboard navigation, and accessible names
+- Provider hover/focus/activation to /settings#providers
+- Notification open/read/read-all/close and independent SSE observation
+- Agent closed-state request observation, open/read-only projection/SSE, close/teardown
+- stacked Agent plus Notification Escape behavior and final trigger Focus restoration
+- Skip Link, route H1, Back/Forward, and scroll restoration
+- screenshots, video, and tracing
+
+$ /home/monody/.codex/skills/playwright/scripts/playwright_cli.sh --session gate2-shell-final console
+Total messages: 3
+Errors: 0
+Warnings: 0
+RESULT=PASS
+
+$ /home/monody/.codex/skills/playwright/scripts/playwright_cli.sh --session gate2-shell-final requests
+relevant_local_api_and_sse_responses=200
+external_iconify_lucide_response=200
+RESULT=PASS
+
+One evidence-capture invocation used the older documented command name `network`.
+The installed CLI rejected that harness command before any product assertion; it
+was corrected to `requests`. This is not a product failure.
+
+B1=PASS
+B2=PASS
+B3=PASS
+B4=NOT RUN
+B5=PASS
+B6_FIREFOX=NOT RUN
+B6_WEBKIT=NOT RUN
+B7=NOT RUN
+B8=NOT RUN
+REAL_READONLY_INTEGRATION=NOT RUN
+WRITE_PATH_E2E=NOT RUN
+
+NOT RUN UNDER THE APPROVED GATE CADENCE
+
+full_lint=NOT RUN
+lint_no_new_warnings_full_run=NOT RUN
+typecheck_e2e=NOT RUN
+full_unit=NOT RUN
+production_build=NOT RUN
+npm_audit=NOT RUN
+full_e2e_stable=NOT RUN
+full_e2e=NOT RUN
+firefox=NOT RUN
+webkit=NOT RUN
+lighthouse=NOT RUN
+full_performance_matrix=NOT RUN
+real_readonly_integration=NOT RUN
+write_path_e2e=NOT RUN
+
+OWNER VISUAL GATE
+
+OWNER_VISUAL_GATE_SHELL=PASS
+GATE_03_ENTRY=READY
+OWNER_VERDICT=OWNER_VISUAL_GATE_SHELL=PASS

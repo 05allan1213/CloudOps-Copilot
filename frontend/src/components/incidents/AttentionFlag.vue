@@ -11,13 +11,16 @@ defineProps<{
     class="attention-flag"
     :class="active ? 'attention-flag--active' : 'attention-flag--clear'"
   >
-    <el-icon
+    <WarningFilled
+      v-if="active"
       :size="14"
       aria-hidden="true"
-    >
-      <WarningFilled v-if="active" />
-      <CircleCheckFilled v-else />
-    </el-icon>
+    />
+    <CircleCheckFilled
+      v-else
+      :size="14"
+      aria-hidden="true"
+    />
     {{ active ? "需要关注" : "无需关注" }}
   </span>
 </template>

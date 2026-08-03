@@ -1,6 +1,8 @@
 import type { AxiosRequestConfig } from "axios";
 
-import { ApiError, getJSON, postJSONWithMeta } from "./client";
+import { ApiError, getJSON, getJSONWithCache, postJSONWithMeta } from "./client";
+import { queryIdentityFor, type QueryCacheLoadResult } from "../composables/queryCache";
+import { toIncidentListAPIQuery } from "../models/incidents";
 import type {
   CollectionResponse,
   CommandOutcome,
@@ -31,7 +33,34 @@ export interface CommandRequestOptions {
 }
 
 export function listIncidents(query: IncidentListQuery, signal?: AbortSignal): Promise<CollectionResponse<IncidentView>> {
-  return getJSON<CollectionResponse<IncidentView>>(base, { params: query, signal });
+  return getJSON<CollectionResponse<IncidentView>>(base, {
+    params: toIncidentListAPIQuery(query),
+    signal,
+  });
+}
+
+export function incidentListQueryIdentity(query: IncidentListQuery) {
+  return queryIdentityFor("incidents-workspace", {
+    url: base,
+    params: toIncidentListAPIQuery(query),
+  });
+}
+
+export function listIncidentsWithCache(
+  query: IncidentListQuery,
+  signal?: AbortSignal,
+  force = false,
+): Promise<QueryCacheLoadResult<CollectionResponse<IncidentView>>> {
+  return getJSONWithCache<CollectionResponse<IncidentView>>(base, {
+    params: toIncidentListAPIQuery(query),
+    signal,
+    cache: {
+      domain: "incidents-workspace",
+      policy: "operational",
+      force,
+      staleWhileRevalidate: true,
+    },
+  });
 }
 
 export async function getIncident(incidentID: string, signal?: AbortSignal): Promise<IncidentView> {

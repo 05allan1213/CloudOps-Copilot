@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { FilterX, Search } from "lucide-vue-next";
-
-import { incidentStatuses, incidentStatusLabel, severityLabel } from "../../models/incidents";
+import { incidentStatusLabel, incidentStatuses, severityLabel } from "../../models/incidents";
 import type { IncidentSeverity, IncidentStatus } from "../../types/incidents";
 
 const props = defineProps<{
@@ -30,18 +28,62 @@ const emit = defineEmits<{
   reset: [];
 }>();
 
-const severities: IncidentSeverity[] = ["critical", "warning", "info", "unknown"];
+const allValue = "__all__";
+const statusItems = [
+  { label: "全部状态", value: allValue },
+  ...incidentStatuses.map((value) => ({ label: incidentStatusLabel(value), value })),
+];
+const severityItems = [
+  { label: "全部级别", value: allValue },
+  ...(["critical", "warning", "info", "unknown"] as const).map((value) => ({
+    label: severityLabel(value),
+    value,
+  })),
+];
+const attentionItems = [
+  { label: "全部 Attention", value: allValue },
+  { label: "需要 Attention", value: "true" },
+  { label: "无需 Attention", value: "false" },
+];
+const quickItems = [
+  { label: "全部", value: "all", icon: "i-lucide-list-filter" },
+  { label: "调查中", value: "investigating", icon: "i-lucide-search-check" },
+  { label: "需关注", value: "attention", icon: "i-lucide-triangle-alert" },
+  { label: "已关闭", value: "closed", icon: "i-lucide-circle-check" },
+];
+const activeAdvancedCount = computed(() => [
+  props.severity,
+  props.attention === undefined ? undefined : String(props.attention),
+  props.resource,
+  props.alert,
+  props.from,
+  props.to,
+].filter(Boolean).length);
+
 const statusModel = computed({
-  get: () => props.status ?? "",
-  set: (value: string) => emit("update:status", (value || undefined) as IncidentStatus | undefined),
+  get: () => props.status ?? allValue,
+  set: (value: string) => emit("update:status", value === allValue ? undefined : value as IncidentStatus),
 });
 const severityModel = computed({
-  get: () => props.severity ?? "",
-  set: (value: string) => emit("update:severity", (value || undefined) as IncidentSeverity | undefined),
+  get: () => props.severity ?? allValue,
+  set: (value: string) => emit("update:severity", value === allValue ? undefined : value as IncidentSeverity),
 });
 const attentionModel = computed({
-  get: () => props.attention === undefined ? "" : String(props.attention),
-  set: (value: string) => emit("update:attention", value === "" ? undefined : value === "true"),
+  get: () => props.attention === undefined ? allValue : String(props.attention),
+  set: (value: string) => emit("update:attention", value === allValue ? undefined : value === "true"),
+});
+const quickModel = computed({
+  get: () => {
+    if (props.attention === true && !props.status) return "attention";
+    if (props.status === "investigating" && props.attention === undefined) return "investigating";
+    if (props.status === "closed" && props.attention === undefined) return "closed";
+    if (!props.status && props.attention === undefined) return "all";
+    return "custom";
+  },
+  set: (value: string) => {
+    emit("update:attention", value === "attention" ? true : undefined);
+    emit("update:status", value === "investigating" || value === "closed" ? value : undefined);
+  },
 });
 const serviceModel = textModel(() => props.service, (value) => emit("update:service", value));
 const resourceModel = textModel(() => props.resource, (value) => emit("update:resource", value));
@@ -54,10 +96,6 @@ const toModel = computed({
   get: () => toLocalDateTime(props.to),
   set: (value: string) => emit("update:to", toRFC3339(value)),
 });
-const hasFilters = computed(() => Boolean(
-  props.status || props.severity || props.service || props.attention !== undefined
-  || props.resource || props.alert || props.from || props.to,
-));
 
 function textModel(read: () => string | undefined, write: (value: string | undefined) => void) {
   return computed({
@@ -82,56 +120,147 @@ function toLocalDateTime(value?: string): string {
 </script>
 
 <template>
-  <form class="filter-bar" aria-labelledby="incident-filters-title" @submit.prevent="$emit('apply')">
-    <div class="filter-heading">
-      <div><h2 id="incident-filters-title">筛选 Incident</h2><p id="incident-filter-help">筛选条件与 URL 保持同步。</p></div>
-      <span class="filter-contract">URL 已同步</span>
-    </div>
-
-    <div class="filter-grid">
-      <label><span>状态</span><select v-model="statusModel" name="status" autocomplete="off"><option value="">全部状态</option><option v-for="option in incidentStatuses" :key="option" :value="option">{{ incidentStatusLabel(option) }}</option></select></label>
-      <label><span>级别</span><select v-model="severityModel" name="severity" autocomplete="off"><option value="">全部级别</option><option v-for="option in severities" :key="option" :value="option">{{ severityLabel(option) }}</option></select></label>
-      <label><span>Attention</span><select v-model="attentionModel" name="attention" autocomplete="off"><option value="">全部</option><option value="true">需要关注</option><option value="false">无需关注</option></select></label>
-      <label><span>服务</span><input v-model="serviceModel" name="service" type="text" maxlength="255" autocomplete="off" spellcheck="false" placeholder="例如：checkout-api…"></label>
-      <label><span>资源</span><input v-model="resourceModel" name="resource" type="text" maxlength="512" autocomplete="off" spellcheck="false" placeholder="资源 ID 或精确名称…"></label>
-      <label><span>Alert</span><input v-model="alertModel" name="alert" type="text" maxlength="36" autocomplete="off" spellcheck="false" placeholder="Alert public UUID…"></label>
-      <label><span>开始时间</span><input v-model="fromModel" name="from" type="datetime-local" autocomplete="off"></label>
-      <label><span>结束时间</span><input v-model="toModel" name="to" type="datetime-local" autocomplete="off"></label>
-    </div>
-
-    <div class="filter-actions">
-      <button type="submit" class="primary-action" :disabled="loading"><Search :size="16" aria-hidden="true" />{{ loading ? "正在查询…" : "查询" }}</button>
-      <button type="button" class="secondary-action" :disabled="!hasFilters || loading" @click="$emit('reset')"><FilterX :size="16" aria-hidden="true" />清除筛选</button>
-    </div>
-  </form>
+  <section
+    class="incident-commandbar"
+    aria-label="Incident 筛选与查询"
+  >
+    <form
+      id="incident-filter-form"
+      class="filter-form"
+      data-testid="incident-filter-form"
+      @submit.prevent="emit('apply')"
+    >
+      <UTabs
+        v-model="quickModel"
+        class="incident-status-tabs"
+        :items="quickItems"
+        :content="false"
+        color="primary"
+        variant="pill"
+        size="sm"
+        aria-label="Incident 高频筛选"
+      />
+      <UInput
+        v-model="serviceModel"
+        class="incident-primary-search"
+        name="service"
+        icon="i-lucide-search"
+        placeholder="搜索服务或响应对象"
+        aria-label="搜索服务"
+      />
+      <UCollapsible class="incident-advanced-filters">
+        <template #default="{ open }">
+          <UButton
+            color="neutral"
+            variant="ghost"
+            icon="i-lucide-sliders-horizontal"
+            :trailing-icon="open ? 'i-lucide-chevron-up' : 'i-lucide-chevron-down'"
+            :label="activeAdvancedCount ? `高级 · ${activeAdvancedCount}` : '高级'"
+            :aria-label="`${open ? '收起' : '展开'} Incident 高级筛选`"
+          />
+        </template>
+        <template #content>
+          <div class="incident-advanced-grid">
+            <UFormField label="生命周期状态">
+              <USelect
+                v-model="statusModel"
+                :items="statusItems"
+                value-key="value"
+                aria-label="Incident 生命周期状态"
+              />
+            </UFormField>
+            <UFormField label="级别">
+              <USelect
+                v-model="severityModel"
+                :items="severityItems"
+                value-key="value"
+                aria-label="级别"
+              />
+            </UFormField>
+            <UFormField label="Attention">
+              <USelect
+                v-model="attentionModel"
+                :items="attentionItems"
+                value-key="value"
+                aria-label="Attention"
+              />
+            </UFormField>
+            <UFormField label="资源">
+              <UInput
+                v-model="resourceModel"
+                name="resource"
+                placeholder="deployment/api"
+                aria-label="资源"
+              />
+            </UFormField>
+            <UFormField label="Alert UUID">
+              <UInput
+                v-model="alertModel"
+                name="alert"
+                placeholder="public Alert ID"
+                aria-label="Alert UUID"
+              />
+            </UFormField>
+            <UFormField label="从">
+              <UInput
+                v-model="fromModel"
+                type="datetime-local"
+                name="from"
+                aria-label="从"
+              />
+            </UFormField>
+            <UFormField label="到">
+              <UInput
+                v-model="toModel"
+                type="datetime-local"
+                name="to"
+                aria-label="到"
+              />
+            </UFormField>
+          </div>
+        </template>
+      </UCollapsible>
+      <UButton
+        type="submit"
+        form="incident-filter-form"
+        data-testid="incident-filter-apply"
+        color="primary"
+        icon="i-lucide-search"
+        :loading="loading"
+        label="应用"
+      />
+      <UButton
+        type="button"
+        color="neutral"
+        variant="ghost"
+        icon="i-lucide-filter-x"
+        square
+        aria-label="清除 Incident 筛选"
+        @click="emit('reset')"
+      />
+    </form>
+  </section>
 </template>
 
 <style scoped>
-.filter-bar { display: grid; min-width: 0; gap: var(--co-space-4); padding: var(--co-space-4); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-panel); background: var(--co-bg-surface); }
-.filter-heading, .filter-actions { display: flex; align-items: center; }
-.filter-heading { justify-content: space-between; gap: var(--co-space-4); }
-.filter-heading h2, .filter-heading p { margin: 0; }
-.filter-heading h2 { font-size: 16px; text-wrap: balance; }
-.filter-heading p { margin-top: 2px; color: var(--co-text-secondary); font-size: 12px; }
-.filter-contract { flex: 0 0 auto; padding: 3px 8px; border: 1px solid var(--co-status-neutral-border); border-radius: var(--co-radius-pill); color: var(--co-status-neutral-fg); background: var(--co-status-neutral-bg); font-size: 10px; font-weight: 700; text-transform: uppercase; }
-.filter-grid { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); min-width: 0; gap: var(--co-space-3); }
-.filter-grid label { display: grid; min-width: 0; gap: 5px; color: var(--co-text-secondary); font-size: 11px; font-weight: 700; }
-.filter-grid input, .filter-grid select { width: 100%; min-width: 0; min-height: 40px; padding: 0 var(--co-space-3); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); color: var(--co-text-primary); background-color: var(--co-bg-surface); font: inherit; font-weight: 500; }
-.filter-grid input:hover, .filter-grid select:hover { border-color: var(--co-border-strong); }
-.filter-grid input:focus-visible, .filter-grid select:focus-visible, button:focus-visible { outline: 2px solid var(--co-action-primary); outline-offset: 2px; }
-.filter-actions { flex-wrap: wrap; gap: var(--co-space-2); }
-.primary-action, .secondary-action { display: inline-flex; min-height: 42px; align-items: center; justify-content: center; gap: 7px; padding: 0 var(--co-space-4); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-control); cursor: pointer; font-weight: 750; }
-.primary-action { border-color: var(--co-action-primary); color: var(--co-text-on-action); background: var(--co-action-primary); }
-.secondary-action { color: var(--co-text-primary); background: var(--co-bg-surface); }
-button:hover { border-color: var(--co-border-strong); }
-button:disabled { cursor: not-allowed; opacity: .55; }
-@media (max-width: 1050px) { .filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 600px) {
-  .filter-contract { display: none; }
-  .filter-grid { grid-template-columns: minmax(0, 1fr); }
-  .filter-grid label { font-size: 12px; }
-  .filter-grid input, .filter-grid select { min-height: 44px; font-size: 16px; }
-  .filter-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .primary-action, .secondary-action { width: 100%; padding-inline: var(--co-space-2); }
+.incident-commandbar { min-width: 0; padding: var(--co-space-2); border: 1px solid var(--co-border-subtle); border-radius: var(--co-radius-frame); background: color-mix(in srgb, var(--co-bg-surface) 88%, var(--co-bg-canvas)); }
+.filter-form { display: grid; min-width: 0; grid-template-columns: minmax(300px, auto) minmax(220px, 1fr) auto auto auto; align-items: center; gap: var(--co-space-2); }
+.incident-status-tabs,
+.incident-primary-search { min-width: 0; }
+.incident-primary-search { width: 100%; }
+.incident-advanced-filters { position: relative; }
+.incident-advanced-grid { position: absolute; z-index: var(--co-z-popover); top: calc(100% + var(--co-space-2)); right: 0; display: grid; width: min(660px, calc(100vw - 64px)); grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--co-space-3); padding: var(--co-space-4); border: 1px solid var(--co-border-default); border-radius: var(--co-radius-panel); background: var(--co-bg-overlay); box-shadow: var(--co-shadow-overlay); }
+.incident-advanced-grid :deep(.u-input), .incident-advanced-grid :deep(.u-select) { width: 100%; }
+
+@media (max-width: 1180px) {
+  .filter-form { grid-template-columns: minmax(280px, 1fr) minmax(220px, 1fr) auto auto auto; }
+  .incident-status-tabs { grid-column: 1 / -1; }
+}
+
+@media (max-width: 1024px) {
+  .filter-form { grid-template-columns: minmax(0, 1fr) auto auto auto; }
+  .incident-status-tabs { grid-column: 1 / -1; }
+  .incident-advanced-grid { position: static; width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: var(--co-space-2); box-shadow: none; }
+  .incident-advanced-filters { position: static; }
 }
 </style>

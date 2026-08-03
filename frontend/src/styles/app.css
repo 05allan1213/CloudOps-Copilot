@@ -1,0 +1,26 @@
+@import "tailwindcss";
+@import "@nuxt/ui";
+@import "./tokens.css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme inline {
+  --font-sans: var(--co-font-sans);
+  --font-mono: var(--co-font-mono);
+  --color-canvas: var(--co-bg-canvas);
+  --color-surface: var(--co-bg-surface);
+  --color-surface-muted: var(--co-bg-subtle);
+  --color-overlay: var(--co-bg-overlay);
+  --color-selected: var(--co-bg-active);
+  --color-border: var(--co-border-default);
+  --color-border-strong: var(--co-border-strong);
+  --color-text-primary: var(--co-text-primary);
+  --color-text-secondary: var(--co-text-secondary);
+  --color-text-muted: var(--co-text-muted);
+  --color-action: var(--co-action-primary);
+  --color-critical: var(--co-status-critical-fg);
+  --color-warning: var(--co-status-warning-fg);
+  --color-success: var(--co-status-success-fg);
+  --color-info: var(--co-status-info-fg);
+  --color-stale: var(--co-status-inconclusive-fg);
+}
