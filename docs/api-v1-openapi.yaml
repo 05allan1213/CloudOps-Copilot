@@ -1691,7 +1691,7 @@ components:
         enabled: { type: boolean }
         endpoint: { type: string, maxLength: 2048 }
         model: { type: string, maxLength: 255 }
-        timeout_ms: { type: integer, minimum: 1000, maximum: 60000 }
+        timeout_ms: { type: integer, minimum: 1000, maximum: 300000 }
         max_results: { type: integer, minimum: 1, maximum: 10000 }
         context_link_base: { type: string, maxLength: 2048 }
     SecretReference:

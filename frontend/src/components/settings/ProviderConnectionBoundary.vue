@@ -71,7 +71,7 @@ function numberValue(value: unknown, fallback: number): number {
           <UInputNumber
             :model-value="Math.max(1, Math.round(modelValue.timeout_ms / 1000))"
             :min="1"
-            :max="60"
+            :max="300"
             :step="1"
             class="provider-connection-control"
             @update:model-value="update('timeout_ms', numberValue($event, 1) * 1000)"

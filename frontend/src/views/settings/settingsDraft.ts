@@ -331,7 +331,7 @@ export function validateSettingsSectionLocally(section: SettingsSectionDraft): A
         if (provider.provider === "llm" && !provider.model.trim()) {
           errors.push({ name: "providers.llm.model", message: "LLM Model 不能为空。" });
         }
-        boundedNumber(errors, `providers.${provider.provider}.timeout_ms`, provider.timeout_ms, 1000, 60000, "Provider timeout");
+        boundedNumber(errors, `providers.${provider.provider}.timeout_ms`, provider.timeout_ms, 1000, 300000, "Provider timeout");
         boundedNumber(errors, `providers.${provider.provider}.max_results`, provider.max_results, 1, 10000, "Provider 结果上限");
       });
       break;

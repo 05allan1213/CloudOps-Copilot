@@ -17,14 +17,15 @@ func TestSemanticMigrationContract(t *testing.T) {
 			migrationNames = append(migrationNames, entry.Name())
 		}
 	}
-	if len(migrationNames) != 11 || migrationNames[0] != "00001_cloudops_baseline.sql" ||
+	if len(migrationNames) != 12 || migrationNames[0] != "00001_cloudops_baseline.sql" ||
 		migrationNames[1] != "00002_platform_foundation.sql" || migrationNames[2] != "00003_infrastructure_topology.sql" ||
 		migrationNames[3] != "00004_operational_scope_registry.sql" || migrationNames[4] != "00005_observability_queries.sql" ||
 		migrationNames[5] != "00006_telemetry_evidence_context.sql" || migrationNames[6] != "00007_alert_lifecycle.sql" ||
 		migrationNames[7] != "00008_agent_workspace.sql" || migrationNames[8] != "00009_agent_workspace_tasks.sql" ||
 		migrationNames[9] != "00010_incident_recovery_loop.sql" ||
-		migrationNames[10] != "00011_controlled_operations.sql" {
-		t.Fatalf("embedded migrations=%v, want exact semantic history through Agent Workspace tasks", migrationNames)
+		migrationNames[10] != "00011_controlled_operations.sql" ||
+		migrationNames[11] != "00012_provider_timeout_contract.sql" {
+		t.Fatalf("embedded migrations=%v, want exact semantic history through provider timeout contract", migrationNames)
 	}
 
 	contents, err := FS.ReadFile(migrationNames[0])
@@ -204,6 +205,23 @@ func TestSemanticMigrationContract(t *testing.T) {
 	for _, forbidden := range []string{"raw_webhook", "secret_value", "phase_5", "phase 5", "CREATE TABLE `alert_assignments`"} {
 		if strings.Contains(strings.ToLower(alertSQL), strings.ToLower(forbidden)) {
 			t.Errorf("Alert lifecycle migration retains forbidden field or implementation identity %q", forbidden)
+		}
+	}
+
+	providerTimeoutContents, err := FS.ReadFile(migrationNames[11])
+	if err != nil {
+		t.Fatal(err)
+	}
+	providerTimeoutSQL := string(providerTimeoutContents)
+	if !strings.HasPrefix(providerTimeoutSQL, "-- +goose Up\n-- +goose NO TRANSACTION") || strings.Contains(providerTimeoutSQL, "-- +goose Down") {
+		t.Fatal("provider timeout contract must be an explicit forward-only Goose migration")
+	}
+	for _, required := range []string{
+		"ALTER TABLE `provider_configurations`", "DROP CHECK `chk_provider_configurations_limits`",
+		"between 1000 and 300000", "between 1 and 10000",
+	} {
+		if !strings.Contains(providerTimeoutSQL, required) {
+			t.Errorf("provider timeout contract migration missing %q", required)
 		}
 	}
 }

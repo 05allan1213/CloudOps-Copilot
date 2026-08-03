@@ -148,6 +148,21 @@ describe("Settings section drafts", () => {
     ]));
   });
 
+  it("accepts bounded long-running LLM timeouts and rejects values above five minutes", () => {
+    const section = createSettingsSectionDrafts(revision()).providers;
+    const provider = (section.value as ConfigurationRevision["providers"])[0];
+    section.summary = "Allow a bounded long-running model request";
+    provider.timeout_ms = 180000;
+
+    expect(validateSettingsSectionLocally(section)).toEqual([]);
+
+    provider.timeout_ms = 300001;
+    expect(validateSettingsSectionLocally(section)).toContainEqual({
+      name: "providers.llm.timeout_ms",
+      message: "Provider timeout必须在 1000 至 300000 之间。",
+    });
+  });
+
   it("protects summary-only edits and invalidates validation identity when the summary changes", () => {
     const section = createSettingsSectionDrafts(revision()).system;
     const initialFingerprint = settingsSectionFingerprint(section);
