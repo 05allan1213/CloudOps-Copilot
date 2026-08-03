@@ -206,6 +206,22 @@ describe("Agent Workspace store", () => {
     expect(store.streamState).toBe("connecting");
   });
 
+  it("restarts a stopped Consultation stream when the same selection is restored", async () => {
+    const detail = consultationFixture();
+    const store = useAgentWorkspaceStore();
+    store.consultations = [detail];
+    store.selection = "consultation";
+    store.selectedID = detail.id;
+    store.consultation = detail;
+    store.streamState = "stopped";
+
+    await expect(store.selectConsultationFromRoute(detail.id)).resolves.toBe(true);
+
+    expect(mocks.getAgentConsultation).not.toHaveBeenCalled();
+    expect(mocks.openAgentEventStream).toHaveBeenCalledOnce();
+    expect(store.streamState).toBe("connecting");
+  });
+
   it("deduplicates a bounded stream, reports reconnect state, and tears down ownership", () => {
     vi.useFakeTimers();
     const store = useAgentWorkspaceStore();
@@ -259,6 +275,8 @@ describe("Agent Workspace store", () => {
     expect(mocks.sendAgentMessage).toHaveBeenCalledTimes(2);
     expect(mocks.sendAgentMessage.mock.calls[1][2]).toBe(firstKey);
     expect(store.pendingMessageIdempotencyKey).toBe("");
+    expect(mocks.openAgentEventStream).toHaveBeenCalledOnce();
+    expect(store.streamState).toBe("connecting");
   });
 
   it("fails closed before creating a Consultation without Query or Evidence references", async () => {

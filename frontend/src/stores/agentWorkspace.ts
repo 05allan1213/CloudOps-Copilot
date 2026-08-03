@@ -271,7 +271,10 @@ export const useAgentWorkspaceStore = defineStore("agent-workspace", {
         this.failure = { message: this.error, status: 404, code: "CONSULTATION_NOT_FOUND", requestID: "", traceID: "", idempotentReplay: null, nextSteps: [], cause: "route" };
         return false;
       }
-      if (this.selection === "consultation" && this.selectedID === id && this.consultation) return true;
+      if (this.selection === "consultation" && this.selectedID === id && this.consultation) {
+        if (this.streamState === "stopped") this.startStream(id);
+        return true;
+      }
       await this.selectConsultation(id);
       return this.selection === "consultation" && this.selectedID === id && this.consultation !== null;
     },
@@ -574,6 +577,7 @@ export const useAgentWorkspaceStore = defineStore("agent-workspace", {
 
     async sendMessage(content: string) {
       if (!this.consultation || this.sending || !content.trim()) return;
+      const consultationID = this.consultation.id;
       const normalized = content.trim();
       if (this.pendingMessageContent !== normalized) {
         this.pendingMessageContent = normalized;
@@ -586,11 +590,12 @@ export const useAgentWorkspaceStore = defineStore("agent-workspace", {
       this.clearFailure();
       this.notice = "";
       try {
-        await sendAgentMessage(this.consultation.id, normalized, this.pendingMessageIdempotencyKey, controller.signal);
+        await sendAgentMessage(consultationID, normalized, this.pendingMessageIdempotencyKey, controller.signal);
         if (controller.signal.aborted || mutationController !== controller) return;
         this.pendingMessageContent = "";
         this.pendingMessageIdempotencyKey = "";
         this.notice = "消息已持久化，Worker 将按当前 snapshot 执行 bounded tools。";
+        this.startStream(consultationID);
         await this.refreshSelection();
       } catch (error) {
         if (!controller.signal.aborted) this.setFailure(error, "消息发送失败；再次提交相同内容会复用同一个 Idempotency-Key。 ");
