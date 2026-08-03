@@ -106,6 +106,30 @@ func TestWorkspaceModelOutcomeRequiresTwoCitedEvidenceSources(t *testing.T) {
 	}
 }
 
+func TestWorkspaceModelCompletionFailsClosedOnEmptyAnswer(t *testing.T) {
+	projected := WorkspaceRun{Evidence: []EvidenceCitation{
+		{EvidenceID: "evidence-kubernetes", Source: "kubernetes"},
+		{EvidenceID: "evidence-prometheus", Source: "prometheus"},
+	}}
+	completion := workspaceModelCompletion(WorkspaceModelResponse{
+		InputTokens: 1871, OutputTokens: 800,
+	}, projected, "llm", "deepseek-v4-flash")
+
+	if completion.Outcome != WorkspaceOutcomeInsufficient || completion.Uncertainty != "high" {
+		t.Fatalf("empty model completion outcome=%q uncertainty=%q", completion.Outcome, completion.Uncertainty)
+	}
+	if completion.FailureCode != workspaceModelUnavailableCode || completion.FailureSummary == "" {
+		t.Fatalf("empty model completion failure=%q summary=%q", completion.FailureCode, completion.FailureSummary)
+	}
+	if completion.InputTokens != 1871 || completion.OutputTokens != 800 ||
+		completion.ModelProvider != "llm" || completion.ActualModel != "deepseek-v4-flash" {
+		t.Fatalf("empty model completion provenance=%+v", completion)
+	}
+	if !strings.Contains(completion.Answer, "没有将空响应当作诊断") {
+		t.Fatalf("empty model completion answer=%q", completion.Answer)
+	}
+}
+
 func TestWorkspaceModelPromptIncludesImmutableSubjectAndEvidenceFacts(t *testing.T) {
 	execution := WorkspaceExecutionContext{
 		Run: WorkspaceRun{Objective: "调查当前 firing condition"},

@@ -49,7 +49,7 @@ func (f workspaceModelFactory) Model(ctx context.Context, revisionID string) (ag
 	zeroRetries := 0
 	client := agentllm.NewClient(agentllm.Options{
 		APIKey: string(access.Credential), APIURL: configuration.Endpoint, Model: configuration.Model,
-		Timeout: timeout, MaxTokens: maxTokens, MaxRetries: &zeroRetries, Observer: f.observer,
+		Timeout: timeout, MaxTokens: maxTokens, MaxRetries: &zeroRetries, ReasoningEffort: "low", Observer: f.observer,
 	})
 	return workspaceLLM{client: client}, string(settings.ProviderLLM), configuration.Model, nil
 }

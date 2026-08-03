@@ -357,16 +357,25 @@ func (r *WorkspaceRunner) executeWorkspace(ctx context.Context, lease WorkspaceL
 			ModelProvider: provider, ActualModel: actualModel,
 		})
 	}
+	return r.config.Store.CompleteWorkspaceTask(ctx, lease, workspaceModelCompletion(response, projected, provider, actualModel))
+}
+
+func workspaceModelCompletion(response WorkspaceModelResponse, projected WorkspaceRun, provider, actualModel string) WorkspaceCompletion {
 	answer := strings.TrimSpace(response.Answer)
-	if answer == "" {
-		answer = workspaceUnavailableAnswer(projected, "模型没有返回可用答案。")
-	}
-	outcome, uncertainty := workspaceModelOutcome(answer, projected.Evidence)
-	return r.config.Store.CompleteWorkspaceTask(ctx, lease, WorkspaceCompletion{
-		Outcome: outcome, Uncertainty: uncertainty, Answer: answer,
-		ModelProvider: provider, ActualModel: actualModel,
+	completion := WorkspaceCompletion{
+		Answer: answer, ModelProvider: provider, ActualModel: actualModel,
 		InputTokens: response.InputTokens, OutputTokens: response.OutputTokens,
-	})
+	}
+	if answer == "" {
+		completion.Outcome = WorkspaceOutcomeInsufficient
+		completion.Uncertainty = "high"
+		completion.Answer = workspaceUnavailableAnswer(projected, "模型没有返回可用答案；没有将空响应当作诊断。")
+		completion.FailureCode = workspaceModelUnavailableCode
+		completion.FailureSummary = "LLM Provider returned no final answer"
+		return completion
+	}
+	completion.Outcome, completion.Uncertainty = workspaceModelOutcome(answer, projected.Evidence)
+	return completion
 }
 
 func (r *WorkspaceRunner) retrieveGuidance(ctx context.Context, lease WorkspaceLease, execution WorkspaceExecutionContext) (workspaceGuidanceInput, error) {
