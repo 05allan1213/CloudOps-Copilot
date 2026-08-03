@@ -521,10 +521,7 @@ func (r *WorkspaceRunner) completeWorkspaceDiagnosis(
 	if err := r.checkWorkspaceCancellation(ctx, lease); err != nil {
 		return workspaceErrorWithExecutionUsage(err, provider, actualModel, usage)
 	}
-	diagnosis, diagnosisErr := ValidateDiagnosisRecord(candidate, DiagnosisValidationInput{
-		IncidentID: diagnosisContext.IncidentID, CycleNo: diagnosisContext.CycleNo,
-		Facts: diagnosisContext.Facts, Policy: diagnosisContext.Policy, Sufficiency: diagnosisContext.Sufficiency,
-	})
+	diagnosis, diagnosisErr := ValidateDiagnosisRecord(candidate, DiagnosisValidationInput(diagnosisContext))
 	if diagnosisErr != nil {
 		completion.FailureCode = workspaceDiagnosisRejectedCode
 		completion.FailureSummary = workspaceBound(diagnosisErr.Error(), 2048)

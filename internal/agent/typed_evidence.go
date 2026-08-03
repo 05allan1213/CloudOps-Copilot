@@ -195,7 +195,7 @@ func buildWorkspaceTypedEvidence(
 		strings.TrimSpace(evidencePublicID) == "" || strings.TrimSpace(incidentPublicID) == "" || cycleNo == 0 ||
 		strings.TrimSpace(runPublicID) == "" || strings.TrimSpace(stepPublicID) == "" ||
 		!typedEvidenceSHA256(snapshotHash) || !typedEvidenceSHA256(contentHash) {
-		return workspaceTypedEvidenceValues{}, errors.New("Workspace typed Evidence identity is incomplete")
+		return workspaceTypedEvidenceValues{}, errors.New("workspace typed Evidence identity is incomplete")
 	}
 	facts := make([]EvidenceFact, len(observation.TypedFacts))
 	for index, candidate := range observation.TypedFacts {
@@ -210,7 +210,7 @@ func buildWorkspaceTypedEvidence(
 		candidate.Truncated = false
 		candidate.DerivedFrom = stableDiagnosisStrings(candidate.DerivedFrom)
 		if !usableFact(candidate) || candidate.ClaimUse != "support" && candidate.ClaimUse != "blocking" {
-			return workspaceTypedEvidenceValues{}, fmt.Errorf("Workspace typed Evidence candidate %d is invalid", index)
+			return workspaceTypedEvidenceValues{}, fmt.Errorf("workspace typed Evidence candidate %d is invalid", index)
 		}
 		candidate.Attributes = cloneEvidenceAttributes(candidate.Attributes)
 		facts[index] = candidate

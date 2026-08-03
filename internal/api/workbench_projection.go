@@ -176,18 +176,19 @@ func validateRemediationTarget(target *RemediationTargetView, sourceType string)
 	if target == nil || !validWorkbenchText(target.Path, 1024, true) || !validWorkbenchText(target.FieldRef, 1024, true) {
 		return fmt.Errorf("%w: invalid remediation target", ErrInvalidArgument)
 	}
-	if sourceType == "gitops" {
+	switch sourceType {
+	case "gitops":
 		if !validWorkbenchText(target.Repository, 255, true) || !validWorkbenchText(target.BaseBranch, 255, true) ||
 			!validWorkbenchText(target.FileMode, 16, true) || !validResolutionRevision(target.BaseRevision) ||
 			!validResolutionRevision(target.LastKnownGoodRevision) || !validResolutionRevision(target.BaseBlobSHA) {
 			return fmt.Errorf("%w: invalid GitOps remediation target", ErrInvalidArgument)
 		}
-	} else if sourceType == "local_scenario" {
+	case "local_scenario":
 		if target.Repository != "" || target.BaseBranch != "" || target.BaseRevision != "" ||
 			target.LastKnownGoodRevision != "" || target.BaseBlobSHA != "" || target.FileMode != "" {
 			return fmt.Errorf("%w: local Scenario remediation target contains Git identity", ErrInvalidArgument)
 		}
-	} else {
+	default:
 		return fmt.Errorf("%w: invalid remediation source type", ErrInvalidArgument)
 	}
 	resource := target.Resource

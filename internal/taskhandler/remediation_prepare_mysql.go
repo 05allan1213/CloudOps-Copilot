@@ -335,10 +335,6 @@ WHERE public_id = ? AND incident_id = ? AND cycle_no = ?`,
 	return bindings, facts, nil
 }
 
-func validateCurrentRemediationDiagnosis(stored agent.DiagnosisRecord, incidentPublicID string, cycleNo uint32, facts []agent.EvidenceFact) error {
-	return validateCurrentRemediationDiagnosisWithPolicy(stored, incidentPublicID, cycleNo, facts, agent.GoldenRequiredEnvClaimPolicy())
-}
-
 func validateCurrentRemediationDiagnosisWithPolicy(stored agent.DiagnosisRecord, incidentPublicID string, cycleNo uint32, facts []agent.EvidenceFact, policy agent.ClaimPolicy) error {
 	sufficiency, err := agent.EvaluateSufficiency(agent.SufficiencyInput{
 		IncidentID: incidentPublicID, CycleNo: uint64(cycleNo), Facts: facts, Policy: policy,

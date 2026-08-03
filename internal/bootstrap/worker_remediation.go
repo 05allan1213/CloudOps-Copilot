@@ -42,7 +42,7 @@ func newSettingsRemediationRunner(
 	kubernetes infrastructure.Reader,
 ) (taskRunner, error) {
 	if db == nil || tasks == nil || settingsService == nil {
-		return nil, errors.New("Settings remediation runner dependencies are incomplete")
+		return nil, errors.New("settings remediation runner dependencies are incomplete")
 	}
 	remediationRepository, err := remediationmysql.NewRepository(db)
 	if err != nil {
