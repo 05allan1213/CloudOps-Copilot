@@ -74,7 +74,7 @@ func TestMySQLConfigurationRevisionSecretAndWorkerBoundary(t *testing.T) {
 	if !validation.Valid || validation.DraftHash == "" || len(validation.Errors) != 0 {
 		t.Fatalf("validation=%+v", validation)
 	}
-	revision, err := service.Apply(ctx, validation.ID, draft)
+	revision, err := service.Apply(ctx, validation.ID, draft, RevisionExpectation{ID: initial.ID, Hash: initial.Hash})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestMySQLConfigurationRevisionSecretAndWorkerBoundary(t *testing.T) {
 	if selected.ClusterID != "cluster-secondary" || !selected.Active {
 		t.Fatalf("selected scope=%+v", selected)
 	}
-	replayed, err := service.Apply(ctx, validation.ID, draft)
+	replayed, err := service.Apply(ctx, validation.ID, draft, RevisionExpectation{ID: initial.ID, Hash: initial.Hash})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,8 +107,17 @@ func TestMySQLConfigurationRevisionSecretAndWorkerBoundary(t *testing.T) {
 
 	staleDraft := draft
 	staleDraft.Summary = "Different unvalidated draft"
-	if _, err := service.Apply(ctx, validation.ID, staleDraft); !errors.Is(err, ErrValidationStale) {
+	if _, err := service.Apply(ctx, validation.ID, staleDraft, RevisionExpectation{ID: initial.ID, Hash: initial.Hash}); !errors.Is(err, ErrValidationStale) {
 		t.Fatalf("stale apply error=%v", err)
+	}
+	secondDraft := draft
+	secondDraft.Summary = "Concurrent configuration based on the initial revision"
+	secondValidation, err := service.Validate(ctx, secondDraft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Apply(ctx, secondValidation.ID, secondDraft, RevisionExpectation{ID: initial.ID, Hash: initial.Hash}); !errors.Is(err, ErrRevisionChanged) {
+		t.Fatalf("concurrent apply error=%v", err)
 	}
 	active, err := service.ActiveRevision(ctx)
 	if err != nil {

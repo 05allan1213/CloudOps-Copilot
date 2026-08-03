@@ -2,10 +2,23 @@ package settings
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"testing"
 	"time"
 )
+
+func TestNewServicePreservesValidatedProviderTimeoutBudget(t *testing.T) {
+	t.Parallel()
+
+	service, err := NewService(&sql.DB{}, t.TempDir(), BootstrapDiagnostics{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := service.httpTimeout, 60*time.Second; got != want {
+		t.Fatalf("provider probe timeout ceiling=%s want=%s", got, want)
+	}
+}
 
 func TestProviderProbeURLNormalizesLLMChatEndpoint(t *testing.T) {
 	t.Parallel()

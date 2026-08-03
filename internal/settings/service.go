@@ -14,7 +14,10 @@ import (
 	"github.com/google/uuid"
 )
 
-const validationLifetime = 10 * time.Minute
+const (
+	validationLifetime          = 10 * time.Minute
+	maximumProviderProbeTimeout = 60 * time.Second
+)
 
 type Service struct {
 	db             *sql.DB
@@ -42,7 +45,7 @@ func NewService(db *sql.DB, dataDir string, bootstrap BootstrapDiagnostics) (*Se
 	}
 	return &Service{
 		db: db, dataDir: dataDir, bootstrap: bootstrap,
-		now: time.Now, httpTimeout: 5 * time.Second,
+		now: time.Now, httpTimeout: maximumProviderProbeTimeout,
 		providerProbes: make(map[Provider]func(context.Context, string) (string, error)),
 	}, nil
 }
@@ -129,10 +132,15 @@ created_by, created_at, expires_at
 	return nil
 }
 
-func (s *Service) Apply(ctx context.Context, validationID string, input Draft) (Revision, error) {
+func (s *Service) Apply(ctx context.Context, validationID string, input Draft, expected RevisionExpectation) (Revision, error) {
 	draft, fieldErrors, draftHash := normalizeDraft(input)
 	if len(fieldErrors) != 0 || draftHash == "" {
 		return Revision{}, errors.Join(ErrInvalidDraft, fieldErrorsError(fieldErrors))
+	}
+	expected.ID = strings.TrimSpace(expected.ID)
+	expected.Hash = strings.TrimSpace(expected.Hash)
+	if len(expected.ID) != 36 || len(expected.Hash) != 64 {
+		return Revision{}, ErrInvalidDraft
 	}
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
@@ -173,9 +181,18 @@ WHERE validation.public_id = ? FOR UPDATE`, strings.TrimSpace(validationID)).
 	}
 
 	var activeRevisionID uint64
-	if err := tx.QueryRowContext(ctx, `SELECT configuration_revision_id
-FROM active_configuration WHERE singleton_id = 1 FOR UPDATE`).Scan(&activeRevisionID); err != nil {
+	var activeRevisionPublicID, activeRevisionHash string
+	if err := tx.QueryRowContext(ctx, `SELECT active.configuration_revision_id,
+	revision.public_id, revision.configuration_hash
+	FROM active_configuration AS active
+	JOIN configuration_revisions AS revision ON revision.id = active.configuration_revision_id
+	WHERE active.singleton_id = 1 FOR UPDATE`).Scan(
+		&activeRevisionID, &activeRevisionPublicID, &activeRevisionHash,
+	); err != nil {
 		return Revision{}, fmt.Errorf("lock active configuration: %w", err)
+	}
+	if activeRevisionPublicID != expected.ID || activeRevisionHash != expected.Hash {
+		return Revision{}, ErrRevisionChanged
 	}
 	var nextNumber uint64
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(revision_number), 0) + 1 FROM configuration_revisions`).Scan(&nextNumber); err != nil {

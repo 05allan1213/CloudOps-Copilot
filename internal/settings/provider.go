@@ -70,7 +70,11 @@ func (s *Service) testProvider(ctx context.Context, config ProviderConfiguration
 	response, err := client.Do(request)
 	if err != nil {
 		result.State = "unavailable"
-		result.Detail = "Provider 连接失败；检查 endpoint、网络与 secret 状态"
+		if errors.Is(err, context.DeadlineExceeded) {
+			result.Detail = "Provider 连接超时；检查 endpoint、网络与 timeout 设置"
+		} else {
+			result.Detail = "Provider 连接失败；检查 endpoint、网络与 secret 状态"
+		}
 		return result
 	}
 	defer func() { _ = response.Body.Close() }()

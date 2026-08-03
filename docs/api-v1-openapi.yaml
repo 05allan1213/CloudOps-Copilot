@@ -2399,9 +2399,11 @@ components:
     ApplyConfiguration:
       type: object
       additionalProperties: false
-      required: [validation_id, draft]
+      required: [validation_id, expected_active_revision_id, expected_active_revision_hash, draft]
       properties:
         validation_id: { type: string, format: uuid }
+        expected_active_revision_id: { type: string, format: uuid }
+        expected_active_revision_hash: { $ref: "#/components/schemas/SHA256" }
         draft: { $ref: "#/components/schemas/ConfigurationDraft" }
     SecretInput:
       type: object

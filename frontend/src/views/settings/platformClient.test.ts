@@ -45,13 +45,15 @@ describe("Settings typed platform client", () => {
 
   it("preserves validation identity and exact write payloads", async () => {
     await validateSettings(draft);
-    await applyConfiguration("validation-1", draft);
+    await applyConfiguration("validation-1", draft, { id: "revision-1", hash: "a".repeat(64) });
     await testProvider(provider, [], "cluster-a");
     await createSecret({ provider: "prometheus", purpose: "token", value: "write-only" });
 
     expect(client.postJSON).toHaveBeenNthCalledWith(1, "/api/v1/settings/validate", draft);
     expect(client.postJSON).toHaveBeenNthCalledWith(2, "/api/v1/configuration-revisions", {
       validation_id: "validation-1",
+      expected_active_revision_id: "revision-1",
+      expected_active_revision_hash: "a".repeat(64),
       draft,
     });
     expect(client.postJSON).toHaveBeenNthCalledWith(3, "/api/v1/providers/prometheus/tests", {

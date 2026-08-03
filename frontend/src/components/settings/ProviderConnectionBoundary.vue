@@ -87,7 +87,7 @@ function numberValue(value: unknown, fallback: number): number {
             :model-value="modelValue.max_results"
             :min="1"
             :max="10000"
-            :step="10"
+            :step="1"
             class="provider-connection-control"
             @update:model-value="update('max_results', numberValue($event, 1))"
           />

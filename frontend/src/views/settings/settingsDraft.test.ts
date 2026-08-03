@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { reactive } from "vue";
 
 import type { ConfigurationRevision, ProviderHealth } from "../../api/platform";
 import {
@@ -103,13 +104,13 @@ describe("Settings section drafts", () => {
     const section = createSettingsSectionDrafts(revision()).providers;
     (section.value as ConfigurationRevision["providers"])[0].timeout_ms = 15000;
     section.summary = "Increase the LLM timeout";
-    const latest = revision({
+    const latest = reactive(revision({
       id: "44444444-4444-4444-8444-444444444444",
       number: 13,
       providers: revision().providers.map((provider) => provider.provider === "llm"
         ? { ...provider, model: "model-b" }
         : provider),
-    });
+    }));
 
     expect(sectionChangedInRevision(section, latest)).toBe(true);
     const preserved = rebaseSettingsSection(section, latest, true);

@@ -822,7 +822,10 @@ async function applySection(key: SettingsSectionKey) {
       return;
     }
 
-    const applied = await applyConfiguration(validation.id, buildSectionConfigurationDraft(section));
+    const applied = await applyConfiguration(validation.id, buildSectionConfigurationDraft(section), {
+      id: section.baseRevisionID,
+      hash: section.baseRevisionHash,
+    });
     runtimes[key].outcomeRevisionID = applied.id;
     runtimes[key].outcome = classifySettingsApplyOutcome(applied, []);
 
@@ -859,6 +862,7 @@ async function applySection(key: SettingsSectionKey) {
   } catch (reason) {
     runtimes[key].error = describeError(reason, `${settingsSectionLabel(key)} apply 失败。`);
     try {
+      invalidateQueryDomain("platform");
       const snapshot = await getSettings();
       settings.value = snapshot;
     } catch {
@@ -1488,7 +1492,7 @@ onBeforeUnmount(() => {
                             v-model="systemValue.query_max_results"
                             :min="1"
                             :max="10000"
-                            :step="10"
+                            :step="1"
                             class="settings-setting-control"
                           />
                         </UFormField>
