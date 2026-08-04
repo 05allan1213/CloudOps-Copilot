@@ -32,12 +32,12 @@ func TestAgentWorkspaceMigrationPreservesEvidenceAndAuthorityBoundaries(t *testi
 		"`producer_type` = _ascii'agent_step'",
 	} {
 		if !strings.Contains(sqlText, required) {
-			t.Fatalf("Phase 6 migration is missing %q", required)
+			t.Fatalf("Agent workspace migration is missing %q", required)
 		}
 	}
 	for _, forbidden := range []string{"shell_command", "kubectl_command", "automatic_authorization", "chain_of_thought"} {
 		if strings.Contains(sqlText, forbidden) {
-			t.Fatalf("Phase 6 migration contains forbidden authority or reasoning field %q", forbidden)
+			t.Fatalf("Agent workspace migration contains forbidden authority or reasoning field %q", forbidden)
 		}
 	}
 }

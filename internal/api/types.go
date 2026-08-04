@@ -67,9 +67,9 @@ type IncidentView struct {
 	UpdatedAt             time.Time                      `json:"updated_at,omitempty"`
 }
 
-// ResourceView is the bounded common shape used by child Query
-// skeletons. Future phases can replace it with richer typed projections without
-// changing the read-only Query port boundary.
+// ResourceView is the bounded common shape used by child Query skeletons.
+// Richer typed projections can replace it without changing the read-only Query
+// port boundary.
 type ResourceView struct {
 	ID                    string    `json:"id"`
 	Kind                  string    `json:"kind"`

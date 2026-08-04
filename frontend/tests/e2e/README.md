@@ -1,44 +1,35 @@
-# Frontend fixture validation record
+# Frontend Browser Tests
 
-Validated locally on 2026-07-26.
+The Playwright suite validates deterministic presentation and interaction contracts against the local fixture server. Coverage includes navigation, URL and scroll restoration, responsive layout, focus management, unavailable states, SSE reconnect behavior, command feedback and operation identity.
 
-## Scope and provenance
+The fixture server returns deterministic `/api/v1` responses. It does not prove the MySQL-backed API, production SSE runtime or Provider effects. Tests under `tests/real-integration/` cover the separate browser -> API -> MySQL/Provider -> refreshed UI boundary.
 
-The Playwright suite validates the current Incident Workbench presentation contract: keyboard and native-link navigation, URL and scroll restoration, responsive layout, focus restoration, fail-closed projection states, finite and reconnecting SSE behavior, Local Owner command feedback, retry identity, and interaction latency.
-
-The Node fixture server is presentation-only. It returns deterministic `/api/v1` responses and does not prove the MySQL-backed API, production SSE runtime, Kubernetes or GitHub Providers, or a real UI-to-Provider integration. Fixture results must not be promoted to task-level MCP evidence.
-
-The browser deliberately renders only fields in the current public contract. Missing service, workload, AgentStep, and Evidence trust fields remain explicitly not projected; the fixture does not synthesize them.
-
-## Commands
-
-The local proxy must bypass the host HTTP proxy for loopback health checks:
+Run the fixture suite with:
 
 ```bash
-cd /home/monody/k8s/CloudOps-Copilot/frontend
-npm run build
-npm test
-NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost \
-  npm run test:e2e -- --grep-invert "themes, motion"
+npm run test:e2e
 ```
 
-## Current result
+Run the stable read-only subset with:
 
-| Gate | Result | Evidence |
-| --- | --- | --- |
-| Vue/TypeScript and Vite build | PASS | `npm run build`; 1812 modules transformed |
-| Vitest unit suite | PASS | 47 tests in 11 files |
-| Non-visual Playwright fixture suite | PASS | 17 serial scenarios |
-| Local Owner 403 failure path | PASS | command feedback remains fail-closed and preserves request identity |
-| SSE finite/reconnect behavior | PASS | cursor dedupe, `Last-Event-ID`, visible projection, and Live restoration |
-| Keyboard focus and list scroll restoration | PASS | detail H1 focus and back-navigation scroll verified |
-| ESLint | NOT RUN | not required for this focused implementation check |
-| Visual snapshot suite | NOT RUN | intentionally excluded from this focused run |
-| Browser or DevTools MCP | NOT RUN | no Browser MCP resource or template is available in this session |
-| Real UI -> `/api/v1` -> MySQL/Provider integration | NOT RUN | task runtime is not yet complete; fixture proof is not a substitute |
+```bash
+npm run test:e2e:stable
+```
 
-## Fixture matrix
+Run the focused Incident and DevOps workspace suite with:
 
-The 17 passing scenarios cover list navigation and states, dataset edges and pagination, timeouts, the four-zone detail chain, empty and unavailable projections, Investigation and Evidence states, Timeline pagination, SSE resume/reconnect, command retry and 202/403/409/422 responses, stale and expired Plans, Verification outcomes, no-change recovery, command timeout, and interaction latency.
+```bash
+npm run test:e2e:incident-devops
+```
 
-The visual, real-data, and Provider gates remain open until Task 0 has a runnable local lifecycle and the required MCP capabilities are available.
+The real integration suite requires a running local CloudOps deployment, a unique run ID and the current source revision. The independent Scope contract also requires its managed test environment:
+
+```bash
+export CLOUDOPS_REAL_INTEGRATION_RUN_ID="integration-$(date -u +%Y%m%dT%H%M%SZ)"
+export CLOUDOPS_REAL_INTEGRATION_SOURCE_HEAD="$(git rev-parse HEAD)"
+make real-integration-scope-up
+scripts/run-real-ui-integration.sh
+make real-integration-scope-down
+```
+
+Playwright reports, traces, screenshots and test results are generated locally and must not be committed.

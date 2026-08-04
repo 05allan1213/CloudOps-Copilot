@@ -768,7 +768,7 @@ test.describe.serial("Settings real revisions, CAS and restoration", () => {
   });
 
   test.describe("restore pre-run equivalent Settings", () => {
-    test.skip(!restoreMode, "run with CLOUDOPS_REAL_INTEGRATION_SETTINGS_RESTORE=1 during final safety cleanup");
+    test.skip(!restoreMode, "run with CLOUDOPS_REAL_INTEGRATION_SETTINGS_RESTORE=1 to exercise the restoration contract");
 
     test("settings.apply-restore", async ({ page }, testInfo) => {
       const tracker = trackBrowserEvidence(page);
@@ -785,7 +785,7 @@ test.describe.serial("Settings real revisions, CAS and restoration", () => {
         expectedOperations: alreadyRestored
           ? ["GET /api/v1/settings"]
           : ["POST /api/v1/configuration-revisions"],
-        uiResult: "active Configuration hash 与 revision 13 精确一致，Scope 内容等价，Worker succeeded，历史测试 Revision 保留",
+        uiResult: "active Configuration hash 与 pre-run hash 精确一致，Scope 内容等价，Worker succeeded",
       }, async () => {
         const preRun = artifact.pre_run!;
         let snapshot = initial;

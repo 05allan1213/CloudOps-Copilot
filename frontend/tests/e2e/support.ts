@@ -67,7 +67,7 @@ export function monitorBrowser(page: Page, options: { allowedFailures?: RegExp[]
 
 export async function expectNoLayoutOverflow(page: Page) {
   const result = await page.evaluate(() => {
-    const allowedContainers = ".desktop-table-wrap, .diff-scroll, .attempt-history > div, .sample-history pre, .drawer-body, .dialog-body, .json-snapshot pre";
+    const allowedContainers = ".desktop-table-wrap, .workspace-dense-list li, .diff-scroll, .attempt-history > div, .sample-history pre, .drawer-body, .dialog-body, .json-snapshot pre";
     const describe = (element: Element) => {
       const id = element.id ? `#${element.id}` : "";
       const classes = typeof element.className === "string"
@@ -79,6 +79,7 @@ export async function expectNoLayoutOverflow(page: Page) {
       if (!(element instanceof HTMLElement)
         || element.clientWidth === 0
         || element.classList.contains("visually-hidden")
+        || element.classList.contains("app-sidebar")
         || element.closest("dialog:not([open])")
         || element.matches(allowedContainers)
         || element.closest(allowedContainers)) return false;

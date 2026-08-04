@@ -7,7 +7,6 @@ export type CapabilityStatus = "PASS" | "FAIL" | "NOT RUN" | "BACKEND_GAP";
 
 interface CapabilityDefinition {
   capability_id: string;
-  status: CapabilityStatus;
   api_operations: string[];
   [key: string]: unknown;
 }
@@ -24,12 +23,11 @@ interface CapabilityAttempt {
   ui_result: string;
   status: CapabilityStatus;
   root_cause?: string;
-  blocked_by?: string;
-  commit?: string;
   evidence_file: string;
 }
 
 interface LedgerCapability extends CapabilityDefinition {
+  status: CapabilityStatus;
   attempts: CapabilityAttempt[];
 }
 
@@ -63,13 +61,6 @@ export interface CapabilityProofOptions {
   uiAction: string;
   expectedOperations?: string[];
   uiResult: string;
-  commit?: string;
-}
-
-export interface CapabilityDispositionOptions extends CapabilityProofOptions {
-  status: "NOT RUN" | "BACKEND_GAP";
-  blockedBy: string;
-  rootCause?: string;
 }
 
 const repoRoot = path.resolve(fileURLToPath(new URL("../../../", import.meta.url)));
@@ -134,7 +125,7 @@ function readLedger(): CapabilityLedger {
         return {
           ...prior,
           ...definition,
-          status: prior?.status ?? definition.status,
+          status: prior?.status ?? "NOT RUN",
           attempts: prior?.attempts ?? [],
         };
       }),
@@ -145,7 +136,11 @@ function readLedger(): CapabilityLedger {
     checkpoint_version: 1,
     source_head: sourceHead,
     updated_at: new Date().toISOString(),
-    capabilities: readManifest().map((definition) => ({ ...definition, attempts: [] })),
+    capabilities: readManifest().map((definition) => ({
+      ...definition,
+      status: "NOT RUN",
+      attempts: [],
+    })),
   };
 }
 
@@ -178,7 +173,6 @@ async function recordAttempt(
   apiEvidence: BrowserApiEvidence[],
   tracker: BrowserEvidenceTracker,
   cause = "",
-  blockedBy = "",
 ) {
   const { runRoot, ledgerPath } = requiredIdentity();
   const ledger = readLedger();
@@ -198,8 +192,6 @@ async function recordAttempt(
     ui_result: options.uiResult,
     status,
     ...(cause ? { root_cause: cause } : {}),
-    ...(blockedBy ? { blocked_by: blockedBy } : {}),
-    ...(options.commit ? { commit: options.commit } : {}),
     evidence_file: evidenceRelative.split(path.sep).join("/"),
   };
   atomicWriteJSON(path.join(runRoot, evidenceRelative), attempt);
@@ -207,46 +199,9 @@ async function recordAttempt(
   capability.status = status;
   if (cause) capability.root_cause = cause;
   else delete capability.root_cause;
-  if (blockedBy) capability.blocked_by = blockedBy;
-  else delete capability.blocked_by;
   ledger.source_head = sourceHead;
   ledger.updated_at = attempt.completed_at;
   atomicWriteJSON(ledgerPath, ledger);
-}
-
-export async function recordCapabilityDisposition<T>(
-  tracker: BrowserEvidenceTracker,
-  testInfo: TestInfo,
-  options: CapabilityDispositionOptions,
-  execute: () => Promise<T>,
-): Promise<T> {
-  const mark = tracker.mark();
-  const startedAt = new Date().toISOString();
-  try {
-    const result = await test.step(options.capabilityID, execute);
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    const records = tracker.since(mark);
-    assertOperations(records, options.expectedOperations ?? []);
-    await recordAttempt(
-      options,
-      startedAt,
-      options.status,
-      records,
-      tracker,
-      options.rootCause,
-      options.blockedBy,
-    );
-    return result;
-  } catch (cause) {
-    const records = tracker.since(mark);
-    const message = cause instanceof Error ? cause.message : String(cause);
-    await recordAttempt(options, startedAt, "FAIL", records, tracker, message);
-    await testInfo.attach(`${options.capabilityID}-failure.json`, {
-      body: Buffer.from(JSON.stringify({ capability_id: options.capabilityID, error: message, api_evidence: records }, null, 2)),
-      contentType: "application/json",
-    });
-    throw cause;
-  }
 }
 
 export function trackBrowserEvidence(...pages: Page[]): BrowserEvidenceTracker {

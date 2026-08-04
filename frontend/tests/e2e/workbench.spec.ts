@@ -34,7 +34,7 @@ test("Incident list preserves keyboard entry, URL filters, sorting, and Back sta
   await configureFixture(request, { list: "ready" });
   await page.setViewportSize({ width: 1440, height: 900 });
   await openList(page, "list-contract");
-  await expect(page.getByTestId("incident-results").locator("tbody tr")).toHaveCount(3);
+  await expect(page.getByTestId("incident-results").getByTestId("incident-row-summary")).toHaveCount(3);
 
   await expect.poll(() => page.evaluate(() => {
     const selector = "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
@@ -47,26 +47,39 @@ test("Incident list preserves keyboard entry, URL filters, sorting, and Back sta
   await page.keyboard.press("Enter");
   await expect(page.getByTestId("app-main")).toBeFocused();
 
-  await page.getByLabel("状态").selectOption("resolved");
-  await page.getByLabel("Attention").selectOption("false");
-  await page.getByLabel("服务").fill("checkout-api");
+  await page.getByRole("button", { name: "展开 Incident 高级筛选" }).click();
+  await page.getByRole("combobox", { name: "Incident 生命周期状态" }).focus();
+  await page.keyboard.press("Enter");
+  await page.getByRole("option", { name: "已恢复", exact: true }).click();
+  await page.getByRole("combobox", { name: "Attention" }).focus();
+  await page.keyboard.press("Enter");
+  await page.getByRole("option", { name: "无需 Attention", exact: true }).click();
+  await page.getByRole("textbox", { name: "搜索服务" }).fill("checkout-api");
   await page.getByTestId("incident-filter-apply").click();
   await expect(page).toHaveURL(/status=resolved/);
   await expect(page).toHaveURL(/attention=false/);
   await expect(page).toHaveURL(/service=checkout-api/);
 
-  const updatedHeader = page.getByRole("columnheader", { name: /更新/ });
-  await expect(updatedHeader).toHaveAttribute("aria-sort", "descending");
-  await updatedHeader.getByRole("button").click();
-  await expect(updatedHeader).toHaveAttribute("aria-sort", "ascending");
+  await expect(page.getByRole("combobox", { name: "Incident 排序字段" })).toContainText("最近更新");
+  await page.getByRole("button", { name: "切换排序方向" }).click();
+  await expect(page).toHaveURL(/direction=asc/);
 
-  await page.locator(`[data-testid="incident-row-link"][href="/incidents/${incidentID}"]`).click();
+  await page
+    .locator(`[data-testid="incident-row-summary"][data-incident-id="${incidentID}"]`)
+    .locator("xpath=ancestor::button[1]")
+    .click();
+  await expect(page.getByTestId("incident-inspector")).toBeVisible();
+  await page.getByRole("link", { name: "打开完整 Incident 详情" }).click();
   await expect(page.locator(".incident-detail-view h1")).toBeFocused();
   await page.goBack();
-  await expect(page.getByTestId("incident-results").locator("tbody tr")).toHaveCount(3);
-  await expect(page.getByLabel("状态")).toHaveValue("resolved");
-  await expect(page.getByLabel("Attention")).toHaveValue("false");
-  await expect(page.getByLabel("服务")).toHaveValue("checkout-api");
+  await expect(page.getByTestId("incident-inspector")).toBeVisible();
+  await page.getByRole("button", { name: "关闭 Inspector" }).click();
+  await expect(page).not.toHaveURL(/selected=/);
+  await expect(page.getByTestId("incident-results").getByTestId("incident-row-summary")).toHaveCount(3);
+  await page.getByRole("button", { name: "展开 Incident 高级筛选" }).click();
+  await expect(page.getByRole("combobox", { name: "Incident 生命周期状态" })).toContainText("已恢复");
+  await expect(page.getByRole("combobox", { name: "Attention" })).toContainText("无需 Attention");
+  await expect(page.getByRole("textbox", { name: "搜索服务" })).toHaveValue("checkout-api");
 
   expect(mutations).toEqual([]);
   browser.expectClean();
@@ -97,17 +110,21 @@ test("Incident cursor pagination and long content remain stable on desktop width
   const browser = monitorBrowser(page, { allowedFailures: [/\/api\/v1\/notification-events: net::ERR_ABORTED$/] });
   await configureFixture(request, { list: "paginated" });
   await openList(page, "list-pagination");
-  const rows = page.getByTestId("incident-results").locator("tbody tr");
+  const rows = page.getByTestId("incident-results").getByTestId("incident-row-summary");
   await expect(rows).toHaveCount(20);
   await page.getByRole("button", { name: "加载更多 Incident" }).click();
   await expect(rows).toHaveCount(50);
 
+  await rows.first().locator("xpath=ancestor::button[1]").click();
+  await expect(page.getByTestId("incident-inspector")).toBeVisible();
   const popupPromise = page.context().waitForEvent("page");
-  await page.getByTestId("incident-row-link").first().click({ modifiers: ["Control"] });
+  await page.getByRole("link", { name: "打开完整 Incident 详情" }).click({ modifiers: ["Control"] });
   const popup = await popupPromise;
   await popup.waitForLoadState("domcontentloaded");
   await expect(popup).toHaveURL(new RegExp(`/incidents/${incidentID}`));
   await popup.close();
+  await page.getByRole("button", { name: "关闭 Inspector" }).click();
+  await expect(page).not.toHaveURL(/selected=/);
 
   for (const [width, height] of [[1024, 768], [1280, 800], [1440, 900], [1920, 1080]]) {
     await page.setViewportSize({ width, height });
@@ -117,12 +134,12 @@ test("Incident cursor pagination and long content remain stable on desktop width
 
   await configureFixture(request, { list: "long" });
   await openList(page, "list-long-content");
-  await expect(page.getByTestId("incident-results").locator("tbody tr")).toHaveCount(20);
+  await expect(page.getByTestId("incident-results").getByTestId("incident-row-summary")).toHaveCount(20);
   await expectNoLayoutOverflow(page);
   browser.expectClean();
 });
 
-test("Incident detail renders typed projections, context links, and the four-zone contract", async ({ page, request }) => {
+test("Incident detail renders typed projections, context links, and the seven-zone contract", async ({ page, request }) => {
   const browser = monitorBrowser(page, { allowedFailures: [/\/events: net::ERR_ABORTED$/] });
   const mutations: string[] = [];
   page.on("request", (outgoing) => {
@@ -133,7 +150,9 @@ test("Incident detail renders typed projections, context links, and the four-zon
   await page.setViewportSize({ width: 1440, height: 1000 });
   await openDetail(page, "detail-contract");
 
-  await expect(page.getByRole("navigation", { name: "Incident detail zones" }).getByRole("link")).toHaveCount(4);
+  const zoneLinks = page.getByRole("navigation", { name: "Incident detail zones" }).getByRole("link");
+  await expect(zoneLinks).toHaveCount(7);
+  await expect(zoneLinks).toHaveText(["01 Agent 调查", "02 Evidence", "03 Approval", "04 Delivery", "05 Verification", "06 Timeline", "07 Resolution"]);
   await expect(page.locator(".context-links a")).toHaveCount(6);
   await expect(page.locator("#related-alerts li")).toHaveCount(1);
   await expect(page.locator("#timeline li")).toHaveCount(1);
@@ -146,7 +165,7 @@ test("Incident detail renders typed projections, context links, and the four-zon
   await expectNoLayoutOverflow(page);
 
   await page.getByRole("navigation", { name: "Incident detail zones" }).getByRole("link", { name: /调查/ }).click();
-  await expect(page).toHaveURL(/#investigation-zone$/);
+  await expect(page).toHaveURL(/#agent-investigation$/);
   await page.getByRole("link", { name: "返回 Incident 列表" }).click();
   await expect(page.getByTestId("incident-results")).toBeVisible();
 
@@ -156,8 +175,8 @@ test("Incident detail renders typed projections, context links, and the four-zon
 
 test("Incident detail keeps empty, failed, deep-link, and missing projections explicit", async ({ page, request }) => {
   await configureFixture(request, { sections: "empty", verification: "not_run", sse: "connected" });
-  await openDetail(page, "detail-empty", "#recovery-zone");
-  await expect(page).toHaveURL(/#recovery-zone$/);
+  await openDetail(page, "detail-empty", "#resolution");
+  await expect(page.locator("#resolution")).toBeInViewport();
   await expect(page.locator("#related-alerts .section-message")).toBeVisible();
   await expect(page.locator("#decision .section-message")).toBeVisible();
   await expect(page.locator("#verifications .section-message")).toContainText("NOT RUN");
@@ -205,12 +224,18 @@ test("Incident SSE reconnect preserves the projection and returns to realtime", 
 
 test("theme, reduced motion, contrast, and desktop density remain deterministic", async ({ page, request }) => {
   await configureFixture(request, { list: "loading" });
+  await page.addInitScript(() => window.localStorage.setItem("cloudops-theme", "dark"));
   await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
   await page.setViewportSize({ width: 1440, height: 900 });
   await openList(page, "theme-motion");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  await expect(page.locator(".skeleton-row span").first()).toBeVisible();
-  await expect.poll(() => page.locator(".skeleton-row span").first().evaluate((element) => getComputedStyle(element).animationName)).toBe("none");
+  const skeleton = page.locator(".skeleton-row").first();
+  await expect(skeleton).toBeVisible();
+  await expect.poll(() => skeleton.evaluate((element) => {
+    const duration = getComputedStyle(element).animationDuration;
+    const value = Number.parseFloat(duration);
+    return duration.endsWith("ms") ? value : value * 1000;
+  })).toBeLessThanOrEqual(0.01);
 
   await page.getByRole("button", { name: "切换浅色主题" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");

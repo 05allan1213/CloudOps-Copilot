@@ -144,7 +144,7 @@ func TestOpenAPICommandAndSafetyContractsMatchRuntime(t *testing.T) {
 		schema := document.Components.Schemas[schemaName]
 		for _, field := range fields {
 			if schema.Properties[field] == nil {
-				t.Errorf("schema %s is missing Phase 9 field %s", schemaName, field)
+				t.Errorf("schema %s is missing Scenario contract field %s", schemaName, field)
 			}
 		}
 	}

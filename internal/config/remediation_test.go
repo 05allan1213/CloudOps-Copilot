@@ -2,14 +2,14 @@ package config
 
 import "testing"
 
-func TestPhase4AuthorityFlagsDefaultOff(t *testing.T) {
+func TestRemediationAuthorityFlagsDefaultOff(t *testing.T) {
 	cfg := Load()
 	if cfg.RemediationEnabled || cfg.GitOpsPREnabled || cfg.GitHubWriteEnabled {
-		t.Fatalf("Phase 4 authority must default off: %+v", cfg)
+		t.Fatalf("remediation authority must default off: %+v", cfg)
 	}
 }
 
-func TestPhase4FlagsCannotBeEnabledOutOfOrder(t *testing.T) {
+func TestRemediationFlagsCannotBeEnabledOutOfOrder(t *testing.T) {
 	cfg := Load()
 	cfg.GitHubWriteEnabled = true
 	if err := cfg.Validate(); err == nil {

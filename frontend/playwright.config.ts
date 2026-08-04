@@ -2,6 +2,9 @@ import { defineConfig } from "@playwright/test";
 
 const browserExecutable = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
 const networkIsolated = process.env.PLAYWRIGHT_NETWORK_ISOLATED === "1";
+const fixtureOrigin = "http://127.0.0.1:18082";
+
+process.env.CLOUDOPS_E2E_FIXTURE_ORIGIN = fixtureOrigin;
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -33,12 +36,12 @@ export default defineConfig({
   webServer: [
     {
       command: "node tests/e2e/fixture-server.mjs",
-      url: "http://127.0.0.1:18082/fixture/state",
+      url: `${fixtureOrigin}/fixture/state`,
       reuseExistingServer: false,
       timeout: 20_000,
     },
     {
-      command: "VITE_API_PROXY_TARGET=http://127.0.0.1:18082 npm run dev -- --host 127.0.0.1 --port 4173 --strictPort",
+      command: `VITE_API_PROXY_TARGET=${fixtureOrigin} npm run dev -- --host 127.0.0.1 --port 4173 --strictPort`,
       url: "http://127.0.0.1:4173",
       reuseExistingServer: false,
       timeout: 30_000,

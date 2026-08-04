@@ -86,6 +86,6 @@ Provider unavailable、partial 或 stale 必须保留具体 source、time、requ
 
 ## 5. External boundary
 
-GitHub、Argo、Registry、hosted Actions、staging 与 production 不由本地 Scenario 隐式授权。没有当前 credential、exact Plan/Authorization 和用户明确外部写权限时，结果必须是 `NOT RUN`。本地 Kubernetes scale 证据不能替代 Git PR、human merge、Argo exact revision 或 hosted signing evidence。
+GitHub、Argo、Registry、hosted Actions、staging 与 production 不由本地 Scenario 隐式授权。没有有效 credential、exact Plan/Authorization 和明确外部写权限时，对应操作必须拒绝执行。本地 Kubernetes scale 也不能替代 Git PR、human merge、Argo exact revision 或 hosted signing。
 
-当前实际 run、对象 ID、截图与 `PASS`/`FAIL`/`NOT RUN` 见 [Phase 9 最终证据](evidence/phase-9-scenario/final-evidence-report.md)。
+每次运行产生的日志、截图、trace、浏览器结果和备份均为本地临时数据，不属于源码仓库。长期风险与控制措施见 [Risk Register](risk-register.md)。

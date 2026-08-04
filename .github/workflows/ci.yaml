@@ -116,6 +116,7 @@ jobs:
           npm run lint:no-new-warnings
           npm run typecheck
           npm run typecheck:e2e
+          npm run check:capabilities
           npm test
           npm run build
           npm run bundle:check

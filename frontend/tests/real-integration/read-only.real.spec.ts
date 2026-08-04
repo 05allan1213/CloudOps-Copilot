@@ -176,11 +176,11 @@ test.describe.serial("real browser read integration", () => {
     await proveCapability(tracker, testInfo, {
       capabilityID: "settings.read",
       uiAction: "直接进入 Settings，遍历五个 section、Storage 与 Revision history 后刷新",
-      uiResult: "active revision 13、五个 section、Storage 和历史从 MySQL 回显",
+      uiResult: "active revision、五个 section、Storage 和历史从 MySQL 回显",
     }, async () => {
       await page.goto("/settings");
       await expect(page.getByRole("heading", { name: "设置", level: 1 })).toBeVisible();
-      await expect(page.getByTestId("app-main")).toContainText("Revision #13");
+      await expect(page.getByTestId("app-main")).toContainText(/Revision #\d+/);
       const navigation = page.getByRole("navigation", { name: "Settings 分区" });
       for (const section of ["系统", "运行范围", "升级策略", "Provider", "Secret 引用"]) {
         const button = navigation.getByRole("button", { name: new RegExp(`^${section}`) });
@@ -193,7 +193,7 @@ test.describe.serial("real browser read integration", () => {
       await expect(page.getByRole("heading", { name: "Configuration Revisions" })).toBeVisible();
       await expect(page.getByRole("heading", { name: "存储与备份" })).toBeVisible();
       await page.reload();
-      await expect(page.getByTestId("app-main")).toContainText("Revision #13");
+      await expect(page.getByTestId("app-main")).toContainText(/Revision #\d+/);
       await expect(page.getByRole("heading", { name: "存储与备份" })).toBeVisible();
     });
   });

@@ -6,6 +6,15 @@ import (
 	"testing"
 )
 
+var implementationIdentityPattern = regexp.MustCompile(`(?i)(^|[^a-z0-9])(v(?:[2-9]|[1-9][0-9]+)|phase[_ -]?[0-9]+)([^a-z0-9]|$)`)
+
+func assertNoImplementationIdentity(t *testing.T, name, sqlText string) {
+	t.Helper()
+	if match := implementationIdentityPattern.FindString(sqlText); match != "" {
+		t.Errorf("%s retains implementation identity %q", name, match)
+	}
+}
+
 func TestSemanticMigrationContract(t *testing.T) {
 	entries, err := FS.ReadDir(".")
 	if err != nil {
@@ -90,9 +99,7 @@ func TestSemanticMigrationContract(t *testing.T) {
 			t.Errorf("baseline retains forbidden compatibility surface %q", forbidden)
 		}
 	}
-	if match := regexp.MustCompile(`(?i)(^|[^a-z0-9])(v2|v3|phase[_ -]?[0-9]+)([^a-z0-9]|$)`).FindString(sqlText); match != "" {
-		t.Errorf("baseline retains generation identity %q", match)
-	}
+	assertNoImplementationIdentity(t, "baseline", sqlText)
 
 	platformContents, err := FS.ReadFile(migrationNames[1])
 	if err != nil {
@@ -115,11 +122,12 @@ func TestSemanticMigrationContract(t *testing.T) {
 			t.Errorf("platform foundation missing %q", required)
 		}
 	}
-	for _, forbidden := range []string{"secret_value", "raw_secret", "v2", "v3", "phase_1", "phase 1"} {
+	for _, forbidden := range []string{"secret_value", "raw_secret"} {
 		if strings.Contains(strings.ToLower(platformSQL), forbidden) {
 			t.Errorf("platform foundation retains forbidden implementation identity %q", forbidden)
 		}
 	}
+	assertNoImplementationIdentity(t, "platform foundation", platformSQL)
 
 	infrastructureContents, err := FS.ReadFile(migrationNames[2])
 	if err != nil {
@@ -138,11 +146,12 @@ func TestSemanticMigrationContract(t *testing.T) {
 			t.Errorf("infrastructure topology missing %q", required)
 		}
 	}
-	for _, forbidden := range []string{"raw_yaml", "secret_value", "v2", "v3", "phase_2", "phase 2"} {
+	for _, forbidden := range []string{"raw_yaml", "secret_value"} {
 		if strings.Contains(strings.ToLower(infrastructureSQL), forbidden) {
 			t.Errorf("infrastructure topology retains forbidden implementation identity %q", forbidden)
 		}
 	}
+	assertNoImplementationIdentity(t, "infrastructure topology", infrastructureSQL)
 
 	scopeRegistryContents, err := FS.ReadFile(migrationNames[3])
 	if err != nil {
@@ -157,11 +166,12 @@ func TestSemanticMigrationContract(t *testing.T) {
 			t.Errorf("operational scope registry missing %q", required)
 		}
 	}
-	for _, forbidden := range []string{"kubeconfig_data", "secret_value", "raw_yaml", "v2", "v3", "phase_2", "phase 2"} {
+	for _, forbidden := range []string{"kubeconfig_data", "secret_value", "raw_yaml"} {
 		if strings.Contains(strings.ToLower(scopeRegistrySQL), forbidden) {
 			t.Errorf("operational scope registry retains forbidden implementation identity %q", forbidden)
 		}
 	}
+	assertNoImplementationIdentity(t, "operational scope registry", scopeRegistrySQL)
 
 	observabilityContents, err := FS.ReadFile(migrationNames[4])
 	if err != nil {
@@ -179,11 +189,12 @@ func TestSemanticMigrationContract(t *testing.T) {
 			t.Errorf("observability queries migration missing %q", required)
 		}
 	}
-	for _, forbidden := range []string{"raw_result", "secret_value", "bearer", "v2", "v3", "phase_3", "phase 3"} {
+	for _, forbidden := range []string{"raw_result", "secret_value", "bearer"} {
 		if strings.Contains(strings.ToLower(observabilitySQL), forbidden) {
 			t.Errorf("observability queries migration retains forbidden implementation or telemetry field %q", forbidden)
 		}
 	}
+	assertNoImplementationIdentity(t, "observability queries migration", observabilitySQL)
 
 	telemetryContents, err := FS.ReadFile(migrationNames[5])
 	if err != nil {
@@ -200,11 +211,12 @@ func TestSemanticMigrationContract(t *testing.T) {
 			t.Errorf("telemetry Evidence/context migration missing %q", required)
 		}
 	}
-	for _, forbidden := range []string{"raw_result", "provider_response", "secret_value", "bearer", "fixture", "phase_4", "phase 4"} {
+	for _, forbidden := range []string{"raw_result", "provider_response", "secret_value", "bearer", "fixture"} {
 		if strings.Contains(strings.ToLower(telemetrySQL), forbidden) {
 			t.Errorf("telemetry Evidence/context migration retains forbidden telemetry field or implementation identity %q", forbidden)
 		}
 	}
+	assertNoImplementationIdentity(t, "telemetry Evidence/context migration", telemetrySQL)
 
 	alertContents, err := FS.ReadFile(migrationNames[6])
 	if err != nil {
@@ -221,11 +233,12 @@ func TestSemanticMigrationContract(t *testing.T) {
 			t.Errorf("Alert lifecycle migration missing %q", required)
 		}
 	}
-	for _, forbidden := range []string{"raw_webhook", "secret_value", "phase_5", "phase 5", "CREATE TABLE `alert_assignments`"} {
+	for _, forbidden := range []string{"raw_webhook", "secret_value", "CREATE TABLE `alert_assignments`"} {
 		if strings.Contains(strings.ToLower(alertSQL), strings.ToLower(forbidden)) {
 			t.Errorf("Alert lifecycle migration retains forbidden field or implementation identity %q", forbidden)
 		}
 	}
+	assertNoImplementationIdentity(t, "Alert lifecycle migration", alertSQL)
 
 	providerTimeoutContents, err := FS.ReadFile(migrationNames[11])
 	if err != nil {

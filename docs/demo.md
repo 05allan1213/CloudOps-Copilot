@@ -49,8 +49,8 @@ scenario_stale_firing_alerts=0
 
 浏览器随后回到 Live Mode，不显示 `Scenario Active` 或 `cloudops-scenario-*` runtime；retained Incident/Alert/Investigation/Plan/Verification history 仍可审计。
 
-## 4. Evidence boundary
+## 4. Boundary
 
-当前验收对象为 Scenario `scenario-20260728045922-4c81122b`；对象 ID、视口、截图、console/network、性能、accessibility 与 cleanup 结果见 [Phase 9 最终证据](evidence/phase-9-scenario/final-evidence-report.md)。
+Scenario 只授权其本地 Kubernetes workload 上的 allowlisted operation。GitHub App write、human merge、Argo reconciliation、Registry publish、hosted Actions、staging 与 production 都需要各自独立的 credential、Plan、Authorization 和显式执行入口。
 
-GitHub App write、human merge、Argo exact revision、hosted Actions、Registry publish/sign/attest、staging 与 production 均未由该 Scenario 隐式执行，保持 `NOT RUN`。
+测试运行产生的对象 ID、日志、截图、trace 和浏览器报告是临时数据，不应提交到仓库。

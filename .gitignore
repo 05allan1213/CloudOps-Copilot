@@ -1,37 +1,51 @@
-# Binaries for programs and plugins
+# Environment and local runtime state
+.env
+.env.*
+!.env.example
+.cloudops/
+
+# Go build and test artifacts
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
-
-# Test binary, built with `go test -c`
 *.test
-
-# Code coverage profiles and other test artifacts
 *.out
-coverage.*
 *.coverprofile
+coverage.*
 profile.cov
-
-# Dependency directories (remove the comment below to include it)
-# vendor/
-
-# Go workspace file
 go.work
 go.work.sum
+/main
+/probe
+/web
 
-# env file
-.env
+# Node.js dependencies and frontend output
+node_modules/
+package-lock.json
+!frontend/package-lock.json
+frontend/dist/
+frontend/.vite/
+frontend/playwright-report/
+frontend/test-results/
 
-# Editor/IDE
-.idea/
-.vscode/
+# Browser tooling and generated output
+.playwright/
+.playwright-cli/
+output/
+
+# Logs and temporary files
+*.log
+*.pid
+*.tmp
 *.swp
 *.swo
 *~
 
-# OS generated files
+# Editors and operating systems
+.idea/
+.vscode/
 .DS_Store
 .DS_Store?
 ._*
@@ -39,53 +53,3 @@ go.work.sum
 .Trashes
 ehthumbs.db
 Thumbs.db
-
-# Logs
-*.log
-
-# Node.js
-node_modules/
-package-lock.json
-!frontend/package-lock.json
-
-# Frontend build outputs
-**/frontend/dist/
-**/frontend/.vite/
-frontend/playwright-report/
-frontend/test-results/
-
-# Frontend redesign prework: keep source and curated evidence, ignore regenerated output.
-docs/evidence/frontend-redesign/prework/prototypes/cloudops-prework/node_modules/
-docs/evidence/frontend-redesign/prework/prototypes/cloudops-prework/dist/
-docs/evidence/frontend-redesign/prework/prototypes/cloudops-prework/output/
-docs/evidence/frontend-redesign/prework/prototypes/cloudops-prework/.playwright/
-docs/evidence/frontend-redesign/prework/prototypes/cloudops-prework/.playwright-cli/
-docs/evidence/frontend-redesign/prework/prototypes/cloudops-prework/auto-imports.d.ts
-docs/evidence/frontend-redesign/prework/prototypes/cloudops-prework/components.d.ts
-!docs/evidence/frontend-redesign/prework/prototypes/cloudops-prework/package-lock.json
-docs/evidence/frontend-redesign/prework/output/playwright/.playwright-cli/
-docs/evidence/frontend-redesign/prework/output/playwright/prototype/*-artifacts/
-docs/evidence/frontend-redesign/prework/output/playwright/prototype/*-check/
-docs/evidence/frontend-redesign/prework/output/playwright/prototype/html-report/
-docs/evidence/frontend-redesign/prework/output/playwright/prototype/targeted-interaction/
-docs/evidence/frontend-redesign/prework/output/playwright/prototype/test-results/
-docs/evidence/frontend-redesign/prework/output/playwright/prototype/results.json
-
-# Project build outputs
-main
-probe
-web
-
-# Private local lifecycle state, backups, and managed secrets
-.cloudops/
-
-# AI file
-.agents/
-.codex/
-.codex
-AGENTS.md
-.trae/
-skills-lock.json
-
-# Intermediate documents
-doc/

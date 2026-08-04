@@ -1,25 +1,25 @@
 # Risk Register
 
-本表只记录当前语义产品与未闭合风险。`CONTROLLED` 限定到明确证据边界；`OPEN` 与 `NOT RUN` 不能被局部测试覆盖。
+本表记录需要长期维护的产品风险。控制措施描述当前设计约束，不代表任意环境或未来变更自动满足这些约束。
 
-| ID | Severity | Risk | Current control / owner | Status |
-|---|---|---|---|---|
-| ARCH-001 | CRITICAL | 平行 API/runtime/schema/deploy path 再次出现 | 唯一 `/api/v1`、root module、forward-only schema、`charts/cloudops`、semantic naming check | CONTROLLED locally |
-| ARCH-002 | HIGH | 文档引用已删除实现或把历史能力写成当前事实 | current-state docs + Phase 9 report；历史报告只保留 exact-run provenance | CONTROLLED for Phase 9 convergence |
-| DATA-001 | CRITICAL | schema/restore 丢失 Incident/Evidence 或破坏 hash/provenance | private backup、staging restore、count/FK/hash/provenance audit、rollback | CONTROLLED locally |
-| DATA-002 | HIGH | migration 或 runtime mutation 破坏单一 truth | Migrate-only forward migration、API/Worker no AutoMigrate、schema tests | CONTROLLED in current tree; future drift remains OPEN |
-| LIFE-001 | CRITICAL | lifecycle 命令误操作其他集群或持久数据 | fixed target、broad override rejection、backup-first reset | CONTROLLED locally |
-| LIFE-002 | MEDIUM | port-forward 在 rollout/command return 后漂移 | status/doctor 单独检测；允许对 canonical Service 建立前台 loopback | CONTROLLED operationally; lifecycle robustness remains OPEN |
-| SECRET-001 | CRITICAL | DB/Provider secret 进入 Git、UI、日志或 Evidence | `.cloudops/` permissions、workload-scoped Secret、write-only Settings API、no-value evidence | CONTROLLED locally; rotation remains OPEN |
-| PROVIDER-001 | CRITICAL | unavailable Provider 产生假成功 | explicit partial/stale/unavailable、bounded query、Provider identity、no fixture fallback | CONTROLLED for local Providers |
-| PROVIDER-002 | CRITICAL | Kubernetes/GitHub/Argo/LLM 越权写入 | three-layer authority、exact hash、effect-time revalidation、Scenario-only RBAC/write gate | CONTROLLED for local Scenario; external writes NOT RUN |
-| API-001 | HIGH | Local Owner 无 auth 被错误暴露到 LAN/Internet | only supported access is `127.0.0.1` port-forward | CONTROLLED for supported mode |
-| API-002 | HIGH | browser mutation 被跨源/replay/stale request 触发 | Origin、idempotency、expected version/hash、body bounds | CONTROLLED in current contracts |
-| UI-001 | HIGH | fixture/截图冒充 UI/API/Provider integration | current browser/network/data/provider/console evidence required | CONTROLLED for Phase 9 Scenario |
-| UI-002 | MEDIUM | 大数据/移动端/Canvas/离线状态退化 | virtual lists、bounded scrollers、320–1440 matrix、structured fallback、offline retry evidence | CONTROLLED for tested matrix |
-| RELEASE-001 | HIGH | 普通源码 push 意外写 Registry/部署 | CI read-only/build-only；publish workflows explicit dispatch | CONTROLLED for branch push |
-| RELEASE-002 | HIGH | hosted scan/sign/attest/cleanup 被本地静态检查冒充 | exact-SHA hosted evidence kept separate | NOT RUN |
-| SCENARIO-001 | HIGH | Scenario runtime 清理不完整或污染 Live Mode | `scenario-down` asserts runtime 0/write gate false/RBAC no/history retained；browser Live Mode check | CONTROLLED for current run |
-| EXTERNAL-001 | HIGH | 本地 Kubernetes recovery 被扩大为 GitHub/Argo/staging/production PASS | final report keeps every external branch explicit `NOT RUN` | NOT RUN |
+| ID | Severity | Risk | Control |
+| --- | --- | --- | --- |
+| ARCH-001 | Critical | 出现平行 API、runtime、schema 或 deploy path | 唯一 `/api/v1`、root Go module、forward-only schema、`charts/cloudops` 和 semantic naming check |
+| ARCH-002 | High | 文档、OpenAPI、runtime route 与 typed client 漂移 | 保留少量 current-state docs，并由 capability matrix、contract tests 和 link checks 联合验证 |
+| DATA-001 | Critical | Schema、restore 或 retention 操作丢失 Domain/Evidence 数据 | Private checksummed backup、staging restore、row-count/schema validation 和 rollback |
+| DATA-002 | High | 多进程修改 schema 或破坏 durable truth | Migrate-only forward migration；API/Worker 禁止 AutoMigrate；schema contract tests |
+| LIFE-001 | Critical | Lifecycle 命令误操作其他集群或持久数据 | 固定 cluster/Namespace/release target，拒绝 broad override，reset 要求 backup-first 和确认 |
+| LIFE-002 | Medium | Port-forward 在 rollout 或命令返回后失效 | Status/doctor 分层诊断；允许对 canonical Service 重建 loopback forward |
+| SECRET-001 | Critical | DB/Provider secret 进入 Git、UI、日志、Evidence 或备份元数据 | `.cloudops/` 权限、workload-scoped Secret、write-only Settings API、redaction 和 no-value projections |
+| PROVIDER-001 | Critical | Provider unavailable 被表现为成功 | 显式 partial/stale/unavailable、bounded queries、source identity 和禁止 fixture fallback |
+| PROVIDER-002 | Critical | Kubernetes、GitHub、Argo 或 LLM 越权写入 | 分离 read/suggestion/effect authority，绑定 exact hash，并在 effect time 重验 precondition 和 write gate |
+| API-001 | High | 无登录的 Local Owner 应用被暴露到 LAN 或 Internet | 仅支持 `127.0.0.1` port-forward；公开或多用户模式需要新的认证和架构设计 |
+| API-002 | High | Browser mutation 被跨源、重放或 stale request 触发 | Origin、idempotency、expected version/hash、body bounds 和 stable Problem Details |
+| UI-001 | High | Fixture 或静态页面检查被误认为真实集成 | 将 fixture tests 与 browser -> API -> MySQL/Provider -> refreshed UI tests 分开 |
+| UI-002 | Medium | 大数据、移动端、Canvas 或离线状态退化 | Virtualization、bounded scrollers、responsive constraints、structured fallback 和 retry states |
+| RELEASE-001 | High | 普通源码 push 意外发布镜像或部署 | CI build-only；Golden publish 使用独立的显式 dispatch workflow |
+| RELEASE-002 | High | 镜像来源、漏洞扫描或不可变身份校验失效 | Exact source revision labels、digest validation、pre-publish scan 和 pinned workflow dependencies |
+| SCENARIO-001 | High | Scenario runtime 清理不完整或污染 Live Mode | `scenario-down` 验证 runtime 为零、write gate 关闭、RBAC 移除且 history 保留 |
+| EXTERNAL-001 | High | 本地恢复结果被扩大为外部 Provider 或生产成功 | 每个外部 effect 都需要独立 credential、Plan、Authorization、execution 和 verification |
 
-逐项证据与 blocker 见 [实施状态](evidence/cloudops-implementation-status.md) 和 [Phase 9 最终证据](evidence/phase-9-scenario/final-evidence-report.md)。
+风险控制相关变更应补充相应 code、contract 或 integration test；一次运行生成的截图、日志和报告不作为仓库内长期状态。
